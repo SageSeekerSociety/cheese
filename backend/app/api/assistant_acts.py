@@ -16,10 +16,13 @@ from pydantic import BaseModel
 
 from app.api.awaiting_asks import MembershipAsk, RunAsk
 from app.api.awaiting_deps import all_waiting
+from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.assistant import gate, refs
 from app.domain.room_task.awaiting import WaitingItem
+from app.domain.space.services import SpaceLabels
+from app.domain.team.services import team_service
 from app.domain.user.services import search_accounts, user_by_handle
 
 
@@ -57,6 +60,13 @@ DOORS = {
     "team_invite_decline": "app.api.routes.users_team.decline_team_invitation",
     "team_join_approve": "app.api.routes.teams.approve_team_join_request",
     "team_join_reject": "app.api.routes.teams.reject_team_join_request",
+    "team_invite": "app.api.routes.teams.create_team_invitation",
+    "team_role": "app.api.routes.teams.patch_team_member_role",
+    "team_remove": "app.api.routes.teams.delete_team_member",
+    "space_add": "app.api.routes.spaces.add_space_member",
+    "space_remove": "app.api.routes.spaces.delete_space_member",
+    "space_admin_add": "app.api.routes.spaces_organization.add_space_admin",
+    "space_admin_remove": "app.api.routes.spaces_organization.delete_space_admin",
 }
 #: How a role is named to the person.
 ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
@@ -274,4 +284,147 @@ def _team_answer(ask: MembershipAsk, yes: bool) -> Plan:
         [(DOORS[door], place)],
         card=("act", {}),
         done=done,
+    )
+
+
+#: How a team role is named to the person, by the route's role name.
+_TEAM_ROLE = {"OWNER": "所有者", "ADMIN": "管理员", "MEMBER": "成员"}
+
+
+async def team_member(db, team_id: int, body: ActIn, who: str, shown: str) -> Plan:
+    """Someone into a team (an invitation they accept), their role in it
+    changed, or them taken out of it — as the team's members page does."""
+    team = await team_service(db).get_team(team_id)
+    person = await user_by_handle(db, who)
+    if team is None:
+        raise NotFoundError.for_resource("team", str(team_id))
+    if person is None:
+        raise NotFoundError(say("assistantWhoUnknown", who=who))
+    held = next(
+        (
+            r
+            for r in await team_service(db).get_team_members(team_id)
+            if r.user_id == person.id
+        ),
+        None,
+    )
+    tid = str(team_id)
+    if body.remove:
+        return Plan(
+            gate.Action(
+                "member", f"将 {shown} 移出团队「{team.name}」", ("remove_member",)
+            ),
+            [{"method": "DELETE", "path": f"/teams/{tid}/members/{person.id}"}],
+            [(DOORS["team_remove"], tid)],
+            card=("act", {}),
+            done=f"已把 {shown} 移出团队「{team.name}」。",
+        )
+    role = (body.role or "member").upper()
+    if role not in ("ADMIN", "MEMBER"):
+        raise BadRequestError(say("assistantActNeeds", what="role: admin / member"))
+    if held is None:
+        return Plan(
+            gate.Action(
+                "member",
+                f"邀请 {shown} 以{_TEAM_ROLE[role]}身份加入团队「{team.name}」",
+            ),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/teams/{tid}/invitations",
+                    "body": {"userId": person.id, "role": role},
+                }
+            ],
+            [(DOORS["team_invite"], tid)],
+            card=("act", {}),
+            done=f"已邀请 {shown} 加入团队「{team.name}」，等对方接受。",
+        )
+    now = {0: "OWNER", 1: "ADMIN", 2: "MEMBER"}.get(held.role, "MEMBER")
+    lowers = (now, role) in (
+        ("OWNER", "ADMIN"),
+        ("OWNER", "MEMBER"),
+        ("ADMIN", "MEMBER"),
+    )
+    return Plan(
+        gate.Action(
+            "member",
+            f"将 {shown} 在团队「{team.name}」的角色从{_TEAM_ROLE[now]}改为"
+            f"{_TEAM_ROLE[role]}",
+            ("lower_role",) if lowers else (),
+        ),
+        [
+            {
+                "method": "PATCH",
+                "path": f"/teams/{tid}/members/{person.id}",
+                "body": {"role": role},
+            }
+        ],
+        [(DOORS["team_role"], tid)],
+        card=("act", {}),
+        done=f"已把 {shown} 在团队「{team.name}」改成{_TEAM_ROLE[role]}。",
+    )
+
+
+async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> Plan:
+    """Someone added to a space or taken out of it, made one of its managers
+    or no longer one — as the space's members and settings pages do."""
+    space = (await SpaceLabels(db).describe([space_id])).get(space_id)
+    person = await user_by_handle(db, who)
+    if space is None:
+        raise NotFoundError.for_resource("space", str(space_id))
+    if person is None:
+        raise NotFoundError(say("assistantWhoUnknown", who=who))
+    sid = str(space_id)
+    manages = await is_space_admin(db, space_id=space_id, user_id=person.id)
+    if body.remove:
+        return Plan(
+            gate.Action(
+                "member", f"将 {shown} 移出空间「{space.name}」", ("remove_member",)
+            ),
+            [{"method": "DELETE", "path": f"/spaces/{sid}/members/{person.id}"}],
+            [(DOORS["space_remove"], sid)],
+            card=("act", {}),
+            done=f"已把 {shown} 移出空间「{space.name}」。",
+        )
+    role = (body.role or "member").lower()
+    if role not in ("admin", "member"):
+        raise BadRequestError(say("assistantActNeeds", what="role: admin / member"))
+    if role == "admin":
+        return Plan(
+            gate.Action("member", f"设 {shown} 为空间「{space.name}」的管理员"),
+            [
+                {
+                    "method": "POST",
+                    "path": f"/spaces/{sid}/managers",
+                    "body": {"userId": person.id, "role": "ADMIN"},
+                }
+            ],
+            [(DOORS["space_admin_add"], sid)],
+            card=("act", {}),
+            done=f"已设 {shown} 为空间「{space.name}」的管理员。",
+        )
+    if manages:
+        return Plan(
+            gate.Action(
+                "member",
+                f"撤掉 {shown} 在空间「{space.name}」的管理员身份",
+                ("lower_role",),
+            ),
+            [{"method": "DELETE", "path": f"/spaces/{sid}/managers/{person.id}"}],
+            [(DOORS["space_admin_remove"], sid)],
+            card=("act", {}),
+            done=f"已撤掉 {shown} 在空间「{space.name}」的管理员身份。",
+        )
+    return Plan(
+        gate.Action("member", f"把 {shown} 加入空间「{space.name}」"),
+        [
+            {
+                "method": "POST",
+                "path": f"/spaces/{sid}/members",
+                "body": {"userId": person.id},
+            }
+        ],
+        [(DOORS["space_add"], sid)],
+        card=("act", {}),
+        done=f"已把 {shown} 加入空间「{space.name}」。",
     )

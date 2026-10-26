@@ -13,6 +13,7 @@ what they may see on the site, and nothing their pages would not show them.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -33,6 +34,8 @@ from app.api.assistant_acts import (
     named,
     need,
     respond,
+    space_member,
+    team_member,
 )
 from app.api.assistant_deps import (
     ProjectPages,
@@ -53,7 +56,7 @@ from app.auth.project_roles import standing
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.personal import reading
+from app.domain.agent.personal import reading, rosters
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, passes, proposals, refs
 from app.domain.assistant import memory as assistant_memory
@@ -269,7 +272,15 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     """cheese_read for a project's own things: the project, a channel, a task,
     its review card, a document."""
     me = await _person(resolver, db)
+    text = body.ref.strip().strip("/")
+    if text == "teams":
+        return ok({"text": await rosters.my_teams(db, me.user_id)})
+    people = _SPACE_PEOPLE.fullmatch(text)
+    if people:
+        return ok({"text": await rosters.space(db, me.user_id, int(people[1]))})
     ref = refs.parse(body.ref)
+    if ref is not None and ref.kind == "team" and (ref.id or "").isdigit():
+        return ok({"text": await rosters.team(db, me.user_id, int(ref.id or 0))})
     if ref is not None and ref.kind in _WAITING_KINDS:
         return ok({"text": await _waiting_one(db, me, ref)})
     if ref is None or ref.kind not in reading.KINDS:
@@ -278,6 +289,9 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     text = await reading.read(reader, ProjectPages(db, resolver), ref, body.page)
     return ok({"text": text})
 
+
+#: Who is in a space: its managers and members (`rosters.space`).
+_SPACE_PEOPLE = re.compile(r"spaces/(\d{1,9})/people")
 
 #: The refs of what waits on the person, by the kind ``refs.parse`` names:
 #: they are read from the inbox, which is where they live.
@@ -458,6 +472,9 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
     ref = refs.parse(need(body.where, "where"))
     if ref is None:
         raise BadRequestError(say("assistantRefUnknown", ref=body.where))
+    if ref.kind in ("team", "space") and (ref.id or "").isdigit():
+        of = team_member if ref.kind == "team" else space_member
+        return await of(db, int(ref.id or 0), body, who, shown)
     if ref.kind == "channel":
         project, place, _ = await _place(db, access, body.where)
         room = place.room

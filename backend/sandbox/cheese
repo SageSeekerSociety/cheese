@@ -1698,7 +1698,8 @@ DELEGATED_TOOLS = ToolTable(
             "草稿 drafts/12，文件 files/30，空间的资料 spaces/4 "
             "（列出全部）和 spaces/4/materials/9；用户的资料库 library（列出全部）和 "
             "library/成绩.xlsx；me 是用户申请过、在做的题目和各自的截止时间，"
-            "settings 是用户的通知设置。"
+            "settings 是用户的通知设置；teams 是用户所在的团队，teams/9 是一个团队的成员"
+            "和角色，spaces/4/people 是一个空间的管理员和成员。"
             "编号从当前页面、待办和别的读取结果里来。"
             "长的分段读：结果末尾写着下一段的 page。",
             {
@@ -1777,12 +1778,15 @@ DELEGATED_TOOLS = ToolTable(
                     ["where", "title"],
                 ),
                 "member": _verb(
-                    "以用户的名义管成员：where 给项目短名或频道编号，who 给对方的 handle 或名字。"
-                    "项目里：不在项目的人发邀请（role 为 member 或 mentor），已在的人改角色"
-                    "（admin / member / mentor），remove 为 true 时移出。频道里：加进来，或 "
-                    "remove 移出。只能做用户自己有权限做的；移出成员、降低权限默认要用户确认。",
+                    "以用户的名义管成员：where 给项目短名、频道编号、团队（teams/9）或空间"
+                    "（spaces/4），who 给对方的 handle 或名字。项目里：不在项目的人发邀请（role "
+                    "为 member 或 mentor），已在的人改角色（admin / member / mentor），remove 为 "
+                    "true 时移出。频道里：加进来，或 remove 移出。团队里：不在团队的人发邀请，已在"
+                    "的人改角色（admin / member），remove 移出。空间里：加为成员，role 为 admin 时"
+                    "设为管理员，已是管理员的人 role 为 member 时撤掉管理员，remove 移出空间。只能做"
+                    "用户自己有权限做的；移出成员、降低权限默认要用户确认。",
                     {
-                        "where": _text("项目短名或频道编号"),
+                        "where": _text("项目短名、频道编号、teams/团队 id 或 spaces/空间 id"),
                         "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
                         "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
                         "remove": {"type": "boolean"},

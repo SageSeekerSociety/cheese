@@ -6,7 +6,7 @@ import uuid
 
 from app.domain.assistant import gate
 from tests.conftest import seed_user
-from tests.integration.conftest import ask_to_join
+from tests.integration.conftest import ask_to_join, create_approved_space
 from tests.integration.test_assistant import _ledger_user
 from tests.integration.test_assistant_agent import (
     _acting,
@@ -55,7 +55,7 @@ def _carry_out(client, token: str, got: dict) -> None:
             json=call.get("body"),
             headers={**_as(token), "X-Cheese-Pass": got["pass"]},
         )
-        assert sent.status_code in (200, 204), sent.text
+        assert 200 <= sent.status_code < 300, sent.text
 
 
 def test_a_team_invitation_is_accepted_for_the_person(client, monkeypatch):
@@ -122,3 +122,141 @@ def test_a_request_to_join_the_persons_team_is_approved_there_only(client, monke
     assert stray.status_code == 403
     assert carol in _members(client, mine, "alice")
     assert carol not in _members(client, other, "alice")
+
+
+def _space(client, owner: str) -> int:
+    made = create_approved_space(
+        client,
+        json={
+            "name": f"课{uuid.uuid4().hex[:4]}",
+            "intro": "一门课",
+            "description": "题目板",
+            "avatarId": 1,
+            "taskTemplates": [],
+        },
+        headers=_bearer(client, owner),
+    )
+    assert made.status_code == 201, made.text
+    return made.json()["data"]["space"]["id"]
+
+
+def _do(client, monkeypatch, handle: str, said: str, act: dict) -> None:
+    token = _acting(client, handle, _asked_in(client, handle, said))
+    _carry_out(client, token, _let_through(client, monkeypatch, token, act))
+
+
+def test_the_person_manages_their_teams_members(client, monkeypatch):
+    team = _team(client, "alice")
+    seed_user(client, "dave")
+    dave = _ledger_user(client, "dave")[0]
+
+    _do(
+        client,
+        monkeypatch,
+        "alice",
+        "邀请 dave 进我的团队",
+        {"kind": "member", "where": f"teams/{team}", "who": "dave"},
+    )
+    [invitation] = client.get(
+        "/users/me/team-invitations",
+        params={"status": "PENDING"},
+        headers=_bearer(client, "dave"),
+    ).json()["data"]["invitations"]
+    assert invitation["team"]["id"] == team
+    client.post(
+        f"/users/me/team-invitations/{invitation['id']}/accept",
+        headers=_bearer(client, "dave"),
+    )
+    _do(
+        client,
+        monkeypatch,
+        "alice",
+        "把 dave 设成团队管理员",
+        {"kind": "member", "where": f"teams/{team}", "who": "dave", "role": "admin"},
+    )
+
+    roles = {
+        m["user"]["id"]: m["role"]
+        for m in client.get(
+            f"/teams/{team}/members", headers=_bearer(client, "alice")
+        ).json()["data"]["members"]
+    }
+    assert roles[dave] == "ADMIN"
+
+
+def test_the_person_manages_their_spaces_members_and_managers(client, monkeypatch):
+    space = _space(client, "alice")
+    seed_user(client, "erin")
+    erin = _ledger_user(client, "erin")[0]
+    where = f"spaces/{space}"
+
+    _do(
+        client,
+        monkeypatch,
+        "alice",
+        "把 erin 加进我的空间",
+        {"kind": "member", "where": where, "who": "erin"},
+    )
+    members = client.get(
+        f"/spaces/{space}/members", headers=_bearer(client, "alice")
+    ).json()["data"]
+    assert erin in {m["user"]["id"] for m in members["members"]}
+
+    _do(
+        client,
+        monkeypatch,
+        "alice",
+        "让 erin 当空间管理员",
+        {"kind": "member", "where": where, "who": "erin", "role": "admin"},
+    )
+    assert erin in _managers(client, space, "alice")
+
+    # Stepping someone down is asked first, by the person's default rule.
+    token = _acting(client, "alice", _asked_in(client, "alice", "撤掉 erin 的管理员"))
+    asked = client.post(
+        "/assistant/agent/act",
+        json={"kind": "member", "where": where, "who": "erin", "role": "member"},
+        headers=_as(token),
+    ).json()["data"]
+    assert asked["done"] is False
+    assert (
+        asked["card"]["summary"]
+        == f"撤掉 erin 在空间「{_name(client, space)}」的管理员身份"
+    )
+    assert erin in _managers(client, space, "alice")
+
+
+def _name(client, space: int) -> str:
+    got = client.get(f"/spaces/{space}", headers=_bearer(client, "alice"))
+    return got.json()["data"]["space"]["name"]
+
+
+def _managers(client, space: int, owner: str) -> set[int]:
+    got = client.get(f"/spaces/{space}/managers", headers=_bearer(client, owner))
+    assert got.status_code == 200, got.text
+    return {m["userId"] for m in got.json()["data"]["managers"]}
+
+
+def _read(client, handle: str, ref: str) -> tuple[int, str]:
+    token = _acting(client, handle, _asked_in(client, handle, "看看"))
+    got = client.post("/assistant/agent/read", json={"ref": ref}, headers=_as(token))
+    return got.status_code, got.json().get("data", {}).get("text", "")
+
+
+def test_it_reads_the_teams_and_spaces_it_manages_people_in(client):
+    """What 芝士 reads before managing people: the person's teams and their
+    role, a team's members, a space's managers and members — and nothing of
+    a team or space the person is not in."""
+    team = _team(client, "alice")
+    space = _space(client, "alice")
+    seed_user(client, "frank")
+
+    status, mine = _read(client, "alice", "teams")
+    assert status == 200 and f"teams/{team}" in mine and "所有者" in mine
+    status, members = _read(client, "alice", f"teams/{team}")
+    assert status == 200 and "alice" in members
+    status, people = _read(client, "alice", f"spaces/{space}/people")
+    assert status == 200 and "管理员：alice" in people
+
+    assert _read(client, "frank", f"teams/{team}")[0] == 404
+    assert _read(client, "frank", f"spaces/{space}/people")[0] == 404

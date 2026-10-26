@@ -130,6 +130,13 @@ GATED_ROUTES: frozenset[str] = frozenset(
         "app.api.routes.users_team.decline_team_invitation",
         "app.api.routes.teams.approve_team_join_request",
         "app.api.routes.teams.reject_team_join_request",
+        "app.api.routes.teams.create_team_invitation",
+        "app.api.routes.teams.patch_team_member_role",
+        "app.api.routes.teams.delete_team_member",
+        "app.api.routes.spaces.add_space_member",
+        "app.api.routes.spaces.delete_space_member",
+        "app.api.routes.spaces_organization.add_space_admin",
+        "app.api.routes.spaces_organization.delete_space_admin",
         "app.api.routes.fetch.read_url",
     }
 )
