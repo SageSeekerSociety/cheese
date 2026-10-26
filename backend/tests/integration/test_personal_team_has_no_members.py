@@ -18,6 +18,7 @@ from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
     TeamMembershipApplication,
+    TeamRecruitmentPost,
     TeamUserRelation,
 )
 from tests.integration.conftest import UserCreator, unique_int
@@ -239,6 +240,75 @@ def test_a_personal_team_cannot_recruit(api_client, people):
         headers=auth(people["friend"]),
     )
     assert outsider.status_code == 403, outsider.text
+
+
+def test_a_withdrawn_ad_cannot_be_opened_again(api_client, people, db_session, _portal):
+    """The migration withdraws the ad; the edit route stops the author (that
+    team's only member) from putting it back in the plaza."""
+    team = personal_team_of(api_client, people["owner"])
+
+    async def the_ad() -> int:
+        now = datetime.now(UTC)
+        post = TeamRecruitmentPost(
+            team_id=team["id"],
+            title=f"Join us {unique_int()}",
+            content="Please",
+            status="CLOSED",
+            created_by=people["owner"].user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(post)
+        await db_session.flush()
+        return post.id
+
+    post_id = _portal.call(the_ad)
+
+    resp = api_client.patch(
+        f"/recruitment/{post_id}",
+        json={"status": "OPEN"},
+        headers=auth(people["owner"]),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "personal team" in resp.json()["error"]["message"]
+
+    async def its_status() -> str:
+        post = await db_session.get(TeamRecruitmentPost, post_id)
+        assert post is not None
+        await db_session.refresh(post)
+        return post.status
+
+    assert _portal.call(its_status) == "CLOSED"
+
+
+def test_the_plaza_never_offers_a_personal_teams_ad(
+    api_client, people, db_session, _portal
+):
+    """Even a row written straight into the table stays out of the plaza: an
+    ad offering a team that takes nobody can only disappoint whoever answers."""
+    team = personal_team_of(api_client, people["owner"])
+    title = f"Join us {unique_int()}"
+
+    async def the_ad() -> int:
+        now = datetime.now(UTC)
+        post = TeamRecruitmentPost(
+            team_id=team["id"],
+            title=title,
+            content="Please",
+            status="OPEN",
+            created_by=people["owner"].user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(post)
+        await db_session.flush()
+        return post.id
+
+    post_id = _portal.call(the_ad)
+
+    resp = api_client.get("/recruitment", params={"keyword": title})
+    assert resp.status_code == 200, resp.text
+    assert post_id not in {p["id"] for p in resp.json()["data"]["posts"]}
 
 
 def test_the_personal_team_rows_in_the_database_are_only_its_owner(

@@ -107,7 +107,12 @@ def upgrade() -> None:
           AND p.deleted_at IS NULL
         """
     )
-    # 5. The rule, where no code path can go around it.
+    # 5. The rule, where no code path can go around it. Only the membership
+    #    row gets one: the previous release already refuses every write into
+    #    one (since #2249), while it still creates recruitment posts and join
+    #    tokens on personal teams. A trigger there would turn those writes into
+    #    errors for the release still serving during the deploy; the edit route
+    #    refuses to open an ad again instead (RecruitmentService.update_post).
     op.execute(
         """
         CREATE FUNCTION team_membership_respects_personal_teams()

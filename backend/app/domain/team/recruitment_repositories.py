@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
+from app.domain.team.models import RecruitmentStatus, Team, TeamRecruitmentPost
 from app.domain.team.repositories import _use_fts
 
 
@@ -56,11 +56,21 @@ class RecruitmentRepository:
     ) -> tuple[list[TeamRecruitmentPost], bool, int | None]:
         """List OPEN recruitment posts ordered by created_at desc.
 
+        A personal team's post is never offered here, whatever its status: the
+        ad asks people into a team that takes nobody. The migration withdrew
+        the ones that existed and the edit route refuses to open one again;
+        this is the read that makes any other writer's mistake invisible.
+
         Returns (rows, has_more, next_start_id).
         """
-        base = select(TeamRecruitmentPost).where(
-            TeamRecruitmentPost.status == RecruitmentStatus.OPEN.value,
-            TeamRecruitmentPost.deleted_at.is_(None),
+        base = (
+            select(TeamRecruitmentPost)
+            .join(Team, Team.id == TeamRecruitmentPost.team_id)
+            .where(
+                TeamRecruitmentPost.status == RecruitmentStatus.OPEN.value,
+                TeamRecruitmentPost.deleted_at.is_(None),
+                Team.personal_owner_user_id.is_(None),
+            )
         )
         if keyword:
             base = base.where(self._keyword_filter(keyword))

@@ -71,6 +71,8 @@ covers:
 
 `TeamRecruitmentPost` 是团队招募帖（标题、正文、联系方式、`max_members`、`expires_at`），状态 `OPEN` / `CLOSED` / `EXPIRED`。`api/routes/recruitment.py` 上列表、编辑、删除都在，但**「招募广场」在界面上还是「即将推出」**（`frontend/src/views/teams/Explore.vue`），所以今天没有一个入口能发帖——后端实现了，产品面还没开，用户文档里那句「目前显示『即将推出』」说的是界面这一半。发帖时个人团队直接拒：它一个人也招不进来，招募帖只能空等。
 
+个人团队的招募帖有三道，同一件事从三个方向各挡一次：迁移 `e3f9a1c62b47` 把已存在的 `OPEN` 帖置为 `CLOSED`；`RecruitmentService.update_post` 拒绝把状态改回 `OPEN`（作者就是那个团队的所有者，否则他能在编辑接口里把帖子重新挂出去）；广场的 `list_open` 联 `team` 排除个人团队，所以别的写法留下的一行也不会被列出来。没有给这张表加触发器，和成员资格不一样：部署时旧版本还在跑，它建帖时不认这条规则，触发器会让它当场报错。
+
 ## 边界与坑 {#traps}
 
 - **团队成员不是项目成员行**。团队里加一个人，他在这个团队的所有项目里立刻出现，不需要谁去同步——反过来说，把一个人移出所有项目而留在团队里，只能靠 `ProjectMemberExclusion`。

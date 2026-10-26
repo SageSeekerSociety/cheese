@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.team import permissions as team_seats
-from app.domain.team.models import TeamRecruitmentPost
+from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
 from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.repositories import TeamRepository
@@ -109,6 +109,15 @@ class RecruitmentService:
             )
         if post.created_by != actor_user_id:
             raise ForbiddenError("Only the post creator can edit this recruitment post")
+        # Editing the text or closing it is fine. Opening it again is not: the
+        # creator of a post on a personal team is that team's owner, so this is
+        # the route that could undo the withdrawal the migration made, and the
+        # database refuses the same write (trigger
+        # `team_recruitment_post_respects_personal_teams`).
+        if status == RecruitmentStatus.OPEN.value:
+            team = await self._team_repo.get_by_id(post.team_id)
+            if team is not None and team.personal_owner_user_id is not None:
+                raise BadRequestError("A personal team takes no recruits")
         return await self._repo.update(
             post,
             title=title,
