@@ -8,7 +8,9 @@ repository) there is none — never a conflict.
 """
 
 import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 import pytest
@@ -143,14 +145,14 @@ def test_a_check_that_fails_still_keeps_the_caches_under_the_cap(tmp_path, monke
     assert _bytes_on_disk(tmp_path / "workspace") <= _SMALL_CAP
 
 
-def test_answers_count_against_the_cap_and_make_way_for_newer_ones(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
-    url, base, heads = proposals_over_time(tmp_path / "repo", 6)
-    for head in heads:
-        assert merge_check.decide(url, "t", base, head) == "clean"
-    assert _bytes_on_disk(tmp_path / "workspace") <= _SMALL_CAP
+def test_answers_past_their_age_are_removed(tmp_path, monkeypatch):
+    url, base, heads = proposals_over_time(tmp_path / "repo", 2)
+    assert merge_check.decide(url, "t", base, heads[0]) == "clean"
+    # From here on, every answer on disk is past the age answers are kept for.
+    monkeypatch.setattr(merge_check, "ANSWERS_KEPT_FOR_S", -60)
+
+    assert merge_check.decide(url, "t", base, heads[1]) == "clean"
+    assert merge_check.answer(url, base, heads[0]) is None
 
 
 def test_checks_running_at_once_under_the_cap_all_answer(tmp_path, monkeypatch):
@@ -161,3 +163,39 @@ def test_checks_running_at_once_under_the_cap_all_answer(tmp_path, monkeypatch):
             pool.map(lambda pr: merge_check.decide(pr.url, "t", pr.base, pr.head), prs)
         )
     assert answers == ["clean"] * len(prs)
+
+
+def test_an_answer_outlives_other_repositories_checks_under_the_cap(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
+    a = proposal(tmp_path / "a", conflicting=True)
+    b = proposal(tmp_path / "b", conflicting=False)
+
+    assert merge_check.decide(a.url, "t", a.base, a.head) == "conflict"
+    assert merge_check.decide(b.url, "t", b.base, b.head) == "clean"
+    assert merge_check.answer(a.url, a.base, a.head) == "conflict"
+
+
+def test_an_answer_being_written_survives_another_check(tmp_path, monkeypatch):
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", _SMALL_CAP)
+    a = proposal(tmp_path / "a", conflicting=True)
+    b = proposal(tmp_path / "b", conflicting=False)
+    written, go_on = threading.Event(), threading.Event()
+    write_text = Path.write_text
+
+    def pauses_after_the_first_partial_answer(self, *args, **kwargs):
+        wrote = write_text(self, *args, **kwargs)
+        if self.name.endswith(".partial") and not written.is_set():
+            written.set()
+            go_on.wait(30)
+        return wrote
+
+    monkeypatch.setattr(Path, "write_text", pauses_after_the_first_partial_answer)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(merge_check.decide, a.url, "t", a.base, a.head)
+        assert written.wait(30)
+        assert merge_check.decide(b.url, "t", b.base, b.head) == "clean"
+        go_on.set()
+        assert first.result(30) == "conflict"
+    assert merge_check.answer(a.url, a.base, a.head) == "conflict"

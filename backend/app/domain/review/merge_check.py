@@ -29,6 +29,8 @@ import shutil
 import signal
 import stat
 import subprocess
+import time
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
@@ -43,11 +45,18 @@ Answer = Literal["clean", "conflict"]
 #: A fetch or merge that runs longer than this is killed and leaves no answer.
 FETCH_TIMEOUT_S = 120
 MERGE_TIMEOUT_S = 60
-#: Everything under `_root()` stays under this, checked before every fetch and
+#: The git caches together stay under this, checked before every fetch and
 #: after every check whatever its outcome: the caches checked least recently
 #: go first, and a repository whose cache alone is larger is checked and then
-#: not kept.
+#: not kept. Answers are not part of it (`ANSWERS_KEPT_FOR`).
 CACHE_LIMIT_BYTES = 2 * 1024**3
+
+#: How long an answer is kept. A reader needs it only from the check that
+#: writes it until the PR's next push or merge, normally minutes to days; two
+#: weeks covers a PR left alone over a holiday, and keeps the answers to one
+#: per pair a forge refused in that time, a few thousand files at most. An
+#: answer pruned early only costs another test merge.
+ANSWERS_KEPT_FOR_S = 14 * 24 * 3600
 
 #: Where a cache is put together before it is renamed into place, so a cache
 #: on disk is either complete or absent (one left behind by a process that
@@ -67,10 +76,15 @@ def _cache(url: str) -> Path:
     return _root() / _key(url)
 
 
+def _answers() -> Path:
+    """Answers live in a store of their own, apart from the caches: a cache
+    that is evicted, or one too large to keep, takes no answer with it, and
+    cache eviction never touches an answer (`_prune_answers` does)."""
+    return _root() / "answers"
+
+
 def _answer_file(url: str, base: str, head: str) -> Path:
-    """Answers live beside the caches, not in them: a cache that is evicted, or
-    one too large to keep, takes no answer with it."""
-    return _root() / "answers" / _key(url) / f"{base}..{head}"
+    return _answers() / _key(url) / f"{base}..{head}"
 
 
 def answer(url: str, base: str, head: str) -> Answer | None:
@@ -186,13 +200,14 @@ def decide(url: str, token: str, base: str, head: str) -> Answer | None:
         found = answer(url, base, head)
         if found is not None:
             return found
-        _evict(holding=cache, answering=_answer_file(url, base, head))
+        _evict(holding=cache)
         try:
             return _test_merge(cache, url, token, base, head)
         finally:
             if cache.is_dir():
                 os.utime(cache)
-            _evict(holding=cache, answering=_answer_file(url, base, head))
+            _evict(holding=cache)
+            _prune_answers()
 
 
 def _test_merge(
@@ -209,27 +224,44 @@ def _test_merge(
     )
     if fetched != 0:
         return None
+    # The answer is the exit code; the tree it prints is not needed. No
+    # `--quiet`: Git 2.47, the one the backend image ships, rejects it (exit
+    # 129), and `--write-tree` alone is there since 2.38.
     merged = _git(
-        cache,
-        ["merge-tree", "--write-tree", "--quiet", base, head],
-        env,
-        MERGE_TIMEOUT_S,
+        cache, ["merge-tree", "--write-tree", base, head], env, MERGE_TIMEOUT_S
     )
     if merged not in (0, 1):
         return None
     result: Answer = "clean" if merged == 0 else "conflict"
     target = _answer_file(url, base, head)
     target.parent.mkdir(parents=True, exist_ok=True)
-    partial = target.with_suffix(".partial")
+    # Its own name, so two writers never share one, and published by rename.
+    partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
     partial.write_text(result)
     partial.replace(target)
     return result
 
 
+def _prune_answers() -> None:
+    """Remove answers older than `ANSWERS_KEPT_FOR_S`, and the folders left
+    empty. A `.partial` file is an answer being written, which takes
+    milliseconds; it is removed only past the same age, when no write can
+    still be under way, so a crash cannot leave one behind for good."""
+    oldest = time.time() - ANSWERS_KEPT_FOR_S
+    with contextlib.suppress(OSError):
+        folders = list(_answers().iterdir())
+        for folder in folders:
+            with contextlib.suppress(OSError):
+                for entry in folder.iterdir():
+                    with contextlib.suppress(OSError):
+                        if entry.lstat().st_mtime < oldest:
+                            entry.unlink()
+                folder.rmdir()  # only once it holds nothing
+
+
 def _allocated(path: Path) -> int:
     """The bytes the filesystem gives ``path`` (a file, or a directory with all
-    it holds), counted in blocks: a five-byte answer takes a whole block. What
-    vanishes meanwhile counts as nothing."""
+    it holds), counted in blocks. What vanishes meanwhile counts as nothing."""
     try:
         own = os.lstat(path)
     except OSError:
@@ -243,53 +275,35 @@ def _allocated(path: Path) -> int:
     return total
 
 
-def _evict(*, holding: Path, answering: Path) -> None:
-    """Bring everything under `_root()` back under `CACHE_LIMIT_BYTES`.
+def _evict(*, holding: Path) -> None:
+    """Bring the git caches back under `CACHE_LIMIT_BYTES`.
 
-    Counted: all of it, by the blocks it takes: caches, caches left half-built,
-    answers, the directories holding them. Removed in this order: half-built
-    caches; then caches and answers, least recently used first (losing an
-    answer only costs another test merge); the cache of the check that calls
-    this (``holding``, whose lock it holds) last, even when it alone is over
-    the limit: that repository was checked in a cache that is not kept, which
-    the log says. The answer this check is about (``answering``) is kept: it
-    is what the check is for. A cache another check holds right now is skipped, never
-    waited for; that check evicts when it ends. Other checks add and remove
-    entries while this runs, so an entry that vanished is simply passed over.
+    Counted: every cache, complete or left half-built, by the blocks it takes.
+    Removed in this order: half-built caches; then caches, least recently
+    checked first; the cache of the check that calls this (``holding``, whose
+    lock it holds) last, even when it alone is over the limit: that repository
+    was checked in a cache that is not kept, which the log says. A cache
+    another check holds right now is skipped, never waited for; that check
+    evicts when it ends. Other checks add and remove caches while this runs,
+    so an entry that vanished is simply passed over. Answers are not touched.
     """
     root = _root()
-    total = _allocated(root)
-    if total <= CACHE_LIMIT_BYTES:
-        return
     own = {holding, holding.with_name(holding.name + _BUILDING)}
-    candidates: list[tuple[int, float, Path]] = []
+    caches: list[tuple[int, float, Path, int]] = []
     with contextlib.suppress(OSError):
         for entry in root.iterdir():
-            if entry.name == "answers":
-                for folder, _, files in os.walk(entry):
-                    for name in files:
-                        found = Path(folder) / name
-                        if found == answering:
-                            continue
-                        with contextlib.suppress(OSError):
-                            candidates.append((1, found.lstat().st_mtime, found))
+            if entry == _answers():
                 continue
             with contextlib.suppress(OSError):
-                if not stat.S_ISDIR(entry.lstat().st_mode):
+                info = entry.lstat()
+                if not stat.S_ISDIR(info.st_mode):
                     continue
                 rank = 2 if entry in own else 0 if entry.name.endswith(_BUILDING) else 1
-                candidates.append((rank, entry.lstat().st_mtime, entry))
-    for _, _, entry in sorted(candidates, key=lambda c: (c[0], c[1])):
+                caches.append((rank, info.st_mtime, entry, _allocated(entry)))
+    total = sum(size for *_, size in caches)
+    for _, _, entry, size in sorted(caches, key=lambda c: (c[0], c[1])):
         if total <= CACHE_LIMIT_BYTES:
             return
-        size = _allocated(entry)
-        if entry.parent != root:  # an answer
-            with contextlib.suppress(OSError):
-                entry.unlink()
-                total -= size
-            with contextlib.suppress(OSError):
-                entry.parent.rmdir()  # once it holds no answer
-            continue
         if entry in own:
             shutil.rmtree(entry, ignore_errors=True)
             total -= size

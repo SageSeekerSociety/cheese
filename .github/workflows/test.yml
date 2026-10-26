@@ -218,6 +218,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
 
+      # The merge check (app/domain/review/merge_check.py) shells out to git,
+      # and the git that decides is the one the backend image ships, not this
+      # runner's newer one: `git merge-tree --quiet` passed here and exits 129
+      # on the image's Git 2.47 (#4853). So its tests run once more on the
+      # image's own runtime stage.
+      - name: Merge check tests with the backend image's git
+        if: ${{ !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        run: bash backend/scripts/test_with_image_git.sh tests/unit/test_merge_check.py
+
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
       # while migrations run?). The merge base it needs came from the fetch
