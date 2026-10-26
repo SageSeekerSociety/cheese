@@ -80,7 +80,7 @@ describe('告警', () => {
     const emitted = view.emitted().openTasks as unknown[][]
     expect(emitted[0][0]).toEqual({ taskApproved: 'NONE' })
 
-    await fireEvent.click(view.getByRole('button', { name: /待审核报名/ }))
+    await fireEvent.click(view.getByRole('button', { name: /待审核申请/ }))
     const next = view.emitted().openTasks as unknown[][]
     expect(next[1][0]).toEqual({ hasPendingApproval: true })
   })
