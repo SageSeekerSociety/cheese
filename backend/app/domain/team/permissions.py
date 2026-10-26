@@ -2,8 +2,8 @@
 
 A team has one owner, admins and members. Each seat holds a fixed set of the
 permissions below; the owner holds all of them. :func:`seat_of` says where a
-person sits, :func:`may` whether that seat holds a permission, and
-:func:`may_remove` whether it reaches someone else's seat: a person manages only
+person sits, :data:`TEAM` (a ``SeatPolicy``) whether that seat holds a
+permission, and :func:`may_remove` whether it reaches someone else's seat: a person manages only
 those strictly below their own (:data:`RANK`). Every check of a team role asks
 these, whether from a route (``app.auth.can``) or from a service acting on a
 team's machines, documents or recruitment posts; the team's services keep only
@@ -16,6 +16,7 @@ import enum
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.policy import SeatPolicy
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
 
@@ -92,20 +93,26 @@ async def seat_of(session: AsyncSession, team_id: int, user_id: int) -> Seat | N
     return seat_named(role)
 
 
-async def may(
-    session: AsyncSession, team_id: int, user_id: int, permission: Permission
-) -> bool:
-    seat = await seat_of(session, team_id, user_id)
-    return seat is not None and permission in GRANTS[seat]
+class TeamPolicy(SeatPolicy[Team, Permission, Seat]):
+    kind = "team"
+    path_param = "teamId"
+    permissions = Permission
+    grants = GRANTS
+
+    async def load(self, session: AsyncSession, id: int) -> Team | None:
+        team = await session.get(Team, id)
+        return None if team is None or team.deleted_at is not None else team
+
+    async def seat(self, session: AsyncSession, obj: Team, user_id: int) -> Seat | None:
+        return await seat_of(session, obj.id, user_id)
+
+    async def sees(self, session: AsyncSession, obj: Team, user_id: int) -> bool:
+        """On the team, or it is a public shared team. Anyone else is answered
+        as if it did not exist."""
+        return obj.open_to_all or await self.seat(session, obj, user_id) is not None
 
 
-async def sees(session: AsyncSession, team_id: int, user_id: int) -> bool:
-    """Whether the team exists for this person: they are on it, or it is a
-    public shared team. Anyone else is answered as if it did not exist."""
-    team = await session.get(Team, team_id)
-    if team is None or team.deleted_at is not None:
-        return False
-    return team.open_to_all or await seat_of(session, team_id, user_id) is not None
+TEAM = TeamPolicy()
 
 
 def may_remove(actor: Seat | None, target: Seat, *, own: bool) -> bool:

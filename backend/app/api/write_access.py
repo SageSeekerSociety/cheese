@@ -8,10 +8,10 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   for the room (``topic_id``) or project (``project_id``) in the path. A
   person's browser session is refused. Used for the write surface the ``cheese``
   CLI alone calls.
-- ``needs(permission, on=...)``: the person may do ``permission`` to the object
-  the path parameter ``on`` names (``app.auth.can``). Checked before the
-  handler runs; it is a read route's declaration too, though only writes must
-  carry one.
+- ``Can(permission)``: the person may do ``permission`` to the object the
+  path names (``app.auth.can``); the parameter it annotates receives that
+  object. Checked before the handler runs; reads use it too, though only
+  writes must carry a declaration.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). Most routes are this.
 
@@ -33,12 +33,14 @@ a single failure.
 
 from __future__ import annotations
 
+import enum
+import inspect
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Path
 from fastapi.dependencies.models import Dependant
 from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
@@ -66,7 +68,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["cheese_only", "route_decides", "needs"]
+    kind: Literal["cheese_only", "route_decides", "can"]
     #: For ``cheese_only``: the path parameter ``<scope>_id`` names the room or
     #: project the credential must be for.
     scope: Literal["topic", "project", None] = None
@@ -155,36 +157,63 @@ async def _credential_opens(
 
 
 @dataclass(frozen=True, eq=False)
-class _Needs(WriteAccess):
-    kind: Literal["needs"] = "needs"
-    permission: can.Permission | None = None
-    #: The path parameter that names the object, as the path spells it.
-    on: str = ""
+class _Can(WriteAccess):
+    kind: Literal["can"] = "can"
+    permission: enum.StrEnum | None = None
+    #: The path parameter that names the object; the policy's own unless a
+    #: route spells it otherwise.
+    at: str = ""
+
+    def __post_init__(self) -> None:
+        # The object's id is declared as a path parameter of this dependency,
+        # under the name the path gives it, so the route's API description
+        # keeps it and FastAPI validates it — a route that takes the object
+        # rather than its id would otherwise drop it from both.
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "object_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[int, Path(alias=self.at)],
+                    ),
+                    inspect.Parameter(
+                        "db",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AsyncSession, Depends(get_db)],
+                    ),
+                    inspect.Parameter(
+                        "person",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AuthUserInfo, Depends(get_auth_user)],
+                    ),
+                ]
+            ),
+        )
 
     @property
     def name(self) -> str:
-        return f"needs {self.permission}"
+        return f"can {self.permission}"
 
     async def __call__(  # type: ignore[override]
-        self,
-        request: Request,
-        db: Annotated[AsyncSession, Depends(get_db)],
-        person: Annotated[AuthUserInfo, Depends(get_auth_user)],
-    ) -> AuthUserInfo:
+        self, *, object_id: int, db: AsyncSession, person: AuthUserInfo
+    ) -> Any:
         if person.user_id == 0:
             raise AuthenticationRequiredError(say("signInRequired"))
         assert self.permission is not None
-        await can.require(
-            db, person.user_id, self.permission, int(request.path_params[self.on])
-        )
-        return person
+        return await can.authorize(db, person.user_id, self.permission, object_id)
 
 
-def needs(permission: can.Permission, *, on: str):
-    """The route's declaration that it needs ``permission`` on the object the
-    path parameter ``on`` names: in the route's ``dependencies``, or as a
-    parameter, which then receives the person it admitted."""
-    return Depends(_Needs(permission=permission, on=on))
+def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
+    """What a route needs, on the object its path names: the parameter it
+    annotates receives that object, loaded and authorized
+    (``team: Annotated[Team, Can(TeamPermission.edit_settings)]``). It is the
+    route's write-access declaration too. ``at`` names the path parameter only
+    where a route spells it otherwise than the object's policy does."""
+    param = at or can.policy_of(permission).path_param
+    return Depends(_Can(permission=permission, at=param))
 
 
 CHEESE_ONLY_IN_ROOM = Depends(_CheeseOnly(scope="topic"))
@@ -253,7 +282,7 @@ def violations(app: FastAPI) -> list[str]:
         elif not route.declared:
             found.append(
                 f"{route.method} {route.path} ({route.endpoint}) declares no write "
-                "access; add needs(...), CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT "
+                "access; add Can(...), CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT "
                 "or ROUTE_DECIDES (app/api/write_access.py) to its dependencies"
             )
     return found

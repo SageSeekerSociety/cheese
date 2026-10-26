@@ -209,7 +209,7 @@ class SqlDeviceRepository:
         return [self._device(row) for row in rows]
 
     async def may_manage_machines(self, team_id: int, user_id: int) -> bool:
-        return await team_seats.may(
+        return await team_seats.TEAM.allows(
             self._session, team_id, user_id, TeamPermission.manage_machines
         )
 

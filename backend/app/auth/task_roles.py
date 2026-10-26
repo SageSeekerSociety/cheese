@@ -21,11 +21,11 @@ are to it.
 It lives beside ``project_roles`` rather than in the task domain because it
 spans the problem, its space and its claimants' teams, and the space domain
 already reads the task domain. A route declares what it needs
-(``app.api.write_access.needs``) and ``app.auth.can`` asks :func:`may`. What depends on the claim a request names —
-reading a participant's submissions, withdrawing a claim — is asked of
-:func:`may_read_participation` and :func:`may_withdraw` by the handler, after
-``needs``. What a person cannot see does not exist for them: :func:`sees` is
-the question behind every 404.
+(``app.api.write_access.Can``) and ``app.auth.can`` asks :data:`TASK`. What
+depends on the claim a request names — reading its submissions, handing work
+in, withdrawing it — is asked of :data:`CLAIM` by the handler once it holds the
+claim (``app.auth.can.require``). What a person cannot see does not exist for
+them: ``TASK.sees`` is the question behind every 404.
 """
 
 import enum
@@ -33,6 +33,7 @@ import enum
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.policy import Policy
 from app.domain.space import permissions as space
 from app.domain.space.repositories import SpaceRepository
 from app.domain.task.claims import claim_of
@@ -63,7 +64,9 @@ async def teaches(session: AsyncSession, task: Task, user_id: int | None) -> boo
         return False
     if task.creator_id is not None and task.creator_id == user_id:
         return True
-    return await space.may(session, task.space_id, user_id, space.Permission.teach)
+    return await space.SPACE.allows(
+        session, task.space_id, user_id, space.Permission.teach
+    )
 
 
 async def space_teachers(session: AsyncSession, space_id: int | None) -> set[int]:
@@ -95,39 +98,40 @@ async def readable(session: AsyncSession, task: Task, user_id: int) -> bool:
     return await _on_the_board(session, task, user_id)
 
 
-async def allows(
-    session: AsyncSession, task: Task, user_id: int, permission: Permission
-) -> bool:
-    """:func:`may` for a problem already in hand."""
-    if permission is Permission.view:
-        return await readable(session, task, user_id)
-    if permission is Permission.take_up:
-        return await _on_the_board(session, task, user_id)
-    if permission is Permission.teach:
-        return await teaches(session, task, user_id)
-    if permission is Permission.approve:
-        return await space.may(session, task.space_id, user_id, space.Permission.teach)
-    if await teaches(session, task, user_id):
-        return True
-    claim = await claim_of(session, task=task, user_id=user_id)
-    return claim is not None and claim.approved == APPROVE_APPROVED
+class TaskPolicy(Policy[Task, Permission]):
+    kind = "task"
+    path_param = "taskId"
+    permissions = Permission
+
+    async def load(self, session: AsyncSession, id: int) -> Task | None:
+        task = await session.get(Task, id)
+        return None if task is None or task.deleted_at is not None else task
+
+    async def may(
+        self, session: AsyncSession, obj: Task, user_id: int, permission: Permission
+    ) -> bool:
+        match permission:
+            case Permission.view:
+                return await readable(session, obj, user_id)
+            case Permission.take_up:
+                return await _on_the_board(session, obj, user_id)
+            case Permission.teach:
+                return await teaches(session, obj, user_id)
+            case Permission.approve:
+                return await space.SPACE.allows(
+                    session, obj.space_id, user_id, space.Permission.teach
+                )
+            case Permission.download:
+                if await teaches(session, obj, user_id):
+                    return True
+                claim = await claim_of(session, task=obj, user_id=user_id)
+                return claim is not None and claim.approved == APPROVE_APPROVED
+
+    async def sees(self, session: AsyncSession, obj: Task, user_id: int) -> bool:
+        return await readable(session, obj, user_id)
 
 
-async def _task(session: AsyncSession, task_id: int) -> Task | None:
-    task = await session.get(Task, task_id)
-    return None if task is None or task.deleted_at is not None else task
-
-
-async def may(
-    session: AsyncSession, task_id: int, user_id: int, permission: Permission
-) -> bool:
-    task = await _task(session, task_id)
-    return task is not None and await allows(session, task, user_id, permission)
-
-
-async def sees(session: AsyncSession, task_id: int, user_id: int) -> bool:
-    task = await _task(session, task_id)
-    return task is not None and await readable(session, task, user_id)
+TASK = TaskPolicy()
 
 
 async def _in_the_claim(
@@ -146,30 +150,48 @@ async def _in_the_claim(
     return found is not None
 
 
-async def may_hand_in(
-    session: AsyncSession, membership: TaskMembership, user_id: int
-) -> bool:
-    """Hand in or change work on a claim: only whoever made it — the person,
-    or anyone on the team that did."""
-    return await _in_the_claim(session, membership, user_id)
+class ClaimPermission(enum.StrEnum):
+    #: Read the claim's submissions and reviews.
+    read = "read"
+    #: Hand in work on it, or change what was handed in.
+    hand_in = "hand_in"
+    #: Withdraw it.
+    withdraw = "withdraw"
 
 
-async def may_read_participation(
-    session: AsyncSession, task: Task, membership: TaskMembership, user_id: int
-) -> bool:
-    """A claim's submissions and reviews: for those who teach the problem, and
-    for whoever made the claim."""
-    return await teaches(session, task, user_id) or await _in_the_claim(
-        session, membership, user_id
-    )
+class ClaimPolicy(Policy[TaskMembership, ClaimPermission]):
+    """A claim on a problem — a person's, or a team's.
+
+    Whoever made it reads it and hands work in on it (anyone on the team, for
+    a team's claim); those who teach the problem read every claim. Withdrawing
+    one is for the person who made it alone, or those who teach the problem: a
+    team's claim is withdrawn by its teachers, not by one of its members."""
+
+    kind = "participant"
+    path_param = "participantId"
+    permissions = ClaimPermission
+
+    async def load(self, session: AsyncSession, id: int) -> TaskMembership | None:
+        claim = await session.get(TaskMembership, id)
+        return None if claim is None or claim.deleted_at is not None else claim
+
+    async def may(
+        self,
+        session: AsyncSession,
+        obj: TaskMembership,
+        user_id: int,
+        permission: ClaimPermission,
+    ) -> bool:
+        task = await session.get(Task, obj.task_id)
+        teacher = task is not None and await teaches(session, task, user_id)
+        match permission:
+            case ClaimPermission.read:
+                return teacher or await _in_the_claim(session, obj, user_id)
+            case ClaimPermission.hand_in:
+                return await _in_the_claim(session, obj, user_id)
+            case ClaimPermission.withdraw:
+                own = not obj.is_team and obj.member_id == user_id
+                return own or teacher
 
 
-async def may_withdraw(
-    session: AsyncSession, task: Task, membership: TaskMembership, user_id: int
-) -> bool:
-    """Withdraw a claim: the person who made it alone, or those who teach the
-    problem. A team's claim is withdrawn by those who teach it, not by one of
-    its members."""
-    if not membership.is_team and membership.member_id == user_id:
-        return True
-    return await teaches(session, task, user_id)
+CLAIM = ClaimPolicy()

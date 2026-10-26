@@ -20,7 +20,7 @@ from app.api.task_serialization import (
     _ms,
     _task_to_api_model,
 )
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.task_roles import Permission as TaskPermission
@@ -51,7 +51,7 @@ router = APIRouter(prefix="/tasks")
 @router.post(
     "/{taskId}/resubmit",
     summary="Resubmit Task",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def resubmit_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -85,7 +85,7 @@ async def resubmit_task(
 @router.get(
     "/{taskId}/participants",
     summary="Get Participants",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def get_task_participants(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -167,7 +167,7 @@ async def get_task_participants(
 @router.get(
     "/{taskId}/participants/{participantId}",
     summary="Get Task Participant",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def get_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

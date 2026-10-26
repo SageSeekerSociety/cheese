@@ -30,13 +30,14 @@ from app.api.task_serialization import (
     _task_requirements,
     _task_to_api_model,
 )
-from app.api.write_access import needs
+from app.api.write_access import Can
+from app.auth import can
 from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.task_roles import ClaimPermission
 from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import (
-    AccessDeniedError,
     BadRequestError,
     ForbiddenError,
     NotFoundError,
@@ -148,7 +149,7 @@ async def search_my_tasks(
 @router.get(
     "/{taskId}",
     summary="Query Task",
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -363,7 +364,7 @@ async def get_task(
 @router.patch(
     "/{taskId}",
     summary="Update Task",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -579,7 +580,7 @@ async def get_tasks(
     "/{taskId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete Task",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -614,7 +615,7 @@ async def delete_task(
     "/{taskId}/participants/{participantId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership",
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -634,10 +635,7 @@ async def delete_task_participant(
         raise NotFoundError("Participant not found")
 
     # 出题者或本版管理员能撤任何报名；成员只能撤自己的。
-    if not await task_seats.may_withdraw(db, task, membership, auth_user.user_id):
-        raise AccessDeniedError(
-            action="withdraw", resource_type="participant", resource_id=membership.id
-        )
+    await can.require(db, auth_user.user_id, ClaimPermission.withdraw, membership)
 
     await membership_service.soft_delete_membership(membership)
 
@@ -646,7 +644,7 @@ async def delete_task_participant(
     "/{taskId}/participants",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership by member",
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -669,10 +667,7 @@ async def delete_task_participant_by_member(
     if membership is None:
         raise NotFoundError("Participant not found")
 
-    if not await task_seats.may_withdraw(db, task, membership, auth_user.user_id):
-        raise AccessDeniedError(
-            action="withdraw", resource_type="participant", resource_id=membership.id
-        )
+    await can.require(db, auth_user.user_id, ClaimPermission.withdraw, membership)
 
     await membership_service.soft_delete_membership(membership)
 
@@ -680,7 +675,7 @@ async def delete_task_participant_by_member(
 @router.patch(
     "/{taskId}/participants",
     summary="Update TaskMembership by member",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_membership_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

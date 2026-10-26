@@ -39,7 +39,7 @@ async def start_login(
     team_id: int, resolver: ActorResolverDep, db: DbSession
 ) -> StartLoginOut:
     actor = await resolver.resolve()
-    if actor.user_id is None or not await team_seats.may(
+    if actor.user_id is None or not await team_seats.TEAM.allows(
         db, team_id, actor.user_id, TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))

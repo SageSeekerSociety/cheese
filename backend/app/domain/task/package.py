@@ -424,7 +424,7 @@ async def shown_task(
 async def refuse_unless_downloader(
     session: AsyncSession, task: Task, user_id: int
 ) -> None:
-    if not await task_seats.allows(
+    if not await task_seats.TASK.may(
         session, task, user_id, task_seats.Permission.download
     ):
         raise ForbiddenError(say("taskFilesForTakers"))

@@ -11,11 +11,11 @@ from app.api.teams_deps import (
     get_team_service,
     load_application_maps,
 )
-from app.api.write_access import ROUTE_DECIDES, needs
+from app.api.write_access import ROUTE_DECIDES, Can
+from app.auth import can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
-    AccessDeniedError,
     BadRequestError,
     ForbiddenError,
     NotFoundError,
@@ -318,7 +318,9 @@ async def _refuse_admin_grant(db, team_id: int, user_id: int) -> None:
     """Making someone an admin by adding or inviting them is changing a role:
     otherwise an admin could take a member out and bring them back one rank
     up."""
-    if not await team_seats.may(db, team_id, user_id, TeamPermission.change_roles):
+    if not await team_seats.TEAM.allows(
+        db, team_id, user_id, TeamPermission.change_roles
+    ):
         raise ForbiddenError(say("teamAdminGrantOwnerOnly"))
 
 
@@ -489,7 +491,7 @@ def _join_link_payload(team: Team) -> dict:
 @router.get(
     "/{teamId}/join-link",
     summary="Get Team Join Link",
-    dependencies=[needs(TeamPermission.edit_settings, on="teamId")],
+    dependencies=[Can(TeamPermission.edit_settings)],
 )
 async def get_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -503,7 +505,7 @@ async def get_team_join_link(
 @router.patch(
     "/{teamId}/join-link",
     summary="Update Team Join Link",
-    dependencies=[needs(TeamPermission.edit_settings, on="teamId")],
+    dependencies=[Can(TeamPermission.edit_settings)],
 )
 async def update_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -518,7 +520,7 @@ async def update_team_join_link(
 @router.post(
     "/{teamId}/join-link/reset",
     summary="Reset Team Join Link",
-    dependencies=[needs(TeamPermission.edit_settings, on="teamId")],
+    dependencies=[Can(TeamPermission.edit_settings)],
 )
 async def reset_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -566,7 +568,7 @@ async def join_team_by_join_link(
 @router.get(
     "/{teamId}/members",
     summary="Enumerate Team Members",
-    dependencies=[needs(TeamPermission.view_members, on="teamId")],
+    dependencies=[Can(TeamPermission.view_members)],
 )
 async def get_team_members(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -660,7 +662,7 @@ async def create_team(
 @router.patch(
     "/{teamId}",
     summary="Update Team",
-    dependencies=[needs(TeamPermission.edit_settings, on="teamId")],
+    dependencies=[Can(TeamPermission.edit_settings)],
 )
 async def patch_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -698,7 +700,7 @@ async def patch_team(
     "/{teamId}",
     summary="Disband Team",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.disband, on="teamId")],
+    dependencies=[Can(TeamPermission.disband)],
 )
 async def delete_team(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -720,7 +722,7 @@ async def delete_team(
     "/{teamId}/members/{userId}",
     summary="Remove Team Member",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.view_members, on="teamId")],
+    dependencies=[Can(TeamPermission.view_members)],
 )
 async def delete_team_member(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -729,18 +731,17 @@ async def delete_team_member(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> Response:
-    # The caller is on the team (``needs`` above), so the roster is theirs to
+    # The caller is on the team (``Can`` above), so the roster is theirs to
     # read and asking about the target tells them nothing new.
     actor = await team_seats.seat_of(db, team_id, auth_user.user_id)
     target = await team_seats.seat_of(db, team_id, user_id)
     if target is None:
         raise NotFoundError.for_resource("team_member", f"{team_id}/{user_id}")
-    if not team_seats.may_remove(actor, target, own=user_id == auth_user.user_id):
-        raise AccessDeniedError(
-            action=TeamPermission.manage_members.value,
-            resource_type="team",
-            resource_id=team_id,
-        )
+    can.refuse_unless(
+        team_seats.may_remove(actor, target, own=user_id == auth_user.user_id),
+        TeamPermission.manage_members,
+        team_id,
+    )
     await service.remove_team_member(team_id=team_id, target_user_id=user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -748,7 +749,7 @@ async def delete_team_member(
 @router.patch(
     "/{teamId}/members/{userId}",
     summary="Update Team Member Role",
-    dependencies=[needs(TeamPermission.change_roles, on="teamId")],
+    dependencies=[Can(TeamPermission.change_roles)],
 )
 async def patch_team_member_role(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -791,7 +792,7 @@ async def patch_team_member_role(
 @router.put(
     "/{teamId}/owner",
     summary="Transfer Team Ownership",
-    dependencies=[needs(TeamPermission.transfer, on="teamId")],
+    dependencies=[Can(TeamPermission.transfer)],
 )
 async def put_team_owner(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -829,10 +830,9 @@ async def put_team_owner(
     "/{teamId}/members",
     summary="Add Team Member",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
 )
 async def add_team_member_entry(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    team: Annotated[TeamView, Can(TeamPermission.manage_members)],
     payload: AddTeamMemberRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: TeamService = Depends(get_team_service),
@@ -846,9 +846,7 @@ async def add_team_member_entry(
     if role_val is None:
         raise BadRequestError(f"Invalid role: {role_str}. Must be MEMBER or ADMIN")
 
-    team = await service.get_team(team_id)
-    if team is None:
-        raise NotFoundError("Team not found")
+    team_id = team.id
     if role_val == TeamMemberRole.ADMIN:
         await _refuse_admin_grant(db, team_id, auth_user.user_id)
 
@@ -873,7 +871,7 @@ async def add_team_member_entry(
 @router.get(
     "/{teamId}/join-requests",
     summary="List Team Join Requests",
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def list_team_join_requests(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -929,7 +927,7 @@ async def list_team_join_requests(
 @router.get(
     "/{teamId}/requests",
     summary="List Team Requests",
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def list_team_requests_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -954,7 +952,7 @@ async def list_team_requests_alias(
 @router.get(
     "/{teamId}/invitations",
     summary="List Team Invitations",
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def list_team_invitations(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1011,7 +1009,7 @@ async def list_team_invitations(
     "/{teamId}/invitations",
     summary="Create Team Invitation",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def create_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1051,7 +1049,7 @@ async def create_team_invitation(
     "/{teamId}/invitations/{invitationId}",
     summary="Cancel Team Invitation",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def cancel_team_invitation(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1071,7 +1069,7 @@ async def cancel_team_invitation(
     "/{teamId}/join-requests/{requestId}/approve",
     summary="Approve Team Join Request",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def approve_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1091,7 +1089,7 @@ async def approve_team_join_request(
     "/{teamId}/requests/{requestId}/approve",
     summary="Approve Team Request",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def approve_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1111,7 +1109,7 @@ async def approve_team_request_alias(
     "/{teamId}/join-requests/{requestId}/reject",
     summary="Reject Team Join Request",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def reject_team_join_request(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
@@ -1131,7 +1129,7 @@ async def reject_team_join_request(
     "/{teamId}/requests/{requestId}/reject",
     summary="Reject Team Request",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(TeamPermission.manage_members, on="teamId")],
+    dependencies=[Can(TeamPermission.manage_members)],
 )
 async def reject_team_request_alias(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
