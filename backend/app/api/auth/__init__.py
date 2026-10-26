@@ -126,6 +126,10 @@ GATED_ROUTES: frozenset[str] = frozenset(
         "app.api.routes.topic_members.remove_topic_member",
         "app.api.routes.topics.create_topic",
         "app.api.routes.local_mcp.decide",
+        "app.api.routes.users_team.accept_team_invitation",
+        "app.api.routes.users_team.decline_team_invitation",
+        "app.api.routes.teams.approve_team_join_request",
+        "app.api.routes.teams.reject_team_join_request",
         "app.api.routes.fetch.read_url",
     }
 )
@@ -161,6 +165,7 @@ def _resolver_for(
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
         gate_pass=request.headers.get("x-cheese-pass") or "",
+        path_ids=frozenset(str(v) for v in request.path_params.values()),
     )
 
 

@@ -1657,9 +1657,9 @@ DELEGATED_TOOLS = ToolTable(
                 ),
                 "respond": _verb(
                     "答复待办里要用户选择的一件事（ref 用待办里写的「答复用」或提醒编号）：提醒"
-                    "的选项（choice 写选项原文），邀请或转让的接受、拒绝（accept / decline），在"
-                    "用户设备上运行命令的允许、拒绝（allow / refuse）。用户没有做这个选择时不执行，"
-                    "结果写明原因。",
+                    "的选项（choice 写选项原文），项目或团队的邀请、项目转让的接受或拒绝，别人"
+                    "申请加入用户管理的团队的批准或拒绝（都用 accept / decline），在用户设备上运行"
+                    "命令的允许、拒绝（allow / refuse）。用户没有做这个选择时不执行，结果写明原因。",
                     {
                         "ref": _text("待办里那件事的编号"),
                         "choice": _text("选项原文，或 accept / decline / allow / refuse"),
