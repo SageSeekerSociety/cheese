@@ -3,7 +3,9 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError
+from app.domain.team import permissions as team_seats
 from app.domain.team.models import TeamRecruitmentPost
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.repositories import TeamRepository
 
@@ -44,7 +46,9 @@ class RecruitmentService:
         team = await self._team_repo.get_by_id(team_id)
         if team is None:
             raise NotFoundError("Team not found", data={"type": "team", "id": team_id})
-        if not await self._team_repo.is_team_at_least_admin(team_id, actor_user_id):
+        if not await team_seats.may(
+            self._team_repo._session, team_id, actor_user_id, TeamPermission.recruit
+        ):
             raise ForbiddenError(
                 "Only team admins or owner can create recruitment posts"
             )
@@ -121,8 +125,11 @@ class RecruitmentService:
                 "Recruitment post not found",
                 data={"type": "recruitment_post", "id": post_id},
             )
-        if not await self._team_repo.is_team_at_least_admin(
-            post.team_id, actor_user_id
+        if not await team_seats.may(
+            self._team_repo._session,
+            post.team_id,
+            actor_user_id,
+            TeamPermission.recruit,
         ):
             raise ForbiddenError(
                 "Only team admins or owner can delete recruitment posts"

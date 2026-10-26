@@ -28,6 +28,7 @@ from app.domain.team.models import Team
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -98,6 +99,12 @@ def _publish_approved_task(api_client: TestClient, board: dict, *, name: str) ->
 def _join_and_approve(
     api_client: TestClient, board: dict, participant_token: str, *, task_id: int
 ) -> int:
+    join_task_space(
+        api_client,
+        task_id,
+        _auth(participant_token),
+        admin_headers=_auth(board["creator_token"]),
+    )
     joined = api_client.post(
         f"/tasks/{task_id}/participations/user",
         json={},
@@ -445,6 +452,12 @@ def test_stalled_lists_only_claims_started_over_fourteen_days_ago_without_a_subm
     moved = _join_and_approve(api_client, board, mover_token, task_id=moved_task)
     late_claim = _join_and_approve(api_client, board, late_token, task_id=late_task)
     _submit(api_client, mover_token, task_id=moved_task, membership_id=moved)
+    join_task_space(
+        api_client,
+        waiting_task,
+        _auth(waiter_token),
+        admin_headers=_auth(board["creator_token"]),
+    )
     applied = api_client.post(
         f"/tasks/{waiting_task}/participations/user",
         json={},
@@ -495,6 +508,12 @@ def test_a_task_is_stalled_only_once_its_started_claims_go_quiet(
     quiet = _login(user_client, api_client, user_client.create_user())
 
     late_claim = _join_and_approve(api_client, board, late, task_id=started_late)
+    join_task_space(
+        api_client,
+        waiting_task,
+        _auth(waiter),
+        admin_headers=_auth(board["creator_token"]),
+    )
     applied = api_client.post(
         f"/tasks/{waiting_task}/participations/user", json={}, headers=_auth(waiter)
     )

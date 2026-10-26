@@ -12,6 +12,17 @@ from tests.integration.conftest import (
 from tests.support.living_doc import overview_of
 
 
+def _admit(api_client: TestClient, space_id: int, admin, *users) -> None:
+    """Put ``users`` in the space; only a space's members see and claim its problems."""
+    for user in users:
+        resp = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": user.user_id},
+            headers={"Authorization": f"Bearer {admin.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+
 class TestTaskIntegration:
     @pytest.mark.parametrize("as_team", [False, True])
     def test_approval_opens_the_shared_workspace(
@@ -185,6 +196,7 @@ class TestTaskIntegration:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant, participant2, participant3)
         category_id = space_data.get("defaultCategoryId")
 
         deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
@@ -947,6 +959,7 @@ class TestTaskEnumeration:
             assert resp.status_code == 200, resp.text
 
         def join(user: CreatedUser, task_id: int) -> None:
+            _admit(api_client, space_id, creator, user)
             resp = api_client.post(
                 f"/tasks/{task_id}/participants",
                 json={},
@@ -1031,6 +1044,7 @@ class TestTaskEnumeration:
         for _ in range(3):
             user = user_client.create_user()
             user.token = user_client.login(api_client, user.username, user.password)
+            _admit(api_client, multi_task_setup["space_id"], creator, user)
             resp = api_client.post(
                 f"/tasks/{task_id}/participants",
                 json={},
@@ -1299,6 +1313,7 @@ class TestParticipantManagement:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant1, participant2, participant3)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -1610,6 +1625,7 @@ class TestTaskSubmission:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -1719,6 +1735,7 @@ class TestTaskReview:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -2410,6 +2427,7 @@ class TestTaskJoinedFilter:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         task_ids = []
@@ -2518,6 +2536,7 @@ class TestParticipantEdgeCases:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -2958,6 +2977,7 @@ class TestParticipantWorkflow:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, *users)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -3418,6 +3438,7 @@ class TestRegistrationStartTime:
         assert space_resp.status_code == 201
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         default_category_id = space_data.get("defaultCategoryId")
 
         registration_start_at = int(

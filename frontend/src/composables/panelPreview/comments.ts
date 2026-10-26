@@ -56,7 +56,8 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
   // 而那正是标记要替他省掉的一步。
   //
   // 哪几档画标记：markdown 画在正文上（`PreviewMarkdown`），转成 PDF 的文档画在页上
-  // （`PreviewPages`），表格画在格子上（`PreviewSheet`）。别的读法有了标记时，这里跟着加。
+  // （`PreviewPages`），表格画在格子上（`PreviewSheet`），图片画在图上（`PreviewImageStage`）。
+  // 别的读法有了标记时，这里跟着加。
   // 这一条和 `PanelPreviewView` 里 `liveAnchors` 收哪几种锚点是配对的——那边多收一种，
   // 这边就得跟着多读一种，不然标记一个都不会出现（栏关着的时候列表根本没读）。
   //
@@ -66,6 +67,9 @@ export function usePanelPreviewComments(deps: CommentsDeps) {
     const view = state.documentType.value?.view
     if (commentable.value === null) return false
     if (view === 'markdown') return true
+    // 图片：这一档没有 `documentType` 那种「读法」，是看后缀认出来的；它上屏的条件和
+    // 宿主里挂 `PreviewImageStage` 那一条一样——指定了文件、内容是字节、后缀是图片。
+    if (state.isImageArtifact.value && !!props.path && !!state.previewFile.value) return true
     // 读成网页时画的是沙箱帧，标记画不上去（`PreviewDocStage` 那一支挂的是 `PreviewPage`）。
     // 表格也算在内：`.xlsx` 有网页这一种读法（`PAGE_FORMATS` 认它），切过去之后挂的是
     // 网页那一支，表格查看器根本没上屏——这里先放行再排掉，等于每打开一份这样的表

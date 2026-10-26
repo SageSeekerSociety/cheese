@@ -33,6 +33,7 @@ from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -113,7 +114,19 @@ def _publish_task(
     return task_id
 
 
-def _join(api_client: TestClient, actor: CreatedUser, task_id: int) -> int:
+def _join(
+    api_client: TestClient,
+    actor: CreatedUser,
+    task_id: int,
+    *,
+    owner: CreatedUser | None = None,
+) -> int:
+    """``actor`` claims the task; ``owner`` (when it is someone else's task)
+    first lets them into its space."""
+    if owner is not None:
+        join_task_space(
+            api_client, task_id, actor.user_id, admin_headers=_auth(owner.token)
+        )
     joined = api_client.post(
         f"/tasks/{task_id}/participants",
         params={"member": actor.user_id},
@@ -190,12 +203,12 @@ def scene(user_client: UserCreator, api_client: TestClient) -> _Scene:
     assert made_admin.status_code == 201, made_admin.text
 
     victim = _human(user_client, api_client)
-    victim_membership = _join(api_client, victim, victim_task)
+    victim_membership = _join(api_client, victim, victim_task, owner=teacher)
     _approve_member(api_client, teacher, victim_task, victim_membership)
     victim_submission = _submit(api_client, victim, victim_task, victim_membership)
 
     bystander = _human(user_client, api_client)
-    bystander_membership = _join(api_client, bystander, victim_task)
+    bystander_membership = _join(api_client, bystander, victim_task, owner=teacher)
     _approve_member(api_client, teacher, victim_task, bystander_membership)
     bystander_submission = _submit(
         api_client, bystander, victim_task, bystander_membership

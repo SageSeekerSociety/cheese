@@ -309,6 +309,7 @@ def _submission_ready(api_client: TestClient, user_client: UserCreator) -> dict:
 
     participant = user_client.create_user()
     participant_token = _login(user_client, api_client, participant)
+    assert _make_member(api_client, board, participant.user_id).status_code == 201
 
     approve_task = api_client.patch(
         f"/tasks/{task_id}",

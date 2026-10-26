@@ -544,6 +544,13 @@ def test_a_published_tasks_private_guidance_is_read_only_by_who_may_teach_it(
         return resp.json()["data"]["text"]
 
     assert "SECRET_ANSWER_4777" in read_as(teacher)
+    # A plain member of the space: reads the 题目, but is not one who teaches it.
+    joined = api_client.post(
+        f"/spaces/{board['space']['id']}/members",
+        json={"userId": board["stranger"].user_id},
+        headers=_headers(teacher),
+    )
+    assert joined.status_code == 201, joined.text
     seen = read_as(board["stranger"])
     assert "Lab 3 缓存模拟器" in seen
     assert "SECRET_ANSWER_4777" not in seen

@@ -85,6 +85,21 @@ RANGE = {
     "suffix": "，超过就报错",
 }
 
+# 图片上框的一块：坐标是原图像素，另带当时那张原图的尺寸。
+IMAGE_REGION = {
+    "kind": "image-region",
+    "path": "room/示意图.png",
+    "source": "live",
+    "version": "version-f",
+    "task_id": None,
+    "x": 12,
+    "y": 40,
+    "width": 180,
+    "height": 96,
+    "natural_width": 1024,
+    "natural_height": 768,
+}
+
 
 class QuotedContextTest(unittest.TestCase):
     def test_typed_input_preserves_quote_and_rejects_an_oversized_combination(self):
@@ -296,6 +311,61 @@ class QuotedContextTest(unittest.TestCase):
         ):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_an_image_region_keeps_natural_pixels_and_rejects_a_displayed_one(self):
+        """图片上框的一块：坐标是原图像素，另带当时那张原图的尺寸。
+
+        它和网页那一类刚好相反：图片没有视口，有一份不变的原图，所以位置直接记原图
+        像素；原图尺寸是正整数（它来自图片自己，不是量出来的浮点数）。带上尺寸，受话
+        人不必先取一次原图就能按比例画回去。
+        """
+        import uuid
+
+        body = {
+            "content": "这一块改掉",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": IMAGE_REGION,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), IMAGE_REGION)
+        # 贴左上角（0）是合法的一处位置。
+        at_origin = {**IMAGE_REGION, "x": 0, "y": 0}
+        self.assertEqual(
+            ChatMessageIn.model_validate(
+                {**body, "quoted_context": at_origin}
+            ).quoted_context.model_dump(mode="json"),
+            at_origin,
+        )
+        for quote in (
+            {k: v for k, v in IMAGE_REGION.items() if k != "width"},
+            {k: v for k, v in IMAGE_REGION.items() if k != "natural_width"},
+            # 框不出东西来的宽高不是一处位置。
+            {**IMAGE_REGION, "width": 0},
+            {**IMAGE_REGION, "height": -1},
+            {**IMAGE_REGION, "x": -1},
+            # 原图尺寸是正整数，不是量出来的浮点数。
+            {**IMAGE_REGION, "natural_width": 0},
+            {**IMAGE_REGION, "natural_width": 1024.5},
+            {**IMAGE_REGION, "natural_height": True},
+            # 图片引用没有页码和视口；extra="forbid" 也不许夹带别的形状的字段。
+            {**IMAGE_REGION, "page": 1},
+            {**IMAGE_REGION, "viewport": {"w": 800, "h": 600}},
+            {**IMAGE_REGION, "kind": "image-area"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+
+    def test_an_image_region_reaches_the_model_as_the_same_data(self):
+        block = SimpleNamespace(
+            kind=BlockKind.message,
+            author="alice",
+            content="<@cheese-current> 看这块",
+            meta={"quoted_context": IMAGE_REGION},
+        )
+        prompt = prompt_line(block, embeds_images=False)
+        self.assertIn("{", prompt, "the model must receive the quoted source")
+        quote, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        self.assertEqual(quote, IMAGE_REGION)
 
     def test_new_quote_kinds_reach_the_model_as_the_same_data(self):
         for quote in (CELL, SHEET_AREA, RANGE):

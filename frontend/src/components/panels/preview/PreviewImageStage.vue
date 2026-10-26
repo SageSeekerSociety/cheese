@@ -9,7 +9,7 @@
 //
 // 「指到哪里」的判据和状态都在 `usePreviewLocator` 那一份里：这一档拿到的是它算好的
 // 结果，自己不知道该显示什么、发得出去发不出去。
-import type { RasterSelection } from './designRegion'
+import type { ImageRegionMark, RasterSelection } from './designRegion'
 import type { ImageRegionHandle } from './usePreviewImageRegion'
 
 import DesignImage from './DesignImage.vue'
@@ -28,6 +28,10 @@ defineProps<{
   locator: { label: string; quote: string; address: string } | null
   docError: string
   annotateError: string
+  /** 图上框出来的那几处评论（原图像素），由宿主按屏幕上那一版筛好。 */
+  marks?: readonly ImageRegionMark[]
+  /** 打开着的那一串，画得实一点。 */
+  activeMark?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +42,8 @@ const emit = defineEmits<{
   'update:locatorNote': [note: string]
   send: []
   cancel: []
+  /** 点了一处评论标记：把那一串打开。 */
+  mark: [id: string]
 }>()
 </script>
 
@@ -52,8 +58,11 @@ const emit = defineEmits<{
       :active-region="imageRegion.target.value?.selection.region ?? null"
       :active="active"
       :zoom-on-wheel="previewFull"
+      :marks="marks"
+      :active-mark="activeMark"
       @region="emit('region', $event)"
       @annotate="emit('annotate', $event)"
+      @mark="emit('mark', $event)"
     >
       <template #region-note="{ geometry, restoreFocus, focusOrigin }">
         <DesignRegionNote

@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+import jwt
 import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, text, update
@@ -54,7 +55,7 @@ from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
-from tests.conftest import seed_task_with_protocol, seed_user
+from tests.conftest import seed_problem_reader, seed_task_with_protocol, seed_user
 from tests.integration.conftest import (
     free_plan_credits,
     post_message,
@@ -413,7 +414,10 @@ _ASKED_FROM: dict[str, int] = {}
 
 
 def _start(client, task_id: int, headers: dict) -> str:
-    """A new topic, asked from ``task_id``'s page."""
+    """A new topic, asked from ``task_id``'s page by a member of its space."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    asker = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+    seed_problem_reader(client, task_id=task_id, user_id=asker)
     r = client.post("/assistant/conversations", headers=headers)
     assert r.status_code == 201, r.text
     conversation = r.json()["data"]["id"]

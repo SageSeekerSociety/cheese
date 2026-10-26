@@ -5,6 +5,7 @@
  * 以及冻结之后谁都改不动——它描述的是「当时那一版」，被改过就不再是同一件事了。
  */
 import type {
+  ImageRegionQuote,
   PagePinQuote,
   SheetCellQuote,
   SheetRangeQuote,
@@ -196,6 +197,40 @@ const webRegion: WebRegionQuote = {
   rect: { x: 0, y: 0, w: 200, h: 100 },
   viewport: { w: 800, h: 600 },
 }
+
+const imageRegion: ImageRegionQuote = {
+  kind: 'image-region',
+  path: '示意图.png',
+  source: 'live',
+  version: 'v8',
+  task_id: null,
+  x: 12,
+  y: 40,
+  width: 180,
+  height: 96,
+  natural_width: 1024,
+  natural_height: 768,
+}
+
+it('图片框选的一块：原图像素加原图尺寸，和网页那一类刚好相反', () => {
+  expect(isQuotedContext(imageRegion)).toBe(true)
+  // 贴左上角（0）是一处合法位置。
+  expect(isQuotedContext({ ...imageRegion, x: 0, y: 0 })).toBe(true)
+  // 框不出东西来的宽高不是一处位置（后端 gt=0）。
+  expect(isQuotedContext({ ...imageRegion, width: 0 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, height: -1 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, x: -1 })).toBe(false)
+  // 原图尺寸是正整数：它来自图片自己，1.5 或 0 都指不回一份原图。
+  expect(isQuotedContext({ ...imageRegion, natural_width: 0 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, natural_width: 1024.5 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, natural_height: undefined })).toBe(false)
+  // 认不出的形状一律不收。多带的字段由后端拦（`extra="forbid"`）——这一层只核它列到的
+  // 那几样，和别的几种引用同一条。
+  expect(isQuotedContext({ ...imageRegion, kind: 'image-area' })).toBe(false)
+  // 文件身份那一半照旧：缺一样都不是同一份东西。
+  expect(isQuotedContext({ ...imageRegion, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, version: '' })).toBe(false)
+})
 
 it('网页预览的三形状都收：点一个元素、选一段文字、圈一块区域', () => {
   expect(isQuotedContext(webElement)).toBe(true)

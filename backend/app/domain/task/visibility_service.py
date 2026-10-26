@@ -2,27 +2,43 @@ from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domain.space.repositories import SpaceAdminRelationRepository
+from app.domain.space.repositories import (
+    SpaceAdminRelationRepository,
+    SpaceRepository,
+)
 from app.domain.task.models import Task, TaskAccessDomain, TaskMembership
 from app.domain.team.models import TeamUserRelation
 from app.domain.user.repositories import UserRepository
 
 
 class TaskVisibilityService:
+    """谁看得见一道题（也就是谁领得了它）。
+
+    题目只给它那块板里的人：出题者、本版管理员、已经领过它的人（个人领或经小队
+    领）总看得见；其余的人先得是这块板的成员，题目开了可见范围（邮箱域名白名单）
+    时还得在名单里。不在板里的人既读不到它，也在列表和搜索里找不到它。
+    ``can_view_task`` 与 ``build_visibility_predicate`` 是同一条规则的两种形态。
+    """
+
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
         self._user_repo = UserRepository(session=session)
         self._admin_repo = SpaceAdminRelationRepository(session=session)
+        self._space_repo = SpaceRepository(session=session)
 
     async def can_view_task(self, *, task: Task, user_id: int) -> bool:
         if user_id <= 0:
-            return not task.access_control_enabled
+            return False
         if task.creator_id == user_id:
             return True
         if await self._is_space_admin(space_id=task.space_id, user_id=user_id):
             return True
         if await self.is_participant(task_id=task.id, user_id=user_id):
             return True
+        if not await self._space_repo.is_member(
+            space_id=task.space_id, user_id=user_id
+        ):
+            return False
         if not task.access_control_enabled:
             return True
 
@@ -54,22 +70,24 @@ class TaskVisibilityService:
             ),
         )
 
-        predicates = [
-            Task.creator_id == user_id,
-            Task.access_control_enabled.is_(False),
-            participant_exists,
-        ]
-
+        admitted: list[ColumnElement[bool]] = [Task.access_control_enabled.is_(False)]
         if email_domain:
-            predicates.append(
+            admitted.append(
                 exists().where(
                     TaskAccessDomain.task_id == Task.id,
                     TaskAccessDomain.deleted_at.is_(None),
                     TaskAccessDomain.domain == email_domain,
                 )
             )
+        in_space = SpaceRepository.build_member_of_predicate(
+            space_id=Task.space_id, user_id=user_id
+        )
 
-        return or_(*predicates)
+        return or_(
+            Task.creator_id == user_id,
+            participant_exists,
+            and_(in_space, or_(*admitted)),
+        )
 
     async def _get_user_email_domain(self, user_id: int) -> str | None:
         user = await self._user_repo.get_by_id(user_id)

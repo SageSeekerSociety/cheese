@@ -33,5 +33,6 @@
   "sourceCommitted": "Committed file",
   "sourceLive": "Current working file",
   "removeQuote": "Remove reference",
-  "draftQuoteConflict": "The composer already has another reference. Send or remove it first."
+  "draftQuoteConflict": "The composer already has another reference. Send or remove it first.",
+  "quotedImageRegion": "Circled an area of the image"
 }
