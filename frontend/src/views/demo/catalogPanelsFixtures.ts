@@ -468,15 +468,17 @@ export function docBundle(
 
 /** 预览格里和大家一起改 markdown 的那个会话（`usePanelPreviewLiveEdit` 的返回）。
  *
- *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件）。正文
- *  绑在一份只活在这个页面里的协同文档上（`localDocSession`），所以点「编辑」真能打字，
- *  只是不连协作服务、也不存回文件——预览站不写任何东西（同上面那些 `refuseWrite`）。 */
+ *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件、正文
+ *  读得出来）。正文绑在一份只活在这个页面里的协同文档上（`localDocSession`），所以点
+ *  「编辑」真能打字，只是不连协作服务、也不存回文件——预览站不写任何东西（同上面那些
+ *  `refuseWrite` 的说明）。 */
 function demoLiveEdit(file: Ref<FileContent | null>): PanelPreviewLiveEdit {
   const session = shallowRef<DocSession | null>(null)
   const editingPath = computed(() => (session.value ? file.value?.path ?? '' : ''))
   const canEdit = computed(() => {
     const f = file.value
-    if (!f || f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
+    if (!f || f.content === null || !f.version || f.binary || f.too_large) return false
+    if (f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
     return (DOCUMENT_TYPES[suffixOf(f.path)]?.view ?? null) === 'markdown'
   })
   return {
@@ -487,11 +489,10 @@ function demoLiveEdit(file: Ref<FileContent | null>): PanelPreviewLiveEdit {
     connection: ref('connected'),
     synced: ref(true),
     readOnly: ref(false),
-    peers: shallowRef([]),
     error: computed(() => ''),
     outdated: ref(false),
     deleted: ref(false),
-    begin: async () => {
+    begin: () => {
       const f = file.value
       if (!canEdit.value || !f) return
       session.value = localDocSession(f.content ?? '', `demo:${f.path}`)

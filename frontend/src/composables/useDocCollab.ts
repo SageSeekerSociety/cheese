@@ -187,10 +187,6 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
     suggestOnly.value = first.suggest_only
     const opened = connectToService(() => (source ? source.open(id) : getDocTicket(id)), first)
     const { doc, provider } = opened
-    // The name the service knows this document by. A living document is named
-    // after its id; a room file is named after its live state's id, which the
-    // open call returns — the signals below travel under that name.
-    const name = first.document
     // 「这个人挑过头像吗」要先知道全局默认头像的 id（见 useChosenAvatar）：注册时
     // profile 一律被填上默认头像，直接 getAvatarUrl 会给没挑过的人配同一张脸。幂等，
     // 问一次全进程共用。问在「真的开了文档」这一刻，不在这里构造的时候：构造这一包
@@ -210,11 +206,14 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
       if (state) synced.value = true
     })
     provider.on('authenticated', () => {
-      if (mine === generation && !session.value) session.value = { document: name, doc, provider, user }
+      if (mine === generation && !session.value) session.value = { document: first.document, doc, provider, user }
     })
     provider.on('stateless', ({ payload }: { payload: string }) => {
       if (mine !== generation) return
-      heard(name, payload, {
+      // Keyed by the id the caller watches, which is what the panels that listen
+      // for comment/mention signals subscribe under (a living document's own id),
+      // not the service's name for the document (`doc:<id>`, `roomfile:<id>`).
+      heard(id, payload, {
         stored: () => stores.value++,
         mentionedOutside: (outside) => (mentionedOutside.value = outside),
         renamed: () => renames.value++,

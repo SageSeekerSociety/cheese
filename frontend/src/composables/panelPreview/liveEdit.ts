@@ -9,7 +9,7 @@
 // 连接、重连、别人的光标、存回的计数都由它负责，这一层只管「哪一份开着」和「屏幕上
 // 那几个状态怎么读」。
 import type { ComputedRef, Ref } from 'vue'
-import type { DocConnection, DocPeer, DocSession } from '../useDocCollab'
+import type { DocConnection, DocSession } from '../useDocCollab'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
@@ -42,7 +42,6 @@ export interface PanelPreviewLiveEdit {
   synced: Ref<boolean>
   /** 只读：服务端照它拒写。 */
   readOnly: Ref<boolean>
-  peers: Ref<DocPeer[]>
   /** 没能连上、或打开本身没成：一句给读者看的话；空串是没有。 */
   error: ComputedRef<string>
   /** 页面用的文档 schema 和服务对不上：得刷新。 */
@@ -78,9 +77,14 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
       const live = await openRoomFileLive(target.room, target.path)
       if (!live.enabled || !live.document || live.ticket === undefined) {
         const said = refusalText(live.reason)
-        pinned.value = null
-        refusedPath.value = target.path
-        refused.value = said
+        // 要票这一段时间里读者可能已经切到别的文件、又点了「编辑」：这一句说的是
+        // **上一次**那一份的事，不能把后来打开的一份收掉，也不该把理由摆到它头上。
+        // 只在还开着同一份时收（`pinned` 换过了就说明不是它了）。
+        if (pinned.value === target) {
+          pinned.value = null
+          refusedPath.value = target.path
+          refused.value = said
+        }
         throw new Error(said)
       }
       return { document: live.document, ticket: live.ticket, read_only: !!live.read_only, suggest_only: false }
@@ -152,7 +156,6 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
     connection: collab.connection,
     synced: collab.synced,
     readOnly: collab.readOnly,
-    peers: collab.peers,
     error,
     outdated: collab.outdated,
     deleted: collab.deleted,
