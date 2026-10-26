@@ -488,7 +488,7 @@ function demoLiveEdit(file: Ref<FileContent | null>): PanelPreviewLiveEdit {
     synced: ref(true),
     readOnly: ref(false),
     peers: shallowRef([]),
-    error: ref(''),
+    error: computed(() => ''),
     outdated: ref(false),
     deleted: ref(false),
     begin: async () => {
