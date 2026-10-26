@@ -38,11 +38,13 @@ from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend, generate_storage_key
 from app.domain.materials.models import Material
 from app.domain.materials.services import MaterialService
+from app.domain.space import permissions as space_seats
 from app.domain.space.models import (
     SpaceAdminRelation,
     SpaceMaterial,
     SpaceMaterialVisibility,
 )
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.repositories import SpaceRepository
 
 _MIME_FAMILIES = (
@@ -280,7 +282,6 @@ class SpaceMaterialService:
         content_type: str,
         visibility: str | None,
     ) -> dict:
-        await self._require_admin(space_id=space_id, user_id=user_id)
         chosen = _parse_visibility(visibility)
         kind = _type_for(content_type)
 
@@ -313,7 +314,6 @@ class SpaceMaterialService:
     async def set_visibility(
         self, *, space_id: int, user_id: int, material_id: int, visibility: str
     ) -> dict:
-        await self._require_admin(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
             raise NotFoundError("Material not found", data={"id": material_id})
@@ -328,7 +328,6 @@ class SpaceMaterialService:
         它」，不是「把文件毁掉」—— 同一份素材可能还被某道题的参考资料引用着，而
         对象删掉就没有回头路。
         """
-        await self._require_admin(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
             raise NotFoundError("Material not found", data={"id": material_id})
@@ -366,16 +365,13 @@ class SpaceMaterialService:
     # ---- 判据 ----
 
     async def _require_member(self, *, space_id: int, user_id: int) -> bool:
-        """看不见这块板就 404（不是 403）；返回的是不是管理员。"""
-        if not await self._spaces.is_member(space_id=space_id, user_id=user_id):
-            raise NotFoundError(
-                "Resource space not found", data={"type": "space", "id": space_id}
-            )
-        return await is_space_admin(self._session, space_id=space_id, user_id=user_id)
-
-    async def _require_admin(self, *, space_id: int, user_id: int) -> None:
-        if not await self._require_member(space_id=space_id, user_id=user_id):
-            raise ForbiddenError("Only a board manager can perform this action")
+        """看不见这块板就 404（不是 403）；返回的是能不能管素材。传、改档、撤下来
+        由路由声明（``SpacePermission.manage_materials``），这里只给读的人用。"""
+        if not await space_seats.sees(self._session, space_id, user_id):
+            raise NotFoundError.for_resource("space", space_id)
+        return await space_seats.may(
+            self._session, space_id, user_id, SpacePermission.manage_materials
+        )
 
 
 def _readable_by_a_member(visibilities: Sequence[str]) -> bool:

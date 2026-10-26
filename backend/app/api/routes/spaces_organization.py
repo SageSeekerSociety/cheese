@@ -17,7 +17,7 @@ other route module.
 
 The helpers it shares with the routes that stay -- `_category_to_api_model`,
 `_domain_group_to_api_model`, `_admin_to_api_model`, `_build_full_space_payload`,
-`_ensure_space_visible`, `get_space_service`, `get_space_topics_service` -- stay
+`get_space_service`, `get_space_topics_service` -- stay
 in `spaces.py` and are imported here, the shape `users_password.py` and
 `topics_side_routes.py` already use. `spaces.py` imports nothing from this
 module, so there is no cycle.
@@ -37,7 +37,6 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from app.api.response import ok
 from app.api.space_deps import (
-    _ensure_space_visible,
     get_space_service,
     get_space_topics_service,
     require_reviewed_space,
@@ -54,12 +53,13 @@ from app.api.space_payloads import (
     _category_to_api_model,
     _domain_group_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError
 from app.db.session import get_db
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
 from app.domain.space.tags_service import SpaceTagsService
 
@@ -76,6 +76,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/topics",
     summary="List or search topics in a space",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def get_space_topics(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -93,7 +94,6 @@ async def get_space_topics(
     - If `keyword` is provided, perform a fuzzy search (sort is ignored).
     - Otherwise, return the hottest topics (most non-deleted tasks in the space).
     """
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     safe_limit = min(limit, 50)
 
     if keyword and keyword.strip():
@@ -107,6 +107,7 @@ async def get_space_topics(
 @router.get(
     "/{spaceId}/categories",
     summary="List categories in a space",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def list_space_categories(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -115,7 +116,6 @@ async def list_space_categories(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     cats = await service.list_categories(
         space_id=space_id, include_archived=includeArchived
@@ -132,7 +132,7 @@ async def list_space_categories(
     "/{spaceId}/categories",
     summary="Create Space Category",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def create_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -145,7 +145,6 @@ async def create_space_category(
         name=payload.name,
         description=payload.description,
         display_order=payload.display_order,
-        actor_user_id=auth_user.user_id,
         # 项目集级默认队友 (#944)：与 PATCH 同一条入口语义。
         default_role=payload.default_role,
     )
@@ -155,7 +154,7 @@ async def create_space_category(
 @router.patch(
     "/{spaceId}/categories/{categoryId}",
     summary="Update Space Category",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def patch_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -172,7 +171,6 @@ async def patch_space_category(
     category = await service.update_category(
         space_id=space_id,
         category_id=category_id,
-        actor_user_id=auth_user.user_id,
         name=payload.name,
         description=payload.description,
         display_order=payload.display_order,
@@ -186,6 +184,7 @@ async def patch_space_category(
 @router.get(
     "/{spaceId}/categories/{categoryId}",
     summary="Get Space Category",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def get_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -194,7 +193,6 @@ async def get_space_category(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     category = await service.get_category_detail(
         space_id=space_id, category_id=category_id
     )
@@ -210,7 +208,7 @@ async def get_space_category(
     "/{spaceId}/categories/{categoryId}",
     summary="Delete Space Category",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def delete_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -219,7 +217,8 @@ async def delete_space_category(
     service: SpaceService = Depends(get_space_service),
 ) -> None:
     await service.delete_category(
-        space_id=space_id, category_id=category_id, actor_user_id=auth_user.user_id
+        space_id=space_id,
+        category_id=category_id,
     )
     return None
 
@@ -227,7 +226,7 @@ async def delete_space_category(
 @router.post(
     "/{spaceId}/categories/{categoryId}/archive",
     summary="Archive Space Category",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def archive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -239,7 +238,6 @@ async def archive_space_category(
         space_id=space_id,
         category_id=category_id,
         archived=True,
-        actor_user_id=auth_user.user_id,
     )
     return ok({"category": _category_to_api_model(category, include_private=True)})
 
@@ -247,7 +245,7 @@ async def archive_space_category(
 @router.delete(
     "/{spaceId}/categories/{categoryId}/archive",
     summary="Unarchive Space Category",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def unarchive_space_category(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -259,7 +257,6 @@ async def unarchive_space_category(
         space_id=space_id,
         category_id=category_id,
         archived=False,
-        actor_user_id=auth_user.user_id,
     )
     return ok({"category": _category_to_api_model(category, include_private=True)})
 
@@ -267,6 +264,7 @@ async def unarchive_space_category(
 @router.get(
     "/{spaceId}/domain-groups",
     summary="List Space Domain Groups",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def list_space_domain_groups(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -274,10 +272,7 @@ async def list_space_domain_groups(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
-    groups = await service.list_domain_groups(
-        space_id=space_id, actor_user_id=auth_user.user_id
-    )
+    groups = await service.list_domain_groups(space_id=space_id)
     items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
     return ok({"groups": items})
 
@@ -286,7 +281,7 @@ async def list_space_domain_groups(
     "/{spaceId}/domain-groups",
     summary="Create Space Domain Group",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def create_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -299,7 +294,6 @@ async def create_space_domain_group(
         name=payload.name,
         description=payload.description,
         domains=payload.domains,
-        actor_user_id=auth_user.user_id,
     )
     return ok({"group": _domain_group_to_api_model(group, domains)})
 
@@ -307,7 +301,7 @@ async def create_space_domain_group(
 @router.patch(
     "/{spaceId}/domain-groups/{groupId}",
     summary="Update Space Domain Group",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def patch_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -322,7 +316,6 @@ async def patch_space_domain_group(
         name=payload.name,
         description=payload.description,
         domains=payload.domains,
-        actor_user_id=auth_user.user_id,
     )
     return ok({"group": _domain_group_to_api_model(group, domains)})
 
@@ -331,7 +324,7 @@ async def patch_space_domain_group(
     "/{spaceId}/domain-groups/{groupId}",
     summary="Delete Space Domain Group",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
 )
 async def delete_space_domain_group(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -342,7 +335,6 @@ async def delete_space_domain_group(
     await service.delete_domain_group(
         space_id=space_id,
         group_id=group_id,
-        actor_user_id=auth_user.user_id,
     )
     return None
 
@@ -350,6 +342,7 @@ async def delete_space_domain_group(
 @router.get(
     "/{spaceId}/managers",
     summary="List Space Managers",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def list_space_admins(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -359,7 +352,6 @@ async def list_space_admins(
 ) -> dict:
     # The managers list answers only to someone who can see the 题目版 — an
     # outsider must not learn who runs a board they were never invited to.
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     admins = await service.list_admins(space_id)
     return ok({"managers": [_admin_to_api_model(rel) for rel in admins]})
 
@@ -368,7 +360,7 @@ async def list_space_admins(
     "/{spaceId}/managers",
     summary="Add Space Manager",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_admins, on="spaceId")],
 )
 async def add_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -385,7 +377,6 @@ async def add_space_admin(
         space_id=space_id,
         target_user_id=payload.user_id,
         role=role,
-        actor_user_id=auth_user.user_id,
     )
     space = await service.get_space(space_id)
     if space is None:
@@ -398,7 +389,7 @@ async def add_space_admin(
     "/{spaceId}/managers/{userId}",
     summary="Remove Space Manager",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_admins, on="spaceId")],
 )
 async def delete_space_admin(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -409,7 +400,6 @@ async def delete_space_admin(
     await service.remove_admin(
         space_id=space_id,
         target_user_id=user_id,
-        actor_user_id=auth_user.user_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -417,7 +407,7 @@ async def delete_space_admin(
 @router.patch(
     "/{spaceId}/managers/{userId}",
     summary="Update Space Manager Role",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_admins, on="spaceId")],
 )
 async def patch_space_manager(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -434,7 +424,6 @@ async def patch_space_manager(
         space_id=space_id,
         target_user_id=user_id,
         new_role=new_role,
-        actor_user_id=auth_user.user_id,
     )
     space = await service.get_space(space_id)
     if space is None:

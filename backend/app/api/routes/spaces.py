@@ -9,8 +9,6 @@ from sqlalchemy.orm import Mapped
 
 from app.api.response import ok
 from app.api.space_deps import (
-    _ensure_space_admin,
-    _ensure_space_visible,
     get_space_analytics_service,
     get_space_analytics_view_service,
     get_space_service,
@@ -26,7 +24,7 @@ from app.api.space_payloads import (
     _invite_codes_to_api_models,
     _space_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import is_space_admin
@@ -39,6 +37,7 @@ from app.core.errors import (
 from app.db.session import get_db
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -214,6 +213,7 @@ async def _hydrate_members(
 @router.get(
     "/{spaceId}",
     summary="Query Space",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def get_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -229,7 +229,6 @@ async def get_space(
         raise NotFoundError(
             "Resource space not found", data={"type": "space", "id": space_id}
         )
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
 
     # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
     # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
@@ -363,7 +362,6 @@ async def create_space(
         await service.replace_classification_topics(
             space_id=space.id,
             topic_ids=classification_topic_ids,
-            actor_user_id=auth_user.user_id,
         )
     space.review_status = "PENDING"
     await db.flush()
@@ -378,9 +376,7 @@ async def create_space(
     )
     # Every 题目版 is created holding a code (see SpaceService.create_space),
     # so hand it back here rather than making the creator come and ask.
-    codes = await service.list_invite_codes(
-        space_id=space.id, actor_user_id=auth_user.user_id
-    )
+    codes = await service.list_invite_codes(space_id=space.id)
     # Same shape the 邀请码 screen reads, its maker hydrated and all: the
     # creator is looking at this payload right after the board appears, and a
     # code that arrives without the same fields the list gives it is how two
@@ -394,7 +390,11 @@ async def create_space(
     )
 
 
-@router.patch("/{spaceId}", summary="Update Space", dependencies=[ROUTE_DECIDES])
+@router.patch(
+    "/{spaceId}",
+    summary="Update Space",
+    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
+)
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: PatchSpaceRequest,
@@ -432,7 +432,6 @@ async def patch_space(
         await service.replace_classification_topics(
             space_id=space_id,
             topic_ids=classification_topic_ids,
-            actor_user_id=auth_user.user_id,
         )
     space_data = await _build_full_space_payload(
         space, service=service, db=db, include_private=True
@@ -444,14 +443,14 @@ async def patch_space(
     "/{spaceId}",
     summary="Delete Space",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.delete, on="spaceId")],
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceService = Depends(get_space_service),
 ) -> None:
-    await service.delete_space(space_id=space_id, actor_user_id=auth_user.user_id)
+    await service.delete_space(space_id=space_id)
     return None
 
 
@@ -480,6 +479,7 @@ async def join_space(
 @router.get(
     "/{spaceId}/members",
     summary="List Space Members",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def list_space_members(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -487,7 +487,6 @@ async def list_space_members(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     members = await service.list_members(space_id)
     items = await _hydrate_members(
         members,
@@ -502,7 +501,7 @@ async def list_space_members(
     "/{spaceId}/members",
     summary="Add Space Member",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_members, on="spaceId")],
 )
 async def add_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -513,7 +512,6 @@ async def add_space_member(
 ) -> dict:
     # Visibility first: otherwise an outsider probing this route is told 403,
     # which confirms the 题目版 exists — the thing a 404 is here to avoid.
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     user_repo = UserRepository(session=db)
     if await user_repo.get_by_id(payload.user_id) is None:
         raise NotFoundError(
@@ -522,7 +520,6 @@ async def add_space_member(
     member = await service.add_member(
         space_id=space_id,
         target_user_id=payload.user_id,
-        actor_user_id=auth_user.user_id,
     )
     items = await _hydrate_members(
         [member],
@@ -537,7 +534,7 @@ async def add_space_member(
     "/{spaceId}/members/{userId}",
     summary="Remove Space Member",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(SpacePermission.manage_members, on="spaceId")],
 )
 async def delete_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -546,11 +543,9 @@ async def delete_space_member(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> Response:
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     await service.remove_member(
         space_id=space_id,
         target_user_id=user_id,
-        actor_user_id=auth_user.user_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -573,6 +568,7 @@ async def leave_space(
 @router.get(
     "/{spaceId}/analytics/tasks",
     summary="Get Space Task Analytics",
+    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
 )
 async def get_space_task_analytics(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -595,7 +591,6 @@ async def get_space_task_analytics(
     db=Depends(get_db),
 ) -> dict:
     """Return per-task analytics table rows for the space."""
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_tasks(
         space_id=space_id,
@@ -617,6 +612,7 @@ async def get_space_task_analytics(
     summary="Get Publishers Participation",
     deprecated=True,
     description="Deprecated: use GET /spaces/{spaceId}/analytics/publishers instead.",
+    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -624,7 +620,6 @@ async def get_publishers_participation(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> dict:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
     return ok(data)
@@ -635,6 +630,7 @@ async def get_publishers_participation(
     summary="Export Space Participants",
     deprecated=True,
     description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
+    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -643,7 +639,6 @@ async def export_space_participants(
     service: SpaceAnalyticsService = Depends(get_space_analytics_service),
     db=Depends(get_db),
 ) -> Response:
-    await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     if format.lower() != "csv":
         raise BadRequestError("Only csv format is supported")

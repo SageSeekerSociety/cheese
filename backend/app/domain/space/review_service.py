@@ -123,8 +123,6 @@ class SpaceReviewService:
         intro: str,
         avatar_id: int | None = None,
     ) -> dict:
-        if not await self.is_owner(space_id, user_id):
-            raise NotFoundError("Space not found")
         row = await self.locked_space(space_id)
         if row.review_status != "REJECTED":
             raise ConflictError("Only rejected applications can be resubmitted")

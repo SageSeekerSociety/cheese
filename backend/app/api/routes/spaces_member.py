@@ -3,12 +3,12 @@
 A slice of `app/api/routes/spaces.py` (arch review, tracking issue #2143): the
 `/me/publishing/tasks` route behind the task list's 我发布的 filter. It scopes its
 query to the caller (`auth_user.user_id`) inside the space named in the path, and
-guards it with `_ensure_space_visible` before the service runs -- the same 404
-the rest of the file gives a space you are not in. The module mounts itself
+declares `needs(SpacePermission.view)` -- the same 404 every space route gives
+a space you are not in. The module mounts itself
 through `app.main._discover_routers` like every other route module.
 
-The helpers it shares with the routes that stay -- `_ensure_space_visible` and the
-provider `get_space_member_publishing_service` -- stay in `spaces.py` and are
+The helper it shares with the routes that stay -- the provider
+`get_space_member_publishing_service` -- stays in `spaces.py` and are
 imported here, the shape `users_password.py`, `topics_side_routes.py` and
 `spaces_organization.py` already use. `spaces.py` imports nothing from this
 module, so there is no cycle.
@@ -23,14 +23,15 @@ from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.response import ok
 from app.api.space_deps import (
-    _ensure_space_visible,
     get_space_member_publishing_service,
     require_reviewed_space,
 )
+from app.api.write_access import needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
 from app.domain.space.member_publishing_service import SpaceMemberPublishingService
+from app.domain.space.permissions import Permission as SpacePermission
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -45,6 +46,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/me/publishing/tasks",
     summary="Get Space My Published Tasks",
+    dependencies=[needs(SpacePermission.view, on="spaceId")],
 )
 async def get_space_me_published_tasks(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -63,7 +65,6 @@ async def get_space_me_published_tasks(
     db=Depends(get_db),
 ) -> dict:
     """Return the authenticated user's published tasks in this space."""
-    await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     items = await service.get_my_published_tasks(
         space_id=space_id,
         user_id=auth_user.user_id,
