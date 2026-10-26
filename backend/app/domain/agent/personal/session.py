@@ -113,6 +113,7 @@ TOOLS = (
     "cheese_card",
     "cheese_room",
     "cheese_people",
+    "cheese_space",
     "cheese_settings",
     "cheese_routine",
     "cheese_notify",
