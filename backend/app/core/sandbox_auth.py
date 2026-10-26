@@ -200,7 +200,9 @@ def for_a_machine(token: str) -> str:
     route with, and it never leaves the platform's machine."""
     claims = scoped_token_claims(token)
     if claims is None:
-        raise ValueError("A valid scoped credential is required")
+        raise ValueError(
+            "A valid scoped credential is required"  # i18n-exempt: platform bug
+        )
     claims[_MACHINE_CLAIM] = "machine"
     raw = json.dumps(claims, separators=(",", ":")).encode()
     body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
