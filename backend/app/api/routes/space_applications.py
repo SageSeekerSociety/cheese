@@ -1,6 +1,6 @@
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.api.response import ok
@@ -35,11 +35,11 @@ async def list_my_applications(
 
 
 @router.post(
-    "/{spaceId}/resubmit",
-    dependencies=[Can(SpacePermission.resubmit)],
+    "/{space_id}/resubmit",
+    dependencies=[Can(SpacePermission.resubmit, at="space_id")],
 )
 async def resubmit_space(
-    space_id: Annotated[int, Path(alias="spaceId")],
+    space_id: int,
     body: ResubmitSpaceRequest,
     user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),

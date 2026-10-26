@@ -34,12 +34,13 @@ a single failure.
 from __future__ import annotations
 
 import enum
+import inspect
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Path
 from fastapi.dependencies.models import Dependant
 from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
@@ -159,32 +160,60 @@ async def _credential_opens(
 class _Can(WriteAccess):
     kind: Literal["can"] = "can"
     permission: enum.StrEnum | None = None
+    #: The path parameter that names the object; the policy's own unless a
+    #: route spells it otherwise.
+    at: str = ""
+
+    def __post_init__(self) -> None:
+        # The object's id is declared as a path parameter of this dependency,
+        # under the name the path gives it, so the route's API description
+        # keeps it and FastAPI validates it — a route that takes the object
+        # rather than its id would otherwise drop it from both.
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "object_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[int, Path(ge=0, alias=self.at)],
+                    ),
+                    inspect.Parameter(
+                        "db",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AsyncSession, Depends(get_db)],
+                    ),
+                    inspect.Parameter(
+                        "person",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AuthUserInfo, Depends(get_auth_user)],
+                    ),
+                ]
+            ),
+        )
 
     @property
     def name(self) -> str:
         return f"can {self.permission}"
 
     async def __call__(  # type: ignore[override]
-        self,
-        request: Request,
-        db: Annotated[AsyncSession, Depends(get_db)],
-        person: Annotated[AuthUserInfo, Depends(get_auth_user)],
+        self, *, object_id: int, db: AsyncSession, person: AuthUserInfo
     ) -> Any:
         if person.user_id == 0:
             raise AuthenticationRequiredError(say("signInRequired"))
         assert self.permission is not None
-        param = can.policy_of(self.permission).path_param
-        return await can.authorize(
-            db, person.user_id, self.permission, int(request.path_params[param])
-        )
+        return await can.authorize(db, person.user_id, self.permission, object_id)
 
 
-def Can(permission: enum.StrEnum) -> Any:
+def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
     """What a route needs, on the object its path names: the parameter it
     annotates receives that object, loaded and authorized
     (``team: Annotated[Team, Can(TeamPermission.edit_settings)]``). It is the
-    route's write-access declaration too."""
-    return Depends(_Can(permission=permission))
+    route's write-access declaration too. ``at`` names the path parameter only
+    where a route spells it otherwise than the object's policy does."""
+    param = at or can.policy_of(permission).path_param
+    return Depends(_Can(permission=permission, at=param))
 
 
 CHEESE_ONLY_IN_ROOM = Depends(_CheeseOnly(scope="topic"))
