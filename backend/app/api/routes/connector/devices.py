@@ -270,7 +270,7 @@ async def device_connect(
     team_id = body.team_id
     if team_id is None:
         team_id = (await team_service(db).ensure_personal_team(actor.user_id)).id
-    if not await team_seats.may(
+    if not await team_seats.TEAM.allows(
         db, team_id, actor.user_id, TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))

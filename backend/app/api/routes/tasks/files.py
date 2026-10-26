@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from app.api.library_bytes import library_file_response
 from app.api.response import ok, typed_response
 from app.api.task_deps import _require_task
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -133,7 +133,7 @@ def _name(raw: str) -> str:
     "/{taskId}/files",
     summary="List Task Files",
     **typed_response(TaskFilesOut),
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def list_task_files(
     task_id: TaskId,
@@ -151,7 +151,7 @@ async def list_task_files(
         {
             "files": [_file(row) for row in rows],
             "starter": _file(starter) if starter is not None else None,
-            "canDownload": await task_seats.allows(
+            "canDownload": await task_seats.TASK.may(
                 db, task, auth_user.user_id, TaskPermission.download
             ),
         }
@@ -177,7 +177,7 @@ BYTES = {
     "/{taskId}/files/raw",
     summary="Download Task File",
     **BYTES,
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def download_task_file(
     task_id: TaskId,
@@ -240,7 +240,7 @@ class TaskVersionsOut(BaseModel):
     "/{taskId}/versions",
     summary="List Task Versions",
     **typed_response(TaskVersionsOut),
-    dependencies=[needs(TaskPermission.view, on="taskId")],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def list_task_versions(
     task_id: TaskId,
@@ -288,7 +288,7 @@ async def list_task_versions(
                 }
                 for v in versions
             ],
-            "canDownload": await task_seats.allows(
+            "canDownload": await task_seats.TASK.may(
                 db, task, auth_user.user_id, TaskPermission.download
             ),
         }
@@ -298,7 +298,7 @@ async def list_task_versions(
 @router.post(
     "/{taskId}/files/uploads",
     summary="Task File Upload Slot",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFileUploadSlot),
 )
 async def task_file_upload_slot(
@@ -320,7 +320,7 @@ async def task_file_upload_slot(
 @router.post(
     "/{taskId}/files/uploads/part",
     summary="Task File Upload Part",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFileUploadPart),
 )
 async def task_file_upload_part(
@@ -342,7 +342,7 @@ async def task_file_upload_part(
     "/{taskId}/files",
     summary="Add Task File",
     status_code=201,
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFilePlacedOut),
 )
 async def add_task_file(
@@ -371,7 +371,7 @@ async def add_task_file(
 @router.put(
     "/{taskId}/files",
     summary="Replace Task File",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFilePlacedOut),
 )
 async def replace_task_file(
@@ -393,7 +393,7 @@ async def replace_task_file(
 @router.delete(
     "/{taskId}/files",
     summary="Remove Task File",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFileRemovedOut),
 )
 async def remove_task_file(
@@ -412,7 +412,7 @@ async def remove_task_file(
 @router.put(
     "/{taskId}/starter",
     summary="Set Task Starter Code",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFilePlacedOut),
 )
 async def set_task_starter(
@@ -438,7 +438,7 @@ async def set_task_starter(
 @router.delete(
     "/{taskId}/starter",
     summary="Remove Task Starter Code",
-    dependencies=[needs(TaskPermission.teach, on="taskId")],
+    dependencies=[Can(TaskPermission.teach)],
     **typed_response(TaskFileRemovedOut),
 )
 async def remove_task_starter(

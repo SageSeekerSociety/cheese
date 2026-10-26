@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
 from app.api.deps import get_discussion_service
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES, needs
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
@@ -253,7 +253,7 @@ async def get_answer(
 @router.put(
     "/{answer_id}",
     summary="Update Answer",
-    dependencies=[needs(AnswerPermission.manage, on="answer_id")],
+    dependencies=[Can(AnswerPermission.manage)],
 )
 async def update_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -278,7 +278,7 @@ async def update_answer(
 @router.delete(
     "/{answer_id}",
     summary="Delete Answer",
-    dependencies=[needs(AnswerPermission.manage, on="answer_id")],
+    dependencies=[Can(AnswerPermission.manage)],
 )
 async def delete_answer(
     question_id: Annotated[int, Path(ge=0)],

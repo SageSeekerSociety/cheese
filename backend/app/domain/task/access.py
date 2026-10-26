@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import task_roles as task_seats
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import NotFoundError
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.repositories import (
     TaskMembershipRepository,
@@ -60,25 +59,3 @@ async def bind_review_path(
         raise NotFoundError.for_resource("submission", submission_id)
 
     return task, membership
-
-
-async def ensure_can_read_participation(
-    *,
-    session: AsyncSession,
-    task: Task,
-    membership: TaskMembership,
-    user_id: int,
-    forbidden_message: str,
-) -> None:
-    """谁看得到一条报名的提交 / 评审。
-
-    教这道题的人、报名者本人（个人报名），以及团队报名时该队的成员
-    （``task_roles.may_read_participation``），三者之一即可；否则用调用方给的
-    那句话答 403。
-
-    ``GET .../submissions`` 与 ``GET .../review`` 共用同一段判据，各自的 403
-    文案由 ``forbidden_message`` 传入 —— 两处返回体逐字不变。
-    """
-    if await task_seats.may_read_participation(session, task, membership, user_id):
-        return
-    raise ForbiddenError(forbidden_message)

@@ -46,7 +46,7 @@ class RecruitmentService:
         team = await self._team_repo.get_by_id(team_id)
         if team is None:
             raise NotFoundError("Team not found", data={"type": "team", "id": team_id})
-        if not await team_seats.may(
+        if not await team_seats.TEAM.allows(
             self._team_repo._session, team_id, actor_user_id, TeamPermission.recruit
         ):
             raise ForbiddenError(
@@ -125,7 +125,7 @@ class RecruitmentService:
                 "Recruitment post not found",
                 data={"type": "recruitment_post", "id": post_id},
             )
-        if not await team_seats.may(
+        if not await team_seats.TEAM.allows(
             self._team_repo._session,
             post.team_id,
             actor_user_id,

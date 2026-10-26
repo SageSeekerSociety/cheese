@@ -366,9 +366,11 @@ class SpaceMaterialService:
     async def _require_member(self, *, space_id: int, user_id: int) -> bool:
         """看不见这块板就 404（不是 403）；返回的是能不能管素材。传、改档、撤下来
         由路由声明（``SpacePermission.manage_materials``），这里只给读的人用。"""
-        if not await space_seats.sees(self._session, space_id, user_id):
+        if not await space_seats.SPACE.allows(
+            self._session, space_id, user_id, space_seats.Permission.view
+        ):
             raise NotFoundError.for_resource("space", space_id)
-        return await space_seats.may(
+        return await space_seats.SPACE.allows(
             self._session, space_id, user_id, SpacePermission.manage_materials
         )
 
