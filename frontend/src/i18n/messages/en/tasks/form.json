@@ -68,6 +68,8 @@
     "label": "How it starts",
     "locked": "Someone has already applied for or started this task, so how it starts can no longer change"
   },
+  "applyEnd": "Applications close",
+  "applyStart": "Applications open",
   "registration": "Application period",
   "registrationEnd": "End date",
   "registrationStart": "Start date",
