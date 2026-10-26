@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.answers.services import AnswersService, _answer_to_dto
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -575,20 +575,10 @@ class TestUpdateAnswer:
         repo.update_answer.return_value = updated
         p_repo.get_profile_by_user_id.return_value = _profile()
 
-        result = await svc.update_answer(
-            answer_id=3, user_id=99, content="Updated content"
-        )
+        result = await svc.update_answer(answer_id=3, content="Updated content")
 
         repo.update_answer.assert_awaited_once_with(original, content="Updated content")
         assert result["content"] == "Updated content"
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _q_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _answer(id=3, created_by_id=99)
-
-        with pytest.raises(ForbiddenError, match="Only the answer owner"):
-            await svc.update_answer(answer_id=3, user_id=77, content="Hack")
 
     @pytest.mark.anyio
     async def test_empty_content_rejected(self):
@@ -596,7 +586,7 @@ class TestUpdateAnswer:
         repo.get_by_id.return_value = _answer(id=3, created_by_id=99)
 
         with pytest.raises(BadRequestError, match="content cannot be empty"):
-            await svc.update_answer(answer_id=3, user_id=99, content="  ")
+            await svc.update_answer(answer_id=3, content="  ")
 
     @pytest.mark.anyio
     async def test_answer_not_found(self):
@@ -604,7 +594,7 @@ class TestUpdateAnswer:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Answer not found"):
-            await svc.update_answer(answer_id=404, user_id=1, content="text")
+            await svc.update_answer(answer_id=404, content="text")
 
 
 # ---------------------------------------------------------------------------
@@ -619,17 +609,9 @@ class TestDeleteAnswer:
         answer = _answer(id=3, created_by_id=99)
         repo.get_by_id.return_value = answer
 
-        await svc.delete_answer(answer_id=3, user_id=99)
+        await svc.delete_answer(answer_id=3)
 
         repo.soft_delete.assert_awaited_once_with(answer)
-
-    @pytest.mark.anyio
-    async def test_not_owner_forbidden(self):
-        svc, repo, _q_repo, _p_repo = _make_service()
-        repo.get_by_id.return_value = _answer(id=3, created_by_id=99)
-
-        with pytest.raises(ForbiddenError, match="Only the answer owner"):
-            await svc.delete_answer(answer_id=3, user_id=77)
 
     @pytest.mark.anyio
     async def test_answer_not_found(self):
@@ -637,7 +619,7 @@ class TestDeleteAnswer:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="Answer not found"):
-            await svc.delete_answer(answer_id=404, user_id=1)
+            await svc.delete_answer(answer_id=404)
 
 
 # ---------------------------------------------------------------------------

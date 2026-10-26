@@ -155,7 +155,7 @@ class TaskMembership(Base):
     __tablename__ = "task_membership"
     __table_args__ = (
         # 鉴权每次请求都问一次「这道题 × 这个人领没领」
-        # (`app.auth.domains.task`)，可见性判据也为每道候选题和每个读者打同样的
+        # (`app.auth.task_roles`)，可见性判据也为每道候选题和每个读者打同样的
         # 相关 EXISTS (`visibility_service`)：两者都按 task_id + member_id 取，
         # 所以这一列 `task_id` 也还上了 `task_membership.task_id` 的外键无索引债。
         Index(
