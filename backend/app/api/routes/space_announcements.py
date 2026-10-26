@@ -15,9 +15,9 @@ from app.api.space_deps import require_reviewed_space
 from app.api.write_access import needs
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import is_space_admin
 from app.db.session import get_db
 from app.domain.delivery.ledger import amend, deliver, retract
+from app.domain.space import permissions as space_seats
 from app.domain.space.announcement_service import (
     TITLE_MAX_LENGTH,
     AnnouncementView,
@@ -126,9 +126,7 @@ async def list_announcements(
     the caller would notify — given to managers only, null for everyone else."""
     service = _service(db)
     listed = await service.list_for_space(space_id)
-    manager = await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
-    )
+    manager = await space_seats.runs(db, space_id, auth_user.user_id)
     notify_count = (
         await service.audience_size(space_id, author_id=auth_user.user_id)
         if manager

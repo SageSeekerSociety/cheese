@@ -13,8 +13,8 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import is_space_admin, space_admin_ids
 from app.core.errors import NotFoundError
+from app.domain.space import permissions as space_seats
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.team.services import team_service
 from app.domain.user.services import names_by_handles, usernames_by_ids
@@ -70,7 +70,7 @@ async def my_spaces(session: AsyncSession, user_id: int) -> str:
     spaces = SpaceService.for_routes(session)
     lines: list[str] = []
     for found in await spaces.list_spaces(limit=LISTED, member_user_id=user_id):
-        runs = await is_space_admin(session, space_id=found.id, user_id=user_id)
+        runs = await space_seats.runs(session, found.id, user_id)
         lines.append(
             f"- 空间「{found.name}」（spaces/{found.id}），"
             + ("你是管理员" if runs else "你是成员")
@@ -96,12 +96,12 @@ async def team(session: AsyncSession, user_id: int, team_id: int) -> str:
 
 async def space(session: AsyncSession, user_id: int, space_id: int) -> str:
     """A space the person is in or runs: its managers and its members."""
-    runs = await is_space_admin(session, space_id=space_id, user_id=user_id)
+    runs = await space_seats.runs(session, space_id, user_id)
     spaces = SpaceService.for_routes(session)
     if not runs and not await spaces.is_member(space_id=space_id, user_id=user_id):
         raise NotFoundError.for_resource("space", str(space_id))
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
-    managers = sorted(await space_admin_ids(session, space_id=space_id))
+    managers = sorted(await space_seats.managers(session, space_id))
     members = [m.user_id for m in await spaces.list_members(space_id)]
     named = await _named(session, managers + members[:LISTED])
     name = label.name if label is not None else str(space_id)

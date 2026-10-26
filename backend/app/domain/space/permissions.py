@@ -34,6 +34,13 @@ class Permission(enum.StrEnum):
     #: See the space and what is in it: its people, categories, announcements,
     #: materials, and one's own problems there.
     view = "view"
+    #: Publish a problem to the space. Anyone in it may; a problem goes up only
+    #: once someone who teaches the space approves it.
+    publish = "publish"
+    #: Teach every problem in the space: approve or send back what was
+    #: published, grade, and manage who takes part — as each problem's own
+    #: setter does for theirs (``app.auth.task_roles``).
+    teach = "teach"
     #: The space's name, intro and limits, its categories, topics and email
     #: domain groups.
     edit_settings = "edit_settings"
@@ -61,7 +68,7 @@ _ADMIN = frozenset(Permission) - {
 GRANTS: dict[Seat, frozenset[Permission]] = {
     Seat.owner: frozenset(Permission),
     Seat.admin: _ADMIN,
-    Seat.member: frozenset({Permission.view}),
+    Seat.member: frozenset({Permission.view, Permission.publish}),
 }
 
 
@@ -99,3 +106,28 @@ async def may(
 async def sees(session: AsyncSession, space_id: int, user_id: int) -> bool:
     """Whether the space exists for this person: they hold a seat in it."""
     return await may(session, space_id, user_id, Permission.view)
+
+
+async def runs(
+    session: AsyncSession, space_id: int | None, user_id: int | None
+) -> bool:
+    """Whether the person is the space's owner or one of its admins. Nobody
+    asking (no id) and no space are no; asked afresh every time, so an admin
+    stepped down is refused on their next request."""
+    if space_id is None or user_id is None:
+        return False
+    return await seat_of(session, space_id, user_id) in (Seat.owner, Seat.admin)
+
+
+async def managers(session: AsyncSession, space_id: int | None) -> set[int]:
+    """The user ids of the space's owner and admins, in one query."""
+    if space_id is None:
+        return set()
+    return set(
+        await session.scalars(
+            select(SpaceAdminRelation.user_id).where(
+                SpaceAdminRelation.space_id == space_id,
+                SpaceAdminRelation.deleted_at.is_(None),
+            )
+        )
+    )

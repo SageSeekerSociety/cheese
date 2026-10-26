@@ -17,7 +17,6 @@ from pydantic import BaseModel
 
 from app.api.awaiting_asks import MembershipAsk, RunAsk
 from app.api.awaiting_deps import all_waiting
-from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.personal import reading, space_desk
@@ -25,6 +24,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.assistant import gate, refs
 from app.domain.project import address
 from app.domain.room_task.awaiting import WaitingItem
+from app.domain.space import permissions as space_seats
 from app.domain.space.services import SpaceLabels
 from app.domain.team.services import team_service
 from app.domain.user.services import search_accounts, user_by_handle
@@ -413,7 +413,7 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
     if person is None:
         raise NotFoundError(say("assistantWhoUnknown", who=who))
     sid = str(space_id)
-    manages = await is_space_admin(db, space_id=space_id, user_id=person.id)
+    manages = await space_seats.runs(db, space_id, person.id)
     if body.remove:
         return Plan(
             gate.Action(

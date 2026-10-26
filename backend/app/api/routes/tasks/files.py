@@ -19,16 +19,17 @@ from pydantic import BaseModel, Field
 from app.api.library_bytes import library_file_response
 from app.api.response import ok, typed_response
 from app.api.task_deps import _require_task
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import needs
+from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.task import package
-from app.domain.task.services import ensure_task_readable
 from app.domain.user.services import user_service
 
 router = APIRouter(prefix="/tasks")
@@ -129,7 +130,10 @@ def _name(raw: str) -> str:
 
 
 @router.get(
-    "/{taskId}/files", summary="List Task Files", **typed_response(TaskFilesOut)
+    "/{taskId}/files",
+    summary="List Task Files",
+    **typed_response(TaskFilesOut),
+    dependencies=[needs(TaskPermission.view, on="taskId")],
 )
 async def list_task_files(
     task_id: TaskId,
@@ -141,14 +145,15 @@ async def list_task_files(
     「看得见」用的是题目详情那三道闸（``ensure_task_readable``）：清单不比题更公开，
     文件名常常就是答案。"""
     task = await _require_task(db, task_id)
-    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     rows = await package.files(db, task.id)
     starter = await package.starter_file(db, task.id)
     return ok(
         {
             "files": [_file(row) for row in rows],
             "starter": _file(starter) if starter is not None else None,
-            "canDownload": await package.may_download(db, task, auth_user.user_id),
+            "canDownload": await task_seats.allows(
+                db, task, auth_user.user_id, TaskPermission.download
+            ),
         }
     )
 
@@ -168,7 +173,12 @@ BYTES = {
 }
 
 
-@router.get("/{taskId}/files/raw", summary="Download Task File", **BYTES)
+@router.get(
+    "/{taskId}/files/raw",
+    summary="Download Task File",
+    **BYTES,
+    dependencies=[needs(TaskPermission.view, on="taskId")],
+)
 async def download_task_file(
     task_id: TaskId,
     name: str,
@@ -183,7 +193,6 @@ async def download_task_file(
     `version`：第几版，取那一版手上的这份文件当时的字节——只认那一版记下的文件；不给
     就是现在这一份。`preview_pdf`：Office 文档转成 PDF，给题目页上的预览。"""
     task = await _require_task(db, task_id)
-    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     await package.refuse_unless_downloader(db, task, auth_user.user_id)
     name = _name(name)
     row_id = (
@@ -231,6 +240,7 @@ class TaskVersionsOut(BaseModel):
     "/{taskId}/versions",
     summary="List Task Versions",
     **typed_response(TaskVersionsOut),
+    dependencies=[needs(TaskPermission.view, on="taskId")],
 )
 async def list_task_versions(
     task_id: TaskId,
@@ -242,7 +252,6 @@ async def list_task_versions(
     看得见这道题就看得到（题目详情那三道闸），和材料清单一样；各版文件的下载走
     ``/files/raw?version=``，判据和下载现在的材料是同一条。"""
     task = await _require_task(db, task_id)
-    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
     versions = await package.history(db, task.id)
     author_ids = list(
         {v.revision.author_id for v in versions if v.revision.author_id is not None}
@@ -279,7 +288,9 @@ async def list_task_versions(
                 }
                 for v in versions
             ],
-            "canDownload": await package.may_download(db, task, auth_user.user_id),
+            "canDownload": await task_seats.allows(
+                db, task, auth_user.user_id, TaskPermission.download
+            ),
         }
     )
 
@@ -287,7 +298,7 @@ async def list_task_versions(
 @router.post(
     "/{taskId}/files/uploads",
     summary="Task File Upload Slot",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFileUploadSlot),
 )
 async def task_file_upload_slot(
@@ -298,7 +309,6 @@ async def task_file_upload_slot(
 ) -> dict:
     """领一次上传的凭据（出题人本人或空间管理员）。超过上限的不给。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     if body.size <= 0:
         raise ValidationError(say("emptyFile"))
     name = library.clean_upload_name(body.name)
@@ -310,7 +320,7 @@ async def task_file_upload_slot(
 @router.post(
     "/{taskId}/files/uploads/part",
     summary="Task File Upload Part",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFileUploadPart),
 )
 async def task_file_upload_part(
@@ -321,7 +331,6 @@ async def task_file_upload_part(
 ) -> dict:
     """一次上传里一段的地址：只收这一段，字节的 MD5 对不上的存储不收。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     return ok(
         await library_records.upload_part(
             package.shelf(task.id), body.upload, body.part, body.md5
@@ -333,7 +342,7 @@ async def task_file_upload_part(
     "/{taskId}/files",
     summary="Add Task File",
     status_code=201,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFilePlacedOut),
 )
 async def add_task_file(
@@ -344,7 +353,6 @@ async def add_task_file(
 ) -> dict:
     """把传上来的一份登记成这道题的材料，题目记一版。撞名不覆盖：拿下一个 `(n)`。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     upload = _received(task.id, body)
     name = await package.add_file(
         db,
@@ -363,7 +371,7 @@ async def add_task_file(
 @router.put(
     "/{taskId}/files",
     summary="Replace Task File",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFilePlacedOut),
 )
 async def replace_task_file(
@@ -375,7 +383,6 @@ async def replace_task_file(
 ) -> dict:
     """把一份材料换成传上来的新版本，旧的留作历史，题目记一版。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     upload = _received(task.id, body)
     name = _name(name)
     await package.replace_file(db, task, by=auth_user.user_id, name=name, data=upload)
@@ -386,7 +393,7 @@ async def replace_task_file(
 @router.delete(
     "/{taskId}/files",
     summary="Remove Task File",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFileRemovedOut),
 )
 async def remove_task_file(
@@ -397,7 +404,6 @@ async def remove_task_file(
 ) -> dict:
     """扔掉一份材料（连同被替换下来的几版），题目记一版。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     await package.remove_file(db, task, by=auth_user.user_id, name=_name(name))
     await db.commit()
     return ok({"removed": True})
@@ -406,7 +412,7 @@ async def remove_task_file(
 @router.put(
     "/{taskId}/starter",
     summary="Set Task Starter Code",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFilePlacedOut),
 )
 async def set_task_starter(
@@ -420,7 +426,6 @@ async def set_task_starter(
     当场查它能不能解开、有没有越出目录的路径或链接、大小和文件数在不在上限内，不合格
     的说清楚为什么。已有一份的，旧的留作历史；已经领了题的项目不受影响。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     upload = _received(task.id, body)
     verb = await package.set_starter(db, task, by=auth_user.user_id, data=upload)
     await package.record(
@@ -433,7 +438,7 @@ async def set_task_starter(
 @router.delete(
     "/{taskId}/starter",
     summary="Remove Task Starter Code",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[needs(TaskPermission.teach, on="taskId")],
     **typed_response(TaskFileRemovedOut),
 )
 async def remove_task_starter(
@@ -443,7 +448,6 @@ async def remove_task_starter(
 ) -> dict:
     """不要起始代码了，题目记一版；之后领题的人拿到的是一个由平台初始化的仓库。"""
     task = await _require_task(db, task_id)
-    await package.refuse_unless_teacher(db, task, auth_user.user_id)
     await package.remove_starter(db, task)
     await package.record(
         db,
