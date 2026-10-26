@@ -6,12 +6,20 @@
 - 不顺手的（不存在的、二进制的）开不了，理由说得出。
 - 协作服务按名字存回来的那一版，读到的是它，旧的那一版仍取得回来。
 - 存回来的一版和这一版内容一样时，不为它多记一版。
+- 两个人同时打开同一份文件，输的那一个读到赢的那一行，调用方的交易不受牵连。
+- 每存一次，这一行的「最后存储时间」都跟着走。
 """
 
+import asyncio
 import base64
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import event
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.living_doc import collab
+from app.domain.living_doc import collab, room_file_collab
+from app.domain.project.models import RoomFileCollab
 from app.domain.textfile import MAX_TEXT_BYTES
 from tests.integration.conftest import post_project
 
@@ -114,7 +122,9 @@ def test_a_store_through_the_service_becomes_a_version_of_the_file(client):
     assert client.get(f"/topics/{room}/files/raw", params={"path": PATH}).content == (
         "第一版\n第二行\n".encode()
     )
-    history = client.get(f"/topics/{room}/files/revisions", params={"path": PATH}).json()
+    history = client.get(
+        f"/topics/{room}/files/revisions", params={"path": PATH}
+    ).json()
     assert len(history["data"]) >= 2
     # The live state is what the open editors share, and it was kept: reopening
     # the file hands back the text the store left, under the same name.
@@ -123,18 +133,78 @@ def test_a_store_through_the_service_becomes_a_version_of_the_file(client):
     assert reloaded["content"] == "第一版\n第二行\n"
 
 
+def test_the_live_state_row_is_inserted_inside_the_savepoint(client):
+    # Losing the create race must not abort the caller's transaction. That
+    # only holds if the INSERT is inside the savepoint: begin_nested() flushes
+    # pending objects first, so a row queued outside it would be written before
+    # SAVEPOINT is even emitted.
+    project, room = _room(client)
+    engine = client.test_factory.kw["bind"].sync_engine
+    seen: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        seen.append(statement)
+
+    async def open_it():
+        async with client.test_factory() as session:
+            return await room_file_collab.open_for(
+                session,
+                project_id=uuid.UUID(project),
+                room_id=uuid.UUID(room),
+                path=PATH,
+                content="第一版\n",
+            )
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        asyncio.run(open_it())
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    def index_of(prefix: str) -> int:
+        return next(
+            i for i, s in enumerate(seen) if s.lstrip().lower().startswith(prefix)
+        )
+
+    assert index_of("insert into room_file_collab") > index_of("savepoint")
+
+
+def test_a_store_moves_the_live_states_storage_time(client):
+    project, room = _room(client)
+    _put(client, project, room, "第一版\n".encode())
+    name = _open(client, room).json()["data"]["document"]
+    collab_id = uuid.UUID(name.split(":", 1)[1])
+
+    async def make_it_old():
+        async with client.test_factory() as session:
+            row = await session.get(RoomFileCollab, collab_id)
+            row.updated_at = datetime(2000, 1, 1, tzinfo=UTC)
+            await session.commit()
+
+    asyncio.run(make_it_old())
+    assert _store(client, name, "第二版\n", "alice").status_code == 200
+
+    async def storage_time():
+        async with client.test_factory() as session:
+            return (await session.get(RoomFileCollab, collab_id)).updated_at
+
+    assert asyncio.run(storage_time()).year >= 2024
+
+
 def test_a_store_that_changed_no_text_writes_no_new_version(client):
     project, room = _room(client)
     _put(client, project, room, "只此一版\n".encode())
     name = _open(client, room).json()["data"]["document"]
     before = len(
-        client.get(f"/topics/{room}/files/revisions", params={"path": PATH})
-        .json()["data"]
+        client.get(f"/topics/{room}/files/revisions", params={"path": PATH}).json()[
+            "data"
+        ]
     )
     # The service's first conversion: the same text, respelled by the editor.
     assert _store(client, name, "只此一版\n", "system").status_code == 200
     after = len(
-        client.get(f"/topics/{room}/files/revisions", params={"path": PATH})
-        .json()["data"]
+        client.get(f"/topics/{room}/files/revisions", params={"path": PATH}).json()[
+            "data"
+        ]
     )
     assert after == before

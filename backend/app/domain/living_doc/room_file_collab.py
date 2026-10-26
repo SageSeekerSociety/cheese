@@ -61,11 +61,13 @@ async def open_for(
         content=content,
         suggestions=[],
     )
-    session.add(row)
     try:
         # A savepoint: losing the race must not take the caller's whole
-        # transaction (and whatever else it did) down with it.
+        # transaction (and whatever else it did) down with it. Added inside
+        # it: begin_nested() flushes pending objects first, which would put
+        # the INSERT outside the savepoint.
         async with session.begin_nested():
+            session.add(row)
             await session.flush()
     except IntegrityError:
         existing = await find(session, room_id=room_id, path=path)
