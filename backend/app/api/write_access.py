@@ -177,7 +177,7 @@ class _Can(WriteAccess):
                     inspect.Parameter(
                         "object_id",
                         inspect.Parameter.KEYWORD_ONLY,
-                        annotation=Annotated[int, Path(ge=0, alias=self.at)],
+                        annotation=Annotated[int, Path(alias=self.at)],
                     ),
                     inspect.Parameter(
                         "db",
