@@ -12,7 +12,6 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token, verify_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
-from app.domain.device.models import DeviceRow
 from app.domain.user.repositories import UserRepository
 from app.domain.user.sessions import SessionService
 from tests.conftest import seed_user
@@ -539,19 +538,19 @@ def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch)
     """A registered subscription reports its status on Models; probing an
     execution device does not register a credential."""
     alice = _login_real(client, "alice")
-    device_id = _enroll_device(client, alice)["device_id"]
+    start = client.post("/connector/auth/device/start", json={"device_name": "macbook"})
+    code = start.json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(alice)
+    )
+    assert connect.status_code == 200, connect.text
+    device_id = connect.json()["device_id"]
+    polled = client.post("/connector/auth/device/poll", json={"device_code": code})
+    token = polled.json()["token"]
     listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
     mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
     team_id = mine["team_id"]
     models_path = f"/connector/teams/{team_id}/model-connections"
-
-    async def transport_token():
-        async with client.test_factory() as db:
-            device = await db.get(DeviceRow, device_id)
-            assert device is not None
-            return device.token
-
-    token = client.portal.call(transport_token)
     login_id = "default"
     status = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}
 

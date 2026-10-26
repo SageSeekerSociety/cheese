@@ -33,6 +33,7 @@ from fastapi import (
     Depends,
     Header,
     Query,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -227,11 +228,19 @@ async def device_start(
 
 @router.post("/auth/device/poll", dependencies=[ROUTE_DECIDES])
 async def device_poll(
-    body: DevicePollRequest, service: DeviceServiceDep
+    body: DevicePollRequest,
+    service: DeviceServiceDep,
+    db: DbSession,
+    response: Response,
 ) -> dict[str, Any]:
     """Poll a pending flow: ``{status}`` until approved, then the durable token +
-    device id the client persists."""
-    return await service.poll(body.device_code)
+    device id the client persists. The token's digest is committed before the
+    answer leaves: the cli dials in with it at once. No cache may keep the answer
+    (RFC 6749 §5.1)."""
+    polled = await service.poll(body.device_code)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return polled
 
 
 @router.get("/auth/device/proposed-name")

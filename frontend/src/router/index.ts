@@ -3,6 +3,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory, START_LOCATION } from 'vue-router'
 
 import AccountRoutes from './account'
+import { canonicalNavigation } from './addressHistory'
 import { requireEmail } from './emailRequired'
 import FeedbackRoutes from './feedback'
 import HomeRoutes from './home'
@@ -16,7 +17,7 @@ import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
-import { canonicalAddress, isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
+import { isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
@@ -172,7 +173,7 @@ router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
 router.beforeEach(leaveAppForPagesItHasNot)
 // 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
-router.beforeEach((to) => (myId() ? canonicalAddress(to) : noteSignedOut(to)))
+router.beforeEach((to) => (myId() ? canonicalNavigation(to, router.options.history) : noteSignedOut(to)))
 
 router.beforeEach(async (to, from, next) => {
   const store = usePageTitleStore()

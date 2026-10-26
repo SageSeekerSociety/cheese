@@ -49,6 +49,12 @@ class SqlDeviceRepository:
         row.device_id = code.device_id
         await self._session.flush()
 
+    async def delete_code(self, code: str) -> None:
+        await self._session.execute(
+            delete(DeviceAuthCodeRow).where(DeviceAuthCodeRow.code == code)
+        )
+        await self._session.flush()
+
     async def get_code(self, code: str) -> AuthCode | None:
         row = await self._session.get(DeviceAuthCodeRow, code)
         if row is None:
@@ -69,7 +75,6 @@ class SqlDeviceRepository:
             row = DeviceRow(device_id=device.device_id, created_at=device.created_at)
             self._session.add(row)
         row.name = device.name
-        row.token = device.token
         row.team_id = device.team_id
         row.owner_user_id = device.owner_user_id
         row.supply = device.supply
@@ -97,7 +102,6 @@ class SqlDeviceRepository:
         return Device(
             device_id=row.device_id,
             name=row.name,
-            token=row.token,
             owner_user_id=row.owner_user_id,
             team_id=row.team_id,
             created_at=_aware(row.created_at),
@@ -125,11 +129,29 @@ class SqlDeviceRepository:
         )
         return self._device(row) if row is not None else None
 
-    async def get_device_by_token(self, token: str) -> Device | None:
+    async def get_device_by_token_digest(self, digest: str) -> Device | None:
         row = await self._session.scalar(
-            select(DeviceRow).where(DeviceRow.token == token)
+            select(DeviceRow).where(DeviceRow.token_digest == digest)
         )
         return self._device(row) if row is not None else None
+
+    async def set_token_digest(self, device_id: str, digest: str) -> bool:
+        # One statement, so two polls racing for the same device cannot both
+        # be handed a token.
+        done = await self._session.execute(
+            update(DeviceRow)
+            .where(DeviceRow.device_id == device_id, DeviceRow.token_digest.is_(None))
+            .values(token_digest=digest)
+            .returning(DeviceRow.device_id)
+        )
+        return done.first() is not None
+
+    async def replace_token_digest(self, device_id: str, digest: str) -> None:
+        await self._session.execute(
+            update(DeviceRow)
+            .where(DeviceRow.device_id == device_id)
+            .values(token_digest=digest)
+        )
 
     async def delete_device(self, device_id: str) -> None:
         await self._session.execute(

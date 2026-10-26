@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.domain.agent.harness.claude_code import owner_login
 from app.domain.agent_instance.models import AccountConnection
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
+from app.domain.device.wiring import sql_device_service
 from app.domain.project.models import Project
 from tests.integration.conftest import new_project, session_auth_headers
 from tests.integration.test_team_model_connections import keep, path, setup_team
@@ -219,7 +220,9 @@ def test_personal_subscription_in_another_team_hides_computer_name_and_keeps_tea
 
     async def token():
         async with client.test_factory() as db:
-            return (await db.get(DeviceRow, device)).token
+            issued = await sql_device_service(db).issue_token(device)
+            await db.commit()
+            return issued
 
     registered = client.post(
         "/connector/model-login/register",
@@ -289,7 +292,9 @@ def test_a_personal_subscription_names_its_claude_account_only_to_its_owner(clie
 
     async def token():
         async with client.test_factory() as db:
-            return (await db.get(DeviceRow, device)).token
+            issued = await sql_device_service(db).issue_token(device)
+            await db.commit()
+            return issued
 
     registered = client.post(
         "/connector/model-login/register",

@@ -757,10 +757,10 @@ def test_the_person_sets_their_rules_and_sees_what_was_done_for_them(
     )
     assert saved.json()["data"]["ask"] == ["remove_member"]
     token = _acting(client, "alice", _asked_in(client, "alice", "在综合频道说一声收到"))
-    # 芝士 cannot change them.
+    # 芝士 cannot change them: its credential does not open that route.
     assert (
         client.put("/assistant/rules", json={"ask": []}, headers=_as(token)).status_code
-        == 401
+        == 403
     )
     keeper = _Gatekeeper("放")
 

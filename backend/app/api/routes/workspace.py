@@ -14,8 +14,13 @@ from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.caller import may_access_project
-from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
+from app.auth.project_access import may_read_project
+from app.core.errors import (
+    AuthenticationRequiredError,
+    GatewayUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
 from app.domain.agent import execution
@@ -31,6 +36,19 @@ from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
+
+
+async def _may_read(resolver, db, project_id: uuid.UUID) -> bool:
+    """Whether the person this request acts as may read the project's
+    conversations (`app.auth.project_access`). A sign-in that was presented and
+    did not verify is a 401, not 「no such project」: the browser refreshes on a
+    401 and has nothing to do with a 404."""
+    person = await resolver.person()
+    if person is None and resolver.presented_sign_in():
+        raise AuthenticationRequiredError(say("sessionExpired"))
+    return await may_read_project(
+        db, project_id=project_id, handle=person.handle if person else None
+    )
 
 
 async def require_place_access(
@@ -49,8 +67,8 @@ async def require_place_access(
     project id was served the file list and file contents.
 
     Both legitimate callers keep working: a human in the browser (member or
-    owner, resolved by HANDLE — see app.auth.caller for why user id is not
-    enough) and the agent on a machine (its project-scoped token). Anything else
+    owner, resolved by HANDLE — see app.auth.caller.handle_named_by for why
+    user id is not enough) and the agent on a machine (its project-scoped token). Anything else
     gets NotFound, so the answer does not confirm the project exists.
 
     A route dependency rather than a line in each handler: the per-handler shape
@@ -59,7 +77,7 @@ async def require_place_access(
     scoped = bool(x_cheese_token) and verify_scoped_token(
         x_cheese_token or "", project_id=str(project_id)
     )
-    if not scoped and not await may_access_project(request, db, project_id):
+    if not scoped and not await _may_read(resolver, db, project_id):
         raise NotFoundError(say("projectNotFound"))
 
     # Files and Git diffs contain the private room's source, not just its title.

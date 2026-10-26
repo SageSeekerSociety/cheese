@@ -21,6 +21,7 @@ from app.domain.machine import warm
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
+from app.domain.user.tokens import digest_token
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
 
@@ -104,7 +105,7 @@ def warm_case(client, monkeypatch):
                 team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id="warm-test",
                 name="Unused",
-                token="test-warm-token",
+                token_digest=digest_token("test-warm-token"),
                 owner_user_id=owner.id,
                 supply=Supply.cloud,
                 created_at=datetime.now(UTC),

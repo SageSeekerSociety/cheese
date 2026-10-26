@@ -18,6 +18,8 @@ const ROOM = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b01'
 const TASK = '5c2d1e0f-1f22-4a33-9c44-5d6e7f8a9b02'
 const DOC = '7e6f5a4b-1f22-4a33-9c44-5d6e7f8a9b03'
 const DM = '1a2b3c4d-1f22-4a33-9c44-5d6e7f8a9b04'
+const UNKNOWN_PROJECT = '2b3c4d5e-6f70-4a12-8b34-5c6d7e8f9a10'
+const UNKNOWN_ROOM = '3c4d5e6f-7081-4b23-9c45-6d7e8f9a10b1'
 
 const { api } = vi.hoisted(() => ({
   api: {
@@ -30,6 +32,7 @@ vi.mock('@/api/addresses', () => api)
 
 import { addressProps, canonicalAddress, shortRoute } from './addresses'
 
+import { canonicalNavigation } from '@/router/addressHistory'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 
 const THINGS: ThingAddress[] = [
@@ -173,16 +176,16 @@ describe('改写地址不吃掉身后那一页', () => {
         },
       ],
     })
-    r.beforeEach((to) => canonicalAddress(to))
+    r.beforeEach((to) => canonicalNavigation(to, r.options.history))
     return r
   }
-  function backOnce(r: ReturnType<typeof guarded>): Promise<string> {
+  function stepHistory(r: ReturnType<typeof guarded>, delta = -1): Promise<string> {
     return new Promise((done) => {
       const stop = r.afterEach((to) => {
         stop()
         done(to.fullPath)
       })
-      r.back()
+      r.go(delta)
     })
   }
 
@@ -193,8 +196,40 @@ describe('改写地址不吃掉身后那一页', () => {
     await r.push(`/projects/${PROJECT}/tasks/${TASK}`)
     expect(r.currentRoute.value.fullPath).toBe('/projects/helper/tasks/318')
 
-    expect(await backOnce(r)).toBe('/projects/helper/channels/7')
-    expect(await backOnce(r)).toBe('/')
+    expect(await stepHistory(r)).toBe('/projects/helper/channels/7')
+    expect(await stepHistory(r)).toBe('/')
+  })
+
+  it('返回经过尚未规范化的旧地址仍能继续退到之前的页面', async () => {
+    const rawRoom: ThingAddress = {
+      project_id: UNKNOWN_PROJECT,
+      slug: 'helper',
+      kind: 'channels',
+      id: UNKNOWN_ROOM,
+      room_id: UNKNOWN_ROOM,
+      number: 7,
+    }
+    api.resolveProject.mockImplementation((ref: string) =>
+      ref === UNKNOWN_PROJECT
+        ? Promise.reject(new Error('not ready'))
+        : Promise.resolve({ id: PROJECT, slug: 'helper' })
+    )
+    api.addressOf.mockImplementation((kind: string, id: string) =>
+      kind === 'channels' && id === UNKNOWN_ROOM ? Promise.resolve(rawRoom) : notFound()
+    )
+
+    const r = guarded()
+    await r.push('/')
+    // 项目映射暂未到达时，这个 UUID 地址会先留在历史里。
+    await r.push(`/projects/${UNKNOWN_PROJECT}/channels/${UNKNOWN_ROOM}`)
+    expect(r.currentRoute.value.fullPath).toBe(`/projects/${UNKNOWN_PROJECT}/channels/${UNKNOWN_ROOM}`)
+
+    // 映射到达后，回退到那条旧历史；改写只能替换当前格，不能再压一格。
+    api.resolveProject.mockResolvedValue({ id: UNKNOWN_PROJECT, slug: 'helper' })
+    await r.push('/projects/helper/tasks/318')
+
+    expect(await stepHistory(r)).toBe('/projects/helper/channels/7')
+    expect(await stepHistory(r)).toBe('/')
   })
 
   it('本来就是换掉当前这一格的，改写后也只换这一格', async () => {
@@ -203,6 +238,6 @@ describe('改写地址不吃掉身后那一页', () => {
     await r.push(`/projects/${PROJECT}/channels/${ROOM}`)
     await r.replace(`/projects/${PROJECT}/tasks/${TASK}`)
 
-    expect(await backOnce(r)).toBe('/')
+    expect(await stepHistory(r)).toBe('/')
   })
 })
