@@ -51,6 +51,9 @@ const READER_INPUT_MS = 500
 /** 时间线内容改写之后多久内，没人动却往上挪的那一下算改写挪的（ms）。 */
 const REWRITE_MS = 500
 
+/** 我们自己发起的那一下滚动，安静多久算停下了（ms）。平滑滚动每一帧都发滚动事件。 */
+const OWN_SCROLL_IDLE_MS = 150
+
 export interface ChatScroll {
   /** 绑在可滚动的那个容器上。 */
   scrollRef: Ref<HTMLElement | null>
@@ -67,6 +70,11 @@ export interface ChatScroll {
   noteFrame(): void
   /** 记下这个话题现在停在哪，并刷新 `atBottom`（滚动事件里、以及切走时调）。 */
   rememberScroll(topicId: string | undefined): void
+  /**
+   * 说一声「接下来这一下滚动是我们自己发的」（跳到某一条）。这一阵里不把往上的移动
+   * 当成读者往上翻，也不当成浏览器锚定夹的；停下之后再按落点定「在不在底部」。
+   */
+  beginOwnScroll(): void
   /** 还原这个话题上次停的地方。 */
   restoreScroll(topicId: string): void
   /** 这个话题再打开时会不会停在底部。 */
@@ -149,6 +157,7 @@ export function useChatScroll(
   const readerTookOver = () => {
     touched()
     settlePending()
+    cancelOwnScroll()
   }
   for (const type of ['wheel', 'touchmove'] as const)
     useEventListener(scrollRef, type, readerTookOver, { passive: true })
@@ -402,6 +411,8 @@ export function useChatScroll(
   // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
     settlePending()
+    // 要的就是底部：正在进行的「跳到某一条」到此为止，别等它停下来的那一拍再改口。
+    cancelOwnScroll()
     // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
     // 把它记成「停在底部」会盖掉它自己记下的位置。
     const id = topicId()
@@ -426,6 +437,14 @@ export function useChatScroll(
     const el = scrollRef.value
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
+    // 我们自己发的那一下还在滚（跳到某一条）：位置照记，但「在不在底部」等它停下再定。
+    // 半路上判，头几帧还在底部、后面又被 `clamped` 那条兜底读成锚定，人就被钉回原处。
+    if (ownScrollTimer !== null) {
+      armOwnScroll()
+      lastTop = el.scrollTop
+      lastHeight = el.scrollHeight
+      return
+    }
     // 回填还没落到位：这期间的「位置」都是它自己一次次试着放的结果（而且没放进去），
     // 读它只会把「还没到」记成「就在这里」。目标还等着，先不记——除非这一下滚动是读的
     // 人自己弄的（刚刚在这一栏里滚过轮/触过屏/按过会翻页的键）。他的手才是准的，目标作废。
@@ -482,6 +501,57 @@ export function useChatScroll(
     })
   }
 
+  // ── 我们自己发起的滚动（跳到某一条）──────────────────────────────────────
+  //
+  // 它既不是读的人在滚，也不是浏览器被就地改写夹的。可两条判据都把它当成后两者：
+  // 平滑滚动的头几帧离底部还不到一屏，照位置算会把「跟新消息」重新打开；而收紧一点
+  // 之后，若这一栏刚被就地改写（agent 在跑时输入框上方那行「用时」每秒都在跳），
+  // 上面那条 `clamped` 兜底就把这次往上的移动读成锚定，当场钉回底部。真机
+  // 2026-10-26：停在对话最底下点左上角书签，被拽回来，到不了设为书签的那一条。
+  //
+  // 所以这一阵里位置照记，`atBottom` 先不动；滚到停下来（安静一个 OWN_SCROLL_IDLE_MS）
+  // 再按真正停下的位置定它——跳到最后一条时跟新消息要照常接上。
+  let ownScrollTimer: ReturnType<typeof setTimeout> | null = null
+
+  function armOwnScroll() {
+    if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
+    ownScrollTimer = setTimeout(() => {
+      ownScrollTimer = null
+      settleOwnScroll()
+    }, OWN_SCROLL_IDLE_MS)
+  }
+
+  /** 这一下滚完了：落点在哪就按哪定。 */
+  function settleOwnScroll() {
+    const el = scrollRef.value
+    if (!el || !el.clientHeight) return
+    lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
+    atBottom.value = isAtBottom(el)
+    const id = showingNewest() ? topicId() : undefined
+    if (id)
+      scrollMemory.set(id, {
+        top: el.scrollTop,
+        atBottom: atBottom.value,
+        anchor: atBottom.value ? undefined : anchorNow(el),
+      })
+  }
+
+  /** 往后的滚动是我们自己发的（跳到某一条、闪一下那一下落位）。 */
+  function beginOwnScroll() {
+    // 读的人点名要去某一条，回填中的目标就作废了。
+    settlePending()
+    // 这一阵不跟新消息：落到哪一条由停下来的那一刻说了算（`settleOwnScroll`）。
+    atBottom.value = false
+    armOwnScroll()
+  }
+
+  /** 不算我们自己发的了：读的人接了手，或者又要钉回底部。 */
+  function cancelOwnScroll() {
+    if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
+    ownScrollTimer = null
+  }
+
   /** 不再记这个话题停在哪：再打开时落到底部。 */
   function forgetScroll(topicId: string) {
     scrollMemory.delete(topicId)
@@ -496,6 +566,7 @@ export function useChatScroll(
   onScopeDispose(() => {
     if (catchUpTimer) clearTimeout(catchUpTimer)
     catchUpTimer = null
+    cancelOwnScroll()
     clearPendingSettle()
     contentObserver?.disconnect()
     contentObserver = null
@@ -510,6 +581,7 @@ export function useChatScroll(
     beginCatchUp,
     noteFrame,
     rememberScroll,
+    beginOwnScroll,
     restoreScroll,
     restoresToBottom,
     forgetScroll,
