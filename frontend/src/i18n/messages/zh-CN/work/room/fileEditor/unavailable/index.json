@@ -2,5 +2,6 @@
   "library_original": "项目资料里的原件只读，先在频道里复制一份再编辑",
   "not_configured": "这个部署没有启用在线编辑",
   "unsupported": "这种文件不能在线编辑",
-  "attachment_original": "对话里发来的原件只读，先在频道里复制一份再编辑"
+  "attachment_original": "对话里发来的原件只读，先在频道里复制一份再编辑",
+  "too_large": "这份文件太大，在线编辑打不开"
 }

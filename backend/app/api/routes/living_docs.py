@@ -969,7 +969,7 @@ async def store_document(
         if row is None:
             raise NotFoundError(say("roomFileNotFound"))
         actors = body.actors or ["system"]
-        agent = bool(actors) and await IdentityService(db).is_agent(actors[0])
+        agent = await IdentityService(db).is_agent(actors[0])
         answer = await room_file_collab.store(
             db,
             row,

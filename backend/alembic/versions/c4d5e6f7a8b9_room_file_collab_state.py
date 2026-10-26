@@ -45,12 +45,7 @@ def upgrade() -> None:
         sa.Column("state", sa.LargeBinary(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False, server_default=""),
         sa.Column("suggestions", sa.JSON(), nullable=False),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text("now()"),
-        ),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.UniqueConstraint(
             "room_id", "path", name="uq_room_file_collab_room_path"
         ),

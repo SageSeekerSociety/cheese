@@ -18,6 +18,7 @@ import asyncio
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
@@ -42,6 +43,12 @@ async def open_for(
     ``content`` seeds a state that does not exist yet: the file's current
     Markdown, which the service converts and stores back before anyone types.
     That first store is the conversion, harmless to an unedited document.
+
+    Two people opening the same file at once both find no row; the unique key
+    on ``(room_id, path)`` settles it, and the loser re-reads what the winner
+    made rather than failing. A save serialises writers on the file itself
+    (`save_room_file`'s advisory lock); this is the same hazard one step
+    earlier, on the row the editing session lives in.
     """
     row = await find(session, room_id=room_id, path=path)
     if row is not None:
@@ -55,7 +62,16 @@ async def open_for(
         suggestions=[],
     )
     session.add(row)
-    await session.flush()
+    try:
+        # A savepoint: losing the race must not take the caller's whole
+        # transaction (and whatever else it did) down with it.
+        async with session.begin_nested():
+            await session.flush()
+    except IntegrityError:
+        existing = await find(session, room_id=room_id, path=path)
+        if existing is None:
+            raise
+        return existing
     return row
 
 
@@ -116,7 +132,7 @@ async def store(
     row.suggestions = suggestions
     await session.flush()
     if content is None or content == row.content:
-        return {"seq": None, "path": row.path}
+        return {"seq": None, "content_version": None, "path": row.path}
     encoded = content.encode("utf-8")
     if await asyncio.to_thread(
         file_store.room_file_exists, row.project_id, row.room_id, row.path
@@ -129,7 +145,7 @@ async def store(
             # file is not worth rewriting.
             row.content = content
             await session.flush()
-            return {"seq": None, "path": row.path}
+            return {"seq": None, "content_version": None, "path": row.path}
     writer = actors[0] if actors else "system"
     saved = await room_files.save_room_file(
         session,

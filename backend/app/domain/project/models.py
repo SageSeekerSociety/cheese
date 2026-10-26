@@ -9,7 +9,7 @@ fully self-governing.
 import enum
 import secrets
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -621,8 +621,11 @@ class RoomFileCollab(UuidPk, Base):
     #: reason}``, as the service reported them. Rooms keep the shape documents
     #: do, so a decision here needs no second implementation.
     suggestions: Mapped[list] = mapped_column(JSON, default=list)
+    #: When this state was last stored. Assigned on every store rather than
+    #: left to the database: a store mutates the row in place, and a column
+    #: whose name says "last edited" must not keep reading its creation time.
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()")
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
 

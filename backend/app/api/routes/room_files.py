@@ -568,7 +568,11 @@ async def open_live_editor(
 
     Only text is served here: the office kinds go through OnlyOffice, whose
     edits land as whole-file saves, not as a shared live document. A file that
-    is not there, or is not text, is refused with a code the screen words.
+    is not there is a 404; the ones that cannot open live answer `enabled` false
+    with a `reason` the screen words
+    (`work.room.fileEditor.unavailable.<reason>`): `not_configured`,
+    `unsupported` (a binary), `too_large` (text over the preview's ceiling,
+    whose text is never read into a body).
     """
     place, actor = await _in_room(db, resolver, topic_id)
     clean = _room_path(path)
