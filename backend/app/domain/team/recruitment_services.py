@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.team import permissions as team_seats
 from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
 from app.domain.team.permissions import Permission as TeamPermission
@@ -58,7 +59,7 @@ class RecruitmentService:
         # asking people to join a team that takes nobody can only disappoint
         # them, and a group that takes people is a shared team.
         if team.personal_owner_user_id is not None:
-            raise BadRequestError("A personal team takes no recruits")
+            raise BadRequestError(say("personalTeamTakesNoRecruits"))
         return await self._repo.create(
             team_id=team_id,
             title=title,
@@ -120,7 +121,7 @@ class RecruitmentService:
         if status == RecruitmentStatus.OPEN.value:
             team = await self._team_repo.get_by_id(post.team_id)
             if team is not None and team.personal_owner_user_id is not None:
-                raise BadRequestError("A personal team takes no recruits")
+                raise BadRequestError(say("personalTeamTakesNoRecruits"))
         return await self._repo.update(
             post,
             title=title,

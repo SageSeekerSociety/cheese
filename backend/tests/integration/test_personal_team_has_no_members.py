@@ -270,7 +270,7 @@ def test_a_withdrawn_ad_cannot_be_opened_again(api_client, people, db_session, _
         headers=auth(people["owner"]),
     )
     assert resp.status_code == 400, resp.text
-    assert "personal team" in resp.json()["error"]["message"]
+    assert resp.json()["error"]["i18n"]["key"] == "personalTeamTakesNoRecruits"
 
     async def its_status() -> str:
         post = await db_session.get(TeamRecruitmentPost, post_id)
