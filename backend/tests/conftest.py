@@ -2983,6 +2983,47 @@ def seed_task_with_protocol(
     return holder["id"]
 
 
+def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
+    """Put ``user_id`` in the space ``task_id`` is published in: only a space's
+    members see and claim its problems (the creator, the space's admins and
+    those already taking part aside). Already a member is fine."""
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.domain.space.models import SpaceMember
+    from app.domain.task.models import Task
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            task = await session.get(Task, task_id)
+            assert task is not None
+            existing = await session.scalar(
+                select(SpaceMember.id).where(
+                    SpaceMember.space_id == task.space_id,
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.deleted_at.is_(None),
+                )
+            )
+            if existing is not None:
+                return
+            now = datetime.now(UTC)
+            session.add(
+                SpaceMember(
+                    space_id=task.space_id,
+                    user_id=user_id,
+                    invite_code_id=None,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_seed())
+
+
 def seed_user(client: TestClient, handle: str) -> str:
     """Get-or-create a real 知是 User for ``handle`` and return a session token
     whose ``sub`` is the int user id (so ActorResolver resolves ``user_id``).
