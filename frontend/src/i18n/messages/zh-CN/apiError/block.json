@@ -1,5 +1,6 @@
 {
   "askAlreadyAnswered": "这道题已经有人回答过了",
+  "askAlreadyClosed": "这道题已经收起了，不再等人回答",
   "askAlreadySkipped": "你已经跳过了这道题",
   "askAnswerNotInGroup": "这些题不属于同一组：{ids}",
   "askAnswerObject": "每道题的答案必须是对象，包含 options 和可选的 note",
@@ -14,6 +15,7 @@
   "askHeaderTooLong": "题签最多 {limit} 个字",
   "askNotAQuestion": "这条消息不是一道带选项的题",
   "askNothingToWithdraw": "你没有回答过这道题，没有可以撤回的答复",
+  "askWithdrawNotYours": "只有问出这道题的队友能撤回它",
   "askOptionObject": "每个选项必须是对象，包含 text 和可选的 explain 字段",
   "askOptionsTwoToThree": "每题需要 2-3 个对象选项",
   "askQuestionObject": "每题必须是对象",

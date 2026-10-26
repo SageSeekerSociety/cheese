@@ -39,7 +39,13 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
-from app.domain.block.asked import Awaited, may_answer, settled, skipped_by
+from app.domain.block.asked import (
+    Awaited,
+    answerable,
+    may_answer,
+    settled,
+    skipped_by,
+)
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
     QUESTION_ROWS,
@@ -214,9 +220,10 @@ class AwaitingQueries:
             if parent is None:
                 return []
             # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
-            # 经了结的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
-            # `_awaiting_an_answer` 一致（`block.asked.settled`）。
-            if settled(parent.meta) or not may_answer(parent.meta, reply.author):
+            # 经了结的题，否则第二个人再点一下就又记一条。判据是 `answerable`，不是
+            # `settled`：过期收起来的那道题仍答得上（题卡留着输入框），而撤回过、
+            # 有人答过、被所有人跳过的都答不上。
+            if not answerable(parent.meta) or not may_answer(parent.meta, reply.author):
                 return []
             return [parent]
         asked_filter = (
@@ -247,7 +254,7 @@ class AwaitingQueries:
                 )
             ).all()
             if may_answer(block.meta, reply.author)
-            and not settled(block.meta)
+            and answerable(block.meta)
             and reply.author not in skipped_by(block.meta)
         ]
         if not candidates:
@@ -276,13 +283,14 @@ class AwaitingQueries:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        # 了结了的不收（和 `_awaiting_an_answer` 的判据一致），他自己跳过的也不收：
-        # 跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
-        # `may_answer` 定，和点选项、跳过同一条。
+        # 答不上的不收（`answerable`，和点选项、跳过同一条）：已经有人答过、被所有人
+        # 跳过、或者被提问的那位撤回的；过期的除外，那道题还收回答。他自己跳过的也
+        # 不收：跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
+        # `may_answer` 定。
         return [
             block
             for block in (await self._session.scalars(stmt)).all()
             if may_answer(block.meta, reply.author)
-            and not settled(block.meta)
+            and answerable(block.meta)
             and reply.author not in skipped_by(block.meta)
         ]

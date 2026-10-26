@@ -843,6 +843,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (`app.periodic_jobs.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.
     queued_message_sweep_interval_s: int = 10
+    # How often the clock takes back questions nobody answered: one indexed read
+    # of the open questions near their deadline per run (`app.periodic_jobs`).
+    # The deadline itself is 72 hours, so the minute a sweep lands on is not
+    # something a reader notices.
+    question_expiry_sweep_interval_s: int = 300
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit
