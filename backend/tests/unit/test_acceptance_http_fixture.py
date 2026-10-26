@@ -3,8 +3,13 @@
 import hashlib
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
+import uuid
 from http.client import HTTPConnection, RemoteDisconnected
 from pathlib import Path
 
@@ -182,7 +187,7 @@ def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
                     content,
                     {
                         "Content-Type": "application/x-git-bundle",
-                        "X-Cheese-Token": "room-fixture-token",
+                        "X-Cheese-Token": "room-handed-token",
                         "X-Content-SHA256": digest,
                         "X-Cheese-Head": snapshot_sha,
                     },
@@ -206,3 +211,94 @@ def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Unix platform socket")
+def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
+    tmp_path, monkeypatch
+):
+    monkeypatch.syspath_prepend(str(ROOT / "scripts/remote_execution"))
+    model = load("model_fixture")
+    room_module = load("room_fixture")
+    room = object.__new__(room_module.RoomExecutor)
+    room.project = str(uuid.uuid4())
+    room.task = str(uuid.uuid4())
+    resource = str(uuid.uuid4())
+    room.target = {"resource_id": resource}
+    room.owner = tmp_path
+    room.snapshots = {}
+    origin = tmp_path / "task-origin"
+    origin.mkdir()
+    (origin / "README.md").write_text("seed\n")
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["add", "."],
+        [
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        ["branch", f"task/{room.task}"],
+    ):
+        subprocess.run(["git", "-C", str(origin), *args], check=True)
+    room.remote = str(origin)
+    socket_dir = Path(tempfile.mkdtemp(dir="/tmp", prefix="cheese-room-sock-"))
+    socket_path = socket_dir / "platform.sock"
+    handler = room.handler(model.Handler)
+    server = model.Server(("127.0.0.1", 0), handler)
+    server.state = {"dir": tmp_path}
+    socket_server = room_module.PlatformSocket(socket_path, handler, tmp_path)
+    threads = [
+        threading.Thread(target=server.serve_forever),
+        threading.Thread(target=socket_server.serve_forever),
+    ]
+    for thread in threads:
+        thread.start()
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
+        "CHEESE_TOKEN": "",
+        "CHEESE_PLATFORM_SOCKET": str(socket_path),
+        "CHEESE_PROJECT": room.project,
+        "CHEESE_TOPIC": resource,
+        "GIT_AUTHOR_NAME": "fixture",
+        "GIT_AUTHOR_EMAIL": "fixture@example.test",
+        "GIT_COMMITTER_NAME": "fixture",
+        "GIT_COMMITTER_EMAIL": "fixture@example.test",
+    }
+    cli = str(ROOT / "backend/sandbox/cheese")
+    try:
+        worktree = Path(
+            subprocess.check_output(
+                [sys.executable, cli, "worktree", room.task],
+                env=env,
+                text=True,
+                timeout=30,
+            ).strip()
+        )
+        (worktree / "draft.md").write_text("Recovered task work\n")
+        for _ in range(2):
+            subprocess.run(
+                [sys.executable, cli, "sync", "--all"],
+                env=env,
+                check=True,
+                timeout=30,
+            )
+        assert len(room.snapshots) == 1
+        server.assert_healthy()
+        socket_server.assert_healthy()
+    finally:
+        socket_server.shutdown()
+        socket_server.server_close()
+        server.shutdown()
+        server.server_close()
+        for thread in threads:
+            thread.join()
+        shutil.rmtree(socket_dir, ignore_errors=True)
