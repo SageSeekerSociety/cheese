@@ -42,6 +42,12 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
         },
         headers=_headers(creator),
     ).json()["data"]["space"]
+    joined = api_client.post(
+        f"/spaces/{space['id']}/members",
+        json={"userId": student.user_id},
+        headers=_headers(creator),
+    )
+    assert joined.status_code == 201, joined.text
     return {"creator": creator, "student": student, "space": space}
 
 

@@ -207,6 +207,9 @@ def test_the_screen_shows_the_composed_guidance_the_turn_will_read(client: TestC
         resource_pack={"compute_credits": 500},
     )
     token = seed_user(client, "inheritance-viewer")
+    _join_board(
+        client, space_id=_space_id_of(client, task_id), handle="inheritance-viewer"
+    )
 
     data = _get(client, task_id=task_id, token=token)
     expected = _resolve_from_db(client, task_id)
@@ -234,6 +237,11 @@ def test_dropping_the_task_layer_changes_what_the_screen_shows(client: TestClien
         override={"teaching": TASK_WEEK},
     )
     token = seed_user(client, "inheritance-mutation-task")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-mutation-task",
+    )
 
     before = _get(client, task_id=task_id, token=token)
     assert before["teaching"]["mode"] == "spec"
@@ -256,6 +264,11 @@ def test_dropping_the_space_layer_changes_what_the_screen_shows(client: TestClie
     """
     task_id = seed_task_with_protocol(client, space_teaching=SPACE_WEEK)
     token = seed_user(client, "inheritance-mutation-space")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-mutation-space",
+    )
     space_id = _space_id_of(client, task_id)
 
     before = _get(client, task_id=task_id, token=token)
@@ -292,18 +305,18 @@ def test_the_screen_lists_the_members_tier_materials_and_hides_the_admins_tier(
     assert all("url" not in m for m in data["materials"])
 
 
-def test_a_viewer_outside_the_board_gets_no_materials_not_an_error(client: TestClient):
-    """一道没开可见范围的题谁都看得见；看不见那块板的人只是拿到空清单。"""
+def test_a_viewer_outside_the_board_reads_nothing(client: TestClient):
+    """题目只给它那块板里的人：板外的人读这道题的继承清单，和读题目详情一样 404
+    —— 指导、资料一样都不交出去。"""
     task_id = seed_task_with_protocol(client, space_teaching=SPACE_WEEK)
     space_id = _space_id_of(client, task_id)
     _add_material(client, space_id=space_id, name="公开讲义.pdf", visibility="members")
     token = seed_user(client, "inheritance-outsider")
 
-    data = _get(client, task_id=task_id, token=token)
+    resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
 
-    assert data["materials"] == []
-    # 指导那一半照样在：资料拿不到不是「这道题对你不可见」。
-    assert data["teaching"]["source"] == "space"
+    assert resp.status_code == 404, resp.text
+    assert "公开讲义.pdf" not in resp.text
 
 
 def test_an_unapproved_task_is_forbidden_and_hands_over_nothing(client: TestClient):
@@ -356,6 +369,11 @@ def test_the_screen_shows_the_default_teammate_and_the_skills_it_brings(
     """
     task_id = seed_task_with_protocol(client, default_role="academic-research")
     token = seed_user(client, "inheritance-agent-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-agent-viewer",
+    )
 
     data = _get(client, task_id=task_id, token=token)
 
@@ -373,6 +391,11 @@ def test_a_role_that_names_no_shipped_preset_is_not_dressed_up_as_one(
     """
     task_id = seed_task_with_protocol(client, default_role="no-such-role")
     token = seed_user(client, "inheritance-agent-unknown")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-agent-unknown",
+    )
 
     data = _get(client, task_id=task_id, token=token)
 
@@ -451,6 +474,11 @@ def test_the_screen_shows_the_skills_every_teammate_will_carry(client: TestClien
         override={"teaching": {"skills": ["documents", "figma"]}},
     )
     token = seed_user(client, "inheritance-skills-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-skills-viewer",
+    )
 
     data = _get(client, task_id=task_id, token=token)
 
@@ -467,6 +495,11 @@ def test_the_screen_shows_the_pack_prompt_the_default_teammate_gets(
         client, resource_pack={"prompt": "先写测试再写实现"}
     )
     token = seed_user(client, "inheritance-pack-prompt-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-pack-prompt-viewer",
+    )
 
     data = _get(client, task_id=task_id, token=token)
 
@@ -481,6 +514,11 @@ def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
         override={"teaching": {"private_prompt": "参考答案是 42"}},
     )
     token = seed_user(client, "inheritance-plain-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-plain-viewer",
+    )
 
     data = _get(client, task_id=task_id, token=token)
 
