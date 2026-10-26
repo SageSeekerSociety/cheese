@@ -67,6 +67,8 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import push_grants_on_connect
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -268,7 +270,9 @@ async def device_connect(
     team_id = body.team_id
     if team_id is None:
         team_id = (await team_service(db).ensure_personal_team(actor.user_id)).id
-    if not await team_service(db).is_team_at_least_admin(team_id, actor.user_id):
+    if not await team_seats.may(
+        db, team_id, actor.user_id, TeamPermission.manage_machines
+    ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
 
     # Approve binds the device to its owner + mints the durable token. The device is

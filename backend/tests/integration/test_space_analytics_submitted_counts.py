@@ -24,6 +24,7 @@ from app.domain.task.models import TaskMembership
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -96,6 +97,12 @@ def _join_and_approve(
     *,
     task_id: int,
 ) -> int:
+    join_task_space(
+        api_client,
+        task_id,
+        _auth(participant_token),
+        admin_headers=_auth(creator_token),
+    )
     joined = api_client.post(
         f"/tasks/{task_id}/participations/user",
         json={},

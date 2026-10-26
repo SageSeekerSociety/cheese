@@ -26,6 +26,11 @@ vi.mock('../../api', async (importOriginal) => {
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
+// 图片这一档也要画评论标记（`drawsMarks`），所以线程列表在栏关着时就会被读——这一条
+// 是那一档的性质，不是这几条用例要看的事，桩掉即可（真走一遍在 `PanelPreview.fileMarks.spec.ts`）。
+const threadsApi = vi.hoisted(() => ({ listFileThreads: vi.fn(), postFileThread: vi.fn() }))
+vi.mock('../../api/fileThreads', () => threadsApi)
+threadsApi.listFileThreads.mockResolvedValue({ data: [], total: 0 })
 
 const bytes = new Uint8Array([1, 2, 3, 4]).buffer
 const version = createHash('sha256').update(new Uint8Array(bytes)).digest('hex').slice(0, 16)
@@ -303,4 +308,49 @@ it('gives the wheel to zoom when the image is the whole screen', async () => {
   const event = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
   pane.dispatchEvent(event)
   expect(event.defaultPrevented).toBe(true)
+})
+
+it('draws a mark on the image for a region comment, and opening the panel follows a click', async () => {
+  // 评论栏关着也画得出来：线程列表是 `drawsMarks` 让读的。点一下就把那一串打开。
+  threadsApi.listFileThreads.mockResolvedValue({
+    data: [
+      {
+        comment: {
+          id: 'c1',
+          author: 'li',
+          content: '这块不对',
+          anchor_quote: null,
+          anchor: {
+            kind: 'image-region',
+            path: 'design.png',
+            source: 'committed',
+            version,
+            task_id: null,
+            x: 200,
+            y: 200,
+            width: 100,
+            height: 100,
+            natural_width: 1000,
+            natural_height: 500,
+          },
+          created_at: '',
+        },
+        revision: 1,
+        state: 'open',
+        replies: [],
+      },
+    ],
+    total: 1,
+  })
+  const ui = mount()
+  await paint(ui)
+  const dot = await waitFor(() => {
+    const found = ui.container.querySelector<HTMLElement>('.design-image__mark')
+    expect(found).toBeTruthy()
+    return found!
+  })
+  expect(dot.dataset.commentMark).toBe('c1')
+  // 原图 (200,200) × 0.5 = 屏上 (100,100)。
+  expect(dot.style.left).toBe('100px')
+  expect(dot.style.top).toBe('100px')
 })

@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -80,6 +81,9 @@ def claim(user_client: UserCreator, api_client: TestClient) -> dict:
     )
     assert resp.status_code == 200, resp.text
 
+    join_task_space(
+        api_client, task_id, participant.user_id, admin_headers=_auth(creator_token)
+    )
     resp = api_client.post(
         f"/tasks/{task_id}/participations/user",
         json={},

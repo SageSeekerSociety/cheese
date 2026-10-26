@@ -1483,14 +1483,14 @@ async def ensure_task_readable(
 
     1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
        对其他人还不该存在 —— 403；
-    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
-       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
+    2. **看不见**（``TaskVisibilityService.can_view_task``）：这个人不在这块板里，
+       或题目自己设了可见范围而他不在里面 —— 404，与「这道题不存在」同一句话；
     3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
        404。
 
     为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
-    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
-    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
+    路由，它只走了第 2 道 —— 而第 2 道不管审核与上限，于是 403 / 404 的题照旧
+    把材料清单交出去。
     「题看不见，清单也看不见」是同一件事，只该有一处判断。
     """
     if task.approved == 2 and task.ended_at is None:  # NONE = 未审批

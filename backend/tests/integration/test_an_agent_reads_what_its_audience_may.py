@@ -297,7 +297,7 @@ def _off_the_team(client, project: str, handle: str) -> None:
             p = await db.get(Project, uuid.UUID(project))
             person = await UserRepository(db).get_by_handle(handle)
             await TeamService(TeamRepository(db)).remove_team_member(
-                team_id=p.team_id, target_user_id=person.id, actor_user_id=person.id
+                team_id=p.team_id, target_user_id=person.id
             )
             await db.commit()
 

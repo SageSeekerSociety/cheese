@@ -87,6 +87,13 @@ class TestBug3TeamEligibilityByDesign:
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
+        joined = api_client.post(
+            f"/spaces/{space['id']}/members",
+            json={"userId": member.user_id},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert joined.status_code == 201, joined.text
+
         return {
             "owner": owner,
             "member": member,

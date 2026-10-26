@@ -10,14 +10,14 @@ from app.api.admin_deps import PlatformAdminDep
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
-from app.api.write_access import ROUTE_DECIDES
-from app.auth.checker import require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
+from app.api.write_access import ROUTE_DECIDES, needs
+from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.model_catalog import model_choices
 from app.domain.authz import policy
 from app.domain.identity.services import IdentityService
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.usage import referrals
 from app.domain.usage.incentives import CreditIncentives
 from app.domain.usage.plans import PlanService
@@ -33,12 +33,8 @@ from app.domain.user.services import usernames_by_ids
 
 router = APIRouter(tags=["credits"])
 TeamId = Annotated[int, Path(ge=1, alias="teamId")]
-TeamReader = Annotated[
-    AuthUserInfo, require_permission(Action.READ, Resource.TEAM_MEMBERSHIP, "teamId")
-]
-TeamManager = Annotated[
-    AuthUserInfo, require_permission(Action.UPDATE, Resource.TEAM, "teamId")
-]
+TeamReader = Annotated[AuthUserInfo, needs(TeamPermission.view_members, on="teamId")]
+TeamManager = Annotated[AuthUserInfo, needs(TeamPermission.edit_settings, on="teamId")]
 
 
 class CreditRequestIn(BaseModel):
@@ -113,7 +109,7 @@ async def credit_requests(team_id: TeamId, db: DbSession, user: TeamReader) -> d
 
 @router.post(
     "/teams/{teamId}/credits/requests",
-    dependencies=[ROUTE_DECIDES, Depends(require_human)],
+    dependencies=[Depends(require_human)],
     **typed_response(CreditRequestOut),
 )
 async def request_credits(

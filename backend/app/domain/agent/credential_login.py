@@ -18,6 +18,8 @@ from app.domain.device.models import (
     DeviceRow,
     ModelCredentialHost,
 )
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 from app.domain.user.tokens import digest_token
 
@@ -56,8 +58,8 @@ async def register(db, ticket: str, transport_token: str, computer_name: str):
         )
     except jwt.PyJWTError:
         raise UnauthorizedError(say("modelLoginAuthorizationInvalid")) from None
-    if not await team_service(db).is_team_at_least_admin(
-        claims["team"], claims["user"]
+    if not await team_seats.may(
+        db, claims["team"], claims["user"], TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
     if await db.get(DeviceClaudeLoginRow, claims["id"]) is not None:

@@ -1342,7 +1342,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             changed
         ).decode()
         before = source.read_bytes()
-        payload["env"]["CHEESE_TOKEN"] = "refreshed-while-busy"
+        payload["env"]["CHEESE_AUTHOR"] = "refreshed-while-busy"
         try:
             bootstrap.configure(payload)
         except RuntimeError as error:
@@ -1354,13 +1354,13 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         deferred = json.loads(capsys.readouterr().out)
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
-        assert (home / ".cheese/cheese-preview.token").read_text() == (
-            "refreshed-while-busy"
-        )
-        assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
-            == "refreshed-while-busy"
-        )
+        # The room holds no credential; the preview helper asks its socket.
+        assert (home / ".cheese/cheese-preview.token").read_text() == ""
+        stored = json.loads((state / "config.json").read_text())["env"]
+        assert stored["CHEESE_AUTHOR"] == "refreshed-while-busy"
+        # A deferred upgrade merges the new install into the running one; the
+        # credential it was handed does not come back with it.
+        assert stored["CHEESE_TOKEN"] == ""
         assert source.read_bytes() == before
         assert ready()["pid"] == original["pid"]
         (home / "room/release").touch()
@@ -1487,13 +1487,13 @@ def test_running_executor_prepares_updated_room_without_restart(
         )
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
-        payload["env"]["CHEESE_TOKEN"] = "refreshed"
+        payload["env"]["CHEESE_AUTHOR"] = "refreshed"
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
         assert ready["workspace"] == str(home / "room")
-        assert (home / ".cheese/cheese-preview.token").read_text() == "refreshed"
+        assert (home / ".cheese/cheese-preview.token").read_text() == ""
         assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_AUTHOR"]
             == "refreshed"
         )
         for iteration in range(2):

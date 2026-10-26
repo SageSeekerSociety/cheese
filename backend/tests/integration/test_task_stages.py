@@ -16,7 +16,11 @@ from app.domain.space.models import SpaceAdminRelation
 from app.domain.task import package
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import Task, TaskMembership
-from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.conftest import (
+    UserCreator,
+    create_approved_space,
+    unique_int,
+)
 from tests.integration.test_task_drafts import _as_cheese
 
 DAY_MS = 24 * 3600 * 1000
@@ -72,6 +76,12 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
         },
         headers=_headers(teacher),
     ).json()["data"]["space"]
+    joined = api_client.post(
+        f"/spaces/{space['id']}/members",
+        json={"userId": student.user_id},
+        headers=_headers(teacher),
+    )
+    assert joined.status_code == 201, joined.text
     return {"teacher": teacher, "student": student, "space": space}
 
 

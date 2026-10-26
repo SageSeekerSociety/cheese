@@ -19,14 +19,16 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
-from app.auth.checker import require_auth_user, require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
+from app.api.write_access import needs
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.agent.model_catalog import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 from app.domain.usage.report import LINES, TEAM_LINES, UsageReport
 
@@ -99,10 +101,8 @@ async def my_credit_usage(
 @router.get("/teams/{teamId}/credits/usage")
 async def team_credit_usage(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    auth_user: Annotated[AuthUserInfo, needs(TeamPermission.view_members, on="teamId")],
     db: AsyncSession = Depends(get_db),
-    auth_user: AuthUserInfo = require_permission(
-        Action.READ, Resource.TEAM_MEMBERSHIP, "teamId"
-    ),
 ) -> dict:
     _ = auth_user
     team = await team_service(db).get_team(team_id)

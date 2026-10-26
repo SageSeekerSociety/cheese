@@ -9,7 +9,8 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent import credential_login
-from app.domain.team.services import team_service
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -38,8 +39,8 @@ async def start_login(
     team_id: int, resolver: ActorResolverDep, db: DbSession
 ) -> StartLoginOut:
     actor = await resolver.resolve()
-    if actor.user_id is None or not await team_service(db).is_team_at_least_admin(
-        team_id, actor.user_id
+    if actor.user_id is None or not await team_seats.may(
+        db, team_id, actor.user_id, TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
     return StartLoginOut(**await credential_login.start(db, team_id, actor.user_id))

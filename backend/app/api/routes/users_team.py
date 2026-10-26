@@ -109,7 +109,6 @@ async def leave_team(
     await team_service.remove_team_member(
         team_id=team_id,
         target_user_id=auth_user.user_id,
-        actor_user_id=auth_user.user_id,
     )
 
 
