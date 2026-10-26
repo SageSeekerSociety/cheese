@@ -549,8 +549,13 @@ export function useChatScroll(
       return
     }
     ownScrollAwaitingLayout = false
-    // 跳到一半切走了话题：这一跳不算数，别把新话题按旧落点写掉。
-    if (ownScrollTopic !== undefined && currentTopicId() !== ownScrollTopic) return
+    // 跳到一半切走了话题：这一跳不算数，别把新话题按旧落点写掉。按此刻的位置把
+    // 「在不在底部」判回来——不然它停在 `beginOwnScroll` 设的 false 上，要等下一次
+    // 滚动事件才有人改。
+    if (ownScrollTopic !== undefined && currentTopicId() !== ownScrollTopic) {
+      cancelOwnScroll()
+      return
+    }
     lastTop = el.scrollTop
     lastHeight = el.scrollHeight
     atBottom.value = isAtBottom(el)
@@ -567,6 +572,9 @@ export function useChatScroll(
   function beginOwnScroll() {
     // 读的人点名要去某一条，回填中的目标就作废了。
     settlePending()
+    // 上一次跳完时这一栏没有布局、还等着落账：这一跳取代它，别让观察者按旧的那一跳
+    // 把新的这一跳在半路上结掉。
+    ownScrollAwaitingLayout = false
     // 这一阵不跟新消息：落到哪一条由停下来的那一刻说了算（`settleOwnScroll`）。
     atBottom.value = false
     ownScrollTopic = currentTopicId()
