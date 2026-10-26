@@ -91,7 +91,7 @@ covers:
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
 | `cheese_inbox(action=respond)` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
-| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces/<id>/people` 是他的团队和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
+| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces`、`spaces/<id>/people` 是他的团队、空间和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
