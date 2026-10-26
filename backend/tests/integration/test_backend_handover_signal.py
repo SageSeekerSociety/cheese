@@ -18,11 +18,12 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
+from app.core.job_runs import JobRun
 from app.core.ownership import OWNER_LOCK, Ownership
 from app.core.ws_handover import EndBusinessSocketsAtHandover
 from app.domain import backend_log
@@ -136,6 +137,24 @@ async def _owner_lock_holders() -> int:
                 ),
                 {"key": OWNER_LOCK},
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+async def _a_job_clock_nobody_else_wrote():
+    """Each test here is a process taking the work over, and its jobs read the
+    clock (`periodic_job_runs`) the last holder left. In this worker's database
+    that is every `client` test's lifespan, which runs the real jobs: once the
+    shard is 300 s old, one of them takes the overdue orphan sweep's tick and
+    its lease stands 300 s, refusing every other claim on that job. A test that
+    needs its 0.01 s "orphan sweep" or "cloud host pool sweep" to run would wait
+    out a lease from a process it never met, so each starts from a clock nobody
+    has written, as the client database starts from empty tables."""
+    engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(delete(JobRun))
     finally:
         await engine.dispose()
 
