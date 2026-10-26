@@ -9,7 +9,7 @@ import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFr
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
@@ -93,6 +93,21 @@ const step = computed(() => {
   if (now.stage === 'shown') return now.loading
   return now.stage === 'waiting' ? now.step : null
 })
+
+const showSource = ref(false)
+const canShowSource = computed(
+  () =>
+    !props.previewAppNote &&
+    !props.displayedFrame?.live &&
+    props.previewFile?.content !== null &&
+    !!props.previewFile?.content
+)
+watch(
+  () => props.previewFile?.path,
+  () => {
+    showSource.value = false
+  }
+)
 </script>
 
 <template>
@@ -131,7 +146,17 @@ const step = computed(() => {
           @click="emit('download')"
         />
       </template>
-      <PreviewPickToggle v-if="pickTarget" :on="pickOn" @toggle="emit('toggle-pick')" />
+      <BaseButton
+        v-if="canShowSource"
+        kind="ghost"
+        size="sm"
+        :prepend-icon="showSource ? 'mdi-web' : 'mdi-code-tags'"
+        data-testid="toggle-frame-source"
+        @click="showSource = !showSource"
+      >
+        {{ t(showSource ? 'work.room.preview.webView' : 'work.room.preview.showSource') }}
+      </BaseButton>
+      <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
     <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
       <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
@@ -182,7 +207,10 @@ const step = computed(() => {
       t('work.room.preview.refresh')
     }}</BaseButton>
     <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
-    <div class="preview-frames">
+    <pre v-if="showSource && canShowSource" class="preview-source" data-testid="frame-source">{{
+      previewFile?.content ?? ''
+    }}</pre>
+    <div v-show="!(showSource && canShowSource)" class="preview-frames">
       <template v-if="frames">
         <iframe
           v-for="frame in frames"
@@ -259,5 +287,18 @@ const step = computed(() => {
 .preview-frame--incoming {
   opacity: 0;
   pointer-events: none;
+}
+.preview-source {
+  flex: 1 1 auto;
+  min-height: var(--preview-min);
+  margin: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>
