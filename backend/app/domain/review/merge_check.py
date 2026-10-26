@@ -42,26 +42,40 @@ Answer = Literal["clean", "conflict"]
 #: A fetch or merge that runs longer than this is killed and leaves no answer.
 FETCH_TIMEOUT_S = 120
 MERGE_TIMEOUT_S = 60
-#: All caches together stay under this; the ones checked least recently go first.
+#: Everything under `_root()` stays under this, checked before every fetch and
+#: after every check whatever its outcome: the caches checked least recently
+#: go first, and a repository whose cache alone is larger is checked and then
+#: not kept.
 CACHE_LIMIT_BYTES = 2 * 1024**3
+
+#: Where a cache is put together before it is renamed into place, so a cache
+#: on disk is either complete or absent (one left behind by a process that
+#: died is removed by the next check of that repository, or by eviction).
+_BUILDING = ".building"
 
 
 def _root() -> Path:
     return Path(settings.workspace_root) / ".merge-checks"
 
 
+def _key(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()[:32]
+
+
 def _cache(url: str) -> Path:
-    return _root() / hashlib.sha256(url.encode()).hexdigest()[:32]
+    return _root() / _key(url)
 
 
-def _answer_file(cache: Path, base: str, head: str) -> Path:
-    return cache / "answers" / f"{base}..{head}"
+def _answer_file(url: str, base: str, head: str) -> Path:
+    """Answers live beside the caches, not in them: a cache that is evicted, or
+    one too large to keep, takes no answer with it."""
+    return _root() / "answers" / _key(url) / f"{base}..{head}"
 
 
 def answer(url: str, base: str, head: str) -> Answer | None:
     """The test merge's answer for this pair, or None while there is none."""
     try:
-        text = _answer_file(_cache(url), base, head).read_text().strip()
+        text = _answer_file(url, base, head).read_text().strip()
     except OSError:
         return None
     return "clean" if text == "clean" else "conflict" if text == "conflict" else None
@@ -131,11 +145,16 @@ def _git(
 
 
 def _prepare(cache: Path, url: str, env: dict[str, str]) -> bool:
-    """A bare repository that fetches from ``url`` without file contents and
-    fetches a missing blob from it on demand."""
-    if (cache / "HEAD").exists():
+    """A bare repository at ``cache`` that fetches from ``url`` without file
+    contents and fetches a missing blob from it on demand.
+
+    Built under another name and renamed into place only once complete, so a
+    process that dies halfway leaves no cache that looks ready."""
+    if cache.is_dir():
         return True
-    cache.mkdir(parents=True, exist_ok=True)
+    building = cache.with_name(cache.name + _BUILDING)
+    shutil.rmtree(building, ignore_errors=True)
+    building.mkdir(parents=True)
     steps = [
         ["init", "-q", "--bare"],
         ["config", "core.repositoryformatversion", "1"],
@@ -145,9 +164,10 @@ def _prepare(cache: Path, url: str, env: dict[str, str]) -> bool:
         ["config", "remote.origin.partialclonefilter", "blob:none"],
     ]
     for step in steps:
-        if _git(cache, step, env, FETCH_TIMEOUT_S) != 0:
-            shutil.rmtree(cache, ignore_errors=True)
+        if _git(building, step, env, FETCH_TIMEOUT_S) != 0:
+            shutil.rmtree(building, ignore_errors=True)
             return False
+    building.rename(cache)
     return True
 
 
@@ -158,40 +178,50 @@ def decide(url: str, token: str, base: str, head: str) -> Answer | None:
     right now (it will write one), or the fetch or the merge failed or ran out
     of time (the next reading starts another)."""
     cache = _cache(url)
-    cache.parent.mkdir(parents=True, exist_ok=True)
+    _root().mkdir(parents=True, exist_ok=True)
     with _locked(cache) as held:
         if not held:
             return None
         found = answer(url, base, head)
         if found is not None:
             return found
-        env = _env(token)
-        if not _prepare(cache, url, env):
-            return None
-        fetched = _git(
-            cache,
-            ["fetch", "-q", "--filter=blob:none", "origin", base, head],
-            env,
-            FETCH_TIMEOUT_S,
-        )
-        if fetched != 0:
-            return None
-        merged = _git(
-            cache,
-            ["merge-tree", "--write-tree", "--quiet", base, head],
-            env,
-            MERGE_TIMEOUT_S,
-        )
-        if merged not in (0, 1):
-            return None
-        result: Answer = "clean" if merged == 0 else "conflict"
-        target = _answer_file(cache, base, head)
-        target.parent.mkdir(exist_ok=True)
-        partial = target.with_suffix(".partial")
-        partial.write_text(result)
-        partial.replace(target)
-        os.utime(cache)
-    _evict(keep=cache)
+        _evict(holding=cache)
+        try:
+            return _test_merge(cache, url, token, base, head)
+        finally:
+            if cache.is_dir():
+                os.utime(cache)
+            _evict(holding=cache)
+
+
+def _test_merge(
+    cache: Path, url: str, token: str, base: str, head: str
+) -> Answer | None:
+    env = _env(token)
+    if not _prepare(cache, url, env):
+        return None
+    fetched = _git(
+        cache,
+        ["fetch", "-q", "--filter=blob:none", "origin", base, head],
+        env,
+        FETCH_TIMEOUT_S,
+    )
+    if fetched != 0:
+        return None
+    merged = _git(
+        cache,
+        ["merge-tree", "--write-tree", "--quiet", base, head],
+        env,
+        MERGE_TIMEOUT_S,
+    )
+    if merged not in (0, 1):
+        return None
+    result: Answer = "clean" if merged == 0 else "conflict"
+    target = _answer_file(url, base, head)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    partial = target.with_suffix(".partial")
+    partial.write_text(result)
+    partial.replace(target)
     return result
 
 
@@ -204,19 +234,48 @@ def _size(path: Path) -> int:
     return total
 
 
-def _evict(*, keep: Path) -> None:
-    """Remove the caches checked least recently until all of them fit in
-    `CACHE_LIMIT_BYTES`; a cache a check holds right now stays."""
-    caches = [p for p in _root().iterdir() if p.is_dir()]
-    sizes = {p: _size(p) for p in caches}
-    total = sum(sizes.values())
-    for cache in sorted(caches, key=lambda p: p.stat().st_mtime):
+def _evict(*, holding: Path) -> None:
+    """Bring everything under `_root()` back under `CACHE_LIMIT_BYTES`.
+
+    Counted: every cache, complete or left half-built, and the answers. Removed
+    first: half-built caches, then the caches checked least recently. The
+    cache of the check that calls this (``holding``, whose lock it holds) goes
+    last, and goes too when it alone is over the limit: that repository was
+    checked in a cache that is not kept, which the log says. A cache another
+    check holds right now is left to that check, which evicts when it ends."""
+    root = _root()
+    entries = [p for p in root.iterdir() if p.is_dir() and p.name != "answers"]
+    sizes = {p: _size(p) for p in entries}
+    total = sum(sizes.values()) + _size(root / "answers")
+    if total <= CACHE_LIMIT_BYTES:
+        return
+
+    def order(path: Path) -> tuple[int, float]:
+        own = path in (holding, holding.with_name(holding.name + _BUILDING))
+        return (
+            2 if own else 0 if path.name.endswith(_BUILDING) else 1,
+            path.stat().st_mtime,
+        )
+
+    for entry in sorted(entries, key=order):
         if total <= CACHE_LIMIT_BYTES:
             return
-        if cache == keep:
+        mine = entry in (holding, holding.with_name(holding.name + _BUILDING))
+        if mine:
+            shutil.rmtree(entry, ignore_errors=True)
+            total -= sizes[entry]
+            if entry == holding:
+                logger.warning(
+                    "merge check: cache of %s is %d bytes, over the %d-byte "
+                    "limit; checked without keeping it",
+                    entry.name,
+                    sizes[entry],
+                    CACHE_LIMIT_BYTES,
+                )
             continue
-        with _locked(cache) as held:
+        name = entry.name.removesuffix(_BUILDING)
+        with _locked(root / name) as held:
             if not held:
                 continue
-            shutil.rmtree(cache, ignore_errors=True)
-            total -= sizes[cache]
+            shutil.rmtree(entry, ignore_errors=True)
+            total -= sizes[entry]

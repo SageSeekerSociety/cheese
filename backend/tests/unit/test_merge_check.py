@@ -87,3 +87,51 @@ async def test_forgejo_refusing_is_settled_by_the_test_merge(
     await _settled()
     later = await client.pull_request_status(**args)
     assert (later.mergeable, later.mergeable_state) == settled
+
+
+def _bytes_on_disk(path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+class _Killed(BaseException):
+    """The process running the check dies here."""
+
+
+def test_a_check_cut_short_while_setting_up_does_not_strand_the_repository(
+    tmp_path, monkeypatch
+):
+    pr = proposal(tmp_path / "repo", conflicting=False)
+    real = merge_check._git
+
+    def dies_while_configuring(cache, args, env, timeout):
+        if args[0] == "config":
+            raise _Killed
+        return real(cache, args, env, timeout)
+
+    monkeypatch.setattr(merge_check, "_git", dies_while_configuring)
+    with pytest.raises(_Killed):
+        merge_check.decide(pr.url, "token", pr.base, pr.head)
+    monkeypatch.setattr(merge_check, "_git", real)
+
+    assert merge_check.decide(pr.url, "token", pr.base, pr.head) == "clean"
+
+
+def test_a_repository_larger_than_the_cap_is_checked_but_not_kept(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", 4096)
+    pr = proposal(tmp_path / "repo", conflicting=False)
+
+    assert merge_check.decide(pr.url, "token", pr.base, pr.head) == "clean"
+    assert merge_check.answer(pr.url, pr.base, pr.head) == "clean"
+    assert _bytes_on_disk(tmp_path / "workspace") <= 4096
+
+
+def test_a_check_that_fails_still_keeps_the_caches_under_the_cap(tmp_path, monkeypatch):
+    earlier = proposal(tmp_path / "earlier", conflicting=False)
+    assert merge_check.decide(earlier.url, "t", earlier.base, earlier.head) == "clean"
+    monkeypatch.setattr(merge_check, "CACHE_LIMIT_BYTES", 4096)
+
+    missing = (tmp_path / "nowhere.git").as_uri()
+    assert merge_check.decide(missing, "t", "a" * 40, "b" * 40) is None
+    assert _bytes_on_disk(tmp_path / "workspace") <= 4096
