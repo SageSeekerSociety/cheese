@@ -775,7 +775,9 @@ def test_the_install_writes_the_preview_token_into_the_room_not_through_a_link(
     state = Path(json.loads(capsys.readouterr().out)["state"])
     try:
         assert not (outside / "authorized_keys").exists()
-        assert not token.is_symlink() and token.read_text() == "test"
+        # Written in place, and empty: a room with its platform socket holds no
+        # credential (the preview helper asks the socket per connection).
+        assert not token.is_symlink() and token.read_text() == ""
     finally:
         stopped = subprocess.run(
             [sys.executable, str(runtime.__file__), "stop", "--state", str(state)],
