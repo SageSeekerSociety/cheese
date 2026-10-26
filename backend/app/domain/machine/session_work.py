@@ -174,6 +174,13 @@ async def _session_author(db, project, handle: str) -> str:
     return await AgentInstanceService(db).ensure_identity(teammate)
 
 
+async def session_author(db, project, handle: str) -> str:
+    """``_session_author``, for the caller of a sandbox's platform-socket
+    request (`domain.machine.caller`): what the session's launch credential
+    names, and so what the request acts as."""
+    return await _session_author(db, project, handle)
+
+
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
     """Tell a device's owner that an agent session started working on it,
     and whether it runs there over the whole machine (``whole``: a
