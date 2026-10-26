@@ -9,6 +9,8 @@ import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFr
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
+import { computed } from 'vue'
+
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
 import PreviewRegionPick from './PreviewRegionPick.vue'
@@ -16,6 +18,7 @@ import PreviewRegionPick from './PreviewRegionPick.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
+import { previewStage } from '@/lib/previewStage'
 
 const props = defineProps<{
   topicId: string | null
@@ -64,6 +67,32 @@ const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popup
 function sandboxFor(mime?: string | null): string {
   return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
 }
+
+// 导航走到哪一步、屏幕上有没有一帧可看，交给 `lib/previewStage` 一处判（它和文档那一档
+// 共用这一套名词）。这一档的两句文案照旧分「正在获取授权」和「正在加载新页面」——它们对应
+// 状态机里的 `auth` 和 `navigate`。
+//
+// 这一档和文档那一档的差别也在这里：换一页时上一帧留在屏幕上（新导航不清掉已加载的那一
+// 帧），所以「有帧可看」和「正在加载」会同时成立。状态机把这两件事分开说，正是为此——
+// 压成互斥的一个值，这行「正在加载新页面」除了第一次导航就再也说不出口了。
+const stage = computed(() =>
+  previewStage({
+    loading: props.navigation === 'authorizing' ? 'auth' : props.navigation === 'navigating' ? 'navigate' : null,
+    shown: !!props.displayedFrame,
+    // 这一档的「上一版还在」由运行时那几行字自己说（实例断了、运行时失败都在那一条里），
+    // 状态机的 stale 是给文档那一档的「这版没取成」用的，这里不重复。
+    stale: false,
+    rendererMissing: false,
+    cannotRender: false,
+  })
+)
+
+// 此刻在取哪一步（`null`＝没在取）。两句文案就在这一处说出来。
+const step = computed(() => {
+  const now = stage.value
+  if (now.stage === 'shown') return now.loading
+  return now.stage === 'waiting' ? now.step : null
+})
 </script>
 
 <template>
@@ -132,12 +161,8 @@ function sandboxFor(mime?: string | null): string {
       <span v-if="displayedFrame.connection === 'gone'"> · {{ t('work.room.preview.instanceGone') }}</span>
       <div v-if="displayedFrame.runtimeError" role="alert">{{ displayedFrame.runtimeError }}</div>
     </div>
-    <div
-      v-if="navigation === 'authorizing' || navigation === 'navigating'"
-      role="status"
-      class="px-3 py-2 text-caption"
-    >
-      {{ t(navigation === 'authorizing' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
+    <div v-if="step" role="status" class="px-3 py-2 text-caption">
+      {{ t(step === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
     </div>
     <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
       {{ navigationError || previewError || previewReadError }}
