@@ -131,12 +131,16 @@ const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(prop
 const {
   locator,
   locatorNote,
+  queued,
   annotateError,
   imageRegion,
   pageLocator,
   quoted,
   pick,
   clearLocator,
+  queueLocator,
+  clearQueued,
+  sendQueued,
   sendLocator,
   onImageRegion,
   onPageContext,
@@ -549,10 +553,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
+      :queued-count="queued.length"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :comment-error="commentError"
       @send="sendLocator"
+      @queue="queueLocator"
+      @send-queued="sendQueued"
+      @clear-queued="clearQueued"
       @comment="commentHere"
       @cancel="clearLocator"
     />
