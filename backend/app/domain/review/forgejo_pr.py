@@ -1,8 +1,5 @@
 """Forgejo's REST implementation of the proposal operations used by Cheese."""
 
-import asyncio
-import time
-from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -32,23 +29,7 @@ def _has_review_comments(row: dict) -> bool:
     return row.get("comments_count") != 0
 
 
-def _check_unsettled(status: PullRequestStatus) -> bool:
-    """Forgejo's `false` on an open, ready PR: a conflict, or a merge check
-    still running — one reading cannot tell which (`pull_request_status`)."""
-    return (
-        status.state == "open"
-        and not status.merged
-        and not status.draft
-        and status.mergeable is False
-    )
-
-
 class ForgejoClient:
-    #: How long `pull_request_status` waits for Forgejo's merge check to settle
-    #: a `mergeable: false`, and how often it reads the PR again meanwhile.
-    MERGE_CHECK_WAIT_S = 10.0
-    MERGE_CHECK_POLL_S = 0.5
-
     def __init__(self, api_base: str, *, transport=None):
         self.api_base = api_base.rstrip("/")
         self.transport = transport
@@ -99,7 +80,7 @@ class ForgejoClient:
                 return result
             page += 1
 
-    async def _read_status(self, owner, repo, number, token) -> PullRequestStatus:
+    async def pull_request_status(self, *, owner, repo, number, token):
         data = self._data(
             await self.request(
                 "GET",
@@ -109,57 +90,22 @@ class ForgejoClient:
         )
         return self.status(data)
 
-    async def pull_request_status(self, *, owner, repo, number, token):
-        """The PR as Forgejo reads once its merge check has settled.
-
-        Forgejo's `mergeable` is a plain bool, and `false` there is not only a
-        conflict: it is also what the PR reads while Forgejo's merge checker is
-        still testing it (`PullRequest.Mergeable` in Forgejo's
-        models/issues/pull.go: checking, conflict and checker error all read
-        false), and every push to either branch sends the PR through that
-        checker again, for about a second or two. GitHub says `null` in that
-        window; the platform reads only a real `False` as a conflict
-        (`merge_state.compute_merge_state`, `nudges._conflict_nudge`), so a
-        single `false` from here would tell the reviewer and 芝士 that a PR
-        conflicts when Forgejo has simply not finished looking at it.
-
-        So a `false` on an open, ready PR is read again until Forgejo answers
-        `true` or `MERGE_CHECK_WAIT_S` passes. One that is still `false` then
-        is a conflict only if a conflict is possible at all: when the head
-        already contains its base, the PR merges without one, and the answer
-        is `unknown` (Forgejo has not confirmed it yet), not `dirty`."""
-        status = await self._read_status(owner, repo, number, token)
-        deadline = time.monotonic() + self.MERGE_CHECK_WAIT_S
-        while _check_unsettled(status) and time.monotonic() < deadline:
-            await asyncio.sleep(self.MERGE_CHECK_POLL_S)
-            status = await self._read_status(owner, repo, number, token)
-        if _check_unsettled(status) and await self._contains_base(
-            owner, repo, status, token
-        ):
-            return replace(status, mergeable=None, mergeable_state="unknown")
-        return status
-
-    async def _contains_base(self, owner, repo, status, token) -> bool:
-        """Whether every commit of the PR's base is already in its head."""
-        comparison = (
-            f"{quote(status.head_sha, safe='')}...{quote(status.base_ref, safe='')}"
-        )
-        data = self._data(
-            await self.request(
-                "GET",
-                f"{self._repo(owner, repo)}/compare/{comparison}",
-                token=token,
-            )
-        )
-        return data["total_commits"] == 0
-
     @staticmethod
     def status(data):
         merged = bool(data.get("merged"))
         raw_title = str(data.get("title") or "")
         title = raw_title.upper()
         draft = title.startswith(("WIP:", "[WIP]"))
-        mergeable = data.get("mergeable")
+        # Forgejo's `mergeable` is a plain bool, and `false` does not mean a
+        # conflict: `PullRequest.Mergeable` (Forgejo's models/issues/pull.go)
+        # reads false while its merge check is still running, which it does
+        # again after every push to either branch, as well as on a conflict, a
+        # checker error and a WIP title. Nothing else in the API tells these
+        # apart (the merge endpoint refuses them all with the same 405), so
+        # `false` is "not known to merge" — GitHub's `null` — and never the
+        # `False` the platform reads as a conflict (`compute_merge_state`,
+        # `nudges._conflict_nudge`).
+        mergeable = True if data.get("mergeable") is True else None
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=data["head"]["ref"],
@@ -173,13 +119,7 @@ class ForgejoClient:
                 else None
             ),
             mergeable=mergeable,
-            mergeable_state="draft"
-            if draft
-            else "dirty"
-            if mergeable is False
-            else "clean"
-            if mergeable is True
-            else "unknown",
+            mergeable_state="draft" if draft else "clean" if mergeable else "unknown",
             draft=draft,
             # 平台按卡片的 subject 写这个标题（`pr_publish.sync_pr_text`），仓库
             # 自己的检查评判它，平台 squash 时落的也是同一行；两条合并路径都会
@@ -189,8 +129,8 @@ class ForgejoClient:
             review_comment_count=data.get("review_comments", 0),
         )
 
-    async def pull_request_head_sha(self, *, owner, repo, number, token):
-        return (await self._read_status(owner, repo, number, token)).head_sha
+    async def pull_request_head_sha(self, **kwargs):
+        return (await self.pull_request_status(**kwargs)).head_sha
 
     async def merge_pull_request(
         self,
@@ -234,8 +174,8 @@ class ForgejoClient:
             reason = (
                 "草稿还未提交评审"
                 if live.draft
-                else "改动与目标版本冲突"
-                if live.mergeable is False
+                else "代码托管服务尚未算出 PR 能否合并"
+                if live.mergeable is None
                 else "检查或评审条件尚未满足"
             )
             return MergeResult(blocked_reason=reason)

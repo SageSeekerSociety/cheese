@@ -231,8 +231,8 @@ async def _push_reached_pr(client, repo, number, sha):
 
     Forgejo handles a push after it returns: a moment later it queues the PR
     for its merge check and records the push on the PR's timeline, in that
-    order. Until then the PR still shows the merge check of its previous head,
-    and a merge of the new head can land while that check is starting."""
+    order. Until then the PR can still read `mergeable: true` from the check
+    of its previous head."""
     async with asyncio.timeout(10):
         while True:
             response = await client.get(f"/repos/{repo}/issues/{number}/timeline")
@@ -807,7 +807,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         stale = await publisher.client.merge_pull_request(**args, sha=reviewed)
         assert stale.stale_head and stale.sha is None
         await _push_reached_pr(client, binding.repo, draft["number"], latest)
-        status = await publisher.client.pull_request_status(**args)
+        # From here a `true` is Forgejo's check of `latest`, not of the old head.
+        async with asyncio.timeout(10):
+            while not (
+                status := await publisher.client.pull_request_status(**args)
+            ).mergeable:
+                await asyncio.sleep(0.1)
         verdict = compute_merge_state(
             github_mergeable_state=status.mergeable_state,
             github_mergeable=status.mergeable,
