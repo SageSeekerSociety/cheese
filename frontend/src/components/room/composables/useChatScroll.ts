@@ -571,12 +571,22 @@ export function useChatScroll(
   /**
    * 不算我们自己发的了：读的人接了手，或者又要钉回底部。
    *
-   * 只撤这一阵，不动 `atBottom`——它在整个窗口里就没被改过，读者接手之后随后的滚动
-   * 事件照常会按位置把它定下来（位置没动的话，它本来就还是对的那个值）。
+   * 撤的时候按此刻的位置把「在不在底部」定回来，`lastTop`/`lastHeight` 也一起刷新。
+   * 这两件事必须在这里做：窗口里 `atBottom` 一直没动（跳之前停在底部的话，它还是
+   * true），而 `rememberScroll` 的窗口分支也不再刷新那两把尺子。读者在 150ms 里滚轮
+   * 接手、滚出去之后，下一个滚动事件拿「跳之前的 `lastHeight`」去比，会算成
+   * `relaid=true`（跳过去时离屏的行刚按真实高度铺开），于是一路往上的移动被当成浏览器
+   * 锚定，`atBottom` 留在 true：药丸不出现，下一条消息一到就被拽回底部——正是这个窗口
+   * 要挡的那件事。
    */
   function cancelOwnScroll() {
     if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
     ownScrollTimer = null
+    const el = scrollRef.value
+    if (!el || !el.clientHeight) return
+    lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
+    atBottom.value = isAtBottom(el)
   }
 
   /** 不再记这个话题停在哪：再打开时落到底部。 */

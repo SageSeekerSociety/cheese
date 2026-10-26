@@ -94,6 +94,21 @@ describe('窗口期内读的人自己动了一下，却一个像素都没挪', (
   })
 })
 
+describe('跳上去之后、窗口还没关，读的人滚轮接手', () => {
+  // 窗口里 `atBottom` 一直没动，`lastHeight` 也还是跳之前那个值。撤窗口时如果不按此刻
+  // 的位置重判，下一条消息一到就把人从书签那儿拽回底部。
+  it('按停下的真实位置算，新消息不把他拽回底部', async () => {
+    const { box, scroll } = await mounted(2000)
+    scroll.beginOwnScroll()
+    box.el.scrollTop = 2000 - 900 // 已经跳到书签那一条了
+    box.el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    expect(scroll.atBottom.value).toBe(false)
+    box.grow(10)
+    fire()
+    expect(box.el.scrollTop).toBe(1100)
+  })
+})
+
 describe('跳的时候这一栏还没有布局', () => {
   // 这一栏藏着时 `scrollIntoView` 本来就没挪动它，所以窗口本身不该改「在不在底部」。
   // （真的从一次跳转过来时，`useChatPaging.openAt` 会先把它设成 false——那是跳转自己
