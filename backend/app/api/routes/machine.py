@@ -35,7 +35,6 @@ _KEPT = frozenset(
         b"x-cheese-turn",
         b"x-cheese-pass",
         b"x-cheese-head",
-        b"x-cheese-version",
         b"x-content-sha256",
     }
 )
@@ -56,7 +55,14 @@ def _routes(app):
     layer = getattr(app, "middleware_stack", None)
     while layer is not None and not isinstance(layer, ExceptionMiddleware):
         layer = getattr(layer, "app", None)
-    return layer or app
+    if layer is None:
+        # Running it from the top would put the request through every
+        # middleware twice; a stack that hides its routes is a change to make
+        # here, not one to serve around.
+        raise RuntimeError(
+            "The app's routes are not below its middleware"  # i18n-exempt: a platform bug
+        )
+    return layer
 
 
 #: The first segments of the platform's API a sandbox does not reach here: the

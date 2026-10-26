@@ -72,3 +72,13 @@ async def test_the_route_sees_the_session_and_only_the_clis_own_headers():
         b"x-cheese-token": b"the-session",
     }
     assert outer.passed == 0
+
+
+def test_the_apps_routes_are_found_below_its_middleware():
+    from starlette.testclient import TestClient
+
+    from app.api.routes.machine import _routes
+    from app.main import app
+
+    with TestClient(app):
+        assert isinstance(_routes(app), ExceptionMiddleware)
