@@ -27,7 +27,7 @@ from app.domain.space.models import (
     SpaceInviteCode,
 )
 from app.domain.task.models import Task
-from app.domain.user.repositories import UserRepository
+from app.domain.user.services import usernames_by_ids
 
 #: A problem not yet reviewed (`task.inputs.APPROVE_NONE`).
 _UNREVIEWED = 2
@@ -62,7 +62,7 @@ async def category_name(session: AsyncSession, space_id: int, id: int) -> str:
 async def code_text(session: AsyncSession, space_id: int, id: int) -> str:
     row = await session.get(SpaceInviteCode, id)
     if row is None or row.space_id != space_id:
-        raise NotFoundError.for_resource("invite code", str(id))
+        raise NotFoundError.for_resource("invite_code", str(id))
     return row.code + (f"（{row.note}）" if row.note else "")
 
 
@@ -71,10 +71,8 @@ async def problem(session: AsyncSession, space_id: int, id: int) -> tuple[str, s
     task = await session.get(Task, id)
     if task is None or task.space_id != space_id or task.deleted_at is not None:
         raise NotFoundError.for_resource("task", str(id))
-    setter = (await UserRepository(session).get_by_ids([task.creator_id])).get(
-        task.creator_id
-    )
-    return task.name, setter.username if setter is not None else str(task.creator_id)
+    setter = (await usernames_by_ids(session, [task.creator_id])).get(task.creator_id)
+    return task.name, setter or str(task.creator_id)
 
 
 def _date(moment: datetime | None) -> str:
@@ -139,13 +137,11 @@ async def desk(session: AsyncSession, user_id: int, space_id: int) -> str:
             .limit(LISTED)
         )
     )
-    setters = await UserRepository(session).get_by_ids(
-        list({t.creator_id for t in waiting})
-    )
+    setters = await usernames_by_ids(session, {t.creator_id for t in waiting})
     lines.append("待审核的题目：")
     lines += [
         f"- 「{t.name}」（spaces/{space_id}/tasks/{t.id}），出题人 "
-        + (setters[t.creator_id].username if t.creator_id in setters else "?")
+        + setters.get(t.creator_id, "?")
         for t in waiting
     ] or ["（无）"]
     return "\n".join(lines)

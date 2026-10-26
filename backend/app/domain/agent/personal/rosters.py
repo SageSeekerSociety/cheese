@@ -15,11 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.space_access import is_space_admin, space_admin_ids
 from app.core.errors import NotFoundError
-from app.domain.space.member_repositories import SpaceMemberRepository
-from app.domain.space.repositories import SpaceRepository
-from app.domain.space.services import SpaceLabels
+from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.team.services import team_service
-from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import names_by_handles, usernames_by_ids
 
 #: A team role, by the int the team domain stores.
 _TEAM_ROLE = {0: "所有者", 1: "管理员", 2: "成员"}
@@ -29,18 +27,12 @@ LISTED = 100
 
 async def _named(session: AsyncSession, user_ids: Sequence[int]) -> dict[int, str]:
     """「赵一鸣（zhaoym）」 for each id, the way 芝士 names people to act on."""
-    users = await UserRepository(session).get_by_ids(list(user_ids))
-    profiles = await UserProfileRepository(session).get_profiles_by_user_ids(
-        list(user_ids)
-    )
+    handles = await usernames_by_ids(session, user_ids)
+    shown = await names_by_handles(session, list(handles.values()))
     named: dict[int, str] = {}
-    for user_id, user in users.items():
-        nickname = getattr(profiles.get(user_id), "nickname", "") or ""
-        named[user_id] = (
-            f"{nickname}（{user.username}）"
-            if nickname and nickname != user.username
-            else user.username
-        )
+    for user_id, handle in handles.items():
+        name = shown.get(handle) or handle
+        named[user_id] = f"{name}（{handle}）" if name != handle else handle
     return named
 
 
@@ -85,15 +77,12 @@ async def team(session: AsyncSession, user_id: int, team_id: int) -> str:
 async def space(session: AsyncSession, user_id: int, space_id: int) -> str:
     """A space the person is in or runs: its managers and its members."""
     runs = await is_space_admin(session, space_id=space_id, user_id=user_id)
-    if not runs and not await SpaceRepository(session=session).is_member(
-        space_id=space_id, user_id=user_id
-    ):
+    spaces = SpaceService.for_routes(session)
+    if not runs and not await spaces.is_member(space_id=space_id, user_id=user_id):
         raise NotFoundError.for_resource("space", str(space_id))
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
     managers = sorted(await space_admin_ids(session, space_id=space_id))
-    members = [
-        m.user_id for m in await SpaceMemberRepository(session).list_members(space_id)
-    ]
+    members = [m.user_id for m in await spaces.list_members(space_id)]
     named = await _named(session, managers + members[:LISTED])
     name = label.name if label is not None else str(space_id)
     lines = [f"空间「{name}」（spaces/{space_id}）"]
