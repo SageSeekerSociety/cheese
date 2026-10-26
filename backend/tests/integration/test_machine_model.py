@@ -3,7 +3,8 @@
 The rules, as a person would state them:
 
 - the sandbox holds no token; the call is the session's that leases the
-  sandbox now, and goes out on that project's gateway key like any other;
+  sandbox now, and goes out on that project's machine key, apart from the
+  session's own (`gateway_usage.MachineGatewayKey`);
 - who the call is, as the device link owner vouched for it, is never shown to
   the gateway;
 - nobody but the device link owner is anyone here.
@@ -26,9 +27,16 @@ def _pool(monkeypatch):
     monkeypatch.setattr(llm_proxy.httpx, "AsyncClient", _FakeClient)
 
     async def fake_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
-        return "sk-virtual-for-" + str(project_id)[:8]
+        kind = "machine" if machine_conversation_id else "virtual"
+        return f"sk-{kind}-for-" + str(project_id)[:8]
 
     monkeypatch.setattr(
         "app.domain.agent.chat.ChatService.project_gateway_key", fake_key
@@ -48,7 +56,7 @@ def _ask(client, *, device, secret="owner-secret"):
     )
 
 
-async def test_the_sandboxs_call_goes_out_on_its_projects_key(client):
+async def test_the_sandboxs_call_goes_out_on_its_projects_machine_key(client):
     room = await _room(client)
     answer = _ask(client, device=room.old_device)
     assert answer.status_code == 200, answer.text
@@ -56,7 +64,7 @@ async def test_the_sandboxs_call_goes_out_on_its_projects_key(client):
     sent = _FakeClient.seen
     assert sent["url"] == "http://pool:4000/v1/messages"
     assert sent["headers"]["authorization"] == (
-        f"Bearer sk-virtual-for-{str(room.project_id)[:8]}"
+        f"Bearer sk-machine-for-{str(room.project_id)[:8]}"
     )
     assert sent["content"] == b'{"model":"m","messages":[]}'
 

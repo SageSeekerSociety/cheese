@@ -67,7 +67,13 @@ def model_pool(monkeypatch):
     )
 
     async def project_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "sk-project"
 

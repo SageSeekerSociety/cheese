@@ -44,7 +44,13 @@ def reader(monkeypatch):
         return FetchOutcome(url, True, PAGE, "plain-http", [])
 
     async def project_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return f"sk-project-{project_id}"
 

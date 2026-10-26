@@ -483,6 +483,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # What a conversation's sandboxes may spend a day on models, per budget
+    # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
+    # of their own with this cap on the gateway, so a machine whose owner
+    # relays its platform socket spends no more. The session's own calls are
+    # not counted against it. A first value, not yet measured against a day of
+    # real reviews.
+    machine_model_daily_budget_usd: float = 10.0
     # --- Voice input (app/domain/voice) ---
     # The composer's microphone: a speech model through the gateway, then a
     # small model that tidies the transcript into a message. Recorded per

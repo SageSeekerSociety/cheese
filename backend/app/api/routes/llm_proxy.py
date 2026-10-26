@@ -555,7 +555,14 @@ async def machine_model(
         access_scope="project",
         ttl_s=_MACHINE_CALL_TOKEN_TTL_S,
     )
-    return await _forward(path, request, db, chat, token)
+    return await _forward(
+        path,
+        request,
+        db,
+        chat,
+        token,
+        machine_conversation=uuid.UUID(caller.conversation_id),
+    )
 
 
 async def _forward(
@@ -564,7 +571,12 @@ async def _forward(
     db: AsyncSession,
     chat: ChatService,
     token: str,
+    *,
+    machine_conversation: uuid.UUID | None = None,
 ) -> StreamingResponse:
+    """``machine_conversation`` is the conversation a sandbox's call comes
+    from: it goes out on that conversation's machine key, capped per day
+    (`gateway_usage.MachineGatewayKey`), not on the session's own."""
     person = personal_claims(token) if token else None
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):
@@ -615,7 +627,15 @@ async def _forward(
         dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        if credit_context is not None:
+        if machine_conversation is not None:
+            key = await chat.project_gateway_key(
+                project_uuid,
+                credit_owner_handle=(
+                    credit_context.owner_handle if credit_context else None
+                ),
+                machine_conversation_id=machine_conversation,
+            )
+        elif credit_context is not None:
             key = await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,

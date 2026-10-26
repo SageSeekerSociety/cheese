@@ -346,6 +346,30 @@ class TaskGatewayAccount(Base):
     budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class MachineGatewayAccount(Base):
+    """The gateway key a conversation's sandboxes call models on, for one
+    budget holder (``""`` when the project pays): apart from the session's own
+    key, with a daily cap on the gateway, so a machine whose owner relays its
+    platform socket spends that much a day at most. Kept, like the task's, so
+    late spend is still charged."""
+
+    __tablename__ = "machine_gateway_accounts"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_machine_gateway_accounts_project_id_projects",
+        ),
+        index=True,
+    )
+    gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    daily_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
     #: 平台看板按天聚合这张表：`created_at` 的范围扫。等值的四条索引
