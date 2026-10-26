@@ -127,6 +127,28 @@ async function dragImage(page: Page, small = false) {
   await page.mouse.move(image.x + (small ? 60 : 180), image.y + (small ? 24 : 140), { steps: 8 })
   await page.mouse.up()
 }
+
+// 图上那几颗评论点要真正接得住指针。区域选择层是 `inset: 0` 的一整张，和点同为
+// `position: absolute` 的兄弟；点排在它前面时，后者既画在上面也先接到这一下，真鼠标
+// 点上去就成了「开始框选」。单测把 `click` 直接打在 `<button>` 上，感受不到这一层，只有
+// 真指针能钉住。`marks` 按原图像素给，这里落在图正中。
+function marksFixture() {
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><div id="fixture"></div><script type="module">
+import {createApp,h,ref} from '/node_modules/.vite/deps/vue.js';
+import DesignImage from '/src/components/panels/preview/DesignImage.vue';
+import i18n,{setLocale} from '/src/i18n/index.ts';
+import '/src/style.css';
+setLocale('zh-CN');
+const bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
+const src=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));
+window.marks=[];window.selections=[];
+const marks=[{id:'t1',region:{x:600,y:400,width:1,height:1}}];
+createApp({setup(){return()=>h('main',{style:'padding:24px;width:860px;height:660px;display:flex'},[
+ h(DesignImage,{src,alt:'design.png',identity:'marks-probe',selectionEnabled:true,marks,activeMark:null,
+   onMark:id=>window.marks.push(id),onRegion:selection=>window.selections.push(selection)})])}}).use(i18n).mount('#fixture');
+</script></body></html>`
+}
+
 // The status line that reads out the selected region in the image's own pixels.
 const regionLine = (page: Page) => page.getByRole('status').filter({ hasText: '原图像素' })
 
@@ -387,4 +409,29 @@ test('a short real PanelPreview clips the note to its parent rather than the tal
     await testInfo.attach(`parent-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
   await expect(page.getByPlaceholder('就这一处说点什么')).toHaveValue('真实短面板草稿')
+})
+
+test('a real pointer on a comment mark opens the thread instead of starting a region', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 760 })
+  await page.route('**/__marks-probe__', route => route.fulfill({ contentType: 'text/html', body: marksFixture() }))
+  await page.goto('/__marks-probe__', { waitUntil: 'commit' })
+  await expect(page.locator('.design-image img')).toBeVisible({ timeout: 60_000 })
+  await page.waitForFunction(() => {
+    const image = document.querySelector('.design-image img') as HTMLImageElement | null
+    return !!image && image.complete && image.naturalWidth > 0
+  })
+  const dot = page.locator('.design-image__mark').first()
+  await expect(dot).toHaveCount(1)
+  const box = await dot.boundingBox()
+  if (!box) throw new Error('No real layout for the mark dot')
+  const hit = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.className ?? '',
+    { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  )
+  expect(hit).toContain('design-image__mark')
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { marks: string[] }).marks))
+    .toEqual(['t1'])
+  expect(await page.evaluate(() => (window as unknown as { selections: unknown[] }).selections.length)).toBe(0)
 })
