@@ -302,6 +302,25 @@ const sheetAnchors = computed(() => {
   }
   return [...pick('sheet-cell', 'address'), ...pick('sheet-range', 'start')]
 })
+/** 图上框出来的那几处评论：原图像素的矩形，交给图片查看器按屏幕缩放画。
+ *
+ *  这一版同样按**屏幕上那份字节**算（`slideContext`），和页上那几颗、表里那几格同一条：
+ *  一份图换过一版之后，上一版那些位置说的就不是屏幕上这张了。 */
+const imageAnchors = computed(() =>
+  liveAnchors('image-region', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const { x, y, width, height } = anchor
+    if (
+      typeof x !== 'number' ||
+      typeof y !== 'number' ||
+      typeof width !== 'number' ||
+      typeof height !== 'number' ||
+      !(width > 0) ||
+      !(height > 0)
+    )
+      return []
+    return [{ id, region: { x, y, width, height } }]
+  })
+)
 /** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
 function openAnchor(id: string) {
   focusedThread.value = id
@@ -460,11 +479,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :locator="locator"
       :doc-error="docError"
       :annotate-error="annotateError"
+      :marks="imageAnchors"
+      :active-mark="focusedThread"
       @region="onImageRegion"
       @annotate="onAnnotate"
       @update:locator-note="locatorNote = $event"
       @send="sendLocator"
       @cancel="clearLocator"
+      @mark="openAnchor"
     />
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>

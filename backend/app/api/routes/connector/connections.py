@@ -45,6 +45,8 @@ from app.domain.device import sandbox
 from app.domain.device.repository import Device
 from app.domain.device.supply import Supply
 from app.domain.machine.session_work import screen_agent_name
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.repositories import TeamRepository
 from app.domain.usage.services import UsageService
 from app.domain.user.services import faces_by_handle, usernames_by_ids
@@ -158,7 +160,9 @@ async def _team_access(db, resolver, team_id: int, *, manage: bool = False) -> i
     teams = TeamRepository(db)
     if not await teams.is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
-    if manage and not await teams.is_team_at_least_admin(team_id, user_id):
+    if manage and not await team_seats.may(
+        db, team_id, user_id, TeamPermission.manage_machines
+    ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
     return user_id
 
@@ -182,7 +186,9 @@ async def team_model_connections(
     connections = await model_connections.of_team(db, team_id, device_hub, user_id)
     held = await account_connections.of_team(db, team_id)
     views = [account_connections.view(r) | {"home_team_id": r.team_id} for r in held]
-    may_manage = await TeamRepository(db).is_team_at_least_admin(team_id, user_id)
+    may_manage = await team_seats.may(
+        db, team_id, user_id, TeamPermission.manage_machines
+    )
     owners = await usernames_by_ids(
         db,
         {
@@ -208,9 +214,7 @@ async def team_model_connections(
     access = await UsageService(db).model_access(team_id)
     return ModelConnectionsOut.model_validate(
         {
-            "can_manage": await TeamRepository(db).is_team_at_least_admin(
-                team_id, user_id
-            ),
+            "can_manage": may_manage,
             "platform_models": [
                 m for m in model_choices({}) if access.shows(m) and access.allows(m)
             ],
@@ -506,7 +510,9 @@ async def team_devices(
     if not await teams.is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
     devices = await service.list_devices_for_team(team_id)
-    may_manage = await teams.is_team_at_least_admin(team_id, user_id)
+    may_manage = await team_seats.may(
+        db, team_id, user_id, TeamPermission.manage_machines
+    )
     by_device = _screens_by_device()
     return {
         "can_manage": may_manage,

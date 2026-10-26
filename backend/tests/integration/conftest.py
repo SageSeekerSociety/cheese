@@ -349,6 +349,32 @@ def create_approved_space(client, **kwargs):
     return response
 
 
+def join_task_space(
+    client, task_id: int, user: int | dict, *, admin_headers: dict
+) -> None:
+    """Put ``user`` (a user id, or that user's auth headers) in the space
+    ``task_id`` is published in, as that space's owner or admin
+    (``admin_headers``) would. Only a space's members see and claim its
+    problems, so a test whose user claims one joins the space first. Already a
+    member is fine."""
+    if isinstance(user, dict):
+        import jwt
+
+        token = user["Authorization"].removeprefix("Bearer ")
+        user_id = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+    else:
+        user_id = user
+    task = client.get(f"/tasks/{task_id}", headers=admin_headers)
+    assert task.status_code == 200, task.text
+    space_id = task.json()["data"]["task"]["space"]["id"]
+    joined = client.post(
+        f"/spaces/{space_id}/members",
+        json={"userId": user_id},
+        headers=admin_headers,
+    )
+    assert joined.status_code in (201, 409), joined.text
+
+
 def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-only access token — the ONLY sanctioned way for a test to
     mint one.

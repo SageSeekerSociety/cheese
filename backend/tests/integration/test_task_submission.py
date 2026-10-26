@@ -11,6 +11,17 @@ from tests.integration.conftest import (
 )
 
 
+def _admit(api_client: TestClient, space_id: int, admin, *users) -> None:
+    """Put ``users`` in the space; only a space's members see and claim its problems."""
+    for user in users:
+        resp = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": user.user_id},
+            headers={"Authorization": f"Bearer {admin.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+
 class TestTaskSubmissionIntegration:
     @pytest.fixture
     def setup_task_for_submission(
@@ -50,6 +61,7 @@ class TestTaskSubmissionIntegration:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant, participant2)
         category_id = space_data["defaultCategoryId"]
 
         return {
@@ -1193,6 +1205,7 @@ class TestTaskSubmissionIntegration:
         assert space_resp.status_code == 201
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, team_creator, team_member)
         category_id = space_data["defaultCategoryId"]
 
         team_resp = api_client.post(

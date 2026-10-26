@@ -101,10 +101,6 @@ class PermissionChecker:
 
     def _get_domain_for_resource(self, resource: Resource) -> str | None:
         mapping = {
-            Resource.TEAM: "team",
-            Resource.TEAM_MEMBERSHIP: "team",
-            Resource.TEAM_REQUEST: "team",
-            Resource.TEAM_INVITATION: "team",
             Resource.TASK: "task",
             Resource.TASK_PARTICIPANT: "task",
             Resource.TASK_SUBMISSION: "task",
