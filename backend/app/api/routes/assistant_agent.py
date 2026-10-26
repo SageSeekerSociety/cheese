@@ -281,6 +281,8 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     text = body.ref.strip().strip("/")
     if text == "teams":
         return ok({"text": await rosters.my_teams(db, me.user_id)})
+    if text == "spaces":
+        return ok({"text": await rosters.my_spaces(db, me.user_id)})
     people = _SPACE_PEOPLE.fullmatch(text)
     if people:
         return ok({"text": await rosters.space(db, me.user_id, int(people[1]))})

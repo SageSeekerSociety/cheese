@@ -260,3 +260,16 @@ def test_it_reads_the_teams_and_spaces_it_manages_people_in(client):
 
     assert _read(client, "frank", f"teams/{team}")[0] == 404
     assert _read(client, "frank", f"spaces/{space}/people")[0] == 404
+
+
+def test_it_lists_the_spaces_the_person_is_in_with_the_ref_that_acts_on_each(client):
+    """Asked to change a space by its name, 芝士 finds its ref by listing the
+    person's spaces, and a space they are not in is not among them."""
+    mine = _space(client, "alice")
+    theirs = _space(client, "bob")
+
+    status, listed = _read(client, "alice", "spaces")
+
+    assert status == 200
+    assert f"spaces/{mine}" in listed and "你是管理员" in listed
+    assert f"spaces/{theirs}" not in listed
