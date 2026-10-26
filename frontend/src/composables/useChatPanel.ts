@@ -260,6 +260,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom: scroll.scrollToBottom,
     rememberScroll: scroll.rememberScroll,
     forgetScroll: scroll.forgetScroll,
+    beginOwnScroll: scroll.beginOwnScroll,
     loadingHistory,
     unseen,
     errorMsg,
