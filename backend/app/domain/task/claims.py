@@ -214,7 +214,11 @@ async def read_mode_for_claim(session: AsyncSession, task: Task) -> None:
     it commits: a change of mode (``hold_against_new_claims``) waits for it or
     is waited for."""
     await session.refresh(
-        task, attribute_names=["start_mode"], with_for_update={"key_share": True}
+        task,
+        attribute_names=["start_mode"],
+        # read + key_share is FOR KEY SHARE; key_share alone would be
+        # FOR NO KEY UPDATE, which makes claims on one task wait for each other.
+        with_for_update={"read": True, "key_share": True},
     )
 
 

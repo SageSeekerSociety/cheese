@@ -198,7 +198,13 @@ class TaskMembershipService:
 
         now = datetime.now(UTC)
         if not await self._repo.try_lock_claim(task.id, member_id, is_team):  # type: ignore[arg-type]
-            raise ClaimInProgressError(say("claimInProgress"))
+            raise ClaimInProgressError(
+                say(
+                    "claimInProgress"
+                    if await self._would_start(task, member_id, is_team)
+                    else "claimBeingChanged"
+                )
+            )
 
         existing = await self._repo.get_by_task_and_member(
             task_id=task.id,  # type: ignore[arg-type]
@@ -255,6 +261,20 @@ class TaskMembershipService:
             pitch=(apply_reason or "").strip(),
         )
         return await self._repo.save(membership)
+
+    async def _would_start(self, task: Task, member_id: int, is_team: bool) -> bool:
+        """Whether the claim request turned away by the claim lock is one that
+        makes a project, so the refusal says what is under way: a project being
+        made (a claim already approved, or a new one on a task started
+        directly), or otherwise an application being decided or written."""
+        held = await self._repo.get_by_task_and_member(
+            task_id=task.id,  # type: ignore[arg-type]
+            member_id=member_id,
+            is_team=is_team,
+        )
+        if held is not None and held.approved != APPROVE_DISAPPROVED:
+            return held.approved == APPROVE_APPROVED
+        return claims.starts_now(task)
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
         membership.deleted_at = datetime.now(UTC)

@@ -697,9 +697,11 @@ def test_a_rejected_application_with_a_newer_one_cannot_be_decided_again(
 
 
 def _paused_after(monkeypatch, name: str, during):
-    """Replace ``claims.<name>`` with the real check followed by a pause in
-    which ``during()`` runs on another thread for up to two seconds: a request
-    landing between the check and the write that follows it."""
+    """Replace ``claims.<name>`` with the real check followed, the first time
+    it is called, by a pause in which ``during()`` runs on another thread for
+    up to two seconds: a request landing between the check and the write that
+    follows it. Each returned future says whether it finished inside the pause
+    (``finished_in_pause``)."""
     import asyncio
 
     from app.domain.task import claims
@@ -710,12 +712,15 @@ def _paused_after(monkeypatch, name: str, during):
 
     async def paused(*args, **kwargs):
         result = await real(*args, **kwargs)
+        if landed:
+            return result
         future = pool.submit(during)
         landed.append(future)
         for _ in range(20):
             if future.done():
                 break
             await asyncio.sleep(0.1)
+        future.finished_in_pause = future.done()  # type: ignore[attr-defined]
         return result
 
     monkeypatch.setattr(claims, name, paused)
@@ -905,3 +910,61 @@ def test_an_approved_application_is_not_started_after_its_own_deadline(
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["i18n"]["key"] == "claimDeadlinePassedForStart"
     assert _projects_of(client, task_id) == []
+
+
+@pytest.mark.parametrize("verdict", ["APPROVED", "NONE"])
+@pytest.mark.parametrize("by_member", [False, True])
+def test_a_re_application_turned_away_while_the_old_one_is_decided_says_so(
+    client, monkeypatch, verdict, by_member
+):
+    """Nothing is being created while the publisher decides the old
+    application: the re-application that has to wait is told the application
+    is being handled, not that a project is being made."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "处理旧申请时又申请")
+    student = _student(client, board)
+    old = _data(_start(client, task_id, student))["participant"]
+    assert _decide(client, board, task_id, old["id"], "DISAPPROVED").status_code == 200
+    landed = _paused_after(
+        monkeypatch, "has_newer_claim", lambda: _start(client, task_id, student)
+    )
+
+    decided = (
+        client.patch(
+            f"/tasks/{task_id}/participants",
+            params={"member": old["memberId"]},
+            json={"approved": verdict},
+            headers=_auth(board["creator_token"]),
+        )
+        if by_member
+        else _decide(client, board, task_id, old["id"], verdict)
+    )
+
+    [again] = [r.result(timeout=10) for r in landed]
+    assert decided.status_code == 200, decided.text
+    assert again.status_code == 409, again.text
+    assert again.json()["error"]["i18n"]["key"] == "claimBeingChanged"
+    assert _projects_of(client, task_id) == []
+
+
+def test_two_applications_to_one_task_do_not_wait_for_each_other(client, monkeypatch):
+    """Reading the start mode holds it against a change, not against other
+    claims: a second student's application goes through while the first is
+    still being written."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "两人同时申请")
+    first, second = _student(client, board), _student(client, board)
+    landed = _paused_after(
+        monkeypatch, "read_mode_for_claim", lambda: _start(client, task_id, second)
+    )
+
+    applied = _start(client, task_id, first)
+
+    [other] = [r.result(timeout=10) for r in landed]
+    assert applied.status_code == 200, applied.text
+    assert other.status_code == 200, other.text
+    # It finished inside the first one's pause, rather than after it.
+    assert landed[0].finished_in_pause
+    assert sorted(a for _, a in _claims_of(client, task_id)) == [2, 2]
