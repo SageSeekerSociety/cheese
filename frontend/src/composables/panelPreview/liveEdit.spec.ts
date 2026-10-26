@@ -129,6 +129,37 @@ it('打开被拒时把理由摆出来，并把这一份收起来', async () => {
   expect(bundle.error.value).toBe(bundle.refused.value)
 })
 
+it('那一次拒绝晚到、读者已经开了另一份：不动后来的那一份，也不把理由摆到它头上', async () => {
+  // 第一次要票挂住（读者等的就是它），第二次换一份文件才放它回来。
+  let release!: (v: unknown) => void
+  api.openRoomFileLive.mockImplementationOnce(() => new Promise((r) => (release = r)))
+  api.openRoomFileLive.mockResolvedValue({
+    enabled: true,
+    document: 'roomfile:two',
+    ticket: 'tok',
+    read_only: false,
+    version: 'v1',
+    content: '',
+  })
+  const { bundle, state } = setup()
+  bundle.begin()
+  await nextTick()
+  const stale = collab.source!.open('room\u0000notes/记录.md')
+
+  // 换到另一份、开了它：编辑器现在说的是 B。
+  state.previewFile.value = { path: 'notes/别的.md', content: '', version: 'v1' } as never
+  await nextTick()
+  bundle.begin()
+  await nextTick()
+  expect(bundle.editingPath.value).toBe('notes/别的.md')
+
+  // A 的拒绝这会儿才回来：B 不该被收掉，屏幕上也不该出现 A 的理由。
+  release({ enabled: false, reason: 'too_large' })
+  await expect(stale).rejects.toThrow()
+  expect(bundle.editingPath.value).toBe('notes/别的.md')
+  expect(bundle.refused.value).toBe('')
+})
+
 it('屏幕上换了另一份文件就收起来，换成别的房间也一样', async () => {
   const { bundle, state, props } = setup()
   bundle.begin()
