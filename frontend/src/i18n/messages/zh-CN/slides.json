@@ -33,5 +33,6 @@
   "sourceCommitted": "已提交文件",
   "sourceLive": "当前工作文件",
   "removeQuote": "移除引用",
-  "draftQuoteConflict": "输入框中已有另一份引用，请先发送或移除它。"
+  "draftQuoteConflict": "输入框中已有另一份引用，请先发送或移除它。",
+  "quotedImageRegion": "圈出了图片上的一块区域"
 }

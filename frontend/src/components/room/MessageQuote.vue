@@ -38,6 +38,17 @@ const pinWhere = computed(() =>
       })
     : ''
 )
+/** 图片上框的那一块：位置是原图像素，不是比例——图片有一份不变的原图。 */
+const imageWhere = computed(() =>
+  props.quote.kind === 'image-region'
+    ? t('work.room.preview.imageRegionWhere', {
+        x: props.quote.x,
+        y: props.quote.y,
+        w: props.quote.width,
+        h: props.quote.height,
+      })
+    : ''
+)
 /** 正文那一段属于哪一节；没有标题就是文件开头。 */
 const rangeWhere = computed(() =>
   props.quote.kind === 'text-range'
@@ -71,6 +82,7 @@ const rangeWhere = computed(() =>
       <div class="message-quote__text">{{ quote.text }}</div>
     </template>
     <div v-else-if="quote.kind === 'web-region'" class="message-quote__where">{{ webWhere }}</div>
+    <div v-else-if="quote.kind === 'image-region'" class="message-quote__where">{{ imageWhere }}</div>
   </details>
 </template>
 

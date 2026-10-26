@@ -83,6 +83,14 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     if (!captured) return
     openLocator(t('design.region'), t('design.selectedRegion', selection.region), '')
     imageRegion.target.value = captured
+    // 框选的位置同时作为一处结构化引用发出去：合成图说得出「图上哪一块」，这句话说得出
+    // 「要改成什么」；只有书面那句话的受话人回到的是「图片这一份」，回不到那一块。坐标
+    // 用的是原图像素（选区就是这么量的），发的时候才配上这一版的身份。
+    quoted.imageRegion({
+      ...selection.region,
+      naturalWidth: selection.naturalWidth,
+      naturalHeight: selection.naturalHeight,
+    })
   }
 
   function onPageContext(payload: SlidePageContext) {
@@ -169,6 +177,13 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       return
     }
     if (imageRegion.target.value) {
+      // 框出来的那一块走结构化引用；发不出去（这份部署没有提问出口、或拿不到身份）才
+      // 退回拼一句话——那句话指得回「图片这一份」，指不回那一块，不能白丢。
+      const sent = quoted.send(note)
+      if (sent !== null) {
+        if (sent) clearLocator()
+        return
+      }
       const message = imageRegion.message(note)
       if (!message) return
       deps.onLocate({ message })

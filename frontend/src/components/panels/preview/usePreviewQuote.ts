@@ -2,6 +2,7 @@ import type { FramePick } from '@/composables/usePreviewFrames'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type {
+  ImageRegionQuote,
   QuotedContext,
   SheetCellQuote,
   SheetRangeQuote,
@@ -44,15 +45,38 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
   const pick = ref<FilePick | null>(null)
   /** 应用上圈的一块：页面在别的源上，只有地址和几何，没有文件身份。 */
   const area = ref<{ url: string; rect: WebRect; viewport: WebViewport } | null>(null)
+  /** 图片上框的一块：原图像素加当时的原图尺寸。几何本身不带身份，发的时候才配上。 */
+  const image = ref<Omit<ImageRegionQuote, Identity> | null>(null)
 
   function clear() {
     page.value = null
     pick.value = null
     area.value = null
+    image.value = null
   }
 
   function region(payload: { url: string; rect: WebRect; viewport: WebViewport }) {
     area.value = payload
+  }
+
+  /** 图片上框的一块。坐标是原图像素，和显示缩放无关。 */
+  function imageRegion(payload: {
+    x: number
+    y: number
+    width: number
+    height: number
+    naturalWidth: number
+    naturalHeight: number
+  }) {
+    image.value = {
+      kind: 'image-region',
+      x: payload.x,
+      y: payload.y,
+      width: payload.width,
+      height: payload.height,
+      natural_width: payload.naturalWidth,
+      natural_height: payload.naturalHeight,
+    }
   }
 
   function cell(payload: { address: string; value: string; sheet: string }) {
@@ -110,6 +134,15 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
       if (!topicId || !props.submitQuestion || !isQuotedContext(quotedContext)) return null
       return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
     }
+    if (image.value) {
+      const identity = props.docIdentity
+      // 图片的那一块要连同这一版的身份才指得回去；拿不到身份就退回拼一句话那条路。
+      if (!identity?.version || !props.submitQuestion) return null
+      const { path, source, version, taskId, topicId } = identity
+      const quotedContext = { ...image.value, path, source, version, task_id: taskId ?? null }
+      if (!isQuotedContext(quotedContext)) return null
+      return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
+    }
     if (page.value) {
       const payload = page.value
       if (!canUse(payload.context)) return false
@@ -152,6 +185,13 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
       const quotedContext = { kind: 'web-region' as const, ...area.value }
       return isQuotedContext(quotedContext) ? quotedContext : null
     }
+    if (image.value) {
+      const identity = props.docIdentity
+      if (!identity?.version) return null
+      const { path, source, version, taskId } = identity
+      const quotedContext = { ...image.value, path, source, version, task_id: taskId ?? null }
+      return isQuotedContext(quotedContext) ? quotedContext : null
+    }
     if (page.value) {
       const payload = page.value
       if (!canUse(payload.context)) return null
@@ -177,5 +217,5 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return isQuotedContext(quotedContext) ? quotedContext : null
   }
 
-  return { page, pick, clear, cell, sheetRange, range, web, region, send, anchor }
+  return { page, pick, clear, cell, sheetRange, range, web, region, imageRegion, send, anchor }
 }

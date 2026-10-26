@@ -82,5 +82,6 @@
   "urlUnavailable": "The preview address is not available yet",
   "webRegion": "Boxed a region",
   "webView": "Web view",
-  "webViewTitle": "Laid out for the screen; elements carry addressable numbers"
+  "webViewTitle": "Laid out for the screen; elements carry addressable numbers",
+  "imageRegionWhere": "Original pixels x={x}, y={y}, w={w}, h={h}"
 }

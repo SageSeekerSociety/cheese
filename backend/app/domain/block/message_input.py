@@ -208,6 +208,33 @@ class WebRegionQuoteIn(BaseModel):
     viewport: WebViewportIn
 
 
+class ImageRegionQuoteIn(BaseModel):
+    """图片上框出的一块：坐标是**原图像素**，不是显示像素。
+
+    和网页那一类不同：图片没有视口，它自己有一份不变的原图尺寸，位置直接记原图上
+    的像素。显示是缩放的，读者改窗口大小、换设备都不改变这一块指的原图上是哪一块。
+    网页那边非得记像素加视口，正是因为网页没有一份稳定的原图。
+
+    `natural_width`/`natural_height` 是当时那张原图的尺寸：带上它，受话人不必先去
+    取一次原图，就能把这一块按比例画回任何一种缩放下。宽高为正——一个框不出东西来
+    的选区不是一处位置。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["image-region"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    x: float = Field(ge=0, allow_inf_nan=False)
+    y: float = Field(ge=0, allow_inf_nan=False)
+    width: float = Field(gt=0, allow_inf_nan=False)
+    height: float = Field(gt=0, allow_inf_nan=False)
+    natural_width: int = Field(gt=0, strict=True)
+    natural_height: int = Field(gt=0, strict=True)
+
+
 QuotedContextIn = Annotated[
     SlidePageQuoteIn
     | PagePinQuoteIn
@@ -216,7 +243,8 @@ QuotedContextIn = Annotated[
     | TextRangeQuoteIn
     | WebElementQuoteIn
     | WebTextQuoteIn
-    | WebRegionQuoteIn,
+    | WebRegionQuoteIn
+    | ImageRegionQuoteIn,
     Field(discriminator="kind"),
 ]
 

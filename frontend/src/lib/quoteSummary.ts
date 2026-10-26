@@ -32,6 +32,8 @@ export function quoteSummary(quote: QuotedContext): string {
       return t('slides.quotedWebText')
     case 'web-region':
       return t('slides.quotedWebRegion')
+    case 'image-region':
+      return t('slides.quotedImageRegion')
     default:
       return t('slides.quotedSource')
   }
