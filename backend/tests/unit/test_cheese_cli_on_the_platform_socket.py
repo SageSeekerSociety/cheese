@@ -5,7 +5,8 @@ The rules, as a person would state them:
 - with a platform socket to dial, every platform call goes down it, under
   `/api`, without the token, and whatever proxy the environment names is not
   used for it;
-- the session it belongs to is what the socket answers, not what the token says;
+- with no credential to name the session, the socket names it;
+- the process that loads the CLI keeps its own urllib;
 - a body too large for the socket goes straight to the platform on the token.
 
 The socket and the platform are loopback fixtures; the shipped CLI runs as it is.
@@ -82,13 +83,14 @@ def machine(monkeypatch):
     # The platform itself is reached as the environment says: here, not proxied.
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     monkeypatch.setenv("no_proxy", "127.0.0.1")
+    before = urllib.request._opener
     source = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
     loader = SourceFileLoader("cheese_on_the_socket", str(source))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    module.opener_before_loading = before
     yield module, on_socket, direct
-    urllib.request.install_opener(None)
     for server in (socket_server, platform):
         server.shutdown()
         server.server_close()
@@ -123,3 +125,8 @@ def test_a_body_too_large_for_the_socket_goes_straight_on_the_token(machine):
     assert on_socket == []
     assert direct[-1]["path"] == "/topics/t/files"
     assert direct[-1]["token"] == "the-token"
+
+
+def test_loading_the_cli_leaves_the_processs_urllib_as_it_was(machine):
+    cheese, _, _ = machine
+    assert urllib.request._opener is cheese.opener_before_loading

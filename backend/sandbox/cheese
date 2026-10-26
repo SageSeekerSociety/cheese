@@ -141,7 +141,8 @@ class _ToThePlatformSocket(urllib.request.BaseHandler):
 
 
 #: The largest request body sent down the socket: the device link holds a
-#: request whole and refuses one over 32 MiB (`device_hub.machine`).
+#: request whole and refuses one over 32 MiB, its head included
+#: (`device_hub.machine.MAX_REQUEST_BYTES`); this stays under that.
 _SOCKET_BODY_LIMIT = 30 * 1024 * 1024
 
 #: The platform's own address, for what does not go through its socket yet: git
@@ -151,11 +152,31 @@ DIRECT_API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rs
     "/"
 )
 PLATFORM_SOCKET = _platform_socket()
-if PLATFORM_SOCKET:
-    urllib.request.install_opener(
-        urllib.request.build_opener(_ToThePlatformSocket(PLATFORM_SOCKET))
-    )
+# This CLI's own: the file is also read as a module by processes whose urllib
+# is theirs (`remote_execution/client.py`), so nothing is installed globally.
+_OPENER = (
+    urllib.request.build_opener(_ToThePlatformSocket(PLATFORM_SOCKET))
+    if PLATFORM_SOCKET
+    else None
+)
+
+
+def _urlopen(request, *args, **kwargs):
+    """`urllib.request.urlopen`, through the platform socket when there is one."""
+    if _OPENER is None:
+        return urllib.request.urlopen(request, *args, **kwargs)
+    return _OPENER.open(request, *args, **kwargs)
+
+
 API = f"http://{_SOCKET_HOST}/api" if PLATFORM_SOCKET else DIRECT_API
+
+
+def _direct_api() -> str:
+    """The platform's own address, for what the socket does not carry: the
+    same as `API` when there is no socket."""
+    return DIRECT_API if PLATFORM_SOCKET else API
+
+
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
@@ -475,26 +496,27 @@ ENVIRONMENT_SPEC_DESCRIPTION = (
 
 
 def _own_session(env) -> str:
-    """This session's id: as the platform socket answers it, or as its
-    credential names it (``session`` in the claims ``cxss_<base64
-    json>.<signature>`` carries)."""
-    if _platform_socket(env):
-        with urllib.request.urlopen(
-            f"http://{_SOCKET_HOST}/whoami", timeout=20
-        ) as response:
-            session = json.load(response).get("session")
-        if not session:
-            raise ValueError("The platform socket names no session")
-        return str(session)
+    """This session's id: as its credential names it (``session`` in the
+    claims ``cxss_<base64 json>.<signature>`` carries), or, with no credential
+    to read, as the platform socket answers it. Only ``ValueError`` when
+    neither says."""
     body = env.get("CHEESE_TOKEN", "").rpartition(".")[0].removeprefix("cxss_")
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
         claims = None
     session = claims.get("session") if isinstance(claims, dict) else None
-    if not session:
-        raise ValueError("This credential names no session")
-    return str(session)
+    if session:
+        return str(session)
+    if _OPENER is not None and _platform_socket(env) == PLATFORM_SOCKET:
+        try:
+            with _urlopen(f"http://{_SOCKET_HOST}/whoami", timeout=20) as response:
+                session = json.load(response).get("session")
+        except (OSError, ValueError):
+            session = None
+        if session:
+            return str(session)
+    raise ValueError("Neither this credential nor the platform socket names a session")
 
 
 _CONTRIBUTOR = {
@@ -5360,7 +5382,7 @@ class LocalHost:
         # ladder of fetch strategies ending in a real browser, which measured
         # 22 s on a page that answered and longer on one that tried every rung.
         try:
-            with urllib.request.urlopen(req, timeout=240) as response:
+            with _urlopen(req, timeout=240) as response:
                 return json.loads(response.read() or b"{}")
         except urllib.error.HTTPError as exc:
             raise PlatformHTTPError(
@@ -5409,7 +5431,7 @@ def _call(
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _urlopen(req, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raw = e.read().decode(errors="replace")
@@ -5636,7 +5658,7 @@ def _flush_pre_push_reports() -> None:
     )
     try:
         message = _RoomMessage(content)
-        if API and TOPIC and TOKEN:
+        if API and TOPIC and (TOKEN or PLATFORM_SOCKET):
             message.tell_room()
         else:
             # Nobody to tell: a checkout with no room has no author to reach.
@@ -5673,7 +5695,7 @@ def _git_credential(operation: str) -> None:
 
 
 def _forge_git_relay(repository: str) -> str:
-    return f"{DIRECT_API}/sandbox/forge/{_need('CHEESE_PROJECT', PROJECT)}/{repository}.git"
+    return f"{_direct_api()}/sandbox/forge/{_need('CHEESE_PROJECT', PROJECT)}/{repository}.git"
 
 
 def _configure_git_transport(repo: Path, data: dict) -> None:
@@ -5690,7 +5712,7 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
         root = data["remote"].rsplit("/", 2)[0]
         probe = root + ("/api/v1/version" if data["forge_kind"] == "forgejo" else "/")
         request = urllib.request.Request(probe)
-        with urllib.request.urlopen(request, timeout=5):
+        with _urlopen(request, timeout=5):
             pass
     except urllib.error.HTTPError:
         reachable = False
@@ -6394,7 +6416,7 @@ def _tell_site(content: str) -> bool:
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with _urlopen(req, timeout=30):
             pass
     except Exception:
         return False
@@ -6415,7 +6437,7 @@ def _tell_room(content: str) -> bool:
     req.add_header("Content-Type", "application/json")
     req.add_header("X-Cheese-Token", TOKEN)
     try:
-        with urllib.request.urlopen(req, timeout=30):
+        with _urlopen(req, timeout=30):
             pass
     except Exception:
         return False
@@ -6897,7 +6919,7 @@ def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
     )
     request.add_header("X-Cheese-Token", TOKEN)
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with _urlopen(request, timeout=20) as response:
             latest = json.load(response)["data"]
         if latest["head_sha"] != head:
             return False
@@ -6953,14 +6975,14 @@ def _backup_task_snapshot(worktree, data, head, snapshot):
         path = f"/projects/{PROJECT}/git/tasks/{task_id}/snapshots/{snapshot}"
         with bundle.open("rb") as stream:
             request = urllib.request.Request(
-                f"{DIRECT_API}{path}", data=stream, method="PUT"
+                f"{_direct_api()}{path}", data=stream, method="PUT"
             )
             request.add_header("Content-Type", "application/x-git-bundle")
             request.add_header("Content-Length", str(bundle.stat().st_size))
             request.add_header("X-Cheese-Token", TOKEN)
             request.add_header("X-Cheese-Head", head)
             request.add_header("X-Content-SHA256", digest.hexdigest())
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with _urlopen(request, timeout=120) as response:
                 receipt = json.load(response)["data"]
         if receipt["digest"] != digest.hexdigest():
             raise RuntimeError("Task backup acknowledgement did not match the bundle")
@@ -7429,7 +7451,7 @@ def _raw_request(
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with _urlopen(req, timeout=30) as r:
             payload = r.read()
     except urllib.error.HTTPError as e:
         # Surface the backend's error body (auth failures, validation, etc.)
@@ -7474,7 +7496,7 @@ def _library_get(project: str, name: str, out: str) -> None:
         url = link["url"]
         if url.startswith("/"):
             # A signed link: curl dials the platform itself.
-            url = f"{DIRECT_API}{url}"
+            url = f"{_direct_api()}{url}"
         done = subprocess.run(
             ["curl", "-sSf", "--retry", "3", "-C", "-", "-o", partial, url],
             capture_output=True,
@@ -7597,9 +7619,7 @@ def _probe_app(port: int) -> int | None:
         f"http://127.0.0.1:{port}/", headers=_SERVE_PROBE_HEADERS, method="GET"
     )
     try:
-        with urllib.request.urlopen(
-            request, timeout=_SERVE_PROBE_TIMEOUT_S
-        ) as response:
+        with _urlopen(request, timeout=_SERVE_PROBE_TIMEOUT_S) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         # 收到应答了,只是不是 2xx/3xx——应用在跑,但这个路径不是它的家。
@@ -8181,7 +8201,7 @@ def main() -> None:
         )
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with _urlopen(req, timeout=60) as r:
             body = r.read()
         parent = os.path.dirname(a.path)
         if parent:
@@ -8208,7 +8228,7 @@ def main() -> None:
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
         try:
-            with urllib.request.urlopen(req, timeout=60) as r:
+            with _urlopen(req, timeout=60) as r:
                 body = r.read()
                 version = r.headers.get("X-Cheese-Version") or ""
         except urllib.error.HTTPError as e:
