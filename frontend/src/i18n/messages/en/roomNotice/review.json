@@ -1,6 +1,8 @@
 {
   "acceptConflict": "Accept stopped: PR #{pr} conflicts with its target branch",
   "acceptConflictDetail": "{url}\nThe conflict cannot be resolved by accepting: the code hosting service cannot merge this PR now. The platform hands the conflict to the AI teammate, which merges the target branch in the task directory, resolves it and pushes again. Accept again once the checks are green.",
+  "acceptRefusedByForge": "Accept stopped: the code hosting service keeps judging PR #{pr} unmergeable",
+  "acceptRefusedByForgeDetail": "{url}\nThe code hosting service keeps judging this PR unmergeable, most likely because it conflicts with its target branch, and accepting cannot resolve that. The platform hands it to the AI teammate, which merges the target branch in the task directory, resolves the conflict and pushes again. Accept again once the checks are green.",
   "acceptDismissed": "PR #{pr} has new commits; its existing approvals were dismissed",
   "acceptDismissedDetail": "Dismissed approvals: {voided}.\nNew commits dismiss existing approvals (project branch protection, on by default). Look at this PR again before accepting it.\n{url}",
   "acceptDone": "{actor} accepted this change; PR #{pr} {how}",
@@ -104,6 +106,7 @@
   "prClosed": "PR #{pr} was closed without merging; the review is void",
   "prClosedDetail": "The PR was closed on GitHub without being merged, so the platform voided this review and will not merge it. To keep delivering, submit a new review.\n{url}",
   "prConflict": "PR #{pr} conflicts with its target branch",
+  "prRefusedByForge": "The code hosting service keeps judging PR #{pr} unmergeable",
   "prMerged": "is merged",
   "prMergedDelivered": "PR #{pr} was merged in the repository; the task is delivered",
   "prMergedExternally": "was merged by hand on GitHub (not by the platform)",

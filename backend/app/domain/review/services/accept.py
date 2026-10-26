@@ -383,6 +383,30 @@ async def _pr_verdict(
             files = None
         changed_paths = None if files is None else [path for _, path in files]
 
+    # Forgejo's "refused" is a merge check still running or a conflict, and
+    # only time tells them apart: the record of since when it has refused this
+    # (head, base) pair lives on the card's mirror, and every reading here —
+    # the poller's, a click's, a stale-snapshot refresh — carries it forward.
+    refused_for = None
+    mirror = card.merge_state if isinstance(card.merge_state, dict) else {}
+    refusal = None
+    if status.mergeable_state == "refused":
+        now = datetime.now(UTC)
+        refusal = merge_state.forge_refusal(
+            mirror.get(merge_state.FORGE_REFUSED_KEY),
+            head=status.head_sha,
+            base=status.base_sha,
+            now=now,
+        )
+        refused_for = now - datetime.fromisoformat(refusal["since"])
+    if refusal != mirror.get(merge_state.FORGE_REFUSED_KEY):
+        # A new dict, so the JSON column sees the change; `_write_merge_mirror`
+        # keeps the record when it rewrites the rest of the mirror.
+        rest = {k: v for k, v in mirror.items() if k != merge_state.FORGE_REFUSED_KEY}
+        if refusal is not None:
+            rest[merge_state.FORGE_REFUSED_KEY] = refusal
+        card.merge_state = rest
+
     verdict = merge_state.compute_merge_state(
         github_mergeable_state=status.mergeable_state,
         github_mergeable=status.mergeable,
@@ -393,6 +417,7 @@ async def _pr_verdict(
         base_ancestry=ancestry,
         github_enforces=enforces,
         draft=status.draft,
+        refused_for=refused_for,
     )
     dependency = await self._dependency_block_reason(card, status)
     if dependency:
@@ -664,7 +689,7 @@ async def _stop_accept_pr_unavailable(
 
 
 async def _stop_accept_conflict(
-    self: pkg.AcceptService, card: AcceptCard, topic: Topic
+    self: pkg.AcceptService, card: AcceptCard, topic: Topic, *, refused: bool = False
 ) -> NoReturn:
     """PR 和目标分支冲突：采纳停下，说清是冲突，把解冲突交给芝士。
 
@@ -691,29 +716,43 @@ async def _stop_accept_conflict(
     Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is
     written on its own connection and must never queue behind a row lock this
     doomed transaction still holds. The room notice goes out first, while
-    `topic` is still live."""
+    `topic` is still live.
+
+    ``refused``: the dirty came from Forgejo refusing the same (head, base)
+    past `merge_state.FORGE_REFUSAL_SETTLES`, not from a forge that reports a
+    conflict as such, so every line says only that much."""
     number = card.pr_number
     card_id = card.id
     self._notify_merge_result(
         topic,
-        say("acceptConflict", pr=number),
+        say("acceptRefusedByForge" if refused else "acceptConflict", pr=number),
         task_id=card.task_id,
         meta=notice(
             EVENT_ACCEPT_CONFLICT,
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
-            detail=say("acceptConflictDetail", url=card.pr_url or ""),
+            detail=say(
+                "acceptRefusedByForgeDetail" if refused else "acceptConflictDetail",
+                url=card.pr_url or "",
+            ),
             detail_label=say("labelReason"),
         ),
     )
+    cause = (
+        "代码托管服务一直判定不能合并，多半是和目标分支冲突了"
+        if refused
+        else "和目标分支冲突了，代码托管服务现在合不了它"
+    )
     note = (
-        f"采纳未完成：PR #{number} 和目标分支冲突了（合并态：dirty），"
-        "代码托管服务现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
+        f"采纳未完成：PR #{number} {cause}（合并态：dirty）。"
+        "冲突要在任务目录里合入目标分支、解决并重新推送，"
         "所以这次采纳停下：解完冲突、检查绿了之后再重新采纳。"
     )
     await self._session.rollback()
     await self._note_outside_accept_txn(card_id, notes.NoteCode.merge_conflict, note)
-    raise UnprocessableEntityError(say("acceptConflicted", pr=number))
+    raise UnprocessableEntityError(
+        say("acceptForgeRefused" if refused else "acceptConflicted", pr=number)
+    )
 
 
 async def _stop_accept_title_disagrees(

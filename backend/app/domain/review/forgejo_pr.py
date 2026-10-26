@@ -96,20 +96,21 @@ class ForgejoClient:
         raw_title = str(data.get("title") or "")
         title = raw_title.upper()
         draft = title.startswith(("WIP:", "[WIP]"))
-        # Forgejo's `mergeable` is a plain bool, and `false` does not mean a
-        # conflict: `PullRequest.Mergeable` (Forgejo's models/issues/pull.go)
-        # reads false while its merge check is still running, which it does
-        # again after every push to either branch, as well as on a conflict, a
-        # checker error and a WIP title. Nothing else in the API tells these
-        # apart (the merge endpoint refuses them all with the same 405), so
-        # `false` is "not known to merge" — GitHub's `null` — and never the
-        # `False` the platform reads as a conflict (`compute_merge_state`,
-        # `nudges._conflict_nudge`).
+        # Forgejo's `mergeable` is a plain bool, and `false` does not by
+        # itself mean a conflict: `PullRequest.Mergeable` (Forgejo's
+        # models/issues/pull.go) reads false while its merge check is still
+        # running, which it does again after every push to either branch, as
+        # well as on a conflict, a checker error and a WIP title. Nothing else
+        # in the API tells these apart (the merge endpoint refuses them all
+        # with the same 405). So `false` on a ready PR is the word "refused",
+        # never the `False` the platform reads as a conflict; how long it has
+        # held for the same head and base decides (`merge_state.forge_refusal`).
         mergeable = True if data.get("mergeable") is True else None
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=data["head"]["ref"],
             base_ref=str((data.get("base") or {}).get("ref") or ""),
+            base_sha=str((data.get("base") or {}).get("sha") or ""),
             state=data["state"],
             merged=merged,
             merge_commit_sha=data.get("merge_commit_sha") if merged else None,
@@ -119,7 +120,7 @@ class ForgejoClient:
                 else None
             ),
             mergeable=mergeable,
-            mergeable_state="draft" if draft else "clean" if mergeable else "unknown",
+            mergeable_state="draft" if draft else "clean" if mergeable else "refused",
             draft=draft,
             # 平台按卡片的 subject 写这个标题（`pr_publish.sync_pr_text`），仓库
             # 自己的检查评判它，平台 squash 时落的也是同一行；两条合并路径都会

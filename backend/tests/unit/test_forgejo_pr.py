@@ -146,7 +146,7 @@ async def test_a_behind_pr_forgejo_is_still_checking_is_not_read_as_a_conflict()
         owner="acme", repo="docs", number=7, token="secret"
     )
     assert status.mergeable is None
-    assert status.mergeable_state == "unknown"
+    assert status.mergeable_state != "dirty"
 
 
 @pytest.mark.anyio

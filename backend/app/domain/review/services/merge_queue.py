@@ -118,6 +118,11 @@ def _write_merge_mirror(
         "checked_at": now_iso,
         "since": since,
     }
+    if merge_state.FORGE_REFUSED_KEY in prev:
+        # Kept as `_pr_verdict` left it: the clock behind Forgejo's refusal.
+        card.merge_state[merge_state.FORGE_REFUSED_KEY] = prev[
+            merge_state.FORGE_REFUSED_KEY
+        ]
 
 
 async def _merge_pr_for_accept(
@@ -240,7 +245,9 @@ async def _merge_pr_for_accept(
     # 那条路上会被笼统的 `except Exception` 说成「合并结果暂时无法确认」
     # （2026-10-16 采纳 PR #3927 时的样子），把「先解冲突」读成了「重试一次」。
     if verdict.state == "dirty":
-        await self._stop_accept_conflict(card, topic)
+        await self._stop_accept_conflict(
+            card, topic, refused=status.mergeable_state == "refused"
+        )
     # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
     # 译). Platform enforcing → only clean, or unstable whose reds are not
     # on the required roster, may merge; everything else is refused with
