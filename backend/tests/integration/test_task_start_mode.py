@@ -869,16 +869,84 @@ def test_nobody_starts_or_applies_once_the_task_has_closed(client, monkeypatch):
     assert _data(_start(client, direct, early))["project"] == started
 
 
-def test_an_approved_application_is_not_started_after_the_task_closes(
+def test_an_application_approved_after_signups_close_is_started_until_its_own_deadline(
+    client, monkeypatch
+):
+    """On a task applied for, the task's deadline is 报名截止: it closes
+    applying, not the approved claimant's start."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _apply_task(client, board, "报名截止后才通过")
+    student = _student(client, board)
+    claim = _data(_start(client, task_id, student))["participant"]["id"]
+    _move_task_deadline(client, board, task_id, _past())
+    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
+
+    started = _data(_start(client, task_id, student))["project"]
+
+    assert _projects_of(client, task_id) == [
+        (started["id"], _personal_team(client, student))
+    ]
+    assert _page(client, task_id, student)["myProject"]["id"] == started["id"]
+
+
+def test_an_application_approved_after_signups_close_is_not_started_after_its_own_deadline(
     client, monkeypatch
 ):
     _real_requests(client, monkeypatch)
     board = _board(client)
-    task_id = _apply_task(client, board, "通过了但整道题截止了")
+    task_id = _apply_task(client, board, "报名截止后通过，自己的也过了")
     student = _student(client, board)
     claim = _data(_start(client, task_id, student))["participant"]["id"]
-    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
     _move_task_deadline(client, board, task_id, _past())
+    assert _decide(client, board, task_id, claim, "APPROVED").status_code == 200
+    _data(
+        client.patch(
+            f"/tasks/{task_id}/participants/{claim}",
+            json={"deadline": _past()},
+            headers=_auth(board["creator_token"]),
+        )
+    )
+
+    refused = _start(client, task_id, student)
+
+    assert refused.status_code == 400, refused.text
+    assert refused.json()["error"]["i18n"]["key"] == "claimDeadlinePassedForStart"
+    assert _projects_of(client, task_id) == []
+
+
+def _only_claim(client, task_id: int) -> int:
+    async def read() -> int:
+        async with client.test_factory() as session:
+            return await session.scalar(
+                select(TaskMembership.id).where(TaskMembership.task_id == task_id)
+            )
+
+    return client.portal.call(read)
+
+
+def test_a_direct_claim_is_not_started_after_the_task_closes_even_with_a_later_own_deadline(
+    client, monkeypatch
+):
+    """On a task started directly the task's deadline is everyone's: a claim
+    whose project was never made is not started once it passes, even when
+    the publisher gave that claim a later deadline of its own."""
+    _real_requests(client, monkeypatch)
+    board = _board(client)
+    task_id = _create_task(client, board, name="直接开始，整道题截止了", startMode="DIRECT")
+    student = _student(client, board)
+    back = _forge_down(monkeypatch)
+    assert _start(client, task_id, student).status_code == 503
+    back()
+    claim = _only_claim(client, task_id)
+    _move_task_deadline(client, board, task_id, _past())
+    _data(
+        client.patch(
+            f"/tasks/{task_id}/participants/{claim}",
+            json={"deadline": _closes()},
+            headers=_auth(board["creator_token"]),
+        )
+    )
 
     refused = _start(client, task_id, student)
 

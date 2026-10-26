@@ -293,16 +293,26 @@ describe('题目详情', () => {
   })
 
   it.each([
-    ['整道题已经截止', { deadline: Date.now() - DAY }, null],
-    ['我自己的截止已经过了', {}, Date.now() - DAY],
-  ])('申请通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, task, mine) => {
+    ['申请制的题、我自己的截止已经过了', 'APPLY', {}, Date.now() - DAY],
+    ['直接开始的题、整道题已经截止', 'DIRECT', { deadline: Date.now() - DAY }, Date.now() + DAY],
+  ])('通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, startMode, task, mine) => {
     const { container } = await mount(
-      { startMode: 'APPLY', joined: true, submittable: true, myProject: null, ...task },
+      { startMode, joined: true, submittable: true, myProject: null, ...task },
       { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }] }
     )
 
     expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
     expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it('申请制的题过了报名截止才通过：在我自己的截止之前照样能开始做', async () => {
+    const { container } = await mount(
+      { startMode: 'APPLY', joined: true, submittable: true, myProject: null, deadline: Date.now() - DAY },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }] }
+    )
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.start'))
+    expect(claimButton(container)?.disabled).toBe(false)
   })
 
   it('我的申请通过了：主操作是「继续做」，打开从这道题来的那个项目', async () => {
