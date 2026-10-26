@@ -35,7 +35,9 @@ covers:
 
 ## 空间 {#spaces}
 
-空间有自己的角色：所有者（建空间的人）和管理员（课程里就是教师），成员是另一份名单。设置、撤销管理员和改角色都要求调用者自己是所有者（`backend/app/domain/space/services.py` 的 `add_admin`、`remove_admin`、`update_admin_role`）。所有权可以转交，转交后旧所有者降为管理员。「这人是不是这门课的教师」由 `backend/app/auth/space_access.py` 的 `is_space_admin` 回答。
+空间有自己的位置：所有者（建空间的人）、管理员（课程里就是教师）和成员。每个位置能做什么由 `backend/app/domain/space/permissions.py` 回答：成员看得到空间和里面的内容；管理员还能改设置和分类、管成员和邀请码、发公告、管资料、看数据分析；设置和撤销管理员、删除空间、被驳回后重新提交审核只有所有者能做。所有权可以转交，转交后旧所有者降为管理员。
+
+空间的路由和团队一样声明自己要哪项权限（`needs(SpacePermission.x, on="spaceId")`），由 `backend/app/auth/can.py` 判定。不在空间里的人得到 404，在空间里但位置不够得到 403。题目那边「这人是不是这门课的教师」暂时仍由 `backend/app/auth/space_access.py` 的 `is_space_admin` 回答，收拢题目权限时改问这里。
 
 ## AI 队友 {#agents}
 

@@ -226,7 +226,7 @@ def test_a_non_admin_cannot_write_the_space_default(
         json={"teaching": SPACE_GUIDE},
         headers=_auth(outsider_token),
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
     assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 
