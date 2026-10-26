@@ -91,14 +91,17 @@ describe('窗口期内读的人自己动了一下，却一个像素都没挪', (
 })
 
 describe('跳的时候这一栏还没有布局', () => {
-  it('停在哪还是哪，露出来照常跟新消息', async () => {
+  // 这一栏藏着时 `scrollIntoView` 本来就没挪动它，所以窗口本身不该改「在不在底部」。
+  // （真的从一次跳转过来时，`useChatPaging.openAt` 会先把它设成 false——那是跳转自己
+  // 的事，不是这个窗口该管的。）
+  it('窗口本身不动「在不在底部」', async () => {
     const { box, scroll } = await mounted(2000)
     box.setHeight(0) // v-show 藏着，或另一个页签在前
     scroll.beginOwnScroll()
     await settle() // 窗口在没有布局的情况下到点
     box.setHeight(400)
     fire() // 布局回来了，观察者报一次
-    expect(scroll.atBottom.value).toBe(true) // 跳前就停在底部，没被这一跳改过
+    expect(scroll.atBottom.value).toBe(true) // 没被这一跳改过
     box.grow(10)
     fire()
     expect(box.el.scrollTop).toBe(1610)
