@@ -32,7 +32,13 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     checked_out = []
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         status = pool_status(client.test_app_engine)
         assert status is not None
@@ -57,7 +63,13 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     from app.domain.agent.chat import ChatService
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "project-key"
 
@@ -140,7 +152,13 @@ def _pool(monkeypatch):
 @pytest.fixture
 def _project_key(monkeypatch):
     async def fake_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
@@ -232,7 +250,13 @@ def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
     async def no_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return None
 
@@ -551,7 +575,13 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
     from app.domain.memory import dream
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "dream-key" if dream else "room-key"
 
@@ -593,7 +623,13 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
     from app.domain.agent.chat import ChatService
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "dream-key" if dream else "room-key"
 
