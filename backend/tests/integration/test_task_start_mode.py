@@ -933,7 +933,9 @@ def test_a_direct_claim_is_not_started_after_the_task_closes_even_with_a_later_o
     the publisher gave that claim a later deadline of its own."""
     _real_requests(client, monkeypatch)
     board = _board(client)
-    task_id = _create_task(client, board, name="直接开始，整道题截止了", startMode="DIRECT")
+    task_id = _create_task(
+        client, board, name="直接开始，整道题截止了", startMode="DIRECT"
+    )
     student = _student(client, board)
     back = _forge_down(monkeypatch)
     assert _start(client, task_id, student).status_code == 503

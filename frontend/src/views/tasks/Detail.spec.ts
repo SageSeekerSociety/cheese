@@ -308,7 +308,10 @@ describe('题目详情', () => {
   it('申请制的题过了报名截止才通过：在我自己的截止之前照样能开始做', async () => {
     const { container } = await mount(
       { startMode: 'APPLY', joined: true, submittable: true, myProject: null, deadline: Date.now() - DAY },
-      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }] }
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }],
+      }
     )
 
     expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.start'))
