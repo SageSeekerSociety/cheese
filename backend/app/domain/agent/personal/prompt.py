@@ -142,7 +142,7 @@ def task_brief(
         (
             f"题目截止：{_when(task.deadline, timezone)}"
             if task.start_mode == START_DIRECT
-            else f"报名截止：{_when(task.deadline, timezone)}"
+            else f"申请截止：{_when(task.deadline, timezone)}"
             "（过了不再收新申请；已经通过的，在自己的提交截止之前都能开始做）"
         ),
         *([mine] if mine else []),

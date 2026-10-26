@@ -224,7 +224,7 @@ async def read_mode_for_claim(session: AsyncSession, task: Task) -> None:
 
 def refuse_claim_after_deadline(task: Task, now: datetime) -> None:
     """Nobody makes a new claim once the task's deadline has passed: no
-    application to a task applied for (its deadline is 报名截止), no start of
+    application to a task applied for (its deadline is 申请截止), no start of
     a task started directly (its deadline is everyone's)."""
     if task.deadline is not None and task.deadline <= now:
         raise BadRequestError(say("taskClosedForStart"))

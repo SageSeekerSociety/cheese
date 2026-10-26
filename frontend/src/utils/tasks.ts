@@ -26,6 +26,21 @@ export function taskState(
 }
 
 /**
+ * 这道题对所有人截止了，对我还开着：我有一份通过了的领取，自己的截止还没过，还能开始做或者正在做。
+ * 申请制的题，题目的截止是申请截止，只挡申请；直接开始的题，题目的截止是所有人的，过了就对谁都
+ * 截止。和服务端列表分组的 `TaskRepository.still_open_to` 是同一条判据：这样的题不收进「已截止」
+ * 那一组，标题旁和列表那一行也不写「已截止」。
+ */
+export function openToMe(
+  task: Pick<Task, 'submittable' | 'userDeadline' | 'startMode' | 'deadline' | 'endedAt'>,
+  now = Date.now()
+): boolean {
+  if (!task.submittable || task.endedAt != null) return false
+  if (task.userDeadline != null && task.userDeadline <= now) return false
+  return task.startMode !== 'DIRECT' || !deadlineState(task.deadline, now)?.passed
+}
+
+/**
  * 一个截止时刻此刻是什么情形。过没过只按这一刻比：`at < now` 就是过了，和服务端
  * `past_deadline`（截止之后不收新的一版）是同一条判据；所以「我的进度」和交作业表单
  * 说的永远是同一件事，不会一边「今天截止」一边「已截止」。

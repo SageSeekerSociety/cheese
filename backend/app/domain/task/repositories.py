@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
-from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
+from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED, START_DIRECT
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -75,6 +75,43 @@ class TaskRepository:
         return or_(
             and_(Task.submitter_type == 0, user_member_exists),
             and_(Task.submitter_type == 1, team_member_exists),
+        )
+
+    @staticmethod
+    def still_open_to(user_id: int):
+        """The tasks still open to ``user_id`` through a claim of their own
+        (or their team's) once they have closed to everyone else: the claim is
+        approved and its own deadline has not passed, so they can still start
+        it or are working on it. On a task applied for, the task's deadline is
+        申请截止 and closes applying only; on a task started directly it is
+        everyone's, so past it nobody holds the task open."""
+        own_deadline_ahead = or_(
+            TaskMembership.deadline.is_(None), TaskMembership.deadline > func.now()
+        )
+        live_approved = and_(
+            TaskMembership.task_id == Task.id,
+            TaskMembership.deleted_at.is_(None),
+            TaskMembership.approved == APPROVE_APPROVED,
+            own_deadline_ahead,
+        )
+        user_claim = exists().where(live_approved, TaskMembership.member_id == user_id)
+        team_claim = exists().where(
+            live_approved,
+            TaskMembership.member_id == TeamUserRelation.team_id,
+            TeamUserRelation.user_id == user_id,
+            TeamUserRelation.deleted_at.is_(None),
+        )
+        return and_(
+            Task.ended_at.is_(None),
+            or_(
+                Task.start_mode != START_DIRECT,
+                Task.deadline.is_(None),
+                Task.deadline > func.now(),
+            ),
+            or_(
+                and_(Task.submitter_type == 0, user_claim),
+                and_(Task.submitter_type == 1, team_claim),
+            ),
         )
 
     async def list_joined(self, user_id: int, *, limit: int) -> Sequence[Task]:
@@ -181,7 +218,9 @@ class TaskRepository:
         if lifecycle is not None:
             stmt = cast(
                 Select[tuple[Task]],
-                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
+                self._apply_lifecycle_filter(
+                    stmt, lifecycle=lifecycle, viewer_id=current_user_id
+                ),
             )
 
         if apply_space_task_visibility:
@@ -297,7 +336,9 @@ class TaskRepository:
         if lifecycle is not None:
             stmt = cast(
                 Select[tuple[int]],
-                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
+                self._apply_lifecycle_filter(
+                    stmt, lifecycle=lifecycle, viewer_id=current_user_id
+                ),
             )
 
         if apply_space_task_visibility:
@@ -341,6 +382,7 @@ class TaskRepository:
         stmt: Select[tuple[Task]] | Select[tuple[int]],
         *,
         lifecycle: str,
+        viewer_id: int | None = None,
     ) -> Select[tuple[Task]] | Select[tuple[int]]:
         if lifecycle == "ended":
             return stmt.where(Task.ended_at.is_not(None))
@@ -369,6 +411,10 @@ class TaskRepository:
                     approved_count < Task.participant_limit,
                 ),
             )
+            if viewer_id:
+                # A task the viewer can still start or is working on stays in
+                # front of them, not among the closed ones.
+                open_ = or_(open_, self.still_open_to(viewer_id))
             return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 

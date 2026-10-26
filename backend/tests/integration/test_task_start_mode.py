@@ -872,11 +872,11 @@ def test_nobody_starts_or_applies_once_the_task_has_closed(client, monkeypatch):
 def test_an_application_approved_after_signups_close_is_started_until_its_own_deadline(
     client, monkeypatch
 ):
-    """On a task applied for, the task's deadline is 报名截止: it closes
+    """On a task applied for, the task's deadline is 申请截止: it closes
     applying, not the approved claimant's start."""
     _real_requests(client, monkeypatch)
     board = _board(client)
-    task_id = _apply_task(client, board, "报名截止后才通过")
+    task_id = _apply_task(client, board, "申请截止后才通过")
     student = _student(client, board)
     claim = _data(_start(client, task_id, student))["participant"]["id"]
     _move_task_deadline(client, board, task_id, _past())
@@ -895,7 +895,7 @@ def test_an_application_approved_after_signups_close_is_not_started_after_its_ow
 ):
     _real_requests(client, monkeypatch)
     board = _board(client)
-    task_id = _apply_task(client, board, "报名截止后通过，自己的也过了")
+    task_id = _apply_task(client, board, "申请截止后通过，自己的也过了")
     student = _student(client, board)
     claim = _data(_start(client, task_id, student))["participant"]["id"]
     _move_task_deadline(client, board, task_id, _past())
