@@ -324,7 +324,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/webhooks.py": 2,
     "app/api/task_teaching.py": 2,
     "app/api/write_access.py": 3,
-    "app/auth/checker.py": 2,
+    "app/auth/checker.py": 1,
     "app/common/auth.py": 1,
     "app/core/config.py": 16,
     "app/core/crypto.py": 1,
@@ -420,7 +420,7 @@ _BASELINE: dict[str, int] = {
     # these sentences with it — the same count, in the file that now holds it.
     "app/domain/agent/session_host/starting.py": 7,
     "app/domain/agent_type/library.py": 11,
-    "app/domain/answers/services.py": 9,
+    "app/domain/answers/services.py": 7,
     "app/domain/attachment/services.py": 5,
     "app/domain/avatars/services.py": 1,
     "app/domain/block/documents.py": 1,
@@ -474,7 +474,7 @@ _BASELINE: dict[str, int] = {
     # 2026-10-18 抽公共函数：这份拒答从 `questions/services.py` 搬进
     # `questions/lookup.py`，句子还是那一句 —— 30 -> 29，另起一格记 1。
     "app/domain/questions/lookup.py": 1,
-    "app/domain/questions/services.py": 29,
+    "app/domain/questions/services.py": 23,
     "app/domain/repository/service.py": 2,
     "app/domain/review/events.py": 1,
     #: 2026-10-16 拆包：#1666 把 `review/github_pr.py` 分成同名包，

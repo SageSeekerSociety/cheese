@@ -51,6 +51,12 @@ covers:
 
 题目路由声明 `needs(TaskPermission.x, on="taskId")`。要看具体报名的判断由处理函数在声明之后调用：`may_read_participation`（看提交和批改：教它的人和报名者本人）、`may_withdraw`（撤回报名：个人报名者本人或教它的人）、`may_hand_in`（交作业：报名者本人或报名团队的成员）。看不到题的人一律 404，包括还没审核通过的题。
 
+## 问答 {#questions}
+
+问答里看、答、关注、投票、评论，登录的人都能做。改问题本身是提问人的事：改、删、设悬赏、采纳答案或撤销采纳、撤回邀请（`backend/app/domain/questions/permissions.py`）；改、删回答是回答作者的事（`backend/app/domain/answers/permissions.py`）。路由声明 `needs(QuestionPermission.manage, on="question_id")` 或 `needs(AnswerPermission.manage, on="answer_id")`，已删除或不存在的问题、回答得到 404。
+
+团队、空间、题目、问答四类对象都由 `backend/app/auth/can.py` 判定，旧的「角色 × 动作 × 资源」表（`app/auth/domains`）已经删除。
+
 ## AI 队友 {#agents}
 
 AI 队友以席位的身份参与房间，和人走同一套判定。平台管理类的操作要求平台管理员身份，AI 队友不在管理员名单里，所以做不了，见[平台管理员](/dev/admins)。

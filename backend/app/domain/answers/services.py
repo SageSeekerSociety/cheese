@@ -1,4 +1,4 @@
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository, AnswerStats
 from app.domain.questions.lookup import ensure_question_exists
@@ -285,12 +285,8 @@ class AnswersService:
             }
         return dto, question_dto
 
-    async def update_answer(
-        self, *, answer_id: int, user_id: int, content: str
-    ) -> dict:
+    async def update_answer(self, *, answer_id: int, content: str) -> dict:
         answer = await self._ensure_answer_exists(answer_id)
-        if answer.created_by_id != user_id:
-            raise ForbiddenError("Only the answer owner can update this answer")
         if not content.strip():
             raise BadRequestError("content cannot be empty")
         updated = await self._repo.update_answer(answer, content=content)
@@ -301,10 +297,8 @@ class AnswersService:
             author=profile_to_author(profile, chosen.get(updated.created_by_id)),
         )
 
-    async def delete_answer(self, *, answer_id: int, user_id: int) -> None:
+    async def delete_answer(self, *, answer_id: int) -> None:
         answer = await self._ensure_answer_exists(answer_id)
-        if answer.created_by_id != user_id:
-            raise ForbiddenError("Only the answer owner can delete this answer")
         await self._repo.soft_delete(answer)
 
     async def add_favorite(self, *, answer_id: int, user_id: int) -> dict:
