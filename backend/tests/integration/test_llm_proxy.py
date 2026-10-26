@@ -611,3 +611,39 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
 
     assert r.status_code == 200
     assert _FakeClient.seen["headers"]["authorization"] == "Bearer dream-key"
+
+
+def test_a_credential_an_execution_machine_holds_calls_no_model(
+    client, _pool, _project_key
+):
+    """A sandbox's own credential, copied anywhere, must not be a key to the
+    project's model pool: a sandbox asks on its platform socket instead
+    (``/machine/llm``), where it needs none. The session host's copy of the
+    same session-bound credential, which Codex and Pi call with, still does."""
+    from app.core.sandbox_auth import bind_resource_token, for_a_machine
+
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    room_token = mint_scoped_token(
+        project_id=project["id"], topic_id=project["root_topic_id"]
+    )
+    session_host = bind_resource_token(
+        room_token, "resource", session_id=str(uuid.uuid4())
+    )
+    held = for_a_machine(session_host)
+
+    _FakeClient.seen = {}
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": f"Bearer {held}"},
+        content=b'{"model":"m","messages":[]}',
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["i18n"]["key"] == "modelCallFromMachineNeedsSocket"
+    assert _FakeClient.seen == {}
+
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": f"Bearer {session_host}"},
+        content=b'{"model":"m","messages":[]}',
+    )
+    assert r.status_code == 200, r.text
