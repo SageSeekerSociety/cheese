@@ -27,6 +27,12 @@ covers:
 
 一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员、导师，每个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
 
+## 管理团队 {#teams}
+
+一个人在团队里坐哪个位置、这个位置能做什么，由 `backend/app/domain/team/permissions.py` 回答：所有者、管理员、成员三个位置，每个位置一组固定的权限（看成员、改设置和加入链接、管成员、改角色、管设备和模型连接、管团队文档、发招募帖、解散、转交）。只能移出位置比自己低的人，自己可以离开，所有者只能转交。
+
+路由在声明里写它要哪项权限：`needs(TeamPermission.x, on="teamId")`（`backend/app/api/write_access.py`），由 `backend/app/auth/can.py` 在进入处理函数之前判定。看不到这个团队的人（不在隐身团队里）得到 404，看得到但权限不够得到 403。团队的服务只管团队自己的规则，例如个人团队不能解散，不再判断调用者是谁。
+
 ## 空间 {#spaces}
 
 空间有自己的角色：所有者（建空间的人）和管理员（课程里就是教师），成员是另一份名单。设置、撤销管理员和改角色都要求调用者自己是所有者（`backend/app/domain/space/services.py` 的 `add_admin`、`remove_admin`、`update_admin_role`）。所有权可以转交，转交后旧所有者降为管理员。「这人是不是这门课的教师」由 `backend/app/auth/space_access.py` 的 `is_space_admin` 回答。

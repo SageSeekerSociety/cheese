@@ -23,7 +23,8 @@ from app.domain.device.repository import (
 )
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
-from app.domain.team.services import team_service
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 
 
 def _aware(dt: datetime) -> datetime:
@@ -207,9 +208,9 @@ class SqlDeviceRepository:
         )
         return [self._device(row) for row in rows]
 
-    async def is_team_admin(self, team_id: int, user_id: int) -> bool:
-        return await team_service(self._session).is_team_at_least_admin(
-            team_id, user_id
+    async def may_manage_machines(self, team_id: int, user_id: int) -> bool:
+        return await team_seats.may(
+            self._session, team_id, user_id, TeamPermission.manage_machines
         )
 
     # -- machine health (#186) ---------------------------------------------

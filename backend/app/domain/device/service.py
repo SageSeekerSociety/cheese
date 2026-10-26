@@ -261,7 +261,7 @@ class DeviceService:
         return device
 
     async def may_manage(self, device: Device, actor_user_id: int) -> bool:
-        return await self._repo.is_team_admin(device.team_id, actor_user_id)
+        return await self._repo.may_manage_machines(device.team_id, actor_user_id)
 
     async def list_devices_for_team(self, team_id: int) -> list[Device]:
         return await self._repo.list_devices_by_team(team_id)

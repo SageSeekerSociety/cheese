@@ -113,7 +113,7 @@ class InMemoryDeviceRepository:
             if d.device_id in self._hosted_device_ids and team_id == d.team_id
         ]
 
-    async def is_team_admin(self, team_id: int, user_id: int) -> bool:
+    async def may_manage_machines(self, team_id: int, user_id: int) -> bool:
         return user_id in self.team_admins.get(team_id, set())
 
     # -- machine health (#186) ---------------------------------------------

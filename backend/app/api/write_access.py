@@ -8,6 +8,10 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   for the room (``topic_id``) or project (``project_id``) in the path. A
   person's browser session is refused. Used for the write surface the ``cheese``
   CLI alone calls.
+- ``needs(permission, on=...)``: the person may do ``permission`` to the object
+  the path parameter ``on`` names (``app.auth.can``). Checked before the
+  handler runs; it is a read route's declaration too, though only writes must
+  carry one.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). Most routes are this.
 
@@ -34,13 +38,16 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.auth import can
+from app.auth.checker import get_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
 from app.core.sandbox_auth import (
@@ -49,6 +56,7 @@ from app.core.sandbox_auth import (
     looks_like_project_agent_credential,
     scoped_token_claims,
 )
+from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -58,7 +66,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["cheese_only", "route_decides"]
+    kind: Literal["cheese_only", "route_decides", "needs"]
     #: For ``cheese_only``: the path parameter ``<scope>_id`` names the room or
     #: project the credential must be for.
     scope: Literal["topic", "project", None] = None
@@ -146,6 +154,39 @@ async def _credential_opens(
         return False
 
 
+@dataclass(frozen=True, eq=False)
+class _Needs(WriteAccess):
+    kind: Literal["needs"] = "needs"
+    permission: can.Permission | None = None
+    #: The path parameter that names the object, as the path spells it.
+    on: str = ""
+
+    @property
+    def name(self) -> str:
+        return f"needs {self.permission}"
+
+    async def __call__(  # type: ignore[override]
+        self,
+        request: Request,
+        db: Annotated[AsyncSession, Depends(get_db)],
+        person: Annotated[AuthUserInfo, Depends(get_auth_user)],
+    ) -> AuthUserInfo:
+        if person.user_id == 0:
+            raise AuthenticationRequiredError(say("signInRequired"))
+        assert self.permission is not None
+        await can.require(
+            db, person.user_id, self.permission, int(request.path_params[self.on])
+        )
+        return person
+
+
+def needs(permission: can.Permission, *, on: str):
+    """The route's declaration that it needs ``permission`` on the object the
+    path parameter ``on`` names: in the route's ``dependencies``, or as a
+    parameter, which then receives the person it admitted."""
+    return Depends(_Needs(permission=permission, on=on))
+
+
 CHEESE_ONLY_IN_ROOM = Depends(_CheeseOnly(scope="topic"))
 CHEESE_ONLY_IN_PROJECT = Depends(_CheeseOnly(scope="project"))
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
@@ -212,8 +253,8 @@ def violations(app: FastAPI) -> list[str]:
         elif not route.declared:
             found.append(
                 f"{route.method} {route.path} ({route.endpoint}) declares no write "
-                "access; add CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT or "
-                "ROUTE_DECIDES (app/api/write_access.py) to its dependencies"
+                "access; add needs(...), CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT "
+                "or ROUTE_DECIDES (app/api/write_access.py) to its dependencies"
             )
     return found
 

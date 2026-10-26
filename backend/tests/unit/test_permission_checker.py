@@ -45,7 +45,7 @@ class TestPermissionRule:
     def test_always_rule_returns_true(self) -> None:
         rule = PermissionRule()
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
-        assert rule.check(user, Action.READ, Resource.TEAM, 1, {}) is True
+        assert rule.check(user, Action.READ, Resource.SPACE, 1, {}) is True
 
     def test_condition_must_match(self) -> None:
         def is_owner_check(user, action, resource, resource_id, context):
@@ -54,10 +54,10 @@ class TestPermissionRule:
         rule = PermissionRule(conditions=[is_owner_check])
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         assert (
-            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
+            rule.check(user, Action.READ, Resource.SPACE, 1, {"is_owner": True}) is True
         )
         assert (
-            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": False})
+            rule.check(user, Action.READ, Resource.SPACE, 1, {"is_owner": False})
             is False
         )
 
@@ -71,16 +71,16 @@ class TestPermissionRule:
         rule = PermissionRule(or_conditions=[[is_owner_check, is_admin_check]])
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         assert (
-            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_owner": True}) is True
+            rule.check(user, Action.READ, Resource.SPACE, 1, {"is_owner": True}) is True
         )
         assert (
-            rule.check(user, Action.READ, Resource.TEAM, 1, {"is_admin": True}) is True
+            rule.check(user, Action.READ, Resource.SPACE, 1, {"is_admin": True}) is True
         )
         assert (
             rule.check(
                 user,
                 Action.READ,
-                Resource.TEAM,
+                Resource.SPACE,
                 1,
                 {"is_owner": False, "is_admin": False},
             )
@@ -112,15 +112,15 @@ class TestPermissionChecker:
         return PermissionChecker()
 
     def test_register_config(self, checker: PermissionChecker) -> None:
-        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.TEAM)
+        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.SPACE)
         checker.register_config(config)
         configs = checker.get_configs_for_role(Role.MEMBER)
         assert config in configs
 
     def test_register_configs(self, checker: PermissionChecker) -> None:
         configs = [
-            PermissionConfig(Role.MEMBER, Action.READ, Resource.TEAM),
-            PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM),
+            PermissionConfig(Role.MEMBER, Action.READ, Resource.SPACE),
+            PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.SPACE),
         ]
         checker.register_configs(configs)
         assert len(checker.get_configs_for_role(Role.MEMBER)) == 1
@@ -134,7 +134,7 @@ class TestPermissionChecker:
             db=db,
             user=user,
             action=Action.DELETE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=999,
         )
         assert allowed is True
@@ -142,7 +142,7 @@ class TestPermissionChecker:
     @pytest.mark.anyio
     async def test_guest_can_create_team(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.GUEST, Action.CREATE, Resource.TEAM)
+        config = PermissionConfig(Role.GUEST, Action.CREATE, Resource.SPACE)
         checker.register_config(config)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
@@ -150,27 +150,27 @@ class TestPermissionChecker:
             db=db,
             user=user,
             action=Action.CREATE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
         )
         assert allowed is True
 
     @pytest.mark.anyio
     async def test_member_can_read_team(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.TEAM)
+        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.SPACE)
         checker.register_config(config)
 
         async def fake_role_provider(db, user_id, domain, resource_id):
             return {Role.MEMBER}
 
-        checker.register_role_provider("team", fake_role_provider)
+        checker.register_role_provider("space", fake_role_provider)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.READ,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is True
@@ -178,20 +178,20 @@ class TestPermissionChecker:
     @pytest.mark.anyio
     async def test_owner_can_delete_team(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.TEAM)
+        config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.SPACE)
         checker.register_config(config)
 
         async def fake_role_provider(db, user_id, domain, resource_id):
             return {Role.OWNER}
 
-        checker.register_role_provider("team", fake_role_provider)
+        checker.register_role_provider("space", fake_role_provider)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.DELETE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is True
@@ -199,20 +199,20 @@ class TestPermissionChecker:
     @pytest.mark.anyio
     async def test_member_cannot_delete_team(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.TEAM)
+        config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.SPACE)
         checker.register_config(config)
 
         async def fake_role_provider(db, user_id, domain, resource_id):
             return {Role.MEMBER}
 
-        checker.register_role_provider("team", fake_role_provider)
+        checker.register_role_provider("space", fake_role_provider)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.DELETE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is False
@@ -222,20 +222,20 @@ class TestPermissionChecker:
         self, checker: PermissionChecker
     ) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM)
+        config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.SPACE)
         checker.register_config(config)
 
         async def fake_role_provider(db, user_id, domain, resource_id):
             return {Role.OWNER}
 
-        checker.register_role_provider("team", fake_role_provider)
+        checker.register_role_provider("space", fake_role_provider)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.UPDATE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is True
@@ -243,20 +243,20 @@ class TestPermissionChecker:
     @pytest.mark.anyio
     async def test_no_permission_without_role(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.TEAM)
+        config = PermissionConfig(Role.MEMBER, Action.READ, Resource.SPACE)
         checker.register_config(config)
 
         async def fake_role_provider(db, user_id, domain, resource_id):
             return set()
 
-        checker.register_role_provider("team", fake_role_provider)
+        checker.register_role_provider("space", fake_role_provider)
 
         user = AuthUserInfo(user_id=1, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.READ,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is False
@@ -264,13 +264,13 @@ class TestPermissionChecker:
 
 class TestPermission:
     def test_permission_creation(self) -> None:
-        perm = Permission(action=Action.READ, resource=Resource.TEAM)
+        perm = Permission(action=Action.READ, resource=Resource.SPACE)
         assert perm.action == Action.READ
-        assert perm.resource == Resource.TEAM
+        assert perm.resource == Resource.SPACE
 
     def test_permission_equality(self) -> None:
-        perm1 = Permission(action=Action.READ, resource=Resource.TEAM)
-        perm2 = Permission(action=Action.READ, resource=Resource.TEAM)
+        perm1 = Permission(action=Action.READ, resource=Resource.SPACE)
+        perm2 = Permission(action=Action.READ, resource=Resource.SPACE)
         assert perm1.action == perm2.action
         assert perm1.resource == perm2.resource
 
@@ -494,20 +494,20 @@ class TestMultipleRoles:
         self, checker: PermissionChecker
     ) -> None:
         db = AsyncMock()
-        config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM)
+        config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.SPACE)
         checker.register_config(config)
 
         async def role_provider(db, user_id, domain, resource_id):
             return {Role.MEMBER, Role.ADMIN}
 
-        checker.register_role_provider("team", role_provider)
+        checker.register_role_provider("space", role_provider)
 
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
         allowed = await checker.check_permission(
             db=db,
             user=user,
             action=Action.UPDATE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert allowed is True
@@ -515,14 +515,14 @@ class TestMultipleRoles:
     @pytest.mark.anyio
     async def test_highest_role_takes_effect(self, checker: PermissionChecker) -> None:
         db = AsyncMock()
-        delete_config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.TEAM)
-        update_config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.TEAM)
+        delete_config = PermissionConfig(Role.OWNER, Action.DELETE, Resource.SPACE)
+        update_config = PermissionConfig(Role.ADMIN, Action.UPDATE, Resource.SPACE)
         checker.register_configs([delete_config, update_config])
 
         async def role_provider(db, user_id, domain, resource_id):
             return {Role.OWNER}
 
-        checker.register_role_provider("team", role_provider)
+        checker.register_role_provider("space", role_provider)
 
         user = AuthUserInfo(user_id=123, system_roles={SystemRole.USER})
 
@@ -530,14 +530,14 @@ class TestMultipleRoles:
             db=db,
             user=user,
             action=Action.DELETE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         can_update = await checker.check_permission(
             db=db,
             user=user,
             action=Action.UPDATE,
-            resource=Resource.TEAM,
+            resource=Resource.SPACE,
             resource_id=1,
         )
         assert can_delete is True
