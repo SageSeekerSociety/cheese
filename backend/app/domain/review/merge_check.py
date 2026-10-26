@@ -84,7 +84,10 @@ def _answers() -> Path:
 
 
 def _answer_file(url: str, base: str, head: str) -> Path:
-    return _answers() / _key(url) / f"{base}..{head}"
+    """One flat folder, the repository in the file's name: there is no folder
+    per repository, so pruning never has one to remove from under a check
+    about to write into it."""
+    return _answers() / f"{_key(url)}.{base}..{head}"
 
 
 def answer(url: str, base: str, head: str) -> Answer | None:
@@ -243,20 +246,17 @@ def _test_merge(
 
 
 def _prune_answers() -> None:
-    """Remove answers older than `ANSWERS_KEPT_FOR_S`, and the folders left
-    empty. A `.partial` file is an answer being written, which takes
+    """Remove answers older than `ANSWERS_KEPT_FOR_S`. Only files: the folder
+    that holds them stays, so a check about to write an answer always finds
+    it. A `.partial` file is an answer being written, which takes
     milliseconds; it is removed only past the same age, when no write can
     still be under way, so a crash cannot leave one behind for good."""
     oldest = time.time() - ANSWERS_KEPT_FOR_S
     with contextlib.suppress(OSError):
-        folders = list(_answers().iterdir())
-        for folder in folders:
+        for entry in list(_answers().iterdir()):
             with contextlib.suppress(OSError):
-                for entry in folder.iterdir():
-                    with contextlib.suppress(OSError):
-                        if entry.lstat().st_mtime < oldest:
-                            entry.unlink()
-                folder.rmdir()  # only once it holds nothing
+                if entry.lstat().st_mtime < oldest:
+                    entry.unlink()
 
 
 def _allocated(path: Path) -> int:

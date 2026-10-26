@@ -199,3 +199,36 @@ def test_an_answer_being_written_survives_another_check(tmp_path, monkeypatch):
         go_on.set()
         assert first.result(30) == "conflict"
     assert merge_check.answer(a.url, a.base, a.head) == "conflict"
+
+
+def test_pruning_never_removes_where_another_check_is_about_to_write(
+    tmp_path, monkeypatch
+):
+    a = proposal(tmp_path / "a", conflicting=True)
+    b = proposal(tmp_path / "b", conflicting=False)
+    # Every answer on disk counts as past its age, so B's check prunes all it can.
+    monkeypatch.setattr(merge_check, "ANSWERS_KEPT_FOR_S", -60)
+    made, go_on = threading.Event(), threading.Event()
+    mkdir = Path.mkdir
+    depth = threading.local()
+
+    def pauses_after_making_the_answer_folder(self, *args, **kwargs):
+        # `mkdir(parents=True)` calls itself for each missing parent: pause once
+        # the whole folder the answer goes into exists, not partway.
+        depth.n = getattr(depth, "n", 0) + 1
+        try:
+            mkdir(self, *args, **kwargs)
+        finally:
+            depth.n -= 1
+        is_answers = "answers" in self.parts
+        if depth.n == 0 and is_answers and not made.is_set():
+            made.set()
+            go_on.wait(30)
+
+    monkeypatch.setattr(Path, "mkdir", pauses_after_making_the_answer_folder)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(merge_check.decide, a.url, "t", a.base, a.head)
+        assert made.wait(30)
+        assert merge_check.decide(b.url, "t", b.base, b.head) == "clean"
+        go_on.set()
+        assert first.result(30) == "conflict"
