@@ -866,18 +866,25 @@ async def charge_turn_spend(
         model=model_roles.model("agent_model"), topic_id=topic_id, turn_id=turn_id
     )
     usages = await settle(sessions, gateway, key, charge, retry_after=TURN_RETRY_AFTER)
-    # What the conversation's sandboxes spent since, on their own key.
-    machine = (
-        MachineGatewayKey(project_id, execution.conversation_id, execution.owner_handle)
-        if execution is not None
-        else MachineGatewayKey(project_id, topic_id, "")
-        if topic_id is not None
-        else None
-    )
-    if machine is None:
+    # What the conversation's sandboxes spent since, on their own keys: every
+    # holder's, so none is left uncharged if the turn's holder is another.
+    conversation_id = execution.conversation_id if execution else topic_id
+    if conversation_id is None:
         return usages
-    machine_usages = await charge_new_spend(sessions, gateway, machine, charge)
-    return [*(usages or []), *(machine_usages or [])] or None
+    async with sessions() as session:
+        holders = (
+            await session.scalars(
+                select(MachineGatewayAccount.owner_handle).where(
+                    MachineGatewayAccount.project_id == project_id,
+                    MachineGatewayAccount.conversation_id == conversation_id,
+                )
+            )
+        ).all()
+    landed = list(usages or [])
+    for holder in holders:
+        machine = MachineGatewayKey(project_id, conversation_id, holder)
+        landed += await charge_new_spend(sessions, gateway, machine, charge) or []
+    return landed or None
 
 
 def _schedule_deferred_drain(

@@ -96,3 +96,25 @@ async def test_what_a_sandbox_spent_is_charged_with_the_turn(
     assert total["cost_usd"] == pytest.approx(0.03)
     # Charged once: the next turn finds nothing new on the key.
     assert await svc.charge_turn_spend(pid, tid, uuid.uuid4()) is None
+
+
+async def test_every_holders_sandbox_spend_is_charged(business_db_factory, tmp_path):
+    fake = CappedGateway()
+    svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)
+    first = await svc.project_gateway_key(
+        pid, credit_owner_handle="a", machine_conversation_id=tid
+    )
+    second = await svc.project_gateway_key(
+        pid, credit_owner_handle="b", machine_conversation_id=tid
+    )
+    assert first and second and first != second
+    fake.spent[first] = {"deepseek-flash": (10, 1, 0.01)}
+    fake.spent[second] = {"glm-5.3-flash": (20, 2, 0.02)}
+
+    usages = await svc.charge_turn_spend(pid, tid, uuid.uuid4())
+
+    assert usages and sorted(u.model for u in usages) == [
+        "deepseek-flash",
+        "glm-5.3-flash",
+    ]
+    assert await svc.charge_turn_spend(pid, tid, uuid.uuid4()) is None
