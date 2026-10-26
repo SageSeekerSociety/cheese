@@ -7,16 +7,25 @@ that state on that device. It is looked up on every request, so a session that
 ended, moved or was given another lease is nobody from its next request on.
 """
 
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sandbox_auth import bind_resource_token, for_a_machine, mint_scoped_token
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
+from app.domain.conversation.services import room_of
 from app.domain.machine.session_work import session_author
 from app.domain.project.services import ProjectService
+from app.domain.room_task.place import session_keeps_work
+from app.domain.topic.services import TopicService
+
+#: How long the credential a socket request is served under lives: it is made
+#: for that one request and never leaves the backend.
+CALL_CREDENTIAL_TTL_S = 300
 
 
 @dataclass(frozen=True)
@@ -68,3 +77,32 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         conversation_id=str(session.conversation_id),
         agent_handle=await session_author(db, project, session.agent_handle),
     )
+
+
+async def credential_of(db: AsyncSession, caller: MachineCaller) -> str | None:
+    """The credential the caller's executor holds, made again for one request:
+    the session's launch credential bound to its lease (as
+    `session_work.restart_executor` makes it), a 支线's marked as keeping no
+    work, and marked as held by a machine so it calls no model. None when the
+    session is gone."""
+    row = await db.get(AgentSession, uuid.UUID(caller.session_id))
+    if row is None:
+        return None
+    lease = row.work_lease or {}
+    room = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
+    resource = lease.get("room_resource_id") or str(room.resource_id or room.id)
+    launch = mint_scoped_token(
+        project_id=caller.project_id,
+        topic_id=caller.conversation_id,
+        agent_handle=caller.agent_handle,
+        access_scope="project",
+        ttl_s=CALL_CREDENTIAL_TTL_S,
+    )
+    bound = bind_resource_token(
+        launch,
+        resource,
+        session_id=caller.session_id,
+        lease_generation=lease.get("generation"),
+        scratch=not await session_keeps_work(db, row.id),
+    )
+    return for_a_machine(bound)
