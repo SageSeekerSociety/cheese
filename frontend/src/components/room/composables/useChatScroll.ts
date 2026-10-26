@@ -443,8 +443,7 @@ export function useChatScroll(
     if (!el || !topicId || !el.clientHeight) return
     // 我们自己发的那一下还在滚（跳到某一条）：这一阵里「在不在底部」和记下的位置都由
     // 停下来的那一刻说了算（`settleOwnScroll`）。半路上判，头几帧还在底部、后面又被
-    // `clamped` 那条兜底读成锚定，人就被钉回原处。`lastTop` 也先不动——留着它，切走
-    // 话题时那一支才看得出这一跳真的把位置挪上去了。
+    // `clamped` 那条兜底读成锚定，人就被钉回原处。
     if (ownScrollTimer !== null) {
       if (currentTopicId() === ownScrollTopic) {
         armOwnScroll()
@@ -580,7 +579,10 @@ export function useChatScroll(
    * 要挡的那件事。
    */
   function cancelOwnScroll() {
-    if (ownScrollTimer !== null) clearTimeout(ownScrollTimer)
+    // 没有窗口在滚的时候它什么也不用做：读的人每一帧滚轮都会走到这里，别让热路径
+    // 白白量三次布局、再写一次 `atBottom`。
+    if (ownScrollTimer === null) return
+    clearTimeout(ownScrollTimer)
     ownScrollTimer = null
     const el = scrollRef.value
     if (!el || !el.clientHeight) return
