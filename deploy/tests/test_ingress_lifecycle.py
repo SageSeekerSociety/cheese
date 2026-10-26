@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from reserved_port import reserve_port
+
 ROOT = Path(__file__).resolve().parents[2]
 NGINX = [sys.argv[1] if len(sys.argv) > 1 else shutil.which("nginx") or "nginx"]
 REQUEST_STARTED = threading.Event()
@@ -53,12 +55,6 @@ class Endpoint(BaseHTTPRequestHandler):
 
     def log_message(self, *_args):
         pass
-
-
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def connect(port, path, host="app.example.test"):
@@ -106,7 +102,7 @@ def main():
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
         old, new, owner, preview = servers
-        api, public, app_api, app_frontend = [free_port() for _ in range(4)]
+        api, public, app_api, app_frontend = [reserve_port() for _ in range(4)]
         # The preview content host: preview-<32hex>.<domain>, and the same with a
         # -<22hex> resource suffix. Project hosts keep the plain form.
         preview_host = "preview-0123456789abcdef0123456789abcdef.example.net"
@@ -124,7 +120,7 @@ def main():
 
         # The box's own frontend ports live in frontend.conf, which every
         # app-router.conf includes, and follow every frontend switch.
-        box_port, box_direct = free_port(), free_port()
+        box_port, box_direct = reserve_port(), reserve_port()
 
         def configure(target):
             (active / "backend.conf").write_text(

@@ -191,7 +191,7 @@ covers:
 | 组 | 套房 |
 |---|---|
 | 发版契约 | `test-app-tier-health.sh`、`test_auto_deploy.py`、`test-workspace-ownership.sh` |
-| 常驻 ingress | `test_ingress_lifecycle.py`、`test_front_door_tls.py`、`deploy/llm-tunnel/verify-sites.py` |
+| 常驻 ingress | `test_reserved_port.py`、`test_ingress_lifecycle.py`、`test_front_door_tls.py`、`deploy/llm-tunnel/verify-sites.py` |
 | 网关与计量 | `test_metering_release.py`、`test_metering_health.py`、`test_gateway_release.py`、`test_gateway_health_workflow.py`、`test_claude_login.py`、`backend/scripts/test_gateway_supply_probe.py`、`.github/scripts/test-plan-image-builds.sh` |
 | Forge 配置 | `test_forge_config.py`、`test_forge_workspace_writers.py` |
 | 磁盘与容器 | `test-disk-pressure-guard.sh`、`test-evict-foreign-container.sh`、`test-dev-box-disk-cleanup.sh` |
