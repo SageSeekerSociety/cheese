@@ -91,14 +91,6 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Move the startup heap (modules, routers, settings, the pool) out of the
-    # collector's scan set once, so every later gen-0/1 pass stops re-walking
-    # it. Nothing reachable at boot can become garbage, so this changes neither
-    # semantics nor peak memory — only how much the collector re-reads.
-    # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
-    # 20-concurrency burst.
-    gc.freeze()
-
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -1011,3 +1003,15 @@ if not settings.device_connection_url:
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
 seal(app)
+
+# Move the startup heap (modules, routers, settings, the pool) out of the
+# collector's scan set, so every later gen-0/1 pass stops re-walking it.
+# `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
+# 20-concurrency burst. A frozen object is never collected, so this runs once
+# per process, here at import, and not in `lifespan`: a process that starts the
+# app more than once (the test suite enters it for every `client` test) froze
+# whatever was alive at each start — that test's engines, pools and connections
+# among them — and every such connection stayed open to Postgres until the
+# process exited. Collecting first leaves only what is reachable to freeze.
+gc.collect()
+gc.freeze()
