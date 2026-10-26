@@ -359,7 +359,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         name: '一栏参与者数据',
         note: '读回来了：读数、趋势和六张分布都摆出来。',
         props: {},
-        expect: '申请主体数',
+        expect: '申请/开始主体数',
       },
       {
         name: '正在读取',
@@ -385,7 +385,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
     id: 'publishers-view',
     title: 'PublishersView',
     about:
-      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、申请最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
+      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、申请/开始最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
     file: 'src/views/spaces/detail/analytics/PublishersView.vue',
     component: PublishersView,
     needs: UI,
