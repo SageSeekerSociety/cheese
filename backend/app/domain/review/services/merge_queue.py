@@ -107,7 +107,7 @@ def _write_merge_mirror(
         if prev.get("state") == verdict.state and prev.get("head_sha") == head_sha
         else now_iso
     )
-    card.merge_state = {
+    mirror: dict = {
         "state": verdict.state,
         "who": who,
         "reasons": [
@@ -120,9 +120,8 @@ def _write_merge_mirror(
     }
     if merge_state.FORGE_REFUSED_KEY in prev:
         # Kept as `_pr_verdict` left it: the clock behind Forgejo's refusal.
-        card.merge_state[merge_state.FORGE_REFUSED_KEY] = prev[
-            merge_state.FORGE_REFUSED_KEY
-        ]
+        mirror[merge_state.FORGE_REFUSED_KEY] = prev[merge_state.FORGE_REFUSED_KEY]
+    card.merge_state = mirror
 
 
 async def _merge_pr_for_accept(
