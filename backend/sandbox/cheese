@@ -590,14 +590,21 @@ PLATFORM_TOOLS = ToolTable(
                         "message_id": _text("消息 id"),
                         **_CHAT_SCOPE,
                         "offset": {"type": "integer", "description": "从第几个字开始"},
-                        "length": {"type": "integer", "description": "最多读多少字，1..12000"},
+                        "length": {
+                            "type": "integer",
+                            "description": "最多读多少字，1..12000",
+                        },
                     },
                     ["message_id"],
                 ),
                 "replies": _verb(
                     "列一条消息的直接回复和它回复的原文；嵌套回复按各条回复的 id 再读。"
                     + _CHAT_READ,
-                    {"message_id": _text("被回复的消息 id"), **_CHAT_SCOPE, **_CHAT_PAGE},
+                    {
+                        "message_id": _text("被回复的消息 id"),
+                        **_CHAT_SCOPE,
+                        **_CHAT_PAGE,
+                    },
                     ["message_id"],
                 ),
                 "edit": _verb(
@@ -700,9 +707,13 @@ PLATFORM_TOOLS = ToolTable(
                     "不给 app 时新建，返回整个块的写法，由你放进文档或聊天消息；给出 app 时修改该小程序，"
                     "保存为新版本，并同步更新所属文档中的版本号，已发到聊天里的不变。",
                     {
-                        "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
+                        "code": _text(
+                            "小程序的 Vue 单文件组件：<script setup> 加 <template>"
+                        ),
                         "title": _text("新建时：小程序的标题，十个字左右"),
-                        "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
+                        "app": _text(
+                            "改已有的小程序时：它的短号（文档里 :::app 后面那串）"
+                        ),
                         "note": _text("这一版改了什么，一句话"),
                         "document": _DOCUMENT_ARG,
                     },
@@ -713,7 +724,10 @@ PLATFORM_TOOLS = ToolTable(
                     "说了它做什么。",
                     {
                         "app": _text("小程序的短号（文档里 :::app 后面那串）"),
-                        "version": {"type": "integer", "description": "第几版；省略读最新一版"},
+                        "version": {
+                            "type": "integer",
+                            "description": "第几版；省略读最新一版",
+                        },
                     },
                     ["app"],
                 ),
@@ -766,11 +780,25 @@ PLATFORM_TOOLS = ToolTable(
                                     "card": _text("要改、挪、删的格子：编号或 ref"),
                                     "ref": _text("add：新格子的名字"),
                                     "content": _text("add、update：格子里的 Markdown"),
-                                    "task": _text("add、update：关联的任务编号；空字符串取消"),
-                                    "x": {"type": "number", "description": "左上角横坐标"},
-                                    "y": {"type": "number", "description": "左上角纵坐标"},
-                                    "width": {"type": "number", "description": "宽，像素"},
-                                    "height": {"type": "number", "description": "高，像素"},
+                                    "task": _text(
+                                        "add、update：关联的任务编号；空字符串取消"
+                                    ),
+                                    "x": {
+                                        "type": "number",
+                                        "description": "左上角横坐标",
+                                    },
+                                    "y": {
+                                        "type": "number",
+                                        "description": "左上角纵坐标",
+                                    },
+                                    "width": {
+                                        "type": "number",
+                                        "description": "宽，像素",
+                                    },
+                                    "height": {
+                                        "type": "number",
+                                        "description": "高，像素",
+                                    },
                                     "from": _text("connect、disconnect：起点格子"),
                                     "to": _text("connect、disconnect：终点格子"),
                                     "label": _text("connect：线上的一句话"),
@@ -893,9 +921,13 @@ PLATFORM_TOOLS = ToolTable(
                         "body": _text(
                             "改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"
                         ),
-                        "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
+                        "artifact": _text(
+                            "产物清单上那一项的 id，照抄系统提示里的清单"
+                        ),
                         "new_artifact": _text("清单上还没有的东西的真名"),
-                        "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
+                        "about": _text(
+                            "这样东西是什么、给谁的；第 1 版和第 20 版都得成立"
+                        ),
                         "deliver": _text("交出去的文件，任务工作目录里的相对路径"),
                         "deliver_url": _text("交出去的地址"),
                         "completes_task": {
@@ -947,11 +979,15 @@ PLATFORM_TOOLS = ToolTable(
                     "提交用 cheese push-fix。卡已经有了结果的，重新递卡。deliver 和 "
                     "deliver_url 给一样。",
                     {
-                        "deliver": _text("换成的文件，任务工作目录里的相对路径，当场留快照"),
+                        "deliver": _text(
+                            "换成的文件，任务工作目录里的相对路径，当场留快照"
+                        ),
                         "deliver_url": _text("换成的地址"),
                     },
                 ),
-                "ready": _verb("把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"),
+                "ready": _verb(
+                    "把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"
+                ),
             },
         ),
         _tool(
@@ -1031,7 +1067,12 @@ PLATFORM_TOOLS = ToolTable(
                     "查看或更换你自己的执行环境：后续文件和命令操作跑在什么样的沙箱里。"
                     "只换你自己，这里的其他队友不受影响；只能选项目能用的规格。更换前平台"
                     "在原来那里尽力把改动推送到分支一次，推没推上去都会换；新环境从分支拉代码。",
-                    {"spec": {"type": "string", "description": ENVIRONMENT_SPEC_DESCRIPTION}},
+                    {
+                        "spec": {
+                            "type": "string",
+                            "description": ENVIRONMENT_SPEC_DESCRIPTION,
+                        }
+                    },
                 ),
                 "wait": _verb(
                     "执行环境还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
@@ -1048,7 +1089,10 @@ PLATFORM_TOOLS = ToolTable(
                     "给同一个 handle 的另一条线程留一张便条。它直接递给那条线程里"
                     "正在干活的队友，不进时间线。收件人只能是你自己在这个项目里的另一条线程——"
                     "跟别的 handle 说话只有 chat 一条路。",
-                    {"thread": _text("那条线程的 topic id"), "content": {"type": "string"}},
+                    {
+                        "thread": _text("那条线程的 topic id"),
+                        "content": {"type": "string"},
+                    },
                     ["thread", "content"],
                 ),
                 "deliver_at": _verb(
@@ -1187,7 +1231,10 @@ PLATFORM_TOOLS = ToolTable(
                         },
                         "author": _text("只看这个人（handle）提的"),
                         "since": _text("只看这个时刻之后提的，ISO-8601"),
-                        "offset": {"type": "integer", "description": "跳过前几条，翻页用"},
+                        "offset": {
+                            "type": "integer",
+                            "description": "跳过前几条，翻页用",
+                        },
                     },
                 ),
                 "get": _verb(
@@ -1251,7 +1298,9 @@ PLATFORM_TOOLS = ToolTable(
                     "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
                     {
                         "title": _text("规则名字，一句话；不写就由你照目标起一个"),
-                        "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
+                        "instructions": _text(
+                            "目标：到点要做的事，写清做什么、交出什么"
+                        ),
                         "note": _text(
                             "补充说明：还有什么要它知道的；不写就没有这一项"
                             "（用哪些资料、结果放哪，每次开工它自己定，不用在这里写）"
@@ -1342,7 +1391,11 @@ PLATFORM_TOOLS = ToolTable(
                     "大小写和连字符要对得上）。\n"
                     "读只是能读：**它不表示可以安装或运行这个技能**。把技能装到机器上、"
                     "或者让它跑起来，一律由人在连接器里采纳，并按它自己写的步骤来做。",
-                    {"name": _text("技能名，从 cheese_skill(action=search) 的结果里来")},
+                    {
+                        "name": _text(
+                            "技能名，从 cheese_skill(action=search) 的结果里来"
+                        )
+                    },
                     ["name"],
                 ),
                 "propose": _verb(
@@ -1358,7 +1411,9 @@ PLATFORM_TOOLS = ToolTable(
                     "一个会话最多提一次。写成做法，不抄聊天记录：先写判断点和理由、踩过的坑、"
                     "产出格式，通用步骤少写；这次的具体文件名、数字、人名写成「用户给的某某」。",
                     {
-                        "name": _text("文件夹名，小写字母、数字、连字符，如 weekly-report"),
+                        "name": _text(
+                            "文件夹名，小写字母、数字、连字符，如 weekly-report"
+                        ),
                         "title": _text("名称"),
                         "description": _text(
                             "什么情况下用它，一句话。决定以后会不会被想起来，写用户会怎么说"
@@ -1662,7 +1717,9 @@ DELEGATED_TOOLS = ToolTable(
                     "命令的允许、拒绝（allow / refuse）。用户没有做这个选择时不执行，结果写明原因。",
                     {
                         "ref": _text("待办里那件事的编号"),
-                        "choice": _text("选项原文，或 accept / decline / allow / refuse"),
+                        "choice": _text(
+                            "选项原文，或 accept / decline / allow / refuse"
+                        ),
                         "confirm": _CONFIRM,
                     },
                     ["ref", "choice"],
@@ -1777,32 +1834,25 @@ DELEGATED_TOOLS = ToolTable(
                     },
                     ["where", "title"],
                 ),
-                "member": _verb(
-                    "以用户的名义管成员：where 给项目短名、频道编号、团队（teams/9）或空间"
-                    "（spaces/4），who 给对方的 handle 或名字。项目里：不在项目的人发邀请（role "
-                    "为 member 或 mentor），已在的人改角色（admin / member / mentor），remove 为 "
-                    "true 时移出。频道里：加进来，或 remove 移出。团队里：不在团队的人发邀请，已在"
-                    "的人改角色（admin / member），remove 移出。空间里：加为成员，role 为 admin 时"
-                    "设为管理员，已是管理员的人 role 为 member 时撤掉管理员，remove 移出空间。只能做"
-                    "用户自己有权限做的；移出成员、降低权限默认要用户确认。",
-                    {
-                        "where": _text("项目短名、频道编号、teams/团队 id 或 spaces/空间 id"),
-                        "who": _text("对方的 handle 或名字；重名时会列出各人的 handle"),
-                        "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
-                        "remove": {"type": "boolean"},
-                        "confirm": _CONFIRM,
-                    },
-                    ["where", "who"],
-                ),
                 "set": _verb(
                     "以用户的名义改项目或频道的一项设置，改之前先用 cheese_read 读「项目短名/"
                     "settings」看现在的值和能选的值。where 给项目短名时 key 为 slug（短名）、"
-                    "task_naming（auto 自动命名 / manual 手动命名）、default_agent（新频道默认的 "
-                    "AI 队友，value 写它的 handle）或 default_model（默认模型，value 写模型 id）；"
-                    "where 给频道编号时 key 为 manager，value 写新负责人的 handle 或名字。",
+                    "task_naming（value 为 auto 自动命名或 manual 手动命名）、default_agent（新"
+                    "频道默认的 AI 队友，value 写它的 handle）或 default_model（默认模型，value 写"
+                    "模型 id）；where 给频道编号时 key 为 manager（频道负责人），value 写新负责人"
+                    "的 handle 或名字。空间的设置用 cheese_space，成员用 cheese_people。",
                     {
                         "where": _text("项目短名或频道编号"),
-                        "key": _text("哪一项"),
+                        "key": {
+                            "type": "string",
+                            "enum": [
+                                "slug",
+                                "task_naming",
+                                "default_agent",
+                                "default_model",
+                                "manager",
+                            ],
+                        },
                         "value": _text("改成什么"),
                         "confirm": _CONFIRM,
                     },
@@ -1810,44 +1860,65 @@ DELEGATED_TOOLS = ToolTable(
                 ),
             },
         ),
+        _tool(
+            "cheese_people",
+            "以用户的名义管一处的人：项目、频道、团队或空间里加人、改角色、移出。where 给"
+            "项目短名、频道编号、teams/9 或 spaces/4，who 给对方的 handle 或名字（不用先读"
+            "名单，重名时结果会列出各人的 handle）。项目里：不在项目的人发邀请（role 为 "
+            "member 或 mentor），已在的人改角色（admin / member / mentor）。频道里：加进来。"
+            "团队里：不在团队的人发邀请，已在的人改角色（admin / member）。空间里：加为成员，"
+            "role 为 admin 设为管理员，已是管理员的人 role 为 member 撤掉管理员。remove 为 "
+            "true 时从这一处移出。只能做用户自己有权限做的；移出、降低权限默认要用户确认。",
+            {
+                "where": _text("项目短名、频道编号、teams/团队 id 或 spaces/空间 id"),
+                "who": _text("对方的 handle 或名字"),
+                "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
+                "remove": {"type": "boolean", "description": "true 时移出"},
+                "confirm": _CONFIRM,
+            },
+            ["where", "who"],
+        ),
         _object(
             "cheese_space",
             "用户管理的空间（课程的题目版）",
             {
                 "set": _verb(
                     "改空间的一项设置：key 为 name（名称）、intro（简介）或 visible_limit（每位"
-                    "出题人对成员可见的已通过题目上限，整数）。改之前可以先用 cheese_read 读 "
-                    "spaces/4/manage 看现在的设置。",
+                    "出题人对成员可见的已通过题目上限，value 写整数）。改之前可以先用 cheese_read "
+                    "读 spaces/4/manage 看现在的设置。空间的成员和管理员用 cheese_people。",
                     {
                         "where": _text("spaces/空间 id"),
-                        "key": _text("哪一项"),
+                        "key": {
+                            "type": "string",
+                            "enum": ["name", "intro", "visible_limit"],
+                        },
                         "value": _text("改成什么"),
                         "confirm": _CONFIRM,
                     },
                     ["where", "key", "value"],
                 ),
                 "announce": _verb(
-                    "发公告给空间里所有人（title 标题、text 正文、pinned 置顶）；ref 给公告编号时"
-                    "改这条公告，ref 加 remove 为 true 时删除它。发公告默认要用户确认。",
+                    "发公告给空间里所有人（title 标题、content 正文、pinned 置顶）；ref 给公告编号"
+                    "时改这条公告的这几项，ref 加 remove 为 true 时删除它。发公告默认要用户确认。",
                     {
                         "where": _text("spaces/空间 id"),
-                        "title": _text("标题"),
-                        "text": _text("正文"),
+                        "title": _text("公告标题"),
+                        "content": _text("公告正文"),
                         "pinned": {"type": "boolean"},
-                        "ref": _text("要改或删的公告编号，见 spaces/4/manage"),
+                        "ref": _text("公告编号，见 spaces/4/manage"),
                         "remove": {"type": "boolean"},
                         "confirm": _CONFIRM,
                     },
                     ["where"],
                 ),
                 "category": _verb(
-                    "管空间的分类：不给 ref 时新建（title 名称、text 说明）；ref 给分类编号时，"
-                    "title 是改名，archived 为 true 归档、false 取消归档，remove 为 true 删除。",
+                    "管空间的分类：不给 ref 时新建（name 名称、note 说明）；ref 给分类编号时，"
+                    "name 是改名，archived 为 true 归档、false 取消归档，remove 为 true 删除。",
                     {
                         "where": _text("spaces/空间 id"),
                         "ref": _text("分类编号，见 spaces/4/manage"),
-                        "title": _text("名称"),
-                        "text": _text("说明"),
+                        "name": _text("分类名称"),
+                        "note": _text("分类说明"),
                         "archived": {"type": "boolean"},
                         "remove": {"type": "boolean"},
                         "confirm": _CONFIRM,
@@ -1856,13 +1927,14 @@ DELEGATED_TOOLS = ToolTable(
                 ),
                 "code": _verb(
                     "管空间的邀请码：不给 ref 时新建一个（max_uses 可用次数、days 几天后过期、"
-                    "text 说明这张码给谁）；ref 给邀请码编号时改这几项，remove 为 true 时停用它。",
+                    "note 写这张码给谁用）；ref 给邀请码编号时改这几项，remove 为 true 时停用它"
+                    "（停用后这张码不能再用）。",
                     {
                         "where": _text("spaces/空间 id"),
                         "ref": _text("邀请码编号，见 spaces/4/manage"),
                         "max_uses": {"type": "integer"},
                         "days": {"type": "integer"},
-                        "text": _text("说明"),
+                        "note": _text("这张码给谁用"),
                         "remove": {"type": "boolean"},
                         "confirm": _CONFIRM,
                     },
@@ -1870,11 +1942,11 @@ DELEGATED_TOOLS = ToolTable(
                 ),
                 "review": _verb(
                     "审核空间里待审核的题目：ref 给题目编号（spaces/4/tasks/87，见 "
-                    "spaces/4/manage），choice 为 accept 通过、decline 退回，退回时 text 写理由。",
+                    "spaces/4/manage），choice 为 accept 通过、reject 退回，退回时 reason 写理由。",
                     {
                         "ref": _text("题目编号"),
-                        "choice": {"type": "string", "enum": ["accept", "decline"]},
-                        "text": _text("退回的理由"),
+                        "choice": {"type": "string", "enum": ["accept", "reject"]},
+                        "reason": _text("退回的理由，出题人会看到"),
                         "confirm": _CONFIRM,
                     },
                     ["ref", "choice"],
@@ -2095,7 +2167,9 @@ DELEGATED_TOOLS = ToolTable(
                     "里）。返回它在电脑上的路径。",
                     {
                         "ref": _text("资料库里的编号，如 library/成绩.xlsx"),
-                        "path": _text("放到电脑上的哪里；默认工作目录下的 files/，用原名"),
+                        "path": _text(
+                            "放到电脑上的哪里；默认工作目录下的 files/，用原名"
+                        ),
                     },
                     ["ref"],
                 ),
@@ -2953,9 +3027,7 @@ class PlatformHTTPError(RuntimeError):
         self.body = body
 
 
-def run_platform_tool(
-    tool: str, args: dict, host, *, delegated: bool = False
-) -> str:
+def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -> str:
     """Run one tool from `PLATFORM_TOOLS` or `DELEGATED_TOOLS` and say, in
     text, what came of it.
 
@@ -2976,15 +3048,13 @@ def run_platform_tool(
     table = next((t for t in tables if tool in t), None)
     if table is None:
         raise ValueError(f"Unknown platform tool: {tool}")
-    if (
-        f"{tool}.{args.get('action')}" == COMPACT_TOOL
-        and not switched_on(getattr(host, "environ", None))
+    if f"{tool}.{args.get('action')}" == COMPACT_TOOL and not switched_on(
+        getattr(host, "environ", None)
     ):
         _, _, compact = COMPACT_TOOL.partition(".")
         offered = [verb for verb in table.actions(tool) or () if verb != compact]
         raise PlatformToolError(
-            "这个部署没有给这个座位打开主动压缩上下文；"
-            + ask_for_action(tool, offered)
+            "这个部署没有给这个座位打开主动压缩上下文；" + ask_for_action(tool, offered)
         )
     # 拒在发出任何请求、碰任何机器之前：一张已经递出去的卡收不回来。
     actions = table.actions(tool)
@@ -3355,7 +3425,9 @@ def _doc_edit(args: dict, host) -> str:
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
             + _searched(args, host, document["CHEESE_DOCUMENT"])
-            + _EDIT_NEXT.get(reason, "先 cheese_doc(action=get) 重读，照读到的原文改好再试。")
+            + _EDIT_NEXT.get(
+                reason, "先 cheese_doc(action=get) 重读，照读到的原文改好再试。"
+            )
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []
@@ -4222,7 +4294,9 @@ def _feedback_get(args: dict, host) -> str:
     if item.get("assignee_handle"):
         lines.append(f"这一条 {item['assignee_handle']} 领着；不是你的就不要修。")
     elif item.get("can_claim"):
-        lines.append(f'要修它，先 cheese_feedback(action=claim, feedback="{shown}") 领下来。')
+        lines.append(
+            f'要修它，先 cheese_feedback(action=claim, feedback="{shown}") 领下来。'
+        )
     return "\n".join(lines)
 
 
@@ -4640,34 +4714,36 @@ _DELEGATED_STEPS = {
     # 以用户的名义发消息：和房间里的 chat_send 同名，房间的发在这里，这个经授权判断
     # 发到 where 那里。
     "chat_send": _acting("message", "where", "content:text"),
-    "cheese_room.member": _acting("member", "where", "who", "role", "remove"),
+    "cheese_people": _acting("member", "where", "who", "role", "remove"),
     "cheese_room.create": _acting("channel", "where", "title", "text", "members_only"),
     "cheese_room.set": _acting("project_set", "where", "key", "value"),
     "cheese_space.set": _acting("space_set", "where", "key", "value"),
     "cheese_space.announce": _acting(
-        "announce", "where", "title", "text", "pinned", "ref", "remove"
+        "announce", "where", "title", "content:text", "pinned", "ref", "remove"
     ),
     "cheese_space.category": _acting(
-        "category", "where", "ref", "title", "text", "archived", "remove"
+        "category", "where", "ref", "name:title", "note:text", "archived", "remove"
     ),
     "cheese_space.code": _acting(
-        "invite_code", "where", "ref", "max_uses", "days", "text", "remove"
+        "invite_code", "where", "ref", "max_uses", "days", "note:text", "remove"
     ),
-    "cheese_space.review": _acting("problem_review", "ref", "choice", "text"),
+    "cheese_space.review": _acting("problem_review", "ref", "choice", "reason:text"),
     # 个人芝士读网页要过授权判断；房间的读网页直接打 /fetch。
     "cheese_web.fetch": _web_fetch,
     # 个人芝士的通知发给用户本人；房间的发进项目的通知。
     "cheese_notify": lambda args, host: (
-        host.request(
-            {
-                "method": "POST",
-                "path": "/assistant/agent/notify-me",
-                "body": _given(args, "text"),
-            }
-        ).get("data")
-        or {}
-    ).get("text")
-    or "",
+        (
+            host.request(
+                {
+                    "method": "POST",
+                    "path": "/assistant/agent/notify-me",
+                    "body": _given(args, "text"),
+                }
+            ).get("data")
+            or {}
+        ).get("text")
+        or ""
+    ),
 }
 
 
@@ -5248,7 +5324,9 @@ _SAY = {
         if (d or {}).get("delivered")
         else "那条线程这会儿没在干活,便条没人接住。"
     ),
-    "cheese_session.deliver_at": lambda a, d, e: f"到 {(d or {}).get('at')} 会把它递给你。",
+    "cheese_session.deliver_at": lambda a, d, e: (
+        f"到 {(d or {}).get('at')} 会把它递给你。"
+    ),
     "cheese_routine.create": _say_routine_draft,
     "cheese_routine.list": _say_routine_list,
     "cheese_routine.update": _say_routine_update,

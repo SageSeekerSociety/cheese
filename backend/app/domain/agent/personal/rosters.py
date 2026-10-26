@@ -37,7 +37,14 @@ async def _named(session: AsyncSession, user_ids: Sequence[int]) -> dict[int, st
 
 
 def _more(total: int) -> list[str]:
-    return [f"……还有 {total - LISTED} 人"] if total > LISTED else []
+    return (
+        [
+            f"……还有 {total - LISTED} 人没有列出。要对其中某人做什么，"
+            "直接在 cheese_people 的 who 里写名字或 handle。"
+        ]
+        if total > LISTED
+        else []
+    )
 
 
 async def my_teams(session: AsyncSession, user_id: int) -> str:

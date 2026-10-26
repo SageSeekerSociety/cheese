@@ -50,11 +50,11 @@ RETIRED: dict[str, str] = {
     "cheese_canvas_get": "cheese_canvas.get",
     "cheese_canvas_edit": "cheese_canvas.edit",
     # The room itself: its roster and its name, and a person's 芝士 making a
-    # channel or changing who is in one.
+    # channel; changing who is in one is its own tool.
     "cheese_members": "cheese_room.members",
     "cheese_title": "cheese_room.rename",
     "cheese_channel_create": "cheese_room.create",
-    "cheese_member_set": "cheese_room.member",
+    "cheese_member_set": "cheese_people",
     # Everything else the room and a person's 芝士 do: routines, feedback,
     # skills, the session itself, the web, the platform's help, the library,
     # notifications, memory, the inbox, settings and problems.

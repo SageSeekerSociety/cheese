@@ -542,7 +542,7 @@ async def announce(db, me: Person, body: ActIn) -> Plan:
         }
         if not change:
             raise BadRequestError(
-                say("assistantActNeeds", what="title / text / pinned")
+                say("assistantActNeeds", what="title / content / pinned")
             )
         said = "，".join(
             {
@@ -594,7 +594,7 @@ async def category(db, me: Person, body: ActIn) -> Plan:
     space = await space_desk.managed(db, me.user_id, sid)
     base = f"/spaces/{sid}/categories"
     if not body.ref:
-        name = need(body.title, "title")
+        name = need(body.title, "name")
         return Plan(
             gate.Action(
                 "category", f"在空间「{space.name}」新建分类「{name}」", low=True
@@ -643,7 +643,7 @@ async def category(db, me: Person, body: ActIn) -> Plan:
             card=("act", {}),
             done=f"已{verb}分类「{name}」。",
         )
-    title = need(body.title, "title")
+    title = need(body.title, "name")
     return Plan(
         gate.Action(
             "category", f"把空间「{space.name}」的分类「{name}」改名为「{title}」"
@@ -711,7 +711,7 @@ async def invite_code(db, me: Person, body: ActIn) -> Plan:
             done=f"已停用邀请码 {code}。",
         )
     if not change:
-        raise BadRequestError(say("assistantActNeeds", what="max_uses / days / text"))
+        raise BadRequestError(say("assistantActNeeds", what="max_uses / days / note"))
     return Plan(
         gate.Action("invite_code", f"修改空间「{space.name}」的邀请码 {code}：{terms}"),
         [{"method": "PATCH", "path": f"{base}/{cid}", "body": change}],
@@ -730,12 +730,12 @@ async def problem_review(db, me: Person, body: ActIn) -> Plan:
     sid, tid = int(ref.within), int(ref.id or 0)
     space = await space_desk.managed(db, me.user_id, sid)
     name, setter = await space_desk.problem(db, sid, tid)
-    if body.choice not in ("accept", "decline"):
-        raise BadRequestError(say("assistantActNeeds", what="choice: accept / decline"))
+    if body.choice not in ("accept", "reject"):
+        raise BadRequestError(say("assistantActNeeds", what="choice: accept / reject"))
     yes = body.choice == "accept"
     why = body.text.strip()
     if not yes and not why:
-        raise BadRequestError(say("assistantActNeeds", what="text"))
+        raise BadRequestError(say("assistantActNeeds", what="reason"))
     return Plan(
         gate.Action(
             "problem_review",

@@ -112,6 +112,7 @@ TOOLS = (
     "cheese_task",
     "cheese_card",
     "cheese_room",
+    "cheese_people",
     "cheese_settings",
     "cheese_routine",
     "cheese_notify",

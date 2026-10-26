@@ -114,6 +114,8 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_find: 'toolLabels.cheeseFind',
   cheese_help: 'toolLabels.cheeseHelp',
   'cheese_card.decide': 'toolLabels.cheeseReviewDecide',
+  cheese_people: 'toolLabels.cheeseMemberSet',
+  // 成员管理改成 cheese_people 之前的调用。
   'cheese_room.member': 'toolLabels.cheeseMemberSet',
   'cheese_room.create': 'toolLabels.cheeseChannelCreate',
   'cheese_room.set': 'toolLabels.cheeseSettingsSet',
@@ -242,7 +244,7 @@ export const RETIRED: Record<string, string> = {
   cheese_members: 'cheese_room.members',
   cheese_title: 'cheese_room.rename',
   cheese_channel_create: 'cheese_room.create',
-  cheese_member_set: 'cheese_room.member',
+  cheese_member_set: 'cheese_people',
   cheese_routine_draft: 'cheese_routine.create',
   cheese_routine_list: 'cheese_routine.list',
   cheese_routine_update: 'cheese_routine.update',

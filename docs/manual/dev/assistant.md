@@ -97,7 +97,7 @@ covers:
 | `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
 | `cheese_task(action=open)` | 在频道里开任务交给 AI 队友，交代作为第一条消息 | 经授权判断，`POST /topics/{id}/tasks` 再发消息 |
 | `cheese_card(action=decide)` | 采纳或退回一项待审阅的改动 | 经授权判断，`/accept-cards/{id}/accept`、`/reject` |
-| `cheese_room(action=member)` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
+| `cheese_people` | 项目里邀请、改角色、移出；频道里加入、移出；团队里邀请、改角色、移出；空间里加入、移出、设或撤管理员 | 经授权判断，成员接口 |
 | `cheese_room(action=create)` | 新建频道 | 经授权判断，`POST /topics` |
 | `cheese_room(action=set)` | 项目短名、任务命名、默认 AI 队友、默认模型；频道负责人 | 经授权判断，项目设置的接口 |
 | `cheese_space` | 空间的名称、简介、可见题目上限；公告；分类；邀请码；审核待审核的题目 | 经授权判断，空间设置、公告、邀请码和 `PATCH /tasks/{id}` |
