@@ -462,6 +462,21 @@ it('支持把多处指认先加入待发列表，再一键合并成一条消息�
   expect(payload[0].message).toContain('补充超时原因')
 })
 
+it('支持在 Markdown 渲染视图与看原文之间切换，换文件时恢复为渲染视图', async () => {
+  const ui = mount()
+  const md = ui.getByTestId('markdown')
+  await firstLine(md)
+  expect(ui.queryByTestId('markdown-source')).toBeNull()
+
+  await fireEvent.click(ui.getByText('看原文'))
+  expect(ui.getByTestId('markdown-source').textContent).toContain('# 配置')
+  expect(ui.queryByTestId('markdown')).toBeNull()
+
+  await ui.rerender(props('output/另一份.md', '# 另一节\n\n正文。\n'))
+  expect(ui.queryByTestId('markdown-source')).toBeNull()
+  expect(ui.getByTestId('markdown')).toBeTruthy()
+})
+
 // ---- 已有的评论画在文件上 ----
 //
 // 哪几条画得出来，是在面板这一层定的：锚点里那段原文要找得回来，而且记的得是**这一版**。
