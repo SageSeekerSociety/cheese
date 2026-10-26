@@ -5,11 +5,11 @@ requires-python = ">=3.13"
 dependencies = [
     "aioboto3>=15.5.0",
     "aiofiles>=25.1.0",
-    "aiosmtplib>=5.1.0",
-    "alembic>=1.18.4",
+    "aiosmtplib>=5.1.3",
+    "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "bcrypt>=5.0.0",
-    "fastapi>=0.137.0",
+    "fastapi>=0.161.1",
     "httpx>=0.28.1",
     # Fetching the web for an agent (app.domain.fetch). markdownify converts a
     # page without deciding what its "main content" is — the readability-style
@@ -22,26 +22,26 @@ dependencies = [
     # counts as one change has a single answer. That script needs lxml: it
     # is the only parser that writes an OOXML part back without rewriting
     # namespace declarations it had no reason to touch.
-    "lxml>=5.3.0",
+    "lxml>=6.1.3",
     "curl-cffi>=0.7",
     # FastAPI parses every file upload through `python-multipart`; it reached
     # the image only through another package's dependency tree until that was
     # removed, and an undeclared dependency fails at request time, on the
     # upload path, with nothing at import time to warn anyone.
     "python-multipart>=0.0.32",
-    "pydantic>=2.13.4",
-    "pydantic-settings==2.14.2",
-    "pyjwt==2.15.0",
+    "pydantic>=2.14.1",
+    "pydantic-settings==2.16.1",
+    "pyjwt==2.15.1",
     "pymupdf4llm>=1.28.0",
     "pyotp>=2.10.0",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.4",
     "pyyaml>=6.0.3",
-    "redis>=8.0.1",
+    "redis>=8.1.0",
     "segno>=1.6.6",
     "sqlalchemy[asyncio]>=2.0",
     "structlog>=26.1.0",
     "uvicorn[standard]>=0.53.0",
-    "webauthn>=3.0.0",
+    "webauthn>=3.0.1",
     "websockets>=16.0",
     "fusepy>=3.0.1",
     "pywebpush>=2.5.0",
@@ -54,7 +54,7 @@ dependencies = [
     # app/core/model_images.py decodes an uploaded picture before a model is
     # sent it; the image the app runs must have it.
     "pillow>=13.0.0",
-    "cachetools==7.2.3",
+    "cachetools==7.2.4",
 ]
 
 [dependency-groups]
