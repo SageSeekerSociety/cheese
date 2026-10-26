@@ -21,6 +21,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, WarmMachine
+from app.domain.user.tokens import digest_token
 from tests.conftest import TEST_DATABASE_URL
 from tests.support.devices import enrollment_team
 
@@ -55,7 +56,7 @@ def test_the_inventory_lists_the_pools_live_hosts_and_ready_warm_machines(client
                         team_id=team_id,
                         device_id=device_id,
                         name=device_id,
-                        token=f"token-{device_id}",
+                        token_digest=digest_token(f"token-{device_id}"),
                         owner_user_id=owner.id,
                         supply=Supply.cloud,
                         cloud_control_private=private,

@@ -523,10 +523,11 @@ class WarmPoolService:
             assert device is not None
             assert row.bootstrap_key is not None
             device.cloud_control_private = settings.microcloud_direct_control
+            token = await self.devices.bootstrap_token(device.device_id)
             await self.session.commit()
             script = enrollment.bootstrap_script(
                 origin=settings.connector_public_base,
-                token=device.token,
+                token=token,
                 device_id=device.device_id,
                 sandbox_disk=True,
             )

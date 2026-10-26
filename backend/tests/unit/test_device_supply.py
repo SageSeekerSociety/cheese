@@ -100,7 +100,6 @@ async def test_an_unclassified_device_reads_as_self_hosted():
     device = Device(
         device_id="d1",
         name="n",
-        token="t",
         owner_user_id=1,
         created_at=datetime(2026, 8, 12, tzinfo=UTC),
         team_id=1,

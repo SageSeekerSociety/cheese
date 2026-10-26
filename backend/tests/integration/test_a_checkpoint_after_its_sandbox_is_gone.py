@@ -13,6 +13,7 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     home_of,
@@ -41,7 +42,7 @@ def _a_cloud_machine(case, device_id: str) -> None:
                 DeviceRow(
                     device_id=device_id,
                     name=device_id,
-                    token=f"{device_id}-token",
+                    token_digest=digest_token(f"{device_id}-token"),
                     owner_user_id=owner,
                     team_id=await enrollment_team(sql_device_service(db), owner),
                     supply=Supply.cloud,

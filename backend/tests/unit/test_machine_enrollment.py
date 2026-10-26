@@ -47,10 +47,12 @@ class FakeDevices:
         self.owners.append(owner_user_id)
         return SimpleNamespace(
             device_id="dev123",
-            token="SECRET-TOKEN",
             owner_user_id=owner_user_id,
             supply=supply,
         )
+
+    async def bootstrap_token(self, device_id):
+        return "SECRET-TOKEN"
 
     async def delete_platform_provisioned(self, device_id, *, actor_user_id):
         pass

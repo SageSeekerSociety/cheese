@@ -135,7 +135,10 @@ async def test_running_sessions_roles_visibility_and_completion(
             )
         )
         await db.commit()
-        device_id, device_token = device.device_id, device.token
+        device_token = await devices.issue_token(device.device_id)
+        assert device_token
+        await db.commit()
+        device_id = device.device_id
 
     url = f"/connector/devices/{device_id}/running-sessions"
     assert (await client.get(url)).status_code == 401

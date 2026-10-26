@@ -47,5 +47,7 @@
   "specTeamDevices": "团队设备",
   "specTeamDevicesAbout": "环境放在团队接入的设备上，不收费；设备由团队管理员在团队设置的「设备」里接入。",
   "deviceTeamAdminOnly": "只有团队管理员能管理设备",
-  "modelCallFromMachineNeedsSocket": "执行机上的凭据不能调模型：沙箱里请经平台 socket（$CHEESE_PLATFORM_SOCKET）调用"
+  "modelCallFromMachineNeedsSocket": "执行机上的凭据不能调模型：沙箱里请经平台 socket（$CHEESE_PLATFORM_SOCKET）调用",
+  "deviceCodeSpent": "这个设备码已失效，请在设备上重新运行 cheesehost auth login",
+  "deviceTokenNotReplaced": "只有平台自己开的机器能更换令牌，这台机器是成员自己接入的"
 }

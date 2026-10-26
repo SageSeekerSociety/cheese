@@ -42,6 +42,7 @@ from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredential
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
+from app.domain.user.tokens import digest_token
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +55,12 @@ class DeviceIdentity:
 async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
     if not token:
         return None
+    digest = digest_token(token)
     row = (
         await session.execute(
-            select(DeviceRow.device_id, DeviceRow.name).where(DeviceRow.token == token)
+            select(DeviceRow.device_id, DeviceRow.name).where(
+                DeviceRow.token_digest == digest
+            )
         )
     ).one_or_none()
     if row is not None:
@@ -64,7 +68,7 @@ async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity 
     host = (
         await session.execute(
             select(ModelCredentialHost.id, ModelCredentialHost.name).where(
-                ModelCredentialHost.token == token
+                ModelCredentialHost.token_digest == digest
             )
         )
     ).one_or_none()

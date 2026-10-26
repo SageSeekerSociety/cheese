@@ -11,6 +11,7 @@ from app.domain.agent.device_hub import DeviceHub, HubScreen
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
+from app.domain.user.tokens import digest_token
 
 
 async def _enrolled() -> tuple[DeviceService, Device, uuid.UUID, uuid.UUID]:
@@ -22,12 +23,12 @@ async def _enrolled() -> tuple[DeviceService, Device, uuid.UUID, uuid.UUID]:
     device = Device(
         device_id="d1",
         name="m",
-        token="dev-token",
         owner_user_id=owner,
         created_at=datetime(2026, 7, 9, tzinfo=UTC),
         team_id=1,
     )
     await repo.save_device(device)
+    await repo.set_token_digest(device.device_id, digest_token("dev-token"))
     return DeviceService(repo), device, owner, agent
 
 
