@@ -59,7 +59,9 @@ def _routes(app):
         # Running it from the top would put the request through every
         # middleware twice; a stack that hides its routes is a change to make
         # here, not one to serve around.
-        raise RuntimeError("The app's routes are not below its middleware")
+        raise RuntimeError(
+            "The app's routes are not below its middleware"  # i18n-exempt: a platform bug
+        )
     return layer
 
 
