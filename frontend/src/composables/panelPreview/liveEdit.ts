@@ -45,7 +45,7 @@ export interface PanelPreviewLiveEdit {
   readOnly: Ref<boolean>
   peers: Ref<DocPeer[]>
   /** 打开失败（网络、读不出来的那一份）：一句给读者看的话；空串是没有。 */
-  error: Ref<string>
+  error: ComputedRef<string>
   /** 页面用的文档 schema 和服务对不上：得刷新。 */
   outdated: Ref<boolean>
   /** 这一份已经被删了。 */
@@ -67,7 +67,8 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
   const refused = ref('')
   /** 那一句说的是哪一份文件：切到别的文件时它就不作数了。 */
   const refusedPath = ref('')
-  const error = ref('')
+  /** 这一次打开本身没成（网络、没权限）：和连接里报的错并成一句。 */
+  const beginError = ref('')
   /** `begin()` 已经拿到的那张票；连接首次开口就用它，不必再要一遍。 */
   let first: DocTicket | null = null
 
@@ -135,7 +136,7 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
     const room = props.topicId
     // 已经开着：这一下按的是同一个「编辑」，不再开一遍（重开会把这张票换掉）。
     if (pinned.value || !room || !file) return
-    error.value = ''
+    beginError.value = ''
     refused.value = ''
     try {
       const live = await openRoomFileLive(room, file.path)
@@ -148,7 +149,7 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
       first = { document: live.document, ticket: live.ticket, read_only: !!live.read_only, suggest_only: false }
       pinned.value = { room, path: file.path }
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : t('work.room.preview.fileReadFailed')
+      beginError.value = cause instanceof Error ? cause.message : t('work.room.preview.fileReadFailed')
     }
   }
 
@@ -157,9 +158,12 @@ export function usePanelPreviewLiveEdit(deps: LiveEditDeps): PanelPreviewLiveEdi
     first = null
     refused.value = ''
     refusedPath.value = ''
-    error.value = ''
+    beginError.value = ''
     // 连接由 `useDocCollab` 看着 watch 的结果自己收。
   }
+
+  /** 屏幕上要说的那一句：打开本身没成，或者连接报的错（票过期、服务不在）。 */
+  const error = computed(() => beginError.value || collab.error.value || '')
 
   return {
     canEdit,
