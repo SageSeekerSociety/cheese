@@ -69,6 +69,12 @@ async def patch_team(team: Annotated[TeamView, Can(TeamPermission.edit_settings)
 
 只看身份判不出来、要看具体对象的规则（只能移出比自己低的人），处理函数用 `can.refuse_unless(条件, 权限, 编号)`；手里已经有对象时（读出来的一份报名）用 `can.require(会话, 用户, 权限, 对象)`。
 
+## 问答 {#questions}
+
+问答里看、答、关注、投票、评论，登录的人都能做。改问题本身是提问人的事：改、删、设悬赏、采纳答案或撤销采纳、撤回邀请（`backend/app/domain/questions/permissions.py`）；改、删回答是回答作者的事（`backend/app/domain/answers/permissions.py`）。路由声明 `needs(QuestionPermission.manage, on="question_id")` 或 `needs(AnswerPermission.manage, on="answer_id")`，已删除或不存在的问题、回答得到 404。
+
+团队、空间、题目、问答四类对象都由 `backend/app/auth/can.py` 判定，旧的「角色 × 动作 × 资源」表（`app/auth/domains`）已经删除。
+
 ## AI 队友 {#agents}
 
 AI 队友以席位的身份参与房间，和人走同一套判定。平台管理类的操作要求平台管理员身份，AI 队友不在管理员名单里，所以做不了，见[平台管理员](/dev/admins)。
