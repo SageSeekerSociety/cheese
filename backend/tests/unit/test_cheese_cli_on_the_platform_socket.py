@@ -7,7 +7,8 @@ The rules, as a person would state them:
   used for it;
 - with no credential to name the session, the socket names it;
 - the process that loads the CLI keeps its own urllib;
-- a body too large for the socket goes straight to the platform on the token.
+- a body too large for the socket goes straight to the platform, on a
+  credential the socket hands out for it rather than the machine's token.
 
 The socket and the platform are loopback fixtures; the shipped CLI runs as it is.
 """
@@ -39,9 +40,10 @@ def _recording(seen):
                     "bytes": len(body),
                 }
             )
-            payload = (
-                {"session": "the-session"} if self.path == "/whoami" else {"data": {}}
-            )
+            payload = {
+                "/whoami": {"session": "the-session"},
+                "/credential": {"token": "handed-for-a-minute", "expires_in": 60},
+            }.get(self.path, {"data": {}})
             raw = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
@@ -118,13 +120,20 @@ def test_a_session_on_the_machine_asks_down_the_socket_too(machine):
     assert on_socket[-1]["token"] is None
 
 
-def test_a_body_too_large_for_the_socket_goes_straight_on_the_token(machine):
+def test_a_body_too_large_for_the_socket_goes_straight_on_a_handed_credential(
+    machine,
+):
     cheese, on_socket, direct = machine
     large = "x" * (cheese._SOCKET_BODY_LIMIT + 1)
     cheese._call("POST", "/topics/t/files", {"content": large})
-    assert on_socket == []
+    assert [call["path"] for call in on_socket] == ["/credential"]
     assert direct[-1]["path"] == "/topics/t/files"
-    assert direct[-1]["token"] == "the-token"
+    assert direct[-1]["token"] == "handed-for-a-minute"
+
+
+def test_gits_relay_password_is_a_handed_credential(machine):
+    cheese, _, _ = machine
+    assert cheese._handed_token() == "handed-for-a-minute"
 
 
 def test_loading_the_cli_leaves_the_processs_urllib_as_it_was(machine):

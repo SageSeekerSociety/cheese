@@ -13,7 +13,7 @@ names, under the session's own credential made for that request.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.exceptions import ExceptionMiddleware
 from starlette.types import Receive, Scope, Send
@@ -22,7 +22,7 @@ from app.api.machine_caller import Caller
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db, release_read_session
 from app.core.errors import ForbiddenError, NotFoundError
-from app.domain.machine.caller import credential_of
+from app.domain.machine.caller import HANDED_CREDENTIAL_TTL_S, credential_of
 
 router = APIRouter(prefix="/machine", tags=["machine"], include_in_schema=False)
 
@@ -80,6 +80,24 @@ async def whoami(caller: Caller) -> dict:
         "conversation": caller.conversation_id,
         "agent": caller.agent_handle,
     }
+
+
+@router.get("/credential")
+async def credential(
+    caller: Caller, db: Annotated[AsyncSession, Depends(get_db)]
+) -> JSONResponse:
+    """The session's credential for what cannot go down the socket: git's
+    own requests to the forge relay, the preview tunnel, a body over the
+    socket's limit. It lasts a minute and is asked for right before that use,
+    so the machine keeps none; held by a machine, it calls no model."""
+    token = await credential_of(db, caller, ttl_s=HANDED_CREDENTIAL_TTL_S)
+    if token is None:
+        raise ForbiddenError()
+    return JSONResponse(
+        {"token": token, "expires_in": HANDED_CREDENTIAL_TTL_S},
+        # A credential: nothing between here and the sandbox keeps a copy.
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 class _AsTheSession(Response):

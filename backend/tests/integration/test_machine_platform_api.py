@@ -8,6 +8,8 @@ The rules, as a person would state them:
 - whatever the sandbox sent that would say who is calling is not what it is
   served as;
 - the model routes and the socket's own routes are not reached this way;
+- what cannot go down the socket is handed the session's credential for a
+  minute, asked for right before it is used;
 - nobody but the device link owner is anyone here.
 """
 
@@ -98,3 +100,29 @@ async def test_without_the_owner_or_a_lease_nobody_is_served(client):
     )
     assert _ask(client, path, device=room.new_device).status_code == 403
     assert _ask(client, path, device=str(uuid.uuid4())).status_code == 403
+
+
+async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(client):
+    import time
+
+    room = await _room(client)
+    answer = client.get(
+        "/machine/credential",
+        headers={
+            "x-device-connection-secret": "owner-secret",
+            "x-machine-device": room.old_device,
+            "x-machine-state": "/old/state",
+        },
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.headers["cache-control"] == "no-store"
+    claims = scoped_token_claims(answer.json()["token"])
+    assert claims is not None
+    assert claims["session"] == str(room.session_id)
+    assert held_by_a_machine(claims)
+    assert claims["exp"] - time.time() <= 61
+    refused = client.get(
+        "/machine/credential",
+        headers={"x-machine-device": room.old_device, "x-machine-state": "/old/state"},
+    )
+    assert refused.status_code == 401

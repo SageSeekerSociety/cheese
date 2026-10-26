@@ -26,6 +26,10 @@ from app.domain.topic.services import TopicService
 #: How long the credential a socket request is served under lives: it is made
 #: for that one request and never leaves the backend.
 CALL_CREDENTIAL_TTL_S = 300
+#: How long the credential a sandbox is handed for what cannot go down its
+#: socket (git's own requests, the preview tunnel, a body over the socket's
+#: limit) lives: it is asked for right before that use.
+HANDED_CREDENTIAL_TTL_S = 60
 
 
 @dataclass(frozen=True)
@@ -79,7 +83,9 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
     )
 
 
-async def credential_of(db: AsyncSession, caller: MachineCaller) -> str | None:
+async def credential_of(
+    db: AsyncSession, caller: MachineCaller, *, ttl_s: int = CALL_CREDENTIAL_TTL_S
+) -> str | None:
     """The credential the caller's executor holds, made again for one request:
     the session's launch credential bound to its lease (as
     `session_work.restart_executor` makes it), a 支线's marked as keeping no
@@ -96,7 +102,7 @@ async def credential_of(db: AsyncSession, caller: MachineCaller) -> str | None:
         topic_id=caller.conversation_id,
         agent_handle=caller.agent_handle,
         access_scope="project",
-        ttl_s=CALL_CREDENTIAL_TTL_S,
+        ttl_s=ttl_s,
     )
     bound = bind_resource_token(
         launch,

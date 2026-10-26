@@ -21,7 +21,8 @@
   CHEESE_PLATFORM_SOCKET 机器上的平台 socket；有它时平台调用都经它走，不带
                  凭据，平台按这台机器当前的租约认出是哪个会话
   CHEESE_TOKEN   会话凭据，没有平台 socket 时每个请求都带上（X-Cheese-Token）；
-                 git 和超过 30 MiB 的上传眼下仍凭它直连平台
+                 有 socket 时，git、备份上传和超过 30 MiB 的请求用的是 socket
+                 现发的一分钟凭据，不用它
   CHEESE_TURN    可选的一轮 id；平台每次检查点单独给它一个（那一轮 sync），
                  有就让块和同步失败的记录归到这一轮
 
@@ -117,14 +118,17 @@ class _ToThePlatformSocket(urllib.request.BaseHandler):
         if req.host != _SOCKET_HOST:
             return None
         body = req.data
-        if isinstance(body, bytes) and len(body) > _SOCKET_BODY_LIMIT and TOKEN:
+        if isinstance(body, bytes) and len(body) > _SOCKET_BODY_LIMIT:
             # The socket holds a request whole and refuses one this large; it
-            # goes straight to the platform on the token while there is one.
+            # goes straight to the platform on a credential handed for it.
             direct = urllib.request.Request(
                 DIRECT_API + req.selector.removeprefix("/api"),
                 data=body,
                 method=req.get_method(),
-                headers={**dict(req.header_items()), "X-Cheese-Token": TOKEN},
+                headers={
+                    **dict(req.header_items()),
+                    "X-Cheese-Token": _handed_token(),
+                },
             )
             return urllib.request.build_opener().open(direct, timeout=req.timeout)
         # The socket says whose the request is; a token is not sent down it.
@@ -169,6 +173,20 @@ def _urlopen(request, *args, **kwargs):
 
 
 API = f"http://{_SOCKET_HOST}/api" if PLATFORM_SOCKET else DIRECT_API
+
+
+def _handed_token() -> str:
+    """A credential for what cannot go down the socket (git's own requests,
+    the task backup's bundle, a body over the socket's limit): asked of the
+    socket right before that use, lasting a minute, so the machine keeps
+    none. Without a socket, the session's own token."""
+    if _OPENER is None:
+        return TOKEN
+    try:
+        with _urlopen(f"http://{_SOCKET_HOST}/credential", timeout=20) as response:
+            return str(json.load(response)["token"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return TOKEN
 
 
 def _direct_api() -> str:
@@ -5792,7 +5810,7 @@ def _git_credential(operation: str) -> None:
         destinations.append(
             (
                 _forge_git_relay(data["repo"]),
-                TOKEN if data["kind"] == "github_app" else data["token"],
+                _handed_token() if data["kind"] == "github_app" else data["token"],
             )
         )
     for destination, credential in destinations:
@@ -7092,7 +7110,7 @@ def _backup_task_snapshot(worktree, data, head, snapshot):
             )
             request.add_header("Content-Type", "application/x-git-bundle")
             request.add_header("Content-Length", str(bundle.stat().st_size))
-            request.add_header("X-Cheese-Token", TOKEN)
+            request.add_header("X-Cheese-Token", _handed_token())
             request.add_header("X-Cheese-Head", head)
             request.add_header("X-Content-SHA256", digest.hexdigest())
             with _urlopen(request, timeout=120) as response:
