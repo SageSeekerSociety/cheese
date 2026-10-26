@@ -65,27 +65,6 @@ def platform_socket() -> str | None:
     return path if path and Path(path).is_socket() else None
 
 
-def gateway_client(timeout: float) -> tuple[httpx.Client, str, dict[str, str]]:
-    """A client for the platform's model route, its base, and its auth header:
-    through the platform socket in a sandbox, else on CHEESE_API with the
-    seat's own token."""
-    socket_path = platform_socket()
-    if socket_path:
-        transport = httpx.HTTPTransport(uds=socket_path)
-        return (
-            httpx.Client(transport=transport, timeout=timeout, trust_env=False),
-            "http://cheese",
-            {},
-        )
-    token = os.environ.get("CHEESE_TOKEN", "")
-    base = os.environ.get("CHEESE_API") or "http://172.17.0.1:8081"
-    return (
-        httpx.Client(timeout=timeout, trust_env=False),
-        base,
-        {"authorization": f"Bearer {token}"},
-    )
-
-
 #: Headers worth keeping as evidence. The pool discriminator is deliberate:
 #: Anthropic's own listener answers with ``anthropic-ratelimit-*``/``request-id``
 #: and LiteLLM's gateway answers with ``x-litellm-*``; a turn that claims the
@@ -232,13 +211,27 @@ class Endpoint:
             )
         return httpx.Client(timeout=DEFAULT_TIMEOUT_S, trust_env=False)
 
+    def _gateway_base(self) -> str:
+        return "http://cheese" if self.socket else self.backend.rstrip("/")
+
+    def catalog(self) -> httpx.Response:
+        """``GET /llm/v1/models`` on this gateway endpoint's road."""
+        auth = (
+            {}
+            if self.socket
+            else {
+                "authorization": f"Bearer {os.environ.get(self.connector_token_env, '')}"
+            }
+        )
+        with self._client() as client:
+            return client.get(f"{self._gateway_base()}/llm/v1/models", headers=auth)
+
     def _url(self) -> str:
         if self.mode == "gateway":
             path = (
                 "/chat/completions" if self.protocol == "openai-chat" else "/messages"
             )
-            base = "http://cheese" if self.socket else self.backend.rstrip("/")
-            return f"{base}/llm/v1{path}"
+            return f"{self._gateway_base()}/llm/v1{path}"
         if self.mode == "direct":
             path = (
                 "/chat/completions"
