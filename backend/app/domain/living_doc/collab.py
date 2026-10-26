@@ -87,6 +87,7 @@ def document_of(name: str) -> uuid.UUID:
 def room_file_collab_of(name: str) -> uuid.UUID:
     prefix, _, ident = name.partition(":")
     if prefix != ROOM_FILE_PREFIX:
+        # i18n-exempt: a programming error the dispatcher already prevents.
         raise ValueError(f"not a room file's collab state: {name}")
     return uuid.UUID(ident)
 

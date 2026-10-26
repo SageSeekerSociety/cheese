@@ -608,10 +608,17 @@ class RoomFileCollab(UuidPk, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_room_file_collab_project_id_projects",
+        ),
+        index=True,
     )
     room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
+        ForeignKey(
+            "topics.id", ondelete="CASCADE", name="fk_room_file_collab_room_id_topics"
+        )
     )
     path: Mapped[str] = mapped_column(String(512))
     state: Mapped[bytes] = mapped_column(LargeBinary)

@@ -33,13 +33,21 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             sa.Uuid(),
-            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "projects.id",
+                ondelete="CASCADE",
+                name="fk_room_file_collab_project_id_projects",
+            ),
             nullable=False,
         ),
         sa.Column(
             "room_id",
             sa.Uuid(),
-            sa.ForeignKey("topics.id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "topics.id",
+                ondelete="CASCADE",
+                name="fk_room_file_collab_room_id_topics",
+            ),
             nullable=False,
         ),
         sa.Column("path", sa.String(512), nullable=False),
