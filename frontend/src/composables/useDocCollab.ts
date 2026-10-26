@@ -134,10 +134,6 @@ export interface DocLiveSource {
 }
 
 export function useDocCollab(document: () => string | null, source?: DocLiveSource) {
-  // 「这个人挑过头像吗」要先知道全局默认头像的 id（见 useChosenAvatar）：注册时
-  // profile 一律被填上默认头像，直接 getAvatarUrl 会给没挑过的人配同一张脸。幂等，
-  // 问一次全进程共用；到这里打开文档时通常已经有答案。
-  ensureDefaultAvatarId()
   const session = shallowRef<DocSession | null>(null)
   const connection = ref<DocConnection>('connecting')
   /** True once the document has arrived from the service at least once. */
@@ -195,6 +191,11 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
     // after its id; a room file is named after its live state's id, which the
     // open call returns — the signals below travel under that name.
     const name = first.document
+    // 「这个人挑过头像吗」要先知道全局默认头像的 id（见 useChosenAvatar）：注册时
+    // profile 一律被填上默认头像，直接 getAvatarUrl 会给没挑过的人配同一张脸。幂等，
+    // 问一次全进程共用。问在「真的开了文档」这一刻，不在这里构造的时候：构造这一包
+    // 却不打开任何文档的地方（预览格里没在编辑的那一份）不该因此发请求。
+    ensureDefaultAvatarId()
     const account = myAccount()
     const user = {
       name: account?.nickname || account?.username || '',
