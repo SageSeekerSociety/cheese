@@ -290,15 +290,18 @@ _TELL_TIMEOUT_S = 3.0
 
 
 async def tell(document_id: uuid.UUID, frame: dict) -> None:
-    """Pass ``frame`` to everyone who has the document open: its comments were
-    written, a stored version moved on, an agent is answering a thread. Not a
-    record: whoever opens the document later reads the state itself, so a
+    """Pass ``frame`` to everyone who has this living document open."""
+    await tell_named(document_name(document_id), frame)
+
+
+async def tell_named(name: str, frame: dict) -> None:
+    """Pass ``frame`` to everyone who has this live document open, under
+    whichever name it goes by (``doc:<id>``, ``roomfile:<id>``). Its comments
+    were written, a stored version moved on, an agent is answering a thread.
+    Not a record: whoever opens the document later reads the state itself, so a
     frame the service never got is lost to nobody but the readers who missed a
     refresh, and is not worth failing the change it announces."""
-    url = (
-        settings.collab_internal_url.rstrip("/")
-        + f"/internal/documents/{document_name(document_id)}/tell"
-    )
+    url = settings.collab_internal_url.rstrip("/") + f"/internal/documents/{name}/tell"
     try:
         async with httpx.AsyncClient(
             timeout=_TELL_TIMEOUT_S, transport=transport
@@ -309,11 +312,11 @@ async def tell(document_id: uuid.UUID, frame: dict) -> None:
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
     except httpx.HTTPError:
-        _log.warning("could not tell document %s's readers", document_id)
+        _log.warning("could not tell %s's readers", name)
         return
     if response.status_code != 200:
         _log.warning(
-            "the collaboration service refused to tell document %s's readers: %s",
-            document_id,
+            "the collaboration service refused to tell %s's readers: %s",
+            name,
             response.status_code,
         )

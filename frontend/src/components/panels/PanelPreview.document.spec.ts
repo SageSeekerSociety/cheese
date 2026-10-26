@@ -75,15 +75,22 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
-// 预览格里那份 markdown 的编辑器身上挂着 Monaco，不该装进这一只面板的用例里。这一只
-// 要的是另一件事：**这一格真的把那一包递了下去**（`PanelPreview` 摊 props 时漏掉它，
-// 「编辑」按钮就永远不出现，而组件自己的单测看不见——它直接挂的是 `PanelPreviewView`）。
-vi.mock('./preview/PreviewMarkdownEdit.vue', () => ({
+// 预览格里那份 markdown 换成协同编辑器之后，它绑真实协同文档（socket、Yjs），不该
+// 装进这一只面板的用例里。这一只要的是另一件事：**这一格真的把那一包递了下去**（
+// `PanelPreview` 摊 props 时漏掉它，「编辑」按钮就永远不出现，而组件自己的单测看不见
+// ——它直接挂的是 `PanelPreviewView`）。
+vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
   default: {
-    name: 'PreviewMarkdownEdit',
-    props: ['edit'],
-    template: '<div data-testid="markdown-edit" :data-path="edit.pinnedPath.value" />',
+    name: 'PreviewMarkdownLive',
+    props: ['live'],
+    template: '<div data-testid="markdown-live" :data-path="live.editingPath.value" />',
   },
+}))
+
+// 那一包协同会话开的是一条真 socket（`useDocCollab`），这一只面板的用例不装它：
+// 换成一只什么都不连的替身。面板这一半要的只是「哪一份开着」那两件读得到。
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
@@ -168,17 +175,17 @@ function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n')
   })
 }
 
-it('offers edit on a markdown file, and hands the panel its editing session', async () => {
-  // 这一条盯的是「这一格真的把编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
-  // `text-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
+it('offers edit on a markdown file, and hands the panel its live session', async () => {
+  // 这一条盯的是「这一格真的把协同编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
+  // `live-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
   editableMarkdown()
   mount()
 
   const button = await screen.findByTestId('edit-file')
   await fireEvent.click(button)
 
-  // 点下去是就地打开编辑器（不是发 `open-editor` 去开 OnlyOffice）。
-  const editor = await screen.findByTestId('markdown-edit')
+  // 点下去是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await screen.findByTestId('markdown-live')
   expect(editor.getAttribute('data-path')).toBe('output/说明.md')
 })
 

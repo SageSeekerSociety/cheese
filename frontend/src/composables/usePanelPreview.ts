@@ -28,10 +28,10 @@ import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
+import { usePanelPreviewLiveEdit } from './panelPreview/liveEdit'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
-import { usePanelPreviewTextEdit } from './panelPreview/textEdit'
 import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
@@ -159,9 +159,9 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onOpenFile: options.onOpenFile,
     refreshDocument: doc.refreshDocument,
   })
-  // 在预览格里直接改一份 markdown：存回那一份房间文件本身（Office 那几种走 OnlyOffice，
-  // 文本这一条不经过它）。
-  const textEdit = usePanelPreviewTextEdit({
+  // 在预览格里和几个人一起改一份 markdown：正文走协作服务，存回那一份房间文件本身
+  // （Office 那几种走 OnlyOffice，文本这一条不经过它）。
+  const liveEdit = usePanelPreviewLiveEdit({
     props,
     state,
     refreshDocument: doc.refreshDocument,
@@ -223,7 +223,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     editor: edits.editor,
     fileHistory: edits.fileHistory,
     // 在预览格里直接改一份 markdown（存回房间文件本身）
-    textEdit,
+    liveEdit,
     // 动作
     load,
     downloadArtifact,

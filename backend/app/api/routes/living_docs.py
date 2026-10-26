@@ -982,6 +982,12 @@ async def store_document(
             file_store=library,
         )
         await db.commit()
+        # A store that moved the text on: tell the open editors, the same frame
+        # a living document's store sends. What refreshes on it is everything
+        # derived from the new version — the history, the comment anchors, the
+        # stored version other panes are reading.
+        if answer["seq"] is not None:
+            await collab.tell_named(name, {"type": "state", "resource": "doc"})
         return answer
     doc = await _document(db, name)
     stored = await store(

@@ -18,7 +18,7 @@
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。编辑器开在全屏
 // 对话框里，那一层留在壳里（`PanelPreviewView`）；这一档只管按 `editing` 之外的那几
 // 样画：文档条上的「编辑」把路径发上去，开不开由外面记。
-import type { PanelPreviewTextEdit } from '@/composables/panelPreview/textEdit'
+import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
@@ -30,7 +30,7 @@ import { computed, defineAsyncComponent, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
-import PreviewMarkdownEdit from './PreviewMarkdownEdit.vue'
+import PreviewMarkdownLive from './PreviewMarkdownLive.vue'
 import PreviewPage from './PreviewPage.vue'
 import PreviewPages from './PreviewPages.vue'
 import PreviewSheet from './PreviewSheet.vue'
@@ -80,9 +80,9 @@ const props = defineProps<{
   pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
   /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
   sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
-  /** 这一份 markdown 的编辑会话（`composables/panelPreview/textEdit.ts` 那一包）。
+  /** 这一份 markdown 的协同编辑会话（`composables/panelPreview/liveEdit.ts` 那一包）。
    *  开着的时候正文换成编辑器。 */
-  textEdit?: PanelPreviewTextEdit
+  liveEdit?: PanelPreviewLiveEdit
   /** 现在打开的那一条：它那颗标记画得显眼些。 */
   activeAnchor?: string | null
 }>()
@@ -107,15 +107,15 @@ const emit = defineEmits<{
   'markdown-quote': [payload: MarkdownQuote]
   /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
   anchor: [id: string]
-  /** 正文的编辑收起来了（存成了或取消）：这一份的编辑会话由外面关掉。 */
-  'close-text-edit': []
+  /** 协同编辑收起来了：这一份的编辑会话由外面关掉。 */
+  'close-live-edit': []
   /** 页上钉了一处 / 那个钉不该再留了。 */
   pin: [payload: PagePin]
   dropped: []
 }>()
 
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。markdown 走另一条
-// 路（预览格里直接编辑正文，`textEdit`），两种都收在「编辑」这一个按钮上。
+// 路（预览格里和几个人一起改正文，`liveEdit`），两种都收在「编辑」这一个按钮上。
 //
 // markdown 那一条在手机上不开：软键盘配 Monaco 不是一件值得存下去的事，编辑器在那边
 // 是只读的。让按钮露着、点开一个存不下去的只读编辑器，比不露更糟——和「改动」那一格
@@ -124,13 +124,13 @@ const emit = defineEmits<{
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
 const { mdAndUp } = useDisplay()
 const officeEditable = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
-const textEditable = computed(
-  () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.textEdit?.canEdit.value
+const liveEditable = computed(
+  () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value
 )
-const canEdit = computed(() => officeEditable.value || textEditable.value)
+const canEdit = computed(() => officeEditable.value || liveEditable.value)
 
 function startEdit() {
-  if (textEditable.value) props.textEdit?.begin()
+  if (liveEditable.value) void props.liveEdit?.begin()
   else if (props.previewFile) emit('open-editor', props.previewFile.path)
 }
 
@@ -226,13 +226,22 @@ defineExpose({ snapshot, clearMark })
     <v-alert v-else-if="docError && docShown" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
+    <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，
+         别让那一下看着像什么都没发生。只在这一份还停在阅读视图时摆。 -->
+    <v-alert
+      v-else-if="liveEdit?.refused.value && !liveEdit.editingPath.value"
+      type="warning"
+      density="compact"
+      class="mx-3 mb-2"
+      data-testid="live-refused"
+    >
+      {{ liveEdit.refused.value }}
+    </v-alert>
 
-    <PreviewMarkdownEdit
-      v-if="documentType.view === 'markdown' && textEdit?.draft.value != null"
-      :edit="textEdit"
-      @saved="emit('close-text-edit')"
-      @cancel="emit('close-text-edit')"
-      @draft="textEdit?.setDraft($event)"
+    <PreviewMarkdownLive
+      v-if="documentType.view === 'markdown' && liveEdit?.editingPath.value"
+      :live="liveEdit"
+      @close="emit('close-live-edit')"
     />
     <PreviewMarkdown
       v-else-if="documentType.view === 'markdown'"
