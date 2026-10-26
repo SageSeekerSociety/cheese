@@ -16,7 +16,16 @@ lists 支线 by the latter. The database keeps them: a message inserted into a
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, select
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    select,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -26,6 +35,13 @@ class Thread(Base):
     __tablename__ = "threads"
     __table_args__ = (
         UniqueConstraint("root_block_id", name="uq_threads_root_block_id"),
+        # 收起来的支线按这一列筛（「这间房还开着的支线」每读一页都要问一次）。部分
+        # 索引只收收起来的那几条，和迁移 `f4b8c2a91d37` 建的是同一个。
+        Index(
+            "ix_threads_recycled_at",
+            "recycled_at",
+            postgresql_where=text("recycled_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
