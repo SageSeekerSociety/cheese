@@ -27,6 +27,11 @@ Everything is read over ``api.github.com`` and the registry, never
 contents API). One source failing costs its own list and a line in ``notes``,
 never the whole market: a catalogue being down is no reason for the dialog to
 lose the other two.
+
+A read that never got an answer is asked again before it is given up on: this
+network drops a connection now and then, and a dropped one says nothing about
+the vendor. A reading that lost a shelf that way is then held only briefly, so
+the next open asks again instead of showing the same hole for half an hour.
 """
 
 from __future__ import annotations
@@ -91,6 +96,19 @@ MCP_LIMIT = 24
 #: A catalogue read is a small file; if it trickles, give up rather than hold the
 #: dialog open. Both hosts answer one in well under a second when healthy.
 READ_TIMEOUT_S = 10
+
+#: How many times one file is asked for before the market gives up on it, and
+#: how long the wait grows between those asks. This network drops a connection
+#: now and then — measured 2026-10-26, a quarter to two fifths of fresh
+#: connections to ``api.github.com`` and the MCP registry were reset — and one
+#: attempt each let a single drop cost a whole shelf.
+READ_ATTEMPTS = 3
+READ_BACKOFF_S = 0.4
+
+#: Answers worth asking for again: the host answered, but not with the file.
+#: A 403 (the hour's requests are gone) or a 404 (not there) is itself a fact;
+#: asking again only spends what requests are left.
+RETRY_STATUSES = frozenset({500, 502, 503, 504})
 #: How many cards of one catalogue are described when no token is configured,
 #: and how many reads are in flight at once. Every description is a request of
 #: its own and the unauthenticated GitHub API allows 60 an hour — the same 60
@@ -104,20 +122,74 @@ DESCRIBE_CONCURRENCY = 6
 #: ``ponytail:`` one process, dropped on restart, not shared between workers.
 #: Upgrade path: a shared cache.
 CACHE_SECONDS = 1800
-_CACHE: dict[str, tuple[float, Any]] = {}
+#: A read that lost a shelf to the network is held only this long, so the next
+#: open asks again instead of showing the same hole for half an hour. A refusal
+#: or a missing file is a real answer and keeps the full ``CACHE_SECONDS``.
+RETRY_SOON_SECONDS = 60
+_CACHE: dict[str, tuple[float, Any, float]] = {}
 
 #: ``(owner, repo, ref, path)`` — where to read one card's own file from.
 Where = Callable[[dict], "tuple[str, str, str, str] | None"]
 
 
 async def _cached(key: str, build: Any) -> Any:
+    """``build``'s value, held for the time it asked to be held."""
     now = time.monotonic()
     hit = _CACHE.get(key)
-    if hit is not None and now - hit[0] < CACHE_SECONDS:
+    if hit is not None and now - hit[0] < hit[2]:
         return hit[1]
-    value = await build()
-    _CACHE[key] = (time.monotonic(), value)
+    value, ttl = await build()
+    _CACHE[key] = (time.monotonic(), value, ttl)
     return value
+
+
+class _Unanswered(LookupError):
+    """The connection ended this read, not the vendor: nothing ever answered.
+
+    Distinct from 「not there」 and from a refusal because asking again in a
+    moment may well get an answer, and only this kind is worth re-reading soon
+    (``RETRY_SOON_SECONDS``).
+    """
+
+
+class _Notes:
+    """What a read has to say about itself.
+
+    ``lines`` is what the dialog shows under the shelves; ``unanswered`` is
+    whether any shelf was lost to the network rather than to an answer.
+    """
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.unanswered = False
+
+
+async def _get(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response | None:
+    """One GET, asked again while the failure is the connection's or the host's.
+
+    ``None`` when every attempt went unanswered, so a caller says 「no answer」
+    rather than making a status up. An answer a caller can act on — refused,
+    not there — comes back as it is, unasked.
+    """
+    got: httpx.Response | None = None
+    for attempt in range(READ_ATTEMPTS):
+        try:
+            got = await client.get(
+                url, params=params, headers=headers, timeout=READ_TIMEOUT_S
+            )
+        except httpx.TransportError:
+            got = None
+        if got is not None and got.status_code not in RETRY_STATUSES:
+            return got
+        if attempt + 1 < READ_ATTEMPTS:
+            await asyncio.sleep(READ_BACKOFF_S * 2**attempt)
+    return got
 
 
 async def _read_file(
@@ -131,14 +203,13 @@ async def _read_file(
     reporting it as 「没有这个文件」 sends the reader looking for a file that is
     there. ``0`` means the request never got an answer at all.
     """
-    try:
-        got = await client.get(
-            f"{API}/repos/{owner}/{repo}/contents/{quote(path)}",
-            params={"ref": ref},
-            headers=github_headers(),
-            timeout=READ_TIMEOUT_S,
-        )
-    except httpx.HTTPError:
+    got = await _get(
+        client,
+        f"{API}/repos/{owner}/{repo}/contents/{quote(path)}",
+        params={"ref": ref},
+        headers=github_headers(),
+    )
+    if got is None:
         return 0, None
     if got.status_code != 200:
         return got.status_code, None
@@ -170,7 +241,10 @@ async def _manifest(client: httpx.AsyncClient, source: dict) -> dict:
     where = f"{source['owner']}/{source['repo']} {source['manifest']}"
     if raw is None:
         # i18n-exempt: 对方那份目录文件怎么了，排错用的；没有人接这个 LookupError
-        raise LookupError(f"{where}: {_why(status)}")
+        message = f"{where}: {_why(status)}"
+        if not status:
+            raise _Unanswered(message)
+        raise LookupError(message)
     try:
         document = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
@@ -221,7 +295,7 @@ def _describe_budget() -> int | None:
 async def _describe(
     client: httpx.AsyncClient,
     cards: list[dict],
-    notes: list[str],
+    notes: _Notes,
     *,
     where: Where,
     parse: Callable[[bytes], str],
@@ -258,10 +332,10 @@ async def _describe(
 
     await asyncio.gather(*(one(card) for card in todo))
     if stopped.is_set():
-        notes.append(f"{label}: descriptions stopped early (GitHub rate limit)")
+        notes.lines.append(f"{label}: descriptions stopped early (GitHub rate limit)")
 
 
-async def _skill_cards(client: httpx.AsyncClient, notes: list[str]) -> list[dict]:
+async def _skill_cards(client: httpx.AsyncClient, notes: _Notes) -> list[dict]:
     """Anthropic's skills as cards, described as far as the budget reaches."""
     document = await _manifest(client, SKILLS)
     entries = [e for e in (document.get("plugins") or []) if isinstance(e, dict)]
@@ -339,7 +413,7 @@ def _plugin_folder(source: object, owner: str, repo: str) -> str:
 
 
 async def _plugin_cards(
-    client: httpx.AsyncClient, source: dict, notes: list[str]
+    client: httpx.AsyncClient, source: dict, notes: _Notes
 ) -> tuple[list[dict], int]:
     """One vendor's plugins as cards, and how many its catalogue names."""
     document = await _manifest(client, source)
@@ -390,11 +464,12 @@ async def _mcp_cards(client: httpx.AsyncClient) -> list[dict]:
     four times (measured 2026-10-11). The parameter makes the registry answer
     with one entry per server.
     """
-    got = await client.get(
-        MCP_REGISTRY,
-        params={"limit": MCP_LIMIT, "version": "latest"},
-        timeout=READ_TIMEOUT_S,
+    got = await _get(
+        client, MCP_REGISTRY, params={"limit": MCP_LIMIT, "version": "latest"}
     )
+    if got is None:
+        # i18n-exempt: 注册表一直没应答 —— 排错用的，不是给读者的一句话。
+        raise _Unanswered("no answer from the MCP registry")
     if got.status_code != 200:
         # i18n-exempt: 官方注册表回了一个非 200 —— 排错用的数字，不是给读者的一句话。
         raise LookupError(f"the MCP registry answered {got.status_code}")
@@ -416,18 +491,26 @@ async def _mcp_cards(client: httpx.AsyncClient) -> list[dict]:
     ]
 
 
-async def _guard(work: Awaitable[Any], notes: list[str], label: str) -> Any | None:
+async def _guard(work: Awaitable[Any], notes: _Notes, label: str) -> Any | None:
     """``work``, or ``None`` with the reason in ``notes`` — one source's loss."""
     try:
         return await work
     except Exception as exc:  # a catalogue being down must not empty the market
         # A timeout's message can be empty; its type is the only thing left to say.
-        notes.append(f"{label}: {str(exc) or type(exc).__name__}")
+        notes.lines.append(f"{label}: {str(exc) or type(exc).__name__}")
+        if isinstance(exc, (_Unanswered, httpx.TransportError)):
+            notes.unanswered = True
         return None
 
 
-async def _read(client: httpx.AsyncClient) -> dict[str, Any]:
-    notes: list[str] = []
+async def _read(client: httpx.AsyncClient) -> tuple[dict[str, Any], float]:
+    """The three lists, and how long this reading may be held.
+
+    A shelf lost to the network is held only ``RETRY_SOON_SECONDS``: the next
+    open asks again, so a drop cannot blank the market for half an hour. What
+    the vendors did answer — including a refusal — is held the full time.
+    """
+    notes = _Notes()
     skills, plugins, mcp = await asyncio.gather(
         _guard(_skill_cards(client, notes), notes, "skills"),
         asyncio.gather(
@@ -444,13 +527,14 @@ async def _read(client: httpx.AsyncClient) -> dict[str, Any]:
     )
     listed = skills or []
     plugin_cards = [card for group in plugins if group for card in group[0]]
-    return {
+    payload = {
         "skills": listed,
         "plugins": plugin_cards,
         "plugin_total": sum(group[1] for group in plugins if group),
         "mcp": mcp or [],
-        "notes": notes,
+        "notes": notes.lines,
     }
+    return payload, RETRY_SOON_SECONDS if notes.unanswered else CACHE_SECONDS
 
 
 async def catalogue(client: httpx.AsyncClient | None = None) -> dict[str, Any]:
