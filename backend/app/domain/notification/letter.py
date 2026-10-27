@@ -238,6 +238,24 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             link=link,
         )
 
+    if type_ == "CREDIT_WARNING":
+        # 额度快用完了（`usage.alerts`）：那句话本身就是这封信要说的，按钮去能处理的
+        # 那一页（`push_link` 认它的两个地址键）。它没有房间，所以不写「房间」那一行。
+        # 标题那行仍是邮件读得懂的中文：这封信给的是会受影响的人，不只给芝士。
+        content = _text(payload, "content") or "额度快用完了"
+        heading = {
+            "team": "团队额度快用完了",
+            "project": "项目额度预算快用完了",
+            "member": "你在本项目的任务额度快用完了",
+        }.get(_text(payload, "layer"), "额度快用完了")
+        return Letter(
+            subject=_clip(f"{heading}：{content}", _SUBJECT_LIMIT),
+            eyebrow=heading,
+            headline=content,
+            action="去处理",
+            link=link,
+        )
+
     if type_ == "DEVICE_IN_USE":
         agent = _text(payload, "agentName") or "AI 队友"
         device = _text(payload, "deviceName")
