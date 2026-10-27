@@ -89,12 +89,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date)
 }
 
-/** 把默认值合进已有的值，嵌套对象逐层合；已有的值优先。 */
+/** 把默认值合进已有的值，嵌套对象逐层合；已有的值优先，哪怕它是 null。
+ *  （`??` 会把显式传进来的 null 让给默认值，`in` 才分得清「没给」和「给了 null」。） */
 function mergeDefaults(defaults: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...values }
   for (const [key, value] of Object.entries(defaults)) {
     const given = merged[key]
-    merged[key] = isPlainObject(value) && isPlainObject(given) ? mergeDefaults(value, given) : given ?? value
+    if (key in merged) {
+      if (isPlainObject(value) && isPlainObject(given)) merged[key] = mergeDefaults(value, given)
+      continue
+    }
+    merged[key] = value
   }
   return merged
 }

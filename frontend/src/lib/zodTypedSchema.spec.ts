@@ -71,6 +71,12 @@ describe('toTypedSchema 的 cast', () => {
       nestedDefault: { inner: '里层默认' },
     })
   })
+
+  it('显式给的 null 留在原地，不被默认值顶掉', () => {
+    const typed = toTypedSchema(z.object({ a: z.string().default('x') }))
+    expect(typed.cast!({ a: null })).toEqual({ a: null })
+    expect(typed.cast!({})).toEqual({ a: 'x' })
+  })
 })
 
 describe('toTypedSchema 的 describe', () => {
