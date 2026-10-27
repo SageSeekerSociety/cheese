@@ -183,9 +183,20 @@ export function useDesignViewport(options: DesignViewportOptions) {
     if (pinching.value && touches.has(event.pointerId)) event.stopPropagation()
   }
   function touchEnd(event: PointerEvent) {
+    // 第二根手指落下时我们自己派发的那个 pointercancel 不是浏览器发的事件：它要走完整个
+    // 派发路径才到得了框选层上的 reset，被这里当成抬手（把第一根手指删掉、再
+    // stopPropagation）拦下来的话，框选层就撤不掉手上那一下。
+    if (!event.isTrusted) return
     if (!touches.delete(event.pointerId)) return
     if (pinching.value) event.stopPropagation()
     if (!touches.size) pinching.value = false
+  }
+  /** 这一次触摸彻底结束了：收起、失焦、指针被系统截走。`touches` 里留一根没抬起来的手指，
+   *  下一根落下来就会被当成第二根，框选从此收不到指针。 */
+  function resetTouches() {
+    touches.clear()
+    pinching.value = false
+    pinchAt = null
   }
   usePinchZoom(pane, {
     zoom: () => scale.value,
@@ -232,10 +243,11 @@ export function useDesignViewport(options: DesignViewportOptions) {
     pan = null
     panning.value = false
   }
-  /** 这一格被收起来（或整页失焦）时，把按着的空格和手上那一次平移放下。 */
+  /** 这一格被收起来（或整页失焦）时，把按着的空格、手上那一次平移和这一轮的手指都放下。 */
   function blur() {
     spaceHeld.value = false
     panEnd()
+    resetTouches()
   }
 
   watch(
