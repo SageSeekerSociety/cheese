@@ -1,5 +1,12 @@
 {
   "creditsExhausted": "额度已用完，这一轮没有执行",
   "creditsExhaustedDetail": "联系团队管理员或额度发放方补充额度。",
-  "creditsRefused": "{reason}这一轮没有执行。"
+  "creditsRefused": "{reason}这一轮没有执行。",
+  "creditWarningTeam": "方案额度还剩 {remaining} 点，{month}月{day}日重置。",
+  "creditWarningTeamHours": "{hours} 小时的方案额度还剩 {remaining} 点，{month}月{day}日 {time} 恢复。",
+  "creditWarningTeamWeek": "本周的方案额度还剩 {remaining} 点，{month}月{day}日 {time} 恢复。",
+  "creditWarningTeamMonth": "本月的方案额度还剩 {remaining} 点，{month}月{day}日 恢复。",
+  "creditWarningProject": "这个项目还剩 {remaining} 点。这个上限不会自动恢复，要管理员调。",
+  "creditWarningMember": "你在这个项目还剩 {remaining} 点，用完归你的任务会停下。",
+  "creditWarningAgent": "团队额度只剩 {remaining} 点，用完你发起的调用会被拒绝。"
 }

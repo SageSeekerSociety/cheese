@@ -11,12 +11,13 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import CreditOffers from '@/components/usage/CreditOffers.vue'
 import CreditTopUp from '@/components/usage/CreditTopUp.vue'
+import CreditWarning from '@/components/usage/CreditWarning.vue'
 import UsageDailyChart from '@/components/usage/UsageDailyChart.vue'
 import UsagePackList from '@/components/usage/UsagePackList.vue'
 import UsagePeriodCard from '@/components/usage/UsagePeriodCard.vue'
 import UsageShareList from '@/components/usage/UsageShareList.vue'
 import UsageTeamList from '@/components/usage/UsageTeamList.vue'
-import { fmtMonth } from '@/lib/creditUsage'
+import { fmtMonth, fmtPoints, fmtResetAt } from '@/lib/creditUsage'
 
 // 团队的「额度」：本月用了多少（按协作、算力分）、其他额度、每天用量、各项目占多少。不按人分。
 defineOptions({ name: 'TeamCreditsView' })
@@ -65,6 +66,53 @@ const otherCredits = computed(() =>
   (props.usage?.packs ?? []).filter((p) => !p.project_id).reduce((sum, p) => sum + p.credits_remaining, 0)
 )
 const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { handle: team.handle } })
+
+// 额度用到八成时页面顶部那一条。和 `usage.alerts` 的判定同一档：团队方案额度
+// 按月看的看本月方案包，按窗口的看最满的那个窗口；到 100% 时页面画的是「已用完」，
+// 这一条就退场，两种说法不会同时出现。
+const windowBodyKey = (w: { hours: number | null; calendar: 'week' | 'month' | null }) =>
+  w.calendar === 'week'
+    ? 'usage.warning.teamWeekBody'
+    : w.calendar === 'month'
+      ? 'usage.warning.teamMonthBody'
+      : 'usage.warning.teamHoursBody'
+
+const warning = computed(() => {
+  const usage = props.usage
+  if (!usage) return null
+  const period = usage.period
+  if (
+    period &&
+    !period.unlimited &&
+    period.remaining_ratio !== null &&
+    period.remaining_ratio > 0 &&
+    period.remaining_ratio <= 0.2
+  ) {
+    const left = Math.max(0, (period.credits_total ?? 0) - (period.credits_used ?? 0))
+    return {
+      title: t('usage.warning.teamTitle'),
+      body: t('usage.warning.teamBody', {
+        n: fmtPoints(left, locale.value),
+        at: period.resets_at ? fmtResetAt(period.resets_at, locale.value) : '',
+      }),
+    }
+  }
+  const fullest = (usage.windows ?? []).reduce<(typeof usage.windows)[number] | null>(
+    (best, window) => (best === null || window.used_ratio > best.used_ratio ? window : best),
+    null
+  )
+  if (fullest && fullest.used_ratio >= 0.8 && fullest.used_ratio < 1) {
+    return {
+      title: t('usage.warning.teamTitle'),
+      body: t(windowBodyKey(fullest), {
+        n: fmtPoints(Math.max(0, fullest.credits_total - fullest.credits_used), locale.value),
+        hours: fullest.hours ?? 0,
+        at: fullest.resets_at ? fmtResetAt(fullest.resets_at, locale.value) : '',
+      }),
+    }
+  }
+  return null
+})
 </script>
 
 <template>
@@ -94,6 +142,7 @@ const teamLink = (team: UsageTeam) => ({ name: 'TeamsDetailCredits', params: { h
 
     <template v-else-if="usage">
       <section class="tcv__balance">
+        <CreditWarning v-if="warning" :title="warning.title" :body="warning.body" />
         <UsagePeriodCard
           :period="usage.period"
           :plan="usage.plan"

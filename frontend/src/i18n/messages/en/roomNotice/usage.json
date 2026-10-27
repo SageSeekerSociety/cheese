@@ -1,5 +1,12 @@
 {
   "creditsExhausted": "The credits are used up, so this turn did not run",
   "creditsExhaustedDetail": "Ask the team admin, or whoever grants the allowance, to top it up.",
-  "creditsRefused": "{reason} This turn did not run."
+  "creditsRefused": "{reason} This turn did not run.",
+  "creditWarningTeam": "{remaining} left of this month's plan, resetting on {month}/{day}.",
+  "creditWarningTeamHours": "{remaining} left of the {hours}-hour plan, reopening on {month}/{day} {time}.",
+  "creditWarningTeamWeek": "{remaining} left of this week's plan, reopening on {month}/{day} {time}.",
+  "creditWarningTeamMonth": "{remaining} left of this month's plan, reopening on {month}/{day}.",
+  "creditWarningProject": "{remaining} left in this project. It does not reset on its own; an administrator has to raise it.",
+  "creditWarningMember": "You have {remaining} left in this project; your tasks stop when it runs out.",
+  "creditWarningAgent": "The team's plan has {remaining} left; when it runs out, the calls you start will be refused."
 }
