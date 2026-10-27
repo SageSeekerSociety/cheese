@@ -220,6 +220,19 @@ def test_a_snapshot_is_sealed_with_the_platform_csp_before_anything_else():
     assert sealed_loose.index(csp) < sealed_loose.index(b"img-src *")
 
 
+def test_the_bridge_and_the_platform_spell_the_csp_the_same_way():
+    """One string, two places that must agree.
+
+    The bridge writes the CSP into the snapshot it hands the parent, and the
+    platform writes it again on the way into storage. If they drift, the
+    snapshot a reader sees before the upload stops being the one the platform
+    promises. The script carries a placeholder, filled at import from
+    SNAPSHOT_CSP, so a second spelling cannot appear — this test keeps it that way.
+    """
+    assert "__SNAPSHOT_CSP__" not in RUNTIME_SCRIPT
+    assert f'"{preview_runtime.SNAPSHOT_CSP}"' in RUNTIME_SCRIPT
+
+
 def test_a_snapshot_in_an_encoding_we_cannot_seal_is_refused_not_stored():
     utf16 = "<?xml version='1.0' encoding='utf-16'?>".encode("utf-16")
     assert preview_runtime.seal_snapshot(utf16) is None

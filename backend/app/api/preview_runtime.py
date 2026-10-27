@@ -8,6 +8,17 @@ itself; injection leaves it alone when it already does.
 
 import re
 
+#: 快照那一层不出网的判据，由平台这一侧写死并附上。写快照的接口按字节存内容，谁都能
+#: 写，所以「这一份 HTML 正好带着一条 `default-src 'none'`」不能当承诺用——只有我们自
+#: 己插进去的那条才算数（浏览器对多条 CSP 取交集，页面自带更松的也压不过它）。
+#:
+#: 只在这里写一次：页面里生成快照时由下面的脚本把它插进 head（脚本里的
+#: ``__SNAPSHOT_CSP__`` 占位符在模块导入时被替掉），收到平台上时由
+#: :func:`seal_snapshot` 再插一遍，两处不可能写成两条不一样的。
+SNAPSHOT_CSP = (
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
+)
+
 RUNTIME_SCRIPT = r"""(() => {
   'use strict';
   let hello = null;
@@ -501,7 +512,7 @@ RUNTIME_SCRIPT = r"""(() => {
     // 快照不出网：外链样式、字体、没换成 data: 的图都不去取，换来的是零请求和不泄露。
     const csp = doc.createElement('meta');
     csp.setAttribute('http-equiv', 'Content-Security-Policy');
-    csp.setAttribute('content', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:");
+    csp.setAttribute('content', "__SNAPSHOT_CSP__");
     head.insertBefore(csp, head.firstChild);
     const html = '<!DOCTYPE html>' + clone.outerHTML;
     return encodedLength(html) <= SNAPSHOT_MAX ? html : '';
@@ -557,6 +568,10 @@ RUNTIME_SCRIPT = r"""(() => {
   }, __PLATFORM_ORIGIN__);
 })();
 """
+
+#: 脚本里那条 CSP 在这里填进去，不用各处的发脚本那一层再替换一次（`__PLATFORM_ORIGIN__`
+#: 是逐个请求才知道的，这条 CSP 不是）。填完以后发出去的脚本里不再有占位符。
+RUNTIME_SCRIPT = RUNTIME_SCRIPT.replace("__SNAPSHOT_CSP__", SNAPSHOT_CSP)
 
 #: 装运行时的那几种文档：房间文件和应用的网页都按它判（`preview_host`、`preview_relay`）。
 HTML_MEDIA = frozenset({"text/html", "application/xhtml+xml"})
@@ -673,12 +688,6 @@ def inject_runtime_script(data: bytes) -> bytes:
     return data[:at] + RUNTIME_TAG + data[at:]
 
 
-#: 快照那一层不出网的判据，由平台这一侧写死并附上。写快照的接口按字节存内容，谁都能
-#: 写，所以「这一份 HTML 正好带着一条 `default-src 'none'`」不能当承诺用——只有我们自
-#: 己插进去的那条才算数（浏览器对多条 CSP 取交集，页面自带更松的也压不过它）。
-SNAPSHOT_CSP = (
-    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
-)
 _SNAPSHOT_CSP_META = (
     f'<meta http-equiv="Content-Security-Policy" content="{SNAPSHOT_CSP}">'.encode()
 )
