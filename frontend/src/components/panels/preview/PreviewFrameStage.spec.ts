@@ -446,6 +446,11 @@ it('电脑睡了：显示压暗的静态快照和唤醒卡，快照不跑脚本�
   // 链上通道、应用两段变灰。
   const down = [...ui.container.querySelectorAll('.browser-chain__seg')].map((el) => el.getAttribute('data-state'))
   expect(down).toEqual(['ok', 'down', 'wait'])
+  // 快照盖着的时候，底下那一帧不接点击也不接键盘：读者看到的、能点的是快照，旧页面
+  // 被点一下会走进错误页，从半透明的快照底下透出来。
+  const oldFrame = ui.container.querySelector('iframe.preview-frame') as HTMLIFrameElement
+  expect(oldFrame.hasAttribute('inert')).toBe(true)
+  expect(ui.container.querySelector('.preview-frames--covered')).not.toBeNull()
   // 睡着时后退前进不亮，地址栏不能敲。
   expect((ui.getByTestId('browser-back') as HTMLButtonElement).disabled).toBe(true)
   await fireEvent.click(ui.getByTestId('preview-wake'))

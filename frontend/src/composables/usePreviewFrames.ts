@@ -449,7 +449,11 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     frame.runtime = 'unconfirmed'
     frame.runtimeError = ''
     // 新的文档要重新证明自己有桥；地址留着上一次的，等新文档报上来再换，免得地址栏一闪。
+    // 后退前进的亮不亮一起清掉：新文档还没报过来之前它是「不知道」，留着上一份文档的
+    // 值会让按钮亮着而按下去什么也不发生（命令要桥，没桥就答 false）。
     frame.bridged = false
+    frame.canBack = false
+    frame.canForward = false
     // 装成了：这一帧上一次的失败（如果有）到此为止。
     frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow

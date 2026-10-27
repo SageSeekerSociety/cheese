@@ -11,6 +11,7 @@ import uuid
 import pytest
 
 from app.api.deps import get_work_runner
+from app.api.preview_runtime import SNAPSHOT_CSP
 from app.api.routes import topics_preview_app
 from app.core.redis import get_redis_client
 from tests.integration.conftest import session_auth_headers
@@ -81,7 +82,11 @@ def test_a_snapshot_is_kept_per_app_and_read_back_by_the_room(client, preview_co
     )
     assert kept.status_code == 200, kept.text
     read = client.get(url, headers=ALICE).json()["data"]
-    assert read["html"] == page and read["href"] == "https://x/signup"
+    # 平台自己盖上了那条 CSP，而且盖在文档内容之前（CSP 只管它后面的东西）：
+    # 写快照的人自己带不带都不算数。
+    assert SNAPSHOT_CSP in read["html"]
+    assert read["html"].index(SNAPSHOT_CSP) < read["html"].index("第 2 步")
+    assert read["href"] == "https://x/signup"
     assert read["title"] == "报名" and read["taken_at"] > 0
 
     # 同一个应用再声明一次（新的一行 artifact）：快照还在。
@@ -89,7 +94,7 @@ def test_a_snapshot_is_kept_per_app_and_read_back_by_the_room(client, preview_co
     try:
         again = _declare(client, topic_id)
         assert again != artifact
-        assert client.get(url, headers=ALICE).json()["data"]["html"] == page
+        assert client.get(url, headers=ALICE).json()["data"]["html"] == read["html"]
         # 写给旧那一行的快照不算数：预览已经换过了。
         stale = client.put(
             url, json={"artifact_id": artifact, "html": page}, headers=ALICE

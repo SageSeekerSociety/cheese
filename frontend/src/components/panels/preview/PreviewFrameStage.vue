@@ -371,6 +371,9 @@ watch(
         'preview-frames',
         `preview-frames--${viewport}`,
         { 'preview-frames--asleep': sleepKind && !appSnapshot },
+        // 快照盖在上面时，下面那一帧留着不重挂，但不该再接点击和键盘：读者看到的、
+        // 能操作的是快照。旧页面被点一下就会走进错误页，从半透明的快照底下透出来。
+        { 'preview-frames--covered': !!sleepKind && !!appSnapshot },
       ]"
     >
       <template v-if="frames">
@@ -380,7 +383,7 @@ watch(
           :name="frame.name"
           class="preview-frame"
           :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
-          :inert="frame.id !== displayedFrame?.id"
+          :inert="!!sleepKind || frame.id !== displayedFrame?.id"
           :aria-hidden="frame.id !== displayedFrame?.id"
           :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
           :title="t('work.room.preview.frameTitle')"
@@ -484,6 +487,10 @@ button.preview-viewport__btn.preview-viewport__btn--active {
   filter: grayscale(1);
   opacity: 0.55;
   pointer-events: none;
+}
+/* 快照盖在上面：下面那一帧已经死了，留着只是为了不重挂；不该再看得见、点得到。 */
+.preview-frames--covered .preview-frame {
+  visibility: hidden;
 }
 .preview-frames {
   position: relative;

@@ -115,13 +115,51 @@ it('waking polls the steps and reloads the preview once the app answers', async 
   expect(reload).not.toHaveBeenCalled()
   api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: false, app_up: true })
   await vi.advanceTimersByTimeAsync(2_000)
-  expect(sleep.wakeSteps.value!.every((s) => s.state === 'done')).toBe(true)
+  // 应用答了：重新载入一次，然后卡收起。收在载入之后、不管载入成不成——留在「四步
+  // 全绿」上会把唤醒按钮一直挡住，读者只能重挂面板。
   expect(reload).toHaveBeenCalledTimes(1)
-  // 新页面装上、应用不再睡：进度收起。
-  state.previewTunnelUp.value = true
+  expect(sleep.wakeSteps.value).toBeNull()
+  scope.stop()
+})
+
+it('a reload that throws after the app answers still gives the card back', async () => {
+  api.wakePreviewApp.mockResolvedValue({ started: true })
+  api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: false, app_up: true })
+  const { state, sleep, reload, scope } = setup()
+  state.previewTunnelUp.value = false
+  state.previewAppUp.value = false
+  reload.mockRejectedValueOnce(new Error('读预览失败'))
+  await sleep.wake()
+  await vi.advanceTimersByTimeAsync(2_000)
+  expect(reload).toHaveBeenCalledTimes(1)
+  expect(sleep.wakeSteps.value).toBeNull()
+  // 还能再按一次：进度清掉了，判据不再挡。
+  api.wakePreviewApp.mockResolvedValue({ started: true })
+  await sleep.wake()
+  expect(api.wakePreviewApp).toHaveBeenCalledTimes(2)
+  scope.stop()
+})
+
+it('a snapshot read that fails is retried the next time the app sleeps', async () => {
+  api.getPreviewSnapshot.mockRejectedValueOnce(new Error('网络抖了一下'))
+  const { state, sleep, scope } = setup()
+  state.previewAppUp.value = false
+  await flush()
+  expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
+  expect(sleep.appSnapshot.value).toBeNull()
+  // 再睡一次（预览信息轮询会这样翻）：这一件没取成过，重试。
   state.previewAppUp.value = true
   await flush()
-  expect(sleep.wakeSteps.value).toBeNull()
+  api.getPreviewSnapshot.mockResolvedValue({
+    html: '<p>kept</p>',
+    href: '',
+    title: '',
+    taken_at: Date.now() / 1000,
+  })
+  state.previewAppUp.value = false
+  await flush()
+  expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(2)
+  expect(sleep.appSnapshot.value?.html).toBe('<p>kept</p>')
   scope.stop()
 })
 

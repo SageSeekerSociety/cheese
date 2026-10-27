@@ -32,6 +32,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.doc_access import require_role
 from app.api.preview_app_state import app_state
+from app.api.preview_runtime import seal_snapshot
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import BlockRepository, ProjectRepository, _actor_in_place
@@ -106,19 +107,28 @@ async def put_preview_snapshot(
 
     Anyone who can see the preview may write it: the snapshot is what they just
     saw, and every reader of the room is shown it later in a frame that runs no
-    script and reaches no network (``sandbox=""`` and the snapshot's own CSP)."""
+    script and reaches no network (``sandbox=""``). That frame runs no script
+    because the sandbox says so; it reaches no network because the CSP the
+    platform stamps into the stored bytes says so — whoever wrote the snapshot
+    does not get to decide that, or a crafted page would phone home from every
+    reader's browser. Sealing happens here, on the way in, so a stored snapshot
+    is already safe to render."""
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     art = await _current_app(db, place)
     if body.artifact_id != art.id:
         raise ValidationError(say("previewSnapshotStale"))
-    data = body.html.encode()
-    if len(data) > SNAPSHOT_MAX_BYTES:
+    sealed = seal_snapshot(body.html.encode())
+    if sealed is None:
+        raise ValidationError(say("previewSnapshotUnsealed"))
+    if len(sealed) > SNAPSHOT_MAX_BYTES:
         raise ValidationError(
             say("previewSnapshotTooLarge", mb=SNAPSHOT_MAX_BYTES // 1_000_000)
         )
+    # body.html is a JSON string, so its bytes are UTF-8 and inserting ASCII keeps
+    # them valid UTF-8; the decode is lossless.
     shot = {
-        "html": body.html,
+        "html": sealed.decode(),
         "href": body.href[:2048],
         "title": body.title[:200],
         "taken_at": time.time(),
@@ -186,27 +196,37 @@ async def wake_preview_app(
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     redis = get_redis_client()
+    key = f"preview-wake:{_snapshot_key(place, art)}"
     if redis is not None:
-        key = f"preview-wake:{_snapshot_key(place, art)}"
         try:
             if not await redis.set(key, "1", nx=True, ex=WAKE_DEDUP_SECONDS):
                 return ok({"started": False, "reason": "pending"})
         except Exception:  # an unreachable limiter does not block a person's wake
-            pass
-    runner.submit(
-        chat,
-        place.conversation_id,
-        author="system",
-        content=WAKE_INSTRUCTION.format(
-            app=art.content,
-            state="电脑没连上平台" if not state.tunnel_up else "应用没有应答",
-            actor=f"<@{actor.handle}>",
-        ),
-        addressed=addressed_to_agent(seat),
-        nudge_event=say(
-            "previewWakeRequested", actor=f"<@{actor.handle}>", seat=f"<@{seat}>"
-        ),
-    )
+            key = ""
+    try:
+        runner.submit(
+            chat,
+            place.conversation_id,
+            author="system",
+            content=WAKE_INSTRUCTION.format(
+                app=art.content,
+                state="电脑没连上平台" if not state.tunnel_up else "应用没有应答",
+                actor=f"<@{actor.handle}>",
+            ),
+            addressed=addressed_to_agent(seat),
+            nudge_event=say(
+                "previewWakeRequested", actor=f"<@{actor.handle}>", seat=f"<@{seat}>"
+            ),
+        )
+    except Exception:
+        # 这一轮没起成：把刚才占下的坑放掉，再按一次还能按。留着的话接下来 90 秒都只会
+        # 报「刚有人按过」，而实际上没有任何东西在跑。
+        if redis is not None and key:
+            try:
+                await redis.delete(key)
+            except Exception:
+                pass
+        raise
     return ok({"started": True})
 
 

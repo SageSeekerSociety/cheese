@@ -402,8 +402,13 @@ RUNTIME_SCRIPT = r"""(() => {
   // ---- 静态快照 ----
   // 应用睡着时宿主拿这一份顶上：此刻渲染出来的 DOM，样式内联进去，脚本拿掉，读得到的
   // 图片换成 data:。它在宿主那边放进不跑脚本、不出网的框里，所以只求「看上去一样」。
+  // 上限按**编码后的字节**数算，不是字符数：平台上那一侧（`SNAPSHOT_MAX_BYTES`）也按
+  // utf-8 字节判，两边得是同一把尺子。中文页面按字符算能过、按字节算过不去，差三倍。
   const SNAPSHOT_MAX = 2000000;
   const IMAGE_MAX = 400000;
+  function encodedLength(text) {
+    try { return new TextEncoder().encode(text).length; } catch (e) { return text.length; }
+  }
   function inlineImage(img) {
     try {
       if (!img.complete || !img.naturalWidth) return '';
@@ -499,7 +504,7 @@ RUNTIME_SCRIPT = r"""(() => {
     csp.setAttribute('content', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:");
     head.insertBefore(csp, head.firstChild);
     const html = '<!DOCTYPE html>' + clone.outerHTML;
-    return html.length <= SNAPSHOT_MAX ? html : '';
+    return encodedLength(html) <= SNAPSHOT_MAX ? html : '';
   }
   function postSnapshot() {
     let html = '';
@@ -666,3 +671,30 @@ def inject_runtime_script(data: bytes) -> bytes:
     if at is None:
         return data
     return data[:at] + RUNTIME_TAG + data[at:]
+
+
+#: 快照那一层不出网的判据，由平台这一侧写死并附上。写快照的接口按字节存内容，谁都能
+#: 写，所以「这一份 HTML 正好带着一条 `default-src 'none'`」不能当承诺用——只有我们自
+#: 己插进去的那条才算数（浏览器对多条 CSP 取交集，页面自带更松的也压不过它）。
+SNAPSHOT_CSP = (
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
+)
+_SNAPSHOT_CSP_META = (
+    f'<meta http-equiv="Content-Security-Policy" content="{SNAPSHOT_CSP}">'.encode()
+)
+
+
+def seal_snapshot(data: bytes) -> bytes | None:
+    """把一份快照 HTML 封成「不出网」的样子：自己那条 CSP 插在文档最前面。
+
+    和装运行时用的是同一处插入点（doctype、注释、`<html>`、`<head>` 之后），所以这条
+    meta 一定排在任何内容之前——CSP 只管它后面的东西，放晚了等于没放。答 None 表示这
+    一份封不了（编码不是 ASCII 兼容的，按字节插会把整份弄错位），调用方该拒收而不是
+    存下一份挡不住出网的快照。
+    """
+    if _declares_non_ascii_compatible(data):
+        return None
+    at = _insertion_point(data)
+    if at is None:
+        return None
+    return data[:at] + _SNAPSHOT_CSP_META + data[at:]

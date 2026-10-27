@@ -14,6 +14,7 @@
   "previewServiceUnreachable": "The document preview service can't be reached right now",
   "previewSnapshotStale": "The preview has changed since; this snapshot was not kept",
   "previewSnapshotTooLarge": "The snapshot is over {mb}MB and was not kept",
+  "previewSnapshotUnsealed": "This snapshot's encoding cannot carry the platform's safety measures, so it was not kept",
   "previewTooLarge": "The file is over {mb}MB, so no preview can be made",
   "previewWakeNoSeat": "The teammate who declared this app has left the channel, so it cannot be asked to restart it"
 }

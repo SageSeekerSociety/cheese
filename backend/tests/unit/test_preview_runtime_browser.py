@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from app.api import preview_runtime
 from app.api.preview_runtime import RUNTIME_SCRIPT
 
 ORIGIN = "https://platform.example"
@@ -191,3 +192,34 @@ assert.equal(snap.querySelector('#grade option[selected]').textContent, '大一'
         env={**os.environ, "JSDOM": str(_jsdom())},
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_a_snapshot_is_sealed_with_the_platform_csp_before_anything_else():
+    """seal_snapshot puts our own CSP first, whatever the writer sent.
+
+    The frame that shows a stored snapshot runs no script (sandbox="") and reaches
+    no network only if the bytes carry `default-src 'none'`; the writer does not
+    get to decide that. Two regardless-sources: a page with no CSP at all, and one
+    whose own CSP is looser than ours (browsers intersect, so ours still wins).
+    """
+    plain = b"<!doctype html><html><head><title>t</title></head><body>hi</body></html>"
+    sealed = preview_runtime.seal_snapshot(plain)
+    assert sealed is not None
+    csp = preview_runtime.SNAPSHOT_CSP.encode()
+    assert csp in sealed
+    assert sealed.index(csp) < sealed.index(b"<body>")
+    assert sealed.index(csp) < sealed.index(b"hi")
+
+    loose = (
+        b'<html><head><meta http-equiv="Content-Security-Policy" content="img-src *">'
+        b"</head><body>x</body></html>"
+    )
+    sealed_loose = preview_runtime.seal_snapshot(loose)
+    assert sealed_loose is not None
+    # Our meta lands before theirs, so both apply and ours is the stricter half.
+    assert sealed_loose.index(csp) < sealed_loose.index(b"img-src *")
+
+
+def test_a_snapshot_in_an_encoding_we_cannot_seal_is_refused_not_stored():
+    utf16 = "<?xml version='1.0' encoding='utf-16'?>".encode("utf-16")
+    assert preview_runtime.seal_snapshot(utf16) is None
