@@ -39,20 +39,24 @@ function lineAt(node: Node, offset: number, edge: 'start' | 'end'): HTMLElement 
 
 /** 终点那一行是不是一个字都没选到：终点在行号上，或者在正文的最开头。
  *
- *  `lineAt` 把两种终点也认成这一行：终点报在行元素上（三击、把整行选完，`offset`
- *  在正文之后），或者报在装着所有行的那一层上、`offset` 指着这一行之后。这两种都是
- *  **整行选完了**，不是「一个字都没选到」——和另外两种一样按偏移判。 */
+ *  `lineAt` 把另外几种终点也认成这一行，各有各的判法：
+ *
+ *  - 报在**正文里**：都在正文最开头之前才算一个字没选到。
+ *  - 报在这一**行元素**上（三击、拖到行首或行尾之外）：落在正文之前（行号那一列、
+ *    行首）才算没选到，正文之后就是整行选完了。
+ *  - 报在**装着这一行的某一层**上：`lineAt` 只在终点位于这一行之后时才这样认出它
+ *    （它取的是 `offset - 1` 那个子元素），所以那种形状就是整行选完了。 */
 function touchesNothing(line: HTMLElement, node: Node, offset: number): boolean {
   const code = line.querySelector('[data-code]')
   if (!code) return true
-  if (!code.contains(node)) {
-    if (node.contains(line)) return false
-    return line !== node || offset <= [...line.childNodes].indexOf(code)
+  if (code.contains(node)) {
+    const before = document.createRange()
+    before.setStart(code, 0)
+    before.setEnd(node, offset)
+    return before.toString().length === 0
   }
-  const before = document.createRange()
-  before.setStart(code, 0)
-  before.setEnd(node, offset)
-  return before.toString().length === 0
+  if (node === line) return offset <= [...line.childNodes].indexOf(code)
+  return !node.contains(line)
 }
 
 /** 这个选区在 `root` 里选中了第几行到第几行；没选、选区跑出了这一份代码就是 null。 */

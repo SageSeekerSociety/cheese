@@ -93,6 +93,7 @@ function isPicked(line: number): boolean {
       :class="{ 'code-view__scroll--wrap': wrap }"
       :style="{ '--code-digits': digits }"
       tabindex="0"
+      role="group"
       :aria-label="t('work.room.preview.codeView')"
       @mousedown="onPress"
       @mouseup="onRelease"

@@ -52,6 +52,14 @@ it('终点报在行元素上（整行选完）时，那一行算在内', async (
   expect(lines().at(-1)![0]).toEqual({ start: 2, end: 4, text: 'b = 2\nc = 3\nd = 4' })
 })
 
+it('终点报在行元素的最开头（行号那一列、行首）时，那一行不算', async () => {
+  const { ui, code, lines } = setup()
+  const line = ui.container.querySelector('[data-line="4"]')!
+  select([code(2), 0], [line, 0])
+  await fireEvent.mouseUp(line)
+  expect(lines().at(-1)![0]).toEqual({ start: 2, end: 3, text: 'b = 2\nc = 3' })
+})
+
 it('终点报在装着所有行的那一层、指着末行之后时，那一行算在内', async () => {
   const { ui, code, lines } = setup()
   const all = ui.container.querySelector('.code-view__lines')!
