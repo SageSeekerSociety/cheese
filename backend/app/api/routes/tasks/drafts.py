@@ -7,8 +7,8 @@ Two sets of routes over the same drafts:
 * ``/task-drafts`` and ``/task-drafts/{id}``: the page's. It lists, opens,
   saves and publishes the person's drafts, in the form's own shape.
 * ``/task-drafts/agent/*``: 芝士's tools (``sandbox/cheese``), reached with the
-  credential a question is answered with (``DELEGATED_ROUTES``), and so acting
-  as the person who asked. They speak 芝士's words (``drafts.AGENT_FIELDS``),
+  credential a question is answered with, and so acting as the person who
+  asked. They speak 芝士's words (``drafts.AGENT_FIELDS``),
   answer in text it can read, and tell the page what changed: each write is
   kept (``assistant.changes``, to be undone) and goes out on the question's
   own stream as a ``change``, which the page applies to the form as it is

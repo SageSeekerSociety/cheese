@@ -10,14 +10,29 @@ from __future__ import annotations
 
 import uuid
 
+from fastapi.requests import HTTPConnection
+
 from app.api.auth import ActorResolver
 from app.api.doc_access import is_team_member, reach
-from app.core.errors import NotFoundError
+from app.core import credentials
+from app.core.credentials import Kind
+from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.personal import service as personal
 from app.domain.assistant import proposals
 from app.domain.room_task.place import place_or_404
 from app.domain.team.services import team_service
 from app.domain.topic.services import TopicService
+
+
+async def not_by_their_assistant(connection: HTTPConnection) -> None:
+    """The panel is the person's own hold on their 芝士 — asking it, stopping
+    it, what it asks first, what it remembers, undoing what it did — so 芝士
+    acting for them is not let in: what is weighed does not reset what weighs
+    it. 芝士 itself works through ``/assistant/agent``."""
+    presented = credentials.presented(connection.headers)
+    if credentials.kind_of(presented) is Kind.DELEGATED:
+        raise ForbiddenError(say("assistantPanelIsThePersons"))
 
 
 class ProjectPages:

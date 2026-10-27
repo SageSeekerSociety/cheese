@@ -805,7 +805,7 @@ def test_the_persons_entries_are_read_by_the_gate_one_a_line(client, monkeypatch
     acting = _acting(client, "dora", _conversation(client, "dora", "帮我看看频道"))
 
     client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "message", "where": room, "text": "收到"},
         headers=acting,
     )
