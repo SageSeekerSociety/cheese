@@ -173,7 +173,8 @@ def _live_claims(
     user_membership: TaskMembership | None,
     team_memberships: Sequence[TaskMembership],
 ) -> list[TaskMembership]:
-    """The person's claims of the kind this task takes, rejected ones left out."""
+    """The person's live claims (``TaskMembership.live_claim``) of the kind
+    this task takes."""
     candidates = (
         [user_membership]
         if task.submitter_type == 0 and user_membership is not None
@@ -181,7 +182,7 @@ def _live_claims(
         if task.submitter_type == 1
         else []
     )
-    return [m for m in candidates if m.approved != 1]
+    return [m for m in candidates if m.live_claim]
 
 
 async def claim_of(
@@ -233,13 +234,11 @@ def refuse_claim_after_deadline(task: Task, now: datetime) -> None:
 def refuse_start_after_deadline(
     task: Task, claim: TaskMembership, now: datetime
 ) -> None:
-    """An approved claim is not started once its own deadline has passed (a
-    project made then would only read failed). On a task started directly the
-    task's deadline is everyone's, so it closes starting too; on a task
-    applied for it closes applying only, and an application approved after it
-    is started until the claim's own deadline."""
-    if starts_now(task) and task.deadline is not None and task.deadline <= now:
-        raise BadRequestError(say("taskClosedForStart"))
+    """An approved claim is started until its own deadline, and not after it
+    (a project made then would only read failed). The task's deadline closes
+    new claims only (``refuse_claim_after_deadline``), in both start modes:
+    someone who already holds a claim is held to the claim's own deadline
+    (the owner, 2026-10-26)."""
     if (
         claim.approved == APPROVE_APPROVED
         and claim.deadline is not None

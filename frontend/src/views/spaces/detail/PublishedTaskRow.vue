@@ -52,9 +52,17 @@ const stats = computed(() => {
             ? t('spaces.detail.tasks.published.publishedOn', { date: date(task.publishedAt) })
             : t('spaces.detail.tasks.published.createdOn', { date: date(task.createdAt) })
         }}</span>
+        <!-- 申请制的题，题目的截止是申请截止，说清楚。 -->
         <span>{{
           task.deadline
-            ? t('spaces.detail.tasks.row.deadline', { date: date(task.deadline) })
+            ? t(
+                task.startMode === 'APPLY'
+                  ? 'spaces.detail.tasks.row.applyDeadline'
+                  : 'spaces.detail.tasks.row.deadline',
+                {
+                  date: date(task.deadline),
+                }
+              )
             : t('spaces.detail.tasks.row.noDeadline')
         }}</span>
       </div>
