@@ -173,7 +173,8 @@ def _live_claims(
     user_membership: TaskMembership | None,
     team_memberships: Sequence[TaskMembership],
 ) -> list[TaskMembership]:
-    """The person's claims of the kind this task takes, rejected ones left out."""
+    """The person's live claims (``TaskMembership.live_claim``) of the kind
+    this task takes."""
     candidates = (
         [user_membership]
         if task.submitter_type == 0 and user_membership is not None
@@ -181,7 +182,7 @@ def _live_claims(
         if task.submitter_type == 1
         else []
     )
-    return [m for m in candidates if m.approved != 1]
+    return [m for m in candidates if m.live_claim]
 
 
 async def claim_of(

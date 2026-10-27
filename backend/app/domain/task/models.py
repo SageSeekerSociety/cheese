@@ -16,13 +16,16 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    and_,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
 from app.domain.task.indexed_rows import LIVE_ROWS, SWEEPABLE_ROWS
+from app.domain.task.inputs import APPROVE_DISAPPROVED
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
@@ -220,6 +223,19 @@ class TaskMembership(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    @hybrid_property
+    def live_claim(self) -> bool:
+        """A claim that still stands: approved, or waiting for approval. A
+        rejected one, or one withdrawn (deleted), is not the person's. One
+        definition for both sides: the rows a list reads as the viewer's own
+        (``TaskRepository.joined_by``) and the ``joined`` flag on each row."""
+        return self.deleted_at is None and self.approved != APPROVE_DISAPPROVED
+
+    @live_claim.inplace.expression
+    @classmethod
+    def _live_claim_expression(cls):
+        return and_(cls.deleted_at.is_(None), cls.approved != APPROVE_DISAPPROVED)
 
 
 class TaskSubmissionSchemaEntry(Base):

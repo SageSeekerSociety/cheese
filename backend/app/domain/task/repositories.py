@@ -58,16 +58,17 @@ class TaskRepository:
 
     @staticmethod
     def joined_by(user_id: int):
-        """The tasks ``user_id`` takes part in: as themselves on an individual
-        task, through one of their teams on a team task."""
+        """The tasks ``user_id`` takes part in: a live claim
+        (``TaskMembership.live_claim``, approved or waiting) as themselves on an
+        individual task, or through one of their teams on a team task."""
         user_member_exists = exists().where(
             TaskMembership.task_id == Task.id,
             TaskMembership.member_id == user_id,
-            TaskMembership.deleted_at.is_(None),
+            TaskMembership.live_claim,
         )
         team_member_exists = exists().where(
             TaskMembership.task_id == Task.id,
-            TaskMembership.deleted_at.is_(None),
+            TaskMembership.live_claim,
             TaskMembership.member_id == TeamUserRelation.team_id,
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
