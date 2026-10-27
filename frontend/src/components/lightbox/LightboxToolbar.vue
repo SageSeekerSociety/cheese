@@ -51,7 +51,7 @@ defineExpose({ closeButton })
           class="lb-btn"
           :title="t('work.image.zoomOut')"
           :aria-label="t('work.image.zoomOut')"
-          :disabled="scale <= 1"
+          :disabled="scale <= 1 || cropping"
           @click="emit('zoom', 1 / 1.25)"
         >
           <v-icon size="18">mdi-minus</v-icon>
@@ -62,11 +62,14 @@ defineExpose({ closeButton })
           class="lb-btn"
           :title="t('work.image.zoomIn')"
           :aria-label="t('work.image.zoomIn')"
+          :disabled="cropping"
           @click="emit('zoom', 1.25)"
         >
           <v-icon size="18">mdi-plus</v-icon>
         </button>
-        <button type="button" class="lb-btn lb-btn--text" @click="emit('fit')">{{ t('work.image.fit') }}</button>
+        <button type="button" class="lb-btn lb-btn--text" :disabled="cropping" @click="emit('fit')">
+          {{ t('work.image.fit') }}
+        </button>
       </div>
       <div class="lb-bar__group" role="group" :aria-label="t('work.image.groupEdit')">
         <button
@@ -74,6 +77,7 @@ defineExpose({ closeButton })
           class="lb-btn"
           :title="t('work.image.rotate')"
           :aria-label="t('work.image.rotate')"
+          :disabled="cropping"
           @click="emit('rotate')"
         >
           <v-icon size="18">mdi-rotate-right</v-icon>
@@ -85,6 +89,7 @@ defineExpose({ closeButton })
           :aria-pressed="adjust.flip"
           :title="t('work.image.flip')"
           :aria-label="t('work.image.flip')"
+          :disabled="cropping"
           @click="emit('flip')"
         >
           <v-icon size="18">mdi-flip-horizontal</v-icon>

@@ -50,6 +50,9 @@ const emit = defineEmits<{ (e: 'close'): void }>()
 const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 const actions = inject(CHAT_IMAGE_ACTIONS, null)
 const gallery = useLightboxGallery(props, source, actions)
+/** 「放进输入框」只在输入框此刻收得了文件时出现：归档的频道、已关闭的任务里它不在，
+ *  点了会排进一个看不见的队，看着像交付成功却没有去处。 */
+const canAttach = computed(() => !!actions?.canAttach())
 
 const stage = ref<HTMLElement | null>(null)
 const figure = ref<HTMLImageElement | null>(null)
@@ -103,6 +106,36 @@ function measureArea() {
   area.value = { left: a.left - b.left, top: a.top - b.top, width: a.width, height: a.height }
 }
 
+/** 量着图不动为止：想裁剪时图要从放大的样子回到一倍，走一小段过渡。
+ *
+ *  写死一个毫秒数会随过渡时长悄悄走散（那个数一变，框就落在错的像素上，导出的裁剪和
+ *  屏幕上看到的不是同一块），窗口变化也一样。所以在裁剪期间跟着量：每一帧量一次，
+ *  连着两次量到同一个结果就算停住了；再挂一个 ResizeObserver，窗口一变立刻跟上。 */
+let settleFrame = 0
+let settleObserver: ResizeObserver | null = null
+function followUntilSettled() {
+  let last = ''
+  const tick = () => {
+    measureArea()
+    const now = JSON.stringify(area.value)
+    if (now === last) return
+    last = now
+    settleFrame = requestAnimationFrame(tick)
+  }
+  settleFrame = requestAnimationFrame(tick)
+  if (typeof ResizeObserver !== 'undefined') {
+    settleObserver = new ResizeObserver(measureArea)
+    if (figure.value) settleObserver.observe(figure.value)
+    if (stage.value) settleObserver.observe(stage.value)
+  }
+}
+function stopFollowing() {
+  if (settleFrame) cancelAnimationFrame(settleFrame)
+  settleFrame = 0
+  settleObserver?.disconnect()
+  settleObserver = null
+}
+
 function rotate() {
   const next = { ...adjust.value, rotate: (adjust.value.rotate + 90) % 360 }
   change({ rotate: next.rotate, crop: adjust.value.crop && carryCrop(adjust.value.crop, adjust.value, next) })
@@ -119,18 +152,18 @@ async function startCrop() {
   draftCrop.value = adjust.value.crop ?? { x: 0.1, y: 0.1, w: 0.8, h: 0.8 }
   cropping.value = true
   await nextTick()
-  measureArea()
-  // 图从放大的样子回到一倍要走一小段过渡，量的是过渡结束后的位置。
-  setTimeout(measureArea, 200)
+  followUntilSettled()
 }
 function finishCrop(apply: boolean) {
   if (apply) change({ crop: draftCrop.value })
   cropping.value = false
+  stopFollowing()
 }
 
 function restore() {
   adjustments.delete(gallery.index.value)
   cropping.value = false
+  stopFollowing()
   void nextTick(view.fit)
 }
 
@@ -172,7 +205,7 @@ async function download() {
 }
 
 async function attach() {
-  if (!actions) return
+  if (!actions?.canAttach()) return
   const file = await edited()
   if (!file) return
   actions.attach(file)
@@ -195,9 +228,23 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') {
     if (cropping.value) finishCrop(false)
     else emit('close')
-  } else if (cropping.value) {
-    if (event.key === 'Enter') finishCrop(true)
-  } else if (event.key === 'ArrowRight') gallery.go(1)
+    return
+  }
+  if (cropping.value) {
+    // 「拖动框选要留下的部分，回车确定」这句说给的是这一层：回车只管裁剪。焦点还在
+    // 工具条上时，回车会先把那颗按钮按下去（关掉浮层、或者又进一次裁剪），所以要
+    // 拦住它，并且只在这一层收这个键。
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      finishCrop(true)
+    }
+    return
+  }
+  // 焦点在滑杆、输入框里时方向键是它们的（亮度的滑杆上，←/→ 是减一档）：别顺手换图，
+  // 那会让刚调的那一档落到正在看的另一张上。
+  const target = event.target as HTMLElement | null
+  if (target && /^(input|select|textarea|button)$/i.test(target.tagName)) return
+  if (event.key === 'ArrowRight') gallery.go(1)
   else if (event.key === 'ArrowLeft') gallery.go(-1)
 }
 
@@ -229,6 +276,7 @@ onMounted(() => {
   toolbar.value?.closeButton?.focus()
 })
 onBeforeUnmount(() => {
+  stopFollowing()
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('popstate', onPopState)
   // 只退自己压的那一格：已经被返回弹掉了，或者这期间页面又往前走了一步，都不碰。
@@ -334,7 +382,7 @@ onBeforeUnmount(() => {
             {{ t('work.image.downloadEdited') }}
           </button>
           <button
-            v-if="actions"
+            v-if="canAttach"
             type="button"
             class="lightbox__act lightbox__act--primary"
             :disabled="saving"

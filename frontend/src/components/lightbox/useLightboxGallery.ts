@@ -29,6 +29,9 @@ export function useLightboxGallery(
   })
   const start = Math.max(0, paths.value.indexOf(props.path ?? ''))
   const index = ref(start)
+  /** 这一刻看的是哪一张：浮层开着的时候对话还会来消息、删消息，`paths` 跟着变，
+   *  只记一个位置会让浮层换到别的图上（或者落到数组外面，卡在「加载中」）。 */
+  const shown = ref(paths.value[start] ?? '')
   /** 这里自己取来的地址（不含点开的那张）。 */
   const urls = reactive(new Map<string, string>())
   const failed = reactive(new Set<string>())
@@ -78,7 +81,16 @@ export function useLightboxGallery(
     const n = total.value
     if (n < 2) return
     index.value = (index.value + delta + n) % n
+    shown.value = paths.value[index.value] ?? shown.value
   }
+
+  // 这一串图变了（对话里来了新消息、删了一条）：还留在原来那张上；那张没了就退到
+  // 现在这一串里最近的合法位置，绝不会落在数组外面。
+  watch(paths, (list) => {
+    const at = list.indexOf(shown.value)
+    index.value = at >= 0 ? at : Math.min(index.value, Math.max(0, list.length - 1))
+    shown.value = list[index.value] ?? ''
+  })
 
   onBeforeUnmount(() => {
     disposed = true

@@ -3,7 +3,7 @@
 // 从 roomFiles.ts 拆出来：那个文件管附件与预览的字节，这里管同一份文件随时间存下的那几版。
 import { t } from '../i18n'
 
-import { authHeaders, BASE, request } from './http'
+import { authHeaders, BASE, ensureFreshToken, request } from './http'
 
 /** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
 export interface RoomFileRevision {
@@ -36,6 +36,9 @@ export function restoreRoomFileRevision(topicId: string, revisionId: string): Pr
 
 /** 某一版的字节（卡片拿它和现在那份逐格比）。 */
 export async function roomFileRevisionBytes(topicId: string, revisionId: string): Promise<ArrayBuffer> {
+  // 裸 fetch 不经过 `request()`：token 快过期时得先自己换一次，否则页面放了一阵再滚到
+  // 一张表格卡，这一下会 401（同 `rawImageUrl` / `previewFileBytes` 的理由）。
+  await ensureFreshToken()
   const res = await fetch(
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/raw`,
     { headers: authHeaders() }
