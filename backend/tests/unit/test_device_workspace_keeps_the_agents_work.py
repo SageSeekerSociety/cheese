@@ -231,7 +231,7 @@ def test_another_worktree_beside_a_task_commits_and_leaves_the_task_alone(
     branch = tasks[task]["branch"]
     delivered = git(remote, "rev-parse", branch)
     extra = tmp_path / "experiment"
-    git(work, "worktree", "add", "-b", "experiment", str(extra), "main")
+    git(work, "worktree", "add", "-b", "experiment", str(extra), "origin/main")
     (extra / "same.txt").write_text("experiment\n")
     git(extra, "add", "same.txt")
 
