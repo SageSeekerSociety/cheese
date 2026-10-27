@@ -119,11 +119,15 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const author = hooks.viewing()
     olderBusy = true
     if (!quiet) loadingOlder.value = true
-    // 这一趟真的要发了，才把上一次的失败收掉：上面那几条守卫发不出去时错误得留着
-    // （`retry` 靠这一点，才不是「按了等于没按」）。收在这里而不是按下重试那一刻，
-    // 是因为错误态占着整块地方——不收的话读者看不见「加载更早的现场…」，也看不见
-    // 屏上那几行，按下去像是没反应。
-    if (!quiet) clearError()
+    // 这一趟真的要发了，才把**这一方向**上一次的失败收掉：上面那几条守卫发不出去
+    // 时错误得留着（`retry` 靠这一点，才不是「按了等于没按」）。收在这里而不是按下
+    // 重试那一刻，是因为错误态占着整块地方——不收的话读者看不见「加载更早的现场…」，
+    // 也看不见屏上那几行，按下去像是没反应。
+    //
+    // 只收 `errorFromOlder` 那一条：`clearError()` 抹的是「此刻画着的那条错误」，
+    // 而这一刻画着的可能是最新一页的失败或一个 403——读者换了个视角、最新一页还没
+    // 读到时，后台这条往回读成功了不该把它连人带按钮一起抹掉。
+    if (!quiet && errorFromOlder.value) clearError()
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
@@ -166,7 +170,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // 预取也可能正好把失败的那一页拿回来（它读的正是没挪过的游标）。那几行已经在
       // 手上了，红条却还盖着它们——读者还得再按一次重试，重发一条他手上已经有了的
       // 请求。所以这里不看 `quiet`：往回读成功了就是成功了，那一条错误该收。
-      clearError()
+      //
+      // 但只收 `errorFromOlder` 那一条，理由同上：此刻画着的可能是最新一页的失败或
+      // 一个 403，往回读读成了不该替它们做主。
+      if (errorFromOlder.value) clearError()
       return true
     } catch (e) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
