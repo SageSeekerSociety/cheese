@@ -99,9 +99,13 @@ const {
   geometry,
   spaceHeld,
   panning,
+  narrow,
   setZoom,
   fit,
   wheel,
+  touchDown,
+  touchMove,
+  touchEnd,
   panStart,
   panMove,
   panEnd,
@@ -342,7 +346,16 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       @pointerup.capture="panEnd"
       @pointercancel.capture="panEnd"
     >
-      <div ref="pane" class="design-image__pane" @wheel="wheel">
+      <div
+        ref="pane"
+        class="design-image__pane"
+        :class="{ 'is-narrow': narrow }"
+        @wheel="wheel"
+        @pointerdown.capture="touchDown"
+        @pointermove.capture="touchMove"
+        @pointerup.capture="touchEnd"
+        @pointercancel.capture="touchEnd"
+      >
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- double-clicking a text mark reopens it for editing, part of drawing with the pointer; the image has no keyboard drawing mode -->
         <div
           class="design-image__sheet"
