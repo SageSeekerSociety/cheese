@@ -190,6 +190,8 @@ const compact = computed(() => docWidth.value > 0 && docWidth.value < 560)
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
+// 代码那一档要的正文：读不成文本（二进制、太大）时是 null，就地说明一句，不往下落。
+const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.content ?? null : null))
 // 代码长行默认横向滚：代码的缩进和对齐是意思的一部分，折行会把它打乱。窄面板上读者
 // 可能宁可折行也不想左右拖，所以留一颗开关。
 const codeWrap = ref(false)
@@ -387,8 +389,8 @@ defineExpose({ snapshot, clearMark })
     />
     <template v-else-if="documentType.view === 'code'">
       <PreviewCode
-        v-if="previewFile.content !== null"
-        :source="previewFile.content"
+        v-if="codeSource !== null"
+        :source="codeSource"
         :language="documentType.language ?? null"
         :wrap="codeWrap"
         @lines="emit('code-lines', $event)"

@@ -99,5 +99,6 @@
   "codeLine": "第 {line} 行",
   "codeLines": "第 {start}–{end} 行",
   "codeWrap": "自动换行",
-  "codeNoWrap": "不换行"
+  "codeNoWrap": "不换行",
+  "codeView": "代码"
 }

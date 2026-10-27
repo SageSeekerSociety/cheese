@@ -400,12 +400,16 @@ watch(
       }}</BaseButton>
     </div>
     <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
+    <!-- 网页源码在这里沿用原来那一条读法：折行。生成的 HTML 常常整页就一两行，
+         横着滚等于看不见。代码文件那一档（`PreviewDocStage`）默认横滚另给开关，
+         因为源码的缩进和对齐是意思的一部分。 -->
     <PreviewCode
       v-if="showSource && canShowSource"
       class="preview-source"
       data-testid="frame-source"
       :source="previewFile?.content ?? ''"
       language="xml"
+      wrap
     />
     <div
       v-show="!(showSource && canShowSource)"

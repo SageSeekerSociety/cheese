@@ -37,10 +37,18 @@ function lineAt(node: Node, offset: number, edge: 'start' | 'end'): HTMLElement 
   return lineElement(child)
 }
 
-/** 终点那一行是不是一个字都没选到：终点在行号上，或者在正文的最开头。 */
+/** 终点那一行是不是一个字都没选到：终点在行号上，或者在正文的最开头。
+ *
+ *  `lineAt` 把两种终点也认成这一行：终点报在行元素上（三击、把整行选完，`offset`
+ *  在正文之后），或者报在装着所有行的那一层上、`offset` 指着这一行之后。这两种都是
+ *  **整行选完了**，不是「一个字都没选到」——和另外两种一样按偏移判。 */
 function touchesNothing(line: HTMLElement, node: Node, offset: number): boolean {
   const code = line.querySelector('[data-code]')
-  if (!code || !code.contains(node)) return true
+  if (!code) return true
+  if (!code.contains(node)) {
+    if (node.contains(line)) return false
+    return line !== node || offset <= [...line.childNodes].indexOf(code)
+  }
   const before = document.createRange()
   before.setStart(code, 0)
   before.setEnd(node, offset)

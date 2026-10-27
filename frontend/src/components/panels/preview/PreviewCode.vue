@@ -17,6 +17,7 @@ import { computed, ref, watch } from 'vue'
 
 import { type LineRange, lineRangeIn, selectLines } from './codeSelection'
 
+import { t } from '@/i18n'
 import { highlightLines, sourceOfLines } from '@/lib/codeHighlight'
 
 const props = withDefaults(
@@ -91,6 +92,8 @@ function isPicked(line: number): boolean {
       class="code-view__scroll"
       :class="{ 'code-view__scroll--wrap': wrap }"
       :style="{ '--code-digits': digits }"
+      tabindex="0"
+      :aria-label="t('work.room.preview.codeView')"
       @mousedown="onPress"
       @mouseup="onRelease"
       @keyup="onRelease"
