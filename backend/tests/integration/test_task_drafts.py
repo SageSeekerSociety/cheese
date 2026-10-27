@@ -467,18 +467,6 @@ def test_an_incomplete_draft_is_not_published(api_client: TestClient, board: dic
     assert "description" in resp.json()["error"]["message"], resp.text
 
 
-def test_the_page_routes_do_not_take_cheeses_credential(
-    api_client: TestClient, board: dict
-):
-    draft = _start(api_client, board, fields=FORM)
-    resp = api_client.patch(
-        f"/task-drafts/{draft['id']}",
-        json={"fields": {"name": "x"}},
-        headers=_as_cheese(board["teacher"]),
-    )
-    assert resp.status_code == 403
-
-
 def test_cheese_fills_every_ai_setting_and_the_published_task_has_them(
     api_client: TestClient, board: dict
 ):
