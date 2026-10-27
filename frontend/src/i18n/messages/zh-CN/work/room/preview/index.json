@@ -63,7 +63,7 @@
   "queuedCount": "待发批注 {count} 处",
   "readFailed": "无法读取文件",
   "readVersion": "读取时版本：{version}",
-  "recipientAgent": "发给任务芝士",
+  "recipientAgent": "发进对话",
   "recipientComment": "仅留评论",
   "recipientLabel": "批注投递目标",
   "refresh": "刷新",

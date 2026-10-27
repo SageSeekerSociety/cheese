@@ -63,7 +63,7 @@
   "queuedCount": "{count} queued note(s)",
   "readFailed": "Couldn't read the file",
   "readVersion": "Version at metadata read: {version}",
-  "recipientAgent": "Send to task agent",
+  "recipientAgent": "Send to conversation",
   "recipientComment": "Comment only",
   "recipientLabel": "Annotation target",
   "refresh": "Refresh",
