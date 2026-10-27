@@ -23,7 +23,7 @@ still names one record, and reading the same page twice lands it once.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import (
     BigInteger,
@@ -40,6 +40,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import UuidPk
+
+#: How long a sealed run's row is kept. It lives here, beside the table whose
+#: row it bounds, because the reader needs it too (`service.read` decides from
+#: it whether the bucket's index can still name anything a page is missing) —
+#: and `service` imports this module, so a constant it needs cannot live in
+#: `retention`, which imports `service`. `retention.RETENTION` is this.
+RETENTION = timedelta(days=30)
 
 
 class SessionRecord(UuidPk, Base):

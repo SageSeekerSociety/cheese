@@ -21,7 +21,7 @@ first, on the sealer's clock, and its row goes on a later pass.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -37,12 +37,10 @@ from sqlalchemy import (
 from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
 from app.domain.session_record import service
-from app.domain.session_record.models import SessionRecord
+from app.domain.session_record.models import RETENTION, SessionRecord
 
 logger = logging.getLogger(__name__)
 
-#: How long a sealed run's row is kept.
-RETENTION = timedelta(days=30)
 #: How often the retention sweep looks.
 EVERY_S = 600
 
