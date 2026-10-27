@@ -45,6 +45,7 @@ import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
 import ComposerSummon from './ComposerSummon.vue'
+import ComposerViewing from './ComposerViewing.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import MentionMenu from './MentionMenu.vue'
 import ReminderDialog from './ReminderDialog.vue'
@@ -668,7 +669,7 @@ defineExpose({
         @voice-done="voice.finish()"
         @voice-swap="swapVoice"
       >
-        <template #chips><slot name="composer-chips" /></template>
+        <template #chips><ComposerViewing :suppressed="!!quote" /><slot name="composer-chips" /></template>
         <template v-if="summonShown" #summon>
           <ComposerSummon
             :guided="!!guided"

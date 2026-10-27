@@ -256,3 +256,13 @@ it('表格一片：CSV 没有工作表名，区域就是它自己', () => {
   // 一片里什么都没有时不装作有内容 —— 几个制表符不是「有内容」。
   expect(container.textContent).toContain('（空）')
 })
+
+it('「在看哪一份」：说这是发消息时开着的文件，不编来源和版本', () => {
+  const { container } = render(MessageQuote, {
+    props: { quote: { kind: 'viewing' as const, path: 'output/招募方案.docx', task_id: null } },
+  })
+  expect(container.textContent).toContain('发这条消息时在看这份文件')
+  expect(container.textContent).toContain('output/招募方案.docx')
+  expect(container.textContent).not.toContain('undefined')
+  expect(container.querySelector('.message-quote__identity')).toBeNull()
+})
