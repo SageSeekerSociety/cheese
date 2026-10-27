@@ -233,3 +233,48 @@ async def test_the_relay_refuses_a_path_that_would_leave_machine(target, monkeyp
     )
     assert sent == []
     assert bytes(written).startswith(b"HTTP/1.1 400")
+
+
+async def test_a_large_body_streams_across_frames_without_waiting_for_the_end(
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
+    monkeypatch.setattr(machine_streams, "_STREAM_THRESHOLD", 8)
+    received: list[bytes] = []
+    first_chunk = asyncio.Event()
+
+    backend = FastAPI()
+
+    @backend.put("/machine/api/projects/p/git/tasks/t/snapshots/s")
+    async def upload(request: Request):
+        async for chunk in request.stream():
+            if chunk:
+                received.append(chunk)
+                first_chunk.set()
+        return {"bytes": sum(len(c) for c in received)}
+
+    machine_streams.serve(
+        machine_relay.forwarder(
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=backend)),
+            "http://backend",
+        )
+    )
+    try:
+        hub, transport = await _linked()
+        await hub.on_device_message(
+            "dev", {"t": "machine.open", "id": "s1", "path": STATE}
+        )
+        head = (
+            b"PUT /api/projects/p/git/tasks/t/snapshots/s HTTP/1.1\r\n"
+            b"host: platform.cheese\r\n"
+            b"content-length: 24\r\n\r\n"
+        )
+        await hub.on_device_message("dev", _data("s1", head + b"0123456789ab"))
+        await asyncio.wait_for(first_chunk.wait(), timeout=2.0)
+        assert b"".join(received) == b"0123456789ab"
+        await hub.on_device_message("dev", _data("s1", b"cdefghijklmn"))
+        frames = await _settled(transport, "s1")
+        assert b"".join(received) == b"0123456789abcdefghijklmn"
+        assert _answer(frames).endswith(b'{"bytes":24}')
+    finally:
+        machine_streams.serve(None)

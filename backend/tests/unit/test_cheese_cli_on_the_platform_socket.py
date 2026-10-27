@@ -120,15 +120,16 @@ def test_a_session_on_the_machine_asks_down_the_socket_too(machine):
     assert on_socket[-1]["token"] is None
 
 
-def test_a_body_too_large_for_the_socket_goes_straight_on_a_handed_credential(
+def test_a_large_body_goes_down_the_socket_without_a_credential(
     machine,
 ):
     cheese, on_socket, direct = machine
-    large = "x" * (cheese._SOCKET_BODY_LIMIT + 1)
+    large = "x" * (30 * 1024 * 1024 + 1)
     cheese._call("POST", "/topics/t/files", {"content": large})
-    assert [call["path"] for call in on_socket] == ["/credential"]
-    assert direct[-1]["path"] == "/topics/t/files"
-    assert direct[-1]["token"] == "handed-for-a-minute"
+    assert [call["path"] for call in on_socket] == ["/api/topics/t/files"]
+    assert on_socket[-1]["token"] is None
+    assert on_socket[-1]["bytes"] > 30 * 1024 * 1024
+    assert direct == []
 
 
 def test_gits_relay_password_is_a_handed_credential(machine):
