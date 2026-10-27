@@ -765,9 +765,9 @@ record the path and never the query string, because several URLs carry a
 credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
-covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
-`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
-script — including across the 「container up, pipe dead」 incident (#579), whose
+covered too. It is recreated outside `deploy-docker.sh` (the tunnel by
+`release-llm-tunnel.yml`, api-front by `deploy/llm-tunnel/up.sh`), so its logs
+used to vanish whenever one of them was recreated — including across the 「container up, pipe dead」 incident (#579), whose
 first-hand account was exactly what nobody could read afterwards.
 
 ## Box ops runbook — changing backend env on a box
