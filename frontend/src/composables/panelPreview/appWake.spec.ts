@@ -163,6 +163,34 @@ it('a snapshot read that fails is retried the next time the app sleeps', async (
   scope.stop()
 })
 
+it('a snapshot read that fails after the artifact changed does not re-ask the new one', async () => {
+  let failFirst: (e: Error) => void = () => {}
+  api.getPreviewSnapshot.mockImplementationOnce(
+    () =>
+      new Promise((_ok, no) => {
+        failFirst = no
+      })
+  )
+  const { state, scope } = setup()
+  state.previewAppUp.value = false
+  await flush()
+  expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
+  // 第一次还在路上时换了产物：新的这一件自己去取一次。
+  api.getPreviewSnapshot.mockResolvedValue(null)
+  state.previewArtifactId.value = 'art-2'
+  await flush()
+  expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(2)
+  // 换产物之前那一次的失败回来了。它不该把新产物的记号一起抹掉，否则再睡着一次又白问。
+  failFirst(new Error('网络抖了一下'))
+  await flush()
+  state.previewAppUp.value = true
+  await flush()
+  state.previewAppUp.value = false
+  await flush()
+  expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(2)
+  scope.stop()
+})
+
 it('a wake that does not get the app up in time gives the button back with a sentence', async () => {
   api.wakePreviewApp.mockResolvedValue({ started: true })
   api.getPreviewWakeStatus.mockResolvedValue({ machine: null, tunnel_up: false, agent_working: false, app_up: false })

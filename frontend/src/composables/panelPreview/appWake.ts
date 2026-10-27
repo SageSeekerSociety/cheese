@@ -114,7 +114,9 @@ export function usePanelPreviewAppSleep(deps: {
       } catch {
         // 取不到就没有快照可顶：卡上照样说清楚，按钮照样能按。这一件没取成的不算「取
         // 过了」——否则一次网络抖动之后，这一次挂载里再睡着都不会重试，卡上永远空着。
-        fetchedFor = null
+        // 只抹自己这一件的记号：请求在路上时换了产物，标记已经是新产物的了，抹掉会让
+        // 它下一轮又多发一次。
+        if (state.previewArtifactId.value === artifactId) fetchedFor = null
       }
     },
     { immediate: true }
@@ -135,6 +137,21 @@ export function usePanelPreviewAppSleep(deps: {
     wakeError.value = error
   }
 
+  /** 应用答了：四步全绿，重新载入预览，再把卡片收掉。
+   *
+   *  载入抛错、或者载回来应用仍然睡着，都退回普通休眠态（按钮还能按）；不收的话卡会
+   *  永远停在「四步全绿」上，而「唤醒」被 progress 判据挡着，只能重挂面板。载入失败
+   *  由取数那一层报在面板上，这里只保证卡片让开。 */
+  async function settle() {
+    progress.value = { machine: true, tunnel: true, agent: true, port: true }
+    try {
+      await deps.reload()
+    } catch {
+      // 见上：报错在别处，卡片要收。
+    }
+    finish()
+  }
+
   async function check() {
     const topicId = props.topicId
     if (!topicId || !progress.value) return
@@ -149,16 +166,7 @@ export function usePanelPreviewAppSleep(deps: {
         port: status.app_up,
       }
       if (status.app_up) {
-        // 应用答了：四步走完，重新载入预览。载入完就收进度——它抛错、或者载回来应用
-        // 仍然睡着，都退回普通休眠态（按钮还能按）；不收的话卡会永远停在「四步全绿」
-        // 上，而「唤醒」被 progress 判据挡着，只能重挂面板。
-        progress.value = { machine: true, tunnel: true, agent: true, port: true }
-        try {
-          await deps.reload()
-        } catch {
-          // 载入失败已经由取数那一层报在面板上；这里只保证卡片让开。
-        }
-        finish()
+        await settle()
         return
       }
     } catch {
@@ -182,13 +190,7 @@ export function usePanelPreviewAppSleep(deps: {
     try {
       const answer = await wakePreviewApp(topicId)
       if (answer.reason === 'up') {
-        progress.value = { machine: true, tunnel: true, agent: true, port: true }
-        try {
-          await deps.reload()
-        } catch {
-          // 同上：载入失败由面板自己报，这里只保证卡片让开。
-        }
-        finish()
+        await settle()
         return
       }
     } catch (e) {
