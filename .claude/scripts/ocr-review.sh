@@ -117,6 +117,7 @@ read_ceiling() {
   local raw=$1
   case "$raw" in
     ''|*[!0-9.]*) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$raw'" ;;
+    *.*.*) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$raw'" ;;
     *[0-9]*) ;;
     *) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$raw'" ;;
   esac
@@ -173,6 +174,21 @@ run_ocr() {
     esac
   fi
   return "$status"
+}
+
+# Whether a run that exited non-zero still produced a review worth keeping.
+#
+# 124 is timeout's own status: the ceiling sent SIGTERM and OCR came back with
+# what it had. A 137 means it had to be killed, which does not prove the ceiling
+# did it — the OOM killer yields the same status — and what it wrote may be
+# truncated. Either way the file has to be a report, not just parseable JSON:
+# OCR writes an object carrying a coverage manifest, and a stray `{}` is not a
+# review. A function so `--self-test` drives this same decision.
+usable_cut() {
+  local status=$1 out=$2
+  [ "$status" = 124 ] || return 1
+  [ -s "$out" ] || return 1
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("manifest") else 1)' "$out" 2>/dev/null
 }
 
 # Prove the ceiling, offline and without the 54 MB install: a stand-in CLI that
@@ -268,7 +284,7 @@ STUB
   # A ceiling that cannot be read must stop the script, not run unbounded: `.`
   # and `..` are the cases a plain character filter lets through and awk then
   # coerces to 0.
-  for bad in half -5 . .. 1e3 " "; do
+  for bad in half -5 . .. 1.2.3 1e3 " "; do
     if (read_ceiling "$bad" >/dev/null) 2>/dev/null; then
       echo "self-test FAILED: OCR_WALL_CLOCK='$bad' was accepted as a ceiling" >&2
       fail=1
@@ -286,9 +302,27 @@ STUB
       || { echo "self-test FAILED: OCR_WALL_CLOCK='$zero' read as '$got', not disarmed" >&2; fail=1; }
   done
 
+  # Which non-zero exits count as a kept partial review. 124 is the ceiling's
+  # own signal; 137 could be anything (the OOM killer), and a report without a
+  # coverage manifest is not a review.
+  printf '{"manifest":{"coverage":{}}}\n' >"$dir/genuine.json"
+  printf '{}\n' >"$dir/empty.json"
+  printf 'not json\n' >"$dir/garbage.json"
+  : >"$dir/nothing.json"
+  usable_cut 124 "$dir/genuine.json" \
+    || { echo "self-test FAILED: a SIGTERM cut with a coverage manifest was refused" >&2; fail=1; }
+  for bad_case in "124 $dir/empty.json" "124 $dir/garbage.json" "124 $dir/nothing.json" \
+                  "137 $dir/genuine.json" "1 $dir/genuine.json"; do
+    # shellcheck disable=SC2086
+    if usable_cut $bad_case; then
+      echo "self-test FAILED: usable_cut accepted '$bad_case'" >&2
+      fail=1
+    fi
+  done
+
   st_cleanup
   [ "$fail" = 0 ] || return 1
-  echo "self-test ok: the ceiling stops the run with a signal OCR can act on, reports both cut kinds, takes the grandchildren, and refuses a ceiling it cannot read"
+  echo "self-test ok: the ceiling stops the run with a signal OCR can act on, reports both cut kinds, takes the grandchildren, and refuses a ceiling or a cut result it cannot trust"
 }
 
 FROM=""
@@ -432,13 +466,7 @@ fi
 # exists to preserve. It exits 0 and says what it is; every other non-zero
 # status keeps the old meaning.
 if [ "$status" != 0 ]; then
-  # 124 is timeout's own status: the ceiling sent SIGTERM and OCR came back. A
-  # 137 means it had to be killed, which does not prove the ceiling did it — the
-  # OOM killer yields the same status — and whatever it wrote may be truncated.
-  # Either way the result has to be a report, not just valid JSON: OCR writes an
-  # object carrying a coverage manifest, and a stray `{}` is not a review.
-  if [ "$status" = 124 ] && [ -s "$OUT" ] \
-    && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("manifest") else 1)' "$OUT" 2>/dev/null; then
+  if usable_cut "$status" "$OUT"; then
     echo "ocr-review: closed at the ${WALL_CLOCK_MIN}m wall clock — a partial result, not a failed run: $OUT" >&2
   else
     echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
