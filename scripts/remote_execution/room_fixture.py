@@ -5,57 +5,20 @@ import hashlib
 import json
 import os
 import shutil
-import socketserver
 import subprocess
 import sys
 import threading
 import time
-import traceback
 import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER  # noqa: E402
 from app.domain.agent import execution, place  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution import runtime  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution.launch import script  # noqa: E402
-
-
-class PlatformSocket(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
-    """The platform socket the connector serves for a room (`machine.go`)."""
-
-    daemon_threads = False
-    closing = False
-
-    def __init__(self, path, handler, directory):
-        self.state = {"dir": Path(directory)}
-        super().__init__(str(path), handler)
-
-    def get_request(self):
-        request, _ = super().get_request()
-        # BaseHTTPRequestHandler logs the peer as a pair.
-        return request, ("socket", 0)
-
-    def shutdown(self):
-        self.closing = True
-        super().shutdown()
-
-    def handle_error(self, request, client_address):
-        from model_fixture import log
-
-        error = traceback.format_exc()
-        self.state.setdefault("handler_errors", []).append(error)
-        log(self.state["dir"] / "handler-errors.jsonl", {"error": error})
-        super().handle_error(request, client_address)
-
-    def assert_healthy(self):
-        errors = getattr(self, "state", {}).get("handler_errors", [])
-        assert not errors, errors
-
-    def server_close(self):
-        super().server_close()
-        self.assert_healthy()
 
 
 class RoomExecutor:
@@ -178,15 +141,19 @@ class RoomExecutor:
         self.socket = None
         self.socket_thread = None
         try:
-            from model_fixture import Handler
+            from model_fixture import Handler, Server
 
-            socket_path = (
-                Path(runtime.platform_socket_directory(self.state)) / "platform.sock"
-            )
-            self.socket = PlatformSocket(socket_path, self.handler(Handler), folder)
+            # The room's platform socket is the released connector's; what
+            # arrives on it the owner relays here, as it relays to the business
+            # backend in a deployment.
+            self.socket = Server(("0.0.0.0", 0), self.handler(Handler))
+            self.socket.state = {"dir": Path(folder)}
             self.socket_thread = threading.Thread(target=self.socket.serve_forever)
             self.socket_thread.start()
-            self.wire = WireOwner(claude)
+            self.wire = WireOwner(
+                claude,
+                origin=f"http://host.docker.internal:{self.socket.server_port}",
+            )
             deadline = time.monotonic() + 30
             while True:
                 try:
@@ -218,8 +185,22 @@ class RoomExecutor:
         executor = self
 
         class Handler(base):
+            def parse_request(self):
+                # What came up a room's platform socket arrives relayed by the
+                # owner under ``/machine``, which is taken off the path.
+                if not super().parse_request():
+                    return False
+                self.relayed = self.path.startswith("/machine/")
+                if self.relayed:
+                    from owner_fixture import SECRET
+
+                    assert self.headers.get(SECRET_HEADER) == SECRET
+                    assert self.headers.get(DEVICE_HEADER) == executor.target["device_id"]
+                    self.path = self.path.removeprefix("/machine")
+                return True
+
             def do_PUT(self):
-                on_socket = self.client_address == ("socket", 0)
+                on_socket = self.relayed
                 prefix = (
                     f"{'/api' if on_socket else ''}"
                     f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
@@ -265,7 +246,7 @@ class RoomExecutor:
                 )
 
             def do_GET(self):
-                if self.client_address == ("socket", 0):
+                if self.relayed:
                     assert "Authorization" not in self.headers
                     if (
                         self.path
@@ -316,7 +297,7 @@ class RoomExecutor:
                 return super().do_GET()
 
             def do_POST(self):
-                if self.client_address == ("socket", 0):
+                if self.relayed:
                     assert "Authorization" not in self.headers
                     if (
                         self.path
