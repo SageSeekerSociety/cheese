@@ -24,6 +24,7 @@
 # Usage:
 #   .claude/scripts/ocr-review.sh --from REF --to REF [--out FILE]
 #   .claude/scripts/ocr-review.sh BASE HEAD [--out FILE]
+#   .claude/scripts/ocr-review.sh --self-test
 #
 # Environment (defaults in parentheses):
 #   OCR_MODEL            model id (deepseek-flash)
@@ -31,12 +32,32 @@
 #   OCR_MAX_TOOLS        tool rounds per subtask; RAISES the 100-row template
 #                        default and cannot lower it, so leaving this unset is
 #                        the only way to get less than 100 (unset)
-#   OCR_TIMEOUT          wall clock in minutes for the whole run (25). It is not a
-#                        hard kill: OCR stops dispatching new groups at it and lets
-#                        the ones in flight finish, so the run can end sooner (its
-#                        own dispatch budget is checked between rounds). Too low a
+#   OCR_TIMEOUT          the OCR run's own budget, in minutes (25). It is NOT a
+#                        whole-run wall clock: OCR multiplies it by the effort's
+#                        round count (low 1, medium 2, high 3) and applies the
+#                        product to EACH file group, so with concurrency 8 the run
+#                        lasts as many batches as it has groups, each batch getting
+#                        that long. Measured on 1.13.3's source (agent.go:
+#                        `ConcurrentTaskTimeout * ReviewRounds`) and by running it.
+#                        It is not a hard kill either: OCR stops dispatching new
+#                        groups at it and lets the ones in flight finish. Too low a
 #                        value is worse than too high — 10 minutes on a five-file
 #                        change ended every group as `timeout` and produced nothing
+#   OCR_WALL_CLOCK       hard ceiling in minutes on the whole run (28), enforced by
+#                        `timeout` in this script rather than by OCR: at it OCR is
+#                        sent SIGTERM, which OCR treats as a graceful stop — it
+#                        writes the findings it has and the coverage ledger, then
+#                        exits. A run cut this way is a partial result, not a run
+#                        that produced nothing; the summary line says so. It exists
+#                        because the platform stops a backgrounded command on its
+#                        own timeout and a killed process writes nothing at all.
+#                        The worst case is this plus OCR_GRACE, which is why the
+#                        default plus the grace still fits under the platform's
+#                        own limit. 0 disables it. Keep it under whatever timeout
+#                        the command is given, and near OCR_TIMEOUT so the two
+#                        agree about what "too long" means
+#   OCR_GRACE            seconds to let OCR finish writing after SIGTERM before it
+#                        is killed (60); SIGKILL after this loses the partial result
 #   OCR_CONCURRENCY      concurrent subtasks (8)
 #   OCR_TOKEN_BUDGET     cap on total tokens (input+output) for the whole run
 #                        (8000000). Checked before every LLM round: a group over
@@ -50,6 +71,12 @@
 #                        and the groups already in flight run to completion and
 #                        bill for every round of it
 #   OCR_VERSION          open-code-review version to install and run (1.13.3)
+#   OCR_CLI              run this executable instead of installing and running
+#                        the pinned one. The install, the sha256 check and the
+#                        package-version check are all skipped: the point of the
+#                        pin is what runs by DEFAULT, and a path given here is a
+#                        deliberate choice by the caller. `--self-test` uses it
+#                        to exercise the wall clock without a 54 MB download
 #
 # The binary is not committed: it is 54 MB, and a pinned npm install into a
 # per-version cache takes about seven seconds. Before anything runs, the native
@@ -65,6 +92,8 @@ MODEL="${OCR_MODEL:-deepseek-flash}"
 EFFORT="${OCR_EFFORT:-low}"
 MAX_TOOLS="${OCR_MAX_TOOLS:-}"
 TIMEOUT_MIN="${OCR_TIMEOUT:-25}"
+WALL_CLOCK_MIN="${OCR_WALL_CLOCK:-28}"
+GRACE_S="${OCR_GRACE:-60}"
 CONCURRENCY="${OCR_CONCURRENCY:-8}"
 TOKEN_BUDGET="${OCR_TOKEN_BUDGET:-8000000}"
 
@@ -75,11 +104,118 @@ PINNED_PLATFORM="linux-x64"
 
 die() { echo "ocr-review: $*" >&2; exit 1; }
 
+# Run the CLI under the wall clock, writing the result to $OUT and the run's own
+# output to the log beside it. $1 is the command as an array's first element.
+#
+# The run gets a session of its own: `setsid` puts the wrapper, the native
+# binary and the git subprocesses it spawns in one process group, which is what
+# lets the wall clock reach all of them. Anything left in this shell's group
+# would outlive the ceiling and keep billing. The signal is SIGTERM because OCR
+# handles it — it writes the findings it has and the coverage ledger before
+# exiting, which is the whole point of having a ceiling at all.
+#
+# 0 disables the ceiling, for a caller that knows its own deadline and wants
+# OCR's own accounting to be the only thing that stops it. Without
+# --foreground, `timeout` runs the child in a process group of its own and
+# signals the group, so nothing under the CLI outlives the ceiling;
+# --kill-after fires only when the grace period runs out.
+#
+# Prints a note on stdout when the ceiling is what ended the run, so the caller
+# can say so: a run cut this way is a partial result, not a failed one.
+run_ocr() {
+  local out=$1 log=$2
+  shift 2
+  local status
+  set +e
+  if [ "$WALL_CLOCK_MIN" = 0 ]; then
+    "$@" >"$out" 2>"$log"
+    status=$?
+  else
+    # awk, not $(( )): the ceiling may be a fraction of a minute in a test, and
+    # bash's arithmetic is integer-only.
+    local ceiling
+    ceiling=$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { printf "%d", m * 60 }')
+    setsid timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
+      "$@" >"$out" 2>"$log"
+    status=$?
+    [ "$status" != 124 ] || printf ' (closed at the %sm wall clock)' "$WALL_CLOCK_MIN"
+  fi
+  set -e
+  return "$status"
+}
+
+# Prove the ceiling, offline and without the 54 MB install: a stand-in CLI that
+# writes a partial result, hangs, and on SIGTERM writes what it has — which is
+# what OCR does. Three things have to hold, and each is a mutation the next
+# reader would otherwise make by accident: the run is stopped at the ceiling at
+# all, it is stopped with a signal OCR can act on (SIGKILL would leave the
+# partial result unwritten), and the grandchild it spawned goes with it (or the
+# ceiling stops the parent and the children keep calling the model).
+self_test() {
+  local dir fail=0 fake got killed
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/ocr-review-self-test.XXXXXX") || return 1
+  trap 'rm -rf "$dir"' RETURN
+  fake="$dir/ocr"
+  cat >"$fake" <<'FAKE'
+#!/usr/bin/env bash
+printf '{"status":"partial","summary":{"files_reviewed":1}}\n'
+sleep 9137 &
+trap 'printf "{\"status\":\"partial-after-term\"}\n"; exit 1' TERM
+while :; do sleep 1; done
+FAKE
+  chmod +x "$fake"
+
+  # Ceiling 3s, grace 5s — and a watch of 20s around it. A ceiling that stopped
+  # working would leave the run hanging rather than failing, and a self-test that
+  # hangs in CI is worse than one that goes red, so the wait is bounded here
+  # instead of by the lane's own timeout.
+  WALL_CLOCK_MIN=0.05 GRACE_S=5 \
+    run_ocr "$dir/out.json" "$dir/out.log" "$fake" >"$dir/note" &
+  local run_pid=$!
+  local waited=0
+  while kill -0 "$run_pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
+    sleep 0.5; waited=$((waited + 1))   # 20 x 0.5s = 10s
+  done
+  if kill -0 "$run_pid" 2>/dev/null; then
+    echo "self-test FAILED: nothing stopped the run; it was still going after 10s" >&2
+    kill "$run_pid" 2>/dev/null || true
+    pkill -f "sleep 9137" 2>/dev/null || true
+    return 1
+  fi
+  got=$(cat "$dir/out.json" 2>/dev/null || true)
+  case "$got" in
+    *partial-after-term*) ;;
+    *) echo "self-test FAILED: the run was not stopped with a signal OCR could act on (got: ${got:-nothing})" >&2; fail=1 ;;
+  esac
+  grep -q "closed at the 0.05m wall clock" "$dir/note" \
+    || { echo "self-test FAILED: the ceiling did not report that it was what stopped the run"; fail=1; }
+  sleep 1
+  if killed=$(pgrep -f "sleep 9137"); then
+    echo "self-test FAILED: a grandchild outlived the ceiling (pids: $killed)" >&2
+    kill $killed 2>/dev/null || true
+    fail=1
+  fi
+
+  # A ceiling of 0 must not be a ceiling at all. What this asserts is that the
+  # disarmed path does not report itself as an active ceiling — a 0 that reached
+  # the arithmetic would become a 0s ceiling and stop the run at once, and the
+  # absence of the note is what tells the two apart without a stopwatch.
+  WALL_CLOCK_MIN=0 GRACE_S=5 run_ocr "$dir/out2.json" "$dir/out2.log" \
+    timeout 2 "$fake" >"$dir/note2" || true
+  [ ! -s "$dir/note2" ] \
+    || { echo "self-test FAILED: a disarmed ceiling reported itself as an active one"; fail=1; }
+  pkill -f "sleep 9137" 2>/dev/null || true
+
+  [ "$fail" = 0 ] || return 1
+  echo "self-test ok: the wall clock stops the run with SIGTERM, reports it, and takes the grandchildren with it"
+}
+
 FROM=""
 TO=""
 OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --self-test) self_test; exit $? ;;
     --from) FROM="$2"; shift 2 ;;
     --to) TO="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -123,7 +259,6 @@ if [ -n "$(git -C "$REPO" config --get remote.origin.partialclonefilter 2>/dev/n
 fi
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/cheese-ocr/$VERSION"
 BIN="$CACHE/node_modules/@alibaba-group/ocr-$PINNED_PLATFORM/bin/opencodereview"
-CLI="$CACHE/node_modules/.bin/ocr"
 
 install_ocr() {
   command -v npm >/dev/null 2>&1 || die "npm is not on PATH; the pinned OCR install needs it"
@@ -140,28 +275,36 @@ install_ocr() {
   fi
 }
 
-if [ ! -x "$BIN" ]; then
-  install_ocr
-fi
-ACTUAL_SHA="$(sha256sum "$BIN" | cut -d' ' -f1)"
-if [ "$ACTUAL_SHA" != "$PINNED_SHA" ]; then
-  # A cached binary that differs may be a stale install of the same version.
-  # Reinstall once; a second mismatch is the registry's answer, and this repo
-  # must not run a reviewer it did not pin.
-  install_ocr
+# A caller that named an executable is taken at its word: the pin below is what
+# protects the default path, not a caller's own choice. `--self-test` uses it to
+# exercise the wall clock without a 54 MB download.
+if [ -z "${OCR_CLI:-}" ]; then
+  CLI="$CACHE/node_modules/.bin/ocr"
+  if [ ! -x "$BIN" ]; then
+    install_ocr
+  fi
   ACTUAL_SHA="$(sha256sum "$BIN" | cut -d' ' -f1)"
-  [ "$ACTUAL_SHA" = "$PINNED_SHA" ] \
-    || die "binary sha256 $ACTUAL_SHA does not match the pinned $PINNED_SHA"
+  if [ "$ACTUAL_SHA" != "$PINNED_SHA" ]; then
+    # A cached binary that differs may be a stale install of the same version.
+    # Reinstall once; a second mismatch is the registry's answer, and this repo
+    # must not run a reviewer it did not pin.
+    install_ocr
+    ACTUAL_SHA="$(sha256sum "$BIN" | cut -d' ' -f1)"
+    [ "$ACTUAL_SHA" = "$PINNED_SHA" ] \
+      || die "binary sha256 $ACTUAL_SHA does not match the pinned $PINNED_SHA"
+  fi
+  # The hash above covers the native binary. What actually runs is the JS wrapper
+  # in the package, which picks that binary and execs it, so this is the other half
+  # of the pin: the installed package's own version, read from npm's metadata. It
+  # is a version rather than a hash — the wrapper changes with the release, and its
+  # bytes under one version number are the registry's to keep honest.
+  INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' \
+    "$CACHE/node_modules/@alibaba-group/open-code-review/package.json" 2>/dev/null || true)"
+  [ "$INSTALLED_VERSION" = "$VERSION" ] \
+    || die "installed package version '$INSTALLED_VERSION' is not the pinned $VERSION"
+else
+  CLI="$OCR_CLI"
 fi
-# The hash above covers the native binary. What actually runs is the JS wrapper
-# in the package, which picks that binary and execs it, so this is the other half
-# of the pin: the installed package's own version, read from npm's metadata. It
-# is a version rather than a hash — the wrapper changes with the release, and its
-# bytes under one version number are the registry's to keep honest.
-INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).version)' \
-  "$CACHE/node_modules/@alibaba-group/open-code-review/package.json" 2>/dev/null || true)"
-[ "$INSTALLED_VERSION" = "$VERSION" ] \
-  || die "installed package version '$INSTALLED_VERSION' is not the pinned $VERSION"
 
 # Results live beside the cached binary, not inside the worktree: a review
 # tree is disposable, and an untracked result file inside it reads as a change
@@ -173,24 +316,31 @@ INSTALLED_VERSION="$(node -e 'process.stdout.write(require(process.argv[1]).vers
 OUT="${OUT:-$CACHE/results/$(printf '%s..%s' "$FROM" "$TO" | sha256sum | cut -c1-16).json}"
 mkdir -p "$(dirname "$OUT")"
 
-OCR_LLM_URL="$LLM_URL" \
-OCR_LLM_TOKEN="$LLM_TOKEN" \
-OCR_LLM_MODEL="$MODEL" \
-  "$CLI" review \
-    --repo "$REPO" \
-    --from "$FROM" --to "$TO" \
-    --format json --audience agent \
-    ${MAX_TOOLS:+--max-tools "$MAX_TOOLS"} \
-    --effort "$EFFORT" \
-    --timeout "$TIMEOUT_MIN" \
-    --concurrency "$CONCURRENCY" \
-    --max-tokens-budget "$TOKEN_BUDGET" \
-  >"$OUT" 2>"${OUT%.json}.log" || {
-    status=$?
-    echo "ocr-review: review exited $status; log: ${OUT%.json}.log" >&2
-    [ -s "$OUT" ] && echo "ocr-review: partial result: $OUT" >&2
-    exit 1
-  }
+RUN=(
+  env
+  "OCR_LLM_URL=$LLM_URL"
+  "OCR_LLM_TOKEN=$LLM_TOKEN"
+  "OCR_LLM_MODEL=$MODEL"
+  "$CLI" review
+    --repo "$REPO"
+    --from "$FROM" --to "$TO"
+    --format json --audience agent
+    --effort "$EFFORT"
+    --timeout "$TIMEOUT_MIN"
+    --concurrency "$CONCURRENCY"
+    --max-tokens-budget "$TOKEN_BUDGET"
+)
+[ -z "$MAX_TOOLS" ] || RUN+=(--max-tools "$MAX_TOOLS")
+
+set +e
+ceiled=$(run_ocr "$OUT" "${OUT%.json}.log" "${RUN[@]}")
+status=$?
+set -e
+if [ "$status" != 0 ]; then
+  echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
+  [ -s "$OUT" ] && echo "ocr-review: partial result: $OUT" >&2
+  exit 1
+fi
 
 python3 - "$OUT" <<'PY'
 import json, sys

@@ -99,12 +99,18 @@ OCR_CONCURRENCY=<n> .claude/scripts/ocr-review.sh --from <merge base> --to HEAD
 ```
 
 Take the concurrency from the topology line under "Review tier", and leave the
-wall clock at its default unless the change is much larger or smaller than the
-five-file change that default was measured on. Leave the effort at its default
-(`low`, one round per file): the tier's effort is what you and any subagent you
-start put into judging, not how many rounds OCR takes — a second and third round
-over the same file cost the wall clock without adding coverage, and on this repo
-one round already fills a twenty-five minute budget.
+ceilings at their defaults unless the change is much larger or smaller than the
+five-file change those defaults were measured on. Leave the effort at its
+default (`low`, one round per file): the tier's effort is what you and any
+subagent you start put into judging, not how many rounds OCR takes — a second
+and third round over the same file cost wall clock without adding coverage, and
+on this repo one round already fills the per-group budget.
+
+If this command is run in the background, give it a timeout at least as long as
+`OCR_WALL_CLOCK` (28 minutes by default) plus the install and the setup, so the
+script's own ceiling stops the run and the platform's does not: the script
+closes a run with SIGTERM, which lets OCR write what it has, while the platform's
+timeout kills the process and leaves an empty result file.
 
 The script prints a one-line JSON summary when it finishes and leaves the full
 result next to it (the `result` field); read that file.
@@ -123,13 +129,16 @@ What you have to know about running it:
   is not checked out. Do not pass another ref to work around that.
 - **It gets slower than it looks.** Each file it reviews is a model loop that
   reads and searches until it has enough; on this repo's `deepseek-flash`
-  a group can take fifteen minutes of wall clock. The wall clock on the
-  topology line is what stops it, and what it produces then is a **partial**
-  result: the groups that finished, with their findings, and the rest marked
-  `failed` as `timeout`. A partial result is a result — use it, and say in the
-  summary which files it never got to. The run carries a token budget as well
-  (the script's default, about twice the largest honest run measured here), and
-  a group cut by it ends `failed` as `budget` the same way. Leave it alone
+  a group can take fifteen minutes of wall clock. Two ceilings stop it, and
+  neither is the one its `--timeout` flag suggests: that flag is per group, not
+  per run. The script's `OCR_WALL_CLOCK` (28 minutes, `OCR_TIMEOUT` 25 for
+  OCR's own accounting) is what bounds the whole thing. What a stopped run
+  produces is a **partial** result: the groups that finished, with their
+  findings, and the rest marked `failed` as `timeout`. A partial result is a
+  result — use it, and say in the summary which files it never got to. The run
+  carries a token budget as well (the script's default, about twice the largest
+  honest run measured here), and a group cut by it ends `failed` as `budget` the
+  same way. Leave it alone
   unless the change is much larger or smaller than that measurement: it is a
   brake on a runaway, not a spend policy, and lowering it turns a large change
   into a partial review rather than a cheaper one.
