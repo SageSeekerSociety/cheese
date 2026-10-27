@@ -53,8 +53,10 @@ function measure(event: Event) {
   if (video.videoWidth > 0 && video.videoHeight > 0) ratio.value = video.videoWidth / video.videoHeight
 }
 
+// 只有播放器在时才有「此刻」：视频还没打开（或打不开）时不该交出一个谁也没选过的 00:00。
 function locateCurrentTime() {
-  const raw = videoRef.value?.currentTime ?? 0
+  if (!videoRef.value) return
+  const raw = videoRef.value.currentTime
   const seconds = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
   const mins = String(Math.floor(seconds / 60)).padStart(2, '0')
   const secs = String(seconds % 60).padStart(2, '0')
@@ -119,6 +121,7 @@ onBeforeUnmount(reset)
         prepend-icon="mdi-map-marker-plus-outline"
         class="attachment-video__locate"
         data-testid="video-locate"
+        :disabled="!url || !!failure"
         :title="t('work.room.video.locateTime')"
         :aria-label="t('work.room.video.locateTime')"
         @click="locateCurrentTime"
