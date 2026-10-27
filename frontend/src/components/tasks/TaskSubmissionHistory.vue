@@ -162,7 +162,6 @@ import type { TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
@@ -176,6 +175,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()
