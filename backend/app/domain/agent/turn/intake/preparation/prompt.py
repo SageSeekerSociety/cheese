@@ -43,6 +43,7 @@ async def build_turn_prompt(
     recipient_instance_id: uuid.UUID | None,
     gone_files: set[uuid.UUID],
     undecodable_files: set[uuid.UUID],
+    credits_note: str | None = None,
 ) -> tuple[str, str | None]:
     """The prompt text this turn is sent, and the line saying how many times
     this same batch has been attempted. Commits the attempt counter before it
@@ -93,6 +94,10 @@ async def build_turn_prompt(
     # institutional authority, and repeating it per line spends that.
     if preamble := _platform_preamble(notices):
         prompt_text = f"{preamble}\n\n{prompt_text}"
+    # 额度快用完了（`usage.alerts`）：只有这一轮会读到，不落到频道里。它不是
+    # 项目设置的解释，是平台自己核得上的事实和它的后果。
+    if credits_note:
+        prompt_text = f"{platform_prompt(credits_note)}\n\n{prompt_text}"
     # 重放可见 (#416): count this attempt on the blocks themselves. A
     # batch the session never read is not stamped `consumed_turn`, so the
     # SAME batch is re-sent with the next prompt, and the next — correct (a

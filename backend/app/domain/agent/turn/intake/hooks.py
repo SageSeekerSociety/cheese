@@ -6,6 +6,7 @@ Neither layer receives ChatService or a many-method private Host protocol.
 """
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core import alerting
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
@@ -46,7 +48,11 @@ from app.domain.agent.turn.intake.notes import (
     _running_compactions,
 )
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
-from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
+from app.domain.agent.turn.state.notices import (
+    _TOOL_ACTION,
+    _turn_failure_notice,
+    is_out_of_credit,
+)
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
@@ -328,6 +334,20 @@ class HookEvents:
                         event.text, event.failure_code, log=event.log
                     )
                     resumable = True
+                    if is_out_of_credit(event.text):
+                        # 上游服务的余额用完了：项目里的人补团队额度也没有用，只有
+                        # 平台管理员能处理。房间里那句已经说了，这里再叫一次管平台
+                        # 的人（`alerting` 自带重复窗口，同一个上游不会每小时刷）。
+                        alerting.send(
+                            "AI 中继余额已用完",
+                            [
+                                f"项目 {project_id}",
+                                "上游原文：" + (event.text or "").strip()[:400],
+                                "重试没有作用；补团队额度也没有用。",
+                            ],
+                            key="ai-relay-out-of-credit",
+                            when=time.time(),
+                        )
                 error_line, error_code = line, meta.get("code")
                 if resumable:
                     recovering = await self._resume_later(

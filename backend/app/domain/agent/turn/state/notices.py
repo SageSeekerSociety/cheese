@@ -25,6 +25,15 @@ _OUT_OF_CREDIT_MARKERS = (
 )
 
 
+def is_out_of_credit(detail: str | None) -> bool:
+    """The upstream refused because ITS account is out of credit.
+
+    Not the team's credits (that is the ledger's refusal) — the balance of the
+    service the platform connects to, which nobody in a project can top up.
+    """
+    return _is_out_of_credit(detail)
+
+
 def _is_out_of_credit(detail: str | None) -> bool:
     if not detail:
         return False

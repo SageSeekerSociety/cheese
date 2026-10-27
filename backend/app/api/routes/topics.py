@@ -92,8 +92,11 @@ from app.domain.topic.services import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.budgets import CreditBudgets
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
+from app.domain.usage.windows import _TZ
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -1003,6 +1006,12 @@ def _disk_snapshot(root: str) -> dict | None:
     }
 
 
+def _credit_reset_text(at: datetime) -> str:
+    """When credits come back, as the page would say it: 「11月1日 00:00」."""
+    local = at.astimezone(_TZ)
+    return f"{local.month}月{local.day}日 {local.strftime('%H:%M')}"
+
+
 @router.get("/{topic_id}/status")
 async def topic_status(
     topic_id: uuid.UUID,
@@ -1031,6 +1040,20 @@ async def topic_status(
         card for card in filed if place.task is None or card.task_id == place.task.id
     ]
     credits = await UsageService(db).project_credits(place.project_id)
+    # 芝士读得懂的那一层：还剩多少之外，还要说清是哪一层、上限多少、几时恢复
+    # （`usage.alerts` 的同一档）。项目预算这一层不会自动恢复，单独给个数。
+    payer = await payer_for_project(db, place.project_id)
+    balance = await Ledger(db).balance(payer)
+    credits["total"] = None if balance.unlimited else balance.credits_total
+    credits["resets_at"] = (
+        None if balance.resets_at is None else _credit_reset_text(balance.resets_at)
+    )
+    budget = await CreditBudgets(db).report(place.project_id)
+    credits["project_remaining"] = (
+        None
+        if budget["credits_limit"] is None
+        else max(0.0, budget["credits_limit"] - budget["credits_used"])
+    )
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
@@ -1052,6 +1075,9 @@ async def topic_status(
                 "credits": {
                     "unlimited": credits["unlimited"],
                     "remaining": credits["credits_remaining"],
+                    "total": credits.get("total"),
+                    "resets_at": credits.get("resets_at"),
+                    "project_remaining": credits.get("project_remaining"),
                 },
             },
         }

@@ -65,6 +65,7 @@ from app.domain.task import teaching as teaching_context
 from app.domain.thread.services import thread_opening
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import conversation_progress, project_topics
+from app.domain.usage.alerts import agent_note
 
 if TYPE_CHECKING:
     from app.domain.agent.turn.intake import preparation as pkg
@@ -374,6 +375,15 @@ async def prepare(
         if bail is not None:
             return bail
         phases_ms["provider"] = (time.monotonic() - started) * 1000
+        # 额度快用完了就告诉这一轮一句（`usage.alerts.agent_note`）。读不出来
+        # 不是这一轮的事：算额度的错不该让一轮活开不了。
+        try:
+            credits_note = await agent_note(session, topic.project_id)
+        except Exception:
+            logger.exception(
+                "could not read the credit warning for %s", topic.project_id
+            )
+            credits_note = None
         prompt_text, replay_notice = await build_turn_prompt(
             session,
             place=place,
@@ -388,6 +398,7 @@ async def prepare(
             recipient_instance_id=recipient_instance_id,
             gone_files=gone_files,
             undecodable_files=undecodable_files,
+            credits_note=credits_note,
         )
         phases_ms["committed"] = (time.monotonic() - started) * 1000
     logger.info(

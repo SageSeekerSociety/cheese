@@ -7000,12 +7000,30 @@ def _format_status(d: dict) -> str:
             f"（已用 {disk.get('used_pct')}%）"
         )
     credits = plat.get("credits") or {}
-    cred = "不限" if credits.get("unlimited") else f"剩 {credits.get('remaining')}"
     lines.append(
         f"并发: 全站运行中 {plat.get('active_turns', '?')} 轮，"
-        f"本项目排队 {plat.get('queued_turns', 0)}；额度: {cred}"
+        f"本项目排队 {plat.get('queued_turns', 0)}；额度: {_credits_line(credits)}"
     )
     return "\n".join(lines)
+
+
+def _credits_line(credits: dict) -> str:
+    """付费方那一层还剩多少、上限多少、几时恢复。
+
+    芝士要的是「这一层用完我会不会被拒绝、几时恢复」，所以除了剩余还要带上另外
+    两样；项目预算那一层不会自动恢复，单独说一句，别让它看起来像会按月回来。
+    """
+    if credits.get("unlimited"):
+        return "不限"
+    parts = [f"剩 {credits.get('remaining')}"]
+    if credits.get("total") is not None:
+        parts.append(f"上限 {credits['total']}")
+    if credits.get("resets_at"):
+        parts.append(f"{credits['resets_at']} 恢复")
+    line = " / ".join(parts)
+    if credits.get("project_remaining") is not None:
+        line += f"；本项目预算还剩 {credits['project_remaining']}（不会自动恢复）"
+    return line
 
 
 # `cheese serve` 报端口之前先敲一次应用,敲通了才算「起来了」。
