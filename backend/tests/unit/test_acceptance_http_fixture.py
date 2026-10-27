@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 import shutil
+import socket
+import socketserver
 import subprocess
 import sys
 import tempfile
@@ -213,6 +215,41 @@ def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
         thread.join()
 
 
+class _OwnerRelay(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """The connector's platform socket and the owner behind it: each request
+    goes on to ``origin`` under ``/machine``, with what the owner adds."""
+
+    daemon_threads = True
+
+    def __init__(self, path, origin, device_id, secret):
+        self.origin, self.device_id, self.secret = origin, device_id, secret
+        super().__init__(str(path), _Relay)
+
+
+class _Relay(socketserver.StreamRequestHandler):
+    def handle(self):
+        method, target, version = self.rfile.readline().decode().split()
+        upstream = socket.create_connection(self.server.origin)
+        upstream.sendall(
+            f"{method} /machine{target} {version}\r\n"
+            f"x-machine-device: {self.server.device_id}\r\n"
+            "x-machine-state: room\r\n"
+            f"x-device-connection-secret: {self.server.secret}\r\n".encode()
+        )
+
+        def up():
+            try:
+                while chunk := self.rfile.read1(65536):
+                    upstream.sendall(chunk)
+            except OSError:  # the answer is in and the client has hung up
+                pass
+
+        threading.Thread(target=up, daemon=True).start()
+        with upstream:
+            while chunk := upstream.recv(65536):
+                self.connection.sendall(chunk)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="Unix platform socket")
 def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
     tmp_path, monkeypatch
@@ -224,7 +261,7 @@ def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
     room.project = str(uuid.uuid4())
     room.task = str(uuid.uuid4())
     resource = str(uuid.uuid4())
-    room.target = {"resource_id": resource}
+    room.target = {"resource_id": resource, "device_id": "acceptance-machine"}
     room.owner = tmp_path
     room.snapshots = {}
     origin = tmp_path / "task-origin"
@@ -251,7 +288,12 @@ def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
     handler = room.handler(model.Handler)
     server = model.Server(("127.0.0.1", 0), handler)
     server.state = {"dir": tmp_path}
-    socket_server = room_module.PlatformSocket(socket_path, handler, tmp_path)
+    socket_server = _OwnerRelay(
+        socket_path,
+        ("127.0.0.1", server.server_port),
+        "acceptance-machine",
+        load("owner_fixture").SECRET,
+    )
     threads = [
         threading.Thread(target=server.serve_forever),
         threading.Thread(target=socket_server.serve_forever),
@@ -293,7 +335,6 @@ def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
             )
         assert len(room.snapshots) == 1
         server.assert_healthy()
-        socket_server.assert_healthy()
     finally:
         socket_server.shutdown()
         socket_server.server_close()
