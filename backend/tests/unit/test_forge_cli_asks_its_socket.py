@@ -108,7 +108,11 @@ def test_the_forge_proxy_refuses_pr_merges_and_injects_the_token():
     )
 
 
-def test_the_forge_proxy_terminates_tls_with_machine_ca_and_blocks_merge(tmp_path):
+def test_the_forge_proxy_terminates_tls_with_machine_ca_and_blocks_merge(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
     ca_dir = tmp_path / "ca"
     platform_dir = tmp_path / "platform"
     _, bundle = forge_proxy.ensure_ca(ca_dir, platform_dir)

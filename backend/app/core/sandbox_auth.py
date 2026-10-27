@@ -157,12 +157,19 @@ def token_agent_handle(token: str) -> str | None:
 
 
 def verify_scoped_token(
-    token: str, *, project_id: str | None = None, topic_id: str | None = None
+    token: str,
+    *,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    allow_machine: bool = False,
 ) -> bool:
-    """True iff `token` is a valid scoped token (good signature, unexpired) whose
-    claims match the given project_id / topic_id (whichever are provided)."""
+    """True iff `token` is a valid scoped token (good signature, unexpired, and
+    not held by a machine unless `allow_machine`) whose claims match the given
+    project_id / topic_id (whichever are provided)."""
     payload = scoped_token_claims(token)
     if payload is None:
+        return False
+    if not allow_machine and held_by_a_machine(payload):
         return False
     if project_id is not None and payload.get("p") != project_id:
         return False
