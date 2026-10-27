@@ -107,11 +107,13 @@ function measureArea() {
   area.value = { left: a.left - b.left, top: a.top - b.top, width: a.width, height: a.height }
 }
 
-/** 量着图不动为止：想裁剪时图要从放大的样子回到一倍，走一小段过渡。
+/** 裁剪期间一直量，直到框能落在屏幕上那块为止。
  *
- *  写死一个毫秒数会随过渡时长悄悄走散（那个数一变，框就落在错的像素上，导出的裁剪和
- *  屏幕上看到的不是同一块），窗口变化也一样。所以在裁剪期间跟着量：每一帧量一次，
- *  连着两次量到同一个结果就算停住了；再挂一个 ResizeObserver，窗口一变立刻跟上。 */
+ *  框是照这一刻图的位置摆的，而这一刻之前有一小段过渡（图从放大的样子回到一倍），
+ *  这期间还可能有别的事动它：窗口缩放、左右按钮和缩略图条随着对话变化出来或收起来、
+ *  图节点换了一个。写死一个毫秒数会和过渡时长悄悄走散，只盯着几个事件又总漏掉下一个
+ *  触发点——所以不去数触发点：每帧量一次，连着两次量到同一个结果就停下（图不动了），
+ *  再挂一个 ResizeObserver 兜住尺寸本身的变化。 */
 let settleFrame = 0
 let settleObserver: ResizeObserver | null = null
 function followUntilSettled() {
@@ -119,9 +121,8 @@ function followUntilSettled() {
   const tick = () => {
     measureArea()
     const now = JSON.stringify(area.value)
-    if (now === last) return
+    settleFrame = now === last ? 0 : requestAnimationFrame(tick)
     last = now
-    settleFrame = requestAnimationFrame(tick)
   }
   settleFrame = requestAnimationFrame(tick)
   if (typeof ResizeObserver !== 'undefined') {
@@ -136,6 +137,16 @@ function stopFollowing() {
   settleObserver?.disconnect()
   settleObserver = null
 }
+
+// 图节点换了一个（换图、列表变化）：ResizeObserver 还挂在摘下来的那个上，量到的是
+// 旧节点。这时重新量一遍、并把它挂到新节点上。
+watch(figure, () => {
+  if (!cropping.value) return
+  measureArea()
+  settleObserver?.disconnect()
+  if (figure.value) settleObserver?.observe(figure.value)
+  if (stage.value) settleObserver?.observe(stage.value)
+})
 
 function rotate() {
   const next = { ...adjust.value, rotate: (adjust.value.rotate + 90) % 360 }
