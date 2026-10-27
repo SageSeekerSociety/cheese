@@ -5,11 +5,15 @@
   "previewDisabled": "这个部署没有启用文档预览",
   "previewFormatUnsupported": "这个格式不能转换为预览",
   "previewFormatUnsupportedNamed": "这个格式不能转换为预览：{format}",
+  "previewNotAnApp": "现在的预览不是一个运行中的应用",
   "previewNotHtml": "转换结果不是有效的网页",
   "previewNotPdf": "转换结果不是有效的 PDF",
   "previewOver10Mb": "文件超过 10 MB，无法生成预览",
   "previewSelectionStale": "这次预览选的已经不是刚打开的那一份了，重新打开预览就好",
   "previewServiceError": "文档预览服务出错，稍后重试",
   "previewServiceUnreachable": "文档预览服务暂时无法访问",
-  "previewTooLarge": "文件超过 {mb}MB，无法生成预览"
+  "previewSnapshotStale": "预览已经换成别的东西了，这份快照没有保存",
+  "previewSnapshotTooLarge": "快照超过 {mb}MB，没有保存",
+  "previewTooLarge": "文件超过 {mb}MB，无法生成预览",
+  "previewWakeNoSeat": "声明这个应用的队友已经不在这个频道里，没法叫它重启"
 }

@@ -5,11 +5,15 @@
   "previewDisabled": "Document preview isn't enabled on this deployment",
   "previewFormatUnsupported": "This format can't be converted to a preview",
   "previewFormatUnsupportedNamed": "This format can't be converted for preview: {format}",
+  "previewNotAnApp": "The preview is not a running app",
   "previewNotHtml": "The conversion didn't produce a valid web page",
   "previewNotPdf": "The conversion didn't produce a valid PDF",
   "previewOver10Mb": "The file is over 10 MB, so no preview can be made",
   "previewSelectionStale": "The preview's selection is no longer the one you opened; open the preview again",
   "previewServiceError": "The document preview service failed. Try again shortly",
   "previewServiceUnreachable": "The document preview service can't be reached right now",
-  "previewTooLarge": "The file is over {mb}MB, so no preview can be made"
+  "previewSnapshotStale": "The preview has changed since; this snapshot was not kept",
+  "previewSnapshotTooLarge": "The snapshot is over {mb}MB and was not kept",
+  "previewTooLarge": "The file is over {mb}MB, so no preview can be made",
+  "previewWakeNoSeat": "The teammate who declared this app has left the channel, so it cannot be asked to restart it"
 }
