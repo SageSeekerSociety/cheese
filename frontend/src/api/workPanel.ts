@@ -4,6 +4,7 @@ import type {
   ListPayload,
   PreviewInfo,
   PreviewSnapshot,
+  PreviewWakeAnswer,
   PreviewWakeStatus,
   TopicWorkSummary,
   UsageStats,
@@ -144,8 +145,8 @@ export function putPreviewSnapshot(
 }
 
 /** 请声明这个应用的队友把它重新跑起来。没起新的一轮时 `reason` 说为什么。 */
-export function wakePreviewApp(topicId: string): Promise<{ started: boolean; reason?: string | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/preview/wake`, { method: 'POST' })
+export function wakePreviewApp(topicId: string): Promise<PreviewWakeAnswer> {
+  return request<PreviewWakeAnswer>(`/topics/${encodeURIComponent(topicId)}/preview/wake`, { method: 'POST' })
 }
 
 /** 唤醒那几步此刻走到哪了。 */

@@ -9,6 +9,10 @@ import type { PreviewFrame } from '../composables/usePreviewFrames'
 
 export type ChainLink = 'ok' | 'down' | 'wait'
 
+//: 「通道在、应用不答」那一段的判据串。它在两处出现——造这一段的地方，和 `appAsleep`
+//: 认它的地方——写成常量，改名时只动这一处，不会一边改了另一边还留着旧串。
+const APP_SILENT = 'work.room.preview.chain.appSilent'
+
 export interface ChainSegment {
   key: 'platform' | 'tunnel' | 'app'
   state: ChainLink
@@ -58,8 +62,7 @@ export function previewChain(input: ChainInput): ChainSegment[] {
           }
   if (tunnel.state !== 'ok')
     return [platform, tunnel, { key: 'app', state: 'wait', reason: 'work.room.preview.chain.unknown' }]
-  if (!input.appAnswering)
-    return [platform, tunnel, { key: 'app', state: 'down', reason: 'work.room.preview.chain.appSilent' }]
+  if (!input.appAnswering) return [platform, tunnel, { key: 'app', state: 'down', reason: APP_SILENT }]
   if (frame?.connection === 'gone')
     return [platform, tunnel, { key: 'app', state: 'wait', reason: 'work.room.preview.chain.appRestarted' }]
   return [platform, tunnel, app]
@@ -93,9 +96,13 @@ function appSegment(input: ChainInput, reachable: boolean): ChainSegment {
   }
 }
 
-/** 链上有没有一段不通：那颗圆点亮不亮。 */
+/** 链上有没有一段**断**了：那颗圆点从「正常」切成「有问题」的判据。
+ *
+ *  「等」不算：重连中、跟着重启后的新实例走、前一段还没通所以后一段判不了，都是正常会
+ *  经过的中间态，它们由圆点的琥珀档说，不换成那句「应用有问题」的提示——换的话每次重连
+ *  都会亮一句有问题。 */
 export function chainBroken(segments: ChainSegment[]): boolean {
-  return segments.some((segment) => segment.state !== 'ok')
+  return segments.some((segment) => segment.state === 'down')
 }
 
 /** 应用睡着了：通道那一段断了（队友的电脑休眠或还没起），或者通道在但应用不答。
@@ -105,6 +112,6 @@ export function appAsleep(segments: ChainSegment[]): 'machine' | 'app' | null {
   const app = segments.find((segment) => segment.key === 'app')
   if (!tunnel) return null
   if (tunnel.state === 'down') return 'machine'
-  if (tunnel.state === 'ok' && app?.state === 'down' && app.reason === 'work.room.preview.chain.appSilent') return 'app'
+  if (tunnel.state === 'ok' && app?.state === 'down' && app.reason === APP_SILENT) return 'app'
   return null
 }

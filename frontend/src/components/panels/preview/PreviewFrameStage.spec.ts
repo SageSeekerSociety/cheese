@@ -404,6 +404,28 @@ it('地址栏跟着帧报来的地址走（只显示路径），回车跳到敲�
   expect(ui.emitted('navigate')).toEqual([['/faq']])
 })
 
+it('房间文件的地址栏剥掉平台前缀显示，回车再补回去', async () => {
+  // 房间文件挂在 `/_cheese/room/` 下。读了显示的是剥过的房间路径，但桥那边
+  // `new URL(path, location.href)` 是相对内容域解析的——不补回前缀，敲 `/pages/b.html`
+  // 会跳到内容域的根下而不是房间里的那一份。
+  const ui = appMount({}, { href: 'https://preview-x.example/_cheese/room/pages/a.html', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/pages/a.html')
+  await fireEvent.update(address, '/pages/b.html')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/_cheese/room/pages/b.html']])
+})
+
+it('输入法拼字时那一下回车不算跳转', async () => {
+  const ui = appMount({}, { href: 'https://preview-x.example/signup', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  await fireEvent.update(address, '/成品')
+  await fireEvent.keyDown(address, { key: 'Enter', isComposing: true })
+  expect(ui.emitted('navigate')).toBeUndefined()
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/成品']])
+})
+
 it('没装桥的页面地址栏只读，显示入口名字；刷新退回整帧重来', async () => {
   const ui = appMount()
   const address = ui.getByTestId('browser-address') as HTMLInputElement

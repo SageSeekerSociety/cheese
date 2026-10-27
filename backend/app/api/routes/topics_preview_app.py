@@ -30,13 +30,12 @@ from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_access import require_role
 from app.api.preview_app_state import app_state
 from app.api.preview_runtime import seal_snapshot
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import BlockRepository, ProjectRepository, _actor_in_place
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
 from app.core import blob_store
 from app.core.errors import NotFoundError, ValidationError
 from app.core.redis import get_redis_client
@@ -97,7 +96,7 @@ class SnapshotOut(BaseModel):
 
 @router.put(
     "/{topic_id}/preview/snapshot",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(Permission.edit_content, at="topic_id")],
     **typed_response(SnapshotOut),
 )
 async def put_preview_snapshot(
@@ -168,7 +167,9 @@ class WakeOut(BaseModel):
 
 
 @router.post(
-    "/{topic_id}/preview/wake", dependencies=[ROUTE_DECIDES], **typed_response(WakeOut)
+    "/{topic_id}/preview/wake",
+    dependencies=[Can(Permission.ask_agent, at="topic_id")],
+    **typed_response(WakeOut),
 )
 async def wake_preview_app(
     topic_id: uuid.UUID,
@@ -180,17 +181,13 @@ async def wake_preview_app(
     """Ask the teammate who declared the app to bring it back up.
 
     Starting a turn costs a model call, so this is the same permission as
-    asking the agent anything (``ask_agent``), and it starts at most one: not
-    while that conversation already has a turn running, and not twice within
-    :data:`WAKE_DEDUP_SECONDS` for the same app."""
+    asking the agent anything (``ask_agent``, the route's own declaration:
+    ``Can(Permission.ask_agent)`` let the caller in and hands the place and the
+    actor here), and it starts at most one: not while that conversation already
+    has a turn running, and not twice within :data:`WAKE_DEDUP_SECONDS` for the
+    same app."""
     place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    await require_role(db, actor, place.project_id, Permission.ask_agent)
+    actor = await _actor_in_place(resolver, place)
     art = await _current_app(db, place)
     seat = art.author
     if seat not in await TopicMemberService(db).agent_handles(place.room_id):

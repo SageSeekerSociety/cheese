@@ -143,7 +143,10 @@ export function usePanelPreviewAppSleep(deps: {
    *  永远停在「四步全绿」上，而「唤醒」被 progress 判据挡着，只能重挂面板。载入失败
    *  由取数那一层报在面板上，这里只保证卡片让开。 */
   async function settle() {
-    progress.value = { machine: true, tunnel: true, agent: true, port: true }
+    // 四步打满之后立刻收进度：再留着，舞台上那句「运行环境已休眠」会继续盖在一个已经
+    // 答上、正在重新载入的应用上；收掉之后由 `asleep` 决定要不要再出卡——载入失败或载
+    // 回来还是睡着，都会退回普通休眠态（按钮能再按）。
+    progress.value = null
     try {
       await deps.reload()
     } catch {

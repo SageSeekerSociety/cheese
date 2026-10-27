@@ -15,6 +15,7 @@ import { computed, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { chainBroken } from '@/lib/previewChain'
+import { ROOM_FILE_PATH } from '@/lib/previewSession'
 
 const props = defineProps<{
   /** 帧报来的此刻地址（完整 URL）；没装桥就是空。 */
@@ -39,20 +40,24 @@ const emit = defineEmits<{
 }>()
 
 /** 地址栏里显示的那一截：路径、查询、片段。房间文件挂在 `/_cheese/room/` 下，把这层平台
- *  自己的前缀去掉，读者看到的是文件在房间里的路径。 */
-function displayPath(href: string): string {
+ *  自己的前缀去掉，读者看到的是文件在房间里的路径。
+ *
+ *  只剥显示用的这一层：桥那边 `new URL(path, location.href)` 是相对内容域解析的，把剥过的
+ *  路径原样递回去会丢掉 `/_cheese/room/` 这一层（房间文件里敲 `/pages/b.html` 会跳到
+ *  内容域的根下）。所以提交时按它原来是哪一档补回前缀，返回两个值。 */
+function displayPath(href: string): { shown: string; room: boolean } {
   try {
     const url = new URL(href)
-    const path = url.pathname.startsWith('/_cheese/room/')
-      ? '/' + url.pathname.slice('/_cheese/room/'.length)
-      : url.pathname
-    return decodeURIComponent(path) + url.search + url.hash
+    const room = url.pathname.startsWith(ROOM_FILE_PATH)
+    const path = room ? '/' + url.pathname.slice(ROOM_FILE_PATH.length) : url.pathname
+    return { shown: decodeURIComponent(path) + url.search + url.hash, room }
   } catch {
-    return href
+    return { shown: href, room: false }
   }
 }
 
-const shown = computed(() => (props.href ? displayPath(props.href) : props.fallback))
+const display = computed(() => (props.href ? displayPath(props.href) : { shown: props.fallback, room: false }))
+const shown = computed(() => display.value.shown)
 const draft = ref(shown.value)
 const editing = ref(false)
 watch(shown, (value) => {
@@ -68,9 +73,13 @@ function blur() {
   draft.value = shown.value
 }
 function submit(event: KeyboardEvent) {
+  // 输入法正在拼字时那一下 Enter 是选字的，不是跳转——房间路径常是中文，半截路径跳不得。
+  if (event.isComposing || event.keyCode === 229) return
   const value = draft.value.trim()
   ;(event.target as HTMLInputElement).blur()
-  if (value && value !== shown.value) emit('navigate', value)
+  if (!value || value === shown.value) return
+  // 房间文件那一档补回被剥掉的前缀：否则 `new URL('/pages/b.html', …)` 会离开房间。
+  emit('navigate', display.value.room && value.startsWith('/') ? ROOM_FILE_PATH + value.slice(1) : value)
 }
 function revert(event: KeyboardEvent) {
   draft.value = shown.value

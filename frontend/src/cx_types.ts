@@ -639,7 +639,7 @@ export interface FileContent {
   editable?: boolean
 }
 
-export type { PreviewInfo, PreviewSnapshot, PreviewWakeStatus } from './types/preview'
+export type { PreviewInfo, PreviewSnapshot, PreviewWakeAnswer, PreviewWakeStatus } from './types/preview'
 
 // GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
 // answered without opening any of it. The 工作面板 offers a tab only where the

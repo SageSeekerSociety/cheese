@@ -192,7 +192,9 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         props: frameStageProps({
           displayedFrame: previewFrame(),
           previewAppNote: 'npm run dev',
-          previewTunnelUp: false,
+          // 唤醒走到第三步：开机和连上通道都打勾了，通道那一段就该是绿的，只有应用还是
+          // 琥珀——进度里的 tunnel 和链上的 tunnel 说的是同一件事，两处不能对不上。
+          previewTunnelUp: true,
           previewAppUp: false,
           appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
           wakeSteps: wakeSteps({ machine: true, tunnel: true, agent: false, port: false }),
