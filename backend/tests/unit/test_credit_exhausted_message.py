@@ -60,6 +60,12 @@ PLATFORM_OUT_OF_CREDIT = [
     "insufficient balance",
     "Your account has insufficient_quota",
     "quota exceeded for this key",
+    # OpenAI's other two refusals about a billing state. Both mean a state no
+    # wait changes, and neither is matched by any of the alternatives above —
+    # dropping the bare word "billing" from the rule lost them with the
+    # false positive it was removed for (2026-10-27 review of #4932).
+    "Billing hard limit has been reached",
+    "Your account is not active, please check your billing details",
 ]
 
 
