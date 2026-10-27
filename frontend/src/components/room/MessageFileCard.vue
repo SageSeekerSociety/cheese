@@ -158,7 +158,7 @@ const badgeHint = computed(() =>
       </span>
       <span class="fcard__text">
         <span class="fcard__title">
-          <v-icon v-if="family !== 'doc'" size="18" class="fcard__type">{{ fileIcon(path) }}</v-icon>
+          <v-icon size="18" class="fcard__type">{{ fileIcon(path) }}</v-icon>
           <span class="fcard__name">{{ name }}</span>
         </span>
         <span class="fcard__meta">
