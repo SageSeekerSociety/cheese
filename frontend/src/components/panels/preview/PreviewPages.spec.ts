@@ -43,6 +43,13 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
 })
 
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
+// 宽窄由 vueuse 的 useElementSize 量，它要真的 ResizeObserver 条目；这里的桩只是一只能手动
+// 触发的回调（下面的 `resize`），两边混用会把那只回调换成 vueuse 的。宽窄在这一份里不是
+// 被测的东西，钉成宽。
+vi.mock('@/lib/previewNarrow', async () => {
+  const { computed } = await import('vue')
+  return { usePreviewNarrow: () => ({ narrow: computed(() => false), measured: computed(() => true) }) }
+})
 
 /** 一页假的：viewport 与 render 都够组件把画布造出来。 */
 function page(number: number) {
@@ -227,9 +234,10 @@ describe('分页文档的阅读视图', () => {
     // 这一条是文字层的字从哪来的：字号 = --total-scale-factor × 每个 span 自己的
     // --font-height，宽高也是 pdf.js 按这个变量写在层上的。它按自己所在的元素读这些
     // 变量，少了就整层按继承来的字号排版——画布照常是对的，只有选中落在别处。
-    // 假的那一页 600 宽，画布就画成 568：两个数都得是同一个比例。
+    // 假的那一页 600 宽，页框就摆成 568（画布铺满页框）：两个数都得是同一个比例。
+    const box = canvas.closest('[data-page]') as HTMLElement
     expect(Number(layer.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(
-      Number.parseFloat(canvas.style.width) / 600,
+      Number.parseFloat(box.style.width) / 600,
       6
     )
     expect(layer.style.getPropertyValue('--scale-round-x')).not.toBe('')

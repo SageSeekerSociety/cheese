@@ -10,17 +10,24 @@
 //
 // 页面按需渲染。一份几十页的文档一次性全画出来，等待的是空白，而且大多数页永远
 // 不会被看到。
+//
+// 手机上一页按页宽铺开，正文只有六七个像素：两根手指捏着放大，点两下放大到正文那一栏
+// 刚好占满宽度、再点两下回到整页。缩放先只把已经画好的页拉大（立刻跟手），手停下来再按
+// 新的比例重画一遍，免得一路是糊的。
 
-import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+
+import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
@@ -62,6 +69,9 @@ type PageSlot = {
   el: HTMLElement | null
   host: HTMLElement | null
   rendered: boolean
+  /** 这一页在 1 倍下的大小（PDF 的点）。还没取到这一页时先借第一页的：绝大多数文档每页
+   *  一样大，页框先按它占好位置，缩放时的落点才算得准。 */
+  base: { width: number; height: number } | null
 }
 
 /** 这一页上被评论指着的那些地方。按页分好一次，别在模板里每页筛一遍整个列表
@@ -112,12 +122,33 @@ async function library() {
   return lib
 }
 
-/** 一页按面板宽度铺满，上限 2 倍是为了不在高分屏上画出过大的位图。 */
-function scaleFor(page: PDFPageProxy): number {
+const { narrow } = usePreviewNarrow(container)
+/** 页四周留的空：窄处收到一半，省下的都给正文。和样式里 `.pv--narrow` 的内边距是同一个数。 */
+const gutter = computed(() => (narrow.value ? 8 : 16))
+
+/** 读者捏出来的放大倍数，1 是「一页刚好铺满宽度」。 */
+const zoom = ref(1)
+const MIN_ZOOM = 1
+const MAX_ZOOM = 4
+/** 一张画布最多这么多像素。iOS 上超过约 1600 万像素的画布直接画不出来（一片空白），放大到
+ *  四倍的一页在三倍屏上会越过它，所以位图精度在这里封顶，宁可略糊。 */
+const MAX_CANVAS_PIXELS = 16_000_000
+
+/** 一页按面板宽度铺满，上限 2 倍是为了不在宽屏上把一页放得比纸还大；再乘上读者捏出来的倍数。 */
+function scaleOf(base: { width: number }): number {
   const width = container.value?.clientWidth ?? 0
-  const base = page.getViewport({ scale: 1 })
-  if (!width || !base.width) return 1
-  return Math.min((width - 32) / base.width, 2)
+  if (!width || !base.width) return zoom.value
+  return Math.min((width - 2 * gutter.value) / base.width, 2) * zoom.value
+}
+
+/** 按现在的比例摆好这一页的框。已经画好的画布和文字层跟着拉伸（画布铺满页框，文字层的
+ *  几何全由 `--total-scale-factor` 乘出来），重画之前选字、标记的位置照样对得上。 */
+function sizeSlot(slot: PageSlot) {
+  if (!slot.el || !slot.base) return
+  const scale = scaleOf(slot.base)
+  slot.el.style.width = `${Math.floor(slot.base.width * scale)}px`
+  slot.el.style.height = `${Math.floor(slot.base.height * scale)}px`
+  slot.host?.querySelector<HTMLElement>('.pv-text')?.style.setProperty('--total-scale-factor', String(scale))
 }
 
 async function renderPage(slot: PageSlot, mine: number) {
@@ -128,19 +159,23 @@ async function renderPage(slot: PageSlot, mine: number) {
     const page = await doc.value.getPage(slot.number)
     if (mine !== renderGeneration || !slot.el || !slot.host) return
 
-    const ratio = window.devicePixelRatio || 1
-    const scale = scaleFor(page)
+    const base = page.getViewport({ scale: 1 })
+    slot.base = { width: base.width, height: base.height }
+    const scale = scaleOf(slot.base)
     const viewport = page.getViewport({ scale })
+    const ratio = Math.min(
+      window.devicePixelRatio || 1,
+      Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height))
+    )
 
     const canvas = document.createElement('canvas')
     canvas.width = Math.floor(viewport.width * ratio)
     canvas.height = Math.floor(viewport.height * ratio)
-    canvas.style.width = `${Math.floor(viewport.width)}px`
-    canvas.style.height = `${Math.floor(viewport.height)}px`
-    slot.el.style.width = `${Math.floor(viewport.width)}px`
-    slot.el.style.height = `${Math.floor(viewport.height)}px`
-    host.replaceChildren(canvas)
+    sizeSlot(slot)
 
+    // 先在画面外画好再换上去：缩放之后重画的那一页，换上之前读者看着的是拉大的旧图，
+    // 不是一块白。
+    //
     // 交画布本身，不交 2D 上下文：v6 起 canvasContext 只为兼容保留，而两个同时给
     // 是明确不允许的。
     await page.render({
@@ -149,6 +184,7 @@ async function renderPage(slot: PageSlot, mine: number) {
       transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
     }).promise
     if (mine !== renderGeneration || !slot.el || !slot.host) return
+    host.replaceChildren(canvas)
 
     const textLayer = document.createElement('div')
     textLayer.className = 'pv-text'
@@ -219,14 +255,19 @@ async function open(data: ArrayBuffer) {
     const loaded = await task.promise
     if (mine !== loadGeneration) return
     doc.value = loaded
+    const first = (await loaded.getPage(1)).getViewport({ scale: 1 })
+    if (mine !== loadGeneration) return
+    zoom.value = 1
     pages.value = Array.from({ length: loaded.numPages }, (_, i) => ({
       number: i + 1,
       el: null,
       host: null,
       rendered: false,
+      base: { width: first.width, height: first.height },
     }))
     await nextTick()
     if (mine !== loadGeneration) return
+    for (const slot of pages.value) sizeSlot(slot)
     observe()
   } catch (e) {
     if (mine !== loadGeneration) return
@@ -257,9 +298,119 @@ function relayout() {
   for (const slot of pages.value) {
     slot.rendered = false
     slot.host?.replaceChildren()
+    sizeSlot(slot)
   }
   observe()
 }
+
+// ---- 缩放 ----
+
+let redrawTimer: ReturnType<typeof setTimeout> | null = null
+/** 手停下来以后按新的比例重画。只作废、不清空：拉大的旧图留在那儿，新图画好了再换。
+ *  指过的那一点不撤——缩放是整页等比的，同一个比例落在同一处内容上（和改宽度时重排不同）。 */
+function redrawSoon() {
+  if (redrawTimer) clearTimeout(redrawTimer)
+  redrawTimer = setTimeout(() => {
+    redrawTimer = null
+    renderGeneration += 1
+    for (const slot of pages.value) slot.rendered = false
+    observe()
+  }, 150)
+}
+
+/** 屏幕上这一点落在哪一页的哪个比例上。 */
+function pageAt(x: number, y: number) {
+  for (const slot of pages.value) {
+    const box = slot.el?.getBoundingClientRect()
+    if (box && box.width && y >= box.top && y <= box.bottom) {
+      return { slot, rx: (x - box.left) / box.width, ry: (y - box.top) / box.height }
+    }
+  }
+  return null
+}
+
+/** 缩放到 `next`，并让 `anchor` 那一处内容留在屏幕上 `to` 这一点（默认就是它原来的位置）。 */
+function zoomTo(
+  next: number,
+  at: { x: number; y: number },
+  anchor = pageAt(at.x, at.y),
+  to: { x: number; y: number } = at
+) {
+  const host = container.value
+  if (!host) return
+  zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
+  for (const slot of pages.value) sizeSlot(slot)
+  const box = anchor?.slot.el?.getBoundingClientRect()
+  if (anchor && box) {
+    host.scrollLeft += box.left + anchor.rx * box.width - to.x
+    host.scrollTop += box.top + anchor.ry * box.height - to.y
+  }
+  redrawSoon()
+}
+
+/** 点两下：放大到手指底下那一栏正文刚好占满宽度；已经放大了就回到整页。
+ *
+ *  「那一栏」从文字层量：手指附近一屏高之内的那些字，从离手指最近的一段起，横向上和它
+ *  搭得上的都算进来。双栏的论文点哪一栏放大哪一栏；一页没有文字（扫描件）就按两倍放大。 */
+function onDoubleTap(point: { x: number; y: number }) {
+  const host = container.value
+  if (!host) return
+  if (zoom.value > 1.05) {
+    zoomTo(1, point)
+    return
+  }
+  const anchor = pageAt(point.x, point.y)
+  const column = anchor && columnAt(anchor.slot, point, host.clientHeight)
+  const page = anchor?.slot.el?.getBoundingClientRect()
+  if (!anchor || !column || !page) {
+    zoomTo(2, point)
+    return
+  }
+  const room = host.clientWidth - 2 * gutter.value
+  const next = (zoom.value * room) / (column.right - column.left)
+  if (next < 1.15) {
+    zoomTo(2, point)
+    return
+  }
+  // 那一栏的左边贴住留白的内沿，手指那一行留在原来的高度。
+  const left = { slot: anchor.slot, rx: (column.left - page.left) / page.width, ry: anchor.ry }
+  zoomTo(next, point, left, { x: host.getBoundingClientRect().left + gutter.value, y: point.y })
+}
+
+function columnAt(slot: PageSlot, point: { x: number; y: number }, reach: number) {
+  const boxes = [...(slot.host?.querySelectorAll<HTMLElement>('.pv-text span') ?? [])]
+    .filter((span) => (span.textContent ?? '').trim())
+    .map((span) => span.getBoundingClientRect())
+    .filter((box) => box.width > 0 && Math.abs(box.top + box.height / 2 - point.y) < reach)
+  if (!boxes.length) return null
+  const distance = (box: DOMRect) =>
+    Math.hypot(
+      Math.max(box.left - point.x, 0, point.x - box.right),
+      Math.max(box.top - point.y, 0, point.y - box.bottom)
+    )
+  const nearest = boxes.reduce((best, box) => (distance(box) < distance(best) ? box : best))
+  let left = nearest.left
+  let right = nearest.right
+  // 两遍：第一遍并进来的段可能让第二遍搭上更远的那几段。
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const box of boxes) {
+      if (box.right > left && box.left < right) {
+        left = Math.min(left, box.left)
+        right = Math.max(right, box.right)
+      }
+    }
+  }
+  return right - left > 0 ? { left, right } : null
+}
+
+usePinchZoom(container, {
+  zoom: () => zoom.value,
+  min: MIN_ZOOM,
+  max: MAX_ZOOM,
+  enabled: () => !pointing.value && pages.value.length > 0,
+  onZoom: (next, origin) => zoomTo(next, origin),
+  onDoubleTap,
+})
 
 let relayoutTimer: ReturnType<typeof setTimeout> | null = null
 function onResize() {
@@ -430,13 +581,20 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   resizeObserver?.disconnect()
   if (relayoutTimer) clearTimeout(relayoutTimer)
+  if (redrawTimer) clearTimeout(redrawTimer)
   void task?.destroy()
 })
 </script>
 
 <template>
   <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- pointer gestures over the pages: a click drops a pin in pointing mode and a mouse selection is quoted; neither has a keyboard counterpart yet -->
-  <div ref="container" class="pv" :class="{ 'pv--pointing': pointing }" @mouseup="onSelect" @click="onPoint">
+  <div
+    ref="container"
+    class="pv"
+    :class="{ 'pv--pointing': pointing, 'pv--narrow': narrow }"
+    @mouseup="onSelect"
+    @click="onPoint"
+  >
     <div class="pv__tools">
       <BaseButton
         size="sm"
@@ -500,9 +658,17 @@ onBeforeUnmount(() => {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  /* 页靠 `margin-inline: auto` 居中，不靠 align-items：放大到比这一格还宽时，居中会把左边
+     那一截推到滚不到的地方，自动外边距在放不下时归零、多出来的都在右边，滚得到。 */
+  align-items: flex-start;
   gap: 16px;
   background: var(--canvas);
+  /* 单指照常滚（横竖都行，放大以后要横着看），浏览器自己的整页缩放和双击放大让给这一格。 */
+  touch-action: pan-x pan-y;
+}
+.pv--narrow {
+  padding: 8px;
+  gap: 8px;
 }
 
 .pv__state {
@@ -528,6 +694,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   overflow: hidden;
   flex: none;
+  margin-inline: auto;
 }
 
 /* 指位置的时候点的是纸，不是纸上的字：文字层整个让开，否则读者一点就选中一行字。 */
@@ -543,7 +710,10 @@ onBeforeUnmount(() => {
 .pv__tools {
   position: sticky;
   top: 0;
-  align-self: flex-end;
+  /* 横向也钉住：放大以后横着滚，按钮仍贴在看得见的那一块的右上角，不跟着纸跑。 */
+  left: 0;
+  align-self: stretch;
+  justify-content: flex-end;
   z-index: var(--z-raised-2);
   display: flex;
   gap: 8px;
@@ -592,6 +762,8 @@ onBeforeUnmount(() => {
 
 .pv__page :deep(canvas) {
   display: block;
+  width: 100%;
+  height: 100%;
 }
 
 /* 透明的可选文字，盖在画布上。
