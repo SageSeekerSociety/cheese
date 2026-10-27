@@ -30,9 +30,9 @@ def _room(client, project_id: str, title: str = "改一份文件") -> str:
 def _agent_headers(project_id: str, room_id: str) -> dict:
     """一轮里铸出来的那种凭据 —— 芝士 摆东西出来用的就是它。"""
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=room_id, ttl_s=3600
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=project_id, topic_id=room_id, ttl_s=3600)
+        }"
     }
 
 

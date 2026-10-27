@@ -477,11 +477,6 @@ class RemoteDeviceHub:
     def last_seen_age(self, device_id: str) -> float | None:
         return self._devices.get(device_id, {}).get("last_seen_age")
 
-    def screen_by_token(self, token: str) -> HubScreen | None:
-        return next(
-            (screen for screen in self._screens.values() if screen.token == token), None
-        )
-
     def screen(self, sid: str) -> HubScreen | None:
         return self._screens.get(sid)
 

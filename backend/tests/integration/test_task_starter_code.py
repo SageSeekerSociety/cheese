@@ -555,13 +555,15 @@ def test_the_ai_teammate_removes_a_published_tasks_starter_code(
     assert listed["starter"] is not None
     creator = board["creator"]
     headers = {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=creator.user_id,
-            handle=creator.username,
-            work=str(uuid.uuid4()),
-            ttl_s=300,
-            read_only=False,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=creator.user_id,
+                handle=creator.username,
+                work=str(uuid.uuid4()),
+                ttl_s=300,
+                read_only=False,
+            )
+        }"
     }
 
     written = api_client.post(

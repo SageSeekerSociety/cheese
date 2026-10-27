@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.db import async_session_factory
 from app.core.errors import AuthenticationRequiredError, ValidationError
 from app.core.sentences import say
@@ -26,23 +27,11 @@ from app.domain.webhook import service as webhook_service
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-def _caller_token(request: Request) -> str:
-    """The webhook token, however the caller presents it: a dedicated header,
-    or a bearer Authorization header (the common webhook-secret convention)."""
-    direct = request.headers.get("x-webhook-token", "").strip()
-    if direct:
-        return direct
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
-
-
 @router.post("/{topic_id}", dependencies=[ROUTE_DECIDES])
 async def receive_webhook(
     topic_id: uuid.UUID, body: dict, request: Request, db: DbSession
 ) -> dict:
-    token = _caller_token(request)
+    token = credentials.presented(request.headers)
     valid = bool(token) and await webhook_service.verify(
         db, topic_id=topic_id, token=token
     )

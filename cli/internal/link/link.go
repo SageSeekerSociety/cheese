@@ -148,7 +148,7 @@ func (c *Conn) Run(ctx context.Context, onMsg func(Msg)) error {
 func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 	header := http.Header{}
 	if c.token != "" {
-		header.Set("X-Cheese-Session", c.token)
+		header.Set("Authorization", "Bearer "+c.token)
 	}
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, header)
 	if err != nil {

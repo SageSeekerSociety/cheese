@@ -90,7 +90,8 @@ async def connector(
         capture_output=True,
     )
     async with websockets.connect(
-        f"ws://127.0.0.1:{port}/connector/agent?token=acceptance"
+        f"ws://127.0.0.1:{port}/connector/agent",
+        additional_headers={"Authorization": "Bearer acceptance"},
     ) as socket:
         welcome = json.loads(await socket.recv())
         events.put({"event": "connected", "welcome": welcome})
@@ -590,7 +591,8 @@ VALUES ('33333333-3333-3333-3333-333333333333','22222222-2222-2222-2222-22222222
             async def reject_device():
                 try:
                     async with websockets.connect(
-                        f"ws://127.0.0.1:{options.port}/connector/agent?token=wrong"
+                        f"ws://127.0.0.1:{options.port}/connector/agent",
+                        additional_headers={"Authorization": "Bearer wrong"},
                     ):
                         raise AssertionError("owner accepted an invalid device token")
                 except websockets.exceptions.InvalidStatus as exc:
@@ -717,7 +719,7 @@ def refused_connection_acceptance(endpoint, token, work, log):
                 endpoint,
                 content=body,
                 headers={
-                    "X-Cheese-Token": self.headers["X-Cheese-Token"],
+                    "Authorization": self.headers["Authorization"],
                     "Content-Type": self.headers["Content-Type"],
                 },
                 timeout=30,
@@ -869,7 +871,9 @@ def image_acceptance(options, root: Path) -> int:
         assert httpx.post(endpoint, json=request).status_code == 401
         assert (
             httpx.post(
-                endpoint, json=request, headers={"X-Cheese-Token": wrong_project}
+                endpoint,
+                json=request,
+                headers={"Authorization": f"Bearer {wrong_project}"},
             ).status_code
             == 403
         )
@@ -880,7 +884,10 @@ def image_acceptance(options, root: Path) -> int:
         )
         try:
             response = httpx.post(
-                endpoint, json=request, headers={"X-Cheese-Token": token}, timeout=30
+                endpoint,
+                json=request,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=30,
             )
         finally:
             docker(

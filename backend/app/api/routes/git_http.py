@@ -8,7 +8,7 @@ from typing import Annotated, BinaryIO, cast
 from fastapi import APIRouter, Depends, Header, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_seated_agent
+from app.api.auth import PresentedCredential, require_seated_agent
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
@@ -76,12 +76,12 @@ async def save_task_snapshot(
     snapshot_sha: str,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
+    credential: PresentedCredential,
     x_cheese_head: str = Header(),
     x_content_sha256: str = Header(),
 ) -> dict:
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token)
+    task = await _task_for(db, project_id, task_id, credential)
     size = 0
     with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as file:
         async for chunk in request.stream():
@@ -107,10 +107,10 @@ async def latest_task_snapshot(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
+    credential: PresentedCredential,
 ) -> dict:
 
-    await _task_for(db, project_id, task_id, x_cheese_token)
+    await _task_for(db, project_id, task_id, credential)
     row = await snapshots.latest(db, task_id)
     return ok(
         {
@@ -129,10 +129,10 @@ async def download_task_snapshot(
     task_id: uuid.UUID,
     snapshot_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
+    credential: PresentedCredential,
 ) -> Response:
 
-    await _task_for(db, project_id, task_id, x_cheese_token)
+    await _task_for(db, project_id, task_id, credential)
     row = await snapshots.get(db, task_id=task_id, snapshot_id=snapshot_id)
     if row is None:
         raise NotFoundError(say("taskBackupNotFound"))
@@ -148,13 +148,13 @@ async def open_task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+    credential: PresentedCredential,
 ) -> dict:
     # deferred-import: tests patch this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token, opening=True)
-    acting = token_agent_handle(x_cheese_token or "")
+    task = await _task_for(db, project_id, task_id, credential, opening=True)
+    acting = token_agent_handle(credential)
     if not acting:
         raise AuthenticationRequiredError("Opening a task needs an agent identity")
     if task.status == "closed":
@@ -169,7 +169,7 @@ async def open_task_workspace(
         # said the task was not in the project (dev, 2026-10-06).
         if await binding_for_project(project_id, db) is not None:
             await TaskService(db).give_branch(task)
-    result = await task_workspace(project_id, task_id, db, x_cheese_token)
+    result = await task_workspace(project_id, task_id, db, credential)
     await db.commit()
     return result
 
@@ -179,12 +179,12 @@ async def task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+    credential: PresentedCredential,
 ) -> dict:
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token)
+    task = await _task_for(db, project_id, task_id, credential)
     if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
     binding = await binding_for_project(project_id, db)

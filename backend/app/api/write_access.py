@@ -50,6 +50,7 @@ from app.api.auth import ActorResolver
 from app.auth import can
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
 from app.core.sandbox_auth import (
@@ -102,7 +103,7 @@ class _CheeseOnly(WriteAccess):
         raw = connection.path_params.get(f"{self.scope}_id")
         project_id = str(raw) if self.scope == "project" and raw else None
         topic_id = str(raw) if self.scope == "topic" and raw else None
-        token = connection.headers.get("x-cheese-token") or ""
+        token = credentials.presented(connection.headers)
         opened = is_valid_cheese_token(token, project_id=project_id, topic_id=topic_id)
         # A project agent credential can address topics in its project, so it
         # can't be matched against the URL by string compare the way a per-turn
@@ -115,7 +116,6 @@ class _CheeseOnly(WriteAccess):
                 token,
                 project_id=project_id,
                 topic_id=topic_id,
-                screen_token=connection.headers.get("x-cheese-screen") or "",
             )
         if not opened:
             raise AuthenticationRequiredError("invalid sandbox token")
@@ -127,7 +127,6 @@ async def _credential_opens(
     *,
     project_id: str | None,
     topic_id: str | None,
-    screen_token: str,
 ) -> bool:
     """Whether the credential's participant may act in this room or project:
     the project match and the revocation check, which a signature alone does
@@ -141,9 +140,7 @@ async def _credential_opens(
         claims = scoped_token_claims(token)
         origin = claims.get("t") if claims else None
         topic = uuid.UUID(topic_id or origin) if topic_id or origin else None
-        resolver = ActorResolver(
-            session=db, bearer=None, cheese_token=token, screen_token=screen_token
-        )
+        resolver = ActorResolver(session=db, bearer=None, cheese_token=token)
         actor = await resolver.resolve(project_id=target, topic_id=topic)
         if not actor.authenticated:
             return False

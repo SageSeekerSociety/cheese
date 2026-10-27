@@ -174,7 +174,7 @@ def execution_handler():
         def do_POST(self):
             if self.path != "/execution":
                 return super().do_POST()
-            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            assert self.headers.get("Authorization") == "Bearer fixture-place-token"
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             wire = self.server.state["wire"]
             return self.reply(

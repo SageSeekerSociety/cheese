@@ -55,14 +55,13 @@ from app.core.sandbox_auth import (
     is_global_sandbox_token,
     looks_like_delegated_credential,
     looks_like_project_agent_credential,
+    pass_id,
     project_agent_claims,
     scoped_token_claims,
     token_agent_handle,
     verify_scoped_token,
 )
 from app.core.sentences import say
-from app.domain.agent.device_attribution import resolve_screen_actor
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.assistant import passes
 from app.domain.authz.policy import authorize_topic_access
@@ -92,10 +91,8 @@ class ActorResolver:
         session: AsyncSession,
         bearer: str | None,
         cheese_token: str,
-        screen_token: str = "",
         writes: bool = False,
         endpoint: str | None = None,
-        gate_pass: str = "",
         path_ids: frozenset[str] = frozenset(),
         allow_machine: bool = False,
     ):
@@ -104,9 +101,8 @@ class ActorResolver:
         # The ids the route's path names (a team's, a space's, an invitation's):
         # where a pass may be spent, besides the project and room it resolves.
         self._path_ids = path_ids
-        # What a person's 芝士 shows at a gated route (``GATED_ROUTES``), and
-        # whether it has already been let through this request.
-        self._gate_pass = gate_pass
+        # Whether a person's 芝士 has already been let through a gated route
+        # (``GATED_ROUTES``) by the pass it presented, this request.
         self._through_gate = False
         # Which route this is (``module.function``), for a delegated credential,
         # which opens only the routes in ``DELEGATED_ROUTES``.
@@ -121,10 +117,6 @@ class ActorResolver:
         self._answer_for_readers: tuple[uuid.UUID | None] | None = None
         self._bearer = bearer
         self._cheese_token = cheese_token
-        # A ``cheese`` call made from inside a self-hosted device screen carries that
-        # screen's token (``X-Cheese-Screen``). It makes the call act as the screen's
-        # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
-        self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
     def for_reading(self) -> "ActorResolver":
@@ -213,7 +205,7 @@ class ActorResolver:
                 project_id = await self.project_of_topic(topic_id)
             if not self._through_gate:
                 self._through_gate = await passes.use(
-                    self._gate_pass,
+                    pass_id(self._cheese_token) or "",
                     work=claims.work,
                     endpoint=self._endpoint or "",
                     places={str(p) for p in (topic_id, project_id) if p is not None}
@@ -415,32 +407,6 @@ class ActorResolver:
                 )
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
         actor = await self._bound(actor)
-        # Device-screen attribution (P3): a cheese call from inside an enrolled device's
-        # screen carries that screen's token. It is a per-screen capability that proves
-        # the call runs as that screen's agent — so it acts as the device agent-user
-        # (agent-as-user), overriding the generic cheese identity. The write-access
-        # declarations (app/api/write_access.py) are unaffected; this only decides
-        # *who* the actor is.
-        if self._screen_token:
-            screen = resolve_screen_actor(device_hub, self._screen_token)
-            if screen is not None:
-                # The screen runs for one project, and acts as its agent there
-                # only. A request naming another one is out of its scope, the
-                # same answer a project credential for another project gets.
-                target = project_id or (
-                    await self.project_of_topic(topic_id) if topic_id else None
-                )
-                if screen.project_id is not None and target not in (
-                    None,
-                    screen.project_id,
-                ):
-                    _log.info("screen_scope_violation", got=str(screen.project_id))
-                    raise ForbiddenError(say("credentialOtherProject"))
-                return Actor(
-                    handle=screen.agent_handle,
-                    user_id=screen.agent_user_id,
-                    via="cheese",
-                )
         return actor
 
     async def _refuse_archived_write(
@@ -948,7 +914,7 @@ class ActorResolver:
         seat it works from, and the credential names that place, so a request
         does not have to name it again.
         """
-        if actor.via != "cheese" or self._screen_token:
+        if actor.via != "cheese":
             return None
         claims = scoped_token_claims(self._cheese_token)
         if not claims or not claims.get("a") or not claims.get("t"):

@@ -40,6 +40,7 @@ from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
 from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
@@ -131,15 +132,6 @@ _DROP_REQUEST_HEADERS = frozenset(
 _DROP_RESPONSE_HEADERS = frozenset(
     {"content-length", "connection", "keep-alive", "transfer-encoding", "upgrade"}
 )
-
-
-def _caller_token(request: Request) -> str:
-    """The scoped token, however Claude Code chose to present it: ANTHROPIC_AUTH_TOKEN
-    rides as a bearer, ANTHROPIC_API_KEY as x-api-key."""
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return request.headers.get("x-api-key", "").strip()
 
 
 def _upstream_url(path: str) -> str:
@@ -251,6 +243,16 @@ async def _projects_own_agent(
     )
 
 
+async def _admitted_session(request: Request) -> str:
+    """The session the metering proxy asks about: its token, in the body."""
+    try:
+        body = json.loads(await request.body() or b"{}")
+    except ValueError:
+        return ""
+    session = body.get("session") if isinstance(body, dict) else None
+    return session if isinstance(session, str) else ""
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
@@ -261,16 +263,20 @@ async def admission(
 ) -> dict:
     """Whether the caller's project can afford one more subscription turn.
 
-    The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request;
-    the Bearer is the sandbox's per-session scoped cheese token (#198), so the
-    project comes from verified claims rather than a spoofable header. The
-    gateway key rides along only when the proxy's own credential does too. The
+    The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request,
+    as itself (the platform's own credential), naming the session it admits by
+    that session's scoped cheese token in the body (#198), so the project comes
+    from verified claims rather than a spoofable header; the gateway key rides
+    along only for it. A pi runner admitting a subagent asks as the session
+    itself, and gets the decision alone. The
     decision reads the same compute-grant balance the gateway brake prices in
     USD — one budget, two enforcement points. Refusing is this endpoint's only
     job: the proxy fails OPEN on transport errors (a broken brake must not be
     a broken platform) and keeps its rolling token cap as the backstop.
     """
-    token = _caller_token(request)
+    caller = credentials.presented(request.headers)
+    from_proxy = is_global_sandbox_token(caller)
+    token = await _admitted_session(request) if from_proxy else caller
     claims = scoped_token_claims(token) if token else None
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
@@ -450,16 +456,11 @@ async def admission(
                 await note_credits_refusal(
                     chat.session_factory, place_uuid, refused.message
                 )
-    # The key goes only to the metering proxy, which proves itself with its
-    # own credential beside the session's bearer. The bearer alone names the
-    # room, and the session holds that same token: answering it with the key
-    # would put a shared pool credential inside every room that can reach this
-    # route. Anyone else (a pi runner admitting a subagent) gets the decision.
-    if (
-        pool == GATEWAY
-        and refused is None
-        and is_global_sandbox_token(request.headers.get("x-cheese-token") or "")
-    ):
+    # The key goes only to the metering proxy, which asks as itself. The
+    # session holds its own token: answering that with the key would put a
+    # shared pool credential inside every room that can reach this route.
+    # Anyone else (a pi runner admitting a subagent) gets the decision.
+    if pool == GATEWAY and refused is None and from_proxy:
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
@@ -525,7 +526,9 @@ async def proxy(
     db: Annotated[AsyncSession, Depends(get_db)],
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
-    return await _forward(path, request, db, chat, _caller_token(request))
+    return await _forward(
+        path, request, db, chat, credentials.presented(request.headers)
+    )
 
 
 @machine_router.api_route(

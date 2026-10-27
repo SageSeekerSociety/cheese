@@ -71,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/platform-fixture":
-            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            assert self.headers.get("Authorization") == "Bearer fixture-place-token"
             return self.reply({"data": {"title": "PLATFORM_API_READ"}})
         if self.path.startswith("/connector/claude/"):
             # As the platform's route serves it (`installer.download_claude`):
@@ -108,7 +108,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = gzip.decompress(raw)
         body = json.loads(raw or b"{}")
         if self.path == "/topics/fixture/messages":
-            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            assert self.headers.get("Authorization") == "Bearer fixture-place-token"
             self.server.state.setdefault("publications", []).append(body)
             dump(
                 self.server.state["dir"] / "publications.json",

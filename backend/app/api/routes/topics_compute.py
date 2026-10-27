@@ -27,6 +27,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import ProjectRepository
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -247,7 +248,7 @@ async def set_session_environment(
     one best-effort checkpoint where it was. An agent may change its own,
     never another's, and never to a machine without isolation."""
     place, topic, task, project, actor = await _place_for_change(db, resolver, topic_id)
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+    claims = scoped_token_claims(credentials.presented(request.headers)) or {}
     scoped_session = claims.get("session") if actor.via == "cheese" else None
     if actor.via == "cheese" and (
         scoped_session != str(session_id)
@@ -298,7 +299,7 @@ async def acquire_session_work_lease(
     db: DbSession,
 ) -> dict:
 
-    token = request.headers.get("x-cheese-token", "")
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
     if claims is not None and not held_by_a_machine(claims):
         place = await place_or_404(db, topic_id)

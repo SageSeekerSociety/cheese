@@ -47,8 +47,6 @@ from urllib.parse import unquote, urlsplit
 #: The claim a scoped credential carries for the seat it acts as (FB-73: this is
 #: what got signed for the wrong seat). ``sandbox_auth.mint_scoped_token``.
 CLAIM_SEAT = "a"
-#: A session-bound credential's payload prefix (``sandbox_auth.bind_resource_token``).
-SCOPED_SESSION_PREFIX = "cxss_"
 
 #: The environment variable the platform sets to the seat a session authors as.
 SESSION_SEAT_ENV = "CHEESE_AUTHOR"
@@ -57,16 +55,17 @@ SESSION_SEAT_ENV = "CHEESE_AUTHOR"
 def credential_claims(token: str) -> dict | None:
     """The claims a scoped credential declares -- its payload, never its signature.
 
-    The token is ``<base64url(json)>. <signature>``; only the first segment is
-    decoded. A malformed token, or one whose payload is not a JSON object,
+    The token is a JWT, ``<header>.<base64url(json)>.<signature>``; only the
+    middle segment is decoded. A malformed token, or one whose payload is not a JSON object,
     returns ``None``. Nothing here verifies the signature or echoes any part of
     the token back; the caller gets the claims dict and nothing else.
     """
     if not token:
         return None
-    body = token.split(".", 1)[0]
-    if body.startswith(SCOPED_SESSION_PREFIX):
-        body = body[len(SCOPED_SESSION_PREFIX) :]
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    body = parts[1]
     try:
         padded = body + "=" * (-len(body) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))

@@ -1032,11 +1032,14 @@ def run(
     while True:
         try:
             sock, answered = open_ws(
-                f"{url}{'&' if '?' in url else '?'}token={tokens.get()}",
+                url,
                 ca_path=ca_path,
                 insecure=insecure,
                 idle_timeout=_IDLE_TIMEOUT_S,
-                headers={CAPS_HEADER: ",".join(sorted(CAPABILITIES))},
+                headers={
+                    "Authorization": f"Bearer {tokens.get()}",
+                    CAPS_HEADER: ",".join(sorted(CAPABILITIES)),
+                },
             )
         except (OSError, PreviewError) as exc:
             retryable = isinstance(exc, OSError) or (

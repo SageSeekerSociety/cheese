@@ -289,7 +289,7 @@ async function agentRoutines(page: Page, roomId: string, agentSeat: string): Pro
     },
   ]) {
     const response = await page.request.post(`/api/topics/${roomId}/routines`, {
-      headers: { "X-Cheese-Token": agentToken },
+      headers: { Authorization: `Bearer ${agentToken}` },
       data: {
         ...rule,
         instructions: "Summarize changes and save a report.",

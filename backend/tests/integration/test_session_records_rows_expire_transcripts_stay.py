@@ -232,7 +232,7 @@ def _works_in(bucket: _Bucket) -> set[str]:
 
 
 def _delete_room(client, room: uuid.UUID) -> None:
-    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    owner = {"Authorization": "", **session_auth_headers("user-1")}
     gone = client.delete(f"/topics/{room}", headers=owner)
     assert gone.status_code == 200, gone.text
 

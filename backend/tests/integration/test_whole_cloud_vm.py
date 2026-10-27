@@ -159,7 +159,7 @@ def _room(case, environment: dict, title: str = "Room"):
 def _lease(case, seat, timeout=660):
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": timeout},
     )
 

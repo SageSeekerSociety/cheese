@@ -294,7 +294,7 @@ def _answered_in_a_thread(
             "request_id": str(uuid.uuid4()),
             "reply_to": asked["id"],
         },
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
     return room, thread

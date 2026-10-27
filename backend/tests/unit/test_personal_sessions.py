@@ -100,7 +100,7 @@ class Platform:
                 outer.tool_calls.append(
                     (
                         f"{self.command} {self.path.split('?')[0]}",
-                        self.headers.get("X-Cheese-Token", ""),
+                        self.headers.get("Authorization", "").removeprefix("Bearer "),
                     )
                 )
                 data = next(

@@ -8,9 +8,10 @@ own token check.
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.api.auth import PresentedCredential
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core import background
@@ -28,14 +29,14 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
 
 @router.post("/storage-sweep", dependencies=[ROUTE_DECIDES])
-async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dict:
+async def trigger_storage_sweep(credential: PresentedCredential) -> dict:
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
     # deferred-import: tests patch this name on app.domain.room_cleanup.retire
     from app.domain.room_cleanup.retire import sweep_retired_storage
 
-    if not is_global_sandbox_token(x_cheese_token):
+    if not is_global_sandbox_token(credential):
         raise UnauthorizedError("Cleanup trigger requires the server credential")
     background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
@@ -62,13 +63,13 @@ def _cheese_cli_source() -> str | None:
 
 @router.get("/cli/cheese", response_model=None)
 async def get_cheese_cli(
-    x_cheese_token: str = Header(default=""),
+    credential: PresentedCredential,
 ) -> PlainTextResponse | JSONResponse:
     """Serve the `cheese` platform-action CLI to an enrolled device's screen launcher
     (a device has no baked-in image). Gated by any valid scoped
     token — it carries no data, just the script; the token still authorizes the
     ACTIONS the CLI performs."""
-    claims = scoped_token_claims(x_cheese_token)
+    claims = scoped_token_claims(credential)
     if not claims or held_by_a_machine(claims):
         return JSONResponse(
             {"code": 401, "message": "invalid sandbox token", "data": None},

@@ -109,7 +109,7 @@ class BackendErrorIn(BaseModel):
 
 
 class BackendErrorBatchIn(BaseModel):
-    # Both optional: a scoped X-Cheese-Token already names the room, and the
+    # Both optional: a scoped agent credential already names the room, and the
     # route prefers the token's claims over anything the body asserts.
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None

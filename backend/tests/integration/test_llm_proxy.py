@@ -49,7 +49,8 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     token = mint_scoped_token(project_id=project_id)
     response = client.post(
         "/llm/admission",
-        headers={"Authorization": f"Bearer {token}", "X-Cheese-Token": SANDBOX_TOKEN},
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["supply"]["key"] == "project-key"
@@ -79,15 +80,20 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     bearer = {"Authorization": f"Bearer {token}"}
     # The test client sends the platform's secret on every request; a session
     # has no such thing.
-    monkeypatch.delitem(client.headers, "X-Cheese-Token")
+    monkeypatch.delitem(client.headers, "Authorization")
 
-    for headers in (
-        bearer,
-        # What a session could add on its own: its scoped token again, or a guess.
-        {**bearer, "X-Cheese-Token": token},
-        {**bearer, "X-Cheese-Token": "not-the-secret"},
+    for headers, sent in (
+        (bearer, None),
+        # What a session could add on its own: its own token as the session
+        # asked about, or a guess at the proxy's credential.
+        (bearer, {"session": token}),
+        ({"Authorization": f"Bearer {'not-the-secret'}"}, {"session": token}),
     ):
-        body = client.post("/llm/admission", headers=headers).json()["data"]
+        body = client.post("/llm/admission", headers=headers, json=sent).json()
+        if sent is not None and headers is not bearer:
+            assert body["code"] == 401
+            continue
+        body = body["data"]
         assert body["allow"] is True
         assert body["supply"]["pool"] == "gateway"
         assert body["supply"]["model"]
@@ -95,7 +101,9 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
         assert "project-key" not in json.dumps(body)
 
     proxy = client.post(
-        "/llm/admission", headers={**bearer, "X-Cheese-Token": SANDBOX_TOKEN}
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
     ).json()["data"]
     assert proxy["supply"]["key"] == "project-key"
 
@@ -218,7 +226,13 @@ def test_x_api_key_presentation_also_works(client, _pool, _project_key):
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
 
-    r = client.post("/llm/v1/messages", headers={"x-api-key": token}, content=b"{}")
+    # Claude Code with ANTHROPIC_API_KEY sends nothing else; the test client's
+    # own default credential is taken off.
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": "", "x-api-key": token},
+        content=b"{}",
+    )
 
     assert r.status_code == 200
 
@@ -596,10 +610,8 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
         token = mint_scoped_token(project_id=pid, topic_id=topic)
         return client.post(
             "/llm/admission",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Cheese-Token": SANDBOX_TOKEN,
-            },
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+            json={"session": token},
         ).json()["data"]["supply"]
 
     before = admitted(root)
