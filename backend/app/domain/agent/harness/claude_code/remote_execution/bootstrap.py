@@ -1304,7 +1304,14 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         recorded = platform_dir / "executor"
         state = executor_state(home, anchors, bool(payload.get("sandbox")))
         token = Path(PLATFORM_DIR) / "cheese-preview.token"
-        spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
+        if sys.platform == "win32":
+            spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
+        else:
+            directory = beneath(home, PLATFORM_DIR)
+            try:
+                remove_beneath(directory, token.name)
+            finally:
+                os.close(directory)
         previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
         if previous is not None:
             # The running executor is reached with the release staged above,

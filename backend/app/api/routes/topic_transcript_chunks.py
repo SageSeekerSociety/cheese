@@ -29,7 +29,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.device import owner_reads
 
@@ -85,7 +85,7 @@ async def session_transcript(
     executor mounts its read-only view at.
     """
     claims = scoped_token_claims(credentials.presented(request.headers))
-    if not claims or claims.get("t") != str(topic_id):
+    if not claims or held_by_a_machine(claims) or claims.get("t") != str(topic_id):
         # i18n-exempt: the caller is the executor, not a person's screen
         raise AuthenticationRequiredError("A credential for this room is required")
     session_claim = claims.get("session")

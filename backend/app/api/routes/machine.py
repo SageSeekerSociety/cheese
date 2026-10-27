@@ -145,7 +145,7 @@ async def platform(
     request and never handed to the sandbox."""
     if path.split("/", 1)[0] in _NOT_HERE:
         raise NotFoundError()
-    credential = await credential_of(db, caller)
+    credential = await credential_of(db, caller, held=False)
     if credential is None:
         raise ForbiddenError()
     # The route asked may hold the request for minutes.
