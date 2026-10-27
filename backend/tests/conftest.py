@@ -1179,7 +1179,9 @@ def _a_test_process_never_hands_the_work_over() -> Iterator[None]:
 
     def a_process_of_its_own() -> None:
         runner = pending_messages.current_runner()
-        if runner is None or not hasattr(runner, "own_sessions"):
+        if runner is None or not (
+            hasattr(runner, "own_sessions") and hasattr(runner, "start_turns")
+        ):
             return
         runner.start_turns()
         runner.own_sessions(True)
