@@ -46,6 +46,7 @@ from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
 from app.core.storage import StorageBackend, private_storage
 from app.domain.conversation.models import Conversation
+from app.domain.session_record import models as session_record_models
 from app.domain.session_record.archive import (
     INDEX_PREFIX,
     describe,
@@ -722,16 +723,13 @@ async def read(
     # has no floor under it: the record just above the page may be one whose
     # row the sweep has already taken.
     #
-    # The window is `retention.RETENTION`'s, read through its own module: that
-    # name is what the sweep above deletes by, and the reader has to share the
-    # live value rather than a copy — a reader holding its own would skip the
-    # listing while a sweep by the real value had taken the rows. The import is
-    # inside the function because `retention` imports this module.
-    from app.domain.session_record import (
-        retention,  # deferred-import: breaks the cycle retention -> service
-    )
-
-    window = datetime.now(UTC) - retention.RETENTION
+    # The window is `models.RETENTION` — the very value `retention.expire`
+    # deletes by — read through the module rather than imported as a name: a
+    # reader holding its own copy would skip the listing while a sweep by the
+    # real value had taken the rows, and answer a short page as if it were
+    # complete. (It lives in `models`, below both this module and `retention`,
+    # because `retention` imports this one.)
+    window = datetime.now(UTC) - session_record_models.RETENTION
     inside_the_window = after is not None and after[0] >= window
     archive = storage or bucket()
     if (

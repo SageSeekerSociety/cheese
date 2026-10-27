@@ -16,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.session_record import retention, service
+from app.domain.session_record import models, service
 from app.domain.session_record.models import SessionRecord
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
     _Bucket,
@@ -215,7 +215,7 @@ def test_a_forward_read_older_than_the_window_still_lists_the_index(
     _drop_rows(client, topic)
     stale = service.encode_cursor(
         (
-            datetime.now(UTC) - retention.RETENTION - timedelta(days=1),
+            datetime.now(UTC) - models.RETENTION - timedelta(days=1),
             "claude_code",
             "cheese",
             0,
