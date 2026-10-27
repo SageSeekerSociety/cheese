@@ -26,8 +26,8 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { useFullscreen } from '@vueuse/core'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
@@ -35,6 +35,7 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
+import { type LocatorAnchor, markPointer, measureAnchor, selectionIn } from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
@@ -156,6 +157,46 @@ const {
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+// ---- 定位框弹在哪 ----
+// 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：
+// 眼睛在哪写字就在哪，指好几处时也看得出哪句话对着哪处。位置在打开那一刻记下：选中的
+// 一段记成一个 Range，点出来的一处记下松手的那一点；滚动和改尺寸时重算一次。
+// 记下的点只认刚刚那一下（键盘选中时没有点，框贴底），见 `preview/locatorAnchor.ts`。
+const POINTER_FRESH_MS = 1500
+let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
+let anchorRange: Range | null = null
+let anchorPointer: ReturnType<typeof markPointer> | null = null
+const locatorAnchor = ref<LocatorAnchor | null>(null)
+useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
+  const panel = panelElement.value
+  if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
+  lastPointer = { ...markPointer(event, panel), at: performance.now() }
+})
+let placing = 0
+function placeLocator() {
+  // 滚动一帧可能来好几次事件：合成一帧量一次，免得每个事件都强制排一次版。
+  if (placing || !locator.value) return
+  placing = requestAnimationFrame(() => {
+    placing = 0
+    const panel = panelElement.value
+    locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+  })
+}
+watch(locator, (now) => {
+  if (!now) {
+    anchorRange = anchorPointer = lastPointer = null
+    locatorAnchor.value = null
+    return
+  }
+  const panel = panelElement.value
+  anchorRange = panel ? selectionIn(panel) : null
+  anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
+  lastPointer = null
+  void nextTick(placeLocator)
+})
+useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
 
 // ---- 这一份文件上的评论 ----
 // 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
@@ -569,6 +610,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :comment-error="commentError"
+      :anchor="locatorAnchor"
       @send="sendLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"

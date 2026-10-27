@@ -680,14 +680,16 @@ def test_routines_of_someone_away_for_long_pause_until_they_resume_them(client):
 def _acting(client, handle: str, conversation: str | None, work: str | None = None):
     seed_user(client, handle)
     return {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=_ledger_user(client, handle)[0],
-            handle=handle,
-            work=work or str(uuid.uuid4()),
-            ttl_s=300,
-            read_only=False,
-            conversation=conversation,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=_ledger_user(client, handle)[0],
+                handle=handle,
+                work=work or str(uuid.uuid4()),
+                ttl_s=300,
+                read_only=False,
+                conversation=conversation,
+            )
+        }"
     }
 
 

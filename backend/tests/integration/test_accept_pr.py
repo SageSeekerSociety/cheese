@@ -3218,7 +3218,9 @@ def test_merge_anyway_is_for_humans_only(client, app_world):
     r = _merge_anyway(
         client,
         cid,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

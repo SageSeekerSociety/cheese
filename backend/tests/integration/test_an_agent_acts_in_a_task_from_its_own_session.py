@@ -34,7 +34,7 @@ def _channel_session(project_id: str, room: str, seat: str) -> dict[str, str]:
     token = mint_scoped_token(
         project_id=project_id, topic_id=room, agent_handle=seat, access_scope="project"
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _say(client, task_id: str, headers: dict[str, str]):
@@ -87,7 +87,9 @@ def test_a_task_session_reads_a_neighbouring_task_through_the_channel(client):
         headers=session_auth_headers("alice"),
     )
     assert said.status_code == 200, said.text
-    headers = {"X-Cheese-Token": mint_session_token(project_id, task_id, seat)}
+    headers = {
+        "Authorization": f"Bearer {mint_session_token(project_id, task_id, seat)}"
+    }
 
     refused = client.get(f"/topics/{other}/history", headers=headers)
 

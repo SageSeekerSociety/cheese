@@ -254,9 +254,9 @@ def _host(client, project: str, task: str):
     class Host:
         environ = {"CHEESE_TOPIC": task, "CHEESE_PROJECT": project}
         headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, task, room_agent_seat(client, task)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, task, room_agent_seat(client, task))
+            }"
         }
         doc_versions: dict = {}
 

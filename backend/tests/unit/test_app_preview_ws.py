@@ -31,20 +31,20 @@ async def test_planned_drain_during_helper_upgrade_never_supersedes_the_helper()
         if message["type"] == "websocket.accept":
             await hub.shutdown()
 
+    token = mint_scoped_token(
+        project_id=str(uuid.uuid4()), topic_id=str(topic), agent_handle="seat"
+    )
     websocket = WebSocket(
         {
             "type": "websocket",
             "path": "/preview/tunnel",
-            "headers": [],
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
             "app": application,
         },
         receive,
         send,
     )
-    token = mint_scoped_token(
-        project_id=str(uuid.uuid4()), topic_id=str(topic), agent_handle="seat"
-    )
-    await app_preview.preview_tunnel(websocket, token=token)
+    await app_preview.preview_tunnel(websocket)
     assert sent[-1]["type"] == "websocket.close"
     assert sent[-1]["code"] == 1012
 

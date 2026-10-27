@@ -36,13 +36,15 @@ FORMAL = {
 def _acting(client, handle: str, work: str | None = None) -> dict:
     seed_user(client, handle)
     return {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=_ledger_user(client, handle)[0],
-            handle=handle,
-            work=work or str(uuid.uuid4()),
-            ttl_s=300,
-            read_only=False,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=_ledger_user(client, handle)[0],
+                handle=handle,
+                work=work or str(uuid.uuid4()),
+                ttl_s=300,
+                read_only=False,
+            )
+        }"
     }
 
 

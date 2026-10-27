@@ -31,7 +31,12 @@ def platform_socket(monkeypatch):
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
-            asked.append((self.path, self.headers.get("x-cheese-token")))
+            asked.append(
+                (
+                    self.path,
+                    self.headers.get("authorization"),
+                )
+            )
             payload = {
                 "/api/sandbox/forge-token": {"data": {"kind": "github_app"}},
                 "/credential": {"token": "handed", "expires_in": 60},

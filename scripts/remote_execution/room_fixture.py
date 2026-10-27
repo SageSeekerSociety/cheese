@@ -219,13 +219,17 @@ class RoomExecutor:
 
         class Handler(base):
             def do_PUT(self):
+                on_socket = self.client_address == ("socket", 0)
                 prefix = (
+                    f"{'/api' if on_socket else ''}"
                     f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
                 )
                 if not self.path.startswith(prefix):
                     return super().do_PUT()
-                assert self.client_address != ("socket", 0)
-                assert self.headers.get("X-Cheese-Token") == "room-handed-token"
+                if on_socket:
+                    assert "Authorization" not in self.headers
+                else:
+                    assert self.headers.get("Authorization") == "Bearer room-handed-token"
                 assert self.headers.get("Content-Type") == "application/x-git-bundle"
                 content = self.rfile.read(int(self.headers["Content-Length"]))
                 digest = hashlib.sha256(content).hexdigest()
@@ -262,11 +266,7 @@ class RoomExecutor:
 
             def do_GET(self):
                 if self.client_address == ("socket", 0):
-                    assert "X-Cheese-Token" not in self.headers
-                    if self.path == "/credential":
-                        return self.reply(
-                            {"token": "room-handed-token", "expires_in": 60}
-                        )
+                    assert "Authorization" not in self.headers
                     if (
                         self.path
                         == f"/api/projects/{executor.project}/git/tasks/{executor.task}"
@@ -317,7 +317,7 @@ class RoomExecutor:
 
             def do_POST(self):
                 if self.client_address == ("socket", 0):
-                    assert "X-Cheese-Token" not in self.headers
+                    assert "Authorization" not in self.headers
                     if (
                         self.path
                         == f"/api/projects/{executor.project}/git/tasks/{executor.task}"
@@ -327,7 +327,7 @@ class RoomExecutor:
                     raise AssertionError(f"unexpected socket POST {self.path}")
                 if self.path != "/execution":
                     return super().do_POST()
-                assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                assert self.headers.get("Authorization") == "Bearer room-fixture-token"
                 payload = json.loads(
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )

@@ -147,7 +147,7 @@ def _lease(case, seat, timeout=660):
     room_id, session_id, token = seat
     return case.client.post(
         f"/topics/{room_id}/sessions/{session_id}/work-lease",
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
         json={"env": {}, "timeout": timeout},
     )
 

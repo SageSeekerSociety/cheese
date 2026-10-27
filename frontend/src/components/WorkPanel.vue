@@ -34,8 +34,10 @@ import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
 
 import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
+import { usePanelSplit } from '../composables/usePanelSplit'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
@@ -58,6 +60,7 @@ import PanelSiteHost from './work/PanelSiteHost.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -475,6 +478,17 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 const tabPanelId = `wp-panel-${useId()}`
 // 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
 const tabBodyRef = ref<HTMLElement | null>(null)
+const { width: bodyWidth } = useElementSize(tabBodyRef)
+const keyExists = (key: string) =>
+  tabs.value.some((tab) => tab.key === key) || openFiles.value.some((f) => fileKey(f.path) === key)
+const {
+  split,
+  canSplit,
+  toggle: toggleSplit,
+  shown,
+  sideClass,
+  drop: dropSplit,
+} = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
 const activeTabLabel = computed(() =>
   active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
@@ -678,6 +692,7 @@ async function closeFile(path: string) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
   const key = fileKey(path)
+  dropSplit(key)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
   const next = openFiles.value.filter((f) => f.path !== path)
@@ -740,11 +755,23 @@ defineExpose({
         :files="openFiles"
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
+        :side="split"
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
       >
-        <template v-if="$slots['tab-actions']" #actions><slot name="tab-actions" /></template>
+        <template v-if="$slots['tab-actions'] || canSplit || split" #actions>
+          <BaseButton
+            v-if="canSplit || split"
+            size="sm"
+            :icon="split ? 'mdi-rectangle-outline' : 'mdi-view-split-vertical'"
+            data-testid="panel-split"
+            :aria-pressed="!!split"
+            :title="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
+            :aria-label="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
+            @click="toggleSplit"
+          /><slot name="tab-actions" />
+        </template>
       </PanelTabs>
 
       <!-- Panel content (not the tab strip) gets its own boundary: a tab that
@@ -764,21 +791,26 @@ defineExpose({
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
-          <div v-show="active === 'overview'" class="tabpane-slot" :class="enterClass('overview')">
+          <div v-show="shown('overview')" class="tabpane-slot" :class="[enterClass('overview'), sideClass('overview')]">
             <slot name="overview" />
           </div>
-          <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
+          <div
+            v-if="!taskId"
+            v-show="shown('threads')"
+            class="tabpane-slot"
+            :class="[enterClass('threads'), sideClass('threads')]"
+          >
             <slot name="threads" />
           </div>
           <PanelSiteHost
             v-if="mounted.has('site')"
-            v-show="active === 'site'"
+            v-show="shown('site')"
             ref="siteRef"
-            :class="enterClass('site')"
+            :class="[enterClass('site'), sideClass('site')]"
             :agent-name="agentName"
             :topic-id="conversationId"
             :project-id="projectId"
-            :active="active === 'site'"
+            :active="shown('site')"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
             :member-names="memberNames"
@@ -791,26 +823,26 @@ defineExpose({
           />
           <PanelChangesHost
             v-if="mounted.has('changes')"
-            v-show="active === 'changes'"
+            v-show="shown('changes')"
             ref="changesRef"
-            :class="enterClass('changes')"
+            :class="[enterClass('changes'), sideClass('changes')]"
             :topic-id="topicId"
             :task-id="taskId"
             :read-only="topic?.status === 'archived' || taskReadOnly"
             :project-id="projectId"
-            :active="active === 'changes'"
+            :active="shown('changes')"
             :refresh-tick="refreshTick"
             :agent-name="agentName"
             :member-names="memberNames"
           />
           <PanelPreviewHost
             v-if="mounted.has('preview')"
-            v-show="active === 'preview'"
+            v-show="shown('preview')"
             :submit-question="submitQuestion"
-            :class="enterClass('preview')"
+            :class="[enterClass('preview'), sideClass('preview')]"
             :topic-id="conversationId"
             :project-id="projectId"
-            :active="active === 'preview'"
+            :active="shown('preview')"
             :refresh-tick="refreshTick"
             :agent-name="agentName"
             :members="members"
@@ -825,16 +857,16 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoomFilesPanelHost
             v-if="mounted.has('files')"
-            v-show="active === 'files'"
-            :class="enterClass('files')"
+            v-show="shown('files')"
+            :class="[enterClass('files'), sideClass('files')]"
             :topic-id="taskId ?? topicId"
             :seats-only="!!topic?.members_only"
             @open="openConversationFile"
           />
           <RoutinePanelHost
             v-if="mounted.has('routines')"
-            v-show="active === 'routines'"
-            :class="enterClass('routines')"
+            v-show="shown('routines')"
+            :class="[enterClass('routines'), sideClass('routines')]"
             :topic-id="topicId"
             :project-id="projectId"
             :room-title="topic?.title ?? ''"
@@ -846,9 +878,9 @@ defineExpose({
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
               v-if="f.document && mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
+              v-show="shown(fileKey(f.path))"
               :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic="null"
               :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
               :activity-tick="activityTick"
@@ -862,8 +894,8 @@ defineExpose({
             />
             <ProjectFileTab
               v-else-if="f.project && mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
-              :class="enterClass(fileKey(f.path))"
+              v-show="shown(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :project-id="projectId ?? topic?.project_id ?? null"
               :channel-id="topicId"
               :path="f.path"
@@ -872,13 +904,13 @@ defineExpose({
             />
             <PanelPreviewHost
               v-else-if="mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
+              v-show="shown(fileKey(f.path))"
               :submit-question="submitQuestion"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic-id="conversationId"
               :project-id="projectId"
               :path="f.path"
-              :active="active === fileKey(f.path)"
+              :active="shown(fileKey(f.path))"
               :refresh-tick="refreshTick"
               :agent-name="agentName"
               :members="members"
@@ -946,6 +978,11 @@ defineExpose({
 .tabbody > * {
   flex: 1 1 auto;
   min-width: 0;
+}
+/* 并排时右边那一格：排在后面，中间一道分隔线。 */
+.tabbody > .tabpane--side {
+  order: 1;
+  border-left: 1px solid var(--line);
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

@@ -145,7 +145,7 @@ async def _teammates_on_bobs_device(client):
             )
             leases[key] = (
                 f"/topics/{topic_id}/sessions/{session.id}/work-lease",
-                {"X-Cheese-Token": token},
+                {"Authorization": f"Bearer {token}"},
             )
         await db.commit()
     return SimpleNamespace(

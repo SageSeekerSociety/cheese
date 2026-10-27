@@ -23,7 +23,7 @@ from tests.integration.conftest import (
     task_agent_headers,
 )
 
-BROWSER = {"X-Cheese-Token": ""}
+BROWSER = {"Authorization": ""}
 
 
 def _a_task(client) -> tuple[str, str, str, str]:

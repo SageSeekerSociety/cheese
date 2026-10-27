@@ -44,7 +44,7 @@ def _do(client, monkeypatch, token: str, act: dict) -> list[dict]:
             call["method"],
             call["path"].replace("{prev}", made),
             json=call.get("body"),
-            headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+            headers=_as(got["pass"]),
         )
         assert sent.status_code == 200, sent.text
         answer = sent.json()["data"]

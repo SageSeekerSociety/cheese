@@ -38,7 +38,7 @@ def _auth_headers(client, handle: str) -> dict:
 
 
 def _as(token: str) -> dict:
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _personal(client, handle: str, project: str | None = None) -> str:
@@ -249,7 +249,7 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     sent = client.post(
         call["path"],
         json=call["body"],
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+        headers=_as(got["pass"]),
     )
     assert sent.status_code == 200, sent.text
     assert sent.json()["data"]["author"] == "alice"
@@ -257,7 +257,7 @@ def test_a_message_the_person_asked_for_is_sent_as_them_through_the_gate(
     again = client.post(
         call["path"],
         json={**call["body"], "request_id": str(uuid.uuid4())},
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+        headers=_as(got["pass"]),
     )
     assert again.status_code == 403
     [check] = _checks(client, "alice")
@@ -313,7 +313,7 @@ def test_a_card_delivering_a_link_is_accepted_as_the_version_cheese_read(
     accepted = client.post(
         call["path"],
         json=call["body"],
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+        headers=_as(got["pass"]),
     )
 
     assert accepted.status_code == 200, accepted.text

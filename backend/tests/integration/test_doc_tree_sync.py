@@ -37,7 +37,9 @@ def test_document_edits_keep_each_sections_author_and_change_record(client):
     revised = DOC_V1.replace("搭建原型。", "先做三个路口的实地观察。")
     response = client.put(
         _doc(client, tid),
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
         json={"content": revised, "expected_version": 1},
     )
     assert response.status_code == 200, response.text

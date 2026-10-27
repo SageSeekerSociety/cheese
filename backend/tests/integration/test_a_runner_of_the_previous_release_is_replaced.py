@@ -351,7 +351,7 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
     answered = client.post(
         f"/topics/{topic}/messages",
         json={"request_id": str(uuid.uuid4()), "content": "the login page is fixed"},
-        headers={"X-Cheese-Token": token, "X-Cheese-Turn": str(WORK)},
+        headers={"Authorization": f"Bearer {token}", "X-Cheese-Turn": str(WORK)},
     )
     assert answered.status_code == 200, answered.text
 

@@ -18,11 +18,14 @@ import uuid
 from typing import Annotated
 
 from fastapi import Depends, Request, Response
+from fastapi.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth.resolver import ActorResolver as ActorResolver
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.config import GATEWAY_MOUNT, settings
+from app.core.credentials import Kind
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -160,16 +163,6 @@ GATED_ROUTES: frozenset[str] = frozenset(
 )
 
 
-def _bearer(header: str | None) -> str | None:
-    """Extract the token from an ``Authorization: Bearer <token>`` header."""
-    if not header:
-        return None
-    parts = header.split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip()
-    return None
-
-
 def _token_verifier(token: str) -> TokenIdentity | None:
     claims = verify_access_token(token)
     if claims is None:
@@ -179,25 +172,52 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
-def _resolver_for(
-    request: Request, db: AsyncSession, bearer: str | None
-) -> ActorResolver:
+#: The kinds of credential an agent acts with, rather than a person's own.
+_AGENT_KINDS = frozenset(
+    {
+        Kind.AGENT,
+        Kind.PROJECT_AGENT,
+        Kind.PERSONAL,
+        Kind.PERSONAL_EXECUTION,
+        Kind.DELEGATED,
+        Kind.PASS,
+    }
+)
+
+
+def resolver_for(request: Request, db: AsyncSession, token: str) -> ActorResolver:
+    """The resolver for a request presenting ``token``: one of the credentials
+    the platform hands its agents, by the kind it says it is
+    (`app.core.credentials`), or else a person's sign-in — one that does not
+    verify included, which is told to sign in again."""
+    person = not (
+        credentials.kind_of(token) in _AGENT_KINDS
+        or credentials.is_platform_secret(token)
+    )
     return ActorResolver(
         session=db,
-        bearer=bearer,
-        cheese_token=request.headers.get("x-cheese-token") or "",
-        screen_token=request.headers.get("x-cheese-screen") or "",
+        bearer=token if person else None,
+        cheese_token="" if person else token,
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
-        gate_pass=request.headers.get("x-cheese-pass") or "",
         path_ids=frozenset(str(v) for v in request.path_params.values()),
     )
+
+
+def presented_credential(connection: HTTPConnection) -> str:
+    """The credential this request carries (`credentials.presented`), for a
+    route that reads a credential itself rather than resolving a caller."""
+    return credentials.presented(connection.headers)
+
+
+#: The credential a request carries, as a route parameter.
+PresentedCredential = Annotated[str, Depends(presented_credential)]
 
 
 def get_actor_resolver(
     request: Request, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> ActorResolver:
-    return _resolver_for(request, db, _bearer(request.headers.get("authorization")))
+    return resolver_for(request, db, credentials.presented(request.headers))
 
 
 #: The cookie a ``<video>`` element's own requests prove the viewer with. The
@@ -214,11 +234,11 @@ def remember_for_media(response: Response, request: Request) -> None:
     """Leave :data:`MEDIA_COOKIE` behind for the ``<video>`` element's own
     requests to this same path, carrying the token this request was made with.
 
-    Only a token sent as ``Authorization`` is mirrored: a cookie is never
-    turned into a fresh cookie, so it cannot outlive the page's own token.
+    Only a person's token sent as ``Authorization`` is mirrored: a cookie is
+    never turned into a fresh cookie, so it cannot outlive the page's own token.
     """
-    token = _bearer(request.headers.get("authorization"))
-    if token:
+    token = credentials.presented(request.headers)
+    if credentials.kind_of(token) is Kind.ACCESS:
         response.set_cookie(
             MEDIA_COOKIE,
             token,
@@ -235,8 +255,8 @@ def get_media_actor_resolver(
 ) -> ActorResolver:
     """``get_actor_resolver`` that also takes the :data:`MEDIA_COOKIE` when the
     request carries no ``Authorization`` header."""
-    bearer = _bearer(request.headers.get("authorization"))
-    return _resolver_for(request, db, bearer or request.cookies.get(MEDIA_COOKIE))
+    token = credentials.presented(request.headers)
+    return resolver_for(request, db, token or request.cookies.get(MEDIA_COOKIE, ""))
 
 
 def _endpoint_name(request: Request) -> str | None:

@@ -40,7 +40,7 @@ it('Escape bubbles through the compact entry and input to exactly one cancel; IM
   expect(ui.emitted().cancel).toHaveLength(2)
 })
 
-it('图上框选批注卡支持直接挂评论、切换投递目标下拉以及显示评论失败提示', async () => {
+it('图上框选批注卡的去处由一个下拉定：默认发进对话，切到「仅留评论」就挂评论，失败时说出来', async () => {
   setLocale('zh-CN')
   vi.stubGlobal(
     'ResizeObserver',
@@ -65,13 +65,18 @@ it('图上框选批注卡支持直接挂评论、切换投递目标下拉以及�
     },
   })
   expect(ui.getByRole('alert').textContent).toContain('评论保存失败')
-  await fireEvent.click(ui.getByTestId('region-note-comment'))
-  expect(ui.emitted().comment).toHaveLength(1)
+  // 同一个选择不再摆两颗按钮：没有单独的「评论」按钮，去处只在下拉里选。
+  expect(ui.queryByTestId('region-note-comment')).toBeNull()
+
+  const input = ui.getByRole('textbox', { name: '就这一处说点什么' })
+  await fireEvent.keyDown(input, { key: 'Enter' })
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.emitted().comment).toBeUndefined()
 
   const select = ui.getByTestId('region-note-recipient') as HTMLSelectElement
   await fireEvent.update(select, 'comment')
-  const input = ui.getByRole('textbox', { name: '就这一处说点什么' })
+  expect(ui.getByRole('button', { name: '评论这一处' })).toBeTruthy()
   await fireEvent.keyDown(input, { key: 'Enter' })
-  expect(ui.emitted().comment).toHaveLength(2)
-  expect(ui.emitted().send).toBeUndefined()
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toHaveLength(1)
 })

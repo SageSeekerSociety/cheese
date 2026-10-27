@@ -257,7 +257,7 @@ def _claimed(token: str, claim: str) -> bool:
     (``sandbox_auth.bind_resource_token``): ``ro``, issued to only read the
     machine, or ``scratch``, whose work is not kept. Read off the token's own
     claims: the refusal's body is the backend's wording, not a contract."""
-    body = token.rpartition(".")[0].removeprefix("cxss_")
+    body = (token.split(".") + ["", ""])[1]
     try:
         claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     except ValueError:
@@ -778,15 +778,15 @@ class RemoteClient:
                     headers={
                         **transport.transport.headers,
                         "Content-Type": "application/json",
-                        "X-Cheese-Token": token,
+                        # What a person's 芝士 does for them once its gate let
+                        # it is done with the pass it was given, in place of
+                        # its own credential (`assistant.passes`).
+                        "Authorization": f"Bearer {args.get('pass') or token}",
                         **(
                             {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
                             if os.environ.get("CHEESE_TURN")
                             else {}
                         ),
-                        # What a person's 芝士 does for them once its gate let
-                        # it (`assistant.passes`).
-                        **({"X-Cheese-Pass": args["pass"]} if args.get("pass") else {}),
                         # The run of the session this call is made in
                         # (`PlatformHost.run`).
                         **({RUN_HEADER: args["run"]} if args.get("run") else {}),
@@ -934,7 +934,7 @@ class RemoteClient:
                 body=body,
                 headers={
                     "Content-Type": "application/json",
-                    "X-Cheese-Token": token,
+                    "Authorization": f"Bearer {token}",
                     **publisher.transport.headers,
                     **(
                         {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
@@ -1504,7 +1504,7 @@ class RemoteClient:
                         body=payload,
                         headers={
                             "Content-Type": "application/json",
-                            "X-Cheese-Token": self.execution_token(),
+                            "Authorization": f"Bearer {self.execution_token()}",
                             **self.transport.headers,
                         },
                     )

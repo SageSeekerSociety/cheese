@@ -61,7 +61,7 @@ def _path(client, task: str) -> str:
 def _as(token: str) -> dict:
     # In place of the platform's secret the test client otherwise sends: a
     # session answering a question has no such thing.
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _edit(client, task: str, token: str):
@@ -261,7 +261,7 @@ def test_an_expired_or_forged_credential_is_none(client):
         assert r.status_code == 401, token
     model = client.post(
         "/llm/v1/chat/completions",
-        headers={"Authorization": f"Bearer {live}", "X-Cheese-Token": ""},
+        headers={"Authorization": f"Bearer {live}"},
         content=b'{"model":"m","messages":[]}',
     )
     assert model.status_code in (401, 403)

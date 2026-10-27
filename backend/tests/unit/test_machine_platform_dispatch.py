@@ -68,8 +68,7 @@ async def test_the_route_sees_the_session_and_only_the_clis_own_headers():
     assert dict(inner["headers"]) == {
         b"content-type": b"application/json",
         b"x-cheese-turn": b"turn",
-        b"X-Cheese-Pass": b"pass",
-        b"x-cheese-token": b"the-session",
+        b"authorization": b"Bearer the-session",
     }
     assert outer.passed == 0
 

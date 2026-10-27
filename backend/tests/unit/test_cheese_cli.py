@@ -316,7 +316,7 @@ def test_raw_request_sends_cheese_token(monkeypatch):
     def fake_urlopen(req, timeout=0):
         seen["url"] = req.full_url
         seen["method"] = req.get_method()
-        seen["token"] = req.get_header("X-cheese-token")
+        seen["token"] = req.get_header("Authorization").removeprefix("Bearer ")
         return _Resp()
 
     monkeypatch.setattr(cli.urllib.request, "urlopen", fake_urlopen)

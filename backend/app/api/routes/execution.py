@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -127,7 +128,7 @@ async def execute(
         payload.method,
         payload.params.get("id", ""),
     )
-    token = request.headers.get("x-cheese-token", "")
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
     # A person's own 芝士 works its sandbox with a credential of its own kind
     # (``machine.holder.Personal``): the conversation is theirs, in no project

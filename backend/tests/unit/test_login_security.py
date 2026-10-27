@@ -2,6 +2,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core import credentials
+from app.core.credentials import Kind
+
 
 class TestAttemptLimiter:
     @pytest.fixture
@@ -156,11 +159,10 @@ class TestPending2faTicket:
         import jwt
 
         from app.common.auth import mint_2fa_pending_token
-        from app.core.config import settings
 
         pinned = 2000000000
         minted = mint_2fa_pending_token(7, expires_at=pinned)
-        decoded = jwt.decode(minted.token, settings.jwt_secret, algorithms=["HS256"])
+        decoded = jwt.decode(minted.token, options={"verify_signature": False})
 
         assert decoded["exp"] == pinned
 
@@ -172,16 +174,10 @@ class TestPending2faTicket:
     def test_a_ticket_without_a_jti_is_not_a_ticket(self) -> None:
         """Including the ones the previous build minted: with no jti there is
         nothing to reserve, so 'has it been spent?' has no answer."""
-        import jwt
 
         from app.common.auth import verify_2fa_pending_token
-        from app.core.config import settings
 
-        legacy = jwt.encode(
-            {"sub": "7", "type": "2fa_pending", "exp": 9999999999},
-            settings.jwt_secret,
-            algorithm="HS256",
-        )
+        legacy = credentials.mint(Kind.TWO_FA_PENDING, {"sub": "7", "exp": 9999999999})
         assert verify_2fa_pending_token(legacy) is None
 
     def test_an_access_token_is_not_a_ticket(self) -> None:

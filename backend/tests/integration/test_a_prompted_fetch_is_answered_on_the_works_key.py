@@ -117,7 +117,7 @@ def test_a_persons_cheese_is_answered_on_their_own_key_through_its_gate(
     r = client.post(
         call["path"],
         json=call["body"],
-        headers={**headers, "X-Cheese-Pass": got["pass"]},
+        headers={**headers, "Authorization": f"Bearer {got['pass']}"},
     )
 
     assert r.status_code == 200, r.text
@@ -132,7 +132,7 @@ def test_a_persons_cheese_is_answered_on_their_own_key_through_its_gate(
 def test_a_project_out_of_credits_gets_the_page_and_no_model_is_asked(client, reader):
     free_plan_credits(client, 0.0)
     project = _project(client, "alice")
-    headers = {"X-Cheese-Token": _issued_token(client, project)}
+    headers = {"Authorization": f"Bearer {_issued_token(client, project)}"}
 
     r = client.post(
         "/fetch",

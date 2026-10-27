@@ -112,13 +112,13 @@ def test_a_task_is_named_by_its_own_session_or_its_owner(client):
 
     # 房间自己的会话不替任务起名 —— 那是任务自己会话的事。
     room_session = {
-        "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=room["id"])
+        "Authorization": f"Bearer {mint_scoped_token(project_id=p['id'], topic_id=room['id'])}"
     }
     refused = client.post(title, json={"title": "别人起的"}, headers=room_session)
     assert refused.status_code == 403
 
     task_session = {
-        "X-Cheese-Token": mint_scoped_token(project_id=p["id"], topic_id=task["id"])
+        "Authorization": f"Bearer {mint_scoped_token(project_id=p['id'], topic_id=task['id'])}"
     }
     r = client.post(title, json={"title": "拆导入"}, headers=task_session)
     assert r.status_code == 200, r.text
