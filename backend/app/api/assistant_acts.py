@@ -61,6 +61,9 @@ class Plan:
     card: tuple[str, dict] | None = None
     #: What 芝士 is told once the calls are made.
     done: str = ""
+    #: Where it acts, the way the person knows it (「频道「实验」」): what its
+    #: step shows. Empty where the step's own arguments say it well enough.
+    subject: str = ""
 
 
 class ActIn(BaseModel):

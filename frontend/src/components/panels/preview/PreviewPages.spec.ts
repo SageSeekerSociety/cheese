@@ -43,6 +43,13 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
 })
 
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
+// 宽窄由 vueuse 的 useElementSize 量，它要真的 ResizeObserver 条目；这里的桩只是一只能手动
+// 触发的回调（下面的 `resize`），两边混用会把那只回调换成 vueuse 的。宽窄在这一份里不是
+// 被测的东西，钉成宽。
+vi.mock('@/lib/previewNarrow', async () => {
+  const { computed } = await import('vue')
+  return { usePreviewNarrow: () => ({ narrow: computed(() => false), measured: computed(() => true) }) }
+})
 
 /** 一页假的：viewport 与 render 都够组件把画布造出来。 */
 function page(number: number) {
@@ -227,9 +234,10 @@ describe('分页文档的阅读视图', () => {
     // 这一条是文字层的字从哪来的：字号 = --total-scale-factor × 每个 span 自己的
     // --font-height，宽高也是 pdf.js 按这个变量写在层上的。它按自己所在的元素读这些
     // 变量，少了就整层按继承来的字号排版——画布照常是对的，只有选中落在别处。
-    // 假的那一页 600 宽，画布就画成 568：两个数都得是同一个比例。
+    // 假的那一页 600 宽，页框就摆成 568（画布铺满页框）：两个数都得是同一个比例。
+    const box = canvas.closest('[data-page]') as HTMLElement
     expect(Number(layer.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(
-      Number.parseFloat(canvas.style.width) / 600,
+      Number.parseFloat(box.style.width) / 600,
       6
     )
     expect(layer.style.getPropertyValue('--scale-round-x')).not.toBe('')
@@ -572,5 +580,55 @@ describe('页上已有的评论标记', () => {
     expect(mark.tagName).toBe('BUTTON')
     expect(mark.className).not.toContain('pv__pin')
     expect(mark.getAttribute('aria-label')).toBe('评论这一处')
+  })
+})
+
+describe('手指放大', () => {
+  /** 点两下：两次抬起隔 150 毫秒、落在同一处。happy-dom 的触摸事件没有构造参数，自己挂。 */
+  function doubleTap(el: HTMLElement) {
+    for (const at of [1000, 1150]) {
+      for (const type of ['touchstart', 'touchend']) {
+        const event = new Event(type, { bubbles: true, cancelable: true })
+        const point = [{ clientX: 50, clientY: 50, identifier: 0 }]
+        Object.defineProperties(event, {
+          touches: { value: type === 'touchstart' ? point : [] },
+          changedTouches: { value: point },
+          timeStamp: { value: at },
+        })
+        el.dispatchEvent(event)
+      }
+    }
+  }
+  const boxWidth = (ui: ReturnType<typeof mount>) =>
+    Number.parseFloat((ui.container.querySelector('[data-page]') as HTMLElement).style.width)
+
+  it('点两下页放大，再点两下回到整页；画布不清空，等手停了再重画', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+
+    // happy-dom 量不出文字的位置，找不到「那一栏」，按两倍放大。
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(1136)
+    // 拉大的旧图留在页上，不是一块白。
+    expect(ui.container.querySelectorAll('canvas')).toHaveLength(2)
+
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
+  })
+
+  it('指位置开着时点两下不放大：那是在指两处', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
   })
 })

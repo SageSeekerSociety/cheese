@@ -91,6 +91,8 @@ router = APIRouter(
 
 #: The most items the inbox lists at once; it says how many more there are.
 INBOX_LIMIT = 30
+#: What the inbox is, named as a step that read it.
+INBOX = "你的待办"
 
 #: Why a thing waits on the person, as their inbox page says it
 #: (``home.inbox.reason``).
@@ -244,7 +246,7 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
             and i.project_id == str(wanted)
         ]
     if not items:
-        return ok({"text": "现在没有等你处理的事。"})
+        return ok({"text": "现在没有等你处理的事。", "subject": INBOX})
     names = _Names(db)
     lines = []
     for item in items[:INBOX_LIMIT]:
@@ -263,7 +265,13 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
         if more > 0
         else ""
     )
-    return ok({"text": head + "\n" + "\n".join(lines) + tail})
+    return ok({"text": head + "\n" + "\n".join(lines) + tail, "subject": INBOX})
+
+
+def _read(found: reading.Read) -> dict:
+    """What a read hands 芝士: the text, and what it read by name, which its
+    step shows."""
+    return ok({"text": found.text, "subject": found.subject})
 
 
 class ReadIn(BaseModel):
@@ -278,15 +286,15 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     me = await _person(resolver, db)
     text = body.ref.strip().strip("/")
     if text == "teams":
-        return ok({"text": await rosters.my_teams(db, me.user_id)})
+        return _read(await rosters.my_teams(db, me.user_id))
     if text == "spaces":
-        return ok({"text": await rosters.my_spaces(db, me.user_id)})
+        return _read(await rosters.my_spaces(db, me.user_id))
     people = _SPACE_PEOPLE.fullmatch(text)
     if people:
-        return ok({"text": await rosters.space(db, me.user_id, int(people[1]))})
+        return _read(await rosters.space(db, me.user_id, int(people[1])))
     desk = _SPACE_DESK.fullmatch(text)
     if desk:
-        return ok({"text": await space_desk.desk(db, me.user_id, int(desk[1]))})
+        return _read(await space_desk.desk(db, me.user_id, int(desk[1])))
     if text.endswith("/settings") and (
         found := refs.parse(text.removesuffix("/settings"))
     ):
@@ -296,17 +304,16 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
                 raise NotFoundError.for_resource("project", found.slug or "")
             channels = await ProjectPages(db, resolver).channels(project.id)
             said = await project_desk.settings(db, project, channels)
-            return ok({"text": said})
+            return _read(reading.Read(f"项目「{project.name}」的设置", said))
     ref = refs.parse(body.ref)
     if ref is not None and ref.kind == "team" and (ref.id or "").isdigit():
-        return ok({"text": await rosters.team(db, me.user_id, int(ref.id or 0))})
+        return _read(await rosters.team(db, me.user_id, int(ref.id or 0)))
     if ref is not None and ref.kind in _WAITING_KINDS:
-        return ok({"text": await _waiting_one(db, me, ref)})
+        return _read(reading.Read(INBOX, await _waiting_one(db, me, ref)))
     if ref is None or ref.kind not in reading.KINDS:
         raise BadRequestError(say("assistantRefUnknown", ref=body.ref))
     reader = reading.Reader(session=db, user_id=me.user_id, timezone=me.timezone)
-    text = await reading.read(reader, ProjectPages(db, resolver), ref, body.page)
-    return ok({"text": text})
+    return _read(await reading.read(reader, ProjectPages(db, resolver), ref, body.page))
 
 
 #: Who is in a space: its managers and members (`rosters.space`).
@@ -395,6 +402,7 @@ async def _message(db, access, body: ActIn, me: Person) -> Plan:
             },
         ),
         done=f"已在「{name}」发出。",
+        subject=f"{'任务' if place.task else '频道'}「{name}」",
     )
 
 
@@ -431,6 +439,7 @@ async def _task(db, access, body: ActIn, me: Person) -> Plan:
             },
         ),
         done=f"已在频道「{room.title}」开了任务「{title}」，AI 队友会接着做。",
+        subject=f"任务「{title}」",
     )
 
 
@@ -481,6 +490,7 @@ async def _review(db, access, body: ActIn, me: Person) -> Plan:
         [call],
         card=("act", {}),
         done=f"已{verb.split('，')[0]}任务「{place.task.title}」。",
+        subject=f"任务「{place.task.title}」",
     )
 
 
@@ -620,6 +630,7 @@ async def _channel(db, access, body: ActIn, me: Person) -> Plan:
         ],
         card=("act", {}),
         done=f"已在项目「{project.name}」建好频道「{title}」。",
+        subject=f"频道「{title}」",
     )
 
 
@@ -752,7 +763,7 @@ async def agent_plan(body: ActIn, resolver: ActorResolverDep, db: DbSession) -> 
     for it, which 芝士's tool makes as the person once its harness has taken
     the action, and what 芝士 is told when they are made."""
     plan, _ = await _planned(db, resolver, body)
-    return ok({"calls": plan.calls, "said": plan.done})
+    return ok({"calls": plan.calls, "said": plan.done, "subject": plan.subject})
 
 
 #: How long one wait on a card holds its request open; 芝士's tool asks again

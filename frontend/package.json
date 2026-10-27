@@ -76,6 +76,7 @@
     "@tiptap/vue-3": "3.30.5",
     "@tiptap/y-tiptap": "3.0.7",
     "@types/katex": "^0.16.7",
+    "@use-gesture/vanilla": "10.3.1",
     "@vue-flow/core": "1.48.2",
     "@vue-flow/node-resizer": "1.5.1",
     "@vueuse/core": "^13.6.0",

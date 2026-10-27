@@ -41,6 +41,17 @@ export interface AssistantStep {
   at?: number
   /** 它读到的东西叫什么（「频道「综合」」）：回来时才知道，显示在编号的位置。 */
   shown?: string
+  /** 它做的是哪一类事：查阅、改了东西、影响到别人。回来时才知道。 */
+  effect?: StepEffect
+}
+
+/** 一步做的是哪一类事，照工具表上写的（`backend/sandbox/cheese` 的 `READS` 等）。 */
+export type StepEffect = 'reads' | 'changes' | 'reaches others'
+
+const STEP_EFFECTS = new Set<string>(['reads', 'changes', 'reaches others'])
+
+function effectOf(value: unknown): { effect?: StepEffect } {
+  return typeof value === 'string' && STEP_EFFECTS.has(value) ? { effect: value as StepEffect } : {}
 }
 
 /** 芝士派出的一个分身：派它的那次调用（`call`）、它做什么、做到哪了、最近做的几步。 */
@@ -54,7 +65,16 @@ export interface AssistantSubagent {
 
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
-  steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number; shown?: string }[]
+  steps?: {
+    call: string
+    name: string
+    args: string
+    failed?: string
+    ms?: number
+    at?: number
+    shown?: string
+    effect?: string
+  }[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
   /** 这一轮派出的分身，最后是什么样。 */
@@ -570,6 +590,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         ms: step.ms,
         ...(typeof step.at === 'number' ? { at: step.at } : {}),
         ...(step.shown ? { shown: step.shown } : {}),
+        ...effectOf(step.effect),
         state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
         error: step.failed,
       })),
@@ -647,7 +668,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         if (step.call !== payload.call || step.state !== 'run') return step
         on.toolEnded?.(step.call, step.name, false)
         const shown = typeof payload.shown === 'string' && payload.shown ? { shown: payload.shown } : {}
-        return { ...step, ...shown, state: 'done' }
+        return { ...step, ...shown, ...effectOf(payload.effect), state: 'done' }
       })
       if (!steps.value.some((step) => step.state === 'run')) tool.value = null
     } else if (event === 'tool_args' && typeof payload.call === 'string' && typeof payload.text === 'string') {
