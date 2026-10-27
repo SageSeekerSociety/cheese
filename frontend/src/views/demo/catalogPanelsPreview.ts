@@ -450,7 +450,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           note: '这一处按不到',
           canComment: true,
         },
-        expect: '评论',
+        expect: '发给芝士',
       },
       {
         get name() {
