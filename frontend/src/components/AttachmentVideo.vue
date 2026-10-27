@@ -6,11 +6,12 @@ import BaseButton from './base/BaseButton.vue'
 import { t } from '@/i18n'
 import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
-const props = defineProps<{ topicId: string | null; path: string; canOpen?: boolean }>()
-const emit = defineEmits<{ open: []; download: [] }>()
+const props = defineProps<{ topicId: string | null; path: string; canOpen?: boolean; canLocate?: boolean }>()
+const emit = defineEmits<{ open: []; download: []; locate: [payload: { seconds: number; timestamp: string }] }>()
 const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 const name = computed(() => props.path.split('/').pop() ?? props.path)
 const url = ref('')
+const videoRef = ref<HTMLVideoElement | null>(null)
 // width / height of the recording, once the player has read it. Until then the
 // box is 16:9; after it, a portrait phone recording gets a tall box instead of
 // being letterboxed into a wide one.
@@ -52,6 +53,14 @@ function measure(event: Event) {
   if (video.videoWidth > 0 && video.videoHeight > 0) ratio.value = video.videoWidth / video.videoHeight
 }
 
+function locateCurrentTime() {
+  const raw = videoRef.value?.currentTime ?? 0
+  const seconds = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+  const mins = String(Math.floor(seconds / 60)).padStart(2, '0')
+  const secs = String(seconds % 60).padStart(2, '0')
+  emit('locate', { seconds, timestamp: `${mins}:${secs}` })
+}
+
 watch(() => [props.topicId, props.path], reset)
 onBeforeUnmount(reset)
 </script>
@@ -61,6 +70,7 @@ onBeforeUnmount(reset)
     <!-- eslint-disable-next-line vuejs-accessibility/media-has-caption -- user-uploaded videos have no supplied caption track; keep native controls and download available -->
     <video
       v-if="url && !failure"
+      ref="videoRef"
       :src="url"
       controls
       playsinline
@@ -101,6 +111,19 @@ onBeforeUnmount(reset)
         @click="emit('open')"
       >
         {{ t('work.room.file.open') }}
+      </BaseButton>
+      <BaseButton
+        v-if="canLocate"
+        kind="ghost"
+        size="sm"
+        prepend-icon="mdi-map-marker-plus-outline"
+        class="attachment-video__locate"
+        data-testid="video-locate"
+        :title="t('work.room.video.locateTime')"
+        :aria-label="t('work.room.video.locateTime')"
+        @click="locateCurrentTime"
+      >
+        {{ t('work.room.video.locateTime') }}
       </BaseButton>
     </div>
   </div>

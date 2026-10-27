@@ -7,7 +7,7 @@
  *
  * 修复前这条会红：框一出来，焦点就在那个输入框上。
  */
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import PreviewLocator from './PreviewLocator.vue'
@@ -106,4 +106,22 @@ it('支持把当前指认加入待发列表，并在待发条上一键全部发�
   expect(sendAllBtn).toBeTruthy()
   sendAllBtn!.click()
   expect(ui.emitted().sendQueued).toHaveLength(1)
+})
+
+it('支持通过投递目标下拉切换为「仅留评论」并回车提交', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '留条评论', canComment: true },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const select = ui.getByTestId('locator-recipient') as HTMLSelectElement
+  await fireEvent.update(select, 'comment')
+  const input = ui.container.querySelector('.locator__input') as HTMLInputElement
+  await fireEvent.keyDown(input, { key: 'Enter' })
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toBeUndefined()
 })

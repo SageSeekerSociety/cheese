@@ -3,7 +3,7 @@ import type { PreviewInfo } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
@@ -159,6 +159,10 @@ it('shows a video deliverable in the video viewer instead of calling it unreadab
   await waitFor(() => expect(screen.getByRole('button', { name: '打开视频' })).toBeTruthy())
   expect(requestPreviewSession).not.toHaveBeenCalled()
   expect(screen.queryByText('这个文件不是文本')).toBeNull()
+
+  await fireEvent.click(screen.getByTestId('video-locate'))
+  expect(await screen.findByText('时间点 00:00')).toBeTruthy()
+  expect(screen.getByText('视频 00:00 画面')).toBeTruthy()
 })
 
 it('still says a file the browser cannot draw is not text', async () => {
