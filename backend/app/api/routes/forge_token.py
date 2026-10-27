@@ -285,9 +285,7 @@ async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
     The git relay and tunnel answer protocol errors, not JSON, so the refusal
     ``require_seated_agent`` raises is turned into a yes/no here."""
     try:
-        await require_seated_agent(
-            db, token, project_id=project_id, topic_id=None, allow_machine=True
-        )
+        await require_seated_agent(db, token, project_id=project_id, topic_id=None)
     except (AuthenticationRequiredError, ForbiddenError):
         return False
     return True
@@ -305,9 +303,7 @@ async def sandbox_forge_token(
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
-    await require_seated_agent(
-        db, token, project_id=project_id, topic_id=None, allow_machine=True
-    )
+    await require_seated_agent(db, token, project_id=project_id, topic_id=None)
     # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes. On GitHub it
