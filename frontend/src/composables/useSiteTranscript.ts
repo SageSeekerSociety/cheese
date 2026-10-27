@@ -119,6 +119,11 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     const author = hooks.viewing()
     olderBusy = true
     if (!quiet) loadingOlder.value = true
+    // 这一趟真的要发了，才把上一次的失败收掉：上面那几条守卫发不出去时错误得留着
+    // （`retry` 靠这一点，才不是「按了等于没按」）。收在这里而不是按下重试那一刻，
+    // 是因为错误态占着整块地方——不收的话读者看不见「加载更早的现场…」，也看不见
+    // 屏上那几行，按下去像是没反应。
+    if (!quiet) clearError()
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
@@ -158,10 +163,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // scrollHeight and compensating with a scrollHeight that already excludes them
       // pulls the reader up by their height on every page. See capAround.
       capSite()
-      // 这一次真的读成了才把上一次的失败收掉：错误态是在这里收的，不是在按下重试
-      // 那一刻收的（见 `retry`）。上面那几条守卫可能让这一趟一个请求都不发，那样
-      // 错误得留着——收掉就等于告诉读者「好了」，可屏上什么都没回来。
-      if (!quiet) clearError()
+      // 预取也可能正好把失败的那一页拿回来（它读的正是没挪过的游标）。那几行已经在
+      // 手上了，红条却还盖着它们——读者还得再按一次重试，重发一条他手上已经有了的
+      // 请求。所以这里不看 `quiet`：往回读成功了就是成功了，那一条错误该收。
+      clearError()
       return true
     } catch (e) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
@@ -439,14 +444,14 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    *  一页去顶替它会把人拽回末尾，而且他停在历史中间、窗口又被裁过时（`hasNewer`
    *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。
    *
-   *  错误不在这里收：两条路自己的守卫都可能让这一趟一个请求都不发（最新一页那条
-   *  `hasNewer` 守卫、往上翻那条 `olderBusy` / `hasOlder` / 游标守卫）。当场收掉的
-   *  话，读者看见红条凭空消失、屏上什么都没回来——正是这一颗按钮要避免的样子。收
-   *  在读到之后：`loadPage` 与 `loadOlder` 各自读完才 `clearError()`。
+   *  错误收在哪由两条路自己定，都不在这里收：往上翻那一路在 `loadOlder` 的守卫放行、
+   *  请求真的要发出去之后才收（守卫发不出去就留着）；最新一页那一路由这里先收，因为
+   *  `loadPage` 的骨架屏只在 `errorMsg` 为空时才摆——而那一路上报的错误，按定义只
+   *  出现在 `firstRead` / 换视角 / 换对话这几种状态下，恰好都是 `hasNewer` 那条守卫
+   *  不成立的时候，所以先收不会被守卫吞掉。
    *
-   *  最新一页那一路要先把错误收掉再读，否则 `loadPage` 认的是「这一格已经报错了」，
-   *  骨架屏不会出现（它只在 `errorMsg` 为空时才摆）——按了像是没反应。往上翻那一路
-   *  没有这个顾虑：它自己摆的是「加载更早的现场…」，与错误态不冲突。 */
+   *  都不能「按下去当场收」：那会让发不出去的那几趟也把红条抹掉，读者看见红条凭空
+   *  消失、屏上什么都没回来。 */
   function retry(): void {
     if (errorFromOlder.value) {
       void loadOlder()

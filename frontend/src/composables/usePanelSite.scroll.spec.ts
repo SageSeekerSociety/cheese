@@ -532,49 +532,49 @@ describe('a read that is slow or fails', () => {
     scope.stop()
   })
 
-  it('keeps the error when a retry sends no request at all', async () => {
-    // 往上翻那条路有几条守卫会让重试一个请求都不发（预取已经在飞时 `olderBusy`
-    // 就是一条）。错误要留着：当场把它收掉，读者看见红条凭空消失、屏上什么都没
-    // 回来，还以为读好了。
+  it('drops the error the moment the retried read goes out, so the reader sees it work', async () => {
+    // 错误态占着整块地方（`PanelSite` 里它是 `v-else-if`，记录和「加载更早的现场…」都
+    // 在 `v-else`）。按下重试当场把错误收掉，读者立刻看见记录回来、那一句「加载更早的
+    // 现场…」在转——而不是对着一条一动不动的红条等。
     api.getTranscript.mockResolvedValueOnce(
       page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
     )
-    const { box, el, site, scope } = await openAtBottom()
+    let n = 0
+    api.getTranscript.mockImplementation(async () => {
+      const k = n
+      n += 1
+      return page(
+        Array.from({ length: 120 }, (_, i) => block(`p${k}_${i}`, i % 60)),
+        { has_more: true, oldest_id: `p${k}_0` }
+      )
+    })
+    const { box, site, scope } = await openAtBottom()
+    await settle()
 
-    api.getTranscript.mockClear()
+    // 读者往上翻：这一页失败。
     api.getTranscript.mockRejectedValueOnce(new Error('请求等待超时，请重试'))
     box.scrollTop = 0
-    el.dispatchEvent(new Event('scroll'))
     site.onSiteScroll()
     await settle()
     expect(site.errorMsg.value).toBe('请求等待超时，请重试')
 
-    // 读者这一页还立着「有更早的」，但后台预取已经占了这一个请求槽（`olderBusy`）：
-    // 这一刻按重试，`loadOlder` 直接早退。
-    let releasePrefetch!: () => void
-    api.getTranscript.mockClear()
+    // 按下重试：请求挂在路上。错误这一刻就该收掉。
+    let release!: () => void
     api.getTranscript.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          releasePrefetch = () => resolve(page([block('p', -1)], { has_more: true, oldest_id: 'p' }))
-        })
+      () => new Promise((resolve) => {
+        release = () => resolve(page([block('z', 0)], { has_more: false }))
+      })
     )
-    box.scrollTop = 0
-    el.dispatchEvent(new Event('scroll'))
-    site.onSiteScroll()
-    await settle()
-    expect(api.getTranscript, '预取在飞').toHaveBeenCalledTimes(1)
-
-    api.getTranscript.mockClear()
     site.retry()
     await settle()
-    expect(api.getTranscript, '这一趟一个请求都发不出去').toHaveBeenCalledTimes(0)
-    expect(site.errorMsg.value, '错误得留着').toBe('请求等待超时，请重试')
+    expect(site.errorMsg.value, '错误在请求发出去的那一刻就收掉').toBeNull()
+    expect(site.loadingOlder.value, '屏上那一句「加载更早的现场…」要立起来').toBe(true)
 
-    releasePrefetch()
+    release()
     await settle()
     scope.stop()
   })
+
 })
 
 describe('a topic with no records yet', () => {
