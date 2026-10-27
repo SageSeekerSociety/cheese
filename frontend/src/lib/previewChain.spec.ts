@@ -1,4 +1,5 @@
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
+import type { ChainInput } from './previewChain'
 
 import { expect, it } from 'vitest'
 
@@ -17,7 +18,7 @@ const frame = (over: Partial<PreviewFrame> = {}): PreviewFrame => ({
   runtime: 'unconfirmed',
   ...over,
 })
-const base = {
+const base: ChainInput = {
   platformError: null,
   live: true,
   tunnelUp: true,
@@ -26,7 +27,7 @@ const base = {
   navigationError: '',
   agentName: '小 C',
 }
-const states = (input: Partial<typeof base>) => previewChain({ ...base, ...input }).map((s) => `${s.key}:${s.state}`)
+const states = (input: Partial<ChainInput>) => previewChain({ ...base, ...input }).map((s) => `${s.key}:${s.state}`)
 
 it('a running app is three green links; a static page is two', () => {
   expect(states({})).toEqual(['platform:ok', 'tunnel:ok', 'app:ok'])

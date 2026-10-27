@@ -121,8 +121,6 @@ function staticFileMount() {
     global: {
       stubs: {
         VIcon: true,
-        VSpacer: true,
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
         VChip: { template: '<span><slot /></span>' },
         ...menuStubs,
       },
@@ -287,7 +285,6 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
       stubs: {
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
         ...menuStubs,
       },
     },
@@ -342,7 +339,6 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
       stubs: {
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
         ...menuStubs,
       },
     },

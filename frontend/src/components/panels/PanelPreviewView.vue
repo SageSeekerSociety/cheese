@@ -59,6 +59,8 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   active: true,
   path: null,
   autoReloaded: false,
+  // 链上「应用」那一段：没给就按「还没答」算，和刚打开面板时一样。
+  previewAppUp: false,
   frames: undefined,
   displayedFrame: null,
   navigation: 'idle',
