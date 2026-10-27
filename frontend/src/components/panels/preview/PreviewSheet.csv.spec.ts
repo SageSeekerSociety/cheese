@@ -88,6 +88,21 @@ it('分号分隔的文件不挤成一列', async () => {
   expect(grid(container)[1]).toEqual(['张三', '90'])
 })
 
+it('探测分隔符时不把引号里的逗号算进去', async () => {
+  const { container } = mount(utf8('姓名;"备注,说明,更多";分数\n张三;"北京,上海,广州";90\n'))
+
+  await waitFor(() => expect(grid(container).length).toBe(2))
+  expect(grid(container)[0]).toEqual(['姓名', '备注,说明,更多', '分数'])
+  expect(grid(container)[1]).toEqual(['张三', '北京,上海,广州', '90'])
+})
+
+it('只有空引号字段的 CSV 也不是空文件', async () => {
+  const { container } = mount(utf8('""'))
+
+  await waitFor(() => expect(grid(container).length).toBe(1))
+  expect(grid(container)[0]).toEqual([''])
+})
+
 it('制表符分隔的文件也读得出列', async () => {
   const { container } = mount(utf8('姓名\t分数\n张三\t90\n'))
 

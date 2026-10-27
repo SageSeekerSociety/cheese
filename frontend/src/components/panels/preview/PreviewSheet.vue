@@ -182,15 +182,27 @@ function decodeText(bytes: Uint8Array): string {
 }
 
 /** 分隔符不总是逗号：Excel 按系统的列表分隔符导出，某些区域设置下是分号；从数据库
- *  导出的常是制表符。数第一行里哪个多就用哪个。引号里的分隔符也被数进去了，但一份
- *  真表里真正的分隔符仍然占多数，而猜错的表现是整张表挤成一列 —— 一眼就看得出。 */
+ *  导出的常是制表符。数第一条记录里哪个多就用哪个，且只数引号外的分隔符；引号里的
+ *  内容不是列边界。猜错的表现是整张表挤成一列 —— 一眼就看得出。 */
 function sniffSeparator(text: string): string {
-  const end = text.search(/\r?\n/)
-  const line = end === -1 ? text : text.slice(0, end)
   let best = ','
   let most = 0
+  const counts = new Map<string, number>([',', ';', '\t'].map((sep) => [sep, 0]))
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch !== '"') continue
+      if (text[i + 1] === '"') i += 1
+      else quoted = false
+      continue
+    }
+    if (ch === '"') quoted = true
+    else if (ch === '\n' || ch === '\r') break
+    else if (counts.has(ch)) counts.set(ch, counts.get(ch)! + 1)
+  }
   for (const sep of [',', ';', '\t']) {
-    const n = line.split(sep).length - 1
+    const n = counts.get(sep)!
     if (n > most) {
       best = sep
       most = n
@@ -207,6 +219,7 @@ function parseCsv(text: string, sep: string): string[][] {
   let row: string[] = []
   let field = ''
   let quoted = false
+  let hasField = false
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i]
     if (quoted) {
@@ -217,7 +230,10 @@ function parseCsv(text: string, sep: string): string[][] {
       } else quoted = false
       continue
     }
-    if (ch === '"') quoted = true
+    if (ch === '"') {
+      quoted = true
+      hasField = true
+    }
     else if (ch === sep) {
       row.push(field)
       field = ''
@@ -227,9 +243,13 @@ function parseCsv(text: string, sep: string): string[][] {
       field = ''
       rows.push(row)
       row = []
-    } else field += ch
+      hasField = false
+    } else {
+      field += ch
+      hasField = true
+    }
   }
-  if (field !== '' || row.length) {
+  if (field !== '' || row.length || hasField) {
     row.push(field)
     rows.push(row)
   }
