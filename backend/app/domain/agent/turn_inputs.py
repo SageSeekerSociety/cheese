@@ -52,7 +52,10 @@ from app.domain.agent.models import (
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
-from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+from app.domain.delivery.receipts import (
+    terminate_inputs_of_dead_works,
+    terminate_unread_of_session,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
@@ -497,10 +500,11 @@ async def close_turns_of_a_destroyed_machine(
     conversation_id: uuid.UUID,
     agent_handle: str,
     harness: str,
+    native_session_id: str | None,
     at: datetime,
 ) -> set[uuid.UUID]:
     """End the turns a session had open when the platform destroyed its machine,
-    and give up on the inputs those turns held.
+    and give up on every input that machine will never read.
 
     The one authority that can say these turns are over is the platform itself:
     it took the machine away, and the runner that would have reported their end
@@ -514,6 +518,16 @@ async def close_turns_of_a_destroyed_machine(
     So this is not that judgement being loosened. It fires only where the
     platform did the destroying, and says nothing about a machine that stopped
     answering.
+
+    What it ends is everything that machine was given, not only what was being
+    run on it when it went. A mid-turn addition (``input_id`` is not
+    ``work_id``) is left behind by the close of the turns: once its own turn
+    has stopped, no later step asks about it, and while it stays unfinished the
+    seat refuses every later message for good (``seat_has_unfinished_input``) —
+    eleven of them in the incident of 2026-10-23, with no session ever opened.
+    Its fate can never be reported either, because the runner that would have
+    reported it went with the machine, so the destruction ends it too, by the
+    session the machine held (``terminate_unread_of_session``).
 
     Runs in the caller's transaction, under the destroyed home's lock, so the
     close and the removal it belongs to land together. The seat's own state row
@@ -547,6 +561,16 @@ async def close_turns_of_a_destroyed_machine(
             await terminate_inputs_of_dead_works(
                 session, claimed, reason="machine_destroyed"
             )
+    if native_session_id is not None:
+        # The turns this machine had open are not all it was given: an input
+        # written into it while it worked has no open turn to be collected once
+        # that turn stops, and would hold its seat for good.
+        await terminate_unread_of_session(
+            session,
+            harness=harness,
+            native_session_id=native_session_id,
+            reason="machine_destroyed",
+        )
     seats = (
         (
             await session.execute(

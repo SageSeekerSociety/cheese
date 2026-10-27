@@ -15,6 +15,14 @@ prepared, and the platform has no authority to end anything on it; its turns
 stay open and ``death_evidence.unknown_row`` keeps them so (FB-56 legacy③).
 That rule is what the second test here holds, and the change that closes
 destroyed machines must not touch it.
+
+The turns are not all a destroyed machine was given. A person's message added
+into a working session (a mid-turn addition, `input_id` is not `work_id`) is no
+turn's own work, so closing the turns never reaches it: once the turn it joined
+has stopped, it holds its seat for good, and every later message to that
+teammate is turned away without a session ever opening — eleven of them in the
+incident of 2026-10-23. The third test holds the rule that the destruction ends
+those too: it is the last moment anything can know they will never be read.
 """
 
 import time
@@ -31,6 +39,8 @@ from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn, SessionState
 from app.domain.agent_session.models import AgentSession
+from app.domain.delivery.input_holds import seat_has_unfinished_input
+from app.domain.delivery.models import NativeInput
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.main import app
@@ -177,6 +187,108 @@ def _working_task(client) -> Iterator[tuple[KeepsWorking, dict, str, uuid.UUID]]
         yield channel, task, room, task_id
     finally:
         app.dependency_overrides.pop(get_chat_service, None)
+
+
+def _seat_and_session(client, task_id: uuid.UUID) -> tuple[str, str, str]:
+    """The harness, the native conversation the machine held, and the seat the
+    ledger names inputs by — the three strings an input row is written under."""
+
+    async def read() -> tuple[str, str, str]:
+        async with client.test_factory() as session:
+            placed = await session.scalar(
+                select(AgentSession).where(AgentSession.conversation_id == task_id)
+            )
+            seat = await session.scalar(
+                select(SessionState).where(SessionState.conversation_id == task_id)
+            )
+            assert placed is not None and placed.resume_token, "会话还没有 native id"
+            assert seat is not None, "座位没有状态行"
+            return placed.harness, placed.resume_token, seat.agent_handle
+
+    return client.portal.call(read)
+
+
+def _leave_an_unread_input(
+    client,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    *,
+    harness: str,
+    native: str,
+    seat: str,
+) -> uuid.UUID:
+    """One input added to a turn that has already ended, and never read.
+
+    A mid-turn addition: its ``input_id`` is not its ``work_id``, so it is not
+    its own work's, no turn's close accounts for it, and
+    ``unread_input_with_over_work`` cannot free it however long the work has
+    been over. What it holds is the seat."""
+
+    async def write() -> uuid.UUID:
+        async with client.test_factory() as session:
+            (running,) = list(
+                await session.scalars(
+                    select(AgentTurn).where(
+                        AgentTurn.conversation_id == task_id,
+                        AgentTurn.stopped_at.is_(None),
+                    )
+                )
+            )
+            joined = AgentTurn(
+                id=uuid.uuid4(),
+                conversation_id=task_id,
+                continuation_id=running.continuation_id,
+                author="alice",
+                content="这一句没人读到",
+                started_at=running.started_at,
+                delivered_at=running.delivered_at,
+                stopped_at=running.started_at + timedelta(minutes=1),
+                session_id=running.session_id,
+                agent_handle=running.agent_handle,
+            )
+            session.add(joined)
+            session.add(
+                NativeInput(
+                    project_id=project_id,
+                    conversation_id=task_id,
+                    recipient_handle=seat,
+                    harness=harness,
+                    native_session_id=native,
+                    input_id=uuid.uuid4(),
+                    work_id=joined.id,
+                    registered_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+            return joined.id
+
+    return client.portal.call(write)
+
+
+def _inputs(client, task_id: uuid.UUID) -> int:
+    """How many inputs the platform has handed this conversation's session."""
+
+    async def read() -> int:
+        async with client.test_factory() as session:
+            return len(
+                list(
+                    await session.scalars(
+                        select(NativeInput.input_id).where(
+                            NativeInput.conversation_id == task_id
+                        )
+                    )
+                )
+            )
+
+    return client.portal.call(read)
+
+
+def _seat_is_held(client, task_id: uuid.UUID, seat: str) -> bool:
+    async def read() -> bool:
+        async with client.test_factory() as session:
+            return await seat_has_unfinished_input(session, task_id, seat)
+
+    return client.portal.call(read)
 
 
 def _sandbox_home(client, task: dict, task_id: uuid.UUID) -> uuid.UUID:
@@ -327,3 +439,42 @@ def test_a_machine_out_of_reach_leaves_the_turn_open(client):
         ).json()["data"]
         (room_row,) = [item for item in board["data"] if item["id"] == room]
         assert room_row["moving"] is True, "the room stopped counting it as work"
+
+
+def test_destroying_the_machine_frees_the_seat_its_unread_inputs_held(client):
+    """平台销毁机器时，这台机器上所有没被读过的输入一并结掉，不只还开着那一轮里的。
+
+    座位被一条没人读过的输入按住，再来的消息就一条也递不进去——平台把它当作「上一条
+    还没读完」，不写进会话，也不给它开一轮（2026-10-23 那次 11 条消息停在门外、
+    会话看起来像丢了，就是这么来的）。那条输入是中途插进正在跑的那一轮的，它自己
+    不是一轮；那一轮停下之后，关轮次的那条路再也不会提到它。机器被销毁，是平台最后
+    一个能说「它再也不会被读到」的时刻，它得把这句话说全。
+    """
+    with _working_task(client) as (channel, task, room, task_id):
+        harness, native, seat = _seat_and_session(client, task_id)
+        _backdate(client, task_id, datetime.now(UTC) - timedelta(hours=21, minutes=24))
+        _leave_an_unread_input(
+            client,
+            uuid.UUID(task["project_id"]),
+            task_id,
+            harness=harness,
+            native=native,
+            seat=seat,
+        )
+        assert _seat_is_held(client, task_id, seat), (
+            "一条没人读过的输入没有按住座位，用例的处境没造出来"
+        )
+
+        assert _destroy(
+            client, _sandbox_home(client, task, task_id), task_id, Destroys()
+        )
+
+        assert not _seat_is_held(client, task_id, seat), (
+            "这台机器上那条没人读的输入，销毁之后还在按着座位"
+        )
+        handed = _inputs(client, task_id)
+        post_message(client, task["id"], "alice", {"content": "还在吗"})
+        _until(
+            lambda: _inputs(client, task_id) > handed,
+            "座位还按着：下一条消息没能交给会话",
+        )

@@ -659,6 +659,7 @@ class SandboxLifecycle:
                     conversation_id=row.conversation_id,
                     agent_handle=row.agent_handle,
                     harness=row.harness,
+                    native_session_id=row.resume_token,
                     at=now,
                 )
             line = (
