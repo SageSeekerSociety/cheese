@@ -28,7 +28,7 @@ from app.core.errors import (
     BadRequestError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.domain.project_skill.service import (
     session_skill_bundle,
     stored_session_skill_bundle,
@@ -52,7 +52,7 @@ async def download_skill_bundle(digest: str, request: Request) -> Response:
     always launches with a scoped credential, so it never needs it here.
     """
     claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
-    project_id = claims.get("p") if claims else None
+    project_id = claims.get("p") if claims and not held_by_a_machine(claims) else None
     if not project_id:
         raise AuthenticationRequiredError("A project-scoped credential is required")
     if not _DIGEST_RE.fullmatch(digest):

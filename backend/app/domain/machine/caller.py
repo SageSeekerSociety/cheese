@@ -84,13 +84,17 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
 
 
 async def credential_of(
-    db: AsyncSession, caller: MachineCaller, *, ttl_s: int = CALL_CREDENTIAL_TTL_S
+    db: AsyncSession,
+    caller: MachineCaller,
+    *,
+    ttl_s: int = CALL_CREDENTIAL_TTL_S,
+    held: bool = True,
 ) -> str | None:
     """The credential the caller's executor holds, made again for one request:
     the session's launch credential bound to its lease (as
     `session_work.restart_executor` makes it), a 支线's marked as keeping no
-    work, and marked as held by a machine so it calls no model. None when the
-    session is gone."""
+    work, and marked as held by a machine (`held=True`) unless kept in-process
+    for `/machine/api` (`held=False`). None when the session is gone."""
     row = await db.get(AgentSession, uuid.UUID(caller.session_id))
     if row is None:
         return None
@@ -111,4 +115,4 @@ async def credential_of(
         lease_generation=lease.get("generation"),
         scratch=not await session_keeps_work(db, row.id),
     )
-    return for_a_machine(bound)
+    return for_a_machine(bound) if held else bound

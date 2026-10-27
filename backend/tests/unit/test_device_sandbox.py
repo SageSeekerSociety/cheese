@@ -532,7 +532,7 @@ def _holds_no_credential(room):
     assert room.bash('printf %s "${CHEESE_TOKEN-unset}"') == ""
     assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"')
     token_file = room.home / ".cheese" / "cheese-preview.token"
-    assert not token_file.exists() or token_file.read_text() == ""
+    assert not token_file.exists() and not token_file.is_symlink()
 
 
 @sandboxed

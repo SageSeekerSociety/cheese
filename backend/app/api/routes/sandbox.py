@@ -15,7 +15,11 @@ from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core import background
 from app.core.errors import UnauthorizedError
-from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
+from app.core.sandbox_auth import (
+    held_by_a_machine,
+    is_global_sandbox_token,
+    scoped_token_claims,
+)
 from app.domain.machine.session_work import checkpoint_room
 
 logger = logging.getLogger(__name__)
@@ -64,7 +68,8 @@ async def get_cheese_cli(
     (a device has no baked-in image). Gated by any valid scoped
     token — it carries no data, just the script; the token still authorizes the
     ACTIONS the CLI performs."""
-    if not scoped_token_claims(x_cheese_token):
+    claims = scoped_token_claims(x_cheese_token)
+    if not claims or held_by_a_machine(claims):
         return JSONResponse(
             {"code": 401, "message": "invalid sandbox token", "data": None},
             status_code=401,

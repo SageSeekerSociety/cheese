@@ -23,7 +23,11 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import BadRequestError, UnauthorizedError
-from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
+from app.core.sandbox_auth import (
+    held_by_a_machine,
+    is_global_sandbox_token,
+    scoped_token_claims,
+)
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.backend_log import BackendErrorBatchIn
 
@@ -37,7 +41,7 @@ def _room(
     body — a container reporting for project A must not be able to write into
     project B by asserting a different id."""
     claims = scoped_token_claims(token)
-    if claims is not None:
+    if claims is not None and not held_by_a_machine(claims):
         project = claims.get("p")
         topic = claims.get("t")
         return (
