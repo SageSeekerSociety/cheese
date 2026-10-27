@@ -510,13 +510,26 @@ jobs:
       # check what the injected bridge's snapshot keeps and what it drops.
       # jsdom is a frontend devDependency, and a pure shard has no frontend
       # install; a skipped case fails the suite (scripts/assert_suite_ran.py),
-      # so it is installed here at the version the frontend's lockfile resolves
-      # (package.json states a caret range, which would float).
+      # so it is installed here.
+      #
+      # The version is the frontend lockfile's resolution for the root project,
+      # not `devDependencies.jsdom` (a caret range, which floats) and not a
+      # `jsdom@x` key found anywhere in the file (a transitive dependency
+      # pulling another major would win). Only the root importer's own `jsdom:`
+      # entry answers "what does the frontend install"; the awk below reads
+      # nothing else and fails this step when it is not there.
       - name: Install jsdom for the preview bridge's snapshot test
         if: matrix.layer == 'pure'
         run: |
-          version="$(sed -n 's/^  jsdom@\([0-9][^:]*\):$/\1/p' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml" | head -1)"
-          test -n "$version" || { echo "no resolved jsdom in frontend/pnpm-lock.yaml" >&2; exit 1; }
+          awk '
+            /^importers:$/ {in_imp=1; next}
+            in_imp && /^  \.:$/ {in_root=1; next}
+            in_imp && /^  [^ ]/ {in_root=0}
+            in_root && /^      jsdom:$/ {want=1; next}
+            want && /^ {8}version: / {sub(/^ {8}version: */, ""); print; exit}
+          ' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml" > "$RUNNER_TEMP/jsdom-version"
+          version="$(cat "$RUNNER_TEMP/jsdom-version")"
+          test -n "$version" || { echo "the root importer in frontend/pnpm-lock.yaml names no jsdom version" >&2; exit 1; }
           npm install --prefix "$RUNNER_TEMP/jsdom" --no-audit --no-fund "jsdom@$version"
           echo "CHEESE_TEST_JSDOM=$RUNNER_TEMP/jsdom/node_modules/jsdom" >> "$GITHUB_ENV"
 
