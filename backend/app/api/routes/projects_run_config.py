@@ -58,15 +58,16 @@ the same prefix and tags, is all it takes.
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.member_settings import change_project_settings, member_setting_actor
+from app.api.member_settings import change_project_settings
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -141,18 +142,15 @@ async def get_default_model(
     return ok(_default_model_state(project.settings, access))
 
 
-@router.put("/{project_id}/default-model", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/default-model")
 async def save_default_model(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.edit_settings)],
     body: ProjectDefaultModelUpdate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。
-    项目里的人和 AI 队友都能改，方案不允许的模型照样拒（``member_settings``）。"""
-    actor = await member_setting_actor(resolver, project_id)
-    project = await ProjectService(db).get_or_404(project_id)
-
+    方案不允许的模型照样拒（``member_settings``）。"""
+    project = at.project
     access = await UsageService(db).model_access(project.team_id)
     valid = {c["id"]: c for c in model_choices(project.settings)}
     patch: dict[str, object] = {}
@@ -173,7 +171,7 @@ async def save_default_model(
         else:
             patch[key] = chosen
     settings = await change_project_settings(
-        db, project, patch, remove=remove, by=actor.handle
+        db, project, patch, remove=remove, by=at.actor.handle
     )
     return ok(_default_model_state(settings, access))
 
@@ -294,25 +292,20 @@ class ComputeConfigsIn(BaseModel):
     max_concurrent_turns: int | None = Field(default=None, strict=True)
 
 
-@router.put("/{project_id}/compute-configs", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/compute-configs")
 async def save_compute_configs(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.edit_settings)],
     body: ComputeConfigsIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """What a new agent in this project gets, and how many of its turns may run
-    at once. Anyone in the project may choose either (``member_settings``);
-    nobody already working moves."""
-    actor = await member_setting_actor(resolver, project_id)
-    project = await ProjectService(db).get(project_id)
-    if project is None:
-        raise NotFoundError(say("projectNotFound"))
+    at once (``member_settings``); nobody already working moves."""
+    project = at.project
     patch: dict[str, object] = {}
     remove: list[str] = []
     if "default" in body.model_fields_set and body.default is not None:
         environment = parse(body.default)
-        await check_allowed(db, project, environment, actor)
+        await check_allowed(db, project, environment, at.actor)
         patch["execution_environment"] = environment.model_dump()
     if "max_concurrent_turns" in body.model_fields_set:
         ceiling = body.max_concurrent_turns
@@ -329,7 +322,7 @@ async def save_compute_configs(
         else:
             patch["max_concurrent_turns"] = ceiling
     settings_now = await change_project_settings(
-        db, project, patch, remove=remove, by=actor.handle
+        db, project, patch, remove=remove, by=at.actor.handle
     )
     return ok(
         {
