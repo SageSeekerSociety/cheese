@@ -108,14 +108,25 @@ PINNED_PLATFORM="linux-x64"
 
 die() { echo "ocr-review: $*" >&2; exit 1; }
 
-# A ceiling that cannot be read is not a ceiling: awk coerces a non-numeric
-# value to 0, and `timeout 0s` means no timeout at all, so a typo would silently
-# remove the bound this script exists to provide. Every zero form disarms it.
-case "$WALL_CLOCK_MIN" in
-  ''|*[!0-9.]*) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$WALL_CLOCK_MIN'" ;;
-esac
-[ "$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { print (m == 0) ? "0" : "1" }')" = 0 ] \
-  && WALL_CLOCK_MIN=0
+# Read the ceiling, or refuse to run: awk coerces a non-numeric value to 0, and
+# `timeout 0s` means no timeout at all, so a typo would silently remove the
+# bound this script exists to provide. `.` and `..` pass a plain character
+# filter and would coerce to 0, so at least one digit is required. Every zero
+# form means `disarmed`. A function so `--self-test` drives this same code.
+read_ceiling() {
+  local raw=$1
+  case "$raw" in
+    ''|*[!0-9.]*) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$raw'" ;;
+    *[0-9]*) ;;
+    *) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$raw'" ;;
+  esac
+  if [ "$(awk -v m="$raw" 'BEGIN { print (m == 0) ? "0" : "1" }')" = 0 ]; then
+    printf '0\n'
+  else
+    printf '%s\n' "$raw"
+  fi
+}
+WALL_CLOCK_MIN=$(read_ceiling "$WALL_CLOCK_MIN")
 
 # Run the CLI under the wall clock, writing the run's result to $1 and its own
 # output to the log $2. Everything after those two is the command.
@@ -178,11 +189,18 @@ self_test() {
   # stay installed after this function returned and fire on the next one's
   # return with $dir out of scope — an unbound variable under set -u.
   st_cleanup() { rm -rf "$dir"; }
+  # A marker unique to this run: a fixed one collides with a leftover from an
+  # earlier run, or with any other process whose command line happens to
+  # contain it, and either reads as a grandchild that survived the ceiling.
+  mark="ocr-self-test-$RANDOM-$$"
+  export OCR_SELF_TEST_MARK="$mark"
   fake="$dir/ocr"
   cat >"$fake" <<'FAKE'
 #!/usr/bin/env bash
 printf '{"status":"partial","summary":{"files_reviewed":1}}\n'
-sleep 9137 &
+# Named via the environment, not a fixed word: `exec -a` sets argv[0], which is
+# what `pgrep -f` matches, and a fixed name collides with leftovers.
+exec -a "$OCR_SELF_TEST_MARK" sleep 9999 &
 trap 'printf "{\"status\":\"partial-after-term\"}\n"; exit 1' TERM
 while :; do sleep 1; done
 FAKE
@@ -202,7 +220,7 @@ FAKE
   if kill -0 "$run_pid" 2>/dev/null; then
     echo "self-test FAILED: nothing stopped the run; it was still going after 20s" >&2
     kill "$run_pid" 2>/dev/null || true
-    pkill -f "sleep 9137" 2>/dev/null || true
+    pkill -f "$mark" 2>/dev/null || true
     st_cleanup
     return 1
   fi
@@ -214,7 +232,7 @@ FAKE
   grep -q "closed at the 0.05m wall clock" "$dir/note" \
     || { echo "self-test FAILED: the ceiling did not report that it was what stopped the run"; fail=1; }
   sleep 1
-  if killed=$(pgrep -f "sleep 9137"); then
+  if killed=$(pgrep -f "$mark"); then
     echo "self-test FAILED: a grandchild outlived the ceiling (pids: $killed)" >&2
     kill $killed 2>/dev/null || true
     fail=1
@@ -228,11 +246,49 @@ FAKE
     timeout 2 "$fake" >"$dir/note2" || true
   [ ! -s "$dir/note2" ] \
     || { echo "self-test FAILED: a disarmed ceiling reported itself as an active one"; fail=1; }
-  pkill -f "sleep 9137" 2>/dev/null || true
+  pkill -f "$mark" 2>/dev/null || true
+
+  # The killed-after-grace case is a different status (137) and a different
+  # message, and it has to say the partial result may be incomplete rather than
+  # that it was written.
+  stubborn="$dir/ocr-killed"
+  cat >"$stubborn" <<'STUB'
+#!/usr/bin/env bash
+trap '' TERM
+exec -a "$OCR_SELF_TEST_MARK-2" sleep 9999 &
+while :; do sleep 1; done
+STUB
+  chmod +x "$stubborn"
+  WALL_CLOCK_MIN=0.02 GRACE_S=1 \
+    run_ocr "$dir/out3.json" "$dir/out3.log" "$stubborn" >"$dir/note3" || true
+  grep -q "ignored SIGTERM" "$dir/note3" \
+    || { echo "self-test FAILED: a hard-killed run did not say so (note: $(cat "$dir/note3"))"; fail=1; }
+  pkill -f "$mark" 2>/dev/null || true
+
+  # A ceiling that cannot be read must stop the script, not run unbounded: `.`
+  # and `..` are the cases a plain character filter lets through and awk then
+  # coerces to 0.
+  for bad in half -5 . .. 1e3 " "; do
+    if (read_ceiling "$bad" >/dev/null) 2>/dev/null; then
+      echo "self-test FAILED: OCR_WALL_CLOCK='$bad' was accepted as a ceiling" >&2
+      fail=1
+    fi
+  done
+  # A ceiling is read as itself; every zero form reads as the disarmed `0`.
+  for good in 25 3.5; do
+    got=$(read_ceiling "$good") || { echo "self-test FAILED: OCR_WALL_CLOCK='$good' was refused" >&2; fail=1; continue; }
+    [ "$got" = "$good" ] \
+      || { echo "self-test FAILED: OCR_WALL_CLOCK='$good' read as '$got'" >&2; fail=1; }
+  done
+  for zero in 0 0.0 00; do
+    got=$(read_ceiling "$zero") || { echo "self-test FAILED: OCR_WALL_CLOCK='$zero' was refused" >&2; fail=1; continue; }
+    [ "$got" = 0 ] \
+      || { echo "self-test FAILED: OCR_WALL_CLOCK='$zero' read as '$got', not disarmed" >&2; fail=1; }
+  done
 
   st_cleanup
   [ "$fail" = 0 ] || return 1
-  echo "self-test ok: the wall clock stops the run with SIGTERM, reports it, and takes the grandchildren with it"
+  echo "self-test ok: the ceiling stops the run with a signal OCR can act on, reports both cut kinds, takes the grandchildren, and refuses a ceiling it cannot read"
 }
 
 FROM=""
@@ -376,7 +432,13 @@ fi
 # exists to preserve. It exits 0 and says what it is; every other non-zero
 # status keeps the old meaning.
 if [ "$status" != 0 ]; then
-  if [ -n "$ceiled" ] && [ -s "$OUT" ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$OUT" 2>/dev/null; then
+  # 124 is timeout's own status: the ceiling sent SIGTERM and OCR came back. A
+  # 137 means it had to be killed, which does not prove the ceiling did it — the
+  # OOM killer yields the same status — and whatever it wrote may be truncated.
+  # Either way the result has to be a report, not just valid JSON: OCR writes an
+  # object carrying a coverage manifest, and a stray `{}` is not a review.
+  if [ "$status" = 124 ] && [ -s "$OUT" ] \
+    && python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("manifest") else 1)' "$OUT" 2>/dev/null; then
     echo "ocr-review: closed at the ${WALL_CLOCK_MIN}m wall clock — a partial result, not a failed run: $OUT" >&2
   else
     echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
