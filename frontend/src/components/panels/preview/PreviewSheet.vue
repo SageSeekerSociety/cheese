@@ -352,6 +352,10 @@ watch(
         :selected="selected"
         :marks="marksByAddress"
         :active-mark="activeMark"
+        :sheet-name="active.name"
+        :changed="changed"
+        :changed-by="changedBy"
+        :show-before="showBefore"
         @choose="choose"
         @mark="emit('mark', $event)"
       />
