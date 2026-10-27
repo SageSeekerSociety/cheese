@@ -148,6 +148,7 @@
       "publishedSome": "Published {n}",
       "lacks": "\"{name}\" is missing {fields}",
       "failed": "\"{name}\" could not be published",
+      "failedBecause": "\"{name}\" could not be published: {reason}",
       "separator": "; ",
       "removeFailed": "Could not delete"
     }

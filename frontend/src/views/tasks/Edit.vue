@@ -243,6 +243,8 @@ const formInvalid = ref(0)
 const attempted = ref(false)
 const saving = ref(false)
 const resubmit = ref(false)
+/** 上一次保存没成的原因，留在页头，直到再点保存（同发题页的发布）。 */
+const saveError = ref('')
 
 // 改了阶段的截止、增删了阶段，存下去可能让学生被判未通过或回到进行中：存之前先说有几个人。
 const stageCheck = useStageChangeCheck((stages) => TaskBoardApi.stageEffect(taskId, stages))
@@ -272,6 +274,7 @@ function save(again: boolean) {
 async function onSubmit(data: TaskFormSubmitData) {
   if (saving.value) return
   saving.value = true
+  saveError.value = ''
   try {
     if (data.stages && !(await stageCheck.allows(data.stages))) return
     await draft.flush()
@@ -298,7 +301,9 @@ async function onSubmit(data: TaskFormSubmitData) {
     }
     navigateToDetail()
   } catch (err) {
-    void errorHandler.handle(err as Error, { defaultMessage: t('global.updateFailed') })
+    // 页头留着这句，不再另弹一条转眼就消失的提示。
+    saveError.value = errorHandler.sentence(err as Error, t('global.updateFailed'))
+    void errorHandler.handle(err as Error, { showToast: false })
   } finally {
     saving.value = false
   }
@@ -369,6 +374,9 @@ onBeforeUnmount(() => void draft.flush())
     <template #actions>
       <span v-if="attempted && formInvalid" class="te__blocking">{{
         t('spaces.detail.publishTask.blocking', { n: formInvalid })
+      }}</span>
+      <span v-else-if="saveError" class="te__blocking" role="alert" data-testid="edit-save-failed">{{
+        saveError
       }}</span>
       <span v-else-if="unsaved" class="te__unsaved" data-testid="edit-unsaved">{{ t('tasks.edit.unsaved') }}</span>
       <BaseButton v-if="unsaved" kind="ghost" :disabled="saving" @click="discard">{{

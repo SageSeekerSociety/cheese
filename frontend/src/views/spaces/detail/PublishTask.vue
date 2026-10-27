@@ -450,8 +450,14 @@ async function publishAll() {
           { id: item.id as number, name, conversationId: conversationHere.value ?? '' },
         ]
         if (item.id === draft.id.value) draft.gone()
-      } catch {
-        sentences.push(t('spaces.detail.publishTask.strip.failed', { name }))
+      } catch (error) {
+        // 和单发一样说服务端那句话；没有原话（网络断了等）才只说发布失败。
+        const reason = errorHandler.sentence(error as Error, '')
+        sentences.push(
+          reason
+            ? t('spaces.detail.publishTask.strip.failedBecause', { name, reason })
+            : t('spaces.detail.publishTask.strip.failed', { name })
+        )
       }
     }
   } finally {

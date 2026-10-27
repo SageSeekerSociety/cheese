@@ -531,6 +531,10 @@
     "s6": {
       "name": "Publish refused",
       "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
+    },
+    "s7": {
+      "name": "Publish all with one refused",
+      "note": "After \"Publish all\", the server refused the second task: the note says how many went out, and the refused one carries the server's own words."
     }
   },
   "basicInfoView": {
