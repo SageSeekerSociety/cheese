@@ -235,6 +235,22 @@ class ImageRegionQuoteIn(BaseModel):
     natural_height: int = Field(gt=0, strict=True)
 
 
+class ViewingQuoteIn(BaseModel):
+    """读者发这条消息时右侧正开着的那一份：只说是哪个文件，不说指着哪一处。
+
+    读者说「这里不对」「这页太挤」时，受话人得知道「这里」是哪一份。这条引用就是那份
+    上下文：它是读者看得见、能关掉的（撰写框上明写「芝士会看到你在看什么」），只在他
+    发消息时随消息走，不实时上报。没有版本：右栏开着的那一格未必读到了版本，指不出
+    哪一版就不假装指出来；受话人要的话去读文件的当前版。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["viewing"]
+    path: str = Field(min_length=1, max_length=1000)
+    task_id: uuid.UUID | None = None
+
+
 QuotedContextIn = Annotated[
     SlidePageQuoteIn
     | PagePinQuoteIn
@@ -244,7 +260,8 @@ QuotedContextIn = Annotated[
     | WebElementQuoteIn
     | WebTextQuoteIn
     | WebRegionQuoteIn
-    | ImageRegionQuoteIn,
+    | ImageRegionQuoteIn
+    | ViewingQuoteIn,
     Field(discriminator="kind"),
 ]
 

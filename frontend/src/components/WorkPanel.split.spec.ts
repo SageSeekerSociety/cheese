@@ -106,3 +106,22 @@ it('看过另一格以后，页签条上能并排；两格同时画出来，上�
   await waitFor(() => expect(visible(ui.getByTestId('pane-overview'))).toBe(false))
   expect(visible(ui.getByTestId('pane-threads'))).toBe(true)
 })
+
+it('面板报出此刻开着哪一份文件（撰写框上「芝士会看到你在看什么」读它）', async () => {
+  const ui = render(WorkPanel as unknown as Component, {
+    props: { topic, activityTick: 0, tab: 'file:output/招募方案.md' },
+    global: {
+      plugins: [vuetify, i18n],
+      stubs: {
+        PanelSiteHost: true,
+        PanelChangesHost: true,
+        PanelPreviewHost: true,
+        RoutinePanelHost: true,
+        RoomFilesPanelHost: true,
+      },
+    },
+  })
+  await waitFor(() => expect((ui.emitted().viewing ?? []).at(-1)).toEqual(['output/招募方案.md']))
+  await fireEvent.click(await ui.findByRole('tab', { name: /概览/ }))
+  await waitFor(() => expect((ui.emitted().viewing ?? []).at(-1)).toEqual([null]))
+})

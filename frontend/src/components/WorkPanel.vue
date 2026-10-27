@@ -158,6 +158,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
+  (e: 'viewing', path: string | null): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
   // 随行带那张合成图。
   (e: 'locate', payload: PreviewLocate): void
@@ -364,6 +365,14 @@ const {
   // 预览和改动只有任务有（见 CHANNEL_TABS）：频道没有电脑在它名下干活。
   taskScoped: computed(() => !!props.taskId),
 })
+
+// 此刻面板上开着哪一份文件（撰写框上「芝士会看到你在看什么」那一行读它）。
+watch(
+  () =>
+    active.value === 'preview' ? previewPath.value : active.value.startsWith('file:') ? active.value.slice(5) : null,
+  (path) => emit('viewing', path),
+  { immediate: true }
+)
 
 // ---- 这一格此刻有没有东西 ----
 // 四格永远都在、位置不变：人记得住「改动在第三格」，一格时有时无的 tab 栏两次打开

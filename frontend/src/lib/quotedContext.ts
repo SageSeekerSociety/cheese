@@ -17,6 +17,7 @@ export type QuotedContext =
   | WebTextQuote
   | WebRegionQuote
   | ImageRegionQuote
+  | ViewingQuote
 
 /** 带文件身份的那些引文共有的那一半：文件身份 + 版本。少了哪一样都指不回同一份东西。
  *
@@ -185,6 +186,15 @@ export type ImageRegionQuote = Readonly<
   }
 >
 
+/** 读者发这条消息时右侧正开着的那一份（撰写框上那行「芝士会看到你在看什么」）。
+ *  只有文件，没有位置和版本：右栏开着的那一格未必读到了版本，指不出哪一版就不假装
+ *  指出来。它让「这里不对」「这页太挤」有个落点。见 `lib/viewingContext.ts`。 */
+export type ViewingQuote = Readonly<{
+  kind: 'viewing'
+  path: string
+  task_id: string | null
+}>
+
 export function frozenQuote(quote: QuotedContext): QuotedContext {
   return Object.freeze({ ...quote })
 }
@@ -256,6 +266,10 @@ function isWebViewport(value: unknown): boolean {
 export function isQuotedContext(value: unknown): value is QuotedContext {
   if (!value || typeof value !== 'object') return false
   const q = value as Record<string, unknown>
+  // 「在看哪一份」只有路径：不带版本，也不带位置。
+  if (q.kind === 'viewing') {
+    return isText(q.path, 1, 1000) && (q.task_id === null || typeof q.task_id === 'string')
+  }
   // 应用上圈的一块区域是唯一不带文件身份的：它凭地址定位，先单独认下来。
   if (q.kind === 'web-region') {
     return isText(q.url, 1, 2048) && isWebRect(q.rect) && isWebViewport(q.viewport)

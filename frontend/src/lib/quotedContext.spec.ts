@@ -288,3 +288,12 @@ it('网页那两种也走文件身份那一半：路径和版本缺一样就不�
     expect(isQuotedContext({ ...quote, task_id: 3 })).toBe(false)
   }
 })
+
+it('「在看哪一份」：只有路径和所在任务，不带版本和位置', () => {
+  const viewing = { kind: 'viewing', path: 'output/招募方案.docx', task_id: null }
+  expect(isQuotedContext(viewing)).toBe(true)
+  expect(isQuotedContext({ ...viewing, task_id: 'b2c7a1f0-0000-4000-8000-000000000000' })).toBe(true)
+  expect(isQuotedContext({ ...viewing, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...viewing, path: 'x'.repeat(1001) })).toBe(false)
+  expect(isQuotedContext({ ...viewing, task_id: 3 })).toBe(false)
+})

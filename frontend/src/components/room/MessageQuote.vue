@@ -16,7 +16,8 @@ const summary = computed(() => quoteSummary(props.quote))
 const path = computed(() => ('path' in props.quote ? props.quote.path : ''))
 const identityLine = computed(() => {
   const quote = props.quote
-  if (!('path' in quote)) return ''
+  // 「在看哪一份」只有路径，没有来源和版本可说。
+  if (!('path' in quote) || quote.kind === 'viewing') return ''
   return (
     t(quote.source === 'committed' ? 'slides.sourceCommitted' : 'slides.sourceLive') +
     ' · ' +

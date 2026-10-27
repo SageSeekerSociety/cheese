@@ -17,7 +17,7 @@ import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/compo
 import type { NoticeRow } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
 
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { editMessage, hearVoice as hearVoiceIn, summonAgent } from '../api'
@@ -26,6 +26,7 @@ import { isAgentBlock, isAgentHandle } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { frozenQuote } from '../lib/quotedContext'
+import { useShareViewing, VIEWING_CONTEXT } from '../lib/viewingContext'
 
 import { t } from '@/i18n'
 
@@ -269,11 +270,21 @@ export function useChatComposer(deps: ChatComposerDeps) {
       errorMsg.value = t('work.room.attachments.sendBlocked')
       return
     }
-    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value)) {
+    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value ?? lookingAt(content))) {
       draft.value = ''
       clearDraftQuote()
       clearPendingAtts()
     }
+  }
+
+  // 右侧开着的那一份（「芝士会看到你在看什么」，lib/viewingContext.ts）：读者没关掉那一
+  // 行、这条也没指别的一处时随消息带上。只有文字的消息才带——引用不能是一条消息的
+  // 全部（后端 quoteNeedsMessage），只发图时就不带。
+  const viewing = inject(VIEWING_CONTEXT, null)
+  const { share: shareViewing } = useShareViewing()
+  function lookingAt(content: string): QuotedContext | undefined {
+    if (!content.trim() || !shareViewing.value) return undefined
+    return viewing?.value ?? undefined
   }
 
   // 每话题草稿: stash / restore everything the composer holds. Nothing here is
