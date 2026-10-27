@@ -332,11 +332,15 @@ class PlatformSocketClient:
             resp = conn.getresponse()
             body = resp.read()
         except _CLIENT_ERRORS as exc:
-            raise OSError(f"platform socket error: {exc}") from exc
+            raise OSError(
+                f"platform socket error: {exc}"
+            ) from exc  # i18n-exempt: machine log
         finally:
             conn.close()
         if resp.status != 200:
-            raise OSError(f"platform socket HTTP {resp.status} for {path}")
+            raise OSError(
+                f"platform socket HTTP {resp.status} for {path}"
+            )  # i18n-exempt: machine log
         return json.loads(body)
 
     def forge_data(self, *, force: bool = False) -> dict | None:
@@ -396,8 +400,8 @@ def _is_private_destination(host: str) -> bool:
         except ValueError:
             continue
         if (
-            ip.is_loopback
-            or ip.is_private
+            not ip.is_global
+            or ip.is_loopback
             or ip.is_link_local
             or ip.is_multicast
             or ip.is_reserved
@@ -695,10 +699,14 @@ class ForgeProxyRuntime:
             while b"\r\n\r\n" not in head:
                 chunk = left.recv(4096)
                 if not chunk:
-                    raise OSError("forge tunnel closed before establishing")
+                    raise OSError(
+                        "forge tunnel closed before establishing"
+                    )  # i18n-exempt: machine log
                 head.extend(chunk)
             if b" 200 " not in head.split(b"\r\n", 1)[0]:
-                raise OSError("forge tunnel refused CONNECT")
+                raise OSError(
+                    "forge tunnel refused CONNECT"
+                )  # i18n-exempt: machine log
             tls_ctx = ssl.create_default_context()
             with tls_ctx.wrap_socket(left, server_hostname=host) as tls_sock:
                 req_lines = [
@@ -729,7 +737,7 @@ class _PreloadedSocket:
         self._sock = sock
 
     def makefile(self, mode: str, *args, **kwargs):
-        return self._sock.makefile(mode, *args, **kwargs)
+        return self._sock.makefile(mode, *args, **kwargs)  # type: ignore[call-overload]
 
 
 class _ForgeSocketServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
