@@ -35,7 +35,16 @@ def _cli():
 
 @pytest.mark.parametrize(
     "path",
-    ["app.py", "src/main.ts", "Widget.tsx", "Main.java", "lib.rs", "run.sh", "a.json", "notes.txt"],
+    [
+        "app.py",
+        "src/main.ts",
+        "Widget.tsx",
+        "Main.java",
+        "lib.rs",
+        "run.sh",
+        "a.json",
+        "notes.txt",
+    ],
 )
 def test_code_and_plain_text_are_shown_as_text(path):
     assert artifact_kind_for(path) == "text"
