@@ -19,6 +19,7 @@
 // 对话框里，那一层留在壳里（`PanelPreviewView`）；这一档只管按 `editing` 之外的那几
 // 样画：文档条上的「编辑」把路径发上去，开不开由外面记。
 import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
@@ -26,7 +27,7 @@ import type { FileKind } from '@/lib/fileKind'
 import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useElementSize } from '@vueuse/core'
 
@@ -36,6 +37,9 @@ import PreviewPage from './PreviewPage.vue'
 import PreviewPages from './PreviewPages.vue'
 import PreviewSheet from './PreviewSheet.vue'
 import PreviewSlides from './PreviewSlides.vue'
+import PreviewVersionDiff from './PreviewVersionDiff.vue'
+import PreviewVersionPicker from './PreviewVersionPicker.vue'
+import PreviewVersionStrip from './PreviewVersionStrip.vue'
 import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -72,6 +76,9 @@ const props = defineProps<{
   slideContext?: SlideSource
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
+  /** 文件名旁「第 N 版」、下面那条「本版共修改 N 处」、对比态和看旧版（`composables/panelPreview/versions.ts`）。
+   *  不给就不摆。 */
+  versions?: PreviewVersionsBundle
   showHistory: boolean
   /** 这一份文件上已有的评论指着的那几处（Markdown 里画成标记）。 */
   anchors?: readonly {
@@ -192,6 +199,34 @@ watch(
   }
 )
 
+// ---- 版本 ----
+// 版本行、提示条、对比态、旧版：取数和判断都在 `versions` 那一包里，这里只决定摆在哪。
+// 协同编辑开着时不摆：编辑器里看到的是正在改的正文，不是哪一版。
+const version = computed(() => (props.liveEdit?.editingPath.value ? null : props.versions?.current.value ?? null))
+const compare = computed(() => (version.value ? props.versions?.compare.value ?? null : null))
+const oldView = computed(() => (version.value ? props.versions?.oldView.value ?? null : null))
+/** 对比态里逐段标出增删的那一种（Markdown、Word）；表格的改动画在格子上，不换正文。 */
+const textCompare = computed(() => {
+  const changes = compare.value?.changes
+  return changes?.kind === 'text' ? changes : null
+})
+const pickMode = computed(() =>
+  props.versions?.canView.value ? 'view' : props.versions?.canCompare.value ? 'compare' : 'none'
+)
+const sheetChanged = computed(() => (oldView.value ? null : props.versions?.changedCells.value ?? null))
+
+const diffRef = ref<InstanceType<typeof PreviewVersionDiff> | null>(null)
+const changeIndex = ref(0)
+function goChange(index: number) {
+  changeIndex.value = index
+  diffRef.value?.focusChange(index)
+}
+// 比出来了就停在第一处：读者点「查看改动」是要看改了哪，不是从文档开头往下找。
+watch(textCompare, (changes) => {
+  changeIndex.value = 0
+  if (changes?.count) void nextTick(() => diffRef.value?.focusChange(0))
+})
+
 /** 文档条上「编辑」之外的那几件：宽时平铺成 BaseButton，窄时收进「…」里的一行。
  *  「编辑」不在这里——它是这一格里让事情往下走的那一颗，留在条上不折叠。 */
 type DocAction = {
@@ -202,17 +237,32 @@ type DocAction = {
   /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
   testid?: string
   disabled?: boolean
+  /** 按下去的那种（「对比」开着时）。 */
+  active?: boolean
   run: () => void
 }
 const actions = computed<DocAction[]>(() => {
   const list: DocAction[] = []
-  if (props.previewFile && !props.previewFile.path.startsWith('library/')) {
+  // 有版本行时「历史」收进它的菜单（菜单底下那一条），条上不再重复摆一颗。
+  if (props.previewFile && !props.previewFile.path.startsWith('library/') && !version.value) {
     list.push({
       key: 'history',
       icon: 'mdi-history',
       label: t('work.room.preview.history'),
       testid: 'file-history',
       run: () => emit('toggle-history'),
+    })
+  }
+  if (props.versions?.canCompare.value && !props.liveEdit?.editingPath.value) {
+    const on = !!props.versions.compare.value
+    list.push({
+      key: 'compare',
+      icon: 'mdi-compare-horizontal',
+      label: t('work.room.versions.compare'),
+      title: t('work.room.versions.compareTitle'),
+      testid: 'version-compare',
+      active: on,
+      run: () => (on ? props.versions?.exitCompare() : props.versions?.openCompare()),
     })
   }
   if (props.canPage) {
@@ -268,6 +318,16 @@ defineExpose({ snapshot, clearMark })
       <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
       <span v-if="!namedTab" class="doc__name">{{ documentName }}</span>
       <span class="doc__type t-meta">{{ documentType.label }}</span>
+      <PreviewVersionPicker
+        v-if="version && versions"
+        :list="versions.list.value"
+        :current="version"
+        :shown="oldView?.seq ?? version.seq"
+        :compact="compact"
+        :on-pick="pickMode"
+        @choose="versions.choose($event)"
+        @history="emit('toggle-history')"
+      />
       <v-spacer />
       <BaseButton
         v-if="canEdit"
@@ -299,6 +359,7 @@ defineExpose({ snapshot, clearMark })
             role="menuitem"
             :prepend-icon="action.icon"
             :disabled="action.disabled"
+            :active="action.active"
             @click="action.run()"
           >
             <v-list-item-title>{{ action.label }}</v-list-item-title>
@@ -314,6 +375,7 @@ defineExpose({ snapshot, clearMark })
           :prepend-icon="action.icon"
           :title="action.title"
           :disabled="action.disabled"
+          :active="action.active"
           :data-testid="action.testid"
           @click="action.run()"
         >
@@ -326,6 +388,23 @@ defineExpose({ snapshot, clearMark })
       :file-history="props.fileHistory"
       :project-id="props.projectId"
       @mention-click="emit('mention-click', $event)"
+    />
+    <PreviewVersionStrip
+      v-if="version && versions"
+      :hint="versions.hint.value"
+      :compare="compare"
+      :old-seq="oldView?.seq ?? null"
+      :old-error="versions.oldError.value"
+      :can-compare="versions.canCompare.value"
+      :change-index="changeIndex"
+      :compact="compact"
+      @view-changes="versions.openCompare()"
+      @dismiss="versions.dismissHint()"
+      @exit-compare="versions.exitCompare()"
+      @compare-current="versions.openCompare(oldView?.seq)"
+      @back="versions.backToLatest()"
+      @prev="goChange(changeIndex - 1)"
+      @next="goChange(changeIndex + 1)"
     />
 
     <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
@@ -346,8 +425,25 @@ defineExpose({ snapshot, clearMark })
       {{ liveEdit.refused.value }}
     </v-alert>
 
+    <PreviewVersionDiff
+      v-if="textCompare"
+      ref="diffRef"
+      :rows="textCompare.diff.rows"
+      :markdown="textCompare.markdown"
+      :compact="compact"
+    />
+    <template v-else-if="oldView">
+      <PreviewMarkdown v-if="oldView.kind === 'markdown' && oldView.text !== null" :source="oldView.text" />
+      <div v-else-if="oldView.kind !== 'markdown' && oldView.bytes" class="doc__body">
+        <PreviewSheet v-if="oldView.kind === 'sheet'" :data="oldView.bytes" :kind="documentType.sheet ?? 'workbook'" />
+        <PreviewPages v-else :data="oldView.bytes" />
+      </div>
+      <div v-else-if="!versions?.oldError.value" class="doc__state">
+        <v-progress-circular indeterminate color="primary" size="24" />
+      </div>
+    </template>
     <PreviewMarkdownLive
-      v-if="documentType.view === 'markdown' && liveEdit?.editingPath.value"
+      v-else-if="documentType.view === 'markdown' && liveEdit?.editingPath.value"
       :live="liveEdit"
       @close="emit('close-live-edit')"
     />
@@ -411,6 +507,8 @@ defineExpose({ snapshot, clearMark })
         :kind="documentType.sheet ?? 'workbook'"
         :marks="sheetAnchors"
         :active-mark="activeAnchor"
+        :changed="sheetChanged"
+        :changed-by="versions?.changedBy.value"
         @cell="emit('cell', $event)"
         @range="emit('sheet-range', $event)"
         @mark="emit('anchor', $event)"

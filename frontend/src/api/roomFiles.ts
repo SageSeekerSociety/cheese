@@ -296,6 +296,16 @@ export function restoreRoomFileRevision(topicId: string, revisionId: string): Pr
   })
 }
 
+/** 某一版的原始字节：预览里比两版改了什么时读它。 */
+export async function roomFileRevisionBytes(topicId: string, revisionId: string): Promise<ArrayBuffer> {
+  const res = await fetch(
+    `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/raw`,
+    { headers: authHeaders() }
+  )
+  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
+  return res.arrayBuffer()
+}
+
 export async function downloadRoomFileRevision(topicId: string, revision: RoomFileRevision): Promise<void> {
   const res = await fetch(
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
