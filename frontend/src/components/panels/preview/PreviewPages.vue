@@ -538,7 +538,8 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-/* 页在上、工具条在右上：滚到哪儿它都在。 */
+/* 工具条浮在内容右上角，不占行高：容器高度归零、overflow 放出来，按钮自己带着不透明
+   的底和一层轻影，压在纸上仍然读得清。sticky 不变，滚到哪儿它都在。 */
 .pv__tools {
   position: sticky;
   top: 0;
@@ -546,8 +547,12 @@ onBeforeUnmount(() => {
   z-index: var(--z-raised-2);
   display: flex;
   gap: 8px;
-  margin-bottom: -8px;
-  padding-bottom: 8px;
+  height: 0;
+  overflow: visible;
+}
+.pv__tools :deep(.base-btn) {
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
 }
 
 .pv__canvas {

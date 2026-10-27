@@ -10,6 +10,7 @@ import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
 import { computed, ref, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
 
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
@@ -96,6 +97,53 @@ const step = computed(() => {
 
 const showSource = ref(false)
 const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
+
+// 「窄」按这一格自己的宽度算，不看窗口：预览在右栏里可以是 466px，或者手机上整页的
+// 一格里——那两种都得把这一条收成一行。还没量到宽度（挂载前、测试里没有布局）按宽处
+// 理，先按平铺画，量到了再收，免得一上来就少一排按钮。
+const wrapRef = ref<HTMLElement | null>(null)
+const { width: wrapWidth } = useElementSize(wrapRef)
+const compact = computed(() => wrapWidth.value > 0 && wrapWidth.value < 560)
+
+// 运行状态平时只说「正常」——那是常态，不该占一整行。只有出问题时才在条上亮一颗
+// 小圆点，点开才展开原来那几行字。
+const statusOpen = ref(false)
+const runtimeSuspect = computed(() => {
+  const frame = props.displayedFrame
+  return (
+    !!frame &&
+    (frame.runtime === 'failed' ||
+      frame.connection === 'disconnected' ||
+      frame.connection === 'gone' ||
+      !!frame.runtimeError)
+  )
+})
+watch(
+  () => props.displayedFrame?.id,
+  () => {
+    statusOpen.value = false
+  }
+)
+
+/** 正常状态下资源/实例标识收进 mime 那颗 chip 的 title：平时不必读，要查时还在。 */
+const identityTitle = computed(() => {
+  const frame = props.displayedFrame
+  if (!frame) return ''
+  const parts: string[] = []
+  if (frame.resourceId) {
+    parts.push(t('work.room.preview.resourceIdentity', { id: frame.resourceId.slice(0, 12) }))
+  }
+  if (frame.instance) {
+    parts.push(t('work.room.preview.instanceIdentity', { id: frame.instance.slice(0, 12) }))
+  } else {
+    parts.push(t(frame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile'))
+  }
+  return parts.join(' · ')
+})
+
+function openTab() {
+  openPreviewInNewTab(props.topicId, props.displayedFrame, props.path)
+}
 const canShowSource = computed(
   () =>
     !props.previewAppNote &&
@@ -103,6 +151,63 @@ const canShowSource = computed(
     props.previewFile?.content !== null &&
     !!props.previewFile?.content
 )
+
+/** 条上那几件动作：宽时平铺成 BaseButton，窄时收进「…」里的一行。一处写、两处画，
+ *  两边不会再各写一遍同一组图标和文案（那正是它们以前对不上的原因）。 */
+type BarAction = {
+  key: string
+  icon: string
+  label: string
+  title?: string
+  /** 平铺时只画图标（条上这几颗都是）：菜单里总是图标加字。 */
+  iconOnly?: boolean
+  /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
+  testid?: string
+  disabled?: boolean
+  run: () => void
+}
+const actions = computed<BarAction[]>(() => {
+  const list: BarAction[] = []
+  if (props.path) {
+    list.push({
+      key: 'open',
+      icon: 'mdi-open-in-new',
+      label: t(props.displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab'),
+      iconOnly: true,
+      run: openTab,
+    })
+    list.push({
+      key: 'download',
+      icon: 'mdi-download',
+      label: t('work.room.preview.download'),
+      iconOnly: true,
+      run: () => emit('download'),
+    })
+  }
+  if (canShowSource.value) {
+    list.push({
+      key: 'source',
+      icon: showSource.value ? 'mdi-web' : 'mdi-code-tags',
+      label: t(showSource.value ? 'work.room.preview.webView' : 'work.room.preview.showSource'),
+      testid: 'toggle-frame-source',
+      run: () => {
+        showSource.value = !showSource.value
+      },
+    })
+  }
+  if (props.path) {
+    list.push({
+      key: 'refresh',
+      icon: 'mdi-refresh',
+      label: t('work.room.preview.refresh'),
+      iconOnly: true,
+      testid: 'refresh-preview',
+      run: () => emit('refresh'),
+    })
+  }
+  return list
+})
+
 watch(
   () => props.previewFile?.path,
   () => {
@@ -113,9 +218,11 @@ watch(
 </script>
 
 <template>
-  <div class="preview-wrap">
+  <div ref="wrapRef" class="preview-wrap">
     <div class="preview-bar text-caption px-3 pt-2">
-      <span class="text-medium-emphasis">{{ displayedFrame?.label || previewAppNote || previewFile?.path }}</span>
+      <span v-if="!path" class="preview-bar__name text-medium-emphasis">{{
+        displayedFrame?.label || previewAppNote || previewFile?.path
+      }}</span>
       <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{
         t('work.room.preview.readVersion', { version: displayedFrame.version })
       }}</span>
@@ -128,77 +235,118 @@ watch(
         size="x-small"
         variant="tonal"
         class="ms-2"
+        :title="runtimeSuspect ? undefined : identityTitle"
         >{{ t('work.room.preview.runningApp') }}</v-chip
       >
-      <v-chip v-else size="x-small" variant="outlined" class="ms-2">{{ displayedFrame?.mime || previewMime }}</v-chip>
-      <template v-if="path">
-        <v-spacer />
-        <BaseButton
-          kind="ghost"
-          icon="mdi-open-in-new"
-          size="sm"
-          :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
-          @click="openPreviewInNewTab(props.topicId, props.displayedFrame, path)"
-        />
-        <BaseButton
-          kind="ghost"
-          icon="mdi-download"
-          size="sm"
-          :title="t('work.room.preview.download')"
-          @click="emit('download')"
-        />
-      </template>
-      <div v-if="!showSource" class="preview-viewport ms-2">
-        <button
-          type="button"
-          class="preview-viewport__btn"
-          :class="{ 'preview-viewport__btn--active': viewport === 'desktop' }"
-          data-testid="viewport-desktop"
-          :aria-pressed="viewport === 'desktop'"
-          :title="t('work.room.preview.viewportDesktop')"
-          :aria-label="t('work.room.preview.viewportDesktop')"
-          @click="viewport = 'desktop'"
-        >
-          <v-icon size="15">mdi-monitor</v-icon>
-        </button>
-        <button
-          type="button"
-          class="preview-viewport__btn"
-          :class="{ 'preview-viewport__btn--active': viewport === 'tablet' }"
-          data-testid="viewport-tablet"
-          :aria-pressed="viewport === 'tablet'"
-          :title="t('work.room.preview.viewportTablet')"
-          :aria-label="t('work.room.preview.viewportTablet')"
-          @click="viewport = 'tablet'"
-        >
-          <v-icon size="15">mdi-tablet</v-icon>
-        </button>
-        <button
-          type="button"
-          class="preview-viewport__btn"
-          :class="{ 'preview-viewport__btn--active': viewport === 'mobile' }"
-          data-testid="viewport-mobile"
-          :aria-pressed="viewport === 'mobile'"
-          :title="t('work.room.preview.viewportMobile')"
-          :aria-label="t('work.room.preview.viewportMobile')"
-          @click="viewport = 'mobile'"
-        >
-          <v-icon size="15">mdi-cellphone</v-icon>
-        </button>
-      </div>
-      <BaseButton
-        v-if="canShowSource"
-        kind="ghost"
-        size="sm"
-        :prepend-icon="showSource ? 'mdi-web' : 'mdi-code-tags'"
-        data-testid="toggle-frame-source"
-        @click="showSource = !showSource"
+      <v-chip
+        v-else
+        size="x-small"
+        variant="outlined"
+        class="ms-2"
+        :title="runtimeSuspect ? undefined : identityTitle"
+        >{{ displayedFrame?.mime || previewMime }}</v-chip
       >
-        {{ t(showSource ? 'work.room.preview.webView' : 'work.room.preview.showSource') }}
-      </BaseButton>
+      <button
+        v-if="runtimeSuspect"
+        type="button"
+        class="preview-status-dot ms-2"
+        data-testid="preview-runtime-alert"
+        :aria-label="t('work.room.preview.runtimeAlert')"
+        :title="t('work.room.preview.runtimeAlert')"
+        :aria-expanded="statusOpen"
+        @click="statusOpen = !statusOpen"
+      >
+        <span class="preview-status-dot__mark" aria-hidden="true" />
+      </button>
+      <v-spacer v-if="path" />
+      <template v-if="compact">
+        <v-menu location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <BaseButton
+              v-bind="menuProps"
+              kind="ghost"
+              icon="mdi-dots-horizontal"
+              size="sm"
+              data-testid="preview-more"
+              :title="t('work.room.menu.more')"
+              :aria-label="t('work.room.menu.more')"
+            />
+          </template>
+          <v-list density="compact" role="menu">
+            <v-list-item
+              v-for="action in actions"
+              :key="action.key"
+              role="menuitem"
+              :prepend-icon="action.icon"
+              :disabled="action.disabled"
+              @click="action.run()"
+            >
+              <v-list-item-title>{{ action.label }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </template>
+      <template v-else>
+        <BaseButton
+          v-for="action in actions"
+          :key="action.key"
+          kind="ghost"
+          size="sm"
+          :icon="action.iconOnly ? action.icon : undefined"
+          :prepend-icon="action.iconOnly ? undefined : action.icon"
+          :disabled="action.disabled"
+          :data-testid="action.testid"
+          :title="action.title ?? action.label"
+          @click="action.run()"
+        >
+          <template v-if="!action.iconOnly">{{ action.label }}</template>
+        </BaseButton>
+        <div v-if="!showSource" class="preview-viewport ms-2">
+          <button
+            type="button"
+            class="preview-viewport__btn"
+            :class="{ 'preview-viewport__btn--active': viewport === 'desktop' }"
+            data-testid="viewport-desktop"
+            :aria-pressed="viewport === 'desktop'"
+            :title="t('work.room.preview.viewportDesktop')"
+            :aria-label="t('work.room.preview.viewportDesktop')"
+            @click="viewport = 'desktop'"
+          >
+            <v-icon size="15">mdi-monitor</v-icon>
+          </button>
+          <button
+            type="button"
+            class="preview-viewport__btn"
+            :class="{ 'preview-viewport__btn--active': viewport === 'tablet' }"
+            data-testid="viewport-tablet"
+            :aria-pressed="viewport === 'tablet'"
+            :title="t('work.room.preview.viewportTablet')"
+            :aria-label="t('work.room.preview.viewportTablet')"
+            @click="viewport = 'tablet'"
+          >
+            <v-icon size="15">mdi-tablet</v-icon>
+          </button>
+          <button
+            type="button"
+            class="preview-viewport__btn"
+            :class="{ 'preview-viewport__btn--active': viewport === 'mobile' }"
+            data-testid="viewport-mobile"
+            :aria-pressed="viewport === 'mobile'"
+            :title="t('work.room.preview.viewportMobile')"
+            :aria-label="t('work.room.preview.viewportMobile')"
+            @click="viewport = 'mobile'"
+          >
+            <v-icon size="15">mdi-cellphone</v-icon>
+          </button>
+        </div>
+      </template>
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
-    <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
+    <div
+      v-if="displayedFrame && runtimeSuspect && statusOpen"
+      role="status"
+      class="preview-runtime-status px-3 py-2 text-caption"
+    >
       <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
         t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId.slice(0, 12) })
       }}</span>
@@ -243,9 +391,6 @@ watch(
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
-    <BaseButton v-if="path" kind="ghost" size="sm" :title="t('work.room.preview.refresh')" @click="emit('refresh')">{{
-      t('work.room.preview.refresh')
-    }}</BaseButton>
     <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
     <pre v-if="showSource && canShowSource" class="preview-source" data-testid="frame-source">{{
       previewFile?.content ?? ''
@@ -296,11 +441,38 @@ watch(
 .preview-bar {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .preview-bar > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 只有文件名让位：条上其余几件都别被挤变形。 */
+.preview-bar__name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* 出问题才亮的小圆点。条上只占这一点地方，细节留给点开之后那几行。 */
+button.preview-status-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+}
+.preview-status-dot__mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+button.preview-status-dot:hover {
+  background: var(--fill);
 }
 .preview-viewport {
   display: inline-flex;
