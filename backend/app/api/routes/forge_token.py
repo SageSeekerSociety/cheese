@@ -310,6 +310,32 @@ async def sandbox_forge_token(
     # may also rerun or cancel CI (`GitHubAppTokens.read_permissions`).
     kept = await session_keeps_work(db, claims.get("session"))
     binding = await binding_for_project(project_id, db)
+    if binding is not None and getattr(request.state, "from_machine_sandbox", False):
+        # A sandbox asking on its platform socket without the host-side proxy
+        # proof receives only repository metadata and a placeholder token; the
+        # real single-repository token is handed only to the proxy outside the
+        # sandbox (#4896).
+        response.headers["Cache-Control"] = "no-store"
+        return ok(
+            {
+                "kind": binding.kind,
+                "project_id": str(project_id),
+                "token": "placeholder",
+                "expires_at": None,
+                "expiry_enforcement": "platform"
+                if not kept and binding.kind == "forgejo"
+                else "provider",
+                "read_only": not kept,
+                "repo": binding.repo,
+                "url": binding.url,
+                "default_branch": binding.default_branch,
+                "api_url": binding.api_url,
+                "username": "x-access-token"
+                if binding.kind == "github_app"
+                else binding.repo.split("/", 1)[0],
+                "permissions": "",
+            }
+        )
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:
         raise GatewayUnavailableError(say("forgeCredentialMissing"))
