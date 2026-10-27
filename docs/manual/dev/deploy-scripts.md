@@ -10,6 +10,7 @@ covers:
   - deploy/check-auto-deploy.py
   - deploy/check-forge-workspace-writers.py
   - deploy/release-device-connection.sh
+  - deploy/release-llm-tunnel.sh
   - deploy/release-gateway.sh
   - deploy/release-metering-proxy.sh
   - deploy/release-cloud-control.sh
@@ -123,6 +124,7 @@ covers:
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
 | `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
+| `release-llm-tunnel.sh` | 单独替换常驻的模型隧道；没有排空，每次都要 `LLM_TUNNEL_INTERRUPT=1`，断开的隧道由机器上的助手自己重连 |
 | `release-gateway.sh` | 网关平面单独发版，颜色和代理都蓝绿切换、不断流；只在 GitHub Actions 里跑，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1` |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |
 | `release-cloud-control.sh` | 云机器加密隧道单独发版 |
@@ -167,13 +169,14 @@ covers:
 
 非脚本的顶层内容：compose 在 `deploy/compose/`（`base`、`etrip`、`forgejo`、`gateway`、`subscription`），镜像源码在 `deploy/gateway/`、`deploy/metering-proxy/`、`deploy/office-render/`、`deploy/browser-render/`，ingress 与 TLS 在 `deploy/llm-tunnel/`，CI runner 的 provision/prune/guard 在 `deploy/ci-runner/`，另外还有 `deploy/docker-compose.prod.yml`（etrip 的整栈）和三份 README（`README-backup.md`、`README-room-cleanup.md`、`README-utf8-cutover.md`）。
 
-## 单独发版的四个平面 {#planes}
+## 单独发版的平面 {#planes}
 
 常驻服务不能跟着 app 层一起滚，所以各有自己的 workflow 和脚本：
 
 | 平面 | 脚本 | workflow |
 |---|---|---|
 | 设备连接 ingress | `release-device-connection.sh` | `.github/workflows/release-device-connection.yml` |
+| 模型隧道 | `release-llm-tunnel.sh` | `.github/workflows/release-llm-tunnel.yml` |
 | 网关 | `release-gateway.sh` | `.github/workflows/release-gateway.yml` |
 | 计量代理 | `release-metering-proxy.sh` | `.github/workflows/release-metering-proxy.yml` |
 | 云隧道 | `release-cloud-control.sh` | `.github/workflows/release-cloud-control.yml` |

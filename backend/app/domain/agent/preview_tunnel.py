@@ -261,6 +261,7 @@ def open_ws(
     insecure: bool = False,
     timeout: float = _HANDSHAKE_TIMEOUT_S,
     idle_timeout: float | None = None,
+    unix_socket: str | None = None,
     publish=None,
     validate=lambda: None,
 ) -> tuple[socket.socket, dict[str, str]]:
@@ -281,7 +282,15 @@ def open_ws(
     if parsed.query:
         path = f"{path}?{parsed.query}"
 
-    if publish is not None:
+    if unix_socket is not None:
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.settimeout(timeout)
+        try:
+            raw.connect(unix_socket)
+        except BaseException:
+            _shutdown(raw)
+            raise
+    elif publish is not None:
         # Owned streams only dial the declared IPv4 loopback port.
         raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         raw.settimeout(timeout)
@@ -294,7 +303,7 @@ def open_ws(
             raise
     else:
         raw = socket.create_connection((host, port), timeout=timeout)
-    if secure:
+    if secure and unix_socket is None:
         if insecure:
             context = ssl._create_unverified_context()  # opt-in only
         else:
@@ -418,69 +427,6 @@ class TokenSource:
                 return handle.read().strip()
         except OSError as exc:
             raise PreviewError(f"could not read {self._path}: {exc}") from exc
-
-
-#: What the HTTP client raises besides OSError when an answer breaks off: a
-#: platform socket that stopped answering, as much as one that never did.
-_CLIENT_ERRORS = (
-    http.client.IncompleteRead,
-    http.client.BadStatusLine,
-    http.client.LineTooLong,
-    http.client.ImproperConnectionState,
-)
-
-
-class _UnixConnection(http.client.HTTPConnection):
-    def __init__(self, path: str, timeout: float) -> None:
-        super().__init__("platform.cheese", timeout=timeout)
-        self._socket_path = path
-
-    def connect(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(self.timeout)
-        sock.connect(self._socket_path)
-        self.sock = sock
-
-
-class SocketTokenSource:
-    """A credential asked of the sandbox's platform socket for EVERY
-    connection (``/credential``): it lasts a minute and the machine keeps
-    none, so a copy of it taken off the machine is soon worth nothing."""
-
-    def __init__(self, path: str, *, timeout: float = 20.0) -> None:
-        self._path = path
-        self._timeout = timeout
-
-    def get(self) -> str:
-        connection = _UnixConnection(self._path, self._timeout)
-        try:
-            connection.request("GET", "/credential")
-            response = connection.getresponse()
-            body = response.read()
-        except (OSError, *_CLIENT_ERRORS) as exc:
-            # Nothing answered (the connector or the platform is away): worth
-            # waiting out, as any other absence of the tunnel's far end.
-            raise PreviewError(
-                f"could not ask the platform socket: {exc}",  # i18n-exempt: machine log
-                retryable=True,
-            ) from exc
-        finally:
-            connection.close()
-        if response.status != 200:
-            # A 4xx is the platform saying no (the session is gone); a 5xx is it
-            # being away.
-            raise PreviewError(
-                f"the platform socket refused: HTTP {response.status}",  # i18n-exempt: machine log
-                retryable=response.status >= 500,
-            )
-        try:
-            token = json.loads(body)["token"]
-        except (ValueError, KeyError, TypeError) as exc:
-            raise PreviewError(
-                "the platform socket gave no credential",  # i18n-exempt: machine log
-                retryable=True,
-            ) from exc
-        return str(token)
 
 
 # --- one connection's worth of work -------------------------------------------
@@ -1010,11 +956,12 @@ _RECONNECT_CAP_S = 15.0
 
 def run(
     url: str,
-    tokens: "TokenSource | SocketTokenSource",
+    tokens: TokenSource | None,
     ports: PortSource,
     *,
     ca_path: str | None = None,
     insecure: bool = False,
+    preview_socket: str | None = None,
 ) -> int:
     """Hold the tunnel open, reconnecting while the backend is merely absent.
 
@@ -1031,15 +978,16 @@ def run(
     delay = _RECONNECT_START_S
     while True:
         try:
+            headers = {CAPS_HEADER: ",".join(sorted(CAPABILITIES))}
+            if tokens is not None:
+                headers["Authorization"] = f"Bearer {tokens.get()}"
             sock, answered = open_ws(
                 url,
                 ca_path=ca_path,
                 insecure=insecure,
                 idle_timeout=_IDLE_TIMEOUT_S,
-                headers={
-                    "Authorization": f"Bearer {tokens.get()}",
-                    CAPS_HEADER: ",".join(sorted(CAPABILITIES)),
-                },
+                unix_socket=preview_socket,
+                headers=headers,
             )
         except (OSError, PreviewError) as exc:
             retryable = isinstance(exc, OSError) or (
@@ -1091,16 +1039,19 @@ def main(argv: list[str] | None = None) -> int:
         "--platform-socket",
         default=os.environ.get("CHEESE_PLATFORM_SOCKET") or None,
         required=False,
-        help="the sandbox's platform socket: a credential is asked of it per "
-        "connection, and the token file is not read",
+        help="the sandbox's platform socket directory: dials preview.sock beside it "
+        "without reading any token inside the sandbox",
     )
     parser.add_argument("--ca", default=os.environ.get("CHEESE_PREVIEW_CA") or None)
     parser.add_argument("--insecure", action="store_true")
     args = parser.parse_args(argv)
     socket_path = args.platform_socket
-    if socket_path and not os.path.exists(socket_path):
-        socket_path = None
-    if not (socket_path or args.token_file) or not args.port_file:
+    preview_socket = None
+    if socket_path:
+        candidate = os.path.join(os.path.dirname(socket_path), "preview.sock")
+        if os.path.exists(candidate) or os.path.exists(socket_path):
+            preview_socket = candidate
+    if not (preview_socket or args.token_file) or not args.port_file:
         print(
             "--port-file and one of --platform-socket or --token-file are required",
             file=sys.stderr,
@@ -1109,10 +1060,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     return run(
         args.url,
-        SocketTokenSource(socket_path) if socket_path else TokenSource(args.token_file),
+        None if preview_socket else TokenSource(args.token_file),
         PortSource(args.port_file),
         ca_path=args.ca,
         insecure=args.insecure,
+        preview_socket=preview_socket,
     )
 
 

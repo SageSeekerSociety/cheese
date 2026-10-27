@@ -10,9 +10,11 @@ own the data plane while the backend restarts freely underneath:
 
 It rides the ordinary backend image (same code, different command — see
 deploy/llm-tunnel/), and deliberately imports nothing of app.main: the route
-authenticates by HMAC over the scoped token's own claims and never touches
-the database, which is exactly what makes it safe to run detached from the
-rest of the app.
+authenticates by the signature over the agent credential's own claims and never
+touches the database, which is exactly what makes it safe to run detached from
+the rest of the app. Because that check is the backend's own code, a change to
+how credentials are signed or read is released to it separately
+(.github/workflows/release-llm-tunnel.yml).
 """
 
 from fastapi import FastAPI

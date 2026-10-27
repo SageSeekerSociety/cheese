@@ -9,6 +9,7 @@ servers it is handed to (`client`), the calls that are not a tool at all
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -440,6 +441,10 @@ def close(self):
         self.stop_command(command_id)
     for client in self.clients.values():
         client.close()
+    if getattr(self, "forge_bridge", None) is not None:
+        with contextlib.suppress(Exception):
+            self.forge_bridge.shutdown()
+            self.forge_bridge.server_close()
     if self.cli_worker is not None:
         assert self.cli_worker.stdin is not None
         self.cli_worker.stdin.close()

@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from app.core.sandbox_auth import for_a_machine, scoped_token_claims
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import EventConsumer
 from app.domain.agent.harness import SessionRef as Seat
@@ -129,14 +128,11 @@ async def start_private_executor(
     """A session whose tools work in a private scratch container has it started
     before the session is: the container is the session's machine.
 
-    The container is given the machine's copy of the session's credential
-    (`sandbox_auth.for_a_machine`), which calls no model: the harness on the
-    host keeps the copy it calls the model route with, and the container has
-    no platform socket to ask one on."""
+    The container holds no credential (`CHEESE_TOKEN` is blank): the harness on
+    the host keeps the session's credential, and the container only runs the
+    commands the harness sends it."""
     if target is not None and target.get("kind") == "private":
-        token = env.get("CHEESE_TOKEN", "")
-        if scoped_token_claims(token) is not None:
-            env = {**env, "CHEESE_TOKEN": for_a_machine(token)}
+        env = {**env, "CHEESE_TOKEN": ""}
         await wire.run(
             host,
             executor.private_script(target, env),

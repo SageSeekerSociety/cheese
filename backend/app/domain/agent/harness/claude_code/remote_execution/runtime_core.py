@@ -78,6 +78,7 @@ RELEASE_FILES = {
     "remote-execution/worker_quota.py": "app/domain/agent/worker_quota.py",
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
+    "remote-execution/forge_proxy.py": "app/domain/agent/forge_proxy.py",
     "cheese": "sandbox/cheese",
 }
 
