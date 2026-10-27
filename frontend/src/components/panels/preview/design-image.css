@@ -67,6 +67,9 @@
   scrollbar-gutter: stable;
   padding: 16px;
 }
+.design-image__pane.is-narrow {
+  padding: 8px;
+}
 .design-image__overlay {
   position: absolute;
   inset: 0;

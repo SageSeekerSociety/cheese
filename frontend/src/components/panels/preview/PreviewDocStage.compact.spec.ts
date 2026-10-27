@@ -84,3 +84,51 @@ it('页签上已经写着文件名：条上不重复，类型标签还在', () =
   expect(ui.queryByText('preview-2.pdf')).toBeNull()
   expect(ui.getByText('PDF')).toBeTruthy()
 })
+
+it('量到宽窄才往上报：取数那一层据此决定 Word 读哪一份；还没量到（0）不报', async () => {
+  width.value = 0
+  const unmeasured = mount()
+  await Promise.resolve()
+  expect(unmeasured.emitted('narrow')).toBeUndefined()
+  cleanup()
+
+  width.value = 390
+  const ui = mount()
+  await waitFor(() => expect(ui.emitted('narrow')).toEqual([[true]]))
+  width.value = 1200
+  await waitFor(() => expect(ui.emitted('narrow')).toEqual([[true], [false]]))
+})
+
+it('窄处读网页版的 Word：交给网页那一格的是按屏宽重排的那一份', async () => {
+  width.value = 390
+  const bundles = previewBundles()
+  const ui = render(PreviewDocStage as unknown as Component, {
+    props: {
+      topicId: 't1',
+      projectId: 'p1',
+      documentType: { label: 'Word', icon: 'mdi-file-word-box', view: 'pages' },
+      documentName: '报告.docx',
+      documentSuffix: 'docx',
+      previewFile: { path: 'output/报告.docx', content: null, size: 10, mime: 'application/octet-stream' },
+      canPage: true,
+      docPage: true,
+      docPageHtml: '<html><head></head><body><div class="page">正文</div></body></html>',
+      docBytes: null,
+      docLoading: false,
+      docError: '',
+      docRendererMissing: false,
+      downloadError: '',
+      revs: bundles.revs,
+      fileHistory: bundles.fileHistory,
+      showHistory: false,
+    },
+    global: {
+      plugins: [vuetify],
+      stubs: { VMenu: { template: '<div><slot name="activator" :props="{}" /><slot /></div>' } },
+    },
+  })
+  const frame = await waitFor(() => ui.container.querySelector('iframe.page-frame') as HTMLIFrameElement)
+  await waitFor(() => expect(frame.getAttribute('srcdoc')).toContain('data-cheese-reflow'))
+  width.value = 1200
+  await waitFor(() => expect(frame.getAttribute('srcdoc')).not.toContain('data-cheese-reflow'))
+})
