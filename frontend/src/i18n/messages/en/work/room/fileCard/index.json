@@ -18,5 +18,6 @@
   "appOffline": "Environment offline",
   "appReplaced": "Replaced by a newer preview",
   "appChecking": "Checking whether it is running…",
-  "app": "App"
+  "app": "App",
+  "newWindow": "New window"
 }

@@ -18,5 +18,6 @@
   "appOffline": "运行环境离线",
   "appReplaced": "已换成更新的预览",
   "appChecking": "正在确认运行状态…",
-  "app": "应用"
+  "app": "应用",
+  "newWindow": "新窗口"
 }

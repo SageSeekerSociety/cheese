@@ -4,7 +4,7 @@
  * 状态按这条消息所在的那段对话去问。
  */
 import { createVuetify } from 'vuetify'
-import { cleanup, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import MessageAppCard from './MessageAppCard.vue'
@@ -51,4 +51,17 @@ it('tells an exited app from an offline machine', async () => {
 it('says a newer preview replaced it when the room now shows something else', async () => {
   mount({ artifactId: 'b2', running: true, tunnelUp: true })
   expect(await screen.findByText('已换成更新的预览')).toBeTruthy()
+})
+
+it('offers a new window only while that app is the one running', async () => {
+  const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+  mount({ artifactId: 'b1', running: true, tunnelUp: true })
+  const button = await screen.findByRole('button', { name: '新窗口' })
+  await fireEvent.click(button)
+  expect(open).toHaveBeenCalledWith('/previews/task-1', '_blank', 'noopener')
+
+  cleanup()
+  mount({ artifactId: 'b1', running: false, tunnelUp: false })
+  await screen.findByText('运行环境离线')
+  expect(screen.queryByRole('button', { name: '新窗口' })).toBeNull()
 })

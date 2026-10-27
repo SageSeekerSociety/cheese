@@ -8,6 +8,7 @@ import { computed, inject, ref, watch } from 'vue'
 import { useIntersectionObserver } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { openPreviewInNewTab } from '@/components/panels/preview/previewNewTab'
 import { t } from '@/i18n'
 import { FILE_FACTS_SOURCE, NO_FILE_FACTS } from '@/lib/fileFactsSource'
 
@@ -82,6 +83,17 @@ const status = computed(
     <div class="appcard__actions">
       <BaseButton kind="secondary" size="sm" prepend-icon="mdi-dock-right" @click="emit('open')">
         {{ t('work.room.message.openInPanel') }}
+      </BaseButton>
+      <!-- 原型里应用卡还有一颗「新窗口」。只在它确实是房间里当前那个、并且应用应
+           答的时候给：打开的是 /previews/<这段对话>，落在当前预览上，不是这一条的
+           复制品；离线或已被替换时打开只会是空白。 -->
+      <BaseButton
+        v-if="state === 'running'"
+        size="sm"
+        prepend-icon="mdi-open-in-new"
+        @click="openPreviewInNewTab(conversationId, null)"
+      >
+        {{ t('work.room.fileCard.newWindow') }}
       </BaseButton>
     </div>
   </div>
