@@ -337,7 +337,14 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       loadedOnce = true
       loadedFor = author
       loadedTopic = tid
-      clearError()
+      // 只收最新一页这一边的错误：此刻画着的可能是「往上翻失败」那一条，而这一趟
+      // 读的是最新一页，替不了它。3 秒一次的刷新每一下都会走到这里，不收手的话，
+      // 读者一往上翻失败、红条刚出来，下一次刷新读成了就把它连重试一起抹掉——而那
+      // 一页其实没回来。
+      //
+      // `opening` 那三种（第一次读、换视角、换对话）除外：那是另一条时间线，上一格
+      // 的错误跟它没关系，读成了就该收。
+      if (opening || !errorFromOlder.value) clearError()
       hooks.noteAgents(tx.data)
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
