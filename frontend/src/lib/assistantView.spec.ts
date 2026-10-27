@@ -37,6 +37,7 @@ describe('一轮做过的几步怎么读', () => {
   afterEach(() => setLocale('en'))
 
   type Done = { name: string; args?: object; effect?: 'reads' | 'changes' | 'reaches others'; shown?: string }
+  const known = (d: Done) => ({ ...(d.effect ? { effect: d.effect } : {}), ...(d.shown ? { shown: d.shown } : {}) })
   const steps = (...done: (Done | 'run' | ['think', number] | ['failed', Done, string])[]): PanelStep[] =>
     done.map((d, i) => {
       if (d === 'run')
@@ -58,10 +59,10 @@ describe('一轮做过的几步怎么读', () => {
           args: JSON.stringify(failed.args ?? {}),
           state: 'failed',
           error,
-          ...failed,
+          ...known(failed),
         })
       }
-      return stepView({ call: `c${i}`, name: d.name, args: JSON.stringify(d.args ?? {}), state: 'done', ...d })
+      return stepView({ call: `c${i}`, name: d.name, args: JSON.stringify(d.args ?? {}), state: 'done', ...known(d) })
     })
   const read = (shown: string): Done => ({ name: 'cheese_read', args: { ref: 'x' }, effect: 'reads', shown })
 
