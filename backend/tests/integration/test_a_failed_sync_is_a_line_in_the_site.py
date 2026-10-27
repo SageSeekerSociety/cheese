@@ -104,7 +104,7 @@ def test_only_this_place_s_own_credential_may_write_one(client):
     text = "有改动没能推回 task/x"
 
     person = _post(client, task_id, {**BROWSER, **session_auth_headers("alice")}, text)
-    assert person.status_code == 401, person.text
+    assert person.status_code == 403, person.text
 
     other = open_task(client, room, "另一件", owner="alice")
     elsewhere = _post(
@@ -113,4 +113,4 @@ def test_only_this_place_s_own_credential_may_write_one(client):
         task_agent_headers(project_id, other["id"], seat),
         text,
     )
-    assert elsewhere.status_code == 401, elsewhere.text
+    assert elsewhere.status_code == 403, elsewhere.text

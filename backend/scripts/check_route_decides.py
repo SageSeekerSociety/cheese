@@ -128,8 +128,7 @@ def judge(base: str) -> int:
         print(f"  {m} {p} ({e})")
     print(
         "\nDeclare what the route needs instead: Can(Permission.<x>) for a team,"
-        " space, problem, question, project or channel (app/api/write_access.py),"
-        " or CHEESE_ONLY_IN_ROOM / CHEESE_ONLY_IN_PROJECT."
+        " space, problem, question, project or channel (app/api/write_access.py)."
     )
     return 1
 

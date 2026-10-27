@@ -2,8 +2,9 @@
 
 The sandbox container reaches the backend over the network (host.docker.internal),
 so the cheese write-endpoints must NOT be open like the browser-facing ones. Each
-`cheese` call carries its credential as ``Authorization: Bearer``; the routes only 芝士 may call declare the
-gate (CHEESE_ONLY_IN_ROOM / CHEESE_ONLY_IN_PROJECT in app/api/write_access.py).
+`cheese` call carries its credential as ``Authorization: Bearer``; a route only
+芝士 may call declares a permission only an AI teammate holds
+(``project_permissions.AGENT_ONLY``, through ``Can`` in app/api/write_access.py).
 
 Three token kinds (review R5), and a fourth outside rooms altogether — the
 **personal credential** a person's 芝士 holds (below), which opens nothing the
@@ -496,17 +497,5 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
 def is_global_sandbox_token(token: str) -> bool:
     """True for the signing secret used directly (dev / trusted-single-host
     override). It carries NO project scope, so a caller accepting it must get the
-    room from somewhere else — see the note on `is_valid_cheese_token`."""
+    room from somewhere else."""
     return credentials.is_platform_secret(token)
-
-
-def is_valid_cheese_token(
-    token: str, *, project_id: str | None = None, topic_id: str | None = None
-) -> bool:
-    """Gate check: a scoped token matching the request's resource, or the global
-    secret (dev / trusted-single-host override)."""
-    if project_id is None and topic_id is None:
-        return False
-    if verify_scoped_token(token, project_id=project_id, topic_id=topic_id):
-        return True
-    return is_global_sandbox_token(token)

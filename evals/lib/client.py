@@ -68,9 +68,7 @@ class EvalApi:
         return body.get("data")
 
     async def get(self, path: str, *, cheese: bool = False, **params: Any) -> Any:
-        headers = (
-            {"Authorization": f"Bearer {self._sandbox_token}"} if cheese else None
-        )
+        headers = {"Authorization": f"Bearer {self._sandbox_token}"} if cheese else None
         return self._unwrap(
             await self._http.get(path, params=params or None, headers=headers)
         )
@@ -95,6 +93,11 @@ class EvalApi:
         return self._unwrap(
             await self._http.post(path, json=body or {}, headers=headers or None)
         )
+
+    async def put(self, path: str, body: dict, *, as_handle: str) -> Any:
+        """PUT body, signed in as ``as_handle``."""
+        headers = {"Authorization": f"Bearer {self.session_token(as_handle)}"}
+        return self._unwrap(await self._http.put(path, json=body, headers=headers))
 
     # ---- structure ---------------------------------------------------------
     # The owner of a project and the creator of a topic are whoever the request
@@ -123,11 +126,26 @@ class EvalApi:
     async def upgrade_block(self, block_id: str) -> dict:
         return await self.post(f"/api/blocks/{block_id}/upgrade", {})
 
-    # ---- memory (cheese-gated write; the runner owns this backend's token) --
+    # ---- memory (the project's shared memory files) ------------------------
 
-    async def seed_memory(self, project_id: str, content: str) -> None:
-        await self.post(
-            f"/api/projects/{project_id}/memory", {"content": content}, cheese=True
+    async def seed_memory(
+        self, project_id: str, name: str, content: str, *, as_handle: str
+    ) -> None:
+        """One memory of the project's shared scope, written as ``as_handle``
+        (someone whose role configures the project's AI teammates)."""
+        memory = (
+            f"---\nname: {name}\ndescription: {content[:60]}\ntype: project\n---\n\n"
+            f"{content}\n"
+        )
+        await self.put(
+            "/api/memory/files",
+            {
+                "project_id": project_id,
+                "scope": "team",
+                "path": f"{name}.md",
+                "content": memory,
+            },
+            as_handle=as_handle,
         )
 
     async def list_memory(self, project_id: str) -> list[dict]:
