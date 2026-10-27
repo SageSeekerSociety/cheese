@@ -1067,6 +1067,8 @@ async def topic_status(
     credits["total"] = total
     credits["resets_at"] = None if reset is None else _credit_reset_text(reset)
     credits["project_remaining"] = cap_remaining
+    # 上面这组数说的是哪一层：团队方案会自己回来，项目预算要有管理人去调。
+    credits["layer"] = "project_budget" if by_budget else "plan"
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))

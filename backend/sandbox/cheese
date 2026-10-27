@@ -7021,8 +7021,12 @@ def _credits_line(credits: dict) -> str:
     if credits.get("resets_at"):
         parts.append(f"{credits['resets_at']} 恢复")
     line = " / ".join(parts)
-    if credits.get("project_remaining") is not None:
-        line += f"；本项目预算还剩 {credits['project_remaining']}（不会自动恢复）"
+    # 先停的是项目预算时，上面那组数说的就是它，而且它不会自己回来；先停的是团队
+    # 方案时，项目预算另算一笔，单独说一句，别让它看起来像会按月回来。
+    if credits.get("layer") == "project_budget":
+        line += "；这个上限不会自动恢复，要管理员调"
+    elif (budget := credits.get("project_remaining")) is not None:
+        line += f"；本项目预算还剩 {budget}（不会自动恢复）"
     return line
 
 
