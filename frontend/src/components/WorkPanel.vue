@@ -755,6 +755,7 @@ defineExpose({
         :files="openFiles"
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
+        :side="split"
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"

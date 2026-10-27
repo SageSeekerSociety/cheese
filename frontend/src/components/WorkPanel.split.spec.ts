@@ -98,6 +98,8 @@ it('看过另一格以后，页签条上能并排；两格同时画出来，上�
   expect(visible(ui.getByTestId('pane-threads'))).toBe(true)
   expect(ui.getByTestId('pane-overview').parentElement!.classList.contains('tabpane--side')).toBe(true)
   expect(button.getAttribute('aria-pressed')).toBe('true')
+  // 页签条上看得出右边那一格也在屏幕上。
+  expect(ui.getByRole('tab', { name: /概览/ }).classList.contains('tabbar__tab--side')).toBe(true)
 
   // 再按一次收回一列：只剩此刻这一格。
   await fireEvent.click(ui.getByTestId('panel-split'))
