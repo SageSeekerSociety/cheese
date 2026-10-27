@@ -403,12 +403,18 @@ function columnAt(slot: PageSlot, point: { x: number; y: number }, reach: number
   return right - left > 0 ? { left, right } : null
 }
 
+let pinchAnchor: ReturnType<typeof pageAt> = null
 usePinchZoom(container, {
   zoom: () => zoom.value,
   min: MIN_ZOOM,
   max: MAX_ZOOM,
   enabled: () => !pointing.value && pages.value.length > 0,
-  onZoom: (next, origin) => zoomTo(next, origin),
+  // 钉住的是两指刚放下时中点底下那一处，之后两指一起挪，页跟着挪：捏着就能平移。
+  onZoom: (next, origin, phase) => {
+    if (phase === 'start' || !pinchAnchor) pinchAnchor = pageAt(origin.x, origin.y)
+    zoomTo(next, origin, pinchAnchor)
+    if (phase === 'end') pinchAnchor = null
+  },
   onDoubleTap,
 })
 
