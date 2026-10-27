@@ -35,7 +35,13 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
-import { type LocatorAnchor, markPointer, measureAnchor, selectionIn } from './preview/locatorAnchor'
+import {
+  FLOATING_MIN_WIDTH,
+  type LocatorAnchor,
+  markPointer,
+  measureAnchor,
+  selectionIn,
+} from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
@@ -164,6 +170,7 @@ const {
 // 一段记成一个 Range，点出来的一处记下松手的那一点；滚动和改尺寸时重算一次。
 // 记下的点只认刚刚那一下（键盘选中时没有点，框贴底），见 `preview/locatorAnchor.ts`。
 const POINTER_FRESH_MS = 1500
+const nodeElement = (node: Node) => (node instanceof Element ? node : node.parentElement)
 let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
@@ -194,7 +201,14 @@ watch(locator, (now) => {
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
-  locatorFromSelection.value = !!anchorRange && !anchorRange.collapsed
+  // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
+  locatorFromSelection.value =
+    !!panel &&
+    !!anchorRange &&
+    !anchorRange.collapsed &&
+    panel.clientWidth >= FLOATING_MIN_WIDTH &&
+    !nodeElement(anchorRange.commonAncestorContainer)?.closest('[data-locator-points]')
   anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
   lastPointer = null
   void nextTick(placeLocator)

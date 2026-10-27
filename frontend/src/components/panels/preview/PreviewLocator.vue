@@ -79,17 +79,39 @@ const RECIPIENTS: readonly { value: Recipient; icon: string; label: string; hint
 const current = computed(() => RECIPIENTS.find((r) => r.value === recipient.value) ?? RECIPIENTS[0])
 const menuOpen = ref(false)
 const picker = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLButtonElement | null>(null)
+const options = ref<HTMLElement[]>([])
 onClickOutside(picker, () => {
   menuOpen.value = false
 })
-function choose(value: Recipient) {
-  recipient.value = value
+/** 开菜单时焦点落在当前选中的那一项上，上下键在两项间移动，Esc 关掉回到按钮。 */
+async function openMenu() {
+  if (props.busy) return
+  menuOpen.value = true
+  await nextTick()
+  const at = RECIPIENTS.findIndex((r) => r.value === recipient.value)
+  options.value[Math.max(at, 0)]?.focus()
+}
+function closeMenu() {
   menuOpen.value = false
+  trigger.value?.focus()
+}
+function moveFocus(event: KeyboardEvent, step: number) {
+  event.preventDefault()
+  const list = options.value
+  const at = list.indexOf(document.activeElement as HTMLElement)
+  list[(at + step + list.length) % list.length]?.focus()
+}
+function choose(value: Recipient) {
+  // 发着的时候不换去处：卡上的按钮和这一条要对得上。
+  if (props.busy) return
+  recipient.value = value
+  closeMenu()
 }
 
 // ---- 先出按钮，还是直接出卡 ----
-// 只在浮在那一处旁边时先出按钮：贴底那一档（键盘选中、面板太窄）离选区远，一颗孤零零
-// 的按钮读者找不到，直接出卡。
+// 打开那一刻定下来，之后不随位置变：选区滚出视野时按钮先藏起来、滚回来再出现，不会
+// 中途变成一整张卡又变回去。面板太窄（框只能贴底）时外面不会给 armFirst，直接出卡。
 const expanded = ref(!props.armFirst)
 watch(
   () => [props.target, props.armFirst] as const,
@@ -98,7 +120,7 @@ watch(
     menuOpen.value = false
   }
 )
-const armed = computed(() => !!props.target && !expanded.value && !!props.anchor)
+const armed = computed(() => !!props.target && !expanded.value)
 const field = ref<HTMLTextAreaElement | null>(null)
 async function expand() {
   expanded.value = true
@@ -116,12 +138,15 @@ const GAP = 8
 const EDGE = 12
 const CARD_WIDTH = 348
 const ARM_HEIGHT = 32
+/** 按钮自己的宽（「添加批注」/「Add note」加图标）：贴边时按它夹，别按卡片宽把它拉离选区。 */
+const ARM_WIDTH = 132
 const floating = computed(() => !!props.anchor && !!props.target)
 const placement = computed(() => {
   const a = props.anchor
   if (!a) return null
   const width = Math.min(CARD_WIDTH, a.panelWidth - EDGE * 2)
-  const left = Math.min(Math.max(a.left, EDGE), a.panelWidth - width - EDGE)
+  const span = armed.value ? ARM_WIDTH : width
+  const left = Math.min(Math.max(a.left, EDGE), a.panelWidth - span - EDGE)
   const below = a.bottom + GAP
   const tall = armed.value ? ARM_HEIGHT : height.value
   const fitsBelow = below + tall <= a.viewBottom - EDGE
@@ -176,7 +201,7 @@ function send(event: KeyboardEvent | MouseEvent) {
 <template>
   <Transition name="locator">
     <button
-      v-if="armed"
+      v-if="armed && anchor"
       type="button"
       class="locator-arm"
       :data-side="placement?.side"
@@ -190,7 +215,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       <span>{{ t('work.room.preview.addNote') }}</span>
     </button>
     <div
-      v-else-if="target || queuedCount"
+      v-else-if="(target && !armed) || (queuedCount && !target)"
       ref="card"
       class="locator"
       :class="{ 'locator--floating': floating }"
@@ -239,6 +264,7 @@ function send(event: KeyboardEvent | MouseEvent) {
                什么。挂不了评论的文件（资料库原件、消息附件）没有这个选择，按钮不出现。 -->
           <div v-show="canComment" ref="picker" class="locator__picker">
             <button
+              ref="trigger"
               type="button"
               class="locator__recipient"
               data-testid="locator-recipient"
@@ -246,7 +272,8 @@ function send(event: KeyboardEvent | MouseEvent) {
               :aria-expanded="menuOpen"
               :aria-label="t('work.room.preview.recipientLabel')"
               :disabled="busy"
-              @click="menuOpen = !menuOpen"
+              @click="menuOpen ? closeMenu() : openMenu()"
+              @keydown.down.prevent="openMenu"
               @keydown.esc.stop.prevent="menuOpen = false"
             >
               <v-icon size="14">{{ current.icon }}</v-icon>
@@ -257,17 +284,23 @@ function send(event: KeyboardEvent | MouseEvent) {
               v-if="menuOpen"
               class="locator__menu"
               role="listbox"
+              tabindex="-1"
               :aria-label="t('work.room.preview.recipientLabel')"
+              @keydown.esc.stop.prevent="closeMenu"
+              @keydown.down="moveFocus($event, 1)"
+              @keydown.up="moveFocus($event, -1)"
             >
               <li
                 v-for="item in RECIPIENTS"
                 :key="item.value"
+                ref="options"
                 role="option"
                 class="locator__option"
                 :class="{ 'locator__option--on': item.value === recipient }"
                 :aria-selected="item.value === recipient"
+                :aria-disabled="busy"
                 :data-testid="`locator-recipient-${item.value}`"
-                tabindex="0"
+                tabindex="-1"
                 @click="choose(item.value)"
                 @keydown.enter.prevent="choose(item.value)"
                 @keydown.space.prevent="choose(item.value)"

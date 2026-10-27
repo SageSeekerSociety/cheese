@@ -91,6 +91,8 @@ function mount() {
 }
 
 it('选中一段以后，定位框弹在那一段旁边，而不是贴在面板底下', async () => {
+  // happy-dom 没有布局：面板宽度给一个够弹出的值（窄于 440 时框贴底、不先出按钮）。
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
   const ui = mount()
   const md = ui.getByTestId('markdown')
   const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
@@ -123,4 +125,5 @@ it('选中一段以后，定位框弹在那一段旁边，而不是贴在面板�
   // 取消以后不再留着位置：下一次指认重新记。
   await fireEvent.click(card.querySelector('button[aria-label="取消"]')!)
   await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull())
+  width.mockRestore()
 })

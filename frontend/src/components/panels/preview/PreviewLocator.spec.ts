@@ -182,13 +182,47 @@ it('拖选一段字：先只出「添加批注」，点了才展开整张卡；E
   expect(ui.emitted().cancel).toHaveLength(1)
 })
 
-it('没有位置可贴（键盘选中、面板太窄）时不先出按钮，直接出卡', () => {
+it('先出按钮的一处滚出视野时按钮先藏起来，滚回来再出现，中途不变成整张卡', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
   const ui = render(PreviewLocator, {
-    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor: null, armFirst: true },
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
     global: { stubs },
   })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+  await ui.rerender({ anchor: null })
   expect(ui.queryByTestId('locator-arm')).toBeNull()
-  expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  await ui.rerender({ anchor })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+})
+
+it('选区靠右时按钮按自己的宽贴边，不被卡片宽拉离选区', () => {
+  const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 800, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  // 800 − 132 − 12 = 656 > 600：按钮就在选区左下，不被拉到 440。
+  expect(ui.getByTestId('locator-arm').style.left).toBe('600px')
+})
+
+it('去处菜单可以只用键盘：下键打开并落在当前项，上下移动，回车选中后焦点回到按钮；发送中不能换', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '改', canComment: true },
+    global: { stubs },
+  })
+  const trigger = ui.getByTestId('locator-recipient')
+  await fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+  await waitFor(() => expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-agent')))
+  await fireEvent.keyDown(ui.getByRole('listbox'), { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-comment'))
+  await fireEvent.keyDown(document.activeElement!, { key: 'Enter' })
+  await waitFor(() => expect(document.activeElement).toBe(trigger))
+  expect(trigger.textContent).toContain('仅留评论')
+
+  await ui.rerender({ busy: true })
+  await fireEvent.click(trigger)
+  expect(ui.queryByRole('listbox')).toBeNull()
 })
 
 it('两行输入：Shift+Enter 换行不发送，Enter 发送；卡底写着怎么发', async () => {
