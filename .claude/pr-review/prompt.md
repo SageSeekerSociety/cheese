@@ -107,7 +107,7 @@ and third round over the same file cost wall clock without adding coverage, and
 on this repo one round already fills the per-group budget.
 
 If this command is run in the background, give it a timeout at least as long as
-`OCR_WALL_CLOCK` (28 minutes by default) plus the install and the setup, so the
+`OCR_WALL_CLOCK` (25 minutes by default) plus the install and the setup, so the
 script's own ceiling stops the run and the platform's does not: the script
 closes a run with SIGTERM, which lets OCR write what it has, while the platform's
 timeout kills the process and leaves an empty result file.
@@ -131,7 +131,7 @@ What you have to know about running it:
   reads and searches until it has enough; on this repo's `deepseek-flash`
   a group can take fifteen minutes of wall clock. Two ceilings stop it, and
   neither is the one its `--timeout` flag suggests: that flag is per group, not
-  per run. The script's `OCR_WALL_CLOCK` (28 minutes, `OCR_TIMEOUT` 25 for
+  per run. The script's `OCR_WALL_CLOCK` (25 minutes, `OCR_TIMEOUT` 25 for
   OCR's own accounting) is what bounds the whole thing. What a stopped run
   produces is a **partial** result: the groups that finished, with their
   findings, and the rest marked `failed` as `timeout`. A partial result is a

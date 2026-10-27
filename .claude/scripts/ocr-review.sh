@@ -43,7 +43,7 @@
 #                        groups at it and lets the ones in flight finish. Too low a
 #                        value is worse than too high — 10 minutes on a five-file
 #                        change ended every group as `timeout` and produced nothing
-#   OCR_WALL_CLOCK       hard ceiling in minutes on the whole run (28), enforced by
+#   OCR_WALL_CLOCK       hard ceiling in minutes on the whole run (25), enforced by
 #                        `timeout` in this script rather than by OCR: at it OCR is
 #                        sent SIGTERM, which OCR treats as a graceful stop — it
 #                        writes the findings it has and the coverage ledger, then
@@ -51,11 +51,13 @@
 #                        that produced nothing; the summary line says so. It exists
 #                        because the platform stops a backgrounded command on its
 #                        own timeout and a killed process writes nothing at all.
-#                        The worst case is this plus OCR_GRACE, which is why the
-#                        default plus the grace still fits under the platform's
-#                        own limit. 0 disables it. Keep it under whatever timeout
-#                        the command is given, and near OCR_TIMEOUT so the two
-#                        agree about what "too long" means
+#                        The worst case is this plus OCR_GRACE, and that sum has
+#                        to fit under the platform's own limit on the command with
+#                        room for the install and the setup before this run: the
+#                        platform kills the process and nothing is written, which
+#                        is the failure this ceiling is here to get in front of.
+#                        0 disables it. A caller that knows its own deadline should
+#                        pass one and set OCR_WALL_CLOCK under it.
 #   OCR_GRACE            seconds to let OCR finish writing after SIGTERM before it
 #                        is killed (60); SIGKILL after this loses the partial result
 #   OCR_CONCURRENCY      concurrent subtasks (8)
@@ -92,7 +94,7 @@ MODEL="${OCR_MODEL:-deepseek-flash}"
 EFFORT="${OCR_EFFORT:-low}"
 MAX_TOOLS="${OCR_MAX_TOOLS:-}"
 TIMEOUT_MIN="${OCR_TIMEOUT:-25}"
-WALL_CLOCK_MIN="${OCR_WALL_CLOCK:-28}"
+WALL_CLOCK_MIN="${OCR_WALL_CLOCK:-25}"
 GRACE_S="${OCR_GRACE:-60}"
 CONCURRENCY="${OCR_CONCURRENCY:-8}"
 TOKEN_BUDGET="${OCR_TOKEN_BUDGET:-8000000}"
