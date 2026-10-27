@@ -510,11 +510,13 @@ jobs:
       # check what the injected bridge's snapshot keeps and what it drops.
       # jsdom is a frontend devDependency, and a pure shard has no frontend
       # install; a skipped case fails the suite (scripts/assert_suite_ran.py),
-      # so it is installed here at the version the frontend pins.
+      # so it is installed here at the version the frontend's lockfile resolves
+      # (package.json states a caret range, which would float).
       - name: Install jsdom for the preview bridge's snapshot test
         if: matrix.layer == 'pure'
         run: |
-          version="$(node -p "require('$GITHUB_WORKSPACE/frontend/package.json').devDependencies.jsdom")"
+          version="$(sed -n 's/^  jsdom@\([0-9][^:]*\):$/\1/p' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml" | head -1)"
+          test -n "$version" || { echo "no resolved jsdom in frontend/pnpm-lock.yaml" >&2; exit 1; }
           npm install --prefix "$RUNNER_TEMP/jsdom" --no-audit --no-fund "jsdom@$version"
           echo "CHEESE_TEST_JSDOM=$RUNNER_TEMP/jsdom/node_modules/jsdom" >> "$GITHUB_ENV"
 

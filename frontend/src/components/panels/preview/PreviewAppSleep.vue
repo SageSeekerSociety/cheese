@@ -189,4 +189,11 @@ const body = computed(() => {
     transform: rotate(360deg);
   }
 }
+/* 关掉动效时不能留着转：全局那条把时长压到 0.001ms，转圈会变成高频闪烁。停掉之后
+ * 这一行照样在说「正在做」——图标是 mdi-loading，整行是加粗的。 */
+@media (prefers-reduced-motion: reduce) {
+  .app-sleep__spin {
+    animation: none;
+  }
+}
 </style>
