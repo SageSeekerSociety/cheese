@@ -530,7 +530,11 @@ def test_a_room_on_a_whole_machine_is_given_its_platform_socket_too(rooms):
 
 def _holds_no_credential(room):
     assert room.bash('printf %s "${CHEESE_TOKEN-unset}"') == ""
+    assert room.bash('printf %s "${CHEESE_PROXY_PROOF-unset}"') == "unset"
     assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"')
+    assert room.bash('echo "$HTTPS_PROXY"').startswith("http://127.0.0.1:")
+    assert room.bash('echo "$SSL_CERT_FILE"').endswith("/ca-bundle.pem")
+    assert room.bash('echo "$NODE_EXTRA_CA_CERTS"').endswith("/ca.pem")
     token_file = room.home / ".cheese" / "cheese-preview.token"
     assert not token_file.exists() and not token_file.is_symlink()
 

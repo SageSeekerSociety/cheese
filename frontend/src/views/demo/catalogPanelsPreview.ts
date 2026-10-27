@@ -131,7 +131,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           frames: [previewFrame(), previewFrame({ id: 2, label: '预览 · 第二版' })],
           displayedFrame: previewFrame({ id: 2, label: '预览 · 第二版' }),
         }),
-        expect: '预览 · 第二版',
+        // 指定了文件的那一格：条上不再写文件名（页签上已经写着），认下载那颗。
         expectSelector: '.mdi-download',
       },
       {

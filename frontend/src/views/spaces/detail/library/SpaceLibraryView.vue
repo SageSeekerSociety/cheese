@@ -10,6 +10,7 @@ import type { SpaceMaterial, SpaceMaterialVisibility } from '@/types'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { usePaneWidth } from '@/composables/usePaneWidth'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -19,6 +20,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import PaneHandle from '@/components/common/PaneHandle.vue'
 import { fmtBytes } from '@/lib/changesTree'
 import { type Kind, KIND_ICONS, kindLabel, kindOf, KINDS } from '@/lib/libraryKinds'
 import { relTime } from '@/lib/relTime'
@@ -133,6 +135,10 @@ function submitUpload() {
 }
 
 const showList = computed(() => props.wide || !props.selected)
+
+// 桌面上右边那一栏预览可以往左拖宽，和项目资料库记在同一份里（`usePaneWidth`）。
+const detailRef = ref<HTMLElement | null>(null)
+const pane = usePaneWidth('cheese.library.previewShare', detailRef)
 </script>
 
 <template>
@@ -245,7 +251,15 @@ const showList = computed(() => props.wide || !props.selected)
     </section>
 
     <!-- The open one: a pane beside the list on desktop, the whole page on a phone. -->
-    <section v-if="selected" class="slib-detail" :class="{ 'slib-detail--phone': !wide }" data-testid="slib-detail">
+    <section
+      v-if="selected"
+      ref="detailRef"
+      class="slib-detail"
+      :class="{ 'slib-detail--phone': !wide }"
+      :style="wide ? pane.style.value : undefined"
+      data-testid="slib-detail"
+    >
+      <PaneHandle v-if="wide" :pane="pane" />
       <header class="slib-detail__head">
         <h2 v-if="wide" class="t-title slib-detail__name" data-user-content>{{ selected.name }}</h2>
         <p class="slib-detail__meta t-meta c-muted">
@@ -487,7 +501,8 @@ const showList = computed(() => props.wide || !props.selected)
   display: flex;
   flex: none;
   flex-direction: column;
-  width: 480px;
+  width: 50%;
+  min-width: min(480px, 100%);
   height: calc(100dvh - 120px);
   min-height: 360px;
   border-left: 1px solid var(--line);

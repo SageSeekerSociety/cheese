@@ -19,7 +19,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
-from app.domain.machine.caller import caller_of, credential_of
+from app.domain.machine.caller import caller_of, credential_of, machine_proxy_proof
 from tests.integration.test_switch_pushes_first import _room
 
 pytestmark = pytest.mark.anyio
@@ -103,12 +103,37 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
     import time
 
     room = await _room(client)
+    # /machine/credential is gone; inside the sandbox, /machine/proxy-credential
+    # without the host-side proof is refused with 403.
+    assert (
+        client.get(
+            "/machine/credential",
+            headers={
+                "x-device-connection-secret": "owner-secret",
+                "x-machine-device": room.old_device,
+                "x-machine-state": "/old/state",
+            },
+        ).status_code
+        == 404
+    )
+    assert (
+        client.get(
+            "/machine/proxy-credential",
+            headers={
+                "x-device-connection-secret": "owner-secret",
+                "x-machine-device": room.old_device,
+                "x-machine-state": "/old/state",
+            },
+        ).status_code
+        == 403
+    )
     answer = client.get(
-        "/machine/credential",
+        "/machine/proxy-credential",
         headers={
             "x-device-connection-secret": "owner-secret",
             "x-machine-device": room.old_device,
             "x-machine-state": "/old/state",
+            "x-cheese-proxy-proof": machine_proxy_proof(str(room.project_id)),
         },
     )
     assert answer.status_code == 200, answer.text
@@ -119,14 +144,18 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
     assert held_by_a_machine(claims)
     assert claims["exp"] - time.time() <= 61
     refused = client.get(
-        "/machine/credential",
+        "/machine/proxy-credential",
         headers={"x-machine-device": room.old_device, "x-machine-state": "/old/state"},
     )
     assert refused.status_code == 401
-    # A machine-held credential is refused on session-host and execution routes;
-    # the sandbox cannot drive its own executor, acquire a lease, or fetch
-    # session-host bundles with it.
+    # A machine-held credential is refused on ordinary platform API routes,
+    # session-host routes and execution routes; the sandbox must ask
+    # /machine/api/... on its socket.
     machine_headers = {"Authorization": f"Bearer {answer.json()['token']}"}
+    assert (
+        client.get(f"/topics/{room.topic_id}", headers=machine_headers).status_code
+        == 401
+    )
     assert (
         client.post(
             f"/topics/{room.topic_id}/execution/{room.lease['room_resource_id']}",
@@ -136,3 +165,51 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
         == 401
     )
     assert client.get("/sandbox/cli/cheese", headers=machine_headers).status_code == 401
+
+
+async def test_sandbox_forge_token_on_socket_returns_placeholder_to_sandbox_and_real_to_proxy(
+    client, monkeypatch
+):
+    from types import SimpleNamespace
+
+    room = await _room(client)
+    binding = SimpleNamespace(
+        kind="github_app",
+        repo="acme/widgets",
+        url="https://github.com/acme/widgets.git",
+        api_url="https://api.github.com",
+        default_branch="main",
+    )
+
+    async def binding_for_project(_id, _session):
+        return binding
+
+    class Minter:
+        async def installation_token(self):
+            return "ghs_real_single_repo_token", "2026-10-27T10:00:00Z"
+
+        async def granted_permissions(self):
+            return {"contents": "write"}
+
+    async def tokens_for_project(_id, _session):
+        return Minter()
+
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project", binding_for_project
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.tokens_for_project", tokens_for_project
+    )
+
+    from_sandbox = _ask(client, "sandbox/forge-token", device=room.old_device)
+    assert from_sandbox.status_code == 200, from_sandbox.text
+    assert from_sandbox.json()["data"]["token"] == "placeholder"
+
+    from_proxy = _ask(
+        client,
+        "sandbox/forge-token",
+        device=room.old_device,
+        headers={"x-cheese-proxy-proof": machine_proxy_proof(str(room.project_id))},
+    )
+    assert from_proxy.status_code == 200, from_proxy.text
+    assert from_proxy.json()["data"]["token"] == "ghs_real_single_repo_token"

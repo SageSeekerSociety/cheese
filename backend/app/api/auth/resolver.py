@@ -51,6 +51,7 @@ from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     DelegatedClaims,
     delegated_claims,
+    held_by_a_machine,
     is_global_sandbox_token,
     looks_like_delegated_credential,
     looks_like_project_agent_credential,
@@ -93,8 +94,10 @@ class ActorResolver:
         writes: bool = False,
         endpoint: str | None = None,
         path_ids: frozenset[str] = frozenset(),
+        allow_machine: bool = False,
     ):
         self._session = session
+        self._allow_machine = allow_machine
         # The ids the route's path names (a team's, a space's, an invitation's):
         # where a pass may be spent, besides the project and room it resolves.
         self._path_ids = path_ids
@@ -159,7 +162,9 @@ class ActorResolver:
         if not self._cheese_token or topic_id is None:
             return
         claims = scoped_token_claims(self._cheese_token)
-        named = (claims or {}).get("t")
+        if claims is None or (not self._allow_machine and held_by_a_machine(claims)):
+            return
+        named = claims.get("t")
         if not named or named == str(topic_id):
             return
         if await conversations.is_task(self._session, uuid.UUID(named)):
@@ -357,6 +362,7 @@ class ActorResolver:
                     if topic_id and not (claims and claims.get("s") == "project")
                     else None
                 ),
+                allow_machine=self._allow_machine,
             )
 
         # The credential names a fixed participant. A project credential uses
@@ -392,7 +398,8 @@ class ActorResolver:
             if (
                 topic_id is None
                 and project_id is None
-                and scoped_token_claims(self._cheese_token) is not None
+                and (claims := scoped_token_claims(self._cheese_token)) is not None
+                and (self._allow_machine or not held_by_a_machine(claims))
             ):
                 raise ForbiddenError(
                     "This credential is restricted to one project; "
@@ -565,7 +572,7 @@ class ActorResolver:
         if not self._cheese_token:
             return
         claims = scoped_token_claims(self._cheese_token)
-        if claims is None:
+        if claims is None or (not self._allow_machine and held_by_a_machine(claims)):
             return
         if project_id is not None and claims.get("p") != str(project_id):
             _log.info("token_scope_violation", kind="project", got=claims.get("p"))

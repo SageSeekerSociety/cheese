@@ -1153,6 +1153,7 @@ def start_sandbox(
 
 @contextlib.contextmanager
 def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
+    payload.pop("proxy_proof", None)
     if sys.platform != "win32":  # Before every path below: its room holds none (docs).
         payload["env"]["CHEESE_TOKEN"] = ""
     project, resource = (
@@ -1429,6 +1430,56 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         yield home, config, state, env
 
 
+def start_forge_proxy(owner, platform, release, env, proxy_proof):
+    """Start the host-side forge CA proxy and preview relay outside the sandbox."""
+    if sys.platform == "win32":
+        return
+    script = release / "remote-execution/forge_proxy.py"
+    if not script.is_file() or shutil.which("openssl") is None:
+        return
+    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+    confinement["own_directory"](platform)
+    ca_dir = execution_root(owner) / "ca"
+    record = platform / "forge-proxy.json"
+    if record.is_file():
+        with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+            pid = int(json.loads(record.read_text())["pid"])
+            os.kill(pid, 15)
+    for name in ("forge.sock", "preview.sock"):
+        (platform / name).unlink(missing_ok=True)
+    log_path = platform / "forge-proxy.log"
+    with open(log_path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as log:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                "--platform-dir",
+                str(platform),
+                "--ca-dir",
+                str(ca_dir),
+                "--api-url",
+                env.get("CHEESE_API", ""),
+                "--preview-url",
+                env.get("CHEESE_PREVIEW_URL", ""),
+            ],
+            cwd=str(platform),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            env={**os.environ, "CHEESE_PROXY_PROOF": proxy_proof},
+            start_new_session=True,
+        )
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if (
+            (platform / "forge.sock").exists()
+            and (platform / "preview.sock").exists()
+            and (platform / "ca-bundle.pem").is_file()
+        ):
+            break
+        time.sleep(0.02)
+
+
 def configure(payload):
     try:
         configure_idle(payload)
@@ -1440,6 +1491,7 @@ def configure(payload):
 
 
 def configure_idle(payload):
+    proxy_proof = payload.pop("proxy_proof", "")
     platform_machine = bool(payload.get("platform_machine"))
     # Refused before anything of the room's is touched where the machine
     # cannot make the sandbox; a Cloud machine is given what it lacks below,
@@ -1529,6 +1581,7 @@ def configure_idle(payload):
                 # (`cli/internal/host/machine.go`); made here, before the
                 # sandbox, so the sandbox is shown it from the start.
                 platform = Path(runtime["platform_socket_directory"](state))
+                start_forge_proxy(Path.home(), platform, release, env, proxy_proof)
                 env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                 # The service makes this link in the /tmp it is shown, which is
                 # its own; clients outside dial the machine's.
@@ -1576,6 +1629,7 @@ def configure_idle(payload):
                     runpy.run_path(str(release / "remote-execution/confinement.py"))[
                         "own_directory"
                     ](platform)
+                    start_forge_proxy(Path.home(), platform, release, env, proxy_proof)
                     env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                     process = subprocess.Popen(
                         argv, start_new_session=True, env=env, **options

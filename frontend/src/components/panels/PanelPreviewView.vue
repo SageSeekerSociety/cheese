@@ -502,6 +502,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :sheet-anchors="sheetAnchors"
       :live-edit="props.liveEdit"
       :active-anchor="focusedThread"
+      :named-tab="!!path"
       @anchor="openAnchor"
       @close-live-edit="props.liveEdit?.end()"
       @open-editor="emit('open-editor', $event)"

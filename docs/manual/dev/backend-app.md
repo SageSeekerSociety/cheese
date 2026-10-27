@@ -32,7 +32,7 @@ covers:
 |---|---|---|---|---|
 | 主 API | `app.main:app` | 8081 | 全部业务接口、投递与调度、Agent 轮、迁移 | 替换（滚动交接见[部署拓扑](/dev/topology#handover)） |
 | 机器连接服务 | `app.device_connection_app:app` | 8082 | 设备与终端 WebSocket，以及进出设备的 RPC | 不重启（`release-device-connection.yml`） |
-| 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`deploy/llm-tunnel/up.sh`） |
+| 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`release-llm-tunnel.yml`） |
 | 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 它跑的代码变了才替换（`deploy/code-digest.py`） |
 
 分开的原因写在各自模块的 docstring 里：机器连接服务要活过主 API 的替换，否则每次发版都会掐断设备链接；模型隧道单独成进程，是因为隧道 WebSocket 原来终结在后端进程里，换容器就切断了那个窗口内所有机器的模型流量（`llm_tunnel_app.py` 引 #551）。
