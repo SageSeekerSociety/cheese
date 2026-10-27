@@ -4,6 +4,9 @@
 // 三种只会出现一种，按读者手上在做的那件事排：在看旧版 > 在比两版 > 新版提示。三种都在
 // 正文上方同一个位置，读者不用找「我现在看的是什么」。
 //
+// 链接紧跟在那句话后面（和原型一样），读完这句眼睛就落在能点的地方；只有对比态的
+// 「上一处 / 下一处」靠右，它是翻页器，不是这句话的下文。
+//
 //   - 提示（琥珀底）：「本版共修改 N 处（对比第 M 版）· 查看改动 · 收起」。产品配色里没有蓝
 //     （提示用的 info 色是中性灰），琥珀底是这一套里「新的、值得看一眼」的那个颜色。
 //   - 对比（绿底）：「版本对比：第 A 版 → 第 B 版」，加上图例、上一处 / 下一处、退出对比。
@@ -87,7 +90,6 @@ const legend = computed(() =>
     <v-icon size="16" class="vs__icon">mdi-history</v-icon>
     <span class="vs__text">{{ t('work.room.versions.oldBar', { seq: oldSeq }) }}</span>
     <span v-if="oldError" class="vs__note">{{ oldError }}</span>
-    <span class="vs__fill" />
     <button v-if="canCompare" type="button" class="vs__link" @click="emit('compare-current')">
       {{ t('work.room.versions.compareWithCurrent') }}
     </button>
@@ -103,6 +105,9 @@ const legend = computed(() =>
       <template v-if="!compact && !compareNote">· {{ legend }}</template>
     </span>
     <span v-if="compareNote" class="vs__note">{{ compareNote }}</span>
+    <button type="button" class="vs__link" data-testid="version-exit" @click="emit('exit-compare')">
+      {{ t('work.room.versions.exitCompare') }}
+    </button>
     <span class="vs__fill" />
     <template v-if="total > 0">
       <BaseButton
@@ -129,9 +134,6 @@ const legend = computed(() =>
         @click="emit('next')"
       />
     </template>
-    <button type="button" class="vs__link" data-testid="version-exit" @click="emit('exit-compare')">
-      {{ t('work.room.versions.exitCompare') }}
-    </button>
   </div>
 
   <div v-else-if="mode === 'hint' && hint" class="vs vs--hint" data-testid="version-strip" data-mode="hint">
@@ -142,7 +144,6 @@ const legend = computed(() =>
         base: hint.base,
       })
     }}</span>
-    <span class="vs__fill" />
     <button type="button" class="vs__link" data-testid="version-view-changes" @click="emit('view-changes')">
       {{ t('work.room.versions.viewChanges') }}
     </button>

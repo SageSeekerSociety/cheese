@@ -509,6 +509,7 @@ defineExpose({ snapshot, clearMark })
         :active-mark="activeAnchor"
         :changed="sheetChanged"
         :changed-by="versions?.changedBy.value"
+        :show-before="!!compare"
         @cell="emit('cell', $event)"
         @range="emit('sheet-range', $event)"
         @mark="emit('anchor', $event)"

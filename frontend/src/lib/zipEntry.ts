@@ -19,8 +19,28 @@ function findEnd(view: DataView): number {
 }
 
 async function inflateRaw(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array> {
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
+  const source = new ReadableStream<BufferSource>({
+    start(controller) {
+      controller.enqueue(data)
+      controller.close()
+    },
+  })
+  const reader = source.pipeThrough(new DecompressionStream('deflate-raw')).getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    size += value.length
+  }
+  const out = new Uint8Array(size)
+  let at = 0
+  for (const chunk of chunks) {
+    out.set(chunk, at)
+    at += chunk.length
+  }
+  return out
 }
 
 /** `name` 那一条的内容；没有这一条、或者这一份不是读得懂的 zip，给 null。 */

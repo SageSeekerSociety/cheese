@@ -72,10 +72,11 @@ const title = computed(() =>
       >
         <div class="vp__row">
           <strong>{{ t('work.room.versions.label', { seq: entry.seq }) }}</strong>
-          <v-chip v-if="entry.current" size="x-small" color="primary" variant="tonal">{{
-            t('work.room.versions.current')
-          }}</v-chip>
           <span class="t-meta">{{ entry.author }} · {{ relTime(entry.at) }}</span>
+          <v-chip v-if="entry.latest" size="x-small" color="primary" variant="tonal">{{
+            t('work.room.versions.latest')
+          }}</v-chip>
+          <v-chip v-if="entry.lastSeen" size="x-small" variant="tonal">{{ t('work.room.versions.lastSeen') }}</v-chip>
         </div>
         <div v-if="entry.note" class="vp__note t-meta">{{ entry.note }}</div>
       </v-list-item>

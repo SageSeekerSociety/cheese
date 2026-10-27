@@ -31,8 +31,10 @@ const props = withDefaults(
     changed?: ReadonlyMap<string, string> | null
     /** 改了这几格的是谁：悬停那一句「某某改过这一格」里的名字。 */
     changedBy?: string
+    /** 对比态：改过的格子里把原来的值也写出来（删除线），不用悬停就看得到改了什么。 */
+    showBefore?: boolean
   }>(),
-  { kind: 'workbook', marks: () => [], activeMark: null, changed: null, changedBy: '' }
+  { kind: 'workbook', marks: () => [], activeMark: null, changed: null, changedBy: '', showBefore: false }
 )
 
 const emit = defineEmits<{
@@ -152,12 +154,15 @@ async function open(data: ArrayBuffer) {
   loading.value = false
 }
 
-/** 这一格这一版改过没有；改过就给悬停那一句（原来写的什么）。 */
-function changedTitle(rowIndex: number, colIndex: number): string | null {
-  const changed = props.changed
+/** 这一格这一版改过没有；改过就给上一版那里写的什么（原来是空的就是空串）。 */
+function beforeAt(rowIndex: number, colIndex: number): string | undefined {
   const sheet = active.value
-  if (!changed || !sheet) return null
-  const before = changed.get(`${sheet.name}!${addressAt(rowIndex, colIndex)}`)
+  return sheet ? props.changed?.get(`${sheet.name}!${addressAt(rowIndex, colIndex)}`) : undefined
+}
+
+/** 改过的格子悬停时那一句：谁改的、原来是什么。 */
+function changedTitle(rowIndex: number, colIndex: number): string | null {
+  const before = beforeAt(rowIndex, colIndex)
   if (before === undefined) return null
   return before
     ? t('work.room.versions.cellChanged', { who: props.changedBy, before: cellText(before) })
@@ -340,7 +345,12 @@ watch(
                 @mouseenter="extendDrag(r, c - 1)"
                 @click="choose(r, c - 1)"
               >
-                <span class="ps__text">{{ cellText(row[c - 1] ?? '') }}</span>
+                <span class="ps__text"
+                  ><del v-if="showBefore && beforeAt(r, c - 1)" class="ps__was">{{
+                    cellText(beforeAt(r, c - 1) ?? '')
+                  }}</del
+                  >{{ cellText(row[c - 1] ?? '') }}</span
+                >
                 <!-- Comment marks: one dot per thread whose sheet-cell lands on this cell.
                      Drawn inside the cell so it moves with the cell when the table
                      re-renders. -->
@@ -527,12 +537,20 @@ watch(
   background: var(--accent-wash);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--surface));
 }
+.ps__cell--chg:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
 .ps__cell--chg.ps__cell--on {
   box-shadow: inset 0 0 0 2px var(--ink);
 }
 .ps__cell--chg.ps__cell--in {
   background: var(--selection-bg);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ps__was {
+  margin-right: 6px;
+  color: var(--danger-ink);
+  text-decoration: line-through;
 }
 .ps__tab-dot {
   display: inline-block;

@@ -25,6 +25,7 @@ import type { PanelPreviewProps } from './types'
 import { computed, ref, shallowRef, watch } from 'vue'
 
 import { roomFileRevisionBytes } from '../../api'
+import { agentNames } from '../../lib/agentNames'
 import { storageGet, storageSet } from '../../lib/browserStorage'
 import { docxParagraphs } from '../../lib/docxText'
 import { isLibraryPath } from '../../lib/library'
@@ -42,7 +43,12 @@ export interface VersionEntry {
   author: string
   at: string
   note: string | null
+  /** 屏幕上这一份就是这一版。 */
   current: boolean
+  /** 清单里最新的一版。 */
+  latest: boolean
+  /** 读者上次看到的就是这一版（比当前旧时才标：「从这一版之后改了什么」）。 */
+  lastSeen: boolean
 }
 
 /** 两版之间改了什么。`text` 是逐段的（Markdown、Word），`sheet` 是逐格的。 */
@@ -123,21 +129,44 @@ export function usePanelPreviewVersions(deps: VersionsDeps) {
     return rows.value.find((row) => row.version === version) ?? null
   })
 
+  // 队友也在项目名册上（`useDocPeople` 只收了人和这间房的那一位）：存下这一版的可能是
+  // 别的队友，名字照名册写，不笼统写成「芝士」。
+  const agents = computed(() => agentNames([], props.members ?? []))
   function authorOf(row: RoomFileRevision): string {
-    const named = row.author ? people.names.value[row.author] : undefined
+    const named = row.author ? people.names.value[row.author] ?? agents.value.get(row.author) : undefined
     if (named) return named
     if (row.author_kind === 'agent') return props.agentName || t('work.room.defaultAgentName')
     return row.author || t('work.room.versions.someone')
   }
 
+  // ---- 「看到第几版了」 ----
+  const seenTick = ref(0)
+  const seen = computed(() => {
+    void seenTick.value
+    const tid = props.topicId
+    if (!tid || !path.value) return null
+    const raw = storageGet(seenKey(tid, path.value))
+    const n = raw === null ? NaN : Number(raw)
+    return Number.isFinite(n) ? n : null
+  })
+  function markSeen() {
+    const tid = props.topicId
+    const row = currentRow.value
+    if (!tid || !path.value || !row) return
+    storageSet(seenKey(tid, path.value), String(row.seq))
+    seenTick.value += 1
+  }
+
   const list = computed<VersionEntry[]>(() =>
-    rows.value.map((row) => ({
+    rows.value.map((row, index) => ({
       id: row.id,
       seq: row.seq,
       author: authorOf(row),
       at: row.created_at,
       note: row.note,
       current: row.id === currentRow.value?.id,
+      latest: index === 0,
+      lastSeen: seen.value === row.seq && row.seq < (currentRow.value?.seq ?? 0),
     }))
   )
   const current = computed(() => list.value.find((entry) => entry.current) ?? null)
@@ -163,24 +192,6 @@ export function usePanelPreviewVersions(deps: VersionsDeps) {
   const older = (seq: number) => rows.value.find((row) => row.seq < seq) ?? null
   const bySeq = (seq: number) => rows.value.find((row) => row.seq === seq) ?? null
   const canCompare = computed(() => !!diffKind.value && !!currentRow.value && !!older(currentRow.value.seq))
-
-  // ---- 「看到第几版了」 ----
-  const seenTick = ref(0)
-  const seen = computed(() => {
-    void seenTick.value
-    const tid = props.topicId
-    if (!tid || !path.value) return null
-    const raw = storageGet(seenKey(tid, path.value))
-    const n = raw === null ? NaN : Number(raw)
-    return Number.isFinite(n) ? n : null
-  })
-  function markSeen() {
-    const tid = props.topicId
-    const row = currentRow.value
-    if (!tid || !path.value || !row) return
-    storageSet(seenKey(tid, path.value), String(row.seq))
-    seenTick.value += 1
-  }
 
   /** 提示条拿哪一版比：读者上次看到的那一版（还在清单里的话），没记过就是上一版。 */
   const hintBase = computed(() => {

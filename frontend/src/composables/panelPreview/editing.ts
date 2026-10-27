@@ -71,7 +71,8 @@ export function usePanelPreviewEditing(deps: EditingDeps) {
   //
   // 房间里的文件一打开就读：文档条上那一行「第 N 版 · 谁 · 什么时候」和「本版共修改 N 处」
   // 都从这份清单来（`./versions.ts`），一份文件多问一次清单，换来读者不用点开历史就知道
-  // 这是哪一版。资料库里的原件没有历史，不问；编辑器开着时读编辑器里那份。
+  // 这是哪一版。只问文档（版本行只摆在文档条上，图片、网页没有）；资料库里的原件没有历史，
+  // 不问；编辑器开着时读编辑器里那份。
   const fileHistory = useRoomFileHistory(
     {
       topicId: () => props.topicId,
@@ -86,7 +87,7 @@ export function usePanelPreviewEditing(deps: EditingDeps) {
           : state.previewFile.value?.version ?? null,
       enabled: () => {
         const path = state.previewFile.value?.path
-        return !!editing.value || showHistory.value || (!!path && !isLibraryPath(path))
+        return !!editing.value || showHistory.value || (!!state.documentType.value && !!path && !isLibraryPath(path))
       },
     },
     {

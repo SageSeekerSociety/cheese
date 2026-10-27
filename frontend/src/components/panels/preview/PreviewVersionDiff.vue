@@ -31,37 +31,37 @@ const props = defineProps<{
 
 type Block =
   | { kind: 'same' | 'add' | 'del'; lines: string[]; change: number | null }
-  | { kind: 'changed'; segments: Segment[]; head: number; list: string; quote: boolean; change: number | null }
+  | ({ kind: 'changed'; segments: Segment[]; change: number | null } & LineStyle)
 
 const HEADING = /^(#{1,6})\s+/
 const LIST = /^\s*([-*+]|\d+[.)])\s+/
 const QUOTE = /^>\s?/
 
-/** 改了几个字的那一段：认出行首的标题、列表、引用符号，从开头那段没改的字里摘掉。 */
+/** 行首的标题、列表、引用符号：认出来排成对应的样子，符号本身不显示。Markdown 的整块交给
+ *  渲染器，用不上这个；Word 的每一段（`lib/docxText` 在行首标了 `# `、`- `）和两种文件里
+ *  改了几个字的那一段用它。 */
+type LineStyle = { head: number; list: string; quote: boolean }
+function lineStyle(text: string): LineStyle & { rest: string } {
+  const h = HEADING.exec(text)
+  if (h) return { head: h[1].length, list: '', quote: false, rest: text.slice(h[0].length) }
+  const l = LIST.exec(text)
+  if (l) return { head: 0, list: /\d/.test(l[1]) ? l[1] : '\u2022', quote: false, rest: text.slice(l[0].length) }
+  const q = props.markdown ? QUOTE.exec(text) : null
+  if (q) return { head: 0, list: '', quote: true, rest: text.slice(q[0].length) }
+  return { head: 0, list: '', quote: false, rest: text }
+}
+
+/** 改了几个字的那一段：行首符号从开头那段没改的字里摘掉。 */
 function changedBlock(segments: Segment[], change: number | null): Block {
   const clean = segments.map((seg) => ({ ...seg, text: seg.text.split(BLANK_LINE).join('') }))
-  let head = 0
-  let list = ''
-  let quote = false
+  let style: LineStyle = { head: 0, list: '', quote: false }
   const first = clean[0]
-  if (props.markdown && first?.kind === 'same') {
-    let text = first.text
-    const h = HEADING.exec(text)
-    const l = LIST.exec(text)
-    const q = QUOTE.exec(text)
-    if (h) {
-      head = h[1].length
-      text = text.slice(h[0].length)
-    } else if (l) {
-      list = /\d/.test(l[1]) ? l[1] : '•'
-      text = text.slice(l[0].length)
-    } else if (q) {
-      quote = true
-      text = text.slice(q[0].length)
-    }
-    clean[0] = { ...first, text }
+  if (first?.kind === 'same') {
+    const { rest, ...found } = lineStyle(first.text)
+    style = found
+    clean[0] = { ...first, text: rest }
   }
-  return { kind: 'changed', segments: clean.filter((seg) => seg.text), head, list, quote, change }
+  return { kind: 'changed', segments: clean.filter((seg) => seg.text), ...style, change }
 }
 
 const blocks = computed<Block[]>(() => {
@@ -135,9 +135,17 @@ defineExpose({ focusChange })
                 : undefined
           "
         >
-          <MarkdownView v-if="markdown" :source="block.lines.join('\n')" class="vd__md" />
+          <MarkdownView v-if="markdown" :source="block.lines.join('\n')" class="vd__md md-content" />
           <template v-else>
-            <p v-for="(line, j) in block.lines" :key="j" class="vd__p">{{ line }}</p>
+            <p
+              v-for="(line, j) in block.lines.map(lineStyle)"
+              :key="j"
+              class="vd__p"
+              :class="line.head ? `vd__h vd__h${line.head}` : ''"
+            >
+              <span v-if="line.list" class="vd__bullet">{{ line.list }}</span
+              >{{ line.rest }}
+            </p>
           </template>
         </div>
       </template>
