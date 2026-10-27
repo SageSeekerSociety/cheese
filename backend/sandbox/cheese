@@ -5629,7 +5629,9 @@ def _git_task(
     pre_push_report: Path | None = None,
 ) -> str:
     env = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") or key == "GIT_SSL_CAINFO"
     }
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
@@ -6050,6 +6052,8 @@ def _wire_remote(repo: Path, data: dict) -> None:
     _git_task(repo, "config", "--replace-all", "credential.helper", "")
     _git_task(repo, "config", "--add", "credential.helper", "!cheese git-credential")
     _git_task(repo, "config", "credential.useHttpPath", "true")
+    if os.environ.get("GIT_SSL_CAINFO"):
+        _git_task(repo, "config", "http.sslCAInfo", os.environ["GIT_SSL_CAINFO"])
     if "origin" not in _git_task(repo, "remote").splitlines():
         _git_task(repo, "remote", "add", "origin", data["remote"])
     else:
@@ -6747,6 +6751,13 @@ def _sync_task(task_id: str) -> list[str]:
                     "!cheese git-credential",
                 )
                 _git_task(worktree, "config", "credential.useHttpPath", "true")
+                if os.environ.get("GIT_SSL_CAINFO"):
+                    _git_task(
+                        worktree,
+                        "config",
+                        "http.sslCAInfo",
+                        os.environ["GIT_SSL_CAINFO"],
+                    )
                 _git_task(worktree, "remote", "set-url", "origin", data["remote"])
                 _configure_git_transport(worktree, data)
             head = _git_task(worktree, "rev-parse", "HEAD")
@@ -6848,7 +6859,9 @@ def _warm_task_diff(worktree: Path, data: dict) -> None:
         # never fetched): there is nothing this can usefully warm.
         return
     env = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") or key == "GIT_SSL_CAINFO"
     }
     env["GIT_TERMINAL_PROMPT"] = "0"
     command = [

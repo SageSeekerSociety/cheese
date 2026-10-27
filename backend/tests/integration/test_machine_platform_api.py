@@ -148,10 +148,14 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
         headers={"x-machine-device": room.old_device, "x-machine-state": "/old/state"},
     )
     assert refused.status_code == 401
-    # A machine-held credential is refused on session-host and execution routes;
-    # the sandbox cannot drive its own executor, acquire a lease, or fetch
-    # session-host bundles with it.
+    # A machine-held credential is refused on ordinary platform API routes,
+    # session-host routes and execution routes; the sandbox must ask
+    # /machine/api/... on its socket.
     machine_headers = {"Authorization": f"Bearer {answer.json()['token']}"}
+    assert (
+        client.get(f"/topics/{room.topic_id}", headers=machine_headers).status_code
+        == 401
+    )
     assert (
         client.post(
             f"/topics/{room.topic_id}/execution/{room.lease['room_resource_id']}",

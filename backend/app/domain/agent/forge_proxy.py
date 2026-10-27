@@ -98,27 +98,32 @@ def is_pr_merge_request(method: str, path: str, body: bytes = b"") -> bool:
 def rewrite_authorization(
     authorization: str, username: str, token: str, *, is_git: bool = False
 ) -> str:
-    """Replace a placeholder credential (or supply a missing one) with `token`."""
+    """Replace a placeholder credential with `token`.
+
+    Unauthenticated requests (such as public release downloads on github.com)
+    and requests carrying another credential are left untouched.
+    """
     if not token:
         return authorization
     raw = (authorization or "").strip()
     if not raw:
-        if is_git:
-            pair = f"{username or 'x-access-token'}:{token}".encode()
-            return "Basic " + base64.b64encode(pair).decode("ascii")
-        return f"Bearer {token}"
+        return ""
     scheme, _, value = raw.partition(" ")
     lower = scheme.lower()
     if lower in ("bearer", "token"):
-        return f"{scheme} {token}"
+        if value.strip() == PLACEHOLDER_TOKEN:
+            return f"{scheme} {token}"
+        return raw
     if lower == "basic":
         try:
             decoded = base64.b64decode(value.strip(), validate=True).decode("utf-8")
-            user, _, _ = decoded.partition(":")
+            user, _, password = decoded.partition(":")
         except (ValueError, UnicodeError, binascii.Error):
-            user = username or "x-access-token"
-        pair = f"{user or username or 'x-access-token'}:{token}".encode()
-        return "Basic " + base64.b64encode(pair).decode("ascii")
+            return raw
+        if password == PLACEHOLDER_TOKEN:
+            pair = f"{user or username or 'x-access-token'}:{token}".encode()
+            return "Basic " + base64.b64encode(pair).decode("ascii")
+        return raw
     return raw
 
 
@@ -384,6 +389,28 @@ class PlatformSocketClient:
         return ok
 
 
+# Matches `sandbox_host.PRIVATE` so private/loopback/link-local/CGNAT ranges are
+# blocked while transparent-DNS benchmark ranges (198.18.0.0/15) used on cloud
+# hosts for external domains remain reachable.
+_BLOCKED_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
+
+
 def _is_private_destination(host: str) -> bool:
     if host.lower() in ("localhost", "localhost.localdomain"):
         return True
@@ -397,14 +424,7 @@ def _is_private_destination(host: str) -> bool:
             ip = ipaddress.ip_address(addr)
         except ValueError:
             continue
-        if (
-            not ip.is_global
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        if any(ip in net for net in _BLOCKED_NETWORKS):
             return True
     return False
 

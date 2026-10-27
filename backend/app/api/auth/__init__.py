@@ -32,7 +32,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.core.sentences import say
 from app.domain.conversation import services as conversations
 from app.domain.identity.actor import TokenIdentity
@@ -280,7 +280,7 @@ async def session_in(
     in — a room, or one of its tasks — and its credential's claims. Only that
     conversation's credential, of that project, with its agent still seated."""
     claims = scoped_token_claims(token)
-    if not claims or claims.get("t") != str(topic_id):
+    if not claims or held_by_a_machine(claims) or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
     project_id = await conversations.project_of(session, topic_id)
     if project_id is None:
@@ -297,6 +297,7 @@ async def require_seated_agent(
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID | None,
+    allow_machine: bool = False,
 ) -> None:
     """Refuse a scoped credential whose agent no longer sits where it acts.
 
@@ -312,7 +313,7 @@ async def require_seated_agent(
     check, so it passes unchanged.
     """
     claims = scoped_token_claims(token)
-    if claims is None:
+    if claims is None or (not allow_machine and held_by_a_machine(claims)):
         raise AuthenticationRequiredError("Agent credential is invalid or expired")
     if not claims.get("a") and not claims.get("t"):
         return
@@ -322,7 +323,9 @@ async def require_seated_agent(
     room = topic_id
     if room is None and claims.get("t"):
         room = uuid.UUID(claims["t"])
-    resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
+    resolver = ActorResolver(
+        session=session, bearer=None, cheese_token=token, allow_machine=allow_machine
+    )
     actor = await resolver.resolve(topic_id=room, project_id=project_id, read_only=True)
     if room is not None:
         await resolver.authorize_topic(
