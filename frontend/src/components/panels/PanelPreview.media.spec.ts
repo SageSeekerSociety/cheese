@@ -3,7 +3,7 @@ import type { PreviewInfo } from '../../cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
