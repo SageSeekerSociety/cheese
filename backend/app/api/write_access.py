@@ -14,7 +14,9 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   writes must carry a declaration. A team, a space, a problem or a question
   is acted on by a person (or their 芝士, as them); a project by whoever
   works in it — a person, their 芝士, or one of its AI teammates — and the
-  parameter receives the project with who acts (``InProject``).
+  parameter receives the project with who acts (``InProject``); asked at a
+  conversation (``at="topic_id"``), by whoever may be in that channel, and the
+  parameter receives the conversation's place with who acts (``InChannel``).
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). Most routes are this.
 
@@ -53,6 +55,7 @@ from app.api.auth import ActorResolver, get_actor_resolver
 from app.auth import can
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.project_roles import may
 from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
@@ -68,6 +71,7 @@ from app.domain.identity.actor import Actor
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission as ProjectPermission
+from app.domain.room_task.place import Place, place_or_404
 
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -274,6 +278,78 @@ class _CanInProject(WriteAccess):
         return InProject(await ProjectService(db).get_or_404(project_id), actor)
 
 
+@dataclass(frozen=True)
+class InChannel:
+    """A conversation a route acts in — a channel, or one of its tasks or 支线
+    (``Place``) — and who acts there."""
+
+    place: Place
+    actor: Actor
+
+
+@dataclass(frozen=True, eq=False)
+class _CanInChannel(WriteAccess):
+    """``Can`` for a project's permission asked in one conversation: whoever
+    may be in its channel (``ActorResolver.authorize_topic``: a private
+    channel is not there for anyone outside it), and may do the permission
+    where they sit in the project — an AI teammate by what its role grants
+    (``project_roles.AGENT_PERMISSIONS``), as everyone else by theirs."""
+
+    kind: Literal["can"] = "can"
+    permission: ProjectPermission | None = None
+    at: str = "topic_id"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "topic_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[uuid.UUID, Path(alias=self.at)],
+                    ),
+                    inspect.Parameter(
+                        "db",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AsyncSession, Depends(get_db)],
+                    ),
+                    inspect.Parameter(
+                        "resolver",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[
+                            ActorResolver, Depends(get_actor_resolver)
+                        ],
+                    ),
+                ]
+            ),
+        )
+
+    @property
+    def name(self) -> str:
+        return f"can {self.permission}"
+
+    async def __call__(  # type: ignore[override]
+        self, *, topic_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
+    ) -> InChannel:
+        assert self.permission is not None
+        place = await place_or_404(db, topic_id)
+        actor = await resolver.resolve(
+            topic_id=place.conversation_id, project_id=place.project_id
+        )
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id
+        )
+        # Nobody signed in gets past the room only on the development override,
+        # which sits nowhere and is asked nothing more.
+        if actor.authenticated and not await may(
+            db, place.project_id, actor.handle, self.permission
+        ):
+            raise ForbiddenError(say("projectPermissionDenied"))
+        return InChannel(place, actor)
+
+
 def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
     """What a route needs, on the object its path names: the parameter it
     annotates receives that object, loaded and authorized
@@ -284,7 +360,9 @@ def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
     parameter only where a route spells it otherwise than the object's policy
     does."""
     if isinstance(permission, ProjectPermission):
-        return Depends(_CanInProject(permission=permission, at=at or "project_id"))
+        if at is not None and at != "project_id":
+            return Depends(_CanInChannel(permission=permission, at=at))
+        return Depends(_CanInProject(permission=permission, at="project_id"))
     param = at or can.policy_of(permission).path_param
     return Depends(_Can(permission=permission, at=param))
 
