@@ -925,12 +925,14 @@ def _only_claim(client, task_id: int) -> int:
     return client.portal.call(read)
 
 
-def test_a_direct_claim_is_not_started_after_the_task_closes_even_with_a_later_own_deadline(
+def test_a_direct_claim_is_started_after_the_task_closes_until_its_own_deadline(
     client, monkeypatch
 ):
-    """On a task started directly the task's deadline is everyone's: a claim
-    whose project was never made is not started once it passes, even when
-    the publisher gave that claim a later deadline of its own."""
+    """Someone who already holds a claim is held only to the claim's own
+    deadline (the owner, 2026-10-26: 这个人的截止期没到就可以开始). On a task
+    started directly the task's deadline closes new starts, so a claim whose
+    project was never made, and whose deadline the publisher moved past the
+    task's, still starts; someone without a claim still cannot."""
     _real_requests(client, monkeypatch)
     board = _board(client)
     task_id = _create_task(
@@ -950,11 +952,12 @@ def test_a_direct_claim_is_not_started_after_the_task_closes_even_with_a_later_o
         )
     )
 
-    refused = _start(client, task_id, student)
+    started = _data(_start(client, task_id, student))["project"]
 
+    assert _page(client, task_id, student)["myProject"]["id"] == started["id"]
+    refused = _start(client, task_id, _student(client, board))
     assert refused.status_code == 400, refused.text
     assert refused.json()["error"]["i18n"]["key"] == "taskClosedForStart"
-    assert _projects_of(client, task_id) == []
 
 
 def test_an_approved_application_is_not_started_after_its_own_deadline(

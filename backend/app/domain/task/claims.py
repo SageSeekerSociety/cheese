@@ -233,13 +233,11 @@ def refuse_claim_after_deadline(task: Task, now: datetime) -> None:
 def refuse_start_after_deadline(
     task: Task, claim: TaskMembership, now: datetime
 ) -> None:
-    """An approved claim is not started once its own deadline has passed (a
-    project made then would only read failed). On a task started directly the
-    task's deadline is everyone's, so it closes starting too; on a task
-    applied for it closes applying only, and an application approved after it
-    is started until the claim's own deadline."""
-    if starts_now(task) and task.deadline is not None and task.deadline <= now:
-        raise BadRequestError(say("taskClosedForStart"))
+    """An approved claim is started until its own deadline, and not after it
+    (a project made then would only read failed). The task's deadline closes
+    new claims only (``refuse_claim_after_deadline``), in both start modes:
+    someone who already holds a claim is held to the claim's own deadline
+    (the owner, 2026-10-26)."""
     if (
         claim.approved == APPROVE_APPROVED
         and claim.deadline is not None

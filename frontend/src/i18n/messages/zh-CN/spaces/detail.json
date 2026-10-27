@@ -2,6 +2,7 @@
   "allContests": "全部题目",
   "announcements": "公告",
   "auditTasks": {
+    "applyDeadline": "申请截止 {date}",
     "approve": "通过",
     "by": "{name} 发布",
     "deadline": "{date} 截止",
@@ -28,9 +29,9 @@
     "submissionRequirements": "提交要求",
     "teamContest": "团队题目",
     "teamLockingPolicyLockOnApproval": "队伍成员申请通过后锁定",
+    "teamLockingPolicyLockOnStart": "队伍成员开始做这道题后锁定",
     "teamLockingPolicyNoLock": "队伍成员允许变更",
-    "title": "待审核题目",
-    "teamLockingPolicyLockOnStart": "队伍成员开始做这道题后锁定"
+    "title": "待审核题目"
   },
   "confirmDeleteSpace": "确定要删除空间「{name}」吗？删除后它对所有人消失，且无法恢复。",
   "data": {
@@ -155,7 +156,10 @@
   "tasks": {
     "allTopics": "全部标签",
     "clearTopics": "清除选择",
+    "closed": "已截止或名额已满（{n}）",
     "loadFailed": "无法加载题目",
+    "mineGroup": "我参与的（{n}）",
+    "noOpenTasks": "暂无开放的题目",
     "noTasks": "暂无题目",
     "noTopics": "暂无标签",
     "pendingOnly": "只看待处理",
@@ -181,15 +185,21 @@
       "submitted": "已提交 {n}"
     },
     "row": {
+      "applied": "已申请",
+      "applyDeadline": "申请截止 {date}",
       "by": "{name} 发布",
       "claimed": "{n} 人参与",
       "claimedOf": "{n} / {limit} 人",
       "claimedTeams": "{n} 支队伍参与",
       "claimedTeamsOf": "{n} / {limit} 支队伍",
       "deadline": "{date}截止",
+      "ended": "已结束",
+      "expired": "已过期",
       "mine": "在做",
       "noDeadline": "不限截止",
-      "applied": "已申请"
+      "passed": "已通过",
+      "submitDeadline": "提交截止 {date}",
+      "submitted": "已提交"
     },
     "scope": {
       "all": "全部",
@@ -205,9 +215,7 @@
       "nearestDeadline": "最近截止"
     },
     "topic": "标签",
-    "topicCount": "{n} 个标签",
-    "closed": "已截止或名额已满（{n}）",
-    "noOpenTasks": "暂无开放的题目"
+    "topicCount": "{n} 个标签"
   },
   "templateForm": {
     "cancel": "取消",

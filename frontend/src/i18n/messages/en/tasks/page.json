@@ -2,6 +2,7 @@
   "claim": {
     "claim": "Apply to do this task",
     "continue": "Continue",
+    "expired": "Expired",
     "notApproved": "Can be applied for once approved",
     "notApprovedStart": "Can be started once approved",
     "pending": "Applied, awaiting approval",
@@ -14,8 +15,9 @@
   "rejectReason": "Not approved: {reason}",
   "reviewTitle": "Submissions from {name}",
   "state": {
+    "applyClosed": "Applications closed",
     "closed": "Closed",
-    "expired": "Expired",
+    "ended": "Ended",
     "full": "Full",
     "notStarted": "Not started",
     "open": "Open",

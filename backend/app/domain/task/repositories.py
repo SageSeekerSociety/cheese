@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
-from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED, START_DIRECT
+from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -75,53 +75,6 @@ class TaskRepository:
         return or_(
             and_(Task.submitter_type == 0, user_member_exists),
             and_(Task.submitter_type == 1, team_member_exists),
-        )
-
-    @staticmethod
-    def _approved_claim_of(user_id: int, *conditions):
-        """Whether ``user_id`` holds an approved claim of the task, their own on
-        an individual task or one of their teams' on a team task, that also
-        meets ``conditions``."""
-        live_approved = and_(
-            TaskMembership.task_id == Task.id,
-            TaskMembership.deleted_at.is_(None),
-            TaskMembership.approved == APPROVE_APPROVED,
-            *conditions,
-        )
-        user_claim = exists().where(live_approved, TaskMembership.member_id == user_id)
-        team_claim = exists().where(
-            live_approved,
-            TaskMembership.member_id == TeamUserRelation.team_id,
-            TeamUserRelation.user_id == user_id,
-            TeamUserRelation.deleted_at.is_(None),
-        )
-        return or_(
-            and_(Task.submitter_type == 0, user_claim),
-            and_(Task.submitter_type == 1, team_claim),
-        )
-
-    @classmethod
-    def can_still_act(cls, user_id: int):
-        """Whether ``user_id``'s approved claim can still be acted on: started,
-        or worked on and handed in, before its own deadline, on a task that has
-        not ended. On a task started directly the task's deadline is
-        everyone's, so past it nobody can; on a task applied for it is 申请截止
-        and closes applying only. The frontend's ``canStillAct`` is the same
-        rule."""
-        return and_(
-            Task.ended_at.is_(None),
-            or_(
-                Task.start_mode != START_DIRECT,
-                Task.deadline.is_(None),
-                Task.deadline > func.now(),
-            ),
-            cls._approved_claim_of(
-                user_id,
-                or_(
-                    TaskMembership.deadline.is_(None),
-                    TaskMembership.deadline > func.now(),
-                ),
-            ),
         )
 
     async def list_joined(self, user_id: int, *, limit: int) -> Sequence[Task]:
@@ -228,9 +181,7 @@ class TaskRepository:
         if lifecycle is not None:
             stmt = cast(
                 Select[tuple[Task]],
-                self._apply_lifecycle_filter(
-                    stmt, lifecycle=lifecycle, viewer_id=current_user_id
-                ),
+                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
             )
 
         if apply_space_task_visibility:
@@ -346,9 +297,7 @@ class TaskRepository:
         if lifecycle is not None:
             stmt = cast(
                 Select[tuple[int]],
-                self._apply_lifecycle_filter(
-                    stmt, lifecycle=lifecycle, viewer_id=current_user_id
-                ),
+                self._apply_lifecycle_filter(stmt, lifecycle=lifecycle),
             )
 
         if apply_space_task_visibility:
@@ -392,7 +341,6 @@ class TaskRepository:
         stmt: Select[tuple[Task]] | Select[tuple[int]],
         *,
         lifecycle: str,
-        viewer_id: int | None = None,
     ) -> Select[tuple[Task]] | Select[tuple[int]]:
         if lifecycle == "ended":
             return stmt.where(Task.ended_at.is_not(None))
@@ -401,7 +349,9 @@ class TaskRepository:
         if lifecycle in ("recruiting", "closed"):
             # Still to be claimed: not ended, registration not over, a seat left.
             # A 题目 whose registration has not opened yet is still ahead of the
-            # reader, so it counts as recruiting.
+            # reader, so it counts as recruiting. This is the task's own state,
+            # the same for every viewer; the list shows the tasks a viewer holds
+            # a claim on in a group of their own (``joined``), not in these two.
             approved_count = (
                 select(func.count(TaskMembership.id))
                 .where(
@@ -421,15 +371,6 @@ class TaskRepository:
                     approved_count < Task.participant_limit,
                 ),
             )
-            if viewer_id:
-                # For a viewer holding an approved claim, the task is open or
-                # closed by whether they can still act on it, whatever it is to
-                # everyone else; for anyone else it is the task's own state.
-                holds = self._approved_claim_of(viewer_id)
-                open_ = or_(
-                    and_(not_(holds), open_),
-                    and_(holds, self.can_still_act(viewer_id)),
-                )
             return stmt.where(open_ if lifecycle == "recruiting" else not_(open_))
         return stmt
 
