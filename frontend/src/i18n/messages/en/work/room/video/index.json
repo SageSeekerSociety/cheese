@@ -3,6 +3,7 @@
   "label": "Video: {name}",
   "loadFailed": "Unable to load this video. Reload or download it",
   "loading": "Loading video",
+  "locateNeedsPlayer": "Open the video first, then annotate a moment of it",
   "locateTime": "Annotate current timestamp",
   "open": "Open video",
   "playFailed": "This browser cannot play the video. Download it to watch",

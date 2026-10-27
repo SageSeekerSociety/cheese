@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import type { LocatorAnchor } from './locatorAnchor'
+
+import { computed, nextTick, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -18,6 +20,9 @@ const props = withDefaults(
     canComment?: boolean
     /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
     commentError?: string
+    /** 指的那一处在面板里的位置（面板内容坐标）。有就把框弹在它旁边；没有（键盘选中、
+     *  那一处滚出了视野、面板太窄）就退回贴在可见区底边。 */
+    anchor?: LocatorAnchor | null
   }>(),
   {
     queuedCount: 0,
@@ -25,6 +30,7 @@ const props = withDefaults(
     busy: false,
     canComment: false,
     commentError: undefined,
+    anchor: null,
   }
 )
 const emit = defineEmits<{
@@ -48,6 +54,37 @@ watch(
   }
 )
 
+// 弹在指的那一处旁边：先放在它下面，下面放不下就翻到上面；左右夹在面板里。高度要等
+// 框画出来才量得到，量到之前先按一个常见的高度放，免得第一帧跳一下。
+const card = ref<HTMLElement | null>(null)
+const height = ref(132)
+const GAP = 8
+const EDGE = 12
+const floating = computed(() => !!props.anchor && !!props.target)
+const placement = computed(() => {
+  const a = props.anchor
+  if (!a) return null
+  const width = Math.min(400, a.panelWidth - EDGE * 2)
+  const left = Math.min(Math.max(a.left, EDGE), a.panelWidth - width - EDGE)
+  const below = a.bottom + GAP
+  const fitsBelow = below + height.value <= a.viewBottom - EDGE
+  const top = fitsBelow ? below : Math.max(a.viewTop + EDGE, a.top - GAP - height.value)
+  return { left, top, width, side: fitsBelow ? 'below' : 'above' }
+})
+const style = computed(() =>
+  floating.value && placement.value
+    ? { left: `${placement.value.left}px`, top: `${placement.value.top}px`, width: `${placement.value.width}px` }
+    : undefined
+)
+watch(
+  () => [!!props.anchor, props.target, props.queuedCount, props.commentError, props.canComment],
+  async () => {
+    await nextTick()
+    if (card.value?.offsetHeight) height.value = card.value.offsetHeight
+  },
+  { immediate: true }
+)
+
 /** 不在弹出时抢焦点。这个框是读者选中一段原文之后出来的，而页面上的选中只在窗口里
  *  焦点还留在正文上时才画——把光标交给输入框，橙色就跟着灭了，读者看不到自己选的是
  *  哪一段。要打字，点一下就进来。 */
@@ -61,36 +98,43 @@ function send(event: KeyboardEvent | MouseEvent) {
   }
   emit('send')
 }
-
-/** 同一句话，另一条出口：挂成这一处的评论，别人能回、能解决。
- *
- *  指认本身不是指令——读者可能想让队友改、也可能只想在那一处留一句话。两条出口并列，
- *  由他点哪个来定（和概览文档那一栏同一套）。 */
-function comment(event: MouseEvent) {
-  if (props.busy || !props.canComment) return
-  event.preventDefault()
-  emit('comment')
-}
 </script>
 
 <template>
   <Transition name="locator">
-    <div v-if="target || queuedCount" class="locator">
-      <div v-if="queuedCount" class="locator__queue">
+    <div
+      v-if="target || queuedCount"
+      ref="card"
+      class="locator"
+      :class="{ 'locator--floating': floating }"
+      :data-side="placement?.side"
+      :style="style"
+    >
+      <div v-if="queuedCount && !target" class="locator__queue">
         <span class="locator__queue-badge t-meta">{{
           t('work.room.preview.queuedCount', { count: queuedCount })
         }}</span>
         <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
           {{ t('work.room.preview.clearQueued') }}
         </BaseButton>
-        <BaseButton v-if="!target" kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
+        <BaseButton kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
           {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
         </BaseButton>
       </div>
       <template v-if="target">
-        <div class="locator__where">
-          <span class="locator__label t-meta" :title="target.label">{{ target.label }}</span>
-          <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
+        <div class="locator__head">
+          <div class="locator__where">
+            <span class="locator__label t-meta" :title="target.label">{{ target.label }}</span>
+            <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
+          </div>
+          <BaseButton
+            icon="mdi-close"
+            size="sm"
+            class="locator__close"
+            :title="t('work.room.preview.cancel')"
+            :aria-label="t('work.room.preview.cancel')"
+            @click="emit('cancel')"
+          />
         </div>
         <input
           :value="note"
@@ -102,52 +146,49 @@ function comment(event: MouseEvent) {
           @keydown.enter="send"
           @keydown.esc.prevent="emit('cancel')"
         />
-        <select
-          v-if="canComment"
-          v-model="recipient"
-          class="locator__recipient"
-          data-testid="locator-recipient"
-          :aria-label="t('work.room.preview.recipientLabel')"
-          :disabled="busy"
-        >
-          <option value="agent">{{ t('work.room.preview.recipientAgent') }}</option>
-          <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
-        </select>
-        <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
-             没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
-        <!-- 栏上的字是「评论」，但同一条面板上还有一颗开评论栏的「评论」：无障碍名说清
-             这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
-        <BaseButton
-          v-if="canComment"
-          kind="secondary"
-          size="sm"
-          :aria-label="t('work.room.comments.commentHere')"
-          :title="t('work.room.comments.commentHere')"
-          :disabled="!note.trim() || busy"
-          @click="comment"
-        >
-          {{ t('work.room.comments.comment') }}
-        </BaseButton>
-        <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
-          {{
-            canComment && recipient === 'comment'
-              ? t('work.room.preview.recipientComment')
-              : canQueue && queuedCount
-                ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
-                : t('work.room.preview.send')
-          }}
-        </BaseButton>
-        <BaseButton
-          v-if="canQueue"
-          kind="secondary"
-          size="sm"
-          :title="t('work.room.preview.queueHint')"
-          :disabled="!note.trim() || busy"
-          @click="emit('queue')"
-        >
-          {{ t('work.room.preview.queue') }}
-        </BaseButton>
-        <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
+        <div class="locator__foot">
+          <!-- 去处只有一处可选：发进对话交给队友改，还是只挂成这一处的评论给人看。
+               挂不了评论的文件（资料库原件、消息附件）没有这个选择，下拉不出现。 -->
+          <select
+            v-show="canComment"
+            v-model="recipient"
+            class="locator__recipient"
+            data-testid="locator-recipient"
+            :aria-label="t('work.room.preview.recipientLabel')"
+            :disabled="busy"
+          >
+            <option value="agent">{{ t('work.room.preview.recipientAgent') }}</option>
+            <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
+          </select>
+          <span class="locator__spacer" />
+          <BaseButton
+            v-if="canQueue && recipient === 'agent'"
+            kind="secondary"
+            size="sm"
+            :title="t('work.room.preview.queueHint')"
+            :disabled="!note.trim() || busy"
+            @click="emit('queue')"
+          >
+            {{ t('work.room.preview.queue') }}
+          </BaseButton>
+          <!-- 切到评论时主按钮也叫「评论」，而面板上还有一颗开评论栏的「评论」：无障碍名说清
+               这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
+          <BaseButton
+            kind="primary"
+            size="sm"
+            :aria-label="canComment && recipient === 'comment' ? t('work.room.comments.commentHere') : undefined"
+            :disabled="!note.trim() || busy"
+            @click="send"
+          >
+            {{
+              canComment && recipient === 'comment'
+                ? t('work.room.comments.comment')
+                : canQueue && queuedCount
+                  ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
+                  : t('work.room.preview.send')
+            }}
+          </BaseButton>
+        </div>
       </template>
       <p v-if="commentError" class="locator__error" role="alert">{{ commentError }}</p>
     </div>
@@ -155,9 +196,11 @@ function comment(event: MouseEvent) {
 </template>
 
 <style scoped>
-/* 跟着面板一起排版，再贴住可见区的底边。用 absolute 钉在面板底边时，面板自己在
-   滚，钉住的是内容的那一处，会压着它下面的内容、滚也滚不开。sticky 时滚到底它就
-   落回内容后面。 */
+/* 两种摆法，同一张卡片：
+   - 弹出：指的那一处在视野里时，卡片绝对定位在它旁边（坐标由面板给，见 locatorAnchor）。
+     面板本身在滚，卡片跟着内容一起走，不会压在别处。
+   - 贴底：键盘选中、那一处滚出了视野，或者面板太窄时，跟着面板排版再贴住可见区底边
+     （sticky，不是 absolute：absolute 钉住的是内容的某一处，滚也滚不开）。 */
 .locator {
   position: sticky;
   bottom: 12px;
@@ -165,33 +208,53 @@ function comment(event: MouseEvent) {
   flex: none;
   margin: 0 12px 12px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  padding: 8px 8px 8px 12px;
-  background: var(--surface);
+  padding: 10px 12px;
+  background: var(--raised);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
 }
+.locator--floating {
+  position: absolute;
+  bottom: auto;
+  margin: 0;
+}
+.locator__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
 .locator__where {
-  flex: none;
-  max-width: 40%;
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.locator__queue {
+.locator__close {
+  flex: none;
+  margin: -4px -6px 0 0;
+}
+.locator__queue,
+.locator__foot {
   display: flex;
-  flex: 1 1 100%;
   align-items: center;
   gap: 8px;
+}
+/* 按钮的字随待发条数变长（「全部发送（3）」）：放不下时整行折下去，不伸出卡片。 */
+.locator__foot {
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 .locator__queue-badge {
   flex: 1;
   color: var(--accent-ink);
   font-weight: 600;
+}
+.locator__spacer {
+  flex: 1;
 }
 /* 位置可能是一串很长的标题路径，折成几行会把下面那行原文挤出框外。只占一行。 */
 .locator__label {
@@ -203,72 +266,64 @@ function comment(event: MouseEvent) {
 .locator__quote {
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--muted);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .locator__input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 7px 10px;
   font-size: 14px;
   line-height: var(--lh-14);
   color: var(--text);
   background: var(--fill);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   outline: none;
   transition: border-color var(--dur-quick) var(--ease-standard);
 }
 .locator__input:focus {
   border-color: var(--accent);
 }
+/* 去处做成一颗胶囊：原生下拉（手机上弹系统选择器、读屏念得出），外观收成和按钮一样高。 */
 .locator__recipient {
   flex: none;
-  padding: 5px 8px;
+  max-width: 50%;
+  height: 28px;
+  padding: 0 26px 0 10px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--text);
-  background: var(--fill);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
+  background-color: var(--fill);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 12px,
+    calc(100% - 10px) 12px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  appearance: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 挂评论失败的那一句：撑满一行，跟着下面两条按钮排。 */
+.locator__recipient:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+/* 挂评论失败的那一句。 */
 .locator__error {
-  flex-basis: 100%;
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
   /* 文字用 ink 那一档：`--danger` 是标记（点、边框、图标）的颜色，压在浅底上做正文
      对比度不够（`.claude/rules/frontend.md` 里那条）。 */
   color: var(--danger-ink);
-}
-@container (max-width: 440px) {
-  .locator {
-    display: grid;
-    /* 输入框一行，剩下的一排放两条出口和关闭——出口可能只有一条（挂不了评论的文件），
-       所以末列用 auto 让它自己收。 */
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
-  }
-  .locator__where {
-    grid-column: 1 / -1;
-    max-width: 100%;
-    flex-direction: row;
-    align-items: baseline;
-    gap: 8px;
-  }
-  .locator__label {
-    flex: none;
-  }
-  .locator__input {
-    width: 100%;
-  }
-  /* 失败那一句占满一整行，不然它会被塞进一格按钮里。 */
-  .locator__error {
-    grid-column: 1 / -1;
-  }
 }
 .locator-enter-active {
   transition:
@@ -284,5 +339,9 @@ function comment(event: MouseEvent) {
 .locator-leave-to {
   opacity: 0;
   transform: translateY(6px);
+}
+.locator--floating[data-side='above'].locator-enter-from,
+.locator--floating[data-side='above'].locator-leave-to {
+  transform: translateY(-6px);
 }
 </style>

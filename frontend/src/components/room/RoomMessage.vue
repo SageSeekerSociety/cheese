@@ -24,7 +24,7 @@ import {
   isVideoBlock,
   replySnippet,
 } from '../../lib/blockDisplay'
-import { fileIcon, previewCanShowInRoom } from '../../lib/fileKind'
+import { fileIcon, hasPagePreview, previewCanShowInRoom } from '../../lib/fileKind'
 import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -37,6 +37,7 @@ import UserAvatar from '../common/UserAvatar.vue'
 import ChecklistMessage from './ChecklistMessage.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
 import MessageEditor from './MessageEditor.vue'
+import MessageFileCard from './MessageFileCard.vue'
 import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
 
@@ -308,7 +309,18 @@ const told = computed(() => toldByMessage(props.refs))
         <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
            点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
         <template v-else-if="canOpenFile">
+          <!-- 能翻页的文档（PDF、Word、幻灯片、表格）带封面画成卡片；其余（网页、markdown、
+               代码）照旧一颗小卡片。 -->
+          <MessageFileCard
+            v-if="hasPagePreview(block.content)"
+            :topic-id="topicId"
+            :path="block.content"
+            :name="artifactName(block)"
+            :kind="artifactKind(block)"
+            @open="emit('open-file', block.content)"
+          />
           <button
+            v-else
             type="button"
             class="im-artifact"
             :title="t('work.room.message.openFile', { name: artifactName(block) })"
