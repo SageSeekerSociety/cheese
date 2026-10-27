@@ -76,7 +76,6 @@
     "@tiptap/vue-3": "3.30.5",
     "@tiptap/y-tiptap": "3.0.7",
     "@types/katex": "^0.16.7",
-    "@vee-validate/zod": "^4.15.1",
     "@vue-flow/core": "1.48.2",
     "@vue-flow/node-resizer": "1.5.1",
     "@vueuse/core": "^13.6.0",
@@ -115,8 +114,8 @@
     "vuetify-sonner": "^0.3.21",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.31",
-    "zod": "^3.25.76",
-    "zod-i18n-map": "^2.27.0"
+    "zod": "^4.6.7",
+    "zod-i18n-map": "^3.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",

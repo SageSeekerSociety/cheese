@@ -95,7 +95,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -103,6 +102,7 @@ import { vuetifyConfig } from '@/utils/form'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { storageGet, storageGetJson, storageSetJson } from '@/lib/browserStorage'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
