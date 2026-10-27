@@ -67,7 +67,7 @@ from app.api.auth import ActorResolverDep
 from app.api.member_settings import change_project_settings
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.api.write_access import Can, InProject
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -346,24 +346,25 @@ async def get_tier_policy(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectService(db).get_or_404(project_id)
+    return ok(_tier_policy(await ProjectService(db).get_or_404(project_id)))
+
+
+def _tier_policy(project) -> dict:
     policy = gate.policy_of(project.settings)
-    return ok(
-        {
-            gate.ALLOWED_TIERS_KEY: (
-                None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
-            ),
-            gate.OVER_TIER_KEY: policy.over_tier,
-            "tiers": sorted(
-                {choice["tier"] for choice in model_choices(project.settings)}
-            ),
-        }
-    )
+    return {
+        gate.ALLOWED_TIERS_KEY: (
+            None if policy.allowed_tiers is None else sorted(policy.allowed_tiers)
+        ),
+        gate.OVER_TIER_KEY: policy.over_tier,
+        "tiers": sorted({choice["tier"] for choice in model_choices(project.settings)}),
+    }
 
 
-@router.put("/{project_id}/tier-policy", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/tier-policy")
 async def set_tier_policy(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """改档位策略。只有项目管理者能改——它决定谁的点头才能放行一次调用。
 
@@ -371,11 +372,10 @@ async def set_tier_policy(
     发生。身上带的档位名不做存在性校验：目录里的档位随部署变（接一个新池就多一
     档），而一条指向不存在档位的策略只是更严，不会让任何调用悄悄放行。
     """
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    project_id = at.project.id
+    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
     service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    project = at.project
     patch: dict[str, object] = {}
     remove: list[str] = []
     if gate.ALLOWED_TIERS_KEY in body:
@@ -394,4 +394,4 @@ async def set_tier_policy(
             )
         patch[gate.OVER_TIER_KEY] = disposition
     await service.merge_settings(project, patch, remove=remove)
-    return await get_tier_policy(project_id, db, resolver)
+    return ok(_tier_policy(project))
