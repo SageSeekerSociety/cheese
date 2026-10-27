@@ -77,11 +77,17 @@ export function useLightboxGallery(
   )
   const currentFailed = computed(() => failed.has(currentPath.value))
 
+  /** 跳到第几张：缩略图条和左右切换都走这里。位置要是被别处直接写过，`shown` 就
+   *  落后了，对话下一变又按老地址把它拽回去。 */
+  function goTo(i: number) {
+    index.value = i
+    shown.value = paths.value[i] ?? shown.value
+  }
+
   function go(delta: number) {
     const n = total.value
     if (n < 2) return
-    index.value = (index.value + delta + n) % n
-    shown.value = paths.value[index.value] ?? shown.value
+    goTo((index.value + delta + n) % n)
   }
 
   // 这一串图变了（对话里来了新消息、删了一条）：还留在原来那张上；那张没了就退到
@@ -98,5 +104,5 @@ export function useLightboxGallery(
     urls.clear()
   })
 
-  return { paths, index, total, current, currentPath, currentFailed, name, urlAt, go }
+  return { paths, index, total, current, currentPath, currentFailed, name, urlAt, go, goTo }
 }

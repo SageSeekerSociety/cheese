@@ -48,6 +48,9 @@ export async function roomFileRevisionBytes(topicId: string, revisionId: string)
 }
 
 export async function downloadRoomFileRevision(topicId: string, revision: RoomFileRevision): Promise<void> {
+  // 同上：裸 fetch，先自己换一次 token。版本列表是打开面板时取的，点下载之前可能已经
+  // 放了很久。
+  await ensureFreshToken()
   const res = await fetch(
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
     { headers: authHeaders() }

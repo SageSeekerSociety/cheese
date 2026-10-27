@@ -58,11 +58,12 @@ const stage = ref<HTMLElement | null>(null)
 const figure = ref<HTMLImageElement | null>(null)
 const toolbar = ref<InstanceType<typeof LightboxToolbar> | null>(null)
 
-/** 每张图各自的调整：切走再切回来，还是刚才调成的样子。 */
-const adjustments = reactive(new Map<number, ImageAdjust>())
-const adjust = computed<ImageAdjust>(() => adjustments.get(gallery.index.value) ?? ORIGINAL)
+/** 每张图各自的调整：切走再切回来，还是刚才调成的样子。按路径记而不是按第几张：
+ *  对话来了新消息，位置会挪，调整跟着位置走就落到别人身上了。 */
+const adjustments = reactive(new Map<string, ImageAdjust>())
+const adjust = computed<ImageAdjust>(() => adjustments.get(gallery.currentPath.value) ?? ORIGINAL)
 function change(next: Partial<ImageAdjust>) {
-  adjustments.set(gallery.index.value, { ...adjust.value, ...next })
+  adjustments.set(gallery.currentPath.value, { ...adjust.value, ...next })
 }
 
 /** 图一倍时四周让出来的地方：顶上工具条，底下缩略图条（有好几张时），左右切换按钮。 */
@@ -161,7 +162,7 @@ function finishCrop(apply: boolean) {
 }
 
 function restore() {
-  adjustments.delete(gallery.index.value)
+  adjustments.delete(gallery.currentPath.value)
   cropping.value = false
   stopFollowing()
   void nextTick(view.fit)
@@ -249,9 +250,11 @@ function onKeydown(event: KeyboardEvent) {
   else if (event.key === 'ArrowLeft') gallery.go(-1)
 }
 
-// 换了一张：缩放回一倍，裁剪框收起。
+// 换了一张：缩放回一倍，裁剪框收起。框是不是在裁剪中，这里也得停掉量的那一套：
+// 缩略图条在裁剪中照样能点，点走之后是这条路把 `cropping` 关掉的。
 watch(gallery.index, () => {
   cropping.value = false
+  stopFollowing()
   notice.value = ''
   view.reset()
 })
@@ -401,7 +404,7 @@ onBeforeUnmount(() => {
             :class="{ 'lightbox__thumb--on': i === gallery.index.value }"
             :aria-current="i === gallery.index.value"
             :aria-label="t('work.image.goTo', { n: i + 1 })"
-            @click="gallery.index.value = i"
+            @click="gallery.goTo(i)"
           >
             <img v-if="gallery.urlAt(i)" :src="gallery.urlAt(i)" alt="" />
           </button>

@@ -167,3 +167,36 @@ it('stays on the same picture when the conversation changes under it', async () 
 
   await waitFor(() => expect(screen.getByText('b.png · 3 / 4')).toBeTruthy())
 })
+
+it('stays on the picture picked from the film strip when the conversation changes under it', async () => {
+  const paths = ref(['up/a.png', 'up/b.png', 'up/c.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  mount(actions)
+
+  await fireEvent.click(screen.getByRole('button', { name: '看第 3 张' }))
+  await waitFor(() => expect(screen.getByText('c.png · 3 / 3')).toBeTruthy())
+
+  paths.value = ['up/new.png', 'up/a.png', 'up/b.png', 'up/c.png']
+
+  // 从缩略图条点过去也要算「现在看的是 c」：不然位置一变，浮层按老地址跳回 b。
+  await waitFor(() => expect(screen.getByText('c.png · 4 / 4')).toBeTruthy())
+})
+
+it('keeps a picture’s own edits with the picture when the list shifts under it', async () => {
+  const paths = ref(['up/a.png', 'up/b.png', 'up/c.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  mount(actions)
+  await fireEvent.keyDown(window, { key: 'ArrowRight' })
+  await waitFor(() => expect(screen.getByText('b.png · 2 / 3')).toBeTruthy())
+
+  await fireEvent.click(screen.getByRole('button', { name: '旋转 90°' }))
+  await waitFor(() => expect(screen.getByAltText('b.png').style.transform).toContain('rotate(90deg)'))
+
+  paths.value = ['up/new.png', 'up/a.png', 'up/b.png', 'up/c.png']
+  await waitFor(() => expect(screen.getByText('b.png · 3 / 4')).toBeTruthy())
+
+  // 调整跟着这张图走，不是跟着它原来排第几：否则它在这里变回原样，转过的样子落到 b 的位置上。
+  expect(screen.getByAltText('b.png').style.transform).toContain('rotate(90deg)')
+})

@@ -5,14 +5,20 @@
 // emit 要穿过 RoomMessage、ChatTimeline 好几层，而且浮层还会切到别的消息的图上；所以
 // 走注入。没人注入的地方（反馈附件、公共页）浮层只看这一张，不出这几颗按钮。
 import type { InjectionKey } from 'vue'
+import type { Block } from '@/cx_types'
+
+import { isImageBlock } from './blockDisplay'
 
 /** 交给右侧面板时先选好的工具：框选批注、写字、打码。面板里那套涂画工具的名字。 */
 export type ImageHandoffTool = 'select' | 'text' | 'redact'
 
+/** 这里只用得上块的三样东西：从 `Block` 里挑，字段改了名这边会报错。 */
+type ImageBlock = Pick<Block, 'kind' | 'mime_type' | 'content'>
+
 /** 一行消息里的块：同一轮连着说的几块折在 `run` 里，第一块是 `block`。 */
 export interface ImageRow {
-  block: { kind: string; mime_type?: string | null; content: string }
-  run: { kind: string; mime_type?: string | null; content: string }[]
+  block: ImageBlock
+  run: ImageBlock[]
 }
 
 /** 这段对话里的图，按出现的先后，同一张只算一次。
@@ -22,8 +28,8 @@ export function imagePaths(rows: readonly ImageRow[]): string[] {
   const out: string[] = []
   for (const row of rows) {
     for (const block of row.run.length ? row.run : [row.block]) {
-      if (block.kind === 'attachment' && (block.mime_type || '').startsWith('image/') && !out.includes(block.content))
-        out.push(block.content)
+      // 「是不是一张图」只问 `isImageBlock`：定义哪天放宽了，两边不会各走各的。
+      if (isImageBlock(block) && !out.includes(block.content)) out.push(block.content)
     }
   }
   return out
