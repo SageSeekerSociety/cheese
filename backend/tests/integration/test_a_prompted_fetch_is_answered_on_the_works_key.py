@@ -25,6 +25,7 @@ from tests.integration.test_assistant_agent import _Gatekeeper
 from tests.integration.test_message_edit import _room
 from tests.integration.test_project_agent_credential import _issued_token, _project
 from tests.integration.test_web_search_is_made_on_the_works_key import _own
+from tests.support import assistant_actions
 
 GATEWAY = "http://gateway.test"
 URL = "https://t.example/page"
@@ -105,19 +106,9 @@ def test_a_persons_cheese_is_answered_on_their_own_key_through_its_gate(
         return _Gatekeeper("放")
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
-    act = client.post(
-        "/assistant/agent/act",
-        json={"kind": "fetch", "url": URL, "prompt": "讲了什么"},
-        headers=headers,
-    )
-    assert act.status_code == 200, act.text
-    got = act.json()["data"]
-    [call] = got["calls"]
-
-    r = client.post(
-        call["path"],
-        json=call["body"],
-        headers={**headers, "Authorization": f"Bearer {got['pass']}"},
+    token = headers["Authorization"].removeprefix("Bearer ")
+    [r] = assistant_actions.take(
+        client, token, {"kind": "fetch", "url": URL, "prompt": "讲了什么"}
     )
 
     assert r.status_code == 200, r.text

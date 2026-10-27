@@ -571,7 +571,10 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    errorForbidden: ref(false),
     arrived: reactive(new Set<string>()),
+    load: async () => {},
+    retry: () => {},
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {

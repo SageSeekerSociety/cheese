@@ -20,7 +20,7 @@ by the project's own agent, with neither.
 * **What its tools act with**: a credential minted for this question
   (``credential``): what the asker may read, and changes to the document
   authored by the agent at the asker's request, through the platform's own
-  routes (``api.auth.DELEGATED_ROUTES``).
+  routes, by the tools its session is handed (``document/session.py``).
 """
 
 import re

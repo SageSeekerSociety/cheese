@@ -380,8 +380,9 @@ def personal_execution_claims(token: str) -> dict | None:
 # A 芝士 answering someone's question acts for that person: what it reads is
 # judged by what the asker may read, and what it changes is recorded as done by
 # the agent at the asker's request. The credential is minted for one question
-# and lives no longer than the answer may, and it opens only the routes that
-# declare they accept it (`api.auth.DELEGATED_ROUTES`).
+# and lives no longer than the answer may. It is held by the session's harness
+# alone, which decides which of the asker's actions its tools take and asks
+# about first (`run_platform_tool`); routes judge it as the asker.
 
 
 @dataclass(frozen=True)
@@ -453,9 +454,7 @@ def mint_delegated_credential(
 
 
 def looks_like_delegated_credential(token: str) -> bool:
-    """A delegated credential, or a pass (`mint_pass`), which acts for the
-    same person through the one door it was issued for."""
-    return credentials.kind_of(token) in (Kind.DELEGATED, Kind.PASS)
+    return credentials.kind_of(token) is Kind.DELEGATED
 
 
 def _delegated(payload: dict | None) -> DelegatedClaims | None:
@@ -490,33 +489,8 @@ def _delegated(payload: dict | None) -> DelegatedClaims | None:
 
 def delegated_claims(token: str) -> DelegatedClaims | None:
     """The claims of a well-formed, correctly-signed, unexpired delegated
-    credential or pass, else ``None`` — never an exception."""
-    kind = credentials.kind_of(token)
-    if kind is not Kind.DELEGATED and kind is not Kind.PASS:
-        return None
-    return _delegated(credentials.read(token, kind))
-
-
-# --- Pass ---------------------------------------------------------------------
-#
-# What a person's 芝士 shows at a door its gate opened (`assistant.passes`): the
-# delegated credential's claims, for the few calls the gate let through, once
-# each. It travels alone, in place of the delegated credential, so a request
-# carries one credential however it was let in; which doors it opens and
-# whether they are used up is kept under its ``jti``.
-
-
-def mint_pass(claims: DelegatedClaims, *, jti: str, ttl_s: int) -> str:
-    return credentials.mint(
-        Kind.PASS, {**_delegated_payload(claims), "jti": jti}, ttl_s=ttl_s
-    )
-
-
-def pass_id(token: str) -> str | None:
-    """The ``jti`` of a valid, unexpired pass, else None."""
-    payload = credentials.read(token, Kind.PASS)
-    jti = payload.get("jti") if payload else None
-    return jti if isinstance(jti, str) and jti else None
+    credential, else ``None`` — never an exception."""
+    return _delegated(credentials.read(token, Kind.DELEGATED))
 
 
 def is_global_sandbox_token(token: str) -> bool:

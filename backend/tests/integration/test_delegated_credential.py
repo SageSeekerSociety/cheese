@@ -121,21 +121,6 @@ def test_it_lists_only_the_askers_own_tasks(client):
     assert "我领的那道" in titles and "别人领的那道" not in titles
 
 
-def test_it_opens_only_the_routes_that_accept_it(client):
-    task, _, _ = _document(client)
-    token = _credential(client, task, read_only=False)
-
-    message = client.post(
-        f"/topics/{task}/messages",
-        json={"content": "我替 bob 说一句", "request_id": str(uuid.uuid4())},
-        headers=_as(token),
-    )
-    members = client.get(f"/topics/{task}/members", headers=_as(token))
-
-    assert message.status_code == 403
-    assert members.status_code == 403
-
-
 def test_it_acts_only_where_it_was_minted(client):
     """An agent's credential, minted for a room. A person's own 芝士, minted
     for no room, reads as the person does
