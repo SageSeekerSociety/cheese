@@ -20,11 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
-from app.api.doc_access import require_role
 from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
@@ -63,11 +62,8 @@ async def _in_room(
     db: AsyncSession,
     resolver: ActorResolver,
     topic_id: uuid.UUID,
-    *,
-    writes: bool = False,
 ) -> tuple[Place, Actor]:
-    """The room and who is in it; ``writes`` also asks that their role lets them
-    change files (#3830)."""
+    """The room and who is in it."""
     place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -75,8 +71,6 @@ async def _in_room(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    if writes:
-        await require_role(db, actor, place.project_id, Permission.edit_content)
     return place, actor
 
 
@@ -266,19 +260,15 @@ async def file_revision_raw(
     return _bytes_response(data, name, row.sha256[:16])
 
 
-@router.post(
-    "/topics/{topic_id}/files/revisions/{revision_id}/restore",
-    dependencies=[ROUTE_DECIDES],
-)
+@router.post("/topics/{topic_id}/files/revisions/{revision_id}/restore")
 async def restore_file_revision(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
     revision_id: uuid.UUID,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Put an earlier save back. The current state becomes one more revision
     back, so a restore is itself undoable."""
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
     made = await room_files.restore_revision(
         db,
@@ -292,9 +282,11 @@ async def restore_file_revision(
     return ok(room_files.revision_out(made))
 
 
-@router.post("/topics/{topic_id}/files/copy", dependencies=[ROUTE_DECIDES])
+@router.post("/topics/{topic_id}/files/copy")
 async def copy_into_room(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Make an editable copy of a file in this room.
 
@@ -302,7 +294,7 @@ async def copy_into_room(
     was given, and the room works on its own copy — which is also how a user's
     file becomes the template for a new one without being overwritten.
     """
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
     if artifact_kind_for(target) not in ARTIFACT_MIME:
@@ -360,16 +352,18 @@ async def list_templates(
     return ok(page(items, len(items)))
 
 
-@router.post("/topics/{topic_id}/files/new", dependencies=[ROUTE_DECIDES])
+@router.post("/topics/{topic_id}/files/new")
 async def new_from_template(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """A new room document, copied from a standard template.
 
     The name must keep the template's format: a 「报告」 saved as .xlsx would be a
     file that no program opens as what its name says.
     """
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     template = catalogue.find(str(body.get("template") or ""))
     if template is None:
         raise ValidationError(say("templateNotFound"))
@@ -467,13 +461,11 @@ async def open_in_editor(
     )
 
 
-@router.post(
-    "/topics/{topic_id}/files/text",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(RoomFileRevisionOut),
-)
+@router.post("/topics/{topic_id}/files/text", **typed_response(RoomFileRevisionOut))
 async def write_text_file(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Save an edit to a room file that is text.
 
@@ -488,7 +480,7 @@ async def write_text_file(
     would overwrite whoever saved in between — the one thing this route exists to
     prevent. The same rule the workspace side enforces (`taskFileReadBeforeSave`).
     """
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     path = _room_path(str(body.get("path") or ""))
     content = body.get("content")
     if not isinstance(content, str):

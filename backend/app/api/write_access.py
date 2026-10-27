@@ -57,7 +57,7 @@ from app.api.auth import ActorResolver, get_actor_resolver
 from app.auth import can
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.project_roles import may
+from app.auth.project_roles import AGENT_PERMISSIONS, may
 from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
@@ -343,13 +343,22 @@ class _CanInChannel(WriteAccess):
         await resolver.authorize_topic(
             actor, project_id=place.project_id, topic_id=place.room_id
         )
-        # Nobody signed in gets past the room only on the development override,
-        # which sits nowhere and is asked nothing more.
-        if actor.authenticated and not await may(
-            db, place.project_id, actor.handle, self.permission
-        ):
+        if not await self._may(db, place, actor):
             raise ForbiddenError(say("projectPermissionDenied"))
         return InChannel(place, actor)
+
+    async def _may(self, db: AsyncSession, place: Place, actor: Actor) -> bool:
+        assert self.permission is not None
+        # Nobody signed in gets past the room only on the development override,
+        # which sits nowhere and is asked nothing more.
+        if not actor.authenticated:
+            return True
+        # An AI teammate the room just let in sits in it by its seat there, not
+        # by a row on the project's roster, which a project's own teammates do
+        # not have: what it may do is what its role grants.
+        if actor.via == "cheese":
+            return self.permission in AGENT_PERMISSIONS
+        return await may(db, place.project_id, actor.handle, self.permission)
 
 
 def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
