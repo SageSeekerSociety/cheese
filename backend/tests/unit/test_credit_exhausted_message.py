@@ -86,6 +86,16 @@ def test_a_platform_account_out_of_credit_is_the_platforms_to_fix(detail):
         "upstream timed out",
         "API Error: 429 Too Many Requests",  # a real rate limit: waiting DOES help
         "connection reset by peer",
+        # The metering proxy's own 503 when its admission check cannot answer
+        # (`deploy/metering-proxy/cheese_billing_core.py`), verbatim from the
+        # failures of 2026-10-27 11:00. It says "billing", and the bare-billing
+        # alternative in the out-of-credit rule read it as the platform's
+        # account running dry: the room was told to wait for a top-up that was
+        # not owed, and the turn was never resumed.
+        "API Error: 503 cheese: task billing attribution is temporarily "
+        "unavailable; retry shortly. This is a server-side issue, usually "
+        "temporary — try again in a moment. If it persists, check "
+        "https://status.claude.com.（server_error）",
     ],
 )
 def test_a_transient_failure_is_not_mistaken_for_it(detail):

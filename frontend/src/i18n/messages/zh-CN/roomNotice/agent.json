@@ -20,6 +20,8 @@
   "cliProviderOverloadedHint": "这是服务端的问题，通常很快恢复。稍后可以重试。",
   "cliSubscriptionAccountsCooling": "平台的 Claude 订阅账号都在限流冷却，这一步未完成",
   "cliSubscriptionAccountsCoolingHint": "订阅账号的用量都到了上限，要等额度恢复才能再调用，短则几分钟，长则几天；这期间重试会马上再失败。等不了的话，先换用不走订阅的模型。",
+  "cliControlPlaneUnavailable": "平台暂时没能确认这次调用该记给谁，这一步未完成",
+  "cliControlPlaneUnavailableHint": "这是平台自己的临时故障，既不是你的额度用完，也不是平台的账户没钱，不用充值。通常很快恢复，稍后可以重试。",
   "cliSubscriptionEgressOffline": "订阅出口机器离线，这一步未完成",
   "cliSubscriptionEgressOfflineHint": "平台的 Claude 订阅只能从这台机器出网，它离线时用订阅的模型都无法调用。等它重新上线后重试，或者先换用其他模型。",
   "cliProviderUnreachable": "无法连接 AI 服务，这一步未完成",
