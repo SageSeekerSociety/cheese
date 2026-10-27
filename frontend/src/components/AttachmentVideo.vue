@@ -6,11 +6,12 @@ import BaseButton from './base/BaseButton.vue'
 import { t } from '@/i18n'
 import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
-const props = defineProps<{ topicId: string | null; path: string; canOpen?: boolean }>()
-const emit = defineEmits<{ open: []; download: [] }>()
+const props = defineProps<{ topicId: string | null; path: string; canOpen?: boolean; canLocate?: boolean }>()
+const emit = defineEmits<{ open: []; download: []; locate: [payload: { seconds: number; timestamp: string }] }>()
 const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 const name = computed(() => props.path.split('/').pop() ?? props.path)
 const url = ref('')
+const videoRef = ref<HTMLVideoElement | null>(null)
 // width / height of the recording, once the player has read it. Until then the
 // box is 16:9; after it, a portrait phone recording gets a tall box instead of
 // being letterboxed into a wide one.
@@ -52,6 +53,27 @@ function measure(event: Event) {
   if (video.videoWidth > 0 && video.videoHeight > 0) ratio.value = video.videoWidth / video.videoHeight
 }
 
+// 只有播放器在时才有「此刻」：视频还没打开（或打不开）时不该交出一个谁也没选过的 00:00。
+function locateCurrentTime() {
+  if (!videoRef.value) return
+  const raw = videoRef.value.currentTime
+  const seconds = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+  const mins = String(Math.floor(seconds / 60)).padStart(2, '0')
+  const secs = String(seconds % 60).padStart(2, '0')
+  emit('locate', { seconds, timestamp: `${mins}:${secs}` })
+}
+
+// 入口灰着时为什么灰：还没打开，或者打开了但放不了（那时下面那行已经说了怎么办）。
+const locateHint = computed(() =>
+  !url.value && !failure.value
+    ? t('work.room.video.locateNeedsPlayer')
+    : failure.value
+      ? failure.value === 'load'
+        ? t('work.room.video.loadFailed')
+        : t('work.room.video.playFailed')
+      : undefined
+)
+
 watch(() => [props.topicId, props.path], reset)
 onBeforeUnmount(reset)
 </script>
@@ -61,6 +83,7 @@ onBeforeUnmount(reset)
     <!-- eslint-disable-next-line vuejs-accessibility/media-has-caption -- user-uploaded videos have no supplied caption track; keep native controls and download available -->
     <video
       v-if="url && !failure"
+      ref="videoRef"
       :src="url"
       controls
       playsinline
@@ -102,6 +125,22 @@ onBeforeUnmount(reset)
       >
         {{ t('work.room.file.open') }}
       </BaseButton>
+      <!-- 灰着的按钮收不到悬停，为什么灰写在包着它的这一层上。 -->
+      <span v-if="canLocate" :title="locateHint">
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          prepend-icon="mdi-map-marker-plus-outline"
+          class="attachment-video__locate"
+          data-testid="video-locate"
+          :disabled="!url || !!failure"
+          :title="locateHint ? undefined : t('work.room.video.locateTime')"
+          :aria-label="t('work.room.video.locateTime')"
+          @click="locateCurrentTime"
+        >
+          {{ t('work.room.video.locateTime') }}
+        </BaseButton>
+      </span>
     </div>
   </div>
 </template>

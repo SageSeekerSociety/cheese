@@ -667,6 +667,7 @@ class TaskMembershipService:
                 {
                     "team": {
                         "id": team_id,
+                        "handle": getattr(candidate, "handle", None),
                         "name": getattr(candidate, "name", None) or "",
                         "intro": getattr(candidate, "intro", None) or "",
                         "avatarId": getattr(candidate, "avatar_id", None),

@@ -32,6 +32,12 @@ defineProps<{
   marks?: readonly ImageRegionMark[]
   /** 打开着的那一串，画得实一点。 */
   activeMark?: string | null
+  /** 这一份图片能不能挂评论（房间产物可挂，资料库原件不可挂）。 */
+  canComment?: boolean
+  /** 评论正在发送中。 */
+  busy?: boolean
+  /** 挂评论没成功的那一句。 */
+  commentError?: string
 }>()
 
 const emit = defineEmits<{
@@ -41,6 +47,7 @@ const emit = defineEmits<{
   ]
   'update:locatorNote': [note: string]
   send: []
+  comment: []
   cancel: []
   /** 点了一处评论标记：把那一串打开。 */
   mark: [id: string]
@@ -73,8 +80,12 @@ const emit = defineEmits<{
           :resource-key="imageRegion.imageIdentity.value"
           :restore-focus="restoreFocus"
           :focus-origin="focusOrigin"
+          :can-comment="canComment"
+          :busy="busy"
+          :comment-error="commentError"
           @update:note="emit('update:locatorNote', $event)"
           @send="emit('send')"
+          @comment="emit('comment')"
           @cancel="emit('cancel')"
         />
       </template>

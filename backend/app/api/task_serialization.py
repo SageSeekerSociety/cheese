@@ -512,8 +512,7 @@ async def _enrich_task_user_state(
     my_membership_by_task_id = {
         task_id: state["user_membership"].id
         for task_id, state in pending.items()
-        if state["user_membership"] is not None
-        and state["user_membership"].approved != 1
+        if state["user_membership"] is not None and state["user_membership"].live_claim
     }
     handed_in_by_membership_id = await handed_in_for(
         db, list(my_membership_by_task_id.values())
@@ -530,8 +529,8 @@ async def _enrich_task_user_state(
         # DISAPPROVED memberships should NOT show as "joined" — otherwise the
         # frontend renders "退出赛题" button for rejected applications.
         joined = bool(
-            (user_membership and user_membership.approved != 1)
-            or any(m.approved != 1 for m in team_memberships)
+            (user_membership is not None and user_membership.live_claim)
+            or any(m.live_claim for m in team_memberships)
         )
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)

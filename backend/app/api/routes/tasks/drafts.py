@@ -265,6 +265,35 @@ async def start_draft(
     return ok(_full(row, names, await drafts.published_items(db, [row])))
 
 
+class TaskChangesOut(BaseModel):
+    """What the edit page of a published 题目 opens on: the person's unsaved
+    changes if they have some, and the form it starts from."""
+
+    draft: TaskDraftOut | None
+    #: The changes' form, or the 题目 as it is when there are none.
+    form: dict
+
+
+@router.get("/changes", **typed_response(TaskChangesOut))
+async def read_changes(
+    resolver: ActorResolverDep,
+    task: Annotated[int, Query(ge=1)],
+    db=Depends(get_db),
+) -> dict:
+    """The person's changes to a published 题目, without starting any: opening
+    the edit page is not changing the 题目, so the draft is started
+    (``POST /task-drafts`` with ``task``) by the first change or the first
+    question to 芝士."""
+    user_id = await _person(resolver)
+    found = await _editable_task(db, task, user_id)
+    row = await drafts.for_task(db, user_id, found.id)
+    if row is None:
+        form = await _task_as_form(db, found, private=True)
+        return ok({"draft": None, "form": form})
+    shown = _full(row, {found.id: found.name}, await drafts.published_items(db, [row]))
+    return ok({"draft": shown, "form": shown["fields"]})
+
+
 class StarterUploadedOut(BaseModel):
     """The starter code, kept as the person's own attachment: its id goes into
     the draft as ``starterAttachmentId``."""

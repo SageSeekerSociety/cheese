@@ -1,8 +1,12 @@
 {
+  "atTime": "视频 {time} 画面",
   "label": "视频：{name}",
   "loadFailed": "无法读取视频，可以重新加载或下载",
   "loading": "视频加载中",
+  "locateNeedsPlayer": "先打开视频，再批注它的某一刻",
+  "locateTime": "批注当前时间点",
   "open": "打开视频",
   "playFailed": "浏览器无法播放这个视频，可以下载后观看",
-  "retry": "重新加载"
+  "retry": "重新加载",
+  "timePoint": "时间点 {time}"
 }

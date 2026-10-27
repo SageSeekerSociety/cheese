@@ -8,7 +8,6 @@
           <strong>{{
             identity.type === 'TEAM' ? identity.teamName || t('tasks.side.unnamedTeam') : t('tasks.side.individual')
           }}</strong>
-          <span v-if="remaining" class="t-meta-read t-num">{{ remaining }}</span>
           <AdaptiveMenu v-if="identity.approved === 'APPROVED'" :actions="mineActions">
             <template #activator="{ props: menu }">
               <BaseButton v-bind="menu" icon="mdi-dots-horizontal" size="sm" :aria-label="t('tasks.side.more')" />
@@ -22,7 +21,9 @@
             <span class="ts__status" :class="`ts__status--${row.tone}`">{{ row.label }}</span>
           </li>
         </ol>
-        <p v-else class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+        <p v-else class="ts__status" :class="`ts__status--${status.tone}`" data-testid="my-status">
+          {{ status.label }}
+        </p>
         <p v-if="myDeadlineText" class="ts__deadline t-meta-read" data-testid="my-deadline">{{ myDeadlineText }}</p>
 
         <template v-if="identity.approved === 'APPROVED'">
@@ -133,17 +134,24 @@ const { t } = useI18n()
 
 const DAY_MS = 86_400_000
 
-/** 我这一份的状态：从报名审核和最新一版提交的评审结果算，不看 `completion_status`（那一列服务端自己都说不准）。 */
+/** 我这一份的状态（Zhifei 2026-10-26：这一栏说我自己，题目名旁边说题目）：从报名审核、最新一版提交
+ *  的评审结果和我自己的截止算，不看 `completion_status`（那一列服务端自己都说不准）。判过通过、交了在
+ *  等批改的，截止过了也照旧这么说；别的过了我的截止就是「已过期」，题目结束了是「已结束」。还没交的，
+ *  没开始是「可以开始」，开始了（有项目）是「进行中」。 */
 const status = computed(() => {
   if (props.identity?.approved === 'NONE') return { label: t('tasks.page.claim.pending'), tone: 'muted' }
   const latest = props.latest
-  if (!latest) return { label: t('tasks.side.noSubmission'), tone: 'muted' }
-  const n = latest.version
+  const n = latest?.version ?? 0
   // 还没判的那一版，接口回的是 `{ reviewed: false }` 而不是空：判没判只看 `reviewed`。
-  if (!latest.review?.reviewed) return { label: t('tasks.side.versionPending', { n }), tone: 'warn' }
-  return latest.review.detail.accepted
-    ? { label: t('tasks.side.versionPassed', { n }), tone: 'ok' }
-    : { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
+  if (latest && !latest.review?.reviewed) return { label: t('tasks.side.versionPending', { n }), tone: 'warn' }
+  if (latest?.review?.reviewed && latest.review.detail.accepted)
+    return { label: t('tasks.side.versionPassed', { n }), tone: 'ok' }
+  if (props.task.endedAt != null) return { label: t('tasks.side.ended'), tone: 'muted' }
+  if (deadlineState(myDeadline.value)?.passed) return { label: t('tasks.side.expired'), tone: 'danger' }
+  if (latest) return { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
+  return props.task.myProject
+    ? { label: t('tasks.page.mine.doing'), tone: 'ok' }
+    : { label: t('tasks.side.canStart'), tone: 'muted' }
 })
 
 /** 分了阶段的题：我在每个阶段上走到哪一步。不分阶段、或还没领到，是空的。 */
@@ -169,11 +177,17 @@ const myDeadline = computed(() => {
   return props.identity.deadline ?? props.task.userDeadline ?? null
 })
 
-/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻。 */
+/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻；后面接着还剩几天
+ *  或过了几天：「提交截止 10月31日 20:41 · 还剩 5 天」。 */
 const myDeadlineText = computed(() =>
   myDeadline.value == null
     ? ''
-    : t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) })
+    : [
+        t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) }),
+        remaining.value,
+      ]
+        .filter(Boolean)
+        .join(' · ')
 )
 
 /** 过没过、隔几天都由 `deadlineState` 说，交作业表单的「已截止」读的也是它。 */

@@ -270,8 +270,8 @@ async def get_task(
         # DISAPPROVED memberships should NOT show as "joined" — otherwise the
         # frontend renders "退出赛题" button for rejected applications.
         joined = bool(
-            (user_membership and user_membership.approved != 1)
-            or any(m.approved != 1 for m in team_memberships)
+            (user_membership is not None and user_membership.live_claim)
+            or any(m.live_claim for m in team_memberships)
         )
         # Hydrate joinedTeams / submittableAsTeam to Team[] (frontend type) so
         # the leave-task dialog can render team.name. Bare ids broke

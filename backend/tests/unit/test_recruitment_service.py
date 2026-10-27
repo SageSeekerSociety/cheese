@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.recruitment_services import RecruitmentService
 
@@ -33,7 +33,7 @@ def _post(**overrides):
 
 
 def _team(**overrides):
-    defaults = {"id": 10, "name": "Alpha"}
+    defaults = {"id": 10, "name": "Alpha", "personal_owner_user_id": None}
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
@@ -157,6 +157,31 @@ class TestUpdatePost:
 
         with pytest.raises(ForbiddenError):
             await svc.update_post(post_id=1, actor_user_id=99, title="New")
+
+    @pytest.mark.anyio
+    async def test_a_personal_teams_ad_cannot_be_opened_again(self):
+        repo = AsyncMock()
+        post = _post(created_by=20, status="CLOSED")
+        repo.get_by_id.return_value = post
+        team_repo = AsyncMock()
+        team_repo.get_by_id.return_value = _team(personal_owner_user_id=20)
+        svc = _make_service(repo=repo, team_repo=team_repo)
+
+        with pytest.raises(BadRequestError):
+            await svc.update_post(post_id=1, actor_user_id=20, status="OPEN")
+        repo.update.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_a_shared_teams_ad_can_be_opened_again(self):
+        repo = AsyncMock()
+        post = _post(created_by=20, status="CLOSED")
+        repo.get_by_id.return_value = post
+        repo.update.return_value = post
+        team_repo = AsyncMock()
+        team_repo.get_by_id.return_value = _team()
+        svc = _make_service(repo=repo, team_repo=team_repo)
+
+        assert await svc.update_post(post_id=1, actor_user_id=20, status="OPEN") is post
 
 
 class TestDeletePost:

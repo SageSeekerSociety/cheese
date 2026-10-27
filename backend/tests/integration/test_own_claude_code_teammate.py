@@ -702,10 +702,15 @@ def test_a_connection_whose_name_is_taken_away_is_named_after_its_plan_again(cli
 
 
 def test_a_removed_connection_takes_its_name_with_it(client):
-    _project_with_bob(client)
+    project_id, _room = _project_with_bob(client)
     laptop = _log_in_claude_code(
         client, "alice", auth_method="claude.ai", subscription_type="max"
     )
+    # The login belongs to alice's personal team when it is created; naming in
+    # the project's team is the same connection brought in first, as in the
+    # tests around this one. (The project used to sit in her personal team, so
+    # the two were the same team and this step was not needed.)
+    assert _add(client, project_id, "alice", laptop).status_code == 200
     assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
 
     removed = client.delete(

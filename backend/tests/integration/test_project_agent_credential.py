@@ -14,8 +14,8 @@ member has, and refused where a member is refused.
 """
 
 import asyncio
-import uuid
 
+import jwt
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -203,10 +203,16 @@ def test_a_credential_is_refused_in_another_project(client):
 
 
 def test_a_forged_credential_is_not_a_credential(client):
-    """The prefix is not the credential — the signature is."""
+    """Saying it is a project credential does not make it one — the signature
+    does."""
     pid = _project(client, "alice")
     tid = _topic(client, pid, title="T", by="alice")
-    forged = f"cxpa_{uuid.uuid4().hex}.{uuid.uuid4().hex}"
+    forged = jwt.encode(
+        {"p": pid, "e": 0, "exp": 9999999999},
+        "not-the-platform-secret",
+        algorithm="HS256",
+        headers={"typ": "project-agent+jwt"},
+    )
 
     assert _write(client, tid, forged).status_code == 401
 

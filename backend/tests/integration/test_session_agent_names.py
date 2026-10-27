@@ -29,7 +29,12 @@ from app.domain.notification.models import Notification
 from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
-from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    registered,
+    session_auth_headers,
+    shared_team_of,
+)
 from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
@@ -61,7 +66,7 @@ async def _teammates_on_bobs_device(client):
         now = datetime.now(UTC)
         db.add(
             TeamUserRelation(
-                team_id=(await db.get(Project, project_id)).team_id,
+                team_id=await shared_team_of(db, project_id, joiner_user_id=bob),
                 user_id=bob,
                 role=TeamMemberRole.ADMIN,
                 created_at=now,

@@ -89,6 +89,57 @@ def _caller_handle(headers: dict | None) -> str | None:
     return claims.handle if claims is not None else None
 
 
+async def shared_team_of(
+    session, project_id, *, joiner_user_id: int | None = None
+) -> int:
+    """The team a project must be in to hold ``joiner_user_id``.
+
+    A project is born in its owner's personal team, and a personal team takes
+    no members but its owner. The first time a test puts a second person on
+    it, the project moves into a shared team of that owner — the same move the
+    product makes (``ProjectTransferService.move_to_team``). Someone who is
+    that team's owner (or a joiner not named at all) needs no move. Returns the
+    team id to put the member row on.
+    """
+    import uuid as _uuid
+
+    from app.domain.project.models import Project
+    from app.domain.team.models import Team, TeamMemberRole, TeamUserRelation
+
+    now = datetime.now(UTC)
+    project = await session.get(Project, _uuid.UUID(str(project_id)))
+    assert project is not None, project_id
+    team = await session.get(Team, project.team_id)
+    assert team is not None, project_id
+    if team.personal_owner_user_id is None or (
+        joiner_user_id is not None and team.personal_owner_user_id == joiner_user_id
+    ):
+        return team.id
+    shared = Team(
+        name="Test team",
+        handle=f"t-{_uuid.uuid4().hex[:12]}",
+        intro="",
+        description="",
+        avatar_id=1,
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(shared)
+    await session.flush()
+    session.add(
+        TeamUserRelation(
+            team_id=shared.id,
+            user_id=team.personal_owner_user_id,
+            role=TeamMemberRole.OWNER,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    project.team_id = shared.id
+    await session.flush()
+    return shared.id
+
+
 async def a_team(session, owner_handle: str | None = None) -> int:
     """A shared team on ``session`` for a test that inserts a project row itself
     — every project belongs to one. With ``owner_handle`` that person (registered
@@ -233,12 +284,25 @@ def new_project(client, name: str = "P", owner: str = "owner", **extra) -> dict:
     return resp.json()["data"]
 
 
-def join_project_team(client, project_id: str, handle: str, *, admin: bool = False):
+def join_project_team(
+    client, project_id: str, handle: str, *, admin: bool = False
+) -> int:
     """Put ``handle`` (registered first) on the team the project belongs to.
 
     This is how a person is in a project now: team members are read from the
     team. ``admin`` makes them a team admin, which is who manages the project
     alongside its owner.
+
+    A project that still sits in its owner's personal team moves into a shared
+    team of that owner first: a personal team takes no members but its owner, so
+    two people on one project are a shared team — the same move the product
+    makes (``ProjectTransferService.move_to_team``). Without it the fixture
+    would be building a state the product forbids, and the database refuses it
+    (``team_membership_respects_personal_teams``).
+
+    Returns the id of the team the project ends up in, which is not necessarily
+    the one it had: callers that go on to ask the team something (its plan, its
+    documents) read it from here rather than from the project's earlier shape.
     """
     import asyncio as _asyncio
 
@@ -248,7 +312,7 @@ def join_project_team(client, project_id: str, handle: str, *, admin: bool = Fal
 
     _register(client, handle)
 
-    async def _join() -> None:
+    async def _join() -> int:
         now = datetime.now(UTC)
         async with client.test_factory() as session:
             project = await session.get(Project, uuid.UUID(str(project_id)))
@@ -257,20 +321,22 @@ def join_project_team(client, project_id: str, handle: str, *, admin: bool = Fal
             assert user is not None, handle
             from app.domain.team.repositories import TeamRepository
 
-            if await TeamRepository(session).is_team_member(project.team_id, user.id):
-                return
-            session.add(
-                TeamUserRelation(
-                    team_id=project.team_id,
-                    user_id=user.id,
-                    role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            await session.commit()
+            team_id = await shared_team_of(session, project_id, joiner_user_id=user.id)
 
-    _asyncio.run(_join())
+            if not await TeamRepository(session).is_team_member(team_id, user.id):
+                session.add(
+                    TeamUserRelation(
+                        team_id=team_id,
+                        user_id=user.id,
+                        role=TeamMemberRole.ADMIN if admin else TeamMemberRole.MEMBER,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await session.commit()
+            return team_id
+
+    return _asyncio.run(_join())
 
 
 def add_external_member(client, project_id: str, handle: str, *, by: str = "owner"):

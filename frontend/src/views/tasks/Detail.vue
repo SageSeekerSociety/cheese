@@ -13,7 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
-import { canStillAct, taskStateFor } from '@/utils/tasks'
+import { canStillAct, taskState as stateOfTask } from '@/utils/tasks'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -157,42 +157,42 @@ const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.val
  *  开始做就是用这道题新建项目。 */
 const approvedWithoutProject = computed(() => joined.value && !myProject.value)
 
-/** 我这一份走到哪了，挂在题目名旁边：等通过、没通过、在做。没领过就没有。 */
-const myState = computed(() => {
-  if (joined.value) return { label: t('tasks.page.mine.doing'), tone: 'ok' }
-  if (myClaimPending.value) return { label: t('tasks.page.mine.pending'), tone: 'muted' }
-  if (myClaimRejected.value) return { label: t('tasks.page.mine.rejected'), tone: 'danger' }
-  return null
-})
-
-/** 通过了还没开始的这一份能不能开始，和标题旁那一枚同一条判据（`canStillAct`）：过了我自己的截止
- *  就不能，开始只会建出一个已经判了未通过的项目；直接开始的题过了题目的截止也不能。 */
-const startClosed = computed(() => !taskData.value || !canStillAct(taskData.value))
-/** 题目名旁边那一枚：这道题此刻对我是什么状态（`taskStateFor`）。没领的人看题目对所有人的状态；
- *  有一份通过了的领取的人，看自己还能不能开始或接着做。 */
+/** 题目名旁边那一枚：题目自己的状态，对谁都一样（Zhifei 2026-10-26）。我这一份走到哪了在右栏
+ *  「我的进度」，我现在能做什么在按钮上。 */
 const taskState = computed(() => {
   if (!taskData.value) return null
-  const state = taskStateFor(taskData.value)
-  if (!state) return null
+  const state = stateOfTask(taskData.value)
   return { label: t(`tasks.page.state.${state.key}`), tone: state.tone }
 })
 
-/** 领取那颗按钮。领不了的时候按钮还在，灰着，字写清为什么。申请在等或没通过的没有这颗：
- *  那件事写在题目名旁边（`myState`）。 */
+/** 主操作那颗按钮：我现在能做什么，按我自己这一份说。做不了的时候按钮还在，灰着，字写清为什么：
+ *  - 手上有通过了的领取、还没开始：我自己的提交截止没到就能开始（两种开始方式都一样，`canStillAct`），
+ *    过了是「已过期」；题目结束了是「已结束」。题目的截止不挡我。
+ *  - 申请在等、被拒了：写这一份走到哪了。
+ *  - 没有领取：题目的截止、名额、开放时间挡着的，写题目的状态（申请制「申请已截止」，直接开始「已截止」）。 */
 const claim = computed(() => {
   const task = taskData.value
   if (!task) return null
-  if (approvedWithoutProject.value)
-    return startClosed.value
-      ? { label: t('tasks.page.state.closed'), disabled: true }
-      : { label: t('tasks.page.claim.start'), disabled: false }
-  if (myClaimPending.value || myClaimRejected.value) return null
+  if (approvedWithoutProject.value) {
+    if (canStillAct(task)) return { label: t('tasks.page.claim.start'), disabled: false }
+    return {
+      label: task.endedAt != null ? t('tasks.page.state.ended') : t('tasks.page.claim.expired'),
+      disabled: true,
+    }
+  }
+  if (myClaimPending.value) return { label: t('tasks.page.mine.pending'), disabled: true }
+  if (myClaimRejected.value) return { label: t('tasks.page.mine.rejected'), disabled: true }
   if (task.approved !== 'APPROVED')
     return {
       label: startsDirectly.value ? t('tasks.page.claim.notApprovedStart') : t('tasks.page.claim.notApproved'),
       disabled: true,
     }
-  if (deadlinePassed.value) return { label: t('tasks.page.state.closed'), disabled: true }
+  if (task.endedAt != null) return { label: t('tasks.page.state.ended'), disabled: true }
+  if (deadlinePassed.value)
+    return {
+      label: startsDirectly.value ? t('tasks.page.state.closed') : t('tasks.page.state.applyClosed'),
+      disabled: true,
+    }
   if (notStarted.value) return { label: t('tasks.page.state.notStarted'), disabled: true }
   if (full.value) return { label: t('tasks.page.state.full'), disabled: true }
   return { label: startsDirectly.value ? t('tasks.page.claim.start') : t('tasks.page.claim.claim'), disabled: false }
@@ -232,13 +232,14 @@ async function loadMine() {
   }
 }
 
-/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：题目已结束，
+/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：这一份再也动不了，
  *  或者只能交一次而且已经交过。 */
 const submitAction = computed(() => {
   if (!joined.value || !taskData.value) return null
   // 已经在交作业的表单上：表单自己有「提交」，这一行不再给第二颗。
   if (route.name === routeNames.submit) return null
-  if (taskData.value.endedAt) return null
+  // 交不了的不给：过了我自己的截止、题目结束了，服务端都不收（`canStillAct`）。
+  if (!canStillAct(taskData.value)) return null
   if (myLatest.value && !taskData.value.resubmittable) return null
   return myLatest.value ? t('tasks.page.submit.again') : t('tasks.page.submit.first')
 })
@@ -400,11 +401,8 @@ onMounted(() => {
       <div class="td__lead">
         <div class="td__titleline">
           <h1 class="td__title t-page-title" data-user-content>{{ taskData.name }}</h1>
-          <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`">
+          <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`" data-testid="task-state">
             {{ taskState.label }}
-          </span>
-          <span v-if="myState" class="td__mine" :class="`td__mine--${myState.tone}`" data-testid="my-claim-state">
-            {{ myState.label }}
           </span>
         </div>
         <p class="td__by t-meta-read">
@@ -664,29 +662,6 @@ onMounted(() => {
 .td__ask {
   min-width: 36px;
   padding: 0 8px;
-}
-
-.td__mine {
-  padding: 1px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  white-space: nowrap;
-}
-
-.td__mine--ok {
-  color: var(--ok-ink);
-  background: var(--ok-wash);
-}
-
-.td__mine--muted {
-  color: var(--muted);
-  background: var(--fill-2);
-}
-
-.td__mine--danger {
-  color: var(--danger-ink);
-  background: var(--danger-wash);
 }
 
 .td-ask :deep(.v-navigation-drawer__content) {

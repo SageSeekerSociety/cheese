@@ -240,10 +240,20 @@ export interface AssistantTopic {
   earlier?: boolean
 }
 
+/** 一问是从哪一页问的，按按下问的那一刻定下来：之后换了页、页面状态变了，都不改它。 */
+export interface AskTarget {
+  /** 人没把「当前页面」关掉：这一问带页面。 */
+  on: boolean
+  /** 那一页（那一刻的值）；还没有可挂的东西时是 null（发布页、改题页还没建草稿）。 */
+  page: AssistantPage | null
+  /** 那一页问之前要做的：先存好草稿。交回这一问要挂的那一份（它刚建、刚存的草稿）。 */
+  prepare?: () => Promise<AssistantPage | null | void>
+}
+
 export interface AssistantOptions {
-  page?: () => AssistantPage | null
-  /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
-  prepare?: () => Promise<void>
+  /** 按下问的那一刻读一次：问的是哪一页、那一页问之前要做什么（见 `AskTarget`）。不给就
+   *  不说页面的事。 */
+  target?: () => AskTarget
   on?: AssistantHooks
   /** 这一句还带什么（不带页面、选中的字、引用），每问一句读一次。 */
   asking?: (question: string) => AssistantAsking
@@ -468,6 +478,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     streaming.value = ''
     const at = new Date().toISOString()
     const asking = opts.asking?.(text)
+    const target = opts.target?.() ?? null
     if (!kept)
       messages.value = [
         ...messages.value,
@@ -477,9 +488,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
     let asked = false
     let unheard: Unheard[] = []
     try {
-      await opts.prepare?.()
+      const prepared = await target?.prepare?.()
       const id = await ensureConversation()
-      const page = opts.page?.() ?? null
+      const page = target?.on ? prepared || target.page : null
       unheard = await follow(
         id,
         (onEvent) =>
@@ -487,7 +498,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             `/assistant/conversations/${id}/ask`,
             {
               question: text,
-              ...(page ? { page } : {}),
+              ...(page ? { page } : target ? { no_page: true } : {}),
               ...(files.length ? { files } : {}),
               ...asking?.body,
               ...(kept ? { kept: true } : {}),
