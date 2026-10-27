@@ -49,11 +49,11 @@ async def receive_webhook(
     if not valid:
         raise AuthenticationRequiredError("Invalid or revoked webhook token")
 
-    content = (body.get("content") or "").strip()
-    source = (body.get("source") or "").strip()
-    if not content:
+    content_raw = body.get("content")
+    source_raw = body.get("source")
+    if not isinstance(content_raw, str) or not (content := content_raw.strip()):
         raise ValidationError(say("contentRequired"))
-    if not source:
+    if not isinstance(source_raw, str) or not (source := source_raw.strip()):
         raise ValidationError(say("sourceRequired"))
 
     topic = await TopicRepository(db).get(topic_id)

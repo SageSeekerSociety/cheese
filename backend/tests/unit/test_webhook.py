@@ -297,6 +297,22 @@ async def test_receive_webhook_rejects_empty_content(monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("field", ["content", "source"])
+@pytest.mark.parametrize("value", [123, []])
+async def test_receive_webhook_rejects_non_string_fields(monkeypatch, field, value):
+    monkeypatch.setattr(
+        webhooks_route.webhook_service, "verify", AsyncMock(return_value=True)
+    )
+    request = _request_with_headers({"x-webhook-token": "good"})
+    body = {"content": "message", "source": "ci"}
+    body[field] = value
+    with pytest.raises(ValidationError):
+        await webhooks_route.receive_webhook(
+            uuid.uuid4(), body, request, db=None
+        )
+
+
+@pytest.mark.anyio
 async def test_receive_webhook_lands_the_post_for_a_valid_token(monkeypatch):
     topic_id, project_id = uuid.uuid4(), uuid.uuid4()
     monkeypatch.setattr(
@@ -358,3 +374,10 @@ async def test_receive_webhook_refuses_a_room_of_an_archived_project(monkeypatch
             db=None,
         )
     post_mock.assert_not_awaited()
+
+
+def test_non_ascii_webhook_signature_is_rejected():
+    """An invalid webhook header must be refused without crashing the ingress."""
+    from app.core.webhook_auth import webhook_token_claims
+
+    assert webhook_token_claims("body.é", topic_id="T") is None

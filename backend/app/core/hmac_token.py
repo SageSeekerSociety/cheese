@@ -25,3 +25,8 @@ def sign_body(secret: str, body: str) -> str:
     """
     digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
+def constant_time_equal(left: str, right: str) -> bool:
+    """Compare attacker-controlled credential text without Unicode failures."""
+    return hmac.compare_digest(left.encode(), right.encode())

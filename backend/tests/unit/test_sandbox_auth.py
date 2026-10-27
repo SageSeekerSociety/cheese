@@ -4,6 +4,8 @@ import base64
 import json
 import uuid
 
+import pytest
+
 from app.core import sandbox_auth as sa
 from app.domain.identity.handles import agent_instance_handle
 
@@ -172,3 +174,22 @@ def test_session_capability_cannot_be_downgraded_to_legacy_owner():
         json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     assert scoped_token_claims(token.removeprefix("cxss_")) is None
     assert verify_scoped_token(legacy, topic_id="room")
+
+
+@pytest.mark.parametrize(
+    "token", ["é", "body.é", "cxpa_body.é", "cxpu_body.é", "cxdg_body.é"]
+)
+@pytest.mark.parametrize(
+    "verifier",
+    [
+        sa.scoped_token_claims,
+        sa.project_agent_claims,
+        sa.personal_claims,
+        sa.delegated_claims,
+        sa.is_global_sandbox_token,
+        lambda token: sa.is_valid_cheese_token(token, project_id="P"),
+    ],
+)
+def test_non_ascii_credentials_are_rejected(token, verifier):
+    """Malformed header credentials are refused rather than crashing authentication."""
+    assert not verifier(token)
