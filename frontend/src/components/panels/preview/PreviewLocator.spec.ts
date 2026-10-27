@@ -7,7 +7,7 @@
  *
  * 修复前这条会红：框一出来，焦点就在那个输入框上。
  */
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import PreviewLocator from './PreviewLocator.vue'
@@ -83,4 +83,45 @@ it('弹出时不去抢正文那边的焦点', async () => {
   // 反面：这一条不是「焦点根本动不了」才绿的——框本身照样能聚焦，读者点一下就进来。
   input.focus()
   expect(document.activeElement).toBe(input)
+})
+
+it('支持把当前指认加入待发列表，并在待发条上一键全部发送', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '改这里', queuedCount: 0 },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const queueBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '加入待发')
+  expect(queueBtn).toBeTruthy()
+  queueBtn!.click()
+  expect(ui.emitted().queue).toHaveLength(1)
+
+  await ui.rerender({ target: null, note: '', queuedCount: 2 })
+  expect(ui.container.textContent).toContain('待发批注 2 处')
+  const sendAllBtn = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '全部发送（2）')
+  expect(sendAllBtn).toBeTruthy()
+  sendAllBtn!.click()
+  expect(ui.emitted().sendQueued).toHaveLength(1)
+})
+
+it('支持通过投递目标下拉切换为「仅留评论」并回车提交', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '留条评论', canComment: true },
+    global: {
+      stubs: {
+        VIcon: true,
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+  const select = ui.getByTestId('locator-recipient') as HTMLSelectElement
+  await fireEvent.update(select, 'comment')
+  const input = ui.container.querySelector('.locator__input') as HTMLInputElement
+  await fireEvent.keyDown(input, { key: 'Enter' })
+  expect(ui.emitted().comment).toHaveLength(1)
+  expect(ui.emitted().send).toBeUndefined()
 })

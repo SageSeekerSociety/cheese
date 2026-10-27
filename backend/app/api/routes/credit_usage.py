@@ -15,20 +15,20 @@ its plan allows, so a member can see what the plan includes.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import AuthUser
 from app.api.response import ok
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.errors import NotFoundError
-from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.agent.model_catalog import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
 from app.domain.team.permissions import Permission as TeamPermission
+from app.domain.team.protocol import TeamView
 from app.domain.team.services import team_service
 from app.domain.usage.report import LINES, TEAM_LINES, UsageReport
 
@@ -100,14 +100,10 @@ async def my_credit_usage(
 
 @router.get("/teams/{teamId}/credits/usage")
 async def team_credit_usage(
-    team_id: Annotated[int, Path(ge=1, alias="teamId")],
-    auth_user: Annotated[AuthUserInfo, needs(TeamPermission.view_members, on="teamId")],
+    team: Annotated[TeamView, Can(TeamPermission.view_members)],
+    me: AuthUser,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    _ = auth_user
-    team = await team_service(db).get_team(team_id)
-    if team is None:
-        raise NotFoundError(say("teamNotFound", team=team_id))
     reports = UsageReport(db)
     personal = team.personal_owner_user_id is not None
     report = await reports.team(
@@ -116,7 +112,7 @@ async def team_credit_usage(
     if personal:
         shared = [
             t
-            for t in await team_service(db).get_teams_of_user(auth_user.user_id)
+            for t in await team_service(db).get_teams_of_user(me.user_id)
             if t.personal_owner_user_id is None
         ]
         report["teams"] = await reports.teams_left(shared)

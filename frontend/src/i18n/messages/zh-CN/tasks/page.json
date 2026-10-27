@@ -2,6 +2,7 @@
   "claim": {
     "claim": "申请做这道题",
     "continue": "继续做",
+    "expired": "已过期",
     "notApproved": "审核通过后才能申请",
     "notApprovedStart": "审核通过后才能开始",
     "pending": "已申请，等待通过",
@@ -14,8 +15,10 @@
   "rejectReason": "审核未通过：{reason}",
   "reviewTitle": "{name} 的提交",
   "state": {
+    "applyClosed": "申请已截止",
     "closed": "已截止",
-    "full": "人数已满",
+    "ended": "已结束",
+    "full": "名额已满",
     "notStarted": "未开始",
     "open": "可申请",
     "openToStart": "可开始",

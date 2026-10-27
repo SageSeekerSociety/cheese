@@ -40,7 +40,7 @@ from app.api.task_serialization import (
     _task_to_api_model,
 )
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.space_access import may_publish_in_space, may_teach_task
+from app.auth import task_roles as task_seats
 from app.core import model_roles
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -57,6 +57,7 @@ from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
 from app.domain.library import records as library_records
+from app.domain.space import permissions as space_seats
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
 from app.domain.task import drafts, package
@@ -162,7 +163,9 @@ async def _zone(db, user_id: int) -> str | None:
 
 
 async def _publishable_space(db, space_id: int, user_id: int) -> None:
-    if not await may_publish_in_space(session=db, space_id=space_id, user_id=user_id):
+    if not await space_seats.SPACE.allows(
+        db, space_id, user_id, space_seats.Permission.publish
+    ):
         raise NotFoundError.for_resource("space", space_id)
 
 
@@ -170,7 +173,7 @@ async def _editable_task(db, task_id: int, user_id: int):
     task = await TaskService.of(db).get_task(task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if not await may_teach_task(session=db, task=task, user_id=user_id):
+    if not await task_seats.teaches(db, task, user_id):
         raise ForbiddenError(say("draftTaskNotYours"))
     return task
 
@@ -179,7 +182,7 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     """The published 题目 as its edit form starts out: every field the form
     saves back, so a change draft saved with one field changed leaves the rest
     as they are — its stages, submission items, rubric and tags included.
-    ``private``: the reader may teach the 题目 (``may_teach_task``), so its
+    ``private``: the reader may teach the 题目 (``task_roles.teaches``), so its
     private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
@@ -260,6 +263,35 @@ async def start_draft(
         names = {}
     await db.commit()
     return ok(_full(row, names, await drafts.published_items(db, [row])))
+
+
+class TaskChangesOut(BaseModel):
+    """What the edit page of a published 题目 opens on: the person's unsaved
+    changes if they have some, and the form it starts from."""
+
+    draft: TaskDraftOut | None
+    #: The changes' form, or the 题目 as it is when there are none.
+    form: dict
+
+
+@router.get("/changes", **typed_response(TaskChangesOut))
+async def read_changes(
+    resolver: ActorResolverDep,
+    task: Annotated[int, Query(ge=1)],
+    db=Depends(get_db),
+) -> dict:
+    """The person's changes to a published 题目, without starting any: opening
+    the edit page is not changing the 题目, so the draft is started
+    (``POST /task-drafts`` with ``task``) by the first change or the first
+    question to 芝士."""
+    user_id = await _person(resolver)
+    found = await _editable_task(db, task, user_id)
+    row = await drafts.for_task(db, user_id, found.id)
+    if row is None:
+        form = await _task_as_form(db, found, private=True)
+        return ok({"draft": None, "form": form})
+    shown = _full(row, {found.id: found.name}, await drafts.published_items(db, [row]))
+    return ok({"draft": shown, "form": shown["fields"]})
 
 
 class StarterUploadedOut(BaseModel):
@@ -527,7 +559,7 @@ async def agent_read(
         raise NotFoundError.for_resource("task", body.task)
     await ensure_task_readable(session=db, task=task, user_id=user_id)
     terms = await _space_terms(db, spaces, task.space_id, user_id)
-    teaches = await may_teach_task(session=db, task=task, user_id=user_id)
+    teaches = await task_seats.teaches(db, task, user_id)
     text = drafts.published_view(
         task.id,
         task.name,
@@ -698,7 +730,7 @@ async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
     rights, and the counts are the 题目's, like its private guidance
     (``_editable_task``)."""
     task = await TaskService.of(db).get_task(row.task_id)
-    if task is None or not await may_teach_task(session=db, task=task, user_id=user_id):
+    if task is None or not await task_seats.teaches(db, task, user_id):
         return None
     stages = drafts.published_form(row).get("stages") or []
     if _stage_rows(stages) == _stage_rows(

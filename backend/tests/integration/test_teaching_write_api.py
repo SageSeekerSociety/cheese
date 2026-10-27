@@ -291,7 +291,7 @@ def test_a_stranger_cannot_write_a_task_override(
         json={"teaching": {"mode": "free"}},
         headers=_auth(outsider_token),
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 def test_the_task_and_the_space_are_both_read_on_the_real_read_path(

@@ -25,6 +25,7 @@ from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import task_roles as task_seats
 from app.core.errors import NotFoundError
 from app.domain.agent.personal import billing, people
 from app.domain.agent.personal.prompt import task_brief
@@ -122,8 +123,8 @@ async def _task(reader: Reader, page_id: str) -> Shown:
             claim=await claim_of(reader.session, task=task, user_id=reader.user_id),
             timezone=reader.timezone,
             materials=[f.name for f in files],
-            materials_readable=await package.may_download(
-                reader.session, task, reader.user_id
+            materials_readable=await task_seats.TASK.may(
+                reader.session, task, reader.user_id, task_seats.Permission.download
             ),
         ),
         label=f"题目「{task.name}」",

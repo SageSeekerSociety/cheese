@@ -153,6 +153,25 @@ describe('芝士摆出来的东西', () => {
     expect(card?.textContent).toContain('文件')
     expect(card?.textContent).not.toContain('weird 文件')
   })
+
+  it('对话里收到的可预览文档与视频附件也能在右侧打开', async () => {
+    history = [
+      block('attachment', 'uploads/id/方案.pdf', { mime_type: 'application/pdf' }),
+      block('attachment', 'uploads/id/演示.mp4', { mime_type: 'video/mp4' }),
+    ]
+    const { container, emitted } = await open()
+
+    const docOpen = container.querySelector<HTMLElement>('[title="打开 方案.pdf"]')
+    const videoOpen = container.querySelector<HTMLElement>('[title="打开 演示.mp4"]')
+    expect(docOpen, '可预览文档附件应当能点开').not.toBeNull()
+    expect(videoOpen, '视频附件应当能在右侧打开').not.toBeNull()
+
+    docOpen!.click()
+    videoOpen!.click()
+    await settle()
+
+    expect(emitted()['open-file']).toEqual([['uploads/id/方案.pdf'], ['uploads/id/演示.mp4']])
+  })
 })
 
 describe('消息里的文件引用', () => {

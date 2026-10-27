@@ -10,7 +10,7 @@
  */
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
 
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import PreviewFrameStage from './PreviewFrameStage.vue'
@@ -75,4 +75,117 @@ it('没在导航时不摆任何一句「正在……」', () => {
   const text = ui.container.textContent ?? ''
   expect(text).not.toContain('正在加载新页面')
   expect(text).not.toContain('正在获取预览授权')
+})
+
+it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文件时恢复为渲染视图', async () => {
+  const staticFrame = { ...frame(), label: 'diagram.svg', mime: 'image/svg+xml', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'diagram.svg',
+        content: '<svg viewBox="0 0 10 10"><circle r="4" /></svg>',
+        version: 'v1',
+        bytes: 47,
+        binary: false,
+        too_large: false,
+      },
+      previewMime: 'image/svg+xml',
+      previewUrl: 'https://example.test/diagram.svg',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: {
+      stubs: {
+        VIcon: true,
+        VChip: { template: '<span><slot /></span>' },
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+
+  expect(ui.queryByTestId('frame-source')).toBeNull()
+  await fireEvent.click(ui.getByTestId('toggle-frame-source'))
+  expect(ui.getByTestId('frame-source').textContent).toContain('<circle r="4" />')
+
+  await ui.rerender({
+    previewFile: {
+      path: 'other.svg',
+      content: '<svg viewBox="0 0 20 20"><rect width="10" height="10" /></svg>',
+      version: 'v2',
+      bytes: 62,
+      binary: false,
+      too_large: false,
+    },
+  })
+  expect(ui.queryByTestId('frame-source')).toBeNull()
+})
+
+it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢复为桌面视口', async () => {
+  const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'index.html',
+        content: '<h1>Hello</h1>',
+        version: 'v1',
+        bytes: 14,
+        binary: false,
+        too_large: false,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: {
+      stubs: {
+        VIcon: true,
+        VChip: { template: '<span><slot /></span>' },
+        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+      },
+    },
+  })
+
+  const stage = ui.container.querySelector('.preview-frames') as HTMLElement
+  expect(stage.getAttribute('data-viewport')).toBe('desktop')
+
+  await fireEvent.click(ui.getByTestId('viewport-tablet'))
+  expect(stage.getAttribute('data-viewport')).toBe('tablet')
+  expect(stage.classList.contains('preview-frames--tablet')).toBe(true)
+
+  await fireEvent.click(ui.getByTestId('viewport-mobile'))
+  expect(stage.getAttribute('data-viewport')).toBe('mobile')
+  expect(stage.classList.contains('preview-frames--mobile')).toBe(true)
+
+  await ui.rerender({
+    previewFile: {
+      path: 'other.html',
+      content: '<h1>Other</h1>',
+      version: 'v2',
+      bytes: 14,
+      binary: false,
+      too_large: false,
+    },
+  })
+  expect(stage.getAttribute('data-viewport')).toBe('desktop')
 })

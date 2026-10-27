@@ -14,7 +14,6 @@ export type EligibilityRejectReasonCode =
   | 'PARTICIPANT_LIMIT_REACHED'
   | 'TASK_NOT_APPROVED'
   | 'REGISTRATION_NOT_STARTED'
-  | 'REGISTRATION_CLOSED'
   | 'MISSING_REAL_NAME'
   | 'TEAM_TOO_SMALL'
   | 'TEAM_TOO_LARGE'
@@ -266,8 +265,7 @@ export type TaskFormSubmitData = {
   intro: string
   description: string
   // Optional, matching both what TaskForm.vue actually emits and what
-  // PostTaskRequestData accepts: categoryId falls back to undefined, and the
-  // team sizes are only set for submitterType === 'TEAM'. They were declared
+  // PostTaskRequestData accepts: categoryId falls back to undefined. They were declared
   // required, but nothing ever caught it — TaskForm builds this object by
   // spreading vee-validate's untyped `values`, which collapses the whole
   // literal to `any` and switches off checking for every field below.

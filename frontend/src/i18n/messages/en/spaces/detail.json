@@ -2,6 +2,7 @@
   "allContests": "All challenges",
   "announcements": "Announcements",
   "auditTasks": {
+    "applyDeadline": "Applications close {date}",
     "approve": "Approve",
     "by": "By {name}",
     "deadline": "Due {date}",
@@ -28,9 +29,9 @@
     "submissionRequirements": "Submission requirements",
     "teamContest": "Team challenge",
     "teamLockingPolicyLockOnApproval": "Team locked on approval",
+    "teamLockingPolicyLockOnStart": "Team locked once it starts",
     "teamLockingPolicyNoLock": "Team changes allowed",
-    "title": "Challenges awaiting review",
-    "teamLockingPolicyLockOnStart": "Team locked once it starts"
+    "title": "Challenges awaiting review"
   },
   "confirmDeleteSpace": "Delete the space \"{name}\"? It disappears for everyone and can't be undone.",
   "data": {
@@ -148,6 +149,7 @@
       "publishedSome": "Published {n}",
       "lacks": "\"{name}\" is missing {fields}",
       "failed": "\"{name}\" could not be published",
+      "failedBecause": "\"{name}\" could not be published: {reason}",
       "separator": "; ",
       "removeFailed": "Could not delete"
     }
@@ -155,7 +157,10 @@
   "tasks": {
     "allTopics": "All tags",
     "clearTopics": "Clear selection",
+    "closed": "Closed or full ({n})",
     "loadFailed": "Couldn't load challenges",
+    "mineGroup": "Joined ({n})",
+    "noOpenTasks": "No open tasks",
     "noTasks": "No challenges yet",
     "noTopics": "No tags",
     "pendingOnly": "Needs action only",
@@ -181,15 +186,21 @@
       "submitted": "Submitted {n}"
     },
     "row": {
+      "applied": "Applied",
+      "applyDeadline": "Applications close {date}",
       "by": "By {name}",
       "claimed": "{n} participants",
       "claimedOf": "{n} / {limit}",
       "claimedTeams": "{n} teams taking part",
       "claimedTeamsOf": "{n} / {limit} teams",
       "deadline": "Due {date}",
+      "ended": "Ended",
+      "expired": "Expired",
       "mine": "Working on it",
       "noDeadline": "No deadline",
-      "applied": "Applied"
+      "passed": "Passed",
+      "submitDeadline": "Submit by {date}",
+      "submitted": "Submitted"
     },
     "scope": {
       "all": "All",
@@ -205,9 +216,7 @@
       "nearestDeadline": "Ending soon"
     },
     "topic": "Tag",
-    "topicCount": "{n} tags",
-    "closed": "Closed or full ({n})",
-    "noOpenTasks": "No open tasks"
+    "topicCount": "{n} tags"
   },
   "templateForm": {
     "cancel": "Cancel",

@@ -267,6 +267,7 @@ _SIGNED_IN_ONLY = [
     ("GET", "{a}/comments", None),
     ("POST", "{a}/comments", {"content": "x"}),
     ("DELETE", "{a}/favorite", None),
+    ("GET", "{q}/followers", None),
 ]
 
 
@@ -316,3 +317,10 @@ def test_the_question_overview_is_public(api_client: TestClient, path: str):
     """Trending questions, totals and popular search terms need no sign-in."""
     response = api_client.get(path)
     assert response.status_code == 200, response.text
+
+
+def test_withdrawing_an_acceptance_on_a_missing_question_finds_nothing(scene: Scene):
+    """A question that does not exist answers 404, as accepting on it does —
+    not 403, which would say there is something there to be refused."""
+    response = scene.client.delete("/questions/99999999/accept", headers=scene.author)
+    assert response.status_code == 404, response.text

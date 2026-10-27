@@ -58,16 +58,17 @@ class TaskRepository:
 
     @staticmethod
     def joined_by(user_id: int):
-        """The tasks ``user_id`` takes part in: as themselves on an individual
-        task, through one of their teams on a team task."""
+        """The tasks ``user_id`` takes part in: a live claim
+        (``TaskMembership.live_claim``, approved or waiting) as themselves on an
+        individual task, or through one of their teams on a team task."""
         user_member_exists = exists().where(
             TaskMembership.task_id == Task.id,
             TaskMembership.member_id == user_id,
-            TaskMembership.deleted_at.is_(None),
+            TaskMembership.live_claim,
         )
         team_member_exists = exists().where(
             TaskMembership.task_id == Task.id,
-            TaskMembership.deleted_at.is_(None),
+            TaskMembership.live_claim,
             TaskMembership.member_id == TeamUserRelation.team_id,
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
@@ -349,7 +350,9 @@ class TaskRepository:
         if lifecycle in ("recruiting", "closed"):
             # Still to be claimed: not ended, registration not over, a seat left.
             # A 题目 whose registration has not opened yet is still ahead of the
-            # reader, so it counts as recruiting.
+            # reader, so it counts as recruiting. This is the task's own state,
+            # the same for every viewer; the list shows the tasks a viewer holds
+            # a claim on in a group of their own (``joined``), not in these two.
             approved_count = (
                 select(func.count(TaskMembership.id))
                 .where(

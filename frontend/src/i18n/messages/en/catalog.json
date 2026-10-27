@@ -527,6 +527,14 @@
     "s5": {
       "name": "Cheese closed",
       "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
+    },
+    "s6": {
+      "name": "Publish refused",
+      "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
+    },
+    "s7": {
+      "name": "Publish all with one refused",
+      "note": "After \"Publish all\", the server refused the second task: the note says how many went out, and the refused one carries the server's own words."
     }
   },
   "basicInfoView": {
@@ -1331,7 +1339,7 @@
     }
   },
   "alertsView": {
-    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, applications to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
     "s1": {
       "name": "Counts with alerts",
       "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."

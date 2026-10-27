@@ -294,10 +294,12 @@ export function useTaskForm(
       editable: true,
       requireRealName: requireRealName.value,
       categoryId: categoryId.value || undefined,
-      minTeamSize: submitterType.value === 'TEAM' ? minTeamSize.value : undefined,
-      maxTeamSize: submitterType.value === 'TEAM' ? maxTeamSize.value : undefined,
+      // As the form holds them whichever form is chosen: publishing the draft
+      // leaves them out of a 个人 题目 (`published_form`).
+      minTeamSize: minTeamSize.value,
+      maxTeamSize: maxTeamSize.value,
       participantLimit: participantLimit.value || undefined,
-      teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
+      teamLockingPolicy: teamLockingPolicy.value,
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
       mentors: mentorsJoin.value ? mentors.value : [],

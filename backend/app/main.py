@@ -82,6 +82,7 @@ from app.domain.machine.runner import (
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
 from app.domain.room_cleanup.retire import sweep_retired_storage
+from app.domain.skill_market import close_market_connections
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -542,6 +543,7 @@ async def lifespan(application: FastAPI):
         try:
             yield
         finally:
+            await close_market_connections()
             watching_jobs.cancel()
             await asyncio.gather(watching_jobs, return_exceptions=True)
             set_periodic_health(None)
@@ -689,13 +691,6 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
-
-# Wire the domain permission configs + role providers into the shared checker.
-# Without this every require_permission()-gated endpoint 403s (the providers
-# would otherwise be empty). Idempotent-enough for a single process start.
-from app.auth.domains import register_all_permissions  # noqa: E402
-
-register_all_permissions()
 
 
 _http_log = get_logger("http")

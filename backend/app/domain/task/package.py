@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core import blob_store
 from app.core.config import settings
 from app.core.errors import (
@@ -41,7 +41,7 @@ from app.domain.library.shelf import Shelf
 from app.domain.notification.preferences import DEFAULT_TIMEZONE
 from app.domain.project import starter as starter_archive
 from app.domain.project.models import Project, ProjectStarterPush, StarterPushState
-from app.domain.task.claims import claim_of, project_claim
+from app.domain.task.claims import project_claim
 from app.domain.task.inputs import APPROVE_APPROVED
 from app.domain.task.models import (
     Task,
@@ -376,7 +376,7 @@ async def history(session: AsyncSession, task_id: int) -> list[Version]:
 #
 # 三条判据，各自一句话（和题目附件时一样）：
 #
-# - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`may_teach_task`）。
+# - 谁能放进、替换、删掉：出题人本人，或这块板的所有者 / 管理员（`task_roles.teaches`）。
 # - 谁能看到清单：看得见这道题的人。看不见材料就无法判断要不要申请。
 # - 谁能下载：出题人 / 板管理员 / 参与者——名下有一份还在、已经通过的申请（自己的，
 #   或所在团队的）。等批的、被拒的、退出的、不再有效的都不能：材料是给开始做这道题
@@ -388,15 +388,8 @@ async def history(session: AsyncSession, task_id: int) -> list[Version]:
 async def refuse_unless_teacher(
     session: AsyncSession, task: Task, user_id: int
 ) -> None:
-    if not await may_teach_task(session, task=task, user_id=user_id):
+    if not await task_seats.teaches(session, task, user_id):
         raise ForbiddenError(say("draftTaskNotYours"))
-
-
-async def may_download(session: AsyncSession, task: Task, user_id: int) -> bool:
-    if await may_teach_task(session, task=task, user_id=user_id):
-        return True
-    claim = await claim_of(session, task=task, user_id=user_id)
-    return claim is not None and claim.approved == APPROVE_APPROVED
 
 
 async def task_folder_shown(session: AsyncSession, project_id) -> bool:
@@ -431,7 +424,9 @@ async def shown_task(
 async def refuse_unless_downloader(
     session: AsyncSession, task: Task, user_id: int
 ) -> None:
-    if not await may_download(session, task, user_id):
+    if not await task_seats.TASK.may(
+        session, task, user_id, task_seats.Permission.download
+    ):
         raise ForbiddenError(say("taskFilesForTakers"))
 
 

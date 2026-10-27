@@ -220,6 +220,10 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       refreshing: false,
       tasks: [task()],
       total: 1,
+      mineTasks: [],
+      mineTotal: 0,
+      mineHasMore: false,
+      mineLoadingMore: false,
       closedTasks: [],
       closedTotal: 0,
       closedHasMore: false,
@@ -259,6 +263,25 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
           closedOpen: true,
         },
         expectSelector: '[data-testid="tasks-closed"]',
+      },
+      {
+        name: '我参与的在最上面',
+        note: '「全部」最上面一组「我参与的」：我手上有一份的题，不收起；每一行写我这一份的状态和我自己的提交截止，右边不写题目的状态。',
+        props: {
+          mineTasks: [
+            task({
+              id: 3,
+              name: '动态规划入门',
+              startMode: 'APPLY',
+              joined: true,
+              submittable: true,
+              // 2030 年：截图哪天拍都还没到，这一行写「在做」。
+              userDeadline: 1893456000000,
+            }),
+          ],
+          mineTotal: 1,
+        },
+        expectSelector: '[data-testid="tasks-mine"]',
       },
     ],
   },
@@ -359,7 +382,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         name: '一栏参与者数据',
         note: '读回来了：读数、趋势和六张分布都摆出来。',
         props: {},
-        expect: '报名主体数',
+        expect: '申请/开始主体数',
       },
       {
         name: '正在读取',
@@ -385,7 +408,7 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
     id: 'publishers-view',
     title: 'PublishersView',
     about:
-      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、报名最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
+      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、申请/开始最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
     file: 'src/views/spaces/detail/analytics/PublishersView.vue',
     component: PublishersView,
     needs: UI,

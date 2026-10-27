@@ -24,10 +24,9 @@ from app.api.space_payloads import (
     _invite_codes_to_api_models,
     _space_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES, needs
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import is_space_admin
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -35,6 +34,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.space import permissions as space_seats
 from app.domain.space.analytics_service import SpaceAnalyticsService
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.permissions import Permission as SpacePermission
@@ -213,7 +213,7 @@ async def _hydrate_members(
 @router.get(
     "/{spaceId}",
     summary="Query Space",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def get_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -232,8 +232,8 @@ async def get_space(
 
     # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
     # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
-    may_manage = auth_user.user_id > 0 and await is_space_admin(
-        session=db, space_id=space_id, user_id=auth_user.user_id
+    may_manage = auth_user.user_id > 0 and await space_seats.runs(
+        db, space_id, auth_user.user_id
     )
 
     categories = None
@@ -393,7 +393,7 @@ async def create_space(
 @router.patch(
     "/{spaceId}",
     summary="Update Space",
-    dependencies=[needs(SpacePermission.edit_settings, on="spaceId")],
+    dependencies=[Can(SpacePermission.edit_settings)],
 )
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -443,7 +443,7 @@ async def patch_space(
     "/{spaceId}",
     summary="Delete Space",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(SpacePermission.delete, on="spaceId")],
+    dependencies=[Can(SpacePermission.delete)],
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -479,7 +479,7 @@ async def join_space(
 @router.get(
     "/{spaceId}/members",
     summary="List Space Members",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def list_space_members(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -501,7 +501,7 @@ async def list_space_members(
     "/{spaceId}/members",
     summary="Add Space Member",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[needs(SpacePermission.manage_members, on="spaceId")],
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def add_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -534,7 +534,7 @@ async def add_space_member(
     "/{spaceId}/members/{userId}",
     summary="Remove Space Member",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(SpacePermission.manage_members, on="spaceId")],
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def delete_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -568,7 +568,7 @@ async def leave_space(
 @router.get(
     "/{spaceId}/analytics/tasks",
     summary="Get Space Task Analytics",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_space_task_analytics(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -612,7 +612,7 @@ async def get_space_task_analytics(
     summary="Get Publishers Participation",
     deprecated=True,
     description="Deprecated: use GET /spaces/{spaceId}/analytics/publishers instead.",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def get_publishers_participation(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -630,7 +630,7 @@ async def get_publishers_participation(
     summary="Export Space Participants",
     deprecated=True,
     description="Deprecated: use GET /spaces/{spaceId}/analytics/participants/export instead.",
-    dependencies=[needs(SpacePermission.view_analytics, on="spaceId")],
+    dependencies=[Can(SpacePermission.view_analytics)],
 )
 async def export_space_participants(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

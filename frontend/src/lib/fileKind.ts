@@ -106,7 +106,7 @@ export function imageMimeOf(suffix: string): string {
  *  知道预览显示不显示得了它。 */
 export function previewCanShow(path: string): boolean {
   const suffix = suffixOf(path)
-  return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix)
+  return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix) || !!videoMimeOf(path)
 }
 
 /** 房间里这一份，预览面板画得出来吗。

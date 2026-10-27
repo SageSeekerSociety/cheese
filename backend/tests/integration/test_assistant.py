@@ -784,7 +784,7 @@ def test_it_names_my_own_deadline_on_my_own_clock(client, gateway):
 
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "你的提交截止：2030-10-24 01:30" in told
-    assert "题目截止：2030-10-24 23:59" in told
+    assert "申请截止：2030-10-24 23:59" in told
     assert "2030-10-25" not in told
 
 

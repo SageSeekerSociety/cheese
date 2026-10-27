@@ -32,6 +32,7 @@ from app.domain.team.models import (
 )
 from app.domain.team.repositories import (
     TeamRepository,
+    refuse_anyone_but_the_owner,
 )
 from app.domain.user.services import (
     handle_is_available_shape,
@@ -217,8 +218,14 @@ class TeamService:
         return await self.visible_team(team.id, user_id)
 
     async def team_for_join_token(self, token: str) -> Team:
+        """The team a link names, for whoever holds it.
+
+        A personal team answers exactly like a bad link: it has no address of
+        its own and nobody but its owner belongs in it, so a token that somehow
+        got onto one must not let it be opened or joined.
+        """
         team = await self._repo.get_by_join_token(token)
-        if team is None:
+        if team is None or team.personal_owner_user_id is not None:
             raise NotFoundError("Invitation link is invalid or has been reset")
         return team
 
@@ -488,6 +495,10 @@ class TeamService:
         target_user_id: int,
         new_role: TeamMemberRole,
     ) -> None:
+        team = await self._get_team_or_error(team_id)
+        # A personal team holds one person; there is no second seat to change,
+        # and a row left over from before that rule is ended, not reshaped.
+        refuse_anyone_but_the_owner(team, target_user_id)
         relation = await self._repo.get_member_relation(team_id, target_user_id)
         if relation is None:
             raise NotFoundError(

@@ -42,6 +42,27 @@ describe('AttachmentVideo', () => {
     expect(video!.hasAttribute('controls')).toBe(true)
   })
 
+  it('annotates the moment on screen, and only once the player is there', async () => {
+    const ui = render(AttachmentVideo, {
+      props: { topicId: 'topic-a', path: 'library/screen.mp4', canLocate: true },
+      global: { plugins: [createVuetify()], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+    })
+    // Not opened yet: there is no "now" to point at, so the entry is off instead of handing over 00:00.
+    const locate = screen.getByTestId('video-locate') as HTMLButtonElement
+    expect(locate.disabled).toBe(true)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
+    const video = await waitFor(() => {
+      const el = document.querySelector('video')
+      expect(el).toBeTruthy()
+      return el as HTMLVideoElement
+    })
+    Object.defineProperty(video, 'currentTime', { value: 90.7, configurable: true })
+    expect((screen.getByTestId('video-locate') as HTMLButtonElement).disabled).toBe(false)
+    await fireEvent.click(screen.getByTestId('video-locate'))
+    expect(ui.emitted().locate).toEqual([[{ seconds: 90, timestamp: '01:30' }]])
+  })
+
   it('allows a failed authenticated read to be retried', async () => {
     mediaUrl.mockRejectedValueOnce(new Error('unavailable'))
     render(AttachmentVideo, {

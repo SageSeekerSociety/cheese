@@ -155,12 +155,15 @@ def test_the_message_shows_the_same_conversation_as_a_task(client, stub_hooks):
     root, thread, _ = _thread_with_a_turn(client, room)
     alice = session_auth_headers("alice")
 
-    listed = client.get(f"/topics/{room}/threads", headers=alice).json()["data"]
+    listed = client.get(f"/topics/{room}/threads", headers=alice).json()["data"]["open"]
     assert [t["id"] for t in listed] == [thread]
 
     client.post(f"/blocks/{root['id']}/upgrade", headers=alice)
 
-    assert client.get(f"/topics/{room}/threads", headers=alice).json()["data"] == []
+    assert (
+        client.get(f"/topics/{room}/threads", headers=alice).json()["data"]["open"]
+        == []
+    )
     main_line = client.get(f"/topics/{room}/blocks", headers=alice).json()["data"][
         "data"
     ]

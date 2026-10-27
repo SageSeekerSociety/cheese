@@ -9,7 +9,7 @@ from app.core.config import Settings, settings
 
 if TYPE_CHECKING:
     from app.domain.team.repositories import TeamRepository
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core.domain_errors import (
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
@@ -59,7 +59,6 @@ from app.domain.task.submission_state import (
 # Moved to ``task_service`` to keep this module under its size cap; re-exported
 # so ``from app.domain.task.services import TaskService`` still resolves.
 from app.domain.task.task_service import TaskService as TaskService
-from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
 
@@ -230,7 +229,7 @@ class TaskMembershipService:
         # 开始方式在这份领取写下之前重读，并且锁住不让它变（改开始方式的那一边
         # 等这里提交）；题目整个截止了，不再收新的领取。
         await claims.read_mode_for_claim(self._repo._session, task)
-        claims.refuse_start_after_deadline(task, None, now)
+        claims.refuse_claim_after_deadline(task, now)
 
         # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
         if is_team:
@@ -454,7 +453,6 @@ class TaskMembershipService:
         registration_not_started = (
             task.registration_start_at is not None and now < task.registration_start_at
         )
-        registration_closed = False
 
         # Rank 规则只看题目所属的空间，与候选团队无关：两条路径共用，进分支前读一次。
         space: _RankSpace | None = None
@@ -483,14 +481,6 @@ class TaskMembershipService:
                     {
                         "code": "REGISTRATION_NOT_STARTED",
                         "message": "Registration has not started yet.",
-                    }
-                )
-
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
                     }
                 )
 
@@ -588,13 +578,6 @@ class TaskMembershipService:
                         "message": "Registration has not started yet.",
                     }
                 )
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
-                    }
-                )
 
             # 名额满了（通过了的申请数到了上限；0 是不限）：题目页写「人数已满」。
             if task.participant_limit:
@@ -684,6 +667,7 @@ class TaskMembershipService:
                 {
                     "team": {
                         "id": team_id,
+                        "handle": getattr(candidate, "handle", None),
                         "name": getattr(candidate, "name", None) or "",
                         "intro": getattr(candidate, "intro", None) or "",
                         "avatarId": getattr(candidate, "avatar_id", None),
@@ -1447,66 +1431,20 @@ async def count_distinct_participants(
     )
 
 
-async def ensure_task_visible_for_ordinary_user(
-    *,
-    session: AsyncSession,
-    task: Task,
-    user_id: int,
-) -> None:
-    # 出题者或本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给成员看的。
-    if await may_teach_task(session=session, task=task, user_id=user_id):
-        return
-    space = await SpaceRepository(session=session).get_by_id(task.space_id)
-    if space is None:
-        raise NotFoundError(
-            "Resource space not found", data={"type": "space", "id": task.space_id}
-        )
-    task_repo = TaskRepository(session=session)
-    if not await task_repo.is_task_visible_for_space_limit(
-        task=task,
-        visible_task_limit=space.visible_task_limit,
-    ):
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task.id}
-        )
-
-
 async def ensure_task_readable(
     *,
     session: AsyncSession,
     task: Task,
     user_id: int,
 ) -> None:
-    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
-
-    三道闸，按顺序各答一句话：
-
-    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
-       对其他人还不该存在 —— 403；
-    2. **看不见**（``TaskVisibilityService.can_view_task``）：这个人不在这块板里，
-       或题目自己设了可见范围而他不在里面 —— 404，与「这道题不存在」同一句话；
-    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
-       404。
-
-    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
-    路由，它只走了第 2 道 —— 而第 2 道不管审核与上限，于是 403 / 404 的题照旧
-    把材料清单交出去。
-    「题看不见，清单也看不见」是同一件事，只该有一处判断。
-    """
-    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        if not await may_teach_task(session=session, task=task, user_id=user_id):
-            raise ForbiddenError(
-                "Only space admins or task creator can view unapproved tasks"
-            )
-    if not await TaskVisibilityService(session=session).can_view_task(
-        task=task, user_id=user_id
-    ):
+    """「这道题在这个读者眼里存不存在」—— 不经路由声明、按正文里的题目 id 读题的
+    几条路（草稿、芝士引用题目）用的那一个判断，判据在 ``task_roles.readable``：
+    还没过审的只给教它的人看，其余的要在板上看得见、没超出本板上限。看不见就是
+    404，与「这道题不存在」同一句话。"""
+    if not await task_seats.readable(session, task, user_id):
         raise NotFoundError(
             "Resource task not found", data={"type": "task", "id": task.id}
         )
-    await ensure_task_visible_for_ordinary_user(
-        session=session, task=task, user_id=user_id
-    )
 
 
 async def validate_and_get_category_id(

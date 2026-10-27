@@ -119,9 +119,10 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
     )
     assert seated.status_code == 200, seated.text
 
-    # 人没有这条限制：同一个人在两个项目的房间里都坐得下（两个项目都在 alice 的
-    # 个人团队里，bob 在这个团队里）。
-    join_project_team(client, home["id"], "bob")
+    # 人没有这条限制：同一个人在两个项目的房间里都坐得下。两个项目各进各的团队——
+    # 个人团队只能有所有者一个人，夹具会把项目搬到共享团队里再加人。
+    for project in (home, elsewhere):
+        join_project_team(client, project["id"], "bob")
     for room in (theirs, ours):
         joined = client.post(
             f"/topics/{room['id']}/members",

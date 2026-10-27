@@ -173,7 +173,8 @@ def _live_claims(
     user_membership: TaskMembership | None,
     team_memberships: Sequence[TaskMembership],
 ) -> list[TaskMembership]:
-    """The person's claims of the kind this task takes, rejected ones left out."""
+    """The person's live claims (``TaskMembership.live_claim``) of the kind
+    this task takes."""
     candidates = (
         [user_membership]
         if task.submitter_type == 0 and user_membership is not None
@@ -181,7 +182,7 @@ def _live_claims(
         if task.submitter_type == 1
         else []
     )
-    return [m for m in candidates if m.approved != 1]
+    return [m for m in candidates if m.live_claim]
 
 
 async def claim_of(
@@ -222,17 +223,24 @@ async def read_mode_for_claim(session: AsyncSession, task: Task) -> None:
     )
 
 
-def refuse_start_after_deadline(
-    task: Task, claim: TaskMembership | None, now: datetime
-) -> None:
-    """Nobody starts a task, or applies for it, once the whole task's deadline
-    has passed; nor starts their own claim once its own deadline has passed
-    (a project made then would only read failed)."""
+def refuse_claim_after_deadline(task: Task, now: datetime) -> None:
+    """Nobody makes a new claim once the task's deadline has passed: no
+    application to a task applied for (its deadline is 申请截止), no start of
+    a task started directly (its deadline is everyone's)."""
     if task.deadline is not None and task.deadline <= now:
         raise BadRequestError(say("taskClosedForStart"))
+
+
+def refuse_start_after_deadline(
+    task: Task, claim: TaskMembership, now: datetime
+) -> None:
+    """An approved claim is started until its own deadline, and not after it
+    (a project made then would only read failed). The task's deadline closes
+    new claims only (``refuse_claim_after_deadline``), in both start modes:
+    someone who already holds a claim is held to the claim's own deadline
+    (the owner, 2026-10-26)."""
     if (
-        claim is not None
-        and claim.approved == APPROVE_APPROVED
+        claim.approved == APPROVE_APPROVED
         and claim.deadline is not None
         and claim.deadline <= now
     ):

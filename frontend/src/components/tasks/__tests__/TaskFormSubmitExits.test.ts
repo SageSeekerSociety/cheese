@@ -246,17 +246,25 @@ describe('发题表单：队伍那几栏只在团队时算数', () => {
     expect(payload.teamLockingPolicy).toBe('NO_LOCK')
   })
 
-  it('个人：那三栏根本不画，交出去的也不带它们', async () => {
+  it('个人：那三栏根本不画', async () => {
     const view = mountForm({ initialData: FILLED })
 
     expect(view.queryByLabelText('tasks.form.minTeamSize')).toBeNull()
     expect(view.queryByLabelText('tasks.form.maxTeamSize')).toBeNull()
+  })
 
+  it('团队改成个人再改回团队：填过的人数还在，交出去的也是它', async () => {
+    const view = mountForm({ initialData: { ...FILLED, submitterType: 'TEAM', minTeamSize: 3, maxTeamSize: 5 } })
+
+    await fireEvent.click(view.getByRole('radio', { name: 'tasks.form.individual' }))
+    await waitFor(() => expect(view.queryByLabelText('tasks.form.minTeamSize')).toBeNull())
+    await fireEvent.click(view.getByRole('radio', { name: 'tasks.form.team' }))
+
+    await waitFor(() => expect((view.getByLabelText('tasks.form.minTeamSize') as HTMLInputElement).value).toBe('3'))
+    expect((view.getByLabelText('tasks.form.maxTeamSize') as HTMLInputElement).value).toBe('5')
     const payload = await submitted(view)
-
-    expect(payload.minTeamSize).toBeUndefined()
-    expect(payload.maxTeamSize).toBeUndefined()
-    expect(payload.teamLockingPolicy).toBeUndefined()
+    expect(payload.submitterType).toBe('TEAM')
+    expect([payload.minTeamSize, payload.maxTeamSize]).toEqual([3, 5])
   })
 
   it('最大比最小还小：表单拦着，一个 submit 都不发', async () => {

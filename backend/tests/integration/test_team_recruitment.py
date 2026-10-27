@@ -229,6 +229,31 @@ class TestTeamRecruitment:
         posts = resp.json()["data"]["posts"]
         assert any(unique_kw in p["title"] for p in posts)
 
+    def test_a_disbanded_teams_ad_leaves_the_plaza(
+        self, api_client: TestClient, recruitment_setup: dict
+    ) -> None:
+        """Disbanding ends the memberships but not the ad; the plaza still must
+        not offer a team that no longer exists."""
+        owner = recruitment_setup["owner"]
+        team_id = recruitment_setup["team_id"]
+        title = f"DisbandedPost-{unique_int()}"
+
+        created = api_client.post(
+            f"/teams/{team_id}/recruitment",
+            json={"title": title, "content": "Join us!"},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert created.status_code == 201, created.text
+
+        gone = api_client.delete(
+            f"/teams/{team_id}", headers={"Authorization": f"Bearer {owner.token}"}
+        )
+        assert gone.status_code == 204, gone.text
+
+        listed = api_client.get("/recruitment", params={"keyword": title})
+        assert listed.status_code == 200, listed.text
+        assert title not in {p["title"] for p in listed.json()["data"]["posts"]}
+
     def test_browse_recruitment_pagination(
         self, api_client: TestClient, recruitment_setup: dict
     ) -> None:

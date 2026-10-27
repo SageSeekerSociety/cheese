@@ -1,24 +1,53 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  target: { label: string; quote: string } | null
-  note: string
-  /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
-  busy?: boolean
-  /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
-  canComment?: boolean
-  /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
-  commentError?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    target: { label: string; quote: string } | null
+    note: string
+    /** 待发批注篮里已攒的条数：一次指认多处后合并成一条消息发给芝士。 */
+    queuedCount?: number
+    /** 这一处指认能不能先加入待发（钉在页上的一处要当场带截图发，不进纯文本待发篮）。 */
+    canQueue?: boolean
+    /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
+    busy?: boolean
+    /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
+    canComment?: boolean
+    /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
+    commentError?: string
+  }>(),
+  {
+    queuedCount: 0,
+    canQueue: true,
+    busy: false,
+    canComment: false,
+    commentError: undefined,
+  }
+)
 const emit = defineEmits<{
   'update:note': [note: string]
   send: []
+  /** 把当前这一处先加入待发列表，选好多处后一并发送。 */
+  queue: []
+  /** 把待发列表里的批注全部合并发送。 */
+  sendQueued: []
+  /** 清空待发列表。 */
+  clearQueued: []
   /** 把这句话连同这一处挂成一条评论，而不是发进对话。 */
   comment: []
   cancel: []
 }>()
+const recipient = ref<'agent' | 'comment'>('agent')
+watch(
+  () => props.canComment,
+  (allowed) => {
+    if (!allowed) recipient.value = 'agent'
+  }
+)
+
 /** 不在弹出时抢焦点。这个框是读者选中一段原文之后出来的，而页面上的选中只在窗口里
  *  焦点还留在正文上时才画——把光标交给输入框，橙色就跟着灭了，读者看不到自己选的是
  *  哪一段。要打字，点一下就进来。 */
@@ -26,6 +55,10 @@ function send(event: KeyboardEvent | MouseEvent) {
   if (props.busy) return
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
   event.preventDefault()
+  if (props.canComment && recipient.value === 'comment') {
+    emit('comment')
+    return
+  }
   emit('send')
 }
 
@@ -42,40 +75,80 @@ function comment(event: MouseEvent) {
 
 <template>
   <Transition name="locator">
-    <div v-if="target" class="locator">
-      <div class="locator__where">
-        <span class="locator__label t-meta" :title="target.label">{{ target.label }}</span>
-        <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
+    <div v-if="target || queuedCount" class="locator">
+      <div v-if="queuedCount" class="locator__queue">
+        <span class="locator__queue-badge t-meta">{{
+          t('work.room.preview.queuedCount', { count: queuedCount })
+        }}</span>
+        <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
+          {{ t('work.room.preview.clearQueued') }}
+        </BaseButton>
+        <BaseButton v-if="!target" kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
+          {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
+        </BaseButton>
       </div>
-      <input
-        :value="note"
-        class="locator__input"
-        autocomplete="off"
-        :aria-label="t('work.room.preview.locatorPlaceholder')"
-        :placeholder="t('work.room.preview.locatorPlaceholder')"
-        @input="emit('update:note', ($event.target as HTMLInputElement).value)"
-        @keydown.enter="send"
-        @keydown.esc.prevent="emit('cancel')"
-      />
-      <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
-           没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
-      <!-- 栏上的字是「评论」，但同一条面板上还有一颗开评论栏的「评论」：无障碍名说清
-           这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
-      <BaseButton
-        v-if="canComment"
-        kind="secondary"
-        size="sm"
-        :aria-label="t('work.room.comments.commentHere')"
-        :title="t('work.room.comments.commentHere')"
-        :disabled="!note.trim() || busy"
-        @click="comment"
-      >
-        {{ t('work.room.comments.comment') }}
-      </BaseButton>
-      <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
-        {{ t('work.room.preview.send') }}
-      </BaseButton>
-      <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
+      <template v-if="target">
+        <div class="locator__where">
+          <span class="locator__label t-meta" :title="target.label">{{ target.label }}</span>
+          <span class="locator__quote" :title="target.quote">{{ target.quote }}</span>
+        </div>
+        <input
+          :value="note"
+          class="locator__input"
+          autocomplete="off"
+          :aria-label="t('work.room.preview.locatorPlaceholder')"
+          :placeholder="t('work.room.preview.locatorPlaceholder')"
+          @input="emit('update:note', ($event.target as HTMLInputElement).value)"
+          @keydown.enter="send"
+          @keydown.esc.prevent="emit('cancel')"
+        />
+        <select
+          v-if="canComment"
+          v-model="recipient"
+          class="locator__recipient"
+          data-testid="locator-recipient"
+          :aria-label="t('work.room.preview.recipientLabel')"
+          :disabled="busy"
+        >
+          <option value="agent">{{ t('work.room.preview.recipientAgent') }}</option>
+          <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
+        </select>
+        <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
+             没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
+        <!-- 栏上的字是「评论」，但同一条面板上还有一颗开评论栏的「评论」：无障碍名说清
+             这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
+        <BaseButton
+          v-if="canComment"
+          kind="secondary"
+          size="sm"
+          :aria-label="t('work.room.comments.commentHere')"
+          :title="t('work.room.comments.commentHere')"
+          :disabled="!note.trim() || busy"
+          @click="comment"
+        >
+          {{ t('work.room.comments.comment') }}
+        </BaseButton>
+        <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
+          {{
+            canComment && recipient === 'comment'
+              ? t('work.room.preview.recipientComment')
+              : canQueue && queuedCount
+                ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
+                : t('work.room.preview.send')
+          }}
+        </BaseButton>
+        <BaseButton
+          v-if="canQueue"
+          kind="secondary"
+          size="sm"
+          :title="t('work.room.preview.queueHint')"
+          :disabled="!note.trim() || busy"
+          @click="emit('queue')"
+        >
+          {{ t('work.room.preview.queue') }}
+        </BaseButton>
+        <BaseButton icon="mdi-close" size="sm" :title="t('work.room.preview.cancel')" @click="emit('cancel')" />
+      </template>
       <p v-if="commentError" class="locator__error" role="alert">{{ commentError }}</p>
     </div>
   </Transition>
@@ -109,6 +182,17 @@ function comment(event: MouseEvent) {
   flex-direction: column;
   gap: 2px;
 }
+.locator__queue {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+}
+.locator__queue-badge {
+  flex: 1;
+  color: var(--accent-ink);
+  font-weight: 600;
+}
 /* 位置可能是一串很长的标题路径，折成几行会把下面那行原文挤出框外。只占一行。 */
 .locator__label {
   color: var(--muted);
@@ -139,6 +223,17 @@ function comment(event: MouseEvent) {
 }
 .locator__input:focus {
   border-color: var(--accent);
+}
+.locator__recipient {
+  flex: none;
+  padding: 5px 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 /* 挂评论失败的那一句：撑满一行，跟着下面两条按钮排。 */
 .locator__error {

@@ -11,8 +11,8 @@
       "label": "超时未评审"
     },
     "pendingClaims": {
-      "hint": "点开看有报名待审核的题目",
-      "label": "待审核报名"
+      "hint": "点开看有申请待审核的题目",
+      "label": "待审核申请"
     },
     "pendingReviews": {
       "hint": "点开看有提交待评审的题目",
@@ -138,8 +138,8 @@
     "loadFailed": "加载总览失败",
     "metric": {
       "claims": {
-        "hint": "个人或团队都按一个主体计算",
-        "label": "报名主体数"
+        "hint": "个人或团队按一个主体计算，含待审核和未通过的申请",
+        "label": "申请/开始主体数"
       },
       "members": {
         "hint": "团队按成员展开",
@@ -163,15 +163,15 @@
       }
     },
     "trend": {
-      "joined": "报名主体趋势",
+      "joined": "申请/开始趋势",
       "succeeded": "成功趋势"
     }
   },
   "participants": {
-    "approval": "报名审核",
+    "approval": "审核状态",
     "completion": "完成状态",
     "distribution": {
-      "approval": "报名审核状态",
+      "approval": "审核状态",
       "className": "班级",
       "completion": "完成状态",
       "grade": "年级",
@@ -183,12 +183,12 @@
     "loadFailed": "加载参与者数据失败",
     "metric": {
       "approved": {
-        "hint": "审核通过的报名主体",
-        "label": "审核通过报名"
+        "hint": "已通过的申请和直接开始做的主体",
+        "label": "参与主体数"
       },
       "claims": {
-        "hint": "个人和团队都按一个主体计算",
-        "label": "报名主体数"
+        "hint": "个人或团队按一个主体计算，含待审核和未通过的申请",
+        "label": "申请/开始主体数"
       },
       "realName": {
         "hint": "已实名的成员",
@@ -206,7 +206,7 @@
       "without": "未实名"
     },
     "trend": {
-      "joined": "报名趋势",
+      "joined": "申请/开始趋势",
       "submitted": "提交趋势",
       "succeeded": "成功趋势"
     }
@@ -217,10 +217,10 @@
   },
   "publishers": {
     "col": {
-      "approvedParticipantCount": "审核通过报名",
-      "avgParticipantsPerTask": "平均每题报名",
+      "approvedParticipantCount": "参与主体",
+      "avgParticipantsPerTask": "平均申请/开始",
       "lastTaskCreatedAt": "最近发题",
-      "participantCount": "报名主体",
+      "participantCount": "申请/开始",
       "publisherName": "出题人",
       "submissionConversionRate": "提交转化率",
       "submittedParticipantCount": "提交主体",
@@ -233,14 +233,14 @@
     "loadFailed": "加载出题人数据失败",
     "rank": {
       "bestRate": "成功率最高",
-      "claims": "{n} 个报名主体",
-      "mostClaims": "报名最多",
+      "claims": "{n} 个申请/开始主体",
+      "mostClaims": "申请/开始最多",
       "mostTasks": "发题最多",
       "tasks": "{n} 个题目"
     },
     "sort": {
       "lastTaskCreatedAt": "最近发题时间",
-      "participantCount": "报名主体数",
+      "participantCount": "申请/开始主体数",
       "successRate": "成功率",
       "taskCount": "题目数"
     },
@@ -266,8 +266,8 @@
       "category": "分类",
       "createdAt": "创建时间",
       "deadline": "截止时间",
-      "participantCount": "报名主体",
-      "pendingParticipantApprovalCount": "待审核报名",
+      "participantCount": "申请/开始",
+      "pendingParticipantApprovalCount": "待审核申请",
       "pendingReviewCount": "待评审",
       "publisher": "出题人",
       "submissionConversionRate": "提交转化率",
@@ -277,11 +277,11 @@
     "empty": "暂无题目",
     "export": "导出题目清单",
     "loadFailed": "加载题目数据失败",
-    "pendingClaims": "待审核报名",
+    "pendingClaims": "待审核申请",
     "pendingReviews": "待评审提交",
     "sort": {
       "createdAt": "创建时间",
-      "participantCount": "报名主体数",
+      "participantCount": "申请/开始主体数",
       "pendingReviewCount": "待评审数",
       "successRate": "成功率"
     },

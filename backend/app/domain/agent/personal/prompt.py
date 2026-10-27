@@ -139,10 +139,16 @@ def task_brief(
             if task.submitter_type == 1 and task.max_team_size
             else ""
         ),
-        f"题目截止：{_when(task.deadline, timezone)}",
+        (
+            f"题目截止：{_when(task.deadline, timezone)}"
+            "（过了不能再开始；已经开始的，在自己的提交截止之前都能接着做）"
+            if task.start_mode == START_DIRECT
+            else f"申请截止：{_when(task.deadline, timezone)}"
+            "（过了不再收新申请；已经通过的，在自己的提交截止之前都能开始做）"
+        ),
         *([mine] if mine else []),
         *(
-            ["开始方式：直接开始，点「开始做这道题」就开始，所有人都按题目截止时间交"]
+            ["开始方式：直接开始，点「开始做这道题」就开始，提交截止默认是题目截止"]
             if task.start_mode == START_DIRECT
             else [
                 "开始方式：申请制，点「申请做这道题」后等出题人通过，通过后才开始",

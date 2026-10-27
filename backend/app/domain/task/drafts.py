@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_type.library import preset_types
@@ -86,6 +86,8 @@ FORM_FIELDS = frozenset(
 PAGE_ONLY = frozenset(
     {"descriptionMarkdown", "teachingOwn", "attachmentFiles", "starterFile"}
 )
+#: What only a 团队 题目 has: its team sizes and when its team locks.
+TEAM_ONLY = ("minTeamSize", "maxTeamSize", "teamLockingPolicy")
 
 #: The longest a draft's whole form may be, as JSON.
 MAX_FORM_BYTES = 200_000
@@ -335,14 +337,12 @@ async def context(
 async def private_shown(session: AsyncSession, row: TaskDraft) -> bool:
     """Whether a draft's private guidance is shown to its writer: a new 题目's
     is their own; changes to a published one only while they may teach it
-    (``may_teach_task``), checked when it is read — an admin who opened the
+    (``task_roles.teaches``), checked when it is read — an admin who opened the
     changes and has since lost the board no longer reads it."""
     if row.task_id is None:
         return True
     task = await session.get(Task, row.task_id)
-    return task is not None and await may_teach_task(
-        session=session, task=task, user_id=row.user_id
-    )
+    return task is not None and await task_seats.teaches(session, task, row.user_id)
 
 
 def without_private(fields: dict) -> dict:
@@ -1295,6 +1295,11 @@ def published_form(draft: TaskDraft) -> dict:
     """The draft as ``POST /tasks`` / ``PATCH /tasks/{id}`` take it."""
     fields = {k: v for k, v in (draft.fields or {}).items() if k not in PAGE_ONLY}
     fields["intro"] = intro_of(draft.fields or {})
+    # A draft keeps the team fields whichever form is chosen, so switching back
+    # to 团队 brings them back; only a 团队 题目 publishes them.
+    if fields.get("submitterType") != "TEAM":
+        for key in TEAM_ONLY:
+            fields.pop(key, None)
     if not draft.fields.get("teachingOwn", False):
         fields.pop("teaching", None)
     # A new 题目 has no own default teammate to clear: "" and None both mean

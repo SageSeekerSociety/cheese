@@ -23,7 +23,11 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import BlockKind, BlockRepository, _actor_in_place
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
@@ -31,6 +35,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.room_task.dispatch import say_thread_title
 from app.domain.room_task.place import place_or_404
 from app.domain.thread import reads
+from app.domain.thread.recycle import restore_thread as restore_a_thread
 from app.domain.thread.schemas import ThreadOut
 from app.domain.thread.services import (
     files_sent_with,
@@ -61,6 +66,7 @@ def _thread_out(thread) -> ThreadOut:
         else None,
         created_by=thread.created_by,
         created_at=thread.created_at.isoformat(),
+        recycled_at=thread.recycled_at.isoformat() if thread.recycled_at else None,
     )
 
 
@@ -133,13 +139,14 @@ async def list_threads(
     """A channel's 支线 with replies, the latest reply first."""
     place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
-    rows = await reads.in_room(
-        db,
-        place.room_id,
-        viewer=actor.handle if actor.authenticated else None,
-        limit=limit,
+    return ok(
+        await reads.in_room(
+            db,
+            place.room_id,
+            viewer=actor.handle if actor.authenticated else None,
+            limit=limit,
+        )
     )
-    return ok(rows)
 
 
 @router.get("/{topic_id}/thread")
@@ -161,7 +168,7 @@ async def get_thread(
     if thread is None and place.task is not None:
         return ok(await _task_as_thread(db, place.task))
     if thread is None:
-        raise NotFoundError("Thread not found")
+        raise NotFoundError(say("threadNotFound"))
     root = await reads.root_of(db, thread)
     files = await files_sent_with(db, root) if root is not None else []
     return ok(
@@ -181,6 +188,45 @@ async def get_thread(
             "task": str(place.task.id) if place.task is not None else None,
         }
     )
+
+
+@router.post(
+    "/{topic_id}/thread/restore",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ThreadOut),
+)
+async def restore_thread(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """把一条收起来的支线放回默认列表（`thread/recycle.py`）。
+
+    收起来的支线是「报错满三天、没人回头」的那一条：它不再点亮频道，也从支线列表里
+    挪到「已回收」一栏。内容一条没删，谁看得到这个频道谁就读得到它；谁能让它回到
+    默认那一栏，是开这条支线的人和频道管理员 —— 和「谁能让一个频道重新排期」同一
+    档人。
+
+    放回来的是它「在哪一栏、算不算数」这两件事，不是那条失败：块没动过，那次坏掉
+    已经过了时限，所以频道那一行的红灯不会跟着回来。那间房要再红，得是之后又有一次
+    没人恢复的失败。再点一次「恢复」（本来就开着）也回 200：这件事本来就是幂等的。
+    """
+    place = await place_or_404(db, topic_id)
+    actor = await _actor_in_place(resolver, place)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("threadRestoreSignIn"))
+    thread = await thread_of(db, topic_id)
+    if thread is None or place.task is not None:
+        raise NotFoundError(say("threadNotFound"))
+    if thread.recycled:
+        managed = await TopicMemberService(db).managed_topic_ids(
+            [place.room], actor.handle
+        )
+        if actor.handle != thread.created_by and place.room.id not in managed:
+            raise ForbiddenError(say("threadRestoreNotYours"))
+    await restore_a_thread(db, thread)
+    out = _thread_out(thread).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(place.room_id, "threads")
+    return ok(out)
 
 
 async def _task_as_thread(db, task) -> dict:

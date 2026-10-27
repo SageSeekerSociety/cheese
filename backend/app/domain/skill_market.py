@@ -32,6 +32,15 @@ A read that never got an answer is asked again before it is given up on: this
 network drops a connection now and then, and a dropped one says nothing about
 the vendor. A reading that lost a shelf that way is then held only briefly, so
 the next open asks again instead of showing the same hole for half an hour.
+
+The market keeps one connection pool for the process's life rather than a fresh
+client per read, because **the loss is in opening a TLS connection, not in the
+request** (measured 2026-10-26, from a session host: a fresh handshake to
+``api.github.com`` reset about ten times in forty, while forty requests over one
+kept-alive connection all answered). Each shelf is one file, and describing the
+cards is a dozen more; sharing the connection turns that dozen handshakes into
+one, which is what took the drops away. A dropped handshake is still retried,
+because the machine that opens the first one is not the only machine that will.
 """
 
 from __future__ import annotations
@@ -127,6 +136,44 @@ CACHE_SECONDS = 1800
 #: or a missing file is a real answer and keeps the full ``CACHE_SECONDS``.
 RETRY_SOON_SECONDS = 60
 _CACHE: dict[str, tuple[float, Any, float]] = {}
+
+#: How long a connection the market opened stays in the pool between reads. The
+#: vendors' catalogues are read on a schedule of open-the-dialog, so a whole
+#: minute of idle keeps the connection across two people's opens.
+KEEPALIVE_S = 60.0
+#: The process's own pool, opened on the first read.
+_CLIENT: tuple[asyncio.AbstractEventLoop, httpx.AsyncClient] | None = None
+
+
+def reuse_market_connections() -> httpx.AsyncClient:
+    """The market's kept-alive pool, opened on first use.
+
+    One pool per event loop: a client's sockets belong to the loop that opened
+    them, and the test client runs the app on its own loop. A read keeps
+    borrowing the same pool for the process's life, which is what turns the
+    market's dozen handshakes into one (see the module docstring).
+    """
+    global _CLIENT
+    loop = asyncio.get_running_loop()
+    if _CLIENT is None or _CLIENT[0] is not loop or _CLIENT[1].is_closed:
+        _CLIENT = (
+            loop,
+            httpx.AsyncClient(
+                timeout=30,
+                follow_redirects=True,
+                limits=httpx.Limits(keepalive_expiry=KEEPALIVE_S),
+            ),
+        )
+    return _CLIENT[1]
+
+
+async def close_market_connections() -> None:
+    """Close the pool at shutdown, if one is open on this loop."""
+    global _CLIENT
+    if _CLIENT is not None and not _CLIENT[1].is_closed:
+        await _CLIENT[1].aclose()
+    _CLIENT = None
+
 
 #: ``(owner, repo, ref, path)`` — where to read one card's own file from.
 Where = Callable[[dict], "tuple[str, str, str, str] | None"]
@@ -538,11 +585,10 @@ async def _read(client: httpx.AsyncClient) -> tuple[dict[str, Any], float]:
 
 
 async def catalogue(client: httpx.AsyncClient | None = None) -> dict[str, Any]:
-    """The market's three lists, read live and cached for a while."""
-    owns = client is None
-    client = client or httpx.AsyncClient(timeout=30, follow_redirects=True)
-    try:
-        return await _cached("catalogue", lambda: _read(client))
-    finally:
-        if owns:
-            await client.aclose()
+    """The market's three lists, read live and cached for a while.
+
+    No client is passed in normal use: a read borrows the process's kept-alive
+    pool, so the market's dozen reads cost one handshake instead of a dozen.
+    """
+    client = client or reuse_market_connections()
+    return await _cached("catalogue", lambda: _read(client))

@@ -26,7 +26,7 @@ import type { FileKind } from '@/lib/fileKind'
 import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
-import { computed, defineAsyncComponent, ref } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
@@ -175,6 +175,13 @@ const stage = computed(() =>
 //   处理的；改动那一格用的是同一个组件。
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
+const showSource = ref(false)
+watch(
+  () => props.previewFile?.path,
+  () => {
+    showSource.value = false
+  }
+)
 
 /** 这一页此刻长什么样：钉一处时随行带上（`usePreviewLocator` 借它）。
  *
@@ -227,6 +234,16 @@ defineExpose({ snapshot, clearMark })
       >
         {{ t(docPage ? 'work.room.preview.printView' : 'work.room.preview.webView') }}
       </BaseButton>
+      <BaseButton
+        v-if="documentType.view === 'markdown' && !liveEdit?.editingPath.value && previewFile?.content !== null"
+        kind="ghost"
+        size="sm"
+        :prepend-icon="showSource ? 'mdi-eye-outline' : 'mdi-code-tags'"
+        data-testid="toggle-md-source"
+        @click="showSource = !showSource"
+      >
+        {{ t(showSource ? 'work.room.preview.webView' : 'work.room.preview.showSource') }}
+      </BaseButton>
       <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="emit('download')">
         {{ t('work.room.preview.download') }}
       </BaseButton>
@@ -261,6 +278,9 @@ defineExpose({ snapshot, clearMark })
       :live="liveEdit"
       @close="emit('close-live-edit')"
     />
+    <pre v-else-if="documentType.view === 'markdown' && showSource" class="doc__source" data-testid="markdown-source">{{
+      previewFile?.content ?? ''
+    }}</pre>
     <PreviewMarkdown
       v-else-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
@@ -393,5 +413,18 @@ defineExpose({ snapshot, clearMark })
   min-height: 0;
   overflow: auto;
   padding: 12px 16px 24px;
+}
+.doc__source {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

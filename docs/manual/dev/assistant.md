@@ -91,7 +91,7 @@ covers:
 |---|---|---|
 | `cheese_inbox` | 等他处理的事，和「待办」页同一份，每件带读它或答复它的编号 | `POST /assistant/agent/inbox` |
 | `cheese_inbox(action=respond)` | 答复待办里要选一项的事：提醒、项目邀请、转让、设备上运行命令 | 经[授权判断](#acting) |
-| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces/<id>/people` 是他的团队和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
+| `cheese_read` | 按编号读一样东西，长的分段 | 项目里的东西 `POST /assistant/agent/read`；题目、草稿、文件、空间资料走 `/task-drafts/agent/*`；他的资料库 `library`、`library/<名字>` 走 `POST /assistant/agent/library`；`me` 是他参加的题目，`settings` 是他的通知设置；`teams`、`teams/<id>`、`spaces`、`spaces/<id>/people` 是他的团队、空间和成员（`personal/rosters.py`），`spaces/<id>/manage` 是他管理的空间的设置、分类、邀请码、公告和待审核的题目（`personal/space_desk.py`），`<项目短名>/settings` 是项目设置（`personal/project_desk.py`） |
 | `cheese_find` | 搜他最近的几个项目或其中一个（频道、消息、任务、文档段落、资料库、产物），或一个空间的题目 | `POST /assistant/agent/search`（在 `routes/project_context.py`，复用项目搜索）；空间走 `/task-drafts/agent/search` |
 | `cheese_help` | 检索或读平台使用文档 | `/docs/agent/search`、`/docs/agent/read` |
 | `chat_send` | 在频道或任务里发消息 | 经授权判断，`POST /topics/{id}/messages` |
@@ -147,7 +147,7 @@ covers:
 
 两只手往里写：
 
-- **人**在发布页、改题页上改，页面停手 600ms 后把改了的那几格存进去（`PATCH /task-drafts/{id}`）。还没有草稿时，第一次改动或第一次问芝士才建（`POST /task-drafts`），地址栏 `?draft=` 记下它。每写一次 `version` 加一，`marks` 记着每一格人最后一次写它时的 `version`。
+- **人**在发布页、改题页上改，页面停手 600ms 后把改了的那几格存进去（`PATCH /task-drafts/{id}`）。还没有草稿时，第一次改动或第一次问芝士才建（`POST /task-drafts`），发布页的由地址栏 `?draft=` 记下；改题页打开时只读那道题已有的修改和表单的起点（`GET /task-drafts/changes?task=`），不建草稿。每写一次 `version` 加一，`marks` 记着每一格人最后一次写它时的 `version`。
 - **芝士**用 `cheese_problem(action=write)` 写，说的是它自己的字段名（`AGENT_FIELDS`：分类、标签写名字，截止时间写这个人时区的「YYYY-MM-DD HH:MM」，详情写 Markdown，也可以按原文替换几处）。它带着读草稿时的 `version`：人在那之后写过的格子保持人的版本，返回里列在 `kept`。写完记下这次改动（见[改动与撤销](#changes)），往这一问的流里推一条 `change`：改动编号、草稿 id、改了哪几格（各自原来是什么）、`kept`、芝士留给人确认的 `notes`、已撤销的格子。
 
 发布（`POST /task-drafts/{id}/publish`，或芝士的 `cheese_problem(action=publish)`）把草稿当成 `POST /tasks` 或 `PATCH /tasks/{id}` 的请求体，走同一段建题、改题代码（`routes/tasks/_writes.py`），然后删掉草稿、把对话改挂到题目上。页面点「发布」「保存更改」时，先把表单校验过的样子存进草稿，再发布草稿。

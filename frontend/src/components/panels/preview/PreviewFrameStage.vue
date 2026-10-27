@@ -9,7 +9,7 @@ import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFr
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
@@ -93,6 +93,23 @@ const step = computed(() => {
   if (now.stage === 'shown') return now.loading
   return now.stage === 'waiting' ? now.step : null
 })
+
+const showSource = ref(false)
+const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
+const canShowSource = computed(
+  () =>
+    !props.previewAppNote &&
+    !props.displayedFrame?.live &&
+    props.previewFile?.content !== null &&
+    !!props.previewFile?.content
+)
+watch(
+  () => props.previewFile?.path,
+  () => {
+    showSource.value = false
+    viewport.value = 'desktop'
+  }
+)
 </script>
 
 <template>
@@ -131,7 +148,55 @@ const step = computed(() => {
           @click="emit('download')"
         />
       </template>
-      <PreviewPickToggle v-if="pickTarget" :on="pickOn" @toggle="emit('toggle-pick')" />
+      <div v-if="!showSource" class="preview-viewport ms-2">
+        <button
+          type="button"
+          class="preview-viewport__btn"
+          :class="{ 'preview-viewport__btn--active': viewport === 'desktop' }"
+          data-testid="viewport-desktop"
+          :aria-pressed="viewport === 'desktop'"
+          :title="t('work.room.preview.viewportDesktop')"
+          :aria-label="t('work.room.preview.viewportDesktop')"
+          @click="viewport = 'desktop'"
+        >
+          <v-icon size="15">mdi-monitor</v-icon>
+        </button>
+        <button
+          type="button"
+          class="preview-viewport__btn"
+          :class="{ 'preview-viewport__btn--active': viewport === 'tablet' }"
+          data-testid="viewport-tablet"
+          :aria-pressed="viewport === 'tablet'"
+          :title="t('work.room.preview.viewportTablet')"
+          :aria-label="t('work.room.preview.viewportTablet')"
+          @click="viewport = 'tablet'"
+        >
+          <v-icon size="15">mdi-tablet</v-icon>
+        </button>
+        <button
+          type="button"
+          class="preview-viewport__btn"
+          :class="{ 'preview-viewport__btn--active': viewport === 'mobile' }"
+          data-testid="viewport-mobile"
+          :aria-pressed="viewport === 'mobile'"
+          :title="t('work.room.preview.viewportMobile')"
+          :aria-label="t('work.room.preview.viewportMobile')"
+          @click="viewport = 'mobile'"
+        >
+          <v-icon size="15">mdi-cellphone</v-icon>
+        </button>
+      </div>
+      <BaseButton
+        v-if="canShowSource"
+        kind="ghost"
+        size="sm"
+        :prepend-icon="showSource ? 'mdi-web' : 'mdi-code-tags'"
+        data-testid="toggle-frame-source"
+        @click="showSource = !showSource"
+      >
+        {{ t(showSource ? 'work.room.preview.webView' : 'work.room.preview.showSource') }}
+      </BaseButton>
+      <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
     <div v-if="displayedFrame" role="status" class="preview-runtime-status px-3 py-2 text-caption">
       <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
@@ -182,7 +247,14 @@ const step = computed(() => {
       t('work.room.preview.refresh')
     }}</BaseButton>
     <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
-    <div class="preview-frames">
+    <pre v-if="showSource && canShowSource" class="preview-source" data-testid="frame-source">{{
+      previewFile?.content ?? ''
+    }}</pre>
+    <div
+      v-show="!(showSource && canShowSource)"
+      :data-viewport="viewport"
+      :class="['preview-frames', `preview-frames--${viewport}`]"
+    >
       <template v-if="frames">
         <iframe
           v-for="frame in frames"
@@ -230,6 +302,33 @@ const step = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.preview-viewport {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+button.preview-viewport__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+button.preview-viewport__btn:hover {
+  color: var(--text);
+  background: var(--fill-2);
+}
+button.preview-viewport__btn.preview-viewport__btn--active {
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+}
 .preview-frame {
   flex: 1 1 auto;
   width: 100%;
@@ -248,7 +347,16 @@ const step = computed(() => {
 .preview-frames {
   position: relative;
   flex: 1 1 auto;
+  width: 100%;
   min-height: var(--preview-min);
+}
+.preview-frames--tablet {
+  width: min(100%, 768px);
+  margin-inline: auto;
+}
+.preview-frames--mobile {
+  width: min(100%, 375px);
+  margin-inline: auto;
 }
 .preview-frames .preview-frame {
   position: absolute;
@@ -259,5 +367,18 @@ const step = computed(() => {
 .preview-frame--incoming {
   opacity: 0;
   pointer-events: none;
+}
+.preview-source {
+  flex: 1 1 auto;
+  min-height: var(--preview-min);
+  margin: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

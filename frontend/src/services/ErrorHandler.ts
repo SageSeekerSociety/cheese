@@ -57,20 +57,17 @@ class ErrorHandlerService {
     const fallback = opts.defaultMessage || t('shell.errors.actionFailed')
     reportError(error.message || fallback, error.stack, `ui:${error.name || 'Error'}`)
 
-    // 服务端回绝了这次请求、却没有专属处理器：说服务端那句话，别拿通用文案把它盖掉。
-    if (hasServerRefusal(error)) {
-      if (opts.showToast) {
-        toast.error(error.message || fallback)
-      }
-      return false
-    }
-
-    // 未知错误
     if (opts.showToast) {
-      toast.error(fallback)
+      toast.error(this.sentence(error, fallback))
     }
 
     return false
+  }
+
+  /** 这次失败对人说的那句话：服务端回绝了（又没有专属处理器）就说服务端那句话，别拿
+   *  通用文案把它盖掉；网络断了、未知错误说 `fallback`。 */
+  sentence(error: Error, fallback: string): string {
+    return hasServerRefusal(error) ? error.message || fallback : fallback
   }
 
   // 包装 async 函数，提供自动错误处理

@@ -136,7 +136,7 @@ async def is_team_member(db: AsyncSession, team_id: int, handle: str) -> bool:
 
 async def manages_team_documents(db: AsyncSession, team_id: int, handle: str) -> bool:
     user = await user_by_handle(db, handle)
-    return user is not None and await team_seats.may(
+    return user is not None and await team_seats.TEAM.allows(
         db, team_id, user.id, TeamPermission.manage_documents
     )
 

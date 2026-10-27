@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「时间」那一节：怎么开始（直接开始 / 申请制）、报名开始与截止（都可空）、
+// 「时间」那一节：怎么开始（直接开始 / 申请制）、两个日期（都可空）、
 // 申请制的题通过后几天内完成。
 //
 // 它只画：几样值都是 props 进来的，改一次往上报一次。今天以前的日子点不动。
@@ -113,8 +113,8 @@ const isAllowedDates = (date: unknown) => {
           <VDateInput
             v-model="registrationStartAt"
             data-agent-field="registration_start"
-            :placeholder="t('tasks.form.registrationStart')"
-            :aria-label="t('tasks.form.registrationStart')"
+            :placeholder="t('tasks.form.applyStart')"
+            :aria-label="t('tasks.form.applyStart')"
             :allowed-dates="isAllowedDates"
             :error="Boolean(errorOf(registrationStartAtControl))"
             prepend-icon=""
@@ -126,8 +126,8 @@ const isAllowedDates = (date: unknown) => {
           <span aria-hidden="true">–</span>
           <VDateInput
             v-model="deadline"
-            :placeholder="t('tasks.form.registrationEnd')"
-            :aria-label="t('tasks.form.registrationEnd')"
+            :placeholder="t('tasks.form.applyEnd')"
+            :aria-label="t('tasks.form.applyEnd')"
             :allowed-dates="isAllowedDates"
             :error="Boolean(errorOf(deadlineControl))"
             prepend-icon=""

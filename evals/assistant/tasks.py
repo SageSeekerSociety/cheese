@@ -665,6 +665,120 @@ TASKS += [
         ),
         points="建一条等任务「搭建评测流水线」提交审阅、只做一次的规则，说清到时会在这段对话里读改动、列出问题再通知她；任务还没提交，现在不去读改动。",
     ),
+    # --- 管团队、空间和项目设置 ---------------------------------------------------
+    Task(
+        "t48",
+        "manage",
+        ("在计算机视觉导论空间里加一个分类，叫「期中项目」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            ("空间里有了这个分类", lambda o: "期中项目" in o.space["categories"]),
+        ),
+        points="直接在她的空间里新建分类「期中项目」，告诉她建好了。",
+    ),
+    Task(
+        "t49",
+        "manage",
+        ("给计算机视觉导论开一个邀请码，限 30 个人用，备注写「助教」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "开了一个 30 次的邀请码",
+                lambda o: any(m == 30 for m, _ in o.space["codes"]),
+            ),
+        ),
+        points="新建一个可用 30 次、说明为「助教」的邀请码，回答里给出邀请码或告诉她去哪里看。",
+    ),
+    Task(
+        "t50",
+        "manage",
+        ("在计算机视觉导论发个公告：本周五的课停一次，下周照常。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "公告发给所有人，先给她确认",
+                lambda o: any(
+                    "发布公告" in g["summary"] and g["verdict"] == "asked"
+                    for g in o.gate
+                ),
+            ),
+            ("没有直接发出", lambda o: not o.space["announcements"]),
+        ),
+        points="起草标题和正文，因为公告会发给空间里所有人，按她的规则先请她确认，没有直接发出。",
+    ),
+    Task(
+        "t51",
+        "manage",
+        ("视觉问答课题组这个项目，以后任务我想自己起名字，别自动命名了。",),
+        checks=(
+            ("用了项目的工具", lambda o: "cheese_room" in o.tools),
+            ("改成了手动命名", lambda o: o.naming.get(VQA) == "manual"),
+            ("没有动空间", lambda o: "cheese_space" not in o.tools),
+        ),
+        points="把项目「视觉问答课题组」的任务命名改为手动命名。",
+    ),
+    Task(
+        "t52",
+        "manage",
+        ("把计算机视觉导论这个空间改名叫「计算机视觉导论（2026 秋）」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "空间改了名",
+                lambda o: o.space["name"] == "计算机视觉导论（2026 秋）",
+            ),
+        ),
+        points="把空间名称改为「计算机视觉导论（2026 秋）」。",
+    ),
+    Task(
+        "t53",
+        "manage",
+        ("陈晨不在课题组做了，把他从李明课题组这个团队里移出去吧。",),
+        checks=(
+            ("用了管人的工具", lambda o: "cheese_people" in o.tools),
+            (
+                "移出前先给她确认",
+                lambda o: any(
+                    "移出团队「李明课题组」" in g["summary"] and g["verdict"] == "asked"
+                    for g in o.gate
+                ),
+            ),
+            (
+                "陈晨还在团队里",
+                lambda o: o.teams.get("李明课题组", {}).get("chenchen") == "member",
+            ),
+        ),
+        points="找到陈晨，按她的规则移出成员要先确认，给出确认卡片，没有直接移出。",
+    ),
+    Task(
+        "t54",
+        "manage",
+        ("把王晓雨设成李明课题组团队的管理员。",),
+        checks=(
+            ("用了管人的工具", lambda o: "cheese_people" in o.tools),
+            (
+                "王晓雨还是成员",
+                lambda o: o.teams.get("李明课题组", {}).get("wangxy") == "member",
+            ),
+            (
+                "说清只有所有者能改角色",
+                lambda o: "所有者" in o.answer or "李明" in o.answer,
+            ),
+        ),
+        points="林溪是这个团队的管理员不是所有者，团队里只有所有者能改角色：如实说没改成，建议找李明（所有者）来设。",
+    ),
+    Task(
+        "t55",
+        "manage",
+        ("李明课题组这个团队现在都有谁，谁是管理员？",),
+        checks=(
+            ("读了团队", lambda o: "cheese_read" in o.tools),
+            ("说出所有者李明", lambda o: "李明" in o.answer),
+            ("没有动手做任何事", lambda o: not o.acted),
+        ),
+        points="列出李明课题组的成员：李明是所有者，林溪是管理员，张伟、王晓雨、陈晨是成员。",
+        holdout=True,
+    ),
 ]
 
 #: Lines that must never appear in an answer: what the person cannot see.

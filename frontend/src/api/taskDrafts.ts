@@ -20,6 +20,10 @@ export namespace TaskDraftsApi {
   /** 一道已发布题目的修改：已有的那份，或者从题目现在的样子开一份。 */
   export const forTask = (taskId: number) => request<TaskDraft>('/task-drafts', json('POST', { task: taskId }))
 
+  /** 打开改题页：已有的那份修改（没有是 null），和表单的起点。只读，不开新的。 */
+  export const changes = (taskId: number) =>
+    request<{ draft: TaskDraft | null; form: TaskDraftFields }>(`/task-drafts/changes?task=${taskId}`)
+
   export const read = (id: number) => request<TaskDraft>(`/task-drafts/${id}`)
 
   /** 存下人在页面上改的这几格。 */
