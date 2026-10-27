@@ -27,7 +27,9 @@ const label = computed(() =>
     :class="{ 'composer-viewing--off': !share }"
     data-testid="composer-viewing"
     :aria-pressed="share"
-    :title="share ? t('work.room.composer.viewingTurnOff') : t('work.room.composer.viewingTurnOn', { name })"
+    :title="
+      share ? `${label}\n${t('work.room.composer.viewingTurnOff')}` : t('work.room.composer.viewingTurnOn', { name })
+    "
     @click="toggle"
   >
     <v-icon size="14">{{ share ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}</v-icon>

@@ -32,3 +32,11 @@ export function useShareViewing() {
 export function fileName(path: string): string {
   return path.split('/').pop() || path
 }
+
+/** 面板页签对应的文件路径。资料库文档的页签是 `doc:<编号>`，那是服务端的名字，不是
+ *  芝士读得到的文件，撰写框上也只会显示一串编号，所以不算「在看文件」。 */
+export function tabFile(key: string, filePrefix: string, docPrefix: string): string | null {
+  if (!key.startsWith(filePrefix)) return null
+  const path = key.slice(filePrefix.length)
+  return path && !path.startsWith(docPrefix) ? path : null
+}

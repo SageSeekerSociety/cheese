@@ -5,8 +5,9 @@ import type { FileSource } from '../cx_types'
  *  幻灯片整页（或页里选中的一段文字）、页面上的一点、表格里的一格、渲染出来的正文里
  *  选中的一段，再加上网页预览里的三种：点一个元素、选一段文字、在没有注入桥的应用上
  *  圈一块区域。「指哪儿」这件事在每种查看器里本来就不一样，所以各带各的字段；共同的
- *  部分是文件身份和版本（`FileIdentity`）——只有 `web-region` 例外：一个应用没有版本
- *  可言，它凭页面地址定位（见 `WebRegionQuote`）。 */
+ *  部分是文件身份和版本（`FileIdentity`）——`web-region` 例外：一个应用没有版本可言，
+ *  它凭页面地址定位（见 `WebRegionQuote`）；`viewing` 也例外：它只说读者开着哪一份，
+ *  不指其中一处（见 `ViewingQuote`）。 */
 export type QuotedContext =
   | SlidePageQuote
   | PagePinQuote

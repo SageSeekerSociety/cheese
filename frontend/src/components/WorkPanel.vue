@@ -43,6 +43,7 @@ import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
+import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -368,8 +369,7 @@ const {
 
 // 此刻面板上开着哪一份文件（撰写框上「芝士会看到你在看什么」那一行读它）。
 watch(
-  () =>
-    active.value === 'preview' ? previewPath.value : active.value.startsWith('file:') ? active.value.slice(5) : null,
+  () => (active.value === 'preview' ? previewPath.value : tabFile(active.value, FILE_TAB, DOC_TAB)),
   (path) => emit('viewing', path),
   { immediate: true }
 )
