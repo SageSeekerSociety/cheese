@@ -330,7 +330,7 @@ def _answers(**by_seat: int) -> dict[str, int]:
 
 #: Refused everywhere but the people who manage the project.
 _MANAGERS_ONLY = dict(
-    anonymous=403,
+    anonymous=401,
     outsider=403,
     agent=403,
     mentor=403,
