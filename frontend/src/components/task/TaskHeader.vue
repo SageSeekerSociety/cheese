@@ -106,6 +106,13 @@ const progressTitle = computed(() => {
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+const metaEl = ref<HTMLElement | null>(null)
+watch(
+  () => state.value?.line,
+  () => {
+    if (metaEl.value) metaEl.value.scrollLeft = 0
+  }
+)
 // 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
 // handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
 // 头像的人共用同一张，认不出是谁。
@@ -254,7 +261,7 @@ function actionTestId(id: string): string | undefined {
       <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
         task ? taskTitle(task) : ''
       }}</span>
-      <span class="task-header__meta">
+      <span ref="metaEl" class="task-header__meta">
         <TaskStateMark
           v-if="state"
           class="task-header__state"
@@ -272,7 +279,7 @@ function actionTestId(id: string): string | undefined {
           :title="progressTitle ?? state?.line"
           >{{ state?.line }}</span
         >
-        <span v-if="agentLeft && (mdAndUp || !state?.line)" class="task-header__left" data-testid="task-agent-left">{{
+        <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
@@ -684,15 +691,19 @@ function actionTestId(id: string): string | undefined {
   grid-column: 1;
   grid-row: 2;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   gap: 6px;
 }
-.task-header--bar .task-header__left {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.task-header--bar .task-header__meta::-webkit-scrollbar {
+  display: none;
+}
+.task-header--bar .task-header__note {
+  flex: none;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 .task-header--bar .task-header__state,
 .task-header--bar .task-header__owner {
