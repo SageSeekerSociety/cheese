@@ -311,14 +311,20 @@ STUB
   : >"$dir/nothing.json"
   usable_cut 124 "$dir/genuine.json" \
     || { echo "self-test FAILED: a SIGTERM cut with a coverage manifest was refused" >&2; fail=1; }
-  for bad_case in "124 $dir/empty.json" "124 $dir/garbage.json" "124 $dir/nothing.json" \
-                  "137 $dir/genuine.json" "1 $dir/genuine.json"; do
-    # shellcheck disable=SC2086
-    if usable_cut $bad_case; then
-      echo "self-test FAILED: usable_cut accepted '$bad_case'" >&2
+  # Each argument is passed directly, not packed into one string and re-split:
+  # a temp path with whitespace would become two words, the file check would
+  # fail for the wrong reason, and every case would be refused vacuously.
+  refuse() {  # status file label
+    if usable_cut "$1" "$2"; then
+      echo "self-test FAILED: usable_cut accepted $3" >&2
       fail=1
     fi
-  done
+  }
+  refuse 124 "$dir/empty.json"   "a parseable but empty object"
+  refuse 124 "$dir/nothing.json" "nothing at all"
+  refuse 124 "$dir/garbage.json" "unparseable output"
+  refuse 137 "$dir/genuine.json" "a hard kill (137) with a manifest"
+  refuse 1   "$dir/genuine.json" "an ordinary failure (1) with a manifest"
 
   st_cleanup
   [ "$fail" = 0 ] || return 1
