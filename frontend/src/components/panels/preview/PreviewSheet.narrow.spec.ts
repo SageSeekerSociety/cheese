@@ -29,10 +29,7 @@ afterEach(() => {
 const vuetify = createVuetify({ components, directives })
 const CSV = new TextEncoder().encode('姓名,学号,备注\n张伟,2026001,\n王芳,2026002,演示超时\n').buffer as ArrayBuffer
 
-function mount(
-  marks: { id: string; sheet: string; address: string }[] = [],
-  extra: Record<string, unknown> = {}
-) {
+function mount(marks: { id: string; sheet: string; address: string }[] = [], extra: Record<string, unknown> = {}) {
   return render(PreviewSheet, {
     props: { data: CSV, kind: 'csv' as const, marks, activeMark: null, ...extra },
     global: { plugins: [vuetify] },
