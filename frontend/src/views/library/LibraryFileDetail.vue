@@ -5,11 +5,14 @@
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+
+import { usePaneWidth } from '@/composables/usePaneWidth'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import PaneHandle from '@/components/common/PaneHandle.vue'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
 import { PREVIEW_MAX_MB, tooLargeToPreview } from '@/lib/fileKind'
@@ -32,10 +35,20 @@ const props = defineProps<{
 const emit = defineEmits<{ download: []; replace: []; close: [] }>()
 
 const tooLarge = computed(() => tooLargeToPreview(props.file.bytes))
+
+// 桌面上这一栏可以往左拖宽，记在这台浏览器上（项目和空间的资料库共用这一份）。
+const root = ref<HTMLElement | null>(null)
+const pane = usePaneWidth('cheese.library.previewShare', root)
 </script>
 
 <template>
-  <section class="library-detail" :class="{ 'library-detail--phone': !props.wide }">
+  <section
+    ref="root"
+    class="library-detail"
+    :class="{ 'library-detail--phone': !props.wide }"
+    :style="props.wide ? pane.style.value : undefined"
+  >
+    <PaneHandle v-if="props.wide" :pane="pane" />
     <header class="library-detail__head">
       <h2 v-if="props.wide" class="t-title library-detail__name">{{ props.file.path }}</h2>
       <p class="t-meta c-faint library-detail__meta">
@@ -96,11 +109,12 @@ const tooLarge = computed(() => tooLargeToPreview(props.file.bytes))
 
 <style scoped>
 .library-detail {
+  position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: 480px;
-  min-width: 0;
+  width: 50%;
+  min-width: min(480px, 100%);
   min-height: 0;
   border-left: 1px solid var(--line);
 }

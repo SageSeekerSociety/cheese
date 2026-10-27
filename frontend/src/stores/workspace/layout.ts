@@ -31,6 +31,12 @@ function validPlaceMap(value: unknown): Record<string, RememberedPlace> {
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
+const WIDE_SCREEN = 1440
+
+function defaultChatPct(): number {
+  return typeof window !== 'undefined' && window.innerWidth >= WIDE_SCREEN ? 45 : 50
+}
+
 // 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
 // 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
 export function lastOpenedProjectId(): string | null {
@@ -57,7 +63,9 @@ export function lastPlaceOf(projectKey: string | null): RememberedPlace | null {
  */
 export function useLayout(projectId: Ref<string | null>) {
   const stored = loadLayout()
-  const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
+  // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给预览，对话栏占 45%。
+  // 拖过一次就记住他选的（`setChatPct`）。
+  const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : defaultChatPct())
   const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
   // 每个项目上次待的地方。rail 的项目格子用它落回那里，而不是每次都落在项目首页
   //（每天都走的主路径不该多加一跳）。
@@ -75,6 +83,11 @@ export function useLayout(projectId: Ref<string | null>) {
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
     persistLayout()
+  }
+
+  /** 双击分隔条：回到没拖过时的那一份（宽屏 45%，否则对半）。 */
+  function resetChatPct() {
+    setChatPct(defaultChatPct())
   }
 
   function setPanelPref(open: boolean) {
@@ -120,6 +133,7 @@ export function useLayout(projectId: Ref<string | null>) {
     lastPlaceByProject,
     persistLayout,
     setChatPct,
+    resetChatPct,
     setPanelPref,
     rememberPlace,
     placeFor,
