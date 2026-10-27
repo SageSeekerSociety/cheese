@@ -161,6 +161,7 @@ it('选中一段之后「评论」这条出口把它交给评论，而不是发�
   await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里数字不对')
   // 两条出口都在指认条上；页面另有一颗开评论栏的按钮，也叫「评论」，所以按条找。
   const bar = ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!
+  await fireEvent.update(bar.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')
   expect(commentBtn).toBeTruthy()
   await fireEvent.click(commentBtn!)
@@ -210,6 +211,7 @@ it('评论还没回来时再点一次，不会挂出第二条一样的评论', a
   await selectPassage(ui)
   await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里数字不对')
   const bar = ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!
+  await fireEvent.update(bar.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
   await fireEvent.click(commentBtn)
   await fireEvent.click(commentBtn)
@@ -268,6 +270,7 @@ it('评论挂不上去时，条上说出来，不是点了没反应', async () =
   const input = ui.getByPlaceholderText('就这一处说点什么')
   await fireEvent.update(input, '这里数字不对')
   const bar = input.closest('.locator')!
+  await fireEvent.update(bar.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
   await fireEvent.click(commentBtn)
 
@@ -310,12 +313,13 @@ it('评论发着的时候读者按了取消：回来时不再替他打开评论�
   const input = ui.getByPlaceholderText('就这一处说点什么')
   await fireEvent.update(input, '这里数字不对')
   const bar = input.closest('.locator')!
+  await fireEvent.update(bar.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
   await fireEvent.click(commentBtn)
   // 先确认这一按真的发出去了：没有这一步，一个「按了评论什么都不发」的退化也能让下面绿。
   await waitFor(() => expect(posted).toBe(1))
   // 还没回来，读者按了条上的取消。
-  const closeBtn = [...bar.querySelectorAll('button')].at(-1)!
+  const closeBtn = bar.querySelector('button[aria-label="取消"]') as HTMLElement
   await fireEvent.click(closeBtn)
   release()
   await Promise.resolve()
@@ -349,6 +353,7 @@ it('换了另一处指认，上一次那句「评论失败」不跟着过来', a
   const input = ui.getByPlaceholderText('就这一处说点什么')
   await fireEvent.update(input, '这里数字不对')
   const bar = input.closest('.locator')!
+  await fireEvent.update(bar.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...bar.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!
   await fireEvent.click(commentBtn)
   await waitFor(() => expect(bar.querySelector('[role="alert"]')).toBeTruthy())
@@ -387,6 +392,7 @@ it('发失败时读者已经换了一处：那句失败不落在新的一处上'
   await selectPassage(ui)
   const input = ui.getByPlaceholderText('就这一处说点什么')
   await fireEvent.update(input, '这里数字不对')
+  await fireEvent.update(input.closest('.locator')!.querySelector('[data-testid="locator-recipient"]')!, 'comment')
   const commentBtn = [...input.closest('.locator')!.querySelectorAll('button')].find(
     (b) => b.textContent?.trim() === '评论'
   )!

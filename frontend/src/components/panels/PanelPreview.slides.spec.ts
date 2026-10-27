@@ -315,7 +315,11 @@ function chatPreview(id: string, rosterGate = Promise.resolve(), refused = false
 async function pageQuestion(ui: ReturnType<typeof chatPreview>, note = 'explain this page') {
   await fireEvent.click(ui.getByText('page'))
   await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), note)
-  await fireEvent.click(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('button')!)
+  await fireEvent.click(
+    [...ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === '发送'
+    )!
+  )
 }
 it('whole-page ask posts the current canonical AI mention through the normal message outbox', async () => {
   const ui = chatPreview('room-post')
@@ -382,7 +386,11 @@ it('keeps the whole-page question until this room roster arrives, then submits i
     release()
   }
   await waitFor(() => expect(ui.container.querySelector('.summon__btn')?.hasAttribute('disabled')).toBe(false))
-  await fireEvent.click(ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelector('button')!)
+  await fireEvent.click(
+    [...ui.getByPlaceholderText('就这一处说点什么').closest('.locator')!.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === '发送'
+    )!
+  )
   await waitFor(() => expect(ui.posted).toHaveLength(1))
   expect(ui.posted[0].body.content).toMatch(/^<@cheese-current> /)
 })

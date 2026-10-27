@@ -114,20 +114,22 @@ onBeforeUnmount(reset)
       >
         {{ t('work.room.file.open') }}
       </BaseButton>
-      <BaseButton
-        v-if="canLocate"
-        kind="ghost"
-        size="sm"
-        prepend-icon="mdi-map-marker-plus-outline"
-        class="attachment-video__locate"
-        data-testid="video-locate"
-        :disabled="!url || !!failure"
-        :title="t('work.room.video.locateTime')"
-        :aria-label="t('work.room.video.locateTime')"
-        @click="locateCurrentTime"
-      >
-        {{ t('work.room.video.locateTime') }}
-      </BaseButton>
+      <!-- 灰着的按钮收不到悬停，为什么灰写在包着它的这一层上。 -->
+      <span v-if="canLocate" :title="url && !failure ? undefined : t('work.room.video.locateNeedsPlayer')">
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          prepend-icon="mdi-map-marker-plus-outline"
+          class="attachment-video__locate"
+          data-testid="video-locate"
+          :disabled="!url || !!failure"
+          :title="t('work.room.video.locateTime')"
+          :aria-label="t('work.room.video.locateTime')"
+          @click="locateCurrentTime"
+        >
+          {{ t('work.room.video.locateTime') }}
+        </BaseButton>
+      </span>
     </div>
   </div>
 </template>

@@ -18,26 +18,53 @@ beforeEach(() => setLocale('zh-CN'))
 
 afterEach(cleanup)
 
-it('指出一处以后有两个出口：挂成评论，或者发进对话', async () => {
+const stubs = {
+  VIcon: true,
+  VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+}
+
+it('指出一处以后去处由一个下拉定：默认发进对话，切到「仅留评论」就挂成评论', async () => {
   const ui = render(PreviewLocator, {
     props: { target: { label: 'week-1.md', quote: '第一段' }, note: '这里数字不对', canComment: true },
-    global: {
-      stubs: {
-        VIcon: true,
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
-      },
-    },
+    global: { stubs },
   })
-  const buttons = [...ui.container.querySelectorAll('button')]
-  // 两条出口各点一次：同一条输入框、同一句话，去处由按钮决定。
-  const commentBtn = buttons.find((b) => b.textContent?.trim() === '评论')
-  const askBtn = buttons.find((b) => b.textContent?.trim() === '发送')
-  expect(commentBtn).toBeTruthy()
-  expect(askBtn).toBeTruthy()
-  commentBtn!.click()
-  askBtn!.click()
+  const labels = () => [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim())
+  // 同一个选择不再摆两颗按钮：底部只有「加入待发」「发送」，去处在下拉里。
+  expect(labels()).not.toContain('评论')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+
+  await fireEvent.update(ui.getByTestId('locator-recipient'), 'comment')
+  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给芝士的那一篮）。
+  expect(labels()).toContain('评论')
+  expect(labels()).not.toContain('加入待发')
+  ;[...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!.click()
   expect(ui.emitted().comment).toHaveLength(1)
   expect(ui.emitted().send).toHaveLength(1)
+})
+
+it('给了位置就弹在那一处下面；下面放不下就翻到上面；左右夹在面板里', async () => {
+  const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor },
+    global: { stubs },
+  })
+  const card = ui.container.querySelector('.locator') as HTMLElement
+  expect(card.classList.contains('locator--floating')).toBe(true)
+  expect(card.dataset.side).toBe('below')
+  expect(card.style.top).toBe('128px')
+  // 面板 700 宽、卡片最宽 400、边距 12：左边最多到 288，不会伸出面板。
+  expect(card.style.left).toBe('288px')
+
+  await ui.rerender({ anchor: { ...anchor, top: 700, bottom: 720 } })
+  expect(card.dataset.side).toBe('above')
+  expect(parseFloat(card.style.top)).toBeLessThan(700)
+
+  // 没有位置（键盘选中、那一处滚出视野、面板太窄）：退回贴在可见区底边。
+  await ui.rerender({ anchor: null })
+  expect(card.classList.contains('locator--floating')).toBe(false)
+  expect(card.style.top).toBe('')
 })
 
 it('这一份文件挂不了评论时，只留「发送」一条出口', async () => {
@@ -56,7 +83,6 @@ it('这一份文件挂不了评论时，只留「发送」一条出口', async (
 })
 
 it('弹出时不去抢正文那边的焦点', async () => {
-  // 按钮原样落成 <button>：这条读的是焦点，Vuetify 的按钮和图标在这一条里没有用。
   const ui = render(PreviewLocator, {
     props: { target: null, note: '' },
     global: {

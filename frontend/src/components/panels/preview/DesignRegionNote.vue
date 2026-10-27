@@ -156,25 +156,12 @@ onBeforeUnmount(() => observer?.disconnect())
         <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
       </select>
       <button
-        v-show="canComment && !compact"
-        type="button"
-        data-testid="region-note-comment"
-        :aria-label="t('work.room.comments.commentHere')"
-        :title="t('work.room.comments.commentHere')"
-        :disabled="!note.trim() || busy"
-        @click="close('comment', $event)"
-      >
-        {{ t('work.room.comments.comment') }}
-      </button>
-      <button
         type="button"
         class="design-region-note__send"
         :disabled="!note.trim() || busy"
         @click="close('send', $event)"
       >
-        {{
-          canComment && recipient === 'comment' ? t('work.room.preview.recipientComment') : t('work.room.preview.send')
-        }}
+        {{ canComment && recipient === 'comment' ? t('work.room.comments.comment') : t('work.room.preview.send') }}
       </button>
       <button
         type="button"
@@ -264,13 +251,26 @@ onBeforeUnmount(() => observer?.disconnect())
 }
 .design-region-note__recipient {
   flex: none;
-  padding: 3px 6px;
+  max-width: 40%;
+  height: 24px;
+  padding: 0 22px 0 8px;
   font-size: 12px;
   line-height: var(--lh-12);
   color: var(--text);
-  background: var(--fill);
+  background-color: var(--fill);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) 10px,
+    calc(100% - 8px) 10px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
   border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
+  appearance: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .design-region-note__error {
