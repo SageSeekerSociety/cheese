@@ -559,8 +559,9 @@ watch(
 .ps--narrow .ps__cell:nth-child(2) {
   z-index: var(--z-raised);
 }
-/* 钉住的格子要有底色，否则横滑时后面的格子从它底下透出来；悬停和拖选的底色照旧。 */
-.ps--narrow .ps__cell:nth-child(2):not(:hover, .ps__cell--in) {
+/* 钉住的格子要有底色，否则横滑时后面的格子从它底下透出来；悬停、拖选和「这一版改过」
+   的底色照旧（这一条比 `.ps__cell--chg` 权限高，不排除它，钉住那一列改过的格子就没琥珀底了）。 */
+.ps--narrow .ps__cell:nth-child(2):not(:hover, .ps__cell--in, .ps__cell--chg) {
   background: var(--surface);
 }
 .ps--narrow .ps__col:nth-child(2) {
