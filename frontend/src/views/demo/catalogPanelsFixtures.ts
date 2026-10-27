@@ -394,6 +394,7 @@ export function previewBundle(
     closeEditor: noop,
     toggleHistory: noop,
     toggleDocPage: noop,
+    setDocNarrow: noop,
     setPickMode: noop,
   }
 }
