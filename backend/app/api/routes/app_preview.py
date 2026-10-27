@@ -17,8 +17,8 @@ import anyio
 from fastapi import APIRouter
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from app.api.auth import PresentedCredential
 from app.api.preview_relay import connection_hub
+from app.core import credentials
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
 from app.domain.agent.preview_hub import SEND_TIMEOUT_S
@@ -61,7 +61,7 @@ _SUPERSEDED_REASON = "a newer launch of this teammate carries this room's previe
 
 
 @tunnel_router.websocket("/tunnel")
-async def preview_tunnel(websocket: WebSocket, token: PresentedCredential) -> None:
+async def preview_tunnel(websocket: WebSocket) -> None:
     """The machine's dial-out preview tunnel, one per teammate in a room.
 
     Authenticated with the scoped cheese token the turn already runs on, so this
@@ -74,7 +74,8 @@ async def preview_tunnel(websocket: WebSocket, token: PresentedCredential) -> No
     request session open for the life of the connection (#356).
     """
     hub = connection_hub(websocket)
-    claims = scoped_token_claims(token or "") or {}
+    token = credentials.presented(websocket.headers)
+    claims = scoped_token_claims(token) or {}
     seat = claims.get("a")
     issued = claims.get("iat")
     try:

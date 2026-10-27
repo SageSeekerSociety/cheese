@@ -42,8 +42,8 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.api.auth import PresentedCredential
 from app.api.ws_pipe import _Activity, _pump_tcp_to_ws, _pump_ws_to_tcp
+from app.core import credentials
 from app.core.config import settings
 from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 
@@ -85,7 +85,6 @@ async def _until_idle(activity: _Activity, idle_s: float, check_s: float) -> Non
 @router.websocket("/tunnel")
 async def tunnel(
     websocket: WebSocket,
-    token: PresentedCredential,
 ) -> None:
     """Relay one TCP connection to the metering proxy's CONNECT listener.
 
@@ -97,7 +96,7 @@ async def tunnel(
     it clear of the trap a long-lived socket falls into when it holds a request
     session open for the life of the connection (#356).
     """
-    claims = scoped_token_claims(token)
+    claims = scoped_token_claims(credentials.presented(websocket.headers))
     # A sandbox's own credential is no tunnel credential: the tunnel carries a
     # session host's Claude Code to the metering proxy, and a sandbox asks for
     # a model on its platform socket (`sandbox_auth.held_by_a_machine`).

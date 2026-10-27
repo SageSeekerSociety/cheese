@@ -157,7 +157,9 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     )
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         request = ws.receive_json()
@@ -197,7 +199,9 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
 
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         assert hub.is_online("dev")
@@ -935,7 +939,9 @@ def test_a_connector_that_falls_silent_is_taken_offline(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "heartbeat"})
@@ -954,7 +960,9 @@ def test_a_connector_that_keeps_beating_stays_online(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         for _ in range(10):
@@ -974,7 +982,9 @@ def test_a_connector_that_never_heartbeats_is_not_judged_by_silence(monkeypatch)
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "hello", "v": 1})

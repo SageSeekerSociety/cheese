@@ -24,7 +24,6 @@ import hmac
 import secrets
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
 
 import jwt
 
@@ -130,26 +129,6 @@ def is_platform_secret(token: str) -> bool:
     return bool(token) and secrets.compare_digest(token, secret)
 
 
-@dataclass(frozen=True)
-class Presented:
-    """What a request's credential turned out to be: a kind and its verified
-    claims, or the platform's own secret (``kind`` None, no claims)."""
-
-    kind: Kind | None
-    claims: dict
-
-
-def identify(token: str) -> Presented | None:
-    """Which credential ``token`` is, verified; None for none at all."""
-    if is_platform_secret(token):
-        return Presented(kind=None, claims={})
-    kind = kind_of(token)
-    if kind is None:
-        return None
-    claims = read(token, kind)
-    return Presented(kind=kind, claims=claims) if claims is not None else None
-
-
 def presented(headers: Mapping[str, str]) -> str:
     """The credential a request carries, from wherever its client can put it.
 
@@ -157,7 +136,7 @@ def presented(headers: Mapping[str, str]) -> str:
     we do not write put it elsewhere, and are read where they do: git answers
     a credential prompt with a password (``Authorization: Basic``), the
     GitHub CLI says ``Authorization: token``, and Claude Code sends its model
-    key as ``x-api-key``. Which kind it is stays :func:`identify`'s to say.
+    key as ``x-api-key``. Which kind it is stays :func:`kind_of`'s to say.
     """
     scheme, _, value = (headers.get("authorization") or "").strip().partition(" ")
     if scheme.lower() in ("bearer", "token"):
