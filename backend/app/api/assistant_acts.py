@@ -1,10 +1,10 @@
-"""What a person's 芝士 does that others see, written out for its gate.
+"""What a person's 芝士 does that others see, written out.
 
-Each kind of action is written out here (`assistant.gate`): what the gate
-reads, the calls that do it — the routes the person's own pages call, made as
-the person — the routes and places a pass for them opens, and, when the gate
-asks first, the card the person confirms instead. ``routes.assistant_agent``
-takes the action, asks the gate and hands back the pass.
+Each kind of action is written out here: what its gate reads
+(`assistant.gate`), the calls that do it — the routes the person's own pages
+call, made as the person — and, when the gate asks first, the card the person
+confirms instead. ``routes.assistant_agent`` answers the two questions 芝士's
+harness asks of one: whether to take it (``/review``), and how (``/plan``).
 """
 
 from __future__ import annotations
@@ -44,52 +44,6 @@ ASK = {
     "join_request": "申请加入团队",
 }
 
-MESSAGE = "app.api.routes.topics_messages.send_chat_message"
-DOORS = {
-    "task": "app.api.routes.topics_tasks.create_task",
-    "accept": "app.api.routes.accept.accept_card",
-    "reject": "app.api.routes.accept.reject_card",
-    "alert": "app.api.routes.alerts.resolve_notification",
-    "invite": "app.api.routes.members.respond_to_invitation",
-    "transfer": "app.api.routes.members.respond_to_transfer",
-    "run": "app.api.routes.local_mcp.decide",
-    "project_invite": "app.api.routes.members.invite_member",
-    "project_remove": "app.api.routes.members.remove_member",
-    "project_role": "app.api.routes.members.set_member_role",
-    "channel_add": "app.api.routes.topic_members.add_topic_member",
-    "channel_remove": "app.api.routes.topic_members.remove_topic_member",
-    "channel": "app.api.routes.topics.create_topic",
-    "fetch": "app.api.routes.fetch.read_url",
-    "team_invite_accept": "app.api.routes.users_team.accept_team_invitation",
-    "team_invite_decline": "app.api.routes.users_team.decline_team_invitation",
-    "team_join_approve": "app.api.routes.teams.approve_team_join_request",
-    "team_join_reject": "app.api.routes.teams.reject_team_join_request",
-    "team_invite": "app.api.routes.teams.create_team_invitation",
-    "team_role": "app.api.routes.teams.patch_team_member_role",
-    "team_remove": "app.api.routes.teams.delete_team_member",
-    "space_add": "app.api.routes.spaces.add_space_member",
-    "space_remove": "app.api.routes.spaces.delete_space_member",
-    "space_admin_add": "app.api.routes.spaces_organization.add_space_admin",
-    "space_admin_remove": "app.api.routes.spaces_organization.delete_space_admin",
-    "space_set": "app.api.routes.spaces.patch_space",
-    "announce": "app.api.routes.space_announcements.publish_announcement",
-    "announce_edit": "app.api.routes.space_announcements.patch_announcement",
-    "announce_delete": "app.api.routes.space_announcements.delete_announcement",
-    "category_add": "app.api.routes.spaces_organization.create_space_category",
-    "category_edit": "app.api.routes.spaces_organization.patch_space_category",
-    "category_delete": "app.api.routes.spaces_organization.delete_space_category",
-    "category_archive": "app.api.routes.spaces_organization.archive_space_category",
-    "category_unarchive": "app.api.routes.spaces_organization.unarchive_space_category",
-    "code_add": "app.api.routes.spaces_invite_codes.create_space_invite_code",
-    "code_edit": "app.api.routes.spaces_invite_codes.patch_space_invite_code",
-    "code_revoke": "app.api.routes.spaces_invite_codes.revoke_space_invite_code",
-    "problem_review": "app.api.routes.tasks.lifecycle.patch_task",
-    "channel_manager": "app.api.routes.project_channels.hand_over_channel",
-    "project_slug": "app.api.routes.addresses.set_project_slug",
-    "task_naming": "app.api.routes.projects.set_task_naming",
-    "default_agent": "app.api.routes.projects_agents.set_project_default_agent",
-    "default_model": "app.api.routes.projects_run_config.save_default_model",
-}
 #: How a role is named to the person.
 ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
 #: Roles from the highest: a move down the list lowers someone.
@@ -98,13 +52,12 @@ RANK = ("owner", "admin", "member", "mentor")
 
 @dataclass
 class Plan:
-    """An action written out: what the gate reads, the calls that do it, the
-    routes and places those calls go through, and the card the person
-    confirms if the gate asks first (None: asked means not done)."""
+    """An action written out: what the gate reads, the calls that do it, and
+    the card the person confirms if the gate asks first (None: asked means not
+    done)."""
 
     action: gate.Action
     calls: list[dict]
-    doors: list[tuple[str, str | None]]
     card: tuple[str, dict] | None = None
     #: What 芝士 is told once the calls are made.
     done: str = ""
@@ -199,7 +152,6 @@ async def respond(db, body: ActIn, me: Person) -> Plan:
                     "body": {"chosen": choice},
                 }
             ],
-            [(DOORS["alert"], None)],
             card=("act", {}),
             done=f"已答复「{item.headline}」：{choice}。",
         )
@@ -229,7 +181,6 @@ async def respond(db, body: ActIn, me: Person) -> Plan:
                     "body": {"allow": yes},
                 }
             ],
-            [(DOORS["run"], None)],
             card=("act", {}),
             done=f"已{'允许' if yes else '拒绝'}运行 {run.server}。",
         )
@@ -262,7 +213,6 @@ async def respond(db, body: ActIn, me: Person) -> Plan:
                 "body": {"accept": yes},
             }
         ],
-        [(DOORS[ref.kind], None)],
         card=("act", {}),
         done=f"已{'接受' if yes else '拒绝'}「{ask.place.name}」的{ASK[ask.kind][-4:]}。",
     )
@@ -301,25 +251,20 @@ def _team_answer(ask: MembershipAsk, yes: bool) -> Plan:
     runs, answered as the inbox page answers it."""
     verb = "接受" if yes else "拒绝"
     if ask.kind == "team_invite":
-        door = "team_invite_accept" if yes else "team_invite_decline"
         path = f"/users/me/team-invitations/{ask.id}/{'accept' if yes else 'decline'}"
-        place = ask.id
         summary = f"{verb} {ask.person.name}的邀请，加入团队「{ask.place.name}」"
         done = f"已{verb}加入团队「{ask.place.name}」的邀请。"
     else:
         verb = "批准" if yes else "拒绝"
-        door = "team_join_approve" if yes else "team_join_reject"
         path = (
             f"/teams/{ask.place_id}/join-requests/{ask.id}/"
             f"{'approve' if yes else 'reject'}"
         )
-        place = ask.place_id
         summary = f"{verb} {ask.person.name}加入团队「{ask.place.name}」的申请"
         done = f"已{verb} {ask.person.name}加入团队「{ask.place.name}」的申请。"
     return Plan(
         gate.Action("respond", summary),
         [{"method": "POST", "path": path}],
-        [(DOORS[door], place)],
         card=("act", {}),
         done=done,
     )
@@ -353,7 +298,6 @@ async def team_member(db, team_id: int, body: ActIn, who: str, shown: str) -> Pl
                 "member", f"将 {shown} 移出团队「{team.name}」", ("remove_member",)
             ),
             [{"method": "DELETE", "path": f"/teams/{tid}/members/{person.id}"}],
-            [(DOORS["team_remove"], tid)],
             card=("act", {}),
             done=f"已把 {shown} 移出团队「{team.name}」。",
         )
@@ -373,7 +317,6 @@ async def team_member(db, team_id: int, body: ActIn, who: str, shown: str) -> Pl
                     "body": {"userId": person.id, "role": role},
                 }
             ],
-            [(DOORS["team_invite"], tid)],
             card=("act", {}),
             done=f"已邀请 {shown} 加入团队「{team.name}」，等对方接受。",
         )
@@ -397,7 +340,6 @@ async def team_member(db, team_id: int, body: ActIn, who: str, shown: str) -> Pl
                 "body": {"role": role},
             }
         ],
-        [(DOORS["team_role"], tid)],
         card=("act", {}),
         done=f"已把 {shown} 在团队「{team.name}」改成{_TEAM_ROLE[role]}。",
     )
@@ -420,7 +362,6 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
                 "member", f"将 {shown} 移出空间「{space.name}」", ("remove_member",)
             ),
             [{"method": "DELETE", "path": f"/spaces/{sid}/members/{person.id}"}],
-            [(DOORS["space_remove"], sid)],
             card=("act", {}),
             done=f"已把 {shown} 移出空间「{space.name}」。",
         )
@@ -437,7 +378,6 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
                     "body": {"userId": person.id, "role": "ADMIN"},
                 }
             ],
-            [(DOORS["space_admin_add"], sid)],
             card=("act", {}),
             done=f"已设 {shown} 为空间「{space.name}」的管理员。",
         )
@@ -449,7 +389,6 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
                 ("lower_role",),
             ),
             [{"method": "DELETE", "path": f"/spaces/{sid}/managers/{person.id}"}],
-            [(DOORS["space_admin_remove"], sid)],
             card=("act", {}),
             done=f"已撤掉 {shown} 在空间「{space.name}」的管理员身份。",
         )
@@ -462,7 +401,6 @@ async def space_member(db, space_id: int, body: ActIn, who: str, shown: str) -> 
                 "body": {"userId": person.id},
             }
         ],
-        [(DOORS["space_add"], sid)],
         card=("act", {}),
         done=f"已把 {shown} 加入空间「{space.name}」。",
     )
@@ -504,7 +442,6 @@ async def space_set(db, me: Person, body: ActIn) -> Plan:
     return Plan(
         gate.Action("settings", f"把空间「{space.name}」的{label}改为「{value}」"),
         [{"method": "PATCH", "path": f"/spaces/{sid}", "body": {field: value}}],
-        [(DOORS["space_set"], str(sid))],
         card=("act", {}),
         done=f"已把空间「{space.name}」的{label}改为「{value}」。",
     )
@@ -527,7 +464,6 @@ async def announce(db, me: Person, body: ActIn) -> Plan:
                     ("delete",),
                 ),
                 [{"method": "DELETE", "path": f"{base}/{aid}"}],
-                [(DOORS["announce_delete"], str(sid))],
                 card=("act", {}),
                 done=f"已删除公告「{title}」。",
             )
@@ -557,7 +493,6 @@ async def announce(db, me: Person, body: ActIn) -> Plan:
                 "announce", f"修改空间「{space.name}」的公告「{title}」：{said}"
             ),
             [{"method": "PATCH", "path": f"{base}/{aid}", "body": change}],
-            [(DOORS["announce_edit"], str(sid))],
             card=("act", {}),
             done=f"已修改公告「{title}」。",
         )
@@ -581,7 +516,6 @@ async def announce(db, me: Person, body: ActIn) -> Plan:
                 },
             }
         ],
-        [(DOORS["announce"], str(sid))],
         card=("act", {}),
         done=f"已在空间「{space.name}」发布公告「{title}」。",
     )
@@ -606,7 +540,6 @@ async def category(db, me: Person, body: ActIn) -> Plan:
                     "body": {"name": name, "description": body.text or None},
                 }
             ],
-            [(DOORS["category_add"], str(sid))],
             card=("act", {}),
             done=f"已新建分类「{name}」。",
         )
@@ -618,7 +551,6 @@ async def category(db, me: Person, body: ActIn) -> Plan:
                 "category", f"删除空间「{space.name}」的分类「{name}」", ("delete",)
             ),
             [{"method": "DELETE", "path": f"{base}/{cid}"}],
-            [(DOORS["category_delete"], str(sid))],
             card=("act", {}),
             done=f"已删除分类「{name}」。",
         )
@@ -632,14 +564,6 @@ async def category(db, me: Person, body: ActIn) -> Plan:
                     "path": f"{base}/{cid}/archive",
                 }
             ],
-            [
-                (
-                    DOORS[
-                        "category_archive" if body.archived else "category_unarchive"
-                    ],
-                    str(sid),
-                )
-            ],
             card=("act", {}),
             done=f"已{verb}分类「{name}」。",
         )
@@ -649,7 +573,6 @@ async def category(db, me: Person, body: ActIn) -> Plan:
             "category", f"把空间「{space.name}」的分类「{name}」改名为「{title}」"
         ),
         [{"method": "PATCH", "path": f"{base}/{cid}", "body": {"name": title}}],
-        [(DOORS["category_edit"], str(sid))],
         card=("act", {}),
         done=f"已把分类「{name}」改名为「{title}」。",
     )
@@ -692,7 +615,6 @@ async def invite_code(db, me: Person, body: ActIn) -> Plan:
                 + (f"（{terms}）" if terms else ""),
             ),
             [{"method": "POST", "path": base, "body": change}],
-            [(DOORS["code_add"], str(sid))],
             card=("act", {}),
             done=f"已为空间「{space.name}」新建邀请码。",
         )
@@ -706,7 +628,6 @@ async def invite_code(db, me: Person, body: ActIn) -> Plan:
                 ("delete",),
             ),
             [{"method": "DELETE", "path": f"{base}/{cid}"}],
-            [(DOORS["code_revoke"], str(sid))],
             card=("act", {}),
             done=f"已停用邀请码 {code}。",
         )
@@ -715,7 +636,6 @@ async def invite_code(db, me: Person, body: ActIn) -> Plan:
     return Plan(
         gate.Action("invite_code", f"修改空间「{space.name}」的邀请码 {code}：{terms}"),
         [{"method": "PATCH", "path": f"{base}/{cid}", "body": change}],
-        [(DOORS["code_edit"], str(sid))],
         card=("act", {}),
         done=f"已修改邀请码 {code}。",
     )
@@ -751,7 +671,6 @@ async def problem_review(db, me: Person, body: ActIn) -> Plan:
                 else {"approved": "DISAPPROVED", "rejectReason": why},
             }
         ],
-        [(DOORS["problem_review"], str(tid))],
         card=("act", {}),
         done=f"已{'通过' if yes else '退回'}题目「{name}」。",
     )
@@ -786,7 +705,6 @@ async def project_set(db, access, body: ActIn) -> Plan:
                     "body": {"handle": who},
                 }
             ],
-            [(DOORS["channel_manager"], str(room.id))],
             card=("act", {}),
             done=f"已把频道「{room.title}」的负责人换成 {shown}。",
         )
@@ -827,7 +745,6 @@ async def project_set(db, access, body: ActIn) -> Plan:
     return Plan(
         gate.Action("settings", f"把项目「{project.name}」的{said}"),
         [{"method": "PUT", "path": f"/projects/{pid}/{path}", "body": sent}],
-        [(DOORS[body.key], pid)],
         card=("act", {}),
         done=f"已把项目「{project.name}」的{said}。",
     )

@@ -38,7 +38,7 @@ covers:
 
 每个请求只带一张凭据，放在 `Authorization: Bearer`。别人写的客户端放在它们自己的位置，照样读：git 作为密码（`Authorization: Basic`），GitHub CLI 写 `Authorization: token`，Claude Code 放在 `x-api-key`。浏览器开 WebSocket 和 iframe 加不了请求头，只在那几条路由上读 `?token=` 或路由自己的 cookie。读法只有一处（`core/credentials.presented`）。
 
-是哪一种凭据也只在一处判断（`core/credentials.py`）。平台签发的每一种都是 JWT，`typ` 头写明种类：人自己的 `access`、`2fa-pending`、`sudo`、`notices`、`app-sign-in`，芝士和会话的 `agent`、`project-agent`、`personal`、`personal-execution`、`delegated`、`pass`、`webhook`。每一种用各自的密钥签：从所属一族的密钥（人的是 `jwt_secret`，芝士的是 `sandbox_signing_secret`）按种类名派生，所以改了头也冒充不了别的种类。计量代理持有 `sandbox_signing_secret`，自己验会话的 `agent+jwt`。
+是哪一种凭据也只在一处判断（`core/credentials.py`）。平台签发的每一种都是 JWT，`typ` 头写明种类：人自己的 `access`、`2fa-pending`、`sudo`、`notices`、`app-sign-in`，芝士和会话的 `agent`、`project-agent`、`personal`、`personal-execution`、`delegated`、`webhook`。每一种用各自的密钥签：从所属一族的密钥（人的是 `jwt_secret`，芝士的是 `sandbox_signing_secret`）按种类名派生，所以改了头也冒充不了别的种类。计量代理持有 `sandbox_signing_secret`，自己验会话的 `agent+jwt`。
 
 不是 JWT 的只有两种：机器令牌（随机串，库里存摘要）和平台自己的密钥（`sandbox_signing_secret` 原样出示，平台的服务之间互相调用时用）。
 
