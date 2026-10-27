@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
@@ -38,6 +40,14 @@ const emit = defineEmits<{
   comment: []
   cancel: []
 }>()
+const recipient = ref<'agent' | 'comment'>('agent')
+watch(
+  () => props.canComment,
+  (allowed) => {
+    if (!allowed) recipient.value = 'agent'
+  }
+)
+
 /** 不在弹出时抢焦点。这个框是读者选中一段原文之后出来的，而页面上的选中只在窗口里
  *  焦点还留在正文上时才画——把光标交给输入框，橙色就跟着灭了，读者看不到自己选的是
  *  哪一段。要打字，点一下就进来。 */
@@ -45,6 +55,10 @@ function send(event: KeyboardEvent | MouseEvent) {
   if (props.busy) return
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
   event.preventDefault()
+  if (props.canComment && recipient.value === 'comment') {
+    emit('comment')
+    return
+  }
   emit('send')
 }
 
@@ -88,6 +102,17 @@ function comment(event: MouseEvent) {
           @keydown.enter="send"
           @keydown.esc.prevent="emit('cancel')"
         />
+        <select
+          v-if="canComment"
+          v-model="recipient"
+          class="locator__recipient"
+          data-testid="locator-recipient"
+          :aria-label="t('work.room.preview.recipientLabel')"
+          :disabled="busy"
+        >
+          <option value="agent">{{ t('work.room.preview.recipientAgent') }}</option>
+          <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
+        </select>
         <!-- 两条出口并列：指认只是把位置定下来，接着做什么由读者点哪个按钮决定。
              没有「评论」可挂的文件（资料库原件、消息附件）只露「发送」这一条。 -->
         <!-- 栏上的字是「评论」，但同一条面板上还有一颗开评论栏的「评论」：无障碍名说清
@@ -105,9 +130,11 @@ function comment(event: MouseEvent) {
         </BaseButton>
         <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
           {{
-            canQueue && queuedCount
-              ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
-              : t('work.room.preview.send')
+            canComment && recipient === 'comment'
+              ? t('work.room.preview.recipientComment')
+              : canQueue && queuedCount
+                ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
+                : t('work.room.preview.send')
           }}
         </BaseButton>
         <BaseButton
@@ -196,6 +223,17 @@ function comment(event: MouseEvent) {
 }
 .locator__input:focus {
   border-color: var(--accent);
+}
+.locator__recipient {
+  flex: none;
+  padding: 5px 8px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 /* 挂评论失败的那一句：撑满一行，跟着下面两条按钮排。 */
 .locator__error {
