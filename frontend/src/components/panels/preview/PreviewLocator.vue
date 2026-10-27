@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { LocatorAnchor } from './locatorAnchor'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -100,7 +100,9 @@ function moveFocus(event: KeyboardEvent, step: number) {
   event.preventDefault()
   const list = options.value
   const at = list.indexOf(document.activeElement as HTMLElement)
-  list[(at + step + list.length) % list.length]?.focus()
+  // 焦点可能还在列表本身上（点了一下它的空白处）：从两端往里走，别一跳又回到第一项。
+  const from = at < 0 ? (step > 0 ? list.length - 1 : 0) : at
+  list[(from + step + list.length) % list.length]?.focus()
 }
 function choose(value: Recipient) {
   // 发着的时候不换去处：卡上的按钮和这一条要对得上。
@@ -159,14 +161,32 @@ const style = computed(() => {
   const at = { left: `${left}px`, top: `${top}px` }
   return armed.value ? at : { ...at, width: `${width}px` }
 })
+// 框画出来以后量一次真实高度：量到之前先按一个常见的高度放，免得第一帧跳一下。
+function measureCard() {
+  if (!armed.value && card.value?.offsetHeight) height.value = card.value.offsetHeight
+}
 watch(
   () => [!!props.anchor, props.target, props.queuedCount, props.commentError, props.canComment, expanded.value],
   async () => {
     await nextTick()
-    if (!armed.value && card.value?.offsetHeight) height.value = card.value.offsetHeight
+    measureCard()
   },
   { immediate: true }
 )
+// 输入框随字往下长（两行到五行），卡片跟着变高：位置按新高度重算，否则往下长时「发送」
+// 会被推出可见区，翻到上面时又会盖住刚选中的那一段。
+// 用 watchEffect 而不是 watch：卡挂在 v-else-if 的分支上，第一次渲染时这个 ref 就已经
+// 指向元素了，非 immediate 的 watch 看不到那一次。
+let cardObserver: ResizeObserver | null = null
+watchEffect(() => {
+  const el = card.value
+  cardObserver?.disconnect()
+  cardObserver = null
+  if (!el || typeof ResizeObserver === 'undefined') return
+  cardObserver = new ResizeObserver(measureCard)
+  cardObserver.observe(el)
+})
+onBeforeUnmount(() => cardObserver?.disconnect())
 
 // 两行起步，字多了往下长，长到五行就在框里滚：批注常常是一句话，偶尔是一段要求。
 const LINE = 22
@@ -175,9 +195,15 @@ function grow() {
   if (!box) return
   box.style.height = 'auto'
   box.style.height = `${Math.min(box.scrollHeight, 5 * LINE + 18)}px`
+  measureCard()
 }
 watch(
   () => props.note,
+  () => void nextTick(grow)
+)
+// 展开时把带进来的字先量一次：预填的批注（从待发篮改一条）也按真实行数排版。
+watch(
+  () => [props.target, expanded.value] as const,
   () => void nextTick(grow)
 )
 
@@ -274,7 +300,7 @@ function send(event: KeyboardEvent | MouseEvent) {
               :disabled="busy"
               @click="menuOpen ? closeMenu() : openMenu()"
               @keydown.down.prevent="openMenu"
-              @keydown.esc.stop.prevent="menuOpen = false"
+              @keydown.esc.stop.prevent="menuOpen ? closeMenu() : emit('cancel')"
             >
               <v-icon size="14">{{ current.icon }}</v-icon>
               <span class="locator__recipient-text">{{ t(current.label) }}</span>

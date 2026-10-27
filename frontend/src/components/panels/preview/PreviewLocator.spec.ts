@@ -240,6 +240,28 @@ it('两行输入：Shift+Enter 换行不发送，Enter 发送；卡底写着怎�
   expect(ui.container.textContent).toContain('「加入待发」可合并多处一起发')
 })
 
+it('焦点在去处按钮上、菜单没开时按 Esc 也撤掉这一处', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  const trigger = ui.getByTestId('locator-recipient')
+  await fireEvent.keyDown(trigger, { key: 'Escape' })
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('焦点落在菜单本身时，上键从最后一项走，不会又跳回第一项', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const list = ui.getByRole('listbox')
+  list.focus()
+  await fireEvent.keyDown(list, { key: 'ArrowUp' })
+  expect(document.activeElement).toBe(ui.getByTestId('locator-recipient-comment'))
+})
+
 it('去处菜单每一项都说清会发生什么', async () => {
   const ui = render(PreviewLocator, {
     props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },

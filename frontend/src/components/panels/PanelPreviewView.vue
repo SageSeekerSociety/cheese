@@ -179,7 +179,7 @@ const locatorAnchor = ref<LocatorAnchor | null>(null)
 const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   const panel = panelElement.value
-  if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
+  if (!panel || (event.target instanceof Element && event.target.closest('.locator, .locator-arm'))) return
   lastPointer = { ...markPointer(event, panel), at: performance.now() }
 })
 let placing = 0
