@@ -5,7 +5,7 @@
 
 import { t } from '../i18n'
 
-import { authHeaders, BASE, request } from './http'
+import { authHeaders, BASE, ensureFreshToken, request } from './http'
 
 /** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
 export interface RoomFileRevision {
@@ -38,6 +38,9 @@ export function restoreRoomFileRevision(topicId: string, revisionId: string): Pr
 
 /** 某一版的原始字节：下载它、预览里比两版改了什么，都读这一份。 */
 export async function roomFileRevisionBytes(topicId: string, revisionId: string): Promise<ArrayBuffer> {
+  // 裸 fetch 不会自己刷新令牌（同 `./roomFiles` 的 `rawImageUrl`）：打开文件就自动比两版，
+  // 标签页闲了一会儿之后这一份会拿着快过期的令牌发出去。
+  await ensureFreshToken()
   const res = await fetch(
     `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/raw`,
     { headers: authHeaders() }
@@ -55,6 +58,9 @@ export async function downloadRoomFileRevision(topicId: string, revision: RoomFi
   const a = document.createElement('a')
   a.href = url
   a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
+  // 挂进文档再点：脱离文档的锚点在某些浏览器里点了不下载（同 `./roomFiles` 的 `downloadFile`）。
+  document.body.appendChild(a)
   a.click()
+  a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

@@ -176,7 +176,8 @@ export function usePanelPreviewVersions(deps: VersionsDeps) {
     if (!type) return null
     if (type.view === 'markdown') return 'markdown'
     if (state.documentSuffix.value === 'docx') return 'docx'
-    if (type.view === 'sheet' && type.sheet !== 'ods') return 'sheet'
+    // 老版 .xls（OLE2）`lib/sheetRead` 按魔数拒掉：摆出「对比」只会必然失败。
+    if (type.view === 'sheet' && type.sheet !== 'ods' && state.documentSuffix.value !== 'xls') return 'sheet'
     return null
   })
   /** 旧版能不能直接画出来：不用服务器转换的那几种才行（转换只认文件的当前内容）。 */
@@ -184,7 +185,7 @@ export function usePanelPreviewVersions(deps: VersionsDeps) {
     const type = state.documentType.value
     if (!type) return null
     if (type.view === 'markdown') return 'markdown'
-    if (type.view === 'sheet' && type.sheet !== 'ods') return 'sheet'
+    if (type.view === 'sheet' && type.sheet !== 'ods' && state.documentSuffix.value !== 'xls') return 'sheet'
     if (state.documentSuffix.value === 'pdf') return 'pdf'
     return null
   })
@@ -317,7 +318,10 @@ export function usePanelPreviewVersions(deps: VersionsDeps) {
         const bytes = await revisionBytes(tid, id)
         if (bySeq(oldSeq.value ?? -1)?.id === id) oldBytes.value = bytes
       } catch (e) {
-        oldError.value = e instanceof Error ? e.message : t('work.room.versions.loadFailed')
+        // 同样认「还是不是这一版」：换版快时上一版的失败不该写在已经画好的下一版旁边。
+        if (bySeq(oldSeq.value ?? -1)?.id === id) {
+          oldError.value = e instanceof Error ? e.message : t('work.room.versions.loadFailed')
+        }
       }
     }
   )
