@@ -36,9 +36,9 @@ def _room(client) -> tuple[str, str]:
 
 def _agent(project: str, room: str) -> dict:
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project, topic_id=room, ttl_s=3600
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=project, topic_id=room, ttl_s=3600)
+        }"
     }
 
 

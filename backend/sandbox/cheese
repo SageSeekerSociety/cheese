@@ -20,7 +20,7 @@
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
   CHEESE_PLATFORM_SOCKET 机器上的平台 socket；有它时平台调用都经它走，不带
                  凭据，平台按这台机器当前的租约认出是哪个会话
-  CHEESE_TOKEN   会话凭据，没有平台 socket 时每个请求都带上（X-Cheese-Token）；
+  CHEESE_TOKEN   会话凭据，没有平台 socket 时每个请求都带上（Authorization: Bearer）；
                  有 socket 时，git、备份上传和超过 30 MiB 的请求用的是 socket
                  现发的一分钟凭据，不用它
   CHEESE_TURN    可选的一轮 id；平台每次检查点单独给它一个（那一轮 sync），
@@ -127,13 +127,13 @@ class _ToThePlatformSocket(urllib.request.BaseHandler):
                 method=req.get_method(),
                 headers={
                     **dict(req.header_items()),
-                    "X-Cheese-Token": _handed_token(),
+                    "Authorization": f"Bearer {_handed_token()}",
                 },
             )
             return urllib.request.build_opener().open(direct, timeout=req.timeout)
         # The socket says whose the request is; a token is not sent down it.
         for headers in (req.headers, req.unredirected_hdrs):
-            for name in [n for n in headers if n.lower() == "x-cheese-token"]:
+            for name in [n for n in headers if n.lower() == "authorization"]:
                 del headers[name]
         handler = urllib.request.AbstractHTTPHandler()
         return handler.do_open(
@@ -5515,14 +5515,13 @@ class LocalHost:
             method=plan["method"],
         )
         req.add_header("Content-Type", "application/json")
-        for header, name in (
-            ("X-Cheese-Token", "CHEESE_TOKEN"),
-            ("X-Cheese-Turn", "CHEESE_TURN"),
-        ):
-            if self.environ.get(name):
-                req.add_header(header, self.environ[name])
-        if plan.get("pass"):
-            req.add_header("X-Cheese-Pass", plan["pass"])
+        # What its gate let a person's 芝士 do is done with the pass it was
+        # given, in place of its own credential (`assistant.passes`).
+        credential = plan.get("pass") or self.environ.get("CHEESE_TOKEN")
+        if credential:
+            req.add_header("Authorization", f"Bearer {credential}")
+        if self.environ.get("CHEESE_TURN"):
+            req.add_header("X-Cheese-Turn", self.environ["CHEESE_TURN"])
         # Generous because one caller is slow: reading a web page can climb a
         # ladder of fetch strategies ending in a real browser, which measured
         # 22 s on a page that answered and longer on one that tried every rung.
@@ -5572,7 +5571,7 @@ def _call(
     req.add_header("Content-Type", "application/json")
     auth = token if token is not None else TOKEN
     if auth:
-        req.add_header("X-Cheese-Token", auth)
+        req.add_header("Authorization", f"Bearer {auth}")
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
@@ -6557,7 +6556,7 @@ def _tell_site(content: str) -> bool:
         method="POST",
     )
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Cheese-Token", TOKEN)
+    req.add_header("Authorization", f"Bearer {TOKEN}")
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
@@ -6580,7 +6579,7 @@ def _tell_room(content: str) -> bool:
         method="POST",
     )
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Cheese-Token", TOKEN)
+    req.add_header("Authorization", f"Bearer {TOKEN}")
     try:
         with _urlopen(req, timeout=30):
             pass
@@ -7062,7 +7061,7 @@ def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
     request = urllib.request.Request(
         f"{API}/projects/{PROJECT}/git/tasks/{task_id}/snapshots/latest"
     )
-    request.add_header("X-Cheese-Token", TOKEN)
+    request.add_header("Authorization", f"Bearer {TOKEN}")
     try:
         with _urlopen(request, timeout=20) as response:
             latest = json.load(response)["data"]
@@ -7124,7 +7123,7 @@ def _backup_task_snapshot(worktree, data, head, snapshot):
             )
             request.add_header("Content-Type", "application/x-git-bundle")
             request.add_header("Content-Length", str(bundle.stat().st_size))
-            request.add_header("X-Cheese-Token", _handed_token())
+            request.add_header("Authorization", f"Bearer {_handed_token()}")
             request.add_header("X-Cheese-Head", head)
             request.add_header("X-Content-SHA256", digest.hexdigest())
             with _urlopen(request, timeout=120) as response:
@@ -7592,7 +7591,7 @@ def _raw_request(
     req = urllib.request.Request(f"{API}{path}", data=body, method=method.upper())
     req.add_header("Content-Type", "application/json")
     if TOKEN:
-        req.add_header("X-Cheese-Token", TOKEN)
+        req.add_header("Authorization", f"Bearer {TOKEN}")
     if TURN:
         req.add_header("X-Cheese-Turn", TURN)
     try:
@@ -8345,7 +8344,7 @@ def main() -> None:
             f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
         )
         if TOKEN:
-            req.add_header("X-Cheese-Token", TOKEN)
+            req.add_header("Authorization", f"Bearer {TOKEN}")
         with _urlopen(req, timeout=60) as r:
             body = r.read()
         parent = os.path.dirname(a.path)
@@ -8371,7 +8370,7 @@ def main() -> None:
             f"{API}/topics/{topic}/files/raw?path={urllib.parse.quote(rel)}"
         )
         if TOKEN:
-            req.add_header("X-Cheese-Token", TOKEN)
+            req.add_header("Authorization", f"Bearer {TOKEN}")
         try:
             with _urlopen(req, timeout=60) as r:
                 body = r.read()

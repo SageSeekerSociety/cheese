@@ -106,7 +106,9 @@ def test_worker_calls_the_platform_with_current_credentials(worker, tmp_path):
             if self.path.startswith("/projects/project/library/link"):
                 # The platform call carries the credential; the bytes are
                 # fetched from the address it hands back, with none.
-                received.append((self.path, self.headers["X-Cheese-Token"]))
+                received.append(
+                    (self.path, self.headers["Authorization"].removeprefix("Bearer "))
+                )
                 body = json.dumps(
                     {"data": {"url": "/blob", "path": "notes.txt", "bytes": len(body)}}
                 ).encode()

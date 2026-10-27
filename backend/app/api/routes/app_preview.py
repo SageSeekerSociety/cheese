@@ -14,9 +14,10 @@ import asyncio
 import uuid
 
 import anyio
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from app.api.auth import PresentedCredential
 from app.api.preview_relay import connection_hub
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import preview_tunnel as wire
@@ -60,9 +61,7 @@ _SUPERSEDED_REASON = "a newer launch of this teammate carries this room's previe
 
 
 @tunnel_router.websocket("/tunnel")
-async def preview_tunnel(
-    websocket: WebSocket, token: str | None = Query(default=None)
-) -> None:
+async def preview_tunnel(websocket: WebSocket, token: PresentedCredential) -> None:
     """The machine's dial-out preview tunnel, one per teammate in a room.
 
     Authenticated with the scoped cheese token the turn already runs on, so this
@@ -70,7 +69,7 @@ async def preview_tunnel(
     audience, and a caller who cannot prove a topic is refused. It also names the
     teammate, which is the other half of the tunnel's key (see ``preview_hub``).
     Verification is an
-    HMAC over the token's own claims, so this route touches no database — which
+    signature over the token's own claims, so this route touches no database — which
     also keeps it clear of the trap a long-lived socket falls into when it holds a
     request session open for the life of the connection (#356).
     """

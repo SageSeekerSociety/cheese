@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 from app.domain.review import gate_sweep
 from app.domain.review.services import GATE_ABANDONED_PREFIX
 from tests.conftest import wait_work_idle
@@ -338,15 +338,17 @@ def test_void_requires_a_logged_in_human(client):
     tid, card_id = _orphan_card(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
 
-    # 匿名（全局 sandbox token 仍在，证明它不足以顶一个身份）。
-    client.headers.pop("Authorization")
-    assert _void(client, card_id).status_code == 401
+    # 只有平台密钥，证明它不足以顶一个身份。
+    platform = {"Authorization": f"Bearer {SANDBOX_TOKEN}"}
+    assert _void(client, card_id, headers=platform).status_code == 401
 
     # 芝士拿着**作用域内**的 token 也不行。作废是授权类动作，只给人。
     r = _void(
         client,
         card_id,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

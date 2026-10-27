@@ -23,6 +23,7 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
+from app.core import credentials
 from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
@@ -51,7 +52,7 @@ async def download_skill_bundle(digest: str, request: Request) -> Response:
     (dev / trusted-single-host) carries no project and is refused — a session
     always launches with a scoped credential, so it never needs it here.
     """
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
+    claims = scoped_token_claims(credentials.presented(request.headers))
     project_id = claims.get("p") if claims else None
     if not project_id:
         raise AuthenticationRequiredError("A project-scoped credential is required")

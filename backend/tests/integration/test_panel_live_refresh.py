@@ -69,7 +69,9 @@ def _room(client) -> tuple[str, str]:
 
 def _agent(pid: str, rid: str) -> dict[str, str]:
     """The credential a turn is minted: what `cheese` and `cheese api` both send."""
-    return {"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=rid)}
+    return {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=rid)}"
+    }
 
 
 def _stale(frames: list[tuple[str, dict]], room: str) -> list[str]:

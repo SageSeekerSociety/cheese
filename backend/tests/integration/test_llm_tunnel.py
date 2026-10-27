@@ -95,7 +95,9 @@ def test_bytes_cross_in_both_directions_unaltered(client, monkeypatch):
         _point_at(monkeypatch, listener.port)
         token = mint_scoped_token(project_id=_PROJECT)
 
-        with client.websocket_connect(f"/llm/tunnel?token={token}") as ws:
+        with client.websocket_connect(
+            "/llm/tunnel", headers={"Authorization": f"Bearer {token}"}
+        ) as ws:
             assert ws.receive_bytes() == b"hello-from-meter"
             ws.send_bytes(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
             assert (
@@ -112,9 +114,11 @@ def test_a_caller_that_cannot_prove_its_project_is_refused(client, monkeypatch):
     with _FakeListener() as listener:
         _point_at(monkeypatch, listener.port)
 
-        for query in ("", "?token=", "?token=not-a-real-token"):
+        for credential in ("", "Bearer ", "Bearer not-a-real-token"):
             with pytest.raises(Exception):  # noqa: B017 — starlette raises on close
-                with client.websocket_connect(f"/llm/tunnel{query}") as ws:
+                with client.websocket_connect(
+                    "/llm/tunnel", headers={"Authorization": credential}
+                ) as ws:
                     ws.receive_bytes()
 
         # Refused before the dial: an unauthenticated caller must not be able to
@@ -130,7 +134,9 @@ def test_a_meter_that_is_down_closes_rather_than_hanging(client, monkeypatch):
     token = mint_scoped_token(project_id=_PROJECT)
 
     with pytest.raises(Exception):  # noqa: B017 — starlette raises on close
-        with client.websocket_connect(f"/llm/tunnel?token={token}") as ws:
+        with client.websocket_connect(
+            "/llm/tunnel", headers={"Authorization": f"Bearer {token}"}
+        ) as ws:
             ws.receive_bytes()
 
 
@@ -153,6 +159,8 @@ def test_a_sandboxs_own_credential_opens_no_tunnel(client, monkeypatch):
     with _FakeListener() as listener:
         _point_at(monkeypatch, listener.port)
         with pytest.raises(Exception):  # noqa: B017 — starlette raises on close
-            with client.websocket_connect(f"/llm/tunnel?token={held}") as ws:
+            with client.websocket_connect(
+                "/llm/tunnel", headers={"Authorization": f"Bearer {held}"}
+            ) as ws:
                 ws.receive_bytes()
         assert not listener.received

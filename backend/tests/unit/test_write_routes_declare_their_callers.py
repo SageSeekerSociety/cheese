@@ -99,7 +99,7 @@ def test_a_cheese_only_route_refuses_a_caller_without_a_credential() -> None:
 
     client = TestClient(_app(router))
     for path in ("/topics/t1/x", "/projects/p1/x"):
-        for headers in ({}, {"x-cheese-token": "not-a-token"}):
+        for headers in ({}, {"Authorization": f"Bearer {'not-a-token'}"}):
             res = client.post(path, headers=headers)
             assert res.status_code == 401, (path, headers)
             assert res.json()["message"] == "invalid sandbox token"

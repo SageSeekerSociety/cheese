@@ -25,9 +25,9 @@ from tests.integration.conftest import post_message, room_agent_seat, room_socke
 def agent_credential(project, topic, seat) -> dict[str, str]:
     """The scoped token this room's seat presents to its own question routes."""
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project, topic_id=topic, agent_handle=seat
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=project, topic_id=topic, agent_handle=seat)
+        }"
     }
 
 

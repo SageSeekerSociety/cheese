@@ -714,7 +714,9 @@ async def test_a_platform_tool_runs_against_the_backend_and_takes_no_machine(
     class API(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            received.append((self.path, self.headers["X-Cheese-Token"], body))
+            received.append(
+                (self.path, self.headers["Authorization"].removeprefix("Bearer "), body)
+            )
             runs.append(self.headers.get("X-Cheese-Run"))
             answer = json.dumps({"data": {"id": "m-9", "content": body["content"]}})
             self.send_response(200)

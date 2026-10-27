@@ -198,12 +198,14 @@ def test_an_ai_teammate_not_seated_in_it_does_not_see_it(client):
     planner = made.json()["data"]["seat_handle"]
     assert _add(client, root, planner, by="dave").status_code == 200
     auth = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=p["id"],
-            topic_id=root,
-            access_scope="project",
-            agent_handle=planner,
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=p['id'],
+                topic_id=root,
+                access_scope='project',
+                agent_handle=planner,
+            )
+        }"
     }
 
     assert client.get(f"/topics/{tid}/blocks", headers=auth).status_code == 404
@@ -216,12 +218,14 @@ def test_an_ai_teammate_not_seated_in_it_does_not_see_it(client):
 
     # The channel's own AI teammate is in it, and reads it.
     seated = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=p["id"],
-            topic_id=tid,
-            access_scope="project",
-            agent_handle=_seated_agent(client, tid),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=p['id'],
+                topic_id=tid,
+                access_scope='project',
+                agent_handle=_seated_agent(client, tid),
+            )
+        }"
     }
     assert client.get(f"/topics/{tid}/blocks", headers=seated).status_code == 200
 

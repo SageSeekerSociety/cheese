@@ -10,7 +10,6 @@ The provider's administrative credentials never leave the backend.
 
 import asyncio
 import base64
-import binascii
 import uuid
 from urllib.parse import quote, urlsplit
 
@@ -26,10 +25,11 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_seated_agent
+from app.api.auth import PresentedCredential, require_seated_agent
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -49,7 +49,7 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 async def forge_tunnel(
     project_id: uuid.UUID,
     websocket: WebSocket,
-    token: str = "",
+    token: PresentedCredential,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Carry native GitHub HTTPS through the deployment without terminating TLS."""
@@ -130,18 +130,6 @@ async def forge_tunnel(
             pass
 
 
-def _forge_credential(authorization: str) -> str:
-    scheme, _, value = authorization.partition(" ")
-    if scheme.lower() in ("token", "bearer"):
-        return value.strip()
-    if scheme.lower() == "basic":
-        try:
-            return base64.b64decode(value, validate=True).decode().partition(":")[2]
-        except (ValueError, UnicodeError, binascii.Error):
-            return ""
-    return ""
-
-
 @router.api_route(
     "/forge/{project_id}/{path:path}",
     methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -158,8 +146,7 @@ async def forge_transport(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
-    authorization = request.headers.get("authorization", "")
-    credential = _forge_credential(authorization)
+    credential = credentials.presented(request.headers)
     # Native Git first discovers whether the server requires HTTP Basic auth.
     denied = Response(
         status_code=401,
@@ -223,6 +210,8 @@ async def forge_transport(
             return denied
         base = binding.api_url.removesuffix("/api/v1").rstrip("/")
         upstream_url = base + "/" + quote(path, safe="/")
+        # The leased Forgejo credential itself, as the caller presented it.
+        authorization = request.headers.get("authorization", "")
     else:
         return denied
     if any(part in (".", "..") for part in path.split("/")):
@@ -302,18 +291,6 @@ async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
     return True
 
 
-def _caller_token(request: Request) -> str:
-    """The scoped token, however the caller presents it: the cheese CLI sends
-    X-Cheese-Token; a bearer header also works."""
-    direct = request.headers.get("x-cheese-token", "").strip()
-    if direct:
-        return direct
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
-
-
 @router.get("/forge-token")
 async def sandbox_forge_token(
     request: Request, response: Response, db: AsyncSession = Depends(get_db)
@@ -321,7 +298,7 @@ async def sandbox_forge_token(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
-    token = _caller_token(request)
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token) if token else None
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")

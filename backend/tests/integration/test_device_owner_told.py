@@ -101,7 +101,7 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
         project_id=project_id,
         device_id=device.device_id,
         lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
-        agent={"X-Cheese-Token": token},
+        agent={"Authorization": f"Bearer {token}"},
     )
 
 

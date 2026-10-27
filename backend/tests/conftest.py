@@ -1549,7 +1549,7 @@ def client(
             # The cheese-only write routes are token-gated (app/api/write_access.py);
             # send the secret on every test request so tests exercising those
             # endpoints (note/lock/...) aren't rejected with 401.
-            c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
+            c.headers["Authorization"] = f"Bearer {SANDBOX_TOKEN}"
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
             # Direct business coroutines must run through ``portal.call`` with this
@@ -2708,7 +2708,7 @@ async def python_client(
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            headers={"X-Cheese-Token": SANDBOX_TOKEN},
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
         ) as c:
             # Expose the per-worker factory so contract tests can seed rows (e.g. a
             # real authenticated user) on the SAME DB the app reads through get_db.

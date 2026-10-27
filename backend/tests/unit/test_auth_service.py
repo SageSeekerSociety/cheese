@@ -9,7 +9,8 @@ from app.common.auth import (
     create_access_token,
     verify_access_token,
 )
-from app.core.config import settings
+from app.core import credentials
+from app.core.credentials import Kind
 
 
 class TestAccessToken:
@@ -51,30 +52,32 @@ class TestAccessToken:
         assert verify_access_token("") is None
 
     def test_an_expired_token_is_refused(self) -> None:
-        expired = jwt.encode(
+        expired = credentials.mint(
+            Kind.ACCESS,
             {
                 "sub": "123",
-                "type": "access",
                 "exp": datetime.now(UTC) - timedelta(hours=1),
             },
-            settings.jwt_secret,
-            algorithm="HS256",
         )
 
         assert verify_access_token(expired) is None
 
     def test_a_token_signed_elsewhere_is_refused(self) -> None:
         forged = jwt.encode(
-            {"sub": "123", "type": "access"}, "not-our-secret", algorithm="HS256"
+            {"sub": "123", "type": "access"},
+            "not-our-secret",
+            algorithm="HS256",
+            headers={"typ": "access+jwt"},
         )
 
         assert verify_access_token(forged) is None
 
     def test_a_token_of_another_type_is_not_an_access_token(self) -> None:
-        other = jwt.encode(
-            {"sub": "123", "type": "2fa_pending"},
-            settings.jwt_secret,
-            algorithm="HS256",
+        other = credentials.mint(
+            Kind.TWO_FA_PENDING,
+            {
+                "sub": "123",
+            },
         )
 
         assert verify_access_token(other) is None

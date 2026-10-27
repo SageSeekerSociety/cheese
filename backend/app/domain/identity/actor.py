@@ -13,9 +13,9 @@ Resolution order (fusion-design §4: "actor 在信任边界注入,永不从 body
 
 1. **Human session token** (``Authorization: Bearer`` / WS ``?token=``) — the
    verified handle, `via="token"`.
-2. **Agent scoped token** (``X-Cheese-Token`` on a cheese-gated route) — resolves
-   to the ``cheese`` agent-user, `via="cheese"`.
-3. **Delegated credential** (``X-Cheese-Token``, a 芝士 answering someone) —
+2. **Agent scoped token** (an ``agent+jwt`` bearer on a cheese-gated route) —
+   resolves to the ``cheese`` agent-user, `via="cheese"`.
+3. **Delegated credential** (a ``delegated+jwt`` bearer, a 芝士 answering someone) —
    resolves to the person it answers, `via="delegated"`, on the few routes that
    accept it (``app.api.auth.DELEGATED_ROUTES``).
 
@@ -34,7 +34,7 @@ from app.core.sentences import say
 
 # Adapters injected at the trust boundary.
 TokenVerifier = Callable[[str], "TokenIdentity | None"]  # bearer/query token → identity
-CheeseVerifier = Callable[[], Awaitable[bool]]  # X-Cheese-Token valid for THIS route?
+CheeseVerifier = Callable[[], Awaitable[bool]]  # agent credential valid for THIS route?
 
 
 @dataclass(frozen=True)

@@ -176,11 +176,13 @@ def test_its_task_cites_a_message_from_its_owner(client, author):
             **({"source_message_id": message["id"]} if message else {}),
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project,
-                topic_id=room,
-                agent_handle=seat,
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project,
+                    topic_id=room,
+                    agent_handle=seat,
+                )
+            }"
         },
     )
     assert response.status_code == 200, response.text
@@ -197,9 +199,9 @@ def _open_task_as(client, project, room, seat, message_id):
             "source_message_id": message_id,
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project, topic_id=room, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=project, topic_id=room, agent_handle=seat)
+            }"
         },
     )
 
@@ -341,11 +343,13 @@ def test_asking_its_owner_keeps_the_question_out_of_the_room_live_feed(
             ],
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project,
-                topic_id=room,
-                agent_handle=seat,
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project,
+                    topic_id=room,
+                    agent_handle=seat,
+                )
+            }"
         },
     )
     assert response.status_code == 200, response.text

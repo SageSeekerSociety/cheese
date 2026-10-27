@@ -7,18 +7,17 @@ caused lie side by side.
 
 Authenticated, unlike `/api/frontend-errors`: a browser cannot hold a secret,
 but a reporting backend runs in a container that already carries one. A scoped
-`X-Cheese-Token` also *names* the room, so the reporter never has to know (or be
+agent credential also *names* the room, so the reporter never has to know (or be
 trusted about) which project it is writing into. The path carries no project or
 topic id, so a write-access declaration cannot scope this route — it does its own check,
 like the /sandbox endpoints.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 
-from app.api.auth import require_seated_agent
+from app.api.auth import PresentedCredential, require_seated_agent
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
@@ -56,17 +55,17 @@ def _room(
 async def report_backend_errors(
     body: BackendErrorBatchIn,
     db: DbSession,
-    x_cheese_token: Annotated[str, Header(alias="X-Cheese-Token")] = "",
+    credential: PresentedCredential,
 ) -> dict:
     """Keep unhandled backend failures as run records. Dedup,
     burst-summarization and the hourly cap happen in the intake — a silently
     dropped report still returns 200, so a reporter in a crash loop never
     retries and never amplifies."""
-    project_id, topic_id = _room(x_cheese_token, body)
-    if project_id is not None and not is_global_sandbox_token(x_cheese_token):
+    project_id, topic_id = _room(credential, body)
+    if project_id is not None and not is_global_sandbox_token(credential):
         # An agent taken off the room may no longer report for it.
         await require_seated_agent(
-            db, x_cheese_token, project_id=project_id, topic_id=topic_id
+            db, credential, project_id=project_id, topic_id=topic_id
         )
     result = await backend_log.record(
         db, project_id=project_id, topic_id=topic_id, errors=body.errors

@@ -1890,7 +1890,7 @@ def _post_backend_errors(project: str, topic: str, errors: list[dict]) -> None:
             data=body,
             headers={
                 "Content-Type": "application/json",
-                "X-Cheese-Token": SCOPED_SECRET,
+                "Authorization": f"Bearer {SCOPED_SECRET}",
             },
         )
         with urlopen(req, timeout=3) as response:

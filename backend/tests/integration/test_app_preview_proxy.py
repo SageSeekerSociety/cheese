@@ -218,7 +218,6 @@ def test_app_methods_body_and_api_paths_reach_only_the_app(client, app_preview, 
         headers={
             "Authorization": "Bearer app-access-token",
             "Cookie": f"{cookie_name()}={preview_cookie}; app-session=app-cookie",
-            "X-Cheese-Token": "platform-secret",
             "X-App-Request": "yes",
             "Content-Type": "application/octet-stream",
         },
@@ -351,7 +350,6 @@ def test_hmr_preserves_query_subprotocol_and_both_frame_types(client, app_previe
             "Origin": origin,
             "Authorization": "Bearer app-access-token",
             "Cookie": f"{cookie_name()}={preview_cookie}; app-session=app-cookie",
-            "X-Cheese-Token": "platform-secret",
         },
         subprotocols=["vite-hmr"],
     ) as socket:
@@ -366,7 +364,6 @@ def test_hmr_preserves_query_subprotocol_and_both_frame_types(client, app_previe
     assert forwarded["authorization"] == "Bearer app-access-token"
     assert forwarded["cookie"] == "app-session=app-cookie"
     assert not forwarded.keys() & {
-        "x-cheese-token",
         "sec-websocket-key",
         "sec-websocket-version",
         "sec-websocket-extensions",
@@ -417,7 +414,9 @@ def test_membership_revocation_blocks_http_and_new_hmr_connection(client, app_pr
 
 def test_the_tunnel_refuses_a_caller_that_cannot_name_a_topic(client):
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/preview/tunnel?token=not-a-token") as socket:
+        with client.websocket_connect(
+            "/preview/tunnel", headers={"Authorization": "Bearer not-a-token"}
+        ) as socket:
             socket.receive_bytes()
 
 
@@ -466,11 +465,12 @@ def test_a_tunnel_whose_peer_dropped_is_an_absent_preview_not_a_fault(
 # --- one tunnel per teammate ----------------------------------------------------
 
 
-def _tunnel_url(project, topic_id, seat: str) -> str:
+def _tunnel(project, topic_id, seat: str) -> dict:
+    """What a teammate's helper dials the preview tunnel with."""
     token = mint_scoped_token(
         project_id=project["id"], topic_id=str(topic_id), agent_handle=seat
     )
-    return f"/preview/tunnel?token={token}"
+    return {"url": "/preview/tunnel", "headers": {"Authorization": f"Bearer {token}"}}
 
 
 def _eventually(check) -> None:
@@ -490,9 +490,9 @@ def test_two_teammates_in_one_room_each_keep_their_tunnel(client, preview_config
     project, topic = _project_topic(client)
     topic_id = uuid.UUID(topic["id"])
 
-    with client.websocket_connect(_tunnel_url(project, topic_id, "cheese-one")):
+    with client.websocket_connect(**_tunnel(project, topic_id, "cheese-one")):
         _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
-        with client.websocket_connect(_tunnel_url(project, topic_id, "cheese-two")):
+        with client.websocket_connect(**_tunnel(project, topic_id, "cheese-two")):
             _eventually(lambda: preview_hub.is_online(topic_id, "cheese-two"))
             assert preview_hub.is_online(topic_id, "cheese-one")
 
@@ -503,11 +503,11 @@ def test_a_relaunched_teammate_tells_its_old_helper_to_stop(client, preview_conf
     dialling straight back in."""
     project, topic = _project_topic(client)
     topic_id = uuid.UUID(topic["id"])
-    url = _tunnel_url(project, topic_id, "cheese-one")
+    url = _tunnel(project, topic_id, "cheese-one")
 
-    with client.websocket_connect(url) as old:
+    with client.websocket_connect(**url) as old:
         _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
-        with client.websocket_connect(url):
+        with client.websocket_connect(**url):
             message = old.receive()
             assert message["type"] == "websocket.close"
             assert message["code"] == wire.CLOSE_SUPERSEDED
@@ -520,13 +520,13 @@ def test_a_stale_helper_cannot_take_the_tunnel_back(client, preview_config):
     live helper holds, so it is refused rather than allowed to displace it."""
     project, topic = _project_topic(client)
     topic_id = uuid.UUID(topic["id"])
-    stale = _tunnel_url(project, topic_id, "cheese-one")
+    stale = _tunnel(project, topic_id, "cheese-one")
     time.sleep(1.05)  # credentials are dated to the second
-    current = _tunnel_url(project, topic_id, "cheese-one")
+    current = _tunnel(project, topic_id, "cheese-one")
 
-    with client.websocket_connect(current):
+    with client.websocket_connect(**current):
         _eventually(lambda: preview_hub.is_online(topic_id, "cheese-one"))
-        with client.websocket_connect(stale) as late:
+        with client.websocket_connect(**stale) as late:
             message = late.receive()
             assert message["type"] == "websocket.close"
             assert message["code"] == wire.CLOSE_SUPERSEDED
@@ -563,11 +563,13 @@ def test_the_room_preview_shows_the_app_of_the_teammate_who_served_it(
             f"/topics/{topic_id}/shown",
             json={"path": "dev server", "as": "app"},
             headers={
-                "X-Cheese-Token": mint_scoped_token(
-                    project_id=project["id"],
-                    topic_id=str(topic_id),
-                    agent_handle=teammate,
-                )
+                "Authorization": f"Bearer {
+                    mint_scoped_token(
+                        project_id=project['id'],
+                        topic_id=str(topic_id),
+                        agent_handle=teammate,
+                    )
+                }"
             },
         )
         assert declared.status_code == 200, declared.text

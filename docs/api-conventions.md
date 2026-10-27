@@ -135,9 +135,9 @@ healthcheck and the rollout's curl reach it; with a client address it is
 counted like any route.
 
 - **Who counts as one principal.** A bearer access token that verifies is its
-  user. A sandbox credential that verifies — in `X-Cheese-Token`, or as the
-  bearer, `x-api-key` or Basic password the LLM proxy and the forge relay
-  receive it in — is its agent within its project (or its room, when it names
+  user. A sandbox credential that verifies — as the bearer, or as the
+  `x-api-key` or Basic password Claude Code and git send it as — is its agent
+  within its project (or its room, when it names
   no agent). The signing secret used directly is one principal of its own.
   Anything else, including a credential that does not verify, is counted by
   the client address uvicorn resolved through `FORWARDED_ALLOW_IPS`; when that

@@ -93,7 +93,7 @@ async def _second_agent(client, room, handle="linus", *, environment=None):
         return SimpleNamespace(
             session_id=row.id,
             handle=handle,
-            agent={"X-Cheese-Token": token},
+            agent={"Authorization": f"Bearer {token}"},
             path=f"/topics/{room.conversation_id}/sessions/{row.id}/environment",
         )
 

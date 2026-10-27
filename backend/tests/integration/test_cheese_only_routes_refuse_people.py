@@ -13,7 +13,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.main import app
 from tests.integration.conftest import post_project, session_auth_headers
 
-_NO_CHEESE = {"X-Cheese-Token": ""}
+_NO_CHEESE = {"Authorization": ""}
 
 
 def _project(client, name: str) -> str:
@@ -78,13 +78,17 @@ def test_cheese_only_routes_refuse_people_and_other_rooms(client):
                 **_NO_CHEESE,
                 **session_auth_headers("user-1"),
             },
-            "芝士 of another project's room": {"X-Cheese-Token": elsewhere},
+            "芝士 of another project's room": {"Authorization": f"Bearer {elsewhere}"},
         }
         if route.declared[0] == "cheese_only_in_room":
-            refused["芝士 of another room in this project"] = {"X-Cheese-Token": beside}
+            refused["芝士 of another room in this project"] = {
+                "Authorization": f"Bearer {beside}"
+            }
         for who, headers in refused.items():
             r = client.request(route.method, url, json={}, headers=headers)
             assert r.status_code == 401, (route.path, who, r.text)
             assert r.json()["message"] == "invalid sandbox token"
-        r = client.request(route.method, url, json={}, headers={"X-Cheese-Token": own})
+        r = client.request(
+            route.method, url, json={}, headers={"Authorization": f"Bearer {own}"}
+        )
         assert r.status_code != 401, (route.path, "芝士 of this room", r.text)

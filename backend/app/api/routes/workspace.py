@@ -6,9 +6,13 @@ import uuid
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
-from app.api.auth import ActorResolverDep, require_seated_in_its_room
+from app.api.auth import (
+    ActorResolverDep,
+    PresentedCredential,
+    require_seated_in_its_room,
+)
 from app.api.deps import get_chat_service
 from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
@@ -56,9 +60,9 @@ async def require_place_access(
     request: Request,
     db: DbSession,
     resolver: ActorResolverDep,
+    credential: PresentedCredential,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> Task | None:
     """Reject a caller with no claim on this project; answer the task it names.
 
@@ -74,8 +78,8 @@ async def require_place_access(
     A route dependency rather than a line in each handler: the per-handler shape
     is exactly how six routes came to share one hole.
     """
-    scoped = bool(x_cheese_token) and verify_scoped_token(
-        x_cheese_token or "", project_id=str(project_id)
+    scoped = bool(credential) and verify_scoped_token(
+        credential, project_id=str(project_id)
     )
     if not scoped and not await _may_read(resolver, db, project_id):
         raise NotFoundError(say("projectNotFound"))
@@ -101,9 +105,7 @@ async def require_place_access(
     if scoped and room_id is None:
         # The whole project's source, to an agent that still sits in the room
         # its credential was minted in.
-        await require_seated_in_its_room(
-            db, x_cheese_token or "", project_id=project_id
-        )
+        await require_seated_in_its_room(db, credential, project_id=project_id)
     if room_id is not None:
         try:
             room_uuid = uuid.UUID(str(room_id))

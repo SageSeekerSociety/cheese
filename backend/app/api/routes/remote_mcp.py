@@ -23,6 +23,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import require
+from app.core import credentials
 from app.core.config import settings
 from app.core.errors import (
     AppError,
@@ -341,7 +342,7 @@ async def proxy(
     """A session's request to one of its project's remote servers. Authenticated
     by the room's credential; the credential for the server is attached here."""
     project_id, claims = await session_in(
-        db, request.headers.get("x-cheese-token", ""), topic_id
+        db, credentials.presented(request.headers), topic_id
     )
     try:
         result = await service.call(

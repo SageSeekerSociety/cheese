@@ -20,6 +20,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.core import credentials
+from app.core.credentials import Kind
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
 from tests.conftest import TEST_DATABASE_URL, seed_user
 from tests.integration.conftest import (
@@ -93,7 +95,7 @@ def _project_agent(client, project_id: str) -> str:
 def _cred(token: str) -> dict[str, str]:
     """How an off-platform agent presents it: the same header the sandbox uses,
     so every existing cheese-aware client works unchanged."""
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _write(client, topic_id: str, token: str, content: str = "芝士写的"):
@@ -127,7 +129,7 @@ def test_the_secret_is_returned_once_and_nowhere_else(client):
     issued = _issue(client, pid, headers)
     assert issued.status_code == 200, issued.text
     token = issued.json()["data"]["token"]
-    assert token.startswith("cxpa_")
+    assert credentials.kind_of(token) is Kind.PROJECT_AGENT
 
     status = client.get(f"/projects/{pid}/agent-credential", headers=headers)
     assert status.status_code == 200

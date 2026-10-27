@@ -102,8 +102,26 @@ def _said(text: str) -> dict:
     return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
 
 
-#: How a delegated credential begins (``app.core.sandbox_auth``).
-DELEGATED_PREFIX = "cxdg_"
+#: The kinds of credential that act for a person (``app.core.credentials``).
+_DELEGATED_KINDS = ("delegated+jwt", "pass+jwt")
+
+
+def _part(token: str, i: int) -> dict:
+    """One JSON part of a JWT, read without verifying it."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        part = json.loads(
+            base64.urlsafe_b64decode(parts[i] + "=" * (-len(parts[i]) % 4))
+        )
+    except (ValueError, TypeError):
+        return {}
+    return part if isinstance(part, dict) else {}
+
+
+def is_delegated(token: str) -> bool:
+    return _part(token, 0).get("typ") in _DELEGATED_KINDS
 
 
 def _scope_of(token: str) -> dict[str, str]:
@@ -111,14 +129,9 @@ def _scope_of(token: str) -> dict[str, str]:
     (``CHEESE_PROJECT``). Read, not verified: the backend verifies the
     credential on every request it is sent with; this only says where to send
     them."""
-    if not token.startswith(DELEGATED_PREFIX):
+    if not is_delegated(token):
         return {}
-    body = token.removeprefix(DELEGATED_PREFIX).rpartition(".")[0]
-    try:
-        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    except (ValueError, TypeError):
-        return {}
-    project = claims.get("p") if isinstance(claims, dict) else None
+    project = _part(token, 1).get("p")
     return {"CHEESE_PROJECT": str(project)} if project else {}
 
 

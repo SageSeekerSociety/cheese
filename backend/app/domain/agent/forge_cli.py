@@ -212,7 +212,7 @@ def credentials():
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
-        headers={"X-Cheese-Token": os.environ["CHEESE_TOKEN"]},
+        headers={"Authorization": "Bearer " + os.environ["CHEESE_TOKEN"]},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)["data"]
