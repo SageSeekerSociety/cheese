@@ -42,10 +42,13 @@ function label(col: number): string {
   return head ? props.cellText(head) : props.columnName(col)
 }
 
-/** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方。 */
-function fields(row: string[]): number[] {
+/** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方 —— 但这一版
+ *  刚被改空的格子要留下：删掉的东西也得看得见，不然卡片上那一处改动凭空消失了。 */
+function fields(row: string[], rowIndex: number): number[] {
   const out: number[] = []
-  for (let col = 1; col < props.width; col += 1) if ((row[col] ?? '').trim()) out.push(col)
+  for (let col = 1; col < props.width; col += 1) {
+    if ((row[col] ?? '').trim() || beforeAt(rowIndex, col) !== undefined) out.push(col)
+  }
   return out
 }
 
@@ -83,7 +86,7 @@ function changedTitle(row: number, col: number): string | null {
         </button>
         <dl class="ps-card__fields">
           <div
-            v-for="c in fields(row)"
+            v-for="c in fields(row, r)"
             :key="c"
             class="ps-card__field"
             :class="{ 'is-on': selected === addressAt(r, c), 'is-chg': changedTitle(r, c) !== null }"

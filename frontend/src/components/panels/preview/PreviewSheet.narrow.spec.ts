@@ -103,3 +103,13 @@ it('对比态里卡片把原来的值用删除线写出来', async () => {
   const was = ui.container.querySelector('.ps-card__was')
   expect(was?.textContent).toBe('2025999')
 })
+
+it('被改空的格子留在卡片上：删掉的东西也看得见', async () => {
+  // 张伟那一行的备注格这一版是空的，上一版写着「演示超时」：空格子本来不摆，改过就要留下。
+  const ui = mount([], { changed: new Map([['!C2', '演示超时']]), changedBy: '芝士Opus', showBefore: true })
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  const was = ui.container.querySelector('.ps-card__was')
+  expect(was?.textContent).toBe('演示超时')
+  const field = was?.closest('.ps-card__field') as HTMLElement
+  expect(field.classList.contains('is-chg')).toBe(true)
+})
