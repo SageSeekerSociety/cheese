@@ -78,7 +78,7 @@ def forwarder(client: httpx.AsyncClient, base: str) -> Handler:
             request.method,
             f"{base.rstrip('/')}{target}",
             headers=headers,
-            content=request.body,
+            content=request.body if request.chunks is None else request.stream(),
             timeout=httpx.Timeout(30, read=None),
         ) as response:
             head = [f"HTTP/1.1 {response.status_code} {response.reason_phrase}"]
