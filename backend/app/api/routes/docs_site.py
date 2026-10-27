@@ -472,4 +472,6 @@ async def agent_read_docs(
         raise ValidationError(exception_text(exc)) from exc
     if text is None:
         raise NotFoundError(say("docsPageNotFound", page=body.page))
-    return ok({"page": library.page_slug(body.page), "markdown": text})
+    slug = library.page_slug(body.page) or ""
+    title = await library.page_title(slug, dev=dev)
+    return ok({"page": slug, "markdown": text, "title": title or slug})

@@ -95,6 +95,18 @@ async def search(query: str, *, dev: bool, limit: int = 6) -> list[Found] | None
     ]
 
 
+async def page_title(slug: str, *, dev: bool) -> str | None:
+    """The title the docs index gives the page ``slug``; None when no index
+    that is read knows it."""
+    sources = [retrieval.source] + ([retrieval.dev_source] if dev else [])
+    for source in sources:
+        index = await source.get()
+        for section in index.sections if index is not None else ():
+            if page_slug(section.url) == slug:
+                return section.title
+    return None
+
+
 def page_slug(page: str) -> str | None:
     """``accept``, ``/accept#is-merge``, ``https://docs.okcheese.com/dev/turn``,
     ``/docs/accept`` → the page's path within the site; None for anything that

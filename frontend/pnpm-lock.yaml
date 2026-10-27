@@ -187,6 +187,9 @@ importers:
       '@vue-flow/node-resizer':
         specifier: 1.5.1
         version: 1.5.1(@vue-flow/core@1.48.2(vue@3.5.42(typescript@5.9.2)))(vue@3.5.42(typescript@5.9.2))
+      '@use-gesture/vanilla':
+        specifier: 10.3.1
+        version: 10.3.1
       '@vueuse/core':
         specifier: ^13.6.0
         version: 13.6.0(vue@3.5.42(typescript@5.9.2))
@@ -2561,6 +2564,12 @@ packages:
 
   '@upsetjs/venn.js@2.0.0':
     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
+
+  '@use-gesture/core@10.3.1':
+    resolution: {integrity: sha512-WcINiDt8WjqBdUXye25anHiNxPc0VOrlT8F6LLkU6cycrOGUDyY/yyFmsg3k8i5OLvv25llc0QC45GhR/C8llw==}
+
+  '@use-gesture/vanilla@10.3.1':
+    resolution: {integrity: sha512-lT4scGLu59ovA3zmtUonukAGcA0AdOOh+iwNDS05Bsu7Lq9aZToDHhI6D8Q2qvsVraovtsLLYwPrWdG/noMAKw==}
 
   '@vee-validate/zod@4.15.1':
     resolution: {integrity: sha512-329Z4TDBE5Vx0FdbA8S4eR9iGCFFUNGbxjpQ20ff5b5wGueScjocUIx9JHPa79LTG06RnlUR4XogQsjN4tecKA==}
@@ -8248,6 +8257,12 @@ snapshots:
     optionalDependencies:
       d3-selection: 3.0.0
       d3-transition: 3.0.1(d3-selection@3.0.0)
+
+  '@use-gesture/core@10.3.1': {}
+
+  '@use-gesture/vanilla@10.3.1':
+    dependencies:
+      '@use-gesture/core': 10.3.1
 
   '@vee-validate/zod@4.15.1(vue@3.5.42(typescript@5.9.2))(zod@3.25.76)':
     dependencies:

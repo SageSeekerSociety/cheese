@@ -5,11 +5,17 @@
 // 排好版之后单元格就不再有地址了。地址恰恰是表格里唯一能指的东西——读者点中 B7，
 // 芝士用 openpyxl 打开的也是 B7，两边说的是同一个格子。换成 PDF 就只剩一段文字，
 // 要靠找。
+//
+// 窄处（手机、被挤窄的右栏）一屏只放得下两三列：A 列跟着行号一起钉在左边，横着滑也认得
+// 出是哪一行；还可以切成「一行一张卡片」（`PreviewSheetCards`），一行竖着读完。
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import PreviewSheetCards from './PreviewSheetCards.vue'
+
 import { t } from '@/i18n'
 import { takeCodePoints } from '@/lib/codePoints'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 const props = withDefaults(
   defineProps<{
@@ -52,6 +58,12 @@ type Sheet = {
    *  表，不该还挂着「较长的单元格被截短了」。 */
   shortened: boolean
 }
+
+const root = ref<HTMLElement | null>(null)
+const { narrow } = usePreviewNarrow(root)
+/** 窄处读成卡片。读者按的，换文件不翻回去；宽回去时照旧是表格（卡片只为窄处而设）。 */
+const cards = ref(false)
+const showCards = computed(() => narrow.value && cards.value)
 
 const sheets = ref<Sheet[]>([])
 const activeIndex = ref(0)
@@ -491,7 +503,7 @@ watch(
 </script>
 
 <template>
-  <div class="ps">
+  <div ref="root" class="ps" :class="{ 'ps--narrow': narrow }">
     <div v-if="loading" class="ps__state">
       <v-progress-circular indeterminate color="primary" size="24" />
     </div>
@@ -502,14 +514,38 @@ watch(
     </div>
 
     <template v-else-if="active">
-      <div v-if="canShowSource" class="ps__bar">
-        <button type="button" class="ps__toggle" @click="showSource = !showSource">
+      <div v-if="canShowSource || narrow" class="ps__bar">
+        <button
+          v-if="narrow && !showSource"
+          type="button"
+          class="ps__toggle"
+          :aria-pressed="cards"
+          data-testid="sheet-cards"
+          @click="cards = !cards"
+        >
+          <v-icon size="16">{{ cards ? 'mdi-table' : 'mdi-card-text-outline' }}</v-icon>
+          {{ cards ? t('work.room.preview.showTable') : t('work.room.preview.sheetCards') }}
+        </button>
+        <button v-if="canShowSource" type="button" class="ps__toggle" @click="showSource = !showSource">
           <v-icon size="16">{{ showSource ? 'mdi-table' : 'mdi-code-tags' }}</v-icon>
           {{ showSource ? t('work.room.preview.showTable') : t('work.room.preview.showSource') }}
         </button>
       </div>
 
       <pre v-if="showSource" class="ps__source">{{ sourceText }}</pre>
+      <PreviewSheetCards
+        v-else-if="showCards"
+        :rows="active.rows"
+        :width="active.width"
+        :address-at="addressAt"
+        :cell-text="cellText"
+        :column-name="columnName"
+        :selected="selected"
+        :marks="marksByAddress"
+        :active-mark="activeMark"
+        @choose="choose"
+        @mark="emit('mark', $event)"
+      />
       <div v-else class="ps__grid">
         <table class="ps__table">
           <thead>
@@ -595,6 +631,7 @@ watch(
   flex: none;
   display: flex;
   justify-content: flex-end;
+  gap: 4px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--line);
 }
@@ -677,6 +714,32 @@ watch(
 .ps__corner {
   top: 0;
   left: 0;
+  z-index: var(--z-raised-2);
+}
+
+/* 窄处把 A 列也钉住，贴在行号列右边：行号列定宽，A 列的 left 才有一个确定的数。A 列
+   限宽，免得一列长名字占掉大半屏。 */
+.ps--narrow .ps__row,
+.ps--narrow .ps__corner {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  box-sizing: border-box;
+}
+.ps--narrow .ps__col:nth-child(2),
+.ps--narrow .ps__cell:nth-child(2) {
+  position: sticky;
+  left: 44px;
+  max-width: 128px;
+}
+.ps--narrow .ps__cell:nth-child(2) {
+  z-index: var(--z-raised);
+}
+/* 钉住的格子要有底色，否则横滑时后面的格子从它底下透出来；悬停和拖选的底色照旧。 */
+.ps--narrow .ps__cell:nth-child(2):not(:hover, .ps__cell--in) {
+  background: var(--surface);
+}
+.ps--narrow .ps__col:nth-child(2) {
   z-index: var(--z-raised-2);
 }
 

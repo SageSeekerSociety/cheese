@@ -7,8 +7,8 @@ Two sets of routes over the same drafts:
 * ``/task-drafts`` and ``/task-drafts/{id}``: the page's. It lists, opens,
   saves and publishes the person's drafts, in the form's own shape.
 * ``/task-drafts/agent/*``: 芝士's tools (``sandbox/cheese``), reached with the
-  credential a question is answered with (``DELEGATED_ROUTES``), and so acting
-  as the person who asked. They speak 芝士's words (``drafts.AGENT_FIELDS``),
+  credential a question is answered with, and so acting as the person who
+  asked. They speak 芝士's words (``drafts.AGENT_FIELDS``),
   answer in text it can read, and tell the page what changed: each write is
   kept (``assistant.changes``, to be undone) and goes out on the question's
   own stream as a ``change``, which the page applies to the form as it is
@@ -59,7 +59,7 @@ from app.domain.attachment.reading import read_document
 from app.domain.library import records as library_records
 from app.domain.space import permissions as space_seats
 from app.domain.space.material_service import SpaceMaterialService
-from app.domain.space.services import SpaceService
+from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.task import drafts, package
 from app.domain.task.inputs import APPROVE_APPROVED, APPROVE_DISAPPROVED
 from app.domain.task.services import TaskService, ensure_task_readable
@@ -160,6 +160,12 @@ async def _task_names(db, rows: list) -> dict[int, str]:
 
 async def _zone(db, user_id: int) -> str | None:
     return (await timezones_by_ids(db, [user_id])).get(user_id)
+
+
+async def _space_named(db, space_id: int) -> str:
+    """A space as a step names it: 「空间「操作系统」」."""
+    label = (await SpaceLabels(db).describe([space_id])).get(space_id)
+    return f"空间「{label.name if label is not None else space_id}」"
 
 
 async def _publishable_space(db, space_id: int, user_id: int) -> None:
@@ -514,8 +520,10 @@ async def agent_search(
         for r in await drafts.list_mine(db, user_id, body.space)
         if all(w in str((r.fields or {}).get("name") or "").lower() for w in words)
     ]
+    found_in = f"{await _space_named(db, body.space)}的题目"
     return ok(
         {
+            "subject": f"{found_in}：{body.query.strip()}" if words else found_in,
             "tasks": [
                 {
                     "id": t.id,
@@ -551,7 +559,13 @@ async def agent_read(
     user_id = await _person(resolver)
     if body.draft is not None:
         row = await drafts.mine(db, user_id, body.draft)
-        return ok({"text": await _draft_text(db, spaces, row, user_id)})
+        name = (row.fields or {}).get("name") or "未命名"
+        return ok(
+            {
+                "text": await _draft_text(db, spaces, row, user_id),
+                "subject": f"题目草稿「{name}」",
+            }
+        )
     if body.task is None:
         raise BadRequestError(say("draftNeedsTarget"))
     task = await TaskService.of(db).get_task(body.task)
@@ -570,7 +584,7 @@ async def agent_read(
     pending = await drafts.for_task(db, user_id, task.id)
     if pending is not None:
         text += f"\n这道题有未保存的修改：草稿 {pending.id}。"
-    return ok({"text": text})
+    return ok({"text": text, "subject": f"题目「{task.name}」"})
 
 
 class WriteIn(BaseModel):
@@ -867,7 +881,12 @@ async def agent_file(body: FileIn, resolver: ActorResolverDep, db=Depends(get_db
         await package.refuse_unless_downloader(db, task, user_id)
         content = await library_records.read(db, package.shelf(task.id), body.name)
         return ok(
-            read_document(content, body.name, pages=body.pages, pictures=_pictures())
+            {
+                **read_document(
+                    content, body.name, pages=body.pages, pictures=_pictures()
+                ),
+                "subject": f"题目「{task.name}」的附件「{body.name.rsplit('/', 1)[-1]}」",
+            }
         )
     if body.file is None:
         raise BadRequestError(say("draftNeedsTarget"))
@@ -876,7 +895,12 @@ async def agent_file(body: FileIn, resolver: ActorResolverDep, db=Depends(get_db
     if not files.is_uploader(attachment, user_id):
         raise ForbiddenError(say("draftFileNotYours"))
     content, filename, _ = await files.download(body.file)
-    return ok(read_document(content, filename, pages=body.pages, pictures=_pictures()))
+    return ok(
+        {
+            **read_document(content, filename, pages=body.pages, pictures=_pictures()),
+            "subject": f"文件「{filename}」",
+        }
+    )
 
 
 class MaterialsIn(BaseModel):
@@ -897,17 +921,23 @@ async def agent_materials(
         listed = await materials.list_for_space(space_id=body.space, user_id=user_id)
         return ok(
             {
+                "subject": f"{await _space_named(db, body.space)}的资料",
                 "materials": [
                     {"id": m.get("id"), "name": m.get("name"), "size": m.get("size")}
                     for m in listed["materials"]
-                ]
+                ],
             }
         )
     content, name, _ = await materials.download(
         space_id=body.space, user_id=user_id, material_id=body.material
     )
     await db.commit()
-    return ok(read_document(content, name, pages=body.pages, pictures=_pictures()))
+    return ok(
+        {
+            **read_document(content, name, pages=body.pages, pictures=_pictures()),
+            "subject": f"资料「{name}」",
+        }
+    )
 
 
 async def _question(resolver: ActorResolverDep, questions: Questions):

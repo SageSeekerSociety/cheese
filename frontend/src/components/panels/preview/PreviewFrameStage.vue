@@ -14,7 +14,6 @@ import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
 import { computed, ref, watch } from 'vue'
-import { useElementSize } from '@vueuse/core'
 
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
@@ -26,6 +25,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 
 const props = defineProps<{
@@ -121,8 +121,7 @@ const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
 // 一格里——那两种都得把这一条收成一行。还没量到宽度（挂载前、测试里没有布局）按宽处
 // 理，先按平铺画，量到了再收，免得一上来就少一排按钮。
 const wrapRef = ref<HTMLElement | null>(null)
-const { width: wrapWidth } = useElementSize(wrapRef)
-const compact = computed(() => wrapWidth.value > 0 && wrapWidth.value < 560)
+const { narrow: compact } = usePreviewNarrow(wrapRef)
 
 // 运行状态平时不占一行：连通链在地址栏旁边，三段都通就是三个绿勾（窄时一颗绿点）；
 // 哪一段不通那段变灰，点开看原因。原来那颗「出问题才亮」的圆点就是这条链（见

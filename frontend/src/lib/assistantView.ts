@@ -1,7 +1,7 @@
 // 芝士一轮里做的事，在面板上画成什么：每一步（动词 + 一个参数），改动卡，结果。这里是
 // 不管写的是什么都一样的那一半——面板拿的形状，和每一步怎么说；写进题目草稿的改动卡、
 // 发布的结果怎么说在 `lib/draftChangeView.ts`。
-import type { AssistantProposal, AssistantStep, AssistantSubagent } from '@/stores/agentThread'
+import type { AssistantProposal, AssistantStep, AssistantSubagent, StepEffect } from '@/stores/agentThread'
 
 import { t } from '@/i18n'
 import { partialStringField } from '@/lib/partialJson'
@@ -13,8 +13,14 @@ export interface PanelStep {
   arg: string
   state: AssistantStep['state']
   error?: string
+  /** 哪一个动作（`chat_send`、`cheese_web.fetch`）：收起的那句按它数发了几条消息。 */
+  tool?: string
+  /** 它做的是哪一类事（工具表上写的）：查阅的几步并成一组，做了事的单列。 */
+  effect?: StepEffect
   /** 推理的那一段，不是一次工具调用。 */
   thinking?: boolean
+  /** 推理用了几秒：太短的不列。 */
+  seconds?: number
   /** 它前面回答已经写了多少字：步骤排在这些字后面。旧的回答没有。 */
   at?: number
   /** 不在步骤里画出来的一步：写进度清单，清单另画在这一轮的最上面。 */
@@ -224,18 +230,19 @@ function shownArg(key: string, value: string): string {
 }
 
 export function stepView(step: AssistantStep): PanelStep {
-  if (step.name === 'thinking')
+  if (step.name === 'thinking') {
+    const seconds = Math.max(1, Math.round((step.ms ?? 0) / 1000))
     return {
       key: step.call,
       verb:
-        step.state === 'run'
-          ? t('tasks.assistant.steps.thinking')
-          : t('tasks.assistant.steps.thought', { s: Math.max(1, Math.round((step.ms ?? 0) / 1000)) }),
+        step.state === 'run' ? t('tasks.assistant.steps.thinking') : t('tasks.assistant.steps.thought', { s: seconds }),
       arg: '',
       state: step.state,
       thinking: true,
+      seconds,
       ...(step.at === undefined ? {} : { at: step.at }),
     }
+  }
   if (step.name === 'cheese_todo')
     return {
       key: step.call,
@@ -245,17 +252,79 @@ export function stepView(step: AssistantStep): PanelStep {
       hidden: true,
       checklist: checklistIn(step.args),
     }
-  const key = STEP_ARG[toolKey(step.name, step.args)] ?? STEP_ARG[step.name]
+  const tool = toolKey(step.name, step.args)
+  const key = STEP_ARG[tool] ?? STEP_ARG[step.name]
   // 读到的东西有名字时写名字，不写编号。
   const arg = step.shown ?? (key ? shownArg(key, partialStringField(step.args, key)?.text ?? '') : '')
   return {
     key: step.call,
-    verb: toolLabel(step.name, step.args),
+    verb: step.effect === 'reads' ? readVerb(tool, step.args) : toolLabel(step.name, step.args),
     arg: arg.replace(/\s+/g, ' ').trim().slice(0, 60),
     state: step.state,
+    tool,
+    ...(step.effect ? { effect: step.effect } : {}),
     error: step.error === undefined ? undefined : stepError(step.error),
     ...(step.at === undefined ? {} : { at: step.at }),
   }
+}
+
+/** 查阅的一步用哪个动词：按关键词或样式找的是「查找」，搜索引擎和帮助文档按词搜的是
+ *  「搜索」，其余（读一个东西、一页帮助、一个网页、电脑上的一个文件）是「读取」。 */
+function readVerb(tool: string, args: string): string {
+  if (tool === 'cheese_find' || tool === 'find' || tool === 'grep') return t('tasks.assistant.steps.verbs.find')
+  const searches =
+    tool === 'cheese_web.search' ||
+    tool === 'cheese_project_search' ||
+    (tool === 'cheese_help' && !partialStringField(args, 'page')?.text)
+  return t(searches ? 'tasks.assistant.steps.verbs.search' : 'tasks.assistant.steps.verbs.read')
+}
+
+/** 推理不到这么多秒的一段不列：它只是两步之间停了一下。 */
+const THOUGHT_LISTED_S = 10
+
+/** 一组步骤画成的几行：接连查阅的几步并成一组，各写一行查了什么；做了事的、失败的、
+ *  派出分身的每步单列。 */
+export type StepRow =
+  | { kind: 'step'; key: string; step: PanelStep }
+  | { kind: 'reads'; key: string; steps: PanelStep[] }
+
+export function stepRows(steps: PanelStep[]): StepRow[] {
+  const rows: StepRow[] = []
+  for (const step of steps) {
+    if (step.thinking && step.state !== 'run' && (step.seconds ?? 0) < THOUGHT_LISTED_S) continue
+    if (step.effect === 'reads' && step.state !== 'failed' && !step.subagent) {
+      const last = rows[rows.length - 1]
+      if (last?.kind === 'reads') last.steps.push(step)
+      else rows.push({ kind: 'reads', key: `reads-${step.key}`, steps: [step] })
+      continue
+    }
+    rows.push({ kind: 'step', key: step.key, step })
+  }
+  return rows
+}
+
+/** 一组查阅的那一行：正在读的那一项，读完了就是一共几项。 */
+export function readsLine(steps: PanelStep[]): string {
+  const running = steps.find((step) => step.state === 'run')
+  if (running) return t('tasks.assistant.steps.reading', { what: `${running.verb}${running.arg}` })
+  return t('tasks.assistant.steps.readCount', { n: steps.length })
+}
+
+/** 收起的那一句：先说做了什么，再说查阅了几项。发消息按条数；别的事只有一件时写这件事，
+ *  几件时写一共几项。从前的回答没记每一步做的是哪类事，只说一共几步。 */
+export function foldedLine(steps: PanelStep[]): string {
+  const calls = steps.filter((step) => !step.thinking)
+  if (!calls.some((step) => step.effect)) return t('tasks.assistant.steps.count', { n: calls.length })
+  const done = calls.filter((step) => step.effect !== 'reads')
+  const sent = done.filter((step) => step.tool === 'chat_send').length
+  const others = done.filter((step) => step.tool !== 'chat_send')
+  const reads = calls.filter((step) => step.effect === 'reads').length
+  const parts: string[] = []
+  if (sent) parts.push(t('tasks.assistant.steps.sent', { n: sent }))
+  if (others.length === 1) parts.push(`${others[0].verb} ${others[0].arg}`.trim())
+  else if (others.length > 1) parts.push(t('tasks.assistant.steps.acted', { n: others.length }))
+  if (reads) parts.push(t('tasks.assistant.steps.readCount', { n: reads }))
+  return parts.join(t('tasks.assistant.steps.and'))
 }
 
 /** 一步为什么没成，写成人读得懂的一句。工具报的是平台原样的回应（`Platform HTTP 404:

@@ -395,6 +395,7 @@ export function previewBundle(
     closeEditor: noop,
     toggleHistory: noop,
     toggleDocPage: noop,
+    setDocNarrow: noop,
     setPickMode: noop,
     stepHistory: () => false,
     goTo: () => false,
@@ -577,7 +578,10 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    errorForbidden: ref(false),
     arrived: reactive(new Set<string>()),
+    load: async () => {},
+    retry: () => {},
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {

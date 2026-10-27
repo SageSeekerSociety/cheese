@@ -204,6 +204,17 @@ def artifact_kind_for(path: str) -> str:
     return ARTIFACT_KIND_BY_SUFFIX.get("." + suffix.lower(), "html") if dot else "html"
 
 
+#: What one tool call does, as the harness of a person's 芝士 weighs it before
+#: running it (`run_platform_tool`), the way Claude Code's permission check reads
+#: a tool's own declaration: it reads; it changes only what is the person's own,
+#: or what they asked it to work on, and they can undo; or it reaches others —
+#: a message, a task, a decision, a member, a page fetched from a host — which its
+#: gate weighs first (`/assistant/agent/review`).
+READS = "reads"
+CHANGES = "changes"
+REACHES_OTHERS = "reaches others"
+
+
 class ToolTable:
     """平台的 MCP 工具表 —— 会话侧的一个常量（结论 21，由结论 63 修订）。
 
@@ -223,8 +234,14 @@ class ToolTable:
     机器没（结论 22）。
     """
 
-    def __init__(self, tools):
+    def __init__(self, tools, effects=None, *, every_call=False):
         tools = tuple(tools)
+        #: What each call does (`READS`, `CHANGES`, `REACHES_OTHERS`), by key
+        #: (`<tool>` or `<tool>.<action>`), for the harness of a person's 芝士 to
+        #: read before it runs one (`run_platform_tool`). `every_call`: a table
+        #: whose every call must say, so a verb added without saying what it
+        #: does fails here rather than running unweighed.
+        self._effects = dict(effects or {})
         #: 一个对象一样工具的那几行，各自的动词（`_object`）：调用时按它查这一个
         #: 动词收哪些参数。它不进清单——清单上只有 MCP 认得的那三个字段。
         self._actions = {t["name"]: t["actions"] for t in tools if "actions" in t}
@@ -233,6 +250,21 @@ class ToolTable:
             {k: v for k, v in t.items() if k not in ("actions", "summary")}
             for t in tools
         )
+        keys = {
+            key
+            for t in tools
+            for key in (
+                [f"{t['name']}.{verb}" for verb in t["actions"]]
+                if "actions" in t
+                else [t["name"]]
+            )
+        }
+        unknown = sorted(set(self._effects) - keys)
+        unsaid = sorted(keys - set(self._effects)) if every_call else []
+        if unknown or unsaid:
+            raise ValueError(
+                f"tool effects name no call: {unknown}; calls that say no effect: {unsaid}"
+            )
 
     def names(self) -> tuple[str, ...]:
         return tuple(tool["name"] for tool in self._tools)
@@ -240,6 +272,14 @@ class ToolTable:
     def schemas(self) -> list[dict]:
         """MCP `tools/list` 要的那一份。"""
         return list(self._tools)
+
+    def effect(self, key: str) -> str | None:
+        """What the call `key` (`<tool>` or `<tool>.<action>`) does; None when
+        it does not say."""
+        return self._effects.get(key)
+
+    def calls_that(self, effect: str) -> frozenset[str]:
+        return frozenset(k for k, e in self._effects.items() if e == effect)
 
     def actions(self, name: str) -> dict | None:
         """The verbs of the tool `name`, each with what it takes; None for a
@@ -1582,7 +1622,18 @@ PLATFORM_TOOLS = ToolTable(
                 "body": {"type": "object", "description": "JSON 请求体，原样发出"},
             },
         ),
-    )
+    ),
+    # Only the calls a document's 芝士 is handed (`document/session.py`): a room's
+    # own agent is weighed by nothing here.
+    {
+        "cheese_doc.get": READS,
+        "cheese_doc.list": READS,
+        "cheese_doc.edit": CHANGES,
+        "cheese_doc.set": CHANGES,
+        "cheese_doc.new": CHANGES,
+        "cheese_app.get": READS,
+        "cheese_app.save": CHANGES,
+    },
 )
 
 #: 替人答题的芝士（文档里的、个人的）才有的几样：它们以提问人的身份查东西，
@@ -2303,7 +2354,45 @@ DELEGATED_TOOLS = ToolTable(
                 ),
             },
         ),
-    )
+    ),
+    {
+        "cheese_inbox.list": READS,
+        "cheese_inbox.respond": REACHES_OTHERS,
+        "cheese_find": READS,
+        "cheese_help": READS,
+        "cheese_read": READS,
+        "chat_send": REACHES_OTHERS,
+        "cheese_task.open": REACHES_OTHERS,
+        "cheese_card.decide": REACHES_OTHERS,
+        "cheese_room.create": REACHES_OTHERS,
+        "cheese_room.set": REACHES_OTHERS,
+        "cheese_people": REACHES_OTHERS,
+        "cheese_space.set": REACHES_OTHERS,
+        "cheese_space.announce": REACHES_OTHERS,
+        "cheese_space.category": REACHES_OTHERS,
+        "cheese_space.code": REACHES_OTHERS,
+        "cheese_space.review": REACHES_OTHERS,
+        "cheese_settings": CHANGES,
+        "cheese_routine": CHANGES,
+        "cheese_notify": CHANGES,
+        "cheese_todo": CHANGES,
+        "cheese_memory.save": CHANGES,
+        "cheese_memory.read": READS,
+        "cheese_memory.forget": CHANGES,
+        "cheese_memory.project": READS,
+        # A page's address reaches the host it names, and can carry out what
+        # 芝士 read; a search goes only to the model's own provider.
+        "cheese_web.fetch": REACHES_OTHERS,
+        "cheese_web.search": READS,
+        "cheese_project_search": READS,
+        "cheese_library.read": READS,
+        "cheese_library.give": CHANGES,
+        "cheese_library.take": CHANGES,
+        "cheese_problem.write": CHANGES,
+        # The person's own draft, published when they say so (its description).
+        "cheese_problem.publish": CHANGES,
+    },
+    every_call=True,
 )
 
 #: 要本话题 / 本项目才答得出的那些。缺了就在发出去之前说清楚，不让后端去猜。
@@ -3118,13 +3207,17 @@ class Said(str):
     """What a tool says, with pictures for an agent that can look at them:
     `images` holds {"data": base64, "mimeType": ...}. Every caller takes it as
     the text it is; a session runner that can hand pictures to its model (pi,
-    Codex) hands these over as well."""
+    Codex) hands these over as well. `subject` is what the call acted on, the
+    way a person knows it (「空间「操作系统」」): a person's 芝士 shows it as
+    the call's step (`_subject`)."""
 
     images: tuple = ()
+    subject: str = ""
 
-    def __new__(cls, text: str, images=()):
+    def __new__(cls, text: str, images=(), subject: str = ""):
         said = super().__new__(cls, text)
         said.images = tuple(images)
+        said.subject = subject
         return said
 
 
@@ -3152,7 +3245,11 @@ def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -
 
     `delegated` says the call is made under a delegated credential (a
     person's 芝士, a document's): an object both tables have (`cheese_task`)
-    is then the delegated one, which acts for the person asking."""
+    is then the delegated one, which acts for the person asking. Such a call
+    runs only if its table says what it does (`ToolTable.effect`), and one that
+    reaches others runs only once the gate takes it (`_reviewed`): this is the
+    harness's check before the tool, as Claude Code's is, and the tool itself
+    just acts as the person."""
     tables = (PLATFORM_TOOLS, DELEGATED_TOOLS)
     if delegated:
         tables = tables[::-1]
@@ -3175,17 +3272,85 @@ def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -
         key = tool
     else:
         key = f"{tool}.{_checked(tool, actions, args, table)}"
+    if delegated:
+        effect = table.effect(key)
+        if effect is None:
+            raise PlatformToolError(f"{key} 没有说明它做什么，不能替用户调用")
+        if effect == REACHES_OTHERS:
+            said = _reviewed(key, args, host)
+            if said is not None:
+                return said
     step = (
         _DELEGATED_STEPS.get(key) if table is DELEGATED_TOOLS else None
     ) or _STEPS.get(key)
+    data = None
     try:
         if step is not None:
-            return step(args, host)
-        plan = request_plan(key, args, host.environ)
+            said = step(args, host)
+        else:
+            plan = request_plan(key, args, host.environ)
     except ValueError as exc:
         raise PlatformToolError(str(exc)) from exc
-    data = host.request(plan).get("data")
-    return _SAY[key](args, data, host.environ)
+    if step is None:
+        data = host.request(plan).get("data")
+        said = _SAY[key](args, data, host.environ)
+    if not delegated or getattr(said, "subject", ""):
+        return said
+    return Said(said, getattr(said, "images", ()), _subject(key, args, data))
+
+
+#: What a read that names nothing in particular read, by the ref it was given.
+_READ_WHOLE = {
+    "me": "你领取的题目",
+    "settings": "你的通知设置",
+    "library": "你的资料库",
+}
+
+
+def _subject(key: str, args: dict, data) -> str:
+    """What one call of a person's 芝士 acted on, the way the person knows it:
+    shown as its step in place of the reference it was given. Where the
+    backend knows the name it says it (`subject` in its answer); what the
+    call's own arguments name is named here. Empty when neither names one."""
+    given = data.get("subject") if isinstance(data, dict) else None
+    if isinstance(given, str) and given.strip():
+        return given.strip()
+    if key == "cheese_read":
+        ref = (args.get("ref") or "").strip().strip("/")
+        if ref in _READ_WHOLE:
+            return _READ_WHOLE[ref]
+        if ref.startswith("library/"):
+            return f"资料库「{ref.rsplit('/', 1)[-1]}」"
+        return ""
+    if key in ("cheese_find", "cheese_project_search", "cheese_web.search"):
+        return (args.get("query") or "").strip()
+    if key == "cheese_help":
+        if args.get("page"):
+            title = data.get("title") if isinstance(data, dict) else None
+            return f"帮助文档「{title or args['page']}」"
+        return f"帮助文档：{(args.get('query') or '').strip()}"
+    if key == "cheese_web.fetch":
+        return _page_named(args.get("url") or "")
+    if key in ("cheese_memory.read", "cheese_memory.save", "cheese_memory.forget"):
+        return f"记忆「{(args.get('name') or '').strip()}」"
+    if key == "cheese_memory.project":
+        return f"项目记忆「{(args.get('name') or '').strip()}」"
+    if key == "cheese_library.read":
+        return f"资料库「{(args.get('path') or '').rstrip('/').rsplit('/', 1)[-1]}」"
+    return ""
+
+
+def _page_named(url: str) -> str:
+    """A web page as a step names it: its site, or a documentation site's
+    index (`llms.txt`) as that."""
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.path.rstrip("/").endswith("/llms.txt"):
+        return (
+            "帮助文档目录"
+            if "okcheese" in parts.netloc
+            else f"{parts.netloc} 的文档目录"
+        )
+    return parts.netloc or url.strip()
 
 
 def _unsaid(value) -> bool:
@@ -4715,34 +4880,112 @@ def _chat_send(args: dict, host) -> str:
     return _say_chat_send(args, data, host.environ)
 
 
-def _act(body: dict, host):
-    """Ask the gate (`/assistant/agent/act`); when it lets the action
-    through, make its calls as the person with the pass it gave. What the last
-    call answered, and what 芝士 is told; None for the answer when it was
-    turned into a card or not done."""
+#: How each call of a person's 芝士 that reaches others names its action to the
+#: platform: the kind (`assistant_acts.ActIn`) and the call's arguments under the
+#: platform's names (`_given`). Its harness asks whether to take it
+#: (`_reviewed`), and the call carries it out (`_carry_out`).
+_ACTIONS = {
+    "cheese_inbox.respond": ("respond", "ref", "choice"),
+    "cheese_task.open": ("task", "where", "title", "brief:text"),
+    "cheese_card.decide": ("review", "ref", "choice", "text"),
+    "chat_send": ("message", "where", "content:text"),
+    "cheese_people": ("member", "where", "who", "role", "remove"),
+    "cheese_room.create": ("channel", "where", "title", "text", "members_only"),
+    "cheese_room.set": ("project_set", "where", "key", "value"),
+    "cheese_space.set": ("space_set", "where", "key", "value"),
+    "cheese_space.announce": (
+        "announce",
+        "where",
+        "title",
+        "content:text",
+        "pinned",
+        "ref",
+        "remove",
+    ),
+    "cheese_space.category": (
+        "category",
+        "where",
+        "ref",
+        "name:title",
+        "note:text",
+        "archived",
+        "remove",
+    ),
+    "cheese_space.code": (
+        "invite_code",
+        "where",
+        "ref",
+        "max_uses",
+        "days",
+        "note:text",
+        "remove",
+    ),
+    "cheese_space.review": ("problem_review", "ref", "choice", "reason:text"),
+    "cheese_web.fetch": ("fetch", "url", "prompt"),
+}
+
+
+_UNWRITTEN = (
+    DELEGATED_TOOLS.calls_that(REACHES_OTHERS)
+    | PLATFORM_TOOLS.calls_that(REACHES_OTHERS)
+) ^ set(_ACTIONS)
+if _UNWRITTEN:
+    raise ValueError(f"calls that reach others and their actions differ: {_UNWRITTEN}")
+
+
+def _action(key: str, args: dict) -> dict:
+    kind, *fields = _ACTIONS[key]
+    return {"kind": kind, **_given(args, *fields, "confirm")}
+
+
+def _reviewed(key: str, args: dict, host) -> str | None:
+    """Ask the gate whether to take this call (`/assistant/agent/review`),
+    before it runs: None to take it; else what 芝士 is told instead — handed
+    back with the reason, or how the card the person was shown ended."""
     data = (
         host.request(
-            {"method": "POST", "path": "/assistant/agent/act", "body": body}
+            {
+                "method": "POST",
+                "path": "/assistant/agent/review",
+                "body": _action(key, args),
+            }
         ).get("data")
         or {}
     )
-    if not data.get("done"):
-        if data.get("returned"):
-            return None, data["said"]
-        why = data.get("reason") or "需要用户确认"
-        card = data.get("card")
-        if card:
-            return None, _decided(card, host)
-        return None, f"没有做：{why}。"
+    if data.get("allowed"):
+        return None
+    if data.get("returned"):
+        return data["said"]
+    card = data.get("card")
+    if card:
+        return _decided(card, host)
+    return f"没有做：{data.get('reason') or '需要用户确认'}。"
+
+
+def _carry_out(key: str, args: dict, host):
+    """Make the calls the person's own pages make for this action
+    (`/assistant/agent/plan`), as the person. What the last call answered, and
+    what 芝士 is told."""
+    data = (
+        host.request(
+            {
+                "method": "POST",
+                "path": "/assistant/agent/plan",
+                "body": _action(key, args),
+            }
+        ).get("data")
+        or {}
+    )
     answered, made = None, None
     for call in data.get("calls") or []:
         plan = dict(call)
         if made is not None:
             plan["path"] = plan["path"].replace("{prev}", str(made))
-        plan["pass"] = data["pass"]
         answered = host.request(plan).get("data")
         made = answered.get("id") if isinstance(answered, dict) else None
-    return answered, data.get("said") or "已完成。"
+    return answered, Said(
+        data.get("said") or "已完成。", subject=data.get("subject") or ""
+    )
 
 
 def _decided(card: dict, host) -> str:
@@ -4765,23 +5008,24 @@ def _decided(card: dict, host) -> str:
             return got["said"]
 
 
-def _acting(kind: str, *fields: str):
+def _carried(key: str):
     def step(args: dict, host) -> str:
-        body = {"kind": kind, **_given(args, *fields, "confirm")}
-        return _act(body, host)[1]
+        return _carry_out(key, args, host)[1]
 
     return step
 
 
 def _web_fetch(args: dict, host):
-    answered, said = _act(
-        {"kind": "fetch", **_given(args, "url", "prompt", "confirm")}, host
+    answered, said = _carry_out("cheese_web.fetch", args, host)
+    if answered is None:
+        return said
+    return Said(
+        _say_fetch(args, answered, host.environ), subject=_page_named(args["url"])
     )
-    return _say_fetch(args, answered, host.environ) if answered is not None else said
 
 
 _STEPS = {
-    "cheese_inbox.respond": _acting("respond", "ref", "choice"),
+    "cheese_inbox.respond": _carried("cheese_inbox.respond"),
     "cheese_library.give": _file_give,
     "cheese_library.take": _file_to_computer,
     "chat_send": _chat_send,
@@ -4816,30 +5060,24 @@ _STEPS = {
 
 
 #: 个人芝士手里的那几样对象，和房间里的同名：同一个 `cheese_task(action=open)`，
-#: 个人芝士以用户的名义、经过授权判断去开（`/assistant/agent/act`），房间的 agent
-#: 从自己的支线拆。名字一样，凭证不同，走的路不同；`run_platform_tool` 替代行凭证
+#: 个人芝士以用户的名义去开（平台写出的那几次调用，`/assistant/agent/plan`），房间
+#: 的 agent 从自己的支线拆。名字一样，凭证不同，走的路不同；`run_platform_tool` 替代行凭证
 #: 的调用先查这里。
 _DELEGATED_STEPS = {
-    "cheese_task.open": _acting("task", "where", "title", "brief:text"),
-    "cheese_card.decide": _acting("review", "ref", "choice", "text"),
-    # 以用户的名义发消息：和房间里的 chat_send 同名，房间的发在这里，这个经授权判断
-    # 发到 where 那里。
-    "chat_send": _acting("message", "where", "content:text"),
-    "cheese_people": _acting("member", "where", "who", "role", "remove"),
-    "cheese_room.create": _acting("channel", "where", "title", "text", "members_only"),
-    "cheese_room.set": _acting("project_set", "where", "key", "value"),
-    "cheese_space.set": _acting("space_set", "where", "key", "value"),
-    "cheese_space.announce": _acting(
-        "announce", "where", "title", "content:text", "pinned", "ref", "remove"
-    ),
-    "cheese_space.category": _acting(
-        "category", "where", "ref", "name:title", "note:text", "archived", "remove"
-    ),
-    "cheese_space.code": _acting(
-        "invite_code", "where", "ref", "max_uses", "days", "note:text", "remove"
-    ),
-    "cheese_space.review": _acting("problem_review", "ref", "choice", "reason:text"),
-    # 个人芝士读网页要过授权判断；房间的读网页直接打 /fetch。
+    "cheese_task.open": _carried("cheese_task.open"),
+    "cheese_card.decide": _carried("cheese_card.decide"),
+    # 以用户的名义发消息：和房间里的 chat_send 同名，房间的发在这里，这个发到
+    # where 那里。
+    "chat_send": _carried("chat_send"),
+    "cheese_people": _carried("cheese_people"),
+    "cheese_room.create": _carried("cheese_room.create"),
+    "cheese_room.set": _carried("cheese_room.set"),
+    "cheese_space.set": _carried("cheese_space.set"),
+    "cheese_space.announce": _carried("cheese_space.announce"),
+    "cheese_space.category": _carried("cheese_space.category"),
+    "cheese_space.code": _carried("cheese_space.code"),
+    "cheese_space.review": _carried("cheese_space.review"),
+    # 个人芝士读网页经平台写出的那次调用；房间的读网页直接打 /fetch。
     "cheese_web.fetch": _web_fetch,
     # 个人芝士的通知发给用户本人；房间的发进项目的通知。
     "cheese_notify": lambda args, host: (
@@ -5480,9 +5718,7 @@ class LocalHost:
             method=plan["method"],
         )
         req.add_header("Content-Type", "application/json")
-        # What its gate let a person's 芝士 do is done with the pass it was
-        # given, in place of its own credential (`assistant.passes`).
-        credential = plan.get("pass") or self.environ.get("CHEESE_TOKEN")
+        credential = self.environ.get("CHEESE_TOKEN")
         if credential:
             req.add_header("Authorization", f"Bearer {credential}")
         if self.environ.get("CHEESE_TURN"):
