@@ -12,6 +12,7 @@ import { nextTick, reactive, ref } from 'vue'
 import { getTranscript, SITE_PAGE_SIZE } from '../api'
 import { capAround, MAX_WINDOW, scrollTopAfterPrepend, shouldLoadNewer, shouldLoadOlder } from '../lib/blockPaging'
 import { beginMeasuredLayout, endMeasuredLayout } from '../lib/contentVisibility'
+import { isForbidden } from '../lib/loadFailure'
 import { cachedWindow, cursorOf, rememberWindow } from '../lib/siteWindow'
 
 import { t } from '@/i18n'
@@ -46,6 +47,24 @@ export interface SiteTranscriptHooks {
 export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   const loading = ref(false)
   const errorMsg = ref<string | null>(null)
+  // 401/403 是「不给你看」，不是「这次没读成」：那一格换成一句说清的话，且**不**
+  // 给重试——再试一次还是同一个回答，摆一颗按了没用的按钮只会让人以为是自己点错
+  // 了。判在这里（取数这一层），画面只收一个布尔值（docs/design-system.md §3.10）。
+  const errorForbidden = ref(false)
+  // 这一格报的是哪一种读失败了：最新一页，还是读者自己往上翻的那一页。重试要重发
+  // **那一次**——两者问的是相反方向，拿最新页去重试往上翻，读者按了只会看见现场
+  // 跳回末尾、刚翻上去的那一页还是没回来。
+  const errorFromOlder = ref(false)
+  function fail(e: unknown, fromOlder = false): void {
+    errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+    errorForbidden.value = isForbidden(e)
+    errorFromOlder.value = fromOlder
+  }
+  function clearError(): void {
+    errorMsg.value = null
+    errorForbidden.value = false
+    errorFromOlder.value = false
+  }
 
   // 现场: read-only transcript timeline. 手上这一窗是**当前视角**的：「全部」是房间里
   // 所有人的，「只看某个队友」时只有它自己的——过滤在服务端的分页里做，不是在读到
@@ -139,12 +158,16 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // scrollHeight and compensating with a scrollHeight that already excludes them
       // pulls the reader up by their height on every page. See capAround.
       capSite()
+      // 这一次真的读成了才把上一次的失败收掉：错误态是在这里收的，不是在按下重试
+      // 那一刻收的（见 `retry`）。上面那几条守卫可能让这一趟一个请求都不发，那样
+      // 错误得留着——收掉就等于告诉读者「好了」，可屏上什么都没回来。
+      if (!quiet) clearError()
       return true
     } catch (e) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
       // 也还是好的，把整栏换成一条红条等于一次读慢了就让人看不成现场（同 loadPage
       // 那条规矩）。预取的失败只是这一次没提前拿到，下次滚到边上再补。
-      if (!quiet) errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+      if (!quiet) fail(e, true)
       return false
     } finally {
       olderBusy = false
@@ -302,7 +325,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       loadedOnce = true
       loadedFor = author
       loadedTopic = tid
-      errorMsg.value = null
+      clearError()
       hooks.noteAgents(tx.data)
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
@@ -357,7 +380,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       void prefetchOlder()
     } catch (e) {
       if (firstRead || switched || switchedTopic) {
-        errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
+        fail(e)
       }
     } finally {
       loading.value = false
@@ -406,6 +429,30 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       } while (reloadQueued)
     } finally {
       loadingPage = false
+    }
+  }
+
+  /** 读者按下那颗「重试」：再读**失败的那一次**，读成了才把失败收掉。
+   *
+   *  再读哪一个由失败的那一次定：最新一页失败了就重读最新一页；读者往上翻的那一
+   *  页失败了就重发那一页的请求（`before` 游标还在，`hasOlder` 也还立着）。拿最新
+   *  一页去顶替它会把人拽回末尾，而且他停在历史中间、窗口又被裁过时（`hasNewer`
+   *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。
+   *
+   *  错误不在这里收：两条路自己的守卫都可能让这一趟一个请求都不发（最新一页那条
+   *  `hasNewer` 守卫、往上翻那条 `olderBusy` / `hasOlder` / 游标守卫）。当场收掉的
+   *  话，读者看见红条凭空消失、屏上什么都没回来——正是这一颗按钮要避免的样子。收
+   *  在读到之后：`loadPage` 与 `loadOlder` 各自读完才 `clearError()`。
+   *
+   *  最新一页那一路要先把错误收掉再读，否则 `loadPage` 认的是「这一格已经报错了」，
+   *  骨架屏不会出现（它只在 `errorMsg` 为空时才摆）——按了像是没反应。往上翻那一路
+   *  没有这个顾虑：它自己摆的是「加载更早的现场…」，与错误态不冲突。 */
+  function retry(): void {
+    if (errorFromOlder.value) {
+      void loadOlder()
+    } else {
+      clearError()
+      void load()
     }
   }
 
@@ -502,8 +549,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     loading,
     loadingOlder,
     errorMsg,
+    errorForbidden,
     arrived,
     load,
+    retry,
     onSiteScroll,
     receive,
   }

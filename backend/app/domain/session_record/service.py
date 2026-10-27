@@ -46,6 +46,7 @@ from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
 from app.core.storage import StorageBackend, private_storage
 from app.domain.conversation.models import Conversation
+from app.domain.session_record import models as session_record_models
 from app.domain.session_record.archive import (
     INDEX_PREFIX,
     describe,
@@ -702,15 +703,40 @@ async def read(
             width = min(width * 2, SEALED_FETCH_PARALLEL)
     await flush()
     # The bucket's index survives the database's thirty-day index: what the
-    # rows no longer hold is still there, under its own key. It is skipped only
-    # when the rows yielded **more than** a page — then, and only then, there
-    # is a boundary to hand back and nothing older could displace it. At
-    # exactly `limit` the reader must still be sent into the archive: the
-    # surplus that would have named their way up may be records whose rows were
-    # swept, and the listing is a round trip the open panel pays every three
-    # seconds only when it actually needs the older half.
+    # rows no longer hold is still there, under its own key. Listing it is a
+    # round trip, so it is skipped whenever it cannot name anything this page
+    # is missing:
+    #
+    # - A forward read (`after`) from inside the retention window. Every run it
+    #   could name is filtered to `last_at >= after[0]`, and a row is swept only
+    #   once its own `last_at` is past the window — so each of those runs still
+    #   has its row, and the listing could only hand back what the rows already
+    #   gave. This is the read the open panel makes: its cursor is seconds old,
+    #   every three seconds, and that listing was the renewal's whole cost —
+    #   right up to the rate limit that made the read answer as a timeout.
+    # - A newest-page read the rows already overfilled: there is a boundary to
+    #   hand back and nothing older could displace it. At exactly `limit` the
+    #   reader must still be sent into the archive — the surplus that would
+    #   have named their way up may be records whose rows were swept.
+    #
+    # Nothing else may skip it. A backward read (`before`, or neither cursor)
+    # has no floor under it: the record just above the page may be one whose
+    # row the sweep has already taken.
+    #
+    # The window is `models.RETENTION` — the very value `retention.expire`
+    # deletes by — read through the module rather than imported as a name: a
+    # reader holding its own copy would skip the listing while a sweep by the
+    # real value had taken the rows, and answer a short page as if it were
+    # complete. (It lives in `models`, below both this module and `retention`,
+    # because `retention` imports this one.)
+    window = datetime.now(UTC) - session_record_models.RETENTION
+    inside_the_window = after is not None and after[0] >= window
     archive = storage or bucket()
-    if archive is not None and not (newest and len(found) > limit):
+    if (
+        archive is not None
+        and not inside_the_window
+        and not (newest and len(found) > limit)
+    ):
         runs = []
         async for key in archive.list_keys(f"{INDEX_PREFIX}/{conversation_id}/"):
             run = describe(key)
