@@ -323,7 +323,13 @@ it('a live frame is asked for a snapshot once it settles, and the snapshot is ha
     expect(send.mock.calls.some((call) => call[0].type === 'snapshot')).toBe(false)
     vi.advanceTimersByTime(2_000)
     expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'snapshot', sessionId: hello.sessionId })
-    dispatch({ ...hello, type: 'snapshot', html: '<!DOCTYPE html><p>hi</p>', href: 'https://preview-fixed.example/', title: 't' })
+    dispatch({
+      ...hello,
+      type: 'snapshot',
+      html: '<!DOCTYPE html><p>hi</p>',
+      href: 'https://preview-fixed.example/',
+      title: 't',
+    })
     expect(onSnapshot).toHaveBeenCalledTimes(1)
     expect(onSnapshot.mock.calls[0]![1]).toEqual({
       html: '<!DOCTYPE html><p>hi</p>',
