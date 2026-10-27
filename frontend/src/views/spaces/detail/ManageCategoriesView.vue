@@ -139,7 +139,6 @@ import type { SpaceCategory } from '@/types'
 
 import { reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -155,6 +154,7 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
 import { defaultRolePayload } from '@/lib/teaching'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useDialog } from '@/plugins/dialog'
 
 export interface CategoryFormValues {

@@ -107,7 +107,6 @@ import type { DomainGroup } from '@/types'
 
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -117,6 +116,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useDialog } from '@/plugins/dialog'
 
 export interface DomainGroupValues {

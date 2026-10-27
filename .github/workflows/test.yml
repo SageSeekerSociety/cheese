@@ -161,6 +161,13 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
+      # The same comparison for who may call a write route: no route added
+      # here leaves it to its handler (ROUTE_DECIDES).
+      - name: No new write route declares ROUTE_DECIDES
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files route-decides
+
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
