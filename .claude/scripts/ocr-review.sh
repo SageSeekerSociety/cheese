@@ -125,13 +125,12 @@ die() { echo "ocr-review: $*" >&2; exit 1; }
 # Prints a note on stdout when the ceiling is what ended the run, so the caller
 # can say so: a run cut this way is a partial result, not a failed one.
 run_ocr() {
-  local out=$1 log=$2
+  local out=$1 log=$2 status
   shift 2
-  local status
-  set +e
+  # `if` rather than set +e/set -e: toggling errexit here would change the
+  # caller's shell, and this is called from the main flow and from a test.
   if [ "$WALL_CLOCK_MIN" = 0 ]; then
-    "$@" >"$out" 2>"$log"
-    status=$?
+    if "$@" >"$out" 2>"$log"; then status=0; else status=$?; fi
   else
     # awk, not $(( )): the ceiling may be a fraction of a minute in a test, and
     # bash's arithmetic is integer-only.
@@ -140,12 +139,14 @@ run_ocr() {
     # -w: wait for the child even when setsid had to fork (it does when the
     # caller is already a process-group leader), so the status below is the
     # run's, not setsid's.
-    setsid -w timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
-      "$@" >"$out" 2>"$log"
-    status=$?
+    if setsid -w timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
+         "$@" >"$out" 2>"$log"; then
+      status=0
+    else
+      status=$?
+    fi
     [ "$status" != 124 ] || printf ' (closed at the %sm wall clock)' "$WALL_CLOCK_MIN"
   fi
-  set -e
   return "$status"
 }
 
@@ -337,10 +338,11 @@ RUN=(
 )
 [ -z "$MAX_TOOLS" ] || RUN+=(--max-tools "$MAX_TOOLS")
 
-set +e
-ceiled=$(run_ocr "$OUT" "${OUT%.json}.log" "${RUN[@]}")
-status=$?
-set -e
+if ceiled=$(run_ocr "$OUT" "${OUT%.json}.log" "${RUN[@]}"); then
+  status=0
+else
+  status=$?
+fi
 if [ "$status" != 0 ]; then
   echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
   [ -s "$OUT" ] && echo "ocr-review: partial result: $OUT" >&2
