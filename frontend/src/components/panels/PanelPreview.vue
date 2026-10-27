@@ -108,6 +108,7 @@ const {
   closeEditor,
   toggleHistory,
   toggleDocPage,
+  setDocNarrow,
   setPickMode,
 } = props.preview
 
@@ -192,6 +193,7 @@ function refresh() {
     @close-editor="closeEditor"
     @toggle-history="toggleHistory"
     @toggle-doc-page="toggleDocPage"
+    @doc-narrow="setDocNarrow"
     @mention-click="emit('mention-click', $event)"
   />
 </template>

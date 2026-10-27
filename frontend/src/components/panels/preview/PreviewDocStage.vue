@@ -29,7 +29,6 @@ import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useElementSize } from '@vueuse/core'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewMarkdownLive from './PreviewMarkdownLive.vue'
@@ -45,6 +44,7 @@ import RevisionList from './RevisionList.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { SLIDE_SUFFIXES } from '@/lib/fileKind'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 
 // The history pane only loads once someone opens it: most previews never do, and
@@ -105,6 +105,8 @@ const emit = defineEmits<{
   'toggle-history': []
   /** 换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
   'toggle-doc-page': []
+  /** 这一格窄下来了 / 宽回去了：窄的时候 Word 默认读网页那一份（取数那一层据此挑取哪一份）。 */
+  narrow: [narrow: boolean]
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
   download: []
   /** 点了一个人名（历史栏上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
@@ -180,15 +182,24 @@ const stage = computed(() =>
 //   上一版警告 —— 刷新失败但屏幕上还留着上一版：说清楚看到的不是最新的。
 //   网页视图 —— 同一份文档的另一种读法：排版按屏幕来，元素带着能寻址的编号（表格的
 //   /数据/B2、演示稿的 /slide[1]/shape[@id=2]），那些编号正是芝士改这份文件时要用的。
-//   PDF 那条路没被换掉，默认也仍然是它。
+//   宽处默认仍是 PDF；窄的一格里 Word 默认读这一份，并且按屏宽重排（`reflow`），不再是一页
+//   缩小的纸。
 //   修订清单 —— 页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是用来逐条
 //   处理的；改动那一格用的是同一个组件。
 
 // 「窄」按这一格自己的宽度算（右栏、手机上的一格），不看窗口：窄到放不下这几颗按钮
 // 就把它们收进「…」，文档条始终一行。还没量到宽度时按宽处画，量到了再收。
 const docRef = ref<HTMLElement | null>(null)
-const { width: docWidth } = useElementSize(docRef)
-const compact = computed(() => docWidth.value > 0 && docWidth.value < 560)
+const { narrow: compact, measured } = usePreviewNarrow(docRef)
+watch(
+  [compact, measured],
+  ([narrow, known]) => {
+    if (known) emit('narrow', narrow)
+  },
+  { immediate: true }
+)
+/** 窄处的 Word 网页版按屏宽重排：页宽、页边距、分页都拿掉，字号照原文。 */
+const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
@@ -475,7 +486,7 @@ defineExpose({ snapshot, clearMark })
       <div class="t-meta mt-1">{{ docError }}</div>
     </div>
     <div v-else-if="docPage" class="doc__body">
-      <PreviewPage :html="docPageHtml ?? null" />
+      <PreviewPage :html="docPageHtml ?? null" :reflow="reflow" />
     </div>
     <div v-else class="doc__body">
       <PreviewSlides

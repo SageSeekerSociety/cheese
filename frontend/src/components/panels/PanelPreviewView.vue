@@ -93,6 +93,8 @@ const emit = defineEmits<{
   'toggle-history': []
   /** 文档条上换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
   'toggle-doc-page': []
+  /** 文档这一格窄下来了 / 宽回去了（`PreviewDocStage` 量的）。 */
+  'doc-narrow': [narrow: boolean]
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
   'mention-click': [handle: string]
 }>()
@@ -509,6 +511,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
+      @narrow="emit('doc-narrow', $event)"
       @download="emit('download')"
       @mention-click="emit('mention-click', $event)"
       @quote="onQuote"

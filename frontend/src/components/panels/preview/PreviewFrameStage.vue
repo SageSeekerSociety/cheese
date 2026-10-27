@@ -10,7 +10,6 @@ import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
 import { computed, ref, watch } from 'vue'
-import { useElementSize } from '@vueuse/core'
 
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
@@ -19,6 +18,7 @@ import PreviewRegionPick from './PreviewRegionPick.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 
 const props = defineProps<{
@@ -102,8 +102,7 @@ const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
 // 一格里——那两种都得把这一条收成一行。还没量到宽度（挂载前、测试里没有布局）按宽处
 // 理，先按平铺画，量到了再收，免得一上来就少一排按钮。
 const wrapRef = ref<HTMLElement | null>(null)
-const { width: wrapWidth } = useElementSize(wrapRef)
-const compact = computed(() => wrapWidth.value > 0 && wrapWidth.value < 560)
+const { narrow: compact } = usePreviewNarrow(wrapRef)
 
 // 运行状态平时只说「正常」——那是常态，不该占一整行。只有出问题时才在条上亮一颗
 // 小圆点，点开才展开原来那几行字。

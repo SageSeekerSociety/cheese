@@ -243,6 +243,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     closeEditor: edits.closeEditor,
     toggleHistory: edits.toggleHistory,
     toggleDocPage: doc.toggleDocPage,
+    setDocNarrow: doc.setNarrow,
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: frames.setPickMode,
