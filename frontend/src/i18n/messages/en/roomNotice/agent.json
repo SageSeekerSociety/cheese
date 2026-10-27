@@ -20,7 +20,7 @@
   "cliProviderOverloadedHint": "This is a problem on the service's side and usually clears up quickly. You can retry later.",
   "cliSubscriptionAccountsCooling": "Every Claude subscription account on the platform is rate-limited; this step did not finish",
   "cliSubscriptionAccountsCoolingHint": "The subscription accounts have reached their usage limits and cannot be called until the limits reset, which takes anywhere from minutes to days; a retry before then fails straight away. If you cannot wait, switch to a model that does not run on the subscription.",
-  "cliControlPlaneUnavailable": "The platform's own service was briefly unreachable; this step did not finish",
+  "cliControlPlaneUnavailable": "The platform's own service is temporarily unavailable; this step did not finish",
   "cliControlPlaneUnavailableHint": "A temporary problem on the platform's side — not a spent balance, so nothing needs topping up. It usually clears up quickly; retry in a moment.",
   "cliSubscriptionEgressOffline": "The subscription's egress machine is offline; this step did not finish",
   "cliSubscriptionEgressOfflineHint": "The platform's Claude subscription can only reach the internet through this machine, so models on the subscription cannot be called while it is offline. Retry once it is back online, or switch to another model for now.",
