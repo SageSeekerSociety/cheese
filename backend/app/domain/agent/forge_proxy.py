@@ -332,15 +332,13 @@ class PlatformSocketClient:
             resp = conn.getresponse()
             body = resp.read()
         except _CLIENT_ERRORS as exc:
-            raise OSError(
-                f"platform socket error: {exc}"
-            ) from exc  # i18n-exempt: machine log
+            # i18n-exempt: machine log
+            raise OSError(f"platform socket error: {exc}") from exc
         finally:
             conn.close()
         if resp.status != 200:
-            raise OSError(
-                f"platform socket HTTP {resp.status} for {path}"
-            )  # i18n-exempt: machine log
+            # i18n-exempt: machine log
+            raise OSError(f"platform socket HTTP {resp.status} for {path}")
         return json.loads(body)
 
     def forge_data(self, *, force: bool = False) -> dict | None:
@@ -699,14 +697,12 @@ class ForgeProxyRuntime:
             while b"\r\n\r\n" not in head:
                 chunk = left.recv(4096)
                 if not chunk:
-                    raise OSError(
-                        "forge tunnel closed before establishing"
-                    )  # i18n-exempt: machine log
+                    # i18n-exempt: machine log
+                    raise OSError("forge tunnel closed before establishing")
                 head.extend(chunk)
             if b" 200 " not in head.split(b"\r\n", 1)[0]:
-                raise OSError(
-                    "forge tunnel refused CONNECT"
-                )  # i18n-exempt: machine log
+                # i18n-exempt: machine log
+                raise OSError("forge tunnel refused CONNECT")
             tls_ctx = ssl.create_default_context()
             with tls_ctx.wrap_socket(left, server_hostname=host) as tls_sock:
                 req_lines = [
