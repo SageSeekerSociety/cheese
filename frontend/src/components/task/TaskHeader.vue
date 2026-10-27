@@ -272,7 +272,7 @@ function actionTestId(id: string): string | undefined {
           :title="progressTitle ?? state?.line"
           >{{ state?.line }}</span
         >
-        <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
+        <span v-if="agentLeft && (mdAndUp || !state?.line)" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
@@ -666,10 +666,10 @@ function actionTestId(id: string): string | undefined {
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(auto, 1fr) auto;
   grid-template-rows: auto auto;
   align-content: center;
-  column-gap: 16px;
+  column-gap: 8px;
   row-gap: 1px;
 }
 .task-header--bar .task-header__text {
@@ -683,6 +683,16 @@ function actionTestId(id: string): string | undefined {
 .task-header--bar .task-header__meta {
   grid-column: 1;
   grid-row: 2;
+  min-width: 0;
+  overflow: hidden;
+  gap: 6px;
+}
+.task-header--bar .task-header__left {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .task-header--bar .task-header__state,
 .task-header--bar .task-header__owner {
@@ -699,17 +709,16 @@ function actionTestId(id: string): string | undefined {
   grid-row: 2;
   justify-self: start;
   gap: 4px;
-  min-width: 0;
-  max-width: 100%;
   height: auto;
   padding-block: 8px;
   margin-block: -8px;
 }
 .task-header--bar .task-header__owner-name {
+  max-width: 8em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.task-header--bar [data-testid='task-more'] {
+.task-header--bar :deep([data-testid='task-more']) {
   grid-column: 3;
   grid-row: 1 / 3;
   align-self: center;
