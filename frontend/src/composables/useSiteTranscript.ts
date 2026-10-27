@@ -60,6 +60,22 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     errorForbidden.value = isForbidden(e)
     errorFromOlder.value = fromOlder
   }
+  /** 一次读成功了，收掉它这一次的失败——**只收它自己的那一边**。
+   *
+   *  这一格只画一条错误（`errorMsg`），而两个方向都能把它写上去：最新一页的读、读者
+   *  往上翻的那一页。所以「读成了」不能无差别地收错误：此刻画着的很可能是**另一个
+   *  方向**的那一条，收掉就等于告诉读者「好了」，可他要的那一页根本没回来。
+   *
+   *  - `older` 说这一次读的是哪一边：往上翻读成了只收往上翻那一条，最新一页读成了
+   *    只收最新一页那一条。
+   *  - `opening` 说这是「另开一格」（第一次读、换视角、换对话）：上一格的错误跟它
+   *    没关系，读成了就该收，不看方向。
+   *
+   *  每次读到之后都走它，判据只在这一处——散在几个调用点上写，漏一处就是一个方向
+   *  被另一个方向抹掉（改这一颗按钮时连着踩了四次，就是这么来的）。 */
+  function settleRead({ older, opening }: { older: boolean; opening: boolean }): void {
+    if (opening || errorFromOlder.value === older) clearError()
+  }
   function clearError(): void {
     errorMsg.value = null
     errorForbidden.value = false
@@ -123,11 +139,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     // 时错误得留着（`retry` 靠这一点，才不是「按了等于没按」）。收在这里而不是按下
     // 重试那一刻，是因为错误态占着整块地方——不收的话读者看不见「加载更早的现场…」，
     // 也看不见屏上那几行，按下去像是没反应。
-    //
-    // 只收 `errorFromOlder` 那一条：`clearError()` 抹的是「此刻画着的那条错误」，
-    // 而这一刻画着的可能是最新一页的失败或一个 403——读者换了个视角、最新一页还没
-    // 读到时，后台这条往回读成功了不该把它连人带按钮一起抹掉。
-    if (!quiet && errorFromOlder.value) clearError()
+    if (!quiet) settleRead({ older: true, opening: false })
     try {
       const page = await getTranscript(tid, {
         limit: SITE_PAGE_SIZE,
@@ -168,12 +180,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // pulls the reader up by their height on every page. See capAround.
       capSite()
       // 预取也可能正好把失败的那一页拿回来（它读的正是没挪过的游标）。那几行已经在
-      // 手上了，红条却还盖着它们——读者还得再按一次重试，重发一条他手上已经有了的
-      // 请求。所以这里不看 `quiet`：往回读成功了就是成功了，那一条错误该收。
-      //
-      // 但只收 `errorFromOlder` 那一条，理由同上：此刻画着的可能是最新一页的失败或
-      // 一个 403，往回读读成了不该替它们做主。
-      if (errorFromOlder.value) clearError()
+      // 手上了，红条却还盖着它们——读者得再按一次重试、重发一条他手上已经有的请求。
+      // 所以这里不看 `quiet`：往回读成功了就是成功了，那一条错误该收。
+      settleRead({ older: true, opening: false })
       return true
     } catch (e) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
@@ -337,14 +346,8 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       loadedOnce = true
       loadedFor = author
       loadedTopic = tid
-      // 只收最新一页这一边的错误：此刻画着的可能是「往上翻失败」那一条，而这一趟
-      // 读的是最新一页，替不了它。3 秒一次的刷新每一下都会走到这里，不收手的话，
-      // 读者一往上翻失败、红条刚出来，下一次刷新读成了就把它连重试一起抹掉——而那
-      // 一页其实没回来。
-      //
-      // `opening` 那三种（第一次读、换视角、换对话）除外：那是另一条时间线，上一格
-      // 的错误跟它没关系，读成了就该收。
-      if (opening || !errorFromOlder.value) clearError()
+      // 读到之后收掉这一次的失败（`settleRead` 管着「只收自己那一边」这条判据）。
+      settleRead({ older: false, opening })
       hooks.noteAgents(tx.data)
       hooks.noteStarts(tx.turn_starts)
       // 跟不跟，读读者自己滚出来的那个状态，而不是此刻量一次：请求在路上的这几百毫秒
@@ -458,14 +461,14 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    *  一页去顶替它会把人拽回末尾，而且他停在历史中间、窗口又被裁过时（`hasNewer`
    *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。
    *
-   *  错误收在哪由两条路自己定，都不在这里收：往上翻那一路在 `loadOlder` 的守卫放行、
-   *  请求真的要发出去之后才收（守卫发不出去就留着）；最新一页那一路由这里先收，因为
-   *  `loadPage` 的骨架屏只在 `errorMsg` 为空时才摆——而那一路上报的错误，按定义只
-   *  出现在 `firstRead` / 换视角 / 换对话这几种状态下，恰好都是 `hasNewer` 那条守卫
-   *  不成立的时候，所以先收不会被守卫吞掉。
+   *  错误收在哪由两条路自己定，都不在这里收（收在读到之后，见 `settleRead`）：往上翻
+   *  那一路在 `loadOlder` 的守卫放行、请求真的要发出去之后收；最新一页那一路在读到
+   *  之后收。都不能「按下去当场收」：那会让发不出去的那几趟也把红条抹掉，读者看见
+   *  红条凭空消失、屏上什么都没回来。
    *
-   *  都不能「按下去当场收」：那会让发不出去的那几趟也把红条抹掉，读者看见红条凭空
-   *  消失、屏上什么都没回来。 */
+   *  唯独最新一页那一路要**先收再读**：它的骨架屏只在 `errorMsg` 为空时才摆。而它
+   *  上报错的状态（第一次读、换视角、换对话）恰好都是 `hasNewer` 守卫不成立的时候，
+   *  所以先收不会被守卫吞掉。 */
   function retry(): void {
     if (errorFromOlder.value) {
       void loadOlder()
