@@ -72,6 +72,7 @@
   "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
   "retryTarget": "Retry new content",
   "runningApp": "Running app",
+  "runtimeAlert": "The app has a problem. Open for details",
   "runtimeFailed": "App reported failure",
   "runtimeReady": "App confirmed ready",
   "runtimeUnconfirmed": "Navigation loaded; app readiness unconfirmed",

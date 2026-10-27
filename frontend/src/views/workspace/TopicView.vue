@@ -406,7 +406,7 @@ void openPlace()
           class="pane-resizer"
           :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
-          @dblclick="store.setChatPct(50)"
+          @dblclick="store.resetChatPct()"
         />
 
         <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
