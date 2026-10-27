@@ -221,6 +221,18 @@ it('窄面板把「在新标签页打开」「下载」「刷新」收进「…�
   expect(ui.container.textContent).toContain('在新标签页打开')
 })
 
+it('窄面板上视口三档进了「…」菜单，照样能切', async () => {
+  panelWidth.value = 390
+  const ui = staticFileMount()
+  const text = ui.container.textContent ?? ''
+  expect(text).toContain('桌面')
+  expect(text).toContain('手机')
+  const items = ui.getAllByRole('menuitem')
+  const mobile = items.find((el) => (el.textContent ?? '').includes('手机'))!
+  await fireEvent.click(mobile)
+  expect(ui.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+})
+
 it('换一页时上一帧还摆着：加载那一句照样说得出口', () => {
   const ui = mount('navigating', frame())
   expect(ui.container.textContent).toContain('正在加载新页面')

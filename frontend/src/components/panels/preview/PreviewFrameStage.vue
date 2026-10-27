@@ -166,8 +166,15 @@ type BarAction = {
   /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
   testid?: string
   disabled?: boolean
+  /** 菜单里那一行是不是当前选中的那一档（视口三档）。 */
+  active?: boolean
   run: () => void
 }
+const VIEWPORTS = [
+  { key: 'desktop', icon: 'mdi-monitor', label: 'work.room.preview.viewportDesktop' },
+  { key: 'tablet', icon: 'mdi-tablet', label: 'work.room.preview.viewportTablet' },
+  { key: 'mobile', icon: 'mdi-cellphone', label: 'work.room.preview.viewportMobile' },
+] as const
 const actions = computed<BarAction[]>(() => {
   const list: BarAction[] = []
   if (props.path) {
@@ -206,6 +213,20 @@ const actions = computed<BarAction[]>(() => {
       testid: 'refresh-preview',
       run: () => emit('refresh'),
     })
+  }
+  // 窄时条上放不下视口三键，它们进菜单，照样能切。
+  if (compact.value && !showSource.value) {
+    for (const mode of VIEWPORTS) {
+      list.push({
+        key: `viewport-${mode.key}`,
+        icon: mode.icon,
+        label: t(mode.label),
+        active: viewport.value === mode.key,
+        run: () => {
+          viewport.value = mode.key
+        },
+      })
+    }
   }
   return list
 })
@@ -262,7 +283,7 @@ watch(
       </button>
       <v-spacer v-if="path" />
       <template v-if="compact">
-        <v-menu location="bottom end">
+        <v-menu v-if="actions.length" location="bottom end">
           <template #activator="{ props: menuProps }">
             <BaseButton
               v-bind="menuProps"
@@ -281,6 +302,7 @@ watch(
               :key="action.key"
               role="menuitem"
               :prepend-icon="action.icon"
+              :active="action.active"
               :disabled="action.disabled"
               @click="action.run()"
             >
@@ -375,6 +397,9 @@ watch(
         · {{ t('work.room.preview.instanceDisconnected') }}</span
       >
       <span v-if="displayedFrame.connection === 'gone'"> · {{ t('work.room.preview.instanceGone') }}</span>
+      <span v-if="compact && displayedFrame.version">
+        · {{ t('work.room.preview.readVersion', { version: displayedFrame.version }) }}</span
+      >
       <div v-if="displayedFrame.runtimeError" role="alert">{{ displayedFrame.runtimeError }}</div>
     </div>
     <div v-if="step" role="status" class="px-3 py-2 text-caption">

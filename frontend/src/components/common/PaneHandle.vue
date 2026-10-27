@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 贴在右边那一栏左缘的拖把：拖动改宽度，左右键也能调，双击回到一半（见 `usePaneWidth`）。
+// 贴在右边那一栏左缘的拖把：拖动改宽度，左右键也能调，双击回到默认（见 `usePaneWidth`）。
 // 样式照对话栏和工作面板之间那一条（`pane-resizer`）：平时是一条细线，悬停变深。
 import type { usePaneWidth } from '@/composables/usePaneWidth'
 
@@ -16,14 +16,14 @@ const props = defineProps<{ pane: ReturnType<typeof usePaneWidth> }>()
     aria-orientation="vertical"
     tabindex="0"
     :aria-valuenow="props.pane.percent.value"
-    aria-valuemin="30"
-    aria-valuemax="75"
+    :aria-valuemin="props.pane.minPercent.value"
+    :aria-valuemax="props.pane.maxPercent"
     :aria-label="t('work.topic.resize')"
     :title="t('work.topic.resize')"
     data-testid="pane-handle"
     @pointerdown="props.pane.startDrag"
     @keydown="props.pane.onKey"
-    @dblclick="props.pane.set(0.5)"
+    @dblclick="props.pane.reset()"
   />
 </template>
 

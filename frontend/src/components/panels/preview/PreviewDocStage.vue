@@ -298,7 +298,6 @@ defineExpose({ snapshot, clearMark })
             :key="action.key"
             role="menuitem"
             :prepend-icon="action.icon"
-            :title="action.title"
             :disabled="action.disabled"
             @click="action.run()"
           >

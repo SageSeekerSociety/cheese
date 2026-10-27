@@ -64,6 +64,7 @@ export function lastPlaceOf(projectKey: string | null): RememberedPlace | null {
 export function useLayout(projectId: Ref<string | null>) {
   const stored = loadLayout()
   // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给预览，对话栏占 45%。
+  // index.html 首屏骨架里抄了同一条规则，两处一起改。
   // 拖过一次就记住他选的（`setChatPct`）。
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : defaultChatPct())
   const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
