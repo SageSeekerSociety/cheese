@@ -15,6 +15,7 @@ import { useDesignShortcuts } from './useDesignShortcuts'
 import { useDesignViewport } from './useDesignViewport'
 
 import { t } from '@/i18n'
+import { takeImageTool } from '@/lib/chatImages'
 
 const props = withDefaults(
   defineProps<{
@@ -282,6 +283,15 @@ watch(
     standaloneRegion.value = null
   },
   { flush: 'sync' }
+)
+// 从对话的看图浮层点「写字」「打码」「框选批注」交过来的：打开就是那件工具。
+watch(
+  () => props.identity,
+  (identity) => {
+    const handed = takeImageTool(identity)
+    if (handed) tool.value = handed
+  },
+  { immediate: true }
 )
 // 收起来的那一刻把手里的东西放下：按着的空格、（真在拖的话）正在进行的平移。
 watch(

@@ -197,6 +197,19 @@
      to --ink. */
   --avatar-ink: #fff;
 
+  /* ---- Picture viewer ----
+     The full-screen picture viewer (ImageLightbox) is dark in both themes: a
+     picture is judged against a dark surround, and a light scrim lets the page
+     behind compete with it. The ground does not change with the theme, so the
+     ink and fills on it do not either (same exception as --avatar-ink). The
+     dark block repeats these values deliberately. */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -521,6 +534,12 @@
   --inverse-fill: rgba(255, 255, 255, 0.1);
 
   --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
 
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;

@@ -11,7 +11,7 @@ import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -25,7 +25,9 @@ import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
+import { isImageBlock } from '../lib/blockDisplay'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { CHAT_IMAGE_ACTIONS, handOffImageTool } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import BookmarkRail from './chat/BookmarkRail.vue'
@@ -428,6 +430,23 @@ const submitQuestion = createQuestionSubmit({
   send,
 })
 defineExpose({ send, linkDown, submitQuestion })
+
+// 看图浮层要的三样（lib/chatImages）：这段对话里有哪些图、右侧面板、输入框，都在这一层。
+provide(CHAT_IMAGE_ACTIONS, {
+  gallery: () => [
+    ...new Set(
+      rows.value
+        .flatMap((row) => (row.run.length ? row.run : [row.block]))
+        .filter(isImageBlock)
+        .map((b) => b.content)
+    ),
+  ],
+  openInPanel: (path, tool) => {
+    handOffImageTool(path, tool)
+    emit('open-file', path)
+  },
+  attach: (file) => void addFiles([file]),
+})
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
 useComposerShortcut({
