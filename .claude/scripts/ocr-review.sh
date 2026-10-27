@@ -135,7 +135,10 @@ run_ocr() {
     # bash's arithmetic is integer-only.
     local ceiling
     ceiling=$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { printf "%d", m * 60 }')
-    setsid timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
+    # -w: wait for the child even when setsid had to fork (it does when the
+    # caller is already a process-group leader), so the status below is the
+    # run's, not setsid's.
+    setsid -w timeout --signal=TERM --kill-after="$GRACE_S" "${ceiling}s" \
       "$@" >"$out" 2>"$log"
     status=$?
     [ "$status" != 124 ] || printf ' (closed at the %sm wall clock)' "$WALL_CLOCK_MIN"
