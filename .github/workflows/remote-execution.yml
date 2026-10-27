@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:48f693df661a2569cfdbdf260476973c710837fbdd138f5e50834c762ea86467
-      ACCEPTANCE_OWNER_REVISION: f85e3813acf4c124ea5cb7e7855c8ee5cdb0d1c8
+      ACCEPTANCE_OWNER_REVISION: 151b1cf7226a6874d720b1008ebbb1f6d9038f9e
       ACCEPTANCE_COMMIT: ${{ github.sha }}
     permissions:
       contents: read
