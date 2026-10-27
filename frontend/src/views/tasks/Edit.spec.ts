@@ -1,8 +1,10 @@
 // 改题页：挂的是真页面、真表单，接口在 API 层答着（真 axios 会被
 // `src/test/setup-network.ts` 逮住，未预期的请求直接判失败）。量的是：
 //
-// 「默认队友」选「沿用上层设置」时写出的那一位，跟着表单上现在显示的项目集走 ——
-// 从第一次画出来就是：项目集来自题目本身、来自打开的修改草稿，都一样。
+// 1. 「默认队友」选「沿用上层设置」时写出的那一位，跟着表单上现在显示的项目集走 ——
+//    从第一次画出来就是：项目集来自题目本身、来自打开的修改草稿，都一样。
+// 2. 草稿：只打开、不改一格就走，这个人的草稿一份都不多；第一次改动才建这道题的修改。
+//    草稿接口答在一份内存里的「这个人的草稿」上（`drafts`），量的是走了以后它里面有什么。
 //
 // i18n 装真的那一份并锁到 zh-CN；tiptap 换成壳 —— 它跟这一页要量的事无关。
 import type { Component } from 'vue'
@@ -23,7 +25,6 @@ import { TaskDraftsApi } from '@/api/taskDrafts'
 import i18n, { setLocale } from '@/i18n'
 
 const taskDetail = vi.fn()
-const draftForTask = vi.fn()
 const listCategories = vi.fn()
 const listAgentTypes = vi.fn()
 const apiRequest = vi.fn()
@@ -48,12 +49,49 @@ vi.mock('@/api/taskBoard', () => ({
   },
 }))
 
+type Draft = {
+  id: number
+  spaceId: number
+  taskId: number | null
+  version: number
+  fields: Record<string, unknown>
+} & Record<string, unknown>
+
+/** 这个人在服务端的草稿，草稿接口照它答（同 `routes/tasks/drafts.py`）。 */
+const drafts = new Map<number, Draft>()
+let nextDraftId = 61
+/** 题目现在的样子，作为改题表单的起点（服务端 `_task_as_form`）。 */
+let taskForm: Record<string, unknown> = {}
+
+function keep(row: Omit<Draft, 'id'> & { id?: number }): Draft {
+  const id = row.id ?? nextDraftId++
+  const kept = { ...row, id } as Draft
+  drafts.set(id, kept)
+  return kept
+}
+const editDraft = (taskId: number) => [...drafts.values()].find((d) => d.taskId === taskId)
+
 vi.mock('@/api/taskDrafts', () => ({
   TaskDraftsApi: {
-    forTask: (...a: unknown[]) => draftForTask(...a),
-    save: vi.fn(async () => ({ version: 2, updatedAt: '2026-10-20T08:01:00Z' })),
+    changes: async (taskId: number) => {
+      const row = editDraft(taskId)
+      return { draft: row ?? null, form: row?.fields ?? taskForm }
+    },
+    forTask: async (taskId: number) =>
+      editDraft(taskId) ?? keep({ spaceId: SPACE_ID, taskId, version: 0, fields: { ...taskForm } }),
+    start: async (spaceId: number, fields: Record<string, unknown>) =>
+      keep({ spaceId, taskId: null, version: 0, fields }),
+    save: vi.fn(async (id: number, fields: Record<string, unknown>) => {
+      const row = drafts.get(id)!
+      row.fields = { ...row.fields, ...fields }
+      row.version += 1
+      return { version: row.version, updatedAt: '2026-10-20T08:01:00Z' }
+    }),
     publish: vi.fn(),
-    remove: vi.fn(),
+    remove: vi.fn(async (id: number) => {
+      drafts.delete(id)
+      return {}
+    }),
   },
 }))
 
@@ -159,7 +197,7 @@ function task(categoryId: number) {
   }
 }
 
-function draftOf(categoryId: number) {
+function draftOf(categoryId: number): Draft {
   return {
     id: 61,
     spaceId: SPACE_ID,
@@ -212,12 +250,15 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  drafts.clear()
+  nextDraftId = 61
+  taskForm = {}
 })
 
 describe('改题页：默认队友沿用的那一位', () => {
   it('打开的修改草稿换了项目集：一画出来就写草稿那个项目集的队友，不是题目原来那个的', async () => {
     taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
-    draftForTask.mockResolvedValue(draftOf(CATEGORY_B.id))
+    keep(draftOf(CATEGORY_B.id))
 
     const view = await mount()
 
@@ -227,7 +268,7 @@ describe('改题页：默认队友沿用的那一位', () => {
 
   it('草稿没动项目集：写题目所在项目集的队友', async () => {
     taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
-    draftForTask.mockResolvedValue(draftOf(CATEGORY_A.id))
+    keep(draftOf(CATEGORY_A.id))
 
     const view = await mount()
 
@@ -239,7 +280,7 @@ describe('改题页：保存', () => {
   it('保存被服务端拒了：页面上留着服务端那句话，人还在这一页', async () => {
     const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
     taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
-    draftForTask.mockResolvedValue(draftOf(CATEGORY_A.id))
+    keep(draftOf(CATEGORY_A.id))
     // No stage changes, so nothing for the stage check to ask about.
     vi.mocked(TaskBoardApi.stageEffect).mockResolvedValue({ failing: 0, reopening: 0, failingNames: [] } as never)
     vi.mocked(TaskDraftsApi.publish).mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
@@ -257,10 +298,9 @@ describe('改题页：保存', () => {
   it('保存被拒以后放弃修改：重开的那份修改上不再挂着上一份的拒绝原因', async () => {
     const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
     taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
-    // The changes as they were, then — after they are discarded — a fresh copy of the task.
-    draftForTask
-      .mockResolvedValueOnce(draftOf(CATEGORY_A.id))
-      .mockResolvedValue({ ...draftOf(CATEGORY_A.id), id: 62, version: 0 })
+    // The changes as they were; once discarded, the page reopens on the task as it is.
+    keep(draftOf(CATEGORY_A.id))
+    taskForm = draftOf(CATEGORY_A.id).fields
     vi.mocked(TaskBoardApi.stageEffect).mockResolvedValue({ failing: 0, reopening: 0, failingNames: [] } as never)
     vi.mocked(TaskDraftsApi.publish).mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
     const view = await mount()
@@ -269,7 +309,47 @@ describe('改题页：保存', () => {
 
     await fireEvent.click(view.getByRole('button', { name: '放弃修改' }))
 
-    await waitFor(() => expect(draftForTask).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(view.queryByText(said)).toBeNull())
+    await waitFor(() => expect(view.queryByRole('button', { name: '放弃修改' })).toBeNull())
+    expect(view.queryByText(said)).toBeNull()
+  })
+})
+
+describe('改题页：修改草稿', () => {
+  /** 名称那一格。 */
+  function nameInput(view: ReturnType<typeof render>): HTMLInputElement {
+    return view.getAllByLabelText('名称', { exact: false }).find((el) => el.tagName === 'INPUT') as HTMLInputElement
+  }
+
+  it('只打开、一格没改就走：这个人的草稿一份都不多', async () => {
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    // On dev the task, its categories and its changes took longer to load than the
+    // autosave waits (600 ms); the page's own loading must not count as a change then.
+    listCategories.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ categories: [CATEGORY_A, CATEGORY_B] }), 800))
+    )
+
+    const view = await mount()
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    cleanup()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect([...drafts.values()]).toEqual([])
+  })
+
+  it('第一次改动才建这道题的修改，改的那一格存进去；不建空间里的新题目', async () => {
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    const view = await mount()
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+
+    await fireEvent.update(nameInput(view), 'Lab 3 缓存模拟器（修订）')
+
+    await waitFor(() => expect(drafts.size).toBe(1), { timeout: 3000 })
+    const [row] = [...drafts.values()]
+    expect(row.taskId).toBe(TASK_ID)
+    await waitFor(() => expect(row.fields.name).toBe('Lab 3 缓存模拟器（修订）'))
+    expect(await view.findByRole('button', { name: '放弃修改' })).toBeTruthy()
   })
 })

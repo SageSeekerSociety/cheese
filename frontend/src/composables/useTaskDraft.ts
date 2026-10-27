@@ -3,8 +3,8 @@
 // 两只手往里写：
 //
 // - **人**在页面上改：每改一格就存（停手 600ms 后一起存），存的是改了的那几格。还没有
-//   草稿（发布页刚打开）时，第一次改动或第一次问芝士才建一份，地址栏记下它的编号，刷新
-//   能接着写。
+//   草稿（发布页、改题页刚打开）时，第一次改动或第一次问芝士才建一份：发布页的记进地址栏，
+//   刷新能接着写；改题页的是这道题的那份修改。
 // - **芝士**答题时写：它的参数边写边流过来，页面先把能确定的几格填上（预览，不存——
 //   这几格这时归芝士，人的保存跳过它们）；调用真正写进草稿以后，服务端推回来的改动才是
 //   定数，覆盖预览、记成已存；调用报错就把预览收回。
@@ -35,6 +35,8 @@ function same(a: unknown, b: unknown): boolean {
 export interface DraftOptions {
   /** 新建草稿时它在哪个空间。 */
   spaceId: () => number | null
+  /** 改的是这道已发布的题目：建的是它的那份修改，不是空间里一道新题目。 */
+  taskId?: () => number | null
   /** 建好了一份草稿：页面把编号写进地址栏。 */
   started?: (draft: TaskDraft) => void
 }
@@ -101,16 +103,30 @@ export function useTaskDraft(options: DraftOptions) {
       if (!(key in pending)) (saved as Record<string, unknown>)[key] = value
   }
 
-  /** 还没有草稿就建一份，带上表单现在的样子（和 `extra`，还没存的那几格）。 */
+  /** 建这份草稿，写进 `written`。改题时是这道题的那份修改：从题目现在的样子开，再存进
+   *  人改的几格；发题时是空间里一份新的。 */
+  async function create(taskId: number | null, written: TaskDraftFields): Promise<TaskDraft> {
+    if (taskId) {
+      const row = await TaskDraftsApi.forTask(taskId)
+      if (!Object.keys(written).length) return row
+      const done = await TaskDraftsApi.save(row.id, written)
+      return { ...row, fields: { ...row.fields, ...written }, version: done.version, updatedAt: done.updatedAt }
+    }
+    const spaceId = options.spaceId()
+    if (!spaceId) throw new Error('no space to start a draft in')
+    return TaskDraftsApi.start(spaceId, written)
+  }
+
+  /** 还没有草稿就建一份，带上 `extra`（还没存的那几格）。 */
   async function ensure(extra: TaskDraftFields = {}): Promise<TaskDraft> {
     if (draft.value) return draft.value
     if (starting) return starting
-    const spaceId = options.spaceId()
-    if (!spaceId) throw new Error('no space to start a draft in')
-    const fields = { ...saved, ...(form?.values() ?? {}), ...pending, ...extra }
-    starting = TaskDraftsApi.start(spaceId, fields).then((row) => {
+    const taskId = options.taskId?.() ?? null
+    // 改题页的表单就是照题目现在的样子装的，只有人改的几格要写；新题目带上表单的全部。
+    const written = taskId ? { ...pending, ...extra } : { ...saved, ...(form?.values() ?? {}), ...pending, ...extra }
+    starting = create(taskId, written).then((row) => {
       draft.value = row
-      saved = { ...row.fields }
+      saved = { ...saved, ...written }
       pending = {}
       saveState.value = 'saved'
       options.started?.(row)

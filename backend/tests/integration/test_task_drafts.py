@@ -169,6 +169,52 @@ def test_changes_to_a_published_task_are_a_draft_until_saved(
     assert refused.status_code in (403, 404)
 
 
+def test_opening_a_published_tasks_changes_starts_no_draft(
+    api_client: TestClient, board: dict
+):
+    """Opening the edit page is not changing the 题目: the person's draft list
+    stays as it was until they change something."""
+    teacher = board["teacher"]
+    draft = _start(api_client, board, fields={**FORM, "deadline": _deadline_ms()})
+    task = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    ).json()["data"]["task"]
+    listing = f"/task-drafts?space={board['space']['id']}"
+
+    opened = api_client.get(
+        f"/task-drafts/changes?task={task['id']}", headers=_headers(teacher)
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["data"]["draft"] is None
+    assert opened.json()["data"]["form"]["name"] == "Lab 3 缓存模拟器"
+    assert (
+        api_client.get(listing, headers=_headers(teacher)).json()["data"]["drafts"]
+        == []
+    )
+
+    # Once there are changes, opening the page opens them.
+    changes = api_client.post(
+        "/task-drafts", json={"task": task["id"]}, headers=_headers(teacher)
+    ).json()["data"]
+    api_client.patch(
+        f"/task-drafts/{changes['id']}",
+        json={"fields": {"name": "Lab 3 缓存模拟器（修订）"}},
+        headers=_headers(teacher),
+    )
+    reopened = api_client.get(
+        f"/task-drafts/changes?task={task['id']}", headers=_headers(teacher)
+    ).json()["data"]
+    assert reopened["draft"]["id"] == changes["id"]
+    assert reopened["form"]["name"] == "Lab 3 缓存模拟器（修订）"
+
+    # Only those who may change the 题目 read it.
+    refused = api_client.get(
+        f"/task-drafts/changes?task={task['id']}",
+        headers=_headers(board["stranger"]),
+    )
+    assert refused.status_code in (403, 404)
+
+
 def test_cheese_writes_a_new_draft_in_its_own_words(
     api_client: TestClient, board: dict
 ):
