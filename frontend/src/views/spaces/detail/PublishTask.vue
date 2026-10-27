@@ -138,6 +138,11 @@ const formKey = ref(0)
 const publishedHere = ref(false)
 /** 上一次发布没成的原因，留在页头，直到再点发布或换一份草稿。 */
 const publishError = ref('')
+// 原因属于它说的那份草稿：换了一份（新建的、从草稿列表或上方那一排切过去的），就不再是它的事。
+watch(
+  () => draft.id.value,
+  () => (publishError.value = '')
+)
 
 /** 不在表单里、但也存进草稿的几样：附件、AI 指导、默认队友。 */
 const teaching = ref<SpaceTeaching>({})
@@ -188,7 +193,6 @@ function fill(fields: TaskDraftFields) {
 async function openDraft(id: number | null) {
   draftReady.value = false
   publishedHere.value = false
-  publishError.value = ''
   await draft.flush()
   let row: TaskDraft | null = null
   if (id !== null) {

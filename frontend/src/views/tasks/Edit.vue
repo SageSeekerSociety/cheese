@@ -245,6 +245,11 @@ const saving = ref(false)
 const resubmit = ref(false)
 /** 上一次保存没成的原因，留在页头，直到再点保存（同发题页的发布）。 */
 const saveError = ref('')
+// 原因属于它说的那份修改：换了一份（放弃修改后重开的、别处换掉的），就不再是它的事。
+watch(
+  () => draft.id.value,
+  () => (saveError.value = '')
+)
 
 // 改了阶段的截止、增删了阶段，存下去可能让学生被判未通过或回到进行中：存之前先说有几个人。
 const stageCheck = useStageChangeCheck((stages) => TaskBoardApi.stageEffect(taskId, stages))

@@ -253,4 +253,23 @@ describe('改题页：保存', () => {
     expect(await view.findByText(said)).toBeTruthy()
     expect(view.container.querySelector('form')).not.toBeNull()
   })
+
+  it('保存被拒以后放弃修改：重开的那份修改上不再挂着上一份的拒绝原因', async () => {
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    // The changes as they were, then — after they are discarded — a fresh copy of the task.
+    draftForTask
+      .mockResolvedValueOnce(draftOf(CATEGORY_A.id))
+      .mockResolvedValue({ ...draftOf(CATEGORY_A.id), id: 62, version: 0 })
+    vi.mocked(TaskBoardApi.stageEffect).mockResolvedValue({ failing: 0, reopening: 0, failingNames: [] } as never)
+    vi.mocked(TaskDraftsApi.publish).mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
+    const view = await mount()
+    await fireEvent.click(view.getByRole('button', { name: '保存更改' }))
+    expect(await view.findByText(said)).toBeTruthy()
+
+    await fireEvent.click(view.getByRole('button', { name: '放弃修改' }))
+
+    await waitFor(() => expect(draftForTask).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(view.queryByText(said)).toBeNull())
+  })
 })
