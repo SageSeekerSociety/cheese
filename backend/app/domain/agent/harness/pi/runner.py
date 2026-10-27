@@ -79,8 +79,16 @@ BRANCH_TOOLS = ("cheese_subagent_start", "cheese_subagent_send", "cheese_subagen
 
 
 #: How what a reading tool read opens: the thing by its name, then its
-#: reference in brackets (``personal/reading.py``) — 「任务「报名说明」（…）」.
-_NAMED = re.compile(r"^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)")
+#: reference in brackets (``personal/reading.py``, ``rosters.py``) —
+#: 「任务「报名说明」（…）」, 「空间「操作系统」（spaces/3）」.
+_NAMED = re.compile(
+    r"^((?:频道|任务|项目|空间|团队|题目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)"
+)
+#: A page read whole opens with its title as a heading — a 题目's
+#: (``task/package.py``), a help page's (``docs_site``), after any note above it.
+_TITLE = re.compile(r"^#[ \t]+(\S[^\n]{0,79})$", re.MULTILINE)
+#: How far into a page its title is looked for.
+_TITLE_WITHIN = 600
 
 
 def named(result: object) -> str | None:
@@ -89,8 +97,11 @@ def named(result: object) -> str | None:
     content = result.get("content") if isinstance(result, dict) else None
     for block in content if isinstance(content, list) else ():
         if isinstance(block, dict) and block.get("type") == "text":
-            found = _NAMED.match(str(block.get("text") or "").lstrip())
-            return found.group(1) if found else None
+            text = str(block.get("text") or "").lstrip()
+            if found := _NAMED.match(text):
+                return found.group(1)
+            title = _TITLE.search(text[:_TITLE_WITHIN])
+            return title.group(1).strip() if title else None
     return None
 
 
