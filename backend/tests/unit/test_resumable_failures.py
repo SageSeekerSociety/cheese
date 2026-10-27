@@ -65,6 +65,17 @@ from app.domain.agent.resumable_failures import (
             "to host generativelanguage.googleapis.com:443（unknown）",
             STREAM_ENDED,
         ),
+        # The metering proxy's own 503 when its admission check cannot answer,
+        # verbatim from 2026-10-27 11:00. It said "billing", was read as a
+        # spent balance, and a spent balance is a state no wait changes — so
+        # the seat sat idle until a person retried. It is a 503: wait and ask.
+        (
+            "API Error: 503 cheese: task billing attribution is temporarily "
+            "unavailable; retry shortly. This is a server-side issue, usually "
+            "temporary — try again in a moment. If it persists, check "
+            "https://status.claude.com.（server_error）",
+            OVERLOADED,
+        ),
     ],
 )
 def test_a_passing_failure_resumes(said, kind):
