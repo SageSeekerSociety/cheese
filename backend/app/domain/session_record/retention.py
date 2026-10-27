@@ -21,7 +21,7 @@ first, on the sealer's clock, and its row goes on a later pass.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -36,13 +36,11 @@ from sqlalchemy import (
 
 from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
-from app.domain.session_record import service
+from app.domain.session_record import models, service
 from app.domain.session_record.models import SessionRecord
 
 logger = logging.getLogger(__name__)
 
-#: How long a sealed run's row is kept.
-RETENTION = timedelta(days=30)
 #: How often the retention sweep looks.
 EVERY_S = 600
 
@@ -74,7 +72,7 @@ async def expire(sessions: SessionFactory, *, now: datetime | None = None) -> in
     Only the row: the run's object stays in the bucket for good (the decision
     above), so no storage call is made here.
     """
-    cutoff = (now or datetime.now(UTC)) - RETENTION
+    cutoff = (now or datetime.now(UTC)) - models.RETENTION
     async with sessions() as db:
         result = await db.execute(
             delete(SessionRecord)

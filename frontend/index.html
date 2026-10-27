@@ -211,7 +211,11 @@
           // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
           var pane = window.innerWidth - 64 - side
           var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
-          if (panel) html.style.setProperty('--sx-chat-w', (Number(layout.chatPct) || 50) + '%')
+          if (panel)
+            html.style.setProperty(
+              '--sx-chat-w',
+              (Number(layout.chatPct) || (window.innerWidth >= 1440 ? 45 : 50)) + '%'
+            )
         } catch (e) {
           // Whatever went wrong, the generic frame is never wrong for long.
         }
