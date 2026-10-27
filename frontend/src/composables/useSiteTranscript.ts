@@ -51,13 +51,19 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   // 给重试——再试一次还是同一个回答，摆一颗按了没用的按钮只会让人以为是自己点错
   // 了。判在这里（取数这一层），画面只收一个布尔值（docs/design-system.md §3.10）。
   const errorForbidden = ref(false)
-  function fail(e: unknown): void {
+  // 这一格报的是哪一种读失败了：最新一页，还是读者自己往上翻的那一页。重试要重发
+  // **那一次**——两者问的是相反方向，拿最新页去重试往上翻，读者按了只会看见现场
+  // 跳回末尾、刚翻上去的那一页还是没回来。
+  const errorFromOlder = ref(false)
+  function fail(e: unknown, fromOlder = false): void {
     errorMsg.value = e instanceof Error ? e.message : t('work.room.site.loadFailed')
     errorForbidden.value = isForbidden(e)
+    errorFromOlder.value = fromOlder
   }
   function clearError(): void {
     errorMsg.value = null
     errorForbidden.value = false
+    errorFromOlder.value = false
   }
 
   // 现场: read-only transcript timeline. 手上这一窗是**当前视角**的：「全部」是房间里
@@ -157,7 +163,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
       // 也还是好的，把整栏换成一条红条等于一次读慢了就让人看不成现场（同 loadPage
       // 那条规矩）。预取的失败只是这一次没提前拿到，下次滚到边上再补。
-      if (!quiet) fail(e)
+      if (!quiet) fail(e, true)
       return false
     } finally {
       olderBusy = false
@@ -422,14 +428,21 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     }
   }
 
-  /** 读者按下那颗「重试」：把上一次的失败收掉再读一次。
+  /** 读者按下那颗「重试」：把上一次的失败收掉，再读**失败的那一次**。
    *
-   *  不收掉的话，`loadPage` 认的是「这一格已经报错了」，骨架屏不会出现（它只在
-   *  `errorMsg` 为空时才摆），读者点下去看见的还是同一条红条——以为没反应。清掉
-   *  之后这一趟就是一次普通的首次读：骨架屏摆出来，读回来就换上记录。 */
+   *  收掉错误在先：不收掉的话，`loadPage` 认的是「这一格已经报错了」，骨架屏不会
+   *  出现（它只在 `errorMsg` 为空时才摆），读者点下去看见的还是同一条红条——以为
+   *  没反应。
+   *
+   *  再读哪一个由失败的那一次定：最新一页失败了就重读最新一页；读者往上翻的那一
+   *  页失败了就重发那一页的请求（`before` 游标还在，`hasOlder` 也还立着）。拿最新
+   *  一页去顶替它会把人拽回末尾，而且他停在历史中间、窗口又被裁过时（`hasNewer`
+   *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。 */
   function retry(): void {
+    const older = errorFromOlder.value
     clearError()
-    void load()
+    if (older) void loadOlder()
+    else void load()
   }
 
   // 一页读回来的，和这一栏手上已有的，按 id 合成一份。读的请求在路上的时候 socket

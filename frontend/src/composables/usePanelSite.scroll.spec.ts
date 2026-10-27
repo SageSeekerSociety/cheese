@@ -499,6 +499,38 @@ describe('a read that is slow or fails', () => {
     expect(site.errorMsg.value).toBe('请求等待超时，请重试')
     scope.stop()
   })
+
+  it('retries the page the reader was paging up to, not the newest one', async () => {
+    // 读者翻到顶、那一页失败：重试要重发**那一页**（带 `before` 游标），不是跳回
+    // 末尾读最新一页。后者在他停在历史中间、窗口又被裁过时（`hasNewer`）会被守卫
+    // 整个丢掉——一次请求都不发，那颗按钮按了等于没按。
+    api.getTranscript.mockResolvedValueOnce(
+      page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
+    )
+    const { box, el, site, scope } = await openAtBottom()
+
+    api.getTranscript.mockClear()
+    api.getTranscript.mockRejectedValueOnce(new Error('请求等待超时，请重试'))
+    box.scrollTop = 0
+    el.dispatchEvent(new Event('scroll'))
+    site.onSiteScroll()
+    await settle()
+    expect(site.errorMsg.value, '往上翻的那一页失败了').toBe('请求等待超时，请重试')
+    expect(
+      api.getTranscript.mock.calls.filter((call) => call[1]?.before),
+      '失败的那一次是往回读'
+    ).toHaveLength(1)
+
+    api.getTranscript.mockClear()
+    api.getTranscript.mockResolvedValue(page([block('z', 0)], { has_more: false }))
+    site.retry()
+    await settle()
+
+    const args = api.getTranscript.mock.calls.map((call) => call[1] ?? {})
+    expect(args, '重试重发的是那一页').toEqual([{ limit: 120, before: 'a', author: null }])
+    expect(site.errorMsg.value, '读回来了就把错误收掉').toBeNull()
+    scope.stop()
+  })
 })
 
 describe('a topic with no records yet', () => {
