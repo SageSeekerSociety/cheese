@@ -16,7 +16,16 @@ lists 支线 by the latter. The database keeps them: a message inserted into a
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, select
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    select,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -26,6 +35,13 @@ class Thread(Base):
     __tablename__ = "threads"
     __table_args__ = (
         UniqueConstraint("root_block_id", name="uq_threads_root_block_id"),
+        # 收起来的支线按这一列筛（「这间房还开着的支线」每读一页都要问一次）。部分
+        # 索引只收收起来的那几条，和迁移 `f4b8c2a91d37` 建的是同一个。
+        Index(
+            "ix_threads_recycled_at",
+            "recycled_at",
+            postgresql_where=text("recycled_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -48,6 +64,16 @@ class Thread(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    #: 这条支线被收起来了（`thread.services.recycle`）：它报的错拖过了时限而没人回来
+    #: 修，于是不再点亮它那间频道，也从默认的支线列表里挪开。块一条不删 —— 翻得到、
+    #: 搜得到，在里面说一句或者点「恢复」就放回来。NULL = 开着。
+    recycled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    @property
+    def recycled(self) -> bool:
+        return self.recycled_at is not None
 
     @staticmethod
     async def of_root(session, block_id: uuid.UUID) -> "Thread | None":

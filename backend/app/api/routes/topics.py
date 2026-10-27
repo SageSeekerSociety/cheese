@@ -202,6 +202,8 @@ async def _unresolved_failures(
 
     `tasks_of_room` 只列**还没关**的活——关了的活自己的错误不再点亮任何一行；原地
     转成任务的支线已按任务算，不折回频道（否则旧错误点亮它、它的话清掉它的失败）。
+    拖过三天的失败也不再点亮（`waits.FAILURE_GIVES_UP_AFTER`），这条线自己那条线
+    也是 —— 否则没人接手的频道仍然永远红。
     """
     if not room_ids:
         return {}, {}

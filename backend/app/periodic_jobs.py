@@ -18,6 +18,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import PROJECT, tell_project
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.session_state import running_conversations
 from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
@@ -42,6 +43,7 @@ from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
+from app.domain.thread import periodic as thread_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
 
@@ -78,6 +80,8 @@ PERIODIC_JOB_NAMES = (
     "notification digest",
     "delivery resend",
     "docs question retention",
+    "question expiry",
+    "thread recycling",
     "turn resumes",
     "failed turn resume deliveries",
     "timed deliveries",
@@ -220,6 +224,9 @@ def periodic_jobs(
         jobs, sessions=sessions, starter_settled=starter_settled
     )
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    thread_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, running=running_conversations
+    )
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

@@ -452,6 +452,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "ci_activity_sweep_interval_s",
         "platform_model_roles_refresh_interval_s",
         "model_spend_cap_alert_interval_s",
+        "question_expiry_sweep_interval_s",
+        "thread_recycle_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -490,6 +492,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("notification digest", 113),
         ("delivery resend", 114),
         ("docs question retention", 86400),
+        ("question expiry", 123),
+        ("thread recycling", 124),
         ("turn resumes", 30),
         ("failed turn resume deliveries", 30),
         ("timed deliveries", 30),

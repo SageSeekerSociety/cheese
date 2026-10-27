@@ -5264,6 +5264,8 @@ def _say_ask(args, data, env) -> str:
         f"已在房间里问了 {len(blocks)} 个问题（消息 id {ids}；"
         f"request_id {(data or {}).get('request_id')}）。"
         "现在就停下，不要等：有人回复时，回复会作为新消息再把你叫起来。"
+        "没人答的题 72 小时后自己收起、不再等人答；想早点收回某一道，"
+        '用 platform_request(method="DELETE", path="/blocks/<消息 id>/question")。'
     )
 
 
