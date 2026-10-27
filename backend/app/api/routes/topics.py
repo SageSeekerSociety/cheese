@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -1262,12 +1262,11 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/summon")
 async def summon_agent(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
@@ -1282,14 +1281,7 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    await require_role(db, actor, place.project_id, Permission.ask_agent)
+    place, actor = at.place, at.actor
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
