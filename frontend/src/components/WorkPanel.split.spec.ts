@@ -125,3 +125,23 @@ it('面板报出此刻开着哪一份文件（撰写框上「芝士会看到你�
   await fireEvent.click(await ui.findByRole('tab', { name: /概览/ }))
   await waitFor(() => expect((ui.emitted().viewing ?? []).at(-1)).toEqual([null]))
 })
+
+it('开着资料库文档时不算「在看文件」：`doc:<编号>` 芝士读不到，撰写框上也只会显示一串编号', async () => {
+  const ui = render(WorkPanel as unknown as Component, {
+    props: { topic, activityTick: 0, tab: 'file:doc:3f2a9c' },
+    global: {
+      plugins: [vuetify, i18n],
+      stubs: {
+        PanelSiteHost: true,
+        PanelChangesHost: true,
+        PanelPreviewHost: true,
+        PanelDocHost: true,
+        RoutinePanelHost: true,
+        RoomFilesPanelHost: true,
+      },
+    },
+  })
+  await waitFor(() => expect(ui.emitted().viewing).toBeTruthy())
+  expect((ui.emitted().viewing ?? []).flat()).not.toContain('doc:3f2a9c')
+  expect((ui.emitted().viewing ?? []).at(-1)).toEqual([null])
+})
