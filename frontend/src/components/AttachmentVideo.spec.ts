@@ -50,6 +50,8 @@ describe('AttachmentVideo', () => {
     // Not opened yet: there is no "now" to point at, so the entry is off instead of handing over 00:00.
     const locate = screen.getByTestId('video-locate') as HTMLButtonElement
     expect(locate.disabled).toBe(true)
+    // 灰着的按钮收不到悬停：为什么灰写在包着它的那一层上。
+    expect(locate.parentElement?.getAttribute('title')).toBe('Open the video first, then annotate a moment of it')
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     const video = await waitFor(() => {

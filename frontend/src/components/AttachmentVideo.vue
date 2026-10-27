@@ -63,6 +63,17 @@ function locateCurrentTime() {
   emit('locate', { seconds, timestamp: `${mins}:${secs}` })
 }
 
+// 入口灰着时为什么灰：还没打开，或者打开了但放不了（那时下面那行已经说了怎么办）。
+const locateHint = computed(() =>
+  !url.value && !failure.value
+    ? t('work.room.video.locateNeedsPlayer')
+    : failure.value
+      ? failure.value === 'load'
+        ? t('work.room.video.loadFailed')
+        : t('work.room.video.playFailed')
+      : undefined
+)
+
 watch(() => [props.topicId, props.path], reset)
 onBeforeUnmount(reset)
 </script>
@@ -114,20 +125,22 @@ onBeforeUnmount(reset)
       >
         {{ t('work.room.file.open') }}
       </BaseButton>
-      <BaseButton
-        v-if="canLocate"
-        kind="ghost"
-        size="sm"
-        prepend-icon="mdi-map-marker-plus-outline"
-        class="attachment-video__locate"
-        data-testid="video-locate"
-        :disabled="!url || !!failure"
-        :title="t('work.room.video.locateTime')"
-        :aria-label="t('work.room.video.locateTime')"
-        @click="locateCurrentTime"
-      >
-        {{ t('work.room.video.locateTime') }}
-      </BaseButton>
+      <!-- 灰着的按钮收不到悬停，为什么灰写在包着它的这一层上。 -->
+      <span v-if="canLocate" :title="locateHint">
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          prepend-icon="mdi-map-marker-plus-outline"
+          class="attachment-video__locate"
+          data-testid="video-locate"
+          :disabled="!url || !!failure"
+          :title="locateHint ? undefined : t('work.room.video.locateTime')"
+          :aria-label="t('work.room.video.locateTime')"
+          @click="locateCurrentTime"
+        >
+          {{ t('work.room.video.locateTime') }}
+        </BaseButton>
+      </span>
     </div>
   </div>
 </template>
