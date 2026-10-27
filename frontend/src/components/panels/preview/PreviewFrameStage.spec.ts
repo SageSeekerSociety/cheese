@@ -371,3 +371,118 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
   })
   expect(stage.getAttribute('data-viewport')).toBe('desktop')
 })
+
+function appMount(over: Record<string, unknown> = {}, shown: Partial<PreviewFrame> = {}) {
+  const live = { ...frame(), connection: 'online' as const, ...shown }
+  return render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [live],
+      displayedFrame: live,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: 'npm run dev',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: 'region',
+      pickOn: false,
+      agentName: '芝士',
+      ...over,
+    },
+    global: { stubs: { VIcon: true, ...menuStubs } },
+  })
+}
+
+it('地址栏跟着帧报来的地址走（只显示路径），回车跳到敲的那一个', async () => {
+  const ui = appMount({}, { href: 'https://preview-x.example/signup?step=2', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/signup?step=2')
+  expect(address.readOnly).toBe(false)
+  await fireEvent.update(address, '/faq')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/faq']])
+})
+
+it('没装桥的页面地址栏只读，显示入口名字；刷新退回整帧重来', async () => {
+  const ui = appMount()
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('week-1.html')
+  expect(address.readOnly).toBe(true)
+  await fireEvent.click(ui.getByTestId('refresh-preview'))
+  expect(ui.emitted('refresh')).toHaveLength(1)
+  expect(ui.emitted('history')).toBeUndefined()
+})
+
+it('后退、前进按帧说的亮灭；有桥时刷新交给帧里那一页自己重载', async () => {
+  const ui = appMount({}, { href: 'https://p.example/a', bridged: true, canBack: true, canForward: false })
+  expect((ui.getByTestId('browser-forward') as HTMLButtonElement).disabled).toBe(true)
+  await fireEvent.click(ui.getByTestId('browser-back'))
+  await fireEvent.click(ui.getByTestId('refresh-preview'))
+  expect(ui.emitted('history')).toEqual([['back'], ['reload']])
+  expect(ui.emitted('refresh')).toBeUndefined()
+})
+
+it('电脑睡了：显示压暗的静态快照和唤醒卡，快照不跑脚本；按钮发唤醒', async () => {
+  const ui = appMount({
+    previewTunnelUp: false,
+    previewAppUp: false,
+    navigationError: '应用预览暂不可用',
+    appSnapshot: { html: '<!DOCTYPE html><p>报名</p>', age: '4 分钟前' },
+  })
+  const card = ui.getByTestId('preview-app-sleep')
+  expect(card.getAttribute('data-kind')).toBe('machine')
+  expect(card.textContent).toContain('运行环境已休眠（当前为静态快照）')
+  expect(card.textContent).toContain('4 分钟前')
+  const shot = ui.getByTestId('preview-snapshot') as HTMLIFrameElement
+  expect(shot.getAttribute('sandbox')).toBe('')
+  expect(shot.getAttribute('srcdoc')).toContain('报名')
+  // 那句报错不再另起一行：卡上已经说清了。
+  expect(ui.queryByRole('alert')).toBeNull()
+  // 链上通道、应用两段变灰。
+  const down = [...ui.container.querySelectorAll('.browser-chain__seg')].map((el) => el.getAttribute('data-state'))
+  expect(down).toEqual(['ok', 'down', 'wait'])
+  // 睡着时后退前进不亮，地址栏不能敲。
+  expect((ui.getByTestId('browser-back') as HTMLButtonElement).disabled).toBe(true)
+  await fireEvent.click(ui.getByTestId('preview-wake'))
+  expect(ui.emitted('wake')).toHaveLength(1)
+})
+
+it('电脑在、应用没答：卡请队友重启；还没留过快照时说清楚，旧页面压暗留着', () => {
+  const ui = appMount({ previewAppUp: false })
+  const card = ui.getByTestId('preview-app-sleep')
+  expect(card.getAttribute('data-kind')).toBe('app')
+  expect(card.textContent).toContain('应用没有应答')
+  expect(card.textContent).not.toContain('静态快照）')
+  expect(card.textContent).toContain('还没有留下快照')
+  expect(card.textContent).toContain('请芝士重启应用')
+  expect(ui.container.querySelector('.preview-frames--asleep')).not.toBeNull()
+})
+
+it('唤醒中：卡变成分步进度，按钮收起；圈选打开时卡让开', async () => {
+  const steps = [
+    { key: 'machine', label: 'work.room.preview.sleep.stepMachine', state: 'done' },
+    { key: 'tunnel', label: 'work.room.preview.sleep.stepTunnel', state: 'done' },
+    { key: 'agent', label: 'work.room.preview.sleep.stepAgent', state: 'now' },
+    { key: 'port', label: 'work.room.preview.sleep.stepPort', state: 'todo' },
+  ]
+  const ui = appMount({ previewTunnelUp: true, previewAppUp: false, wakeSteps: steps })
+  const rows = [...ui.getByTestId('preview-wake-steps').children].map((el) => [
+    el.textContent?.trim(),
+    el.getAttribute('data-state'),
+  ])
+  expect(rows).toEqual([
+    ['开机', 'done'],
+    ['连上通道', 'done'],
+    ['芝士重启应用', 'now'],
+    ['等端口应答', 'todo'],
+  ])
+  expect(ui.queryByTestId('preview-wake')).toBeNull()
+  await ui.rerender({ pickOn: true })
+  expect((ui.container.querySelector('.app-sleep__card') as HTMLElement).style.display).toBe('none')
+  expect(ui.getByTestId('preview-region-pick')).toBeTruthy()
+})

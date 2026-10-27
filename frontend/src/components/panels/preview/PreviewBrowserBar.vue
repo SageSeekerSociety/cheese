@@ -59,6 +59,14 @@ watch(shown, (value) => {
   if (!editing.value) draft.value = value
 })
 
+function focus(event: FocusEvent) {
+  editing.value = true
+  if (props.navigable) (event.target as HTMLInputElement).select()
+}
+function blur() {
+  editing.value = false
+  draft.value = shown.value
+}
 function submit(event: KeyboardEvent) {
   const value = draft.value.trim()
   ;(event.target as HTMLInputElement).blur()
@@ -137,14 +145,8 @@ function segmentLabel(segment: ChainSegment): string {
       :readonly="!navigable"
       :title="[href || fallback, ...details].join(' · ')"
       :aria-label="t('work.room.preview.browser.address')"
-      @focus="
-        editing = true
-        navigable && ($event.target as HTMLInputElement).select()
-      "
-      @blur="
-        editing = false
-        draft = shown
-      "
+      @focus="focus"
+      @blur="blur"
       @keydown.enter.prevent="submit"
       @keydown.esc.stop.prevent="revert"
     />
