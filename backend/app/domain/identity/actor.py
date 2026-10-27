@@ -16,8 +16,7 @@ Resolution order (fusion-design §4: "actor 在信任边界注入,永不从 body
 2. **Agent scoped token** (an ``agent+jwt`` bearer on a cheese-gated route) —
    resolves to the ``cheese`` agent-user, `via="cheese"`.
 3. **Delegated credential** (a ``delegated+jwt`` bearer, a 芝士 answering someone) —
-   resolves to the person it answers, `via="delegated"`, on the few routes that
-   accept it (``app.api.auth.DELEGATED_ROUTES``).
+   resolves to the person it answers, `via="delegated"`.
 
 Nothing else names the caller. A handle in a body or a query parameter is never
 an identity, so a request with neither credential resolves to nobody.
