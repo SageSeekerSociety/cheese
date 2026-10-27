@@ -127,3 +127,46 @@ it('选中一段以后，定位框弹在那一段旁边，而不是贴在面板�
   await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull())
   width.mockRestore()
 })
+
+async function selectFirstLine(ui: ReturnType<typeof mount>) {
+  const md = ui.getByTestId('markdown')
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  await fireEvent.mouseUp(md)
+  return md
+}
+
+it('面板窄到框只能贴底时，选中一段直接出卡，不先出按钮', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+  const ui = mount()
+  await selectFirstLine(ui)
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  width.mockRestore()
+})
+
+it('在标着「指」的查看器里（如表格）拖出的选区直接出卡', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  ui.getByTestId('markdown').setAttribute('data-locator-points', '')
+  await selectFirstLine(ui)
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  width.mockRestore()
+})
+
+it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡，不会两样都不见', async () => {
+  let w = 800
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => w)
+  const ui = mount()
+  await selectFirstLine(ui)
+  await waitFor(() => ui.getByTestId('locator-arm'))
+  w = 400
+  window.dispatchEvent(new Event('resize'))
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  width.mockRestore()
+})

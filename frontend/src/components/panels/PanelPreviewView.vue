@@ -190,6 +190,10 @@ function placeLocator() {
     placing = 0
     const panel = panelElement.value
     locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+    // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
+    // 不能两样都不画。
+    if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
+      locatorFromSelection.value = false
   })
 }
 watch(locator, (now) => {
