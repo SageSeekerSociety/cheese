@@ -73,8 +73,10 @@ describe('toTypedSchema 的 cast', () => {
   })
 
   it('显式给的 null 留在原地，不被默认值顶掉', () => {
+    // 表单里 nullable 的格确实是 null，而 schema 的输入类型不一定收 null；
+    // 这里要验的正是合并那一步，所以绕过类型而不是改 schema。
     const typed = toTypedSchema(z.object({ a: z.string().default('x') }))
-    expect(typed.cast!({ a: null })).toEqual({ a: null })
+    expect(typed.cast!({ a: null } as unknown as { a?: string })).toEqual({ a: null })
     expect(typed.cast!({})).toEqual({ a: 'x' })
   })
 })
