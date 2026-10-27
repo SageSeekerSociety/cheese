@@ -165,6 +165,10 @@ class TeamMembershipService:
         status = await self.join_status(team.id, user_id)
         if status != "none":
             return status
+        # A personal team takes no members but its owner — and no application
+        # either: one waiting there could only ever sit unanswered. The owner
+        # is already in, so this only ever answers someone else.
+        refuse_anyone_but_the_owner(team, user_id)
         if not team.join_approval:
             # deferred-import: tests replace this name on app.domain.team.services
             from app.domain.team.services import check_team_locking_status
