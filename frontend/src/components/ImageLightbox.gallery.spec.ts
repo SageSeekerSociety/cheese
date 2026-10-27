@@ -218,3 +218,24 @@ it('leaves crop mode when the picture it framed is deleted and another takes its
   await waitFor(() => expect(screen.getByText('c.png · 2 / 2')).toBeTruthy())
   expect(screen.queryByTestId('lightbox-crop')).toBeNull()
 })
+
+it('refits the picture when the strip appears and takes room away', async () => {
+  const paths = ref(['up/a.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  // 这一层里「图多大就摆多大」要真尺寸：给一个比窗口大的原图和一块固定的窗口。
+  vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(1200)
+  vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(800)
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1000)
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(800)
+
+  mount(actions)
+  await fireEvent.load(screen.getByAltText('a.png'))
+  // 只有这一张：左右按钮和缩略图条都不在，两边只让开 24px。
+  await waitFor(() => expect(screen.getByAltText('a.png').style.width).toBe('952px'))
+
+  // 对话里又来了一张：左右按钮和缩略图条出来，两边让开 76px，底下多出一条缩略图条。
+  paths.value = ['up/a.png', 'up/b.png']
+
+  await waitFor(() => expect(screen.getByAltText('a.png').style.width).toBe('848px'))
+})
