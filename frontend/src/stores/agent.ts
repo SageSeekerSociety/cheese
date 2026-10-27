@@ -175,7 +175,6 @@ export const agentThread = createAssistant({
     const cited = citedIn(question)
     return {
       body: {
-        ...(agentPageOn.value ? {} : { no_page: true }),
         ...(selection ? { selection } : {}),
       },
       shown: {

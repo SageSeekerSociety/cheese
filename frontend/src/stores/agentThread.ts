@@ -241,6 +241,8 @@ export interface AssistantTopic {
 }
 
 export interface AssistantOptions {
+  /** 这一问挂在哪一页；`null` 是这一问不带页面（`no_page`）。在 `prepare` 之后读：发布页、
+   *  改题页上的草稿是 `prepare` 才建出来的。 */
   page?: () => AssistantPage | null
   /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
   prepare?: () => Promise<void>
@@ -487,7 +489,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             `/assistant/conversations/${id}/ask`,
             {
               question: text,
-              ...(page ? { page } : {}),
+              ...(page ? { page } : opts.page ? { no_page: true } : {}),
               ...(files.length ? { files } : {}),
               ...asking?.body,
               ...(kept ? { kept: true } : {}),

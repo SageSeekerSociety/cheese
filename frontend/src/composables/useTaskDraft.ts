@@ -117,6 +117,11 @@ export function useTaskDraft(options: DraftOptions) {
     return TaskDraftsApi.start(spaceId, written)
   }
 
+  /** 存完一次以后：存这次的时候人又改了几格，就还没存完（停手后接着存）。 */
+  function settled(): SaveState {
+    return Object.keys(pending).length ? 'saving' : 'saved'
+  }
+
   /** 还没有草稿就建一份，带上 `extra`（还没存的那几格）。 */
   async function ensure(extra: TaskDraftFields = {}): Promise<TaskDraft> {
     if (draft.value) return draft.value
@@ -127,8 +132,11 @@ export function useTaskDraft(options: DraftOptions) {
     starting = create(taskId, written).then((row) => {
       draft.value = row
       saved = { ...saved, ...written }
-      pending = {}
-      saveState.value = 'saved'
+      // 写进去的那几格不用再存；建的这段时间里人又改的，还等着下一次存。
+      for (const [key, value] of Object.entries(written))
+        if (key in pending && same((pending as Record<string, unknown>)[key], value))
+          delete (pending as Record<string, unknown>)[key]
+      saveState.value = settled()
       options.started?.(row)
       return row
     })
@@ -181,7 +189,7 @@ export function useTaskDraft(options: DraftOptions) {
             draft.value = { ...draft.value, version: done.version, updatedAt: done.updatedAt }
         }
         saved = { ...saved, ...fields }
-        saveState.value = 'saved'
+        saveState.value = settled()
       } catch {
         pending = { ...fields, ...pending }
         saveState.value = 'failed'

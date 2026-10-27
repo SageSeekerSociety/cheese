@@ -28,6 +28,22 @@ const taskDetail = vi.fn()
 const listCategories = vi.fn()
 const listAgentTypes = vi.fn()
 const apiRequest = vi.fn()
+/** 问芝士发出去的那几次请求体（事件流答一句就完）。 */
+const asked: Record<string, unknown>[] = []
+
+vi.mock('@/api/eventStream', async (original) => ({
+  ...(await original<Record<string, unknown>>()),
+  postEventStream: async (
+    _path: string,
+    body: Record<string, unknown>,
+    onEvent: (event: string, data: unknown) => void,
+    options?: { onOpen?: () => void }
+  ) => {
+    asked.push(body)
+    options?.onOpen?.()
+    onEvent('done', {})
+  },
+}))
 
 vi.mock('@/api', async (original) => ({
   ...(await original<Record<string, unknown>>()),
@@ -69,6 +85,8 @@ function keep(row: Omit<Draft, 'id'> & { id?: number }): Draft {
   drafts.set(id, kept)
   return kept
 }
+/** 不为空时，建修改草稿的请求停在这里，等测试放行（量建的那一阵里人又改了什么）。 */
+let holdCreate: Promise<void> | null = null
 const editDraft = (taskId: number) => [...drafts.values()].find((d) => d.taskId === taskId)
 
 vi.mock('@/api/taskDrafts', () => ({
@@ -77,8 +95,10 @@ vi.mock('@/api/taskDrafts', () => ({
       const row = editDraft(taskId)
       return { draft: row ?? null, form: row?.fields ?? taskForm }
     },
-    forTask: async (taskId: number) =>
-      editDraft(taskId) ?? keep({ spaceId: SPACE_ID, taskId, version: 0, fields: { ...taskForm } }),
+    forTask: async (taskId: number) => {
+      if (holdCreate) await holdCreate
+      return editDraft(taskId) ?? keep({ spaceId: SPACE_ID, taskId, version: 0, fields: { ...taskForm } })
+    },
     start: async (spaceId: number, fields: Record<string, unknown>) =>
       keep({ spaceId, taskId: null, version: 0, fields }),
     save: vi.fn(async (id: number, fields: Record<string, unknown>) => {
@@ -132,6 +152,8 @@ vi.mock('@/components/common/Editor/TipTapEditor.vue', async () => {
 })
 
 import TaskEdit from './Edit.vue'
+
+import { askAgent, resetAgent } from '@/stores/agent'
 
 const SPACE_ID = 7
 const TASK_ID = 9
@@ -253,6 +275,8 @@ afterEach(() => {
   drafts.clear()
   nextDraftId = 61
   taskForm = {}
+  holdCreate = null
+  asked.length = 0
 })
 
 describe('改题页：默认队友沿用的那一位', () => {
@@ -351,5 +375,39 @@ describe('改题页：修改草稿', () => {
     expect(row.taskId).toBe(TASK_ID)
     await waitFor(() => expect(row.fields.name).toBe('Lab 3 缓存模拟器（修订）'))
     expect(await view.findByRole('button', { name: '放弃修改' })).toBeTruthy()
+  })
+
+  it('建这份修改的那一阵里又改了：改的停在最后那一版，离开时也存下', async () => {
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    let release = () => {}
+    holdCreate = new Promise((resolve) => (release = resolve))
+    const view = await mount()
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+
+    await fireEvent.update(nameInput(view), '第一版')
+    // Autosave has started creating the change draft and is waiting on the server.
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    await fireEvent.update(nameInput(view), '第二版')
+    release()
+    await waitFor(() => expect(drafts.size).toBe(1))
+    cleanup()
+
+    const [row] = [...drafts.values()]
+    await waitFor(() => expect(row.fields.name).toBe('第二版'), { timeout: 3000 })
+  })
+
+  it('还没有修改时先问芝士：这一问挂在刚建的这份修改上', async () => {
+    resetAgent()
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    await mount()
+
+    await askAgent('请检查这道题')
+
+    const [row] = [...drafts.values()]
+    expect(row.taskId).toBe(TASK_ID)
+    expect(asked.at(-1)).toMatchObject({ question: '请检查这道题', page: { kind: 'draft', id: row.id } })
+    expect(asked.at(-1)).not.toHaveProperty('no_page')
   })
 })
