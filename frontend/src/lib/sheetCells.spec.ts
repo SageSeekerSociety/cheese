@@ -15,7 +15,9 @@ async function book(fill: (sheet: ExcelJS.Worksheet, other: ExcelJS.Worksheet) =
   other.addRow(['订单号', '金额'])
   fill(sheet, other)
   const out = await wb.xlsx.writeBuffer()
-  return (out as Uint8Array).buffer.slice(0) as ArrayBuffer
+  // exceljs 声明的是它自己的 Buffer（extends ArrayBuffer），运行时给的是 Node 的
+  // Buffer（Uint8Array 的一种）：两种都收，后者的字节会被拷进新的 ArrayBuffer。
+  return new Uint8Array(out as ArrayBuffer).buffer
 }
 
 it('counts every cell whose shown value differs, on any sheet', async () => {

@@ -133,7 +133,9 @@ async function sheet(orders: number): Promise<ArrayBuffer> {
   ws.addRow(['月份', '订单数'])
   ws.addRow(['9 月', orders])
   const out = await wb.xlsx.writeBuffer()
-  return (out as Uint8Array).buffer.slice(0) as ArrayBuffer
+  // exceljs 声明的是它自己的 Buffer（extends ArrayBuffer），运行时给的是 Node 的
+  // Buffer（Uint8Array 的一种）：两种都收，后者的字节会被拷进新的 ArrayBuffer。
+  return new Uint8Array(out as ArrayBuffer).buffer
 }
 
 it('表格在这条消息之后改过：数出改了几格（拿消息那一版和现在这份比）', async () => {
