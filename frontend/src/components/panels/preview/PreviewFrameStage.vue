@@ -2,9 +2,13 @@
 // 当前预览里「一个跑着的东西」那一档：应用条、运行时状态、frames，以及应用那一档的
 // 框选遮罩。
 //
+// 条的上半是「小浏览器」那一行（后退、前进、刷新、地址栏、连通链，见 `PreviewBrowserBar`）；
+// 应用睡着时帧上盖一层静态快照和唤醒卡（见 `PreviewAppSleep`）。
+//
 // 两种帧同住一层：有地址的网页（`frames`，一次挂两帧，切的时候旧的留着不重挂，见
 // 宿主那一层）和只有名字的应用（`frameName`，授权表投进去的那一个）。哪一帧在台前由
 // `displayedFrame` 说，其余几帧 `inert` 收起来——它们还在跑，只是不接读者的输入。
+import type { AppWakeStep } from '@/composables/panelPreview/appWake'
 import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFrames'
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
@@ -12,6 +16,8 @@ import type { WebRect, WebViewport } from '@/lib/quotedContext'
 import { computed, ref, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
 
+import PreviewAppSleep from './PreviewAppSleep.vue'
+import PreviewBrowserBar from './PreviewBrowserBar.vue'
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
 import PreviewRegionPick from './PreviewRegionPick.vue'
@@ -19,6 +25,7 @@ import PreviewRegionPick from './PreviewRegionPick.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
+import { appAsleep, previewChain } from '@/lib/previewChain'
 import { previewStage } from '@/lib/previewStage'
 
 const props = defineProps<{
@@ -39,6 +46,13 @@ const props = defineProps<{
   previewUrl: string | null
   previewAppNote: string
   previewTunnelUp: boolean
+  /** 应用的端口有应答（后端给了地址）：连通链「应用」那一段。 */
+  previewAppUp: boolean
+  /** 这个应用最近一次成功加载时留的静态快照，和它是多久以前留的。 */
+  appSnapshot?: { html: string; age: string } | null
+  /** 唤醒的分步进度（没在唤醒是 null）和没成时那一句。 */
+  wakeSteps?: AppWakeStep[] | null
+  wakeError?: string
   previewError: string | null
   previewReadError: string | null
   /** 圈选开关开着没有，以及它在哪一档上（判据在 `usePreviewPick`）。
@@ -58,6 +72,11 @@ const emit = defineEmits<{
   'toggle-pick': []
   'pick-region': [payload: { rect: WebRect; viewport: WebViewport }]
   download: []
+  /** 后退、前进、重载帧里那一页（由帧里的桥执行）。 */
+  history: [action: 'back' | 'forward' | 'reload']
+  /** 地址栏里敲了一个地址。 */
+  navigate: [path: string]
+  wake: []
 }>()
 
 // 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
@@ -105,43 +124,52 @@ const wrapRef = ref<HTMLElement | null>(null)
 const { width: wrapWidth } = useElementSize(wrapRef)
 const compact = computed(() => wrapWidth.value > 0 && wrapWidth.value < 560)
 
-// 运行状态平时只说「正常」——那是常态，不该占一整行。只有出问题时才在条上亮一颗
-// 小圆点，点开才展开原来那几行字。
-const statusOpen = ref(false)
-const runtimeSuspect = computed(() => {
-  const frame = props.displayedFrame
-  return (
-    !!frame &&
-    (frame.runtime === 'failed' ||
-      frame.connection === 'disconnected' ||
-      frame.connection === 'gone' ||
-      !!frame.runtimeError)
-  )
-})
-watch(
-  () => props.displayedFrame?.id,
-  () => {
-    statusOpen.value = false
-  }
+// 运行状态平时不占一行：连通链在地址栏旁边，三段都通就是三个绿勾（窄时一颗绿点）；
+// 哪一段不通那段变灰，点开看原因。原来那颗「出问题才亮」的圆点就是这条链（见
+// `lib/previewChain`）。
+const live = computed(() => !!props.displayedFrame?.live || !!props.previewAppNote)
+const segments = computed(() =>
+  previewChain({
+    platformError: props.previewError,
+    live: live.value,
+    tunnelUp: props.previewTunnelUp,
+    appAnswering: props.previewAppUp,
+    frame: props.displayedFrame ?? null,
+    navigationError: props.navigationError ?? '',
+    agentName: props.agentName,
+  })
 )
+/** 应用睡着了（电脑休眠、或电脑在应用没答）：帧上盖快照和唤醒卡。正在唤醒时也算——
+ *  唤醒卡上的进度要一直摆到新页面装上为止。 */
+const asleep = computed(() => (live.value ? appAsleep(segments.value) : null))
+const sleepKind = computed(() => asleep.value ?? (props.wakeSteps ? 'machine' : null))
 
-/** 正常状态下资源/实例标识收进 mime 那颗 chip 的 title：平时不必读，要查时还在。 */
-const identityTitle = computed(() => {
+/** 链点开后最下面那几行：资源、实例、读到的版本、就绪与否。平时不读，要查时还在。 */
+const details = computed(() => {
   const frame = props.displayedFrame
-  if (!frame) return ''
+  if (!frame) return []
   const parts: string[] = []
-  if (frame.resourceId) {
-    parts.push(t('work.room.preview.resourceIdentity', { id: frame.resourceId.slice(0, 12) }))
-  }
-  if (frame.instance) {
-    parts.push(t('work.room.preview.instanceIdentity', { id: frame.instance.slice(0, 12) }))
-  } else {
-    parts.push(t(frame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile'))
-  }
-  // 窄条上不摆「读到的版本」那行字，它挪到这里，悬停或长按还看得到。
-  if (compact.value && frame.version) parts.unshift(t('work.room.preview.readVersion', { version: frame.version }))
-  return parts.join(' · ')
+  if (frame.version) parts.push(t('work.room.preview.readVersion', { version: frame.version }))
+  if (frame.resourceId) parts.push(t('work.room.preview.resourceIdentity', { id: frame.resourceId.slice(0, 12) }))
+  if (frame.instance) parts.push(t('work.room.preview.instanceIdentity', { id: frame.instance.slice(0, 12) }))
+  else parts.push(t(frame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile'))
+  parts.push(
+    t(
+      frame.runtime === 'ready'
+        ? 'work.room.preview.runtimeReady'
+        : frame.runtime === 'failed'
+          ? 'work.room.preview.runtimeFailed'
+          : 'work.room.preview.runtimeUnconfirmed'
+    )
+  )
+  return parts
 })
+
+/** 刷新：帧里有桥就让那一页自己重载（表单、登录态都还在这个源里）；没有桥就整帧重来。 */
+function reload() {
+  if (props.displayedFrame?.bridged && !asleep.value) emit('history', 'reload')
+  else emit('refresh')
+}
 
 function openTab() {
   openPreviewInNewTab(props.topicId, props.displayedFrame, props.path)
@@ -204,16 +232,6 @@ const actions = computed<BarAction[]>(() => {
       },
     })
   }
-  if (props.path) {
-    list.push({
-      key: 'refresh',
-      icon: 'mdi-refresh',
-      label: t('work.room.preview.refresh'),
-      iconOnly: true,
-      testid: 'refresh-preview',
-      run: () => emit('refresh'),
-    })
-  }
   // 窄时条上放不下视口三键，它们进菜单，照样能切。
   if (compact.value && !showSource.value) {
     for (const mode of VIEWPORTS) {
@@ -242,46 +260,21 @@ watch(
 
 <template>
   <div ref="wrapRef" class="preview-wrap">
-    <div class="preview-bar text-caption px-3 pt-2">
-      <span v-if="!path" class="preview-bar__name text-medium-emphasis">{{
-        displayedFrame?.label || previewAppNote || previewFile?.path
-      }}</span>
-      <span v-if="displayedFrame?.version && !compact" class="text-medium-emphasis ms-2">{{
-        t('work.room.preview.readVersion', { version: displayedFrame.version })
-      }}</span>
-      <v-chip
-        v-if="
-          displayedFrame
-            ? displayedFrame.live && displayedFrame.connection === 'online' && !navigationError
-            : previewAppNote
-        "
-        size="x-small"
-        variant="tonal"
-        class="ms-2"
-        :title="runtimeSuspect ? undefined : identityTitle"
-        >{{ t('work.room.preview.runningApp') }}</v-chip
-      >
-      <v-chip
-        v-else
-        size="x-small"
-        variant="outlined"
-        class="ms-2"
-        :title="runtimeSuspect ? undefined : identityTitle"
-        >{{ displayedFrame?.mime || previewMime }}</v-chip
-      >
-      <button
-        v-if="runtimeSuspect"
-        type="button"
-        class="preview-status-dot ms-2"
-        data-testid="preview-runtime-alert"
-        :aria-label="t('work.room.preview.runtimeAlert')"
-        :title="t('work.room.preview.runtimeAlert')"
-        :aria-expanded="statusOpen"
-        @click="statusOpen = !statusOpen"
-      >
-        <span class="preview-status-dot__mark" aria-hidden="true" />
-      </button>
-      <v-spacer v-if="path" />
+    <div class="preview-bar text-caption px-2 pt-1">
+      <PreviewBrowserBar
+        :href="displayedFrame?.href ?? ''"
+        :fallback="displayedFrame?.label || previewAppNote || previewFile?.path || ''"
+        :can-back="!asleep && !!displayedFrame?.canBack"
+        :can-forward="!asleep && !!displayedFrame?.canForward"
+        :navigable="!asleep && !!displayedFrame?.bridged"
+        :segments="segments"
+        :details="details"
+        :compact="compact"
+        @back="emit('history', 'back')"
+        @forward="emit('history', 'forward')"
+        @reload="reload"
+        @navigate="emit('navigate', $event)"
+      />
       <template v-if="compact">
         <v-menu v-if="actions.length" location="bottom end">
           <template #activator="{ props: menuProps }">
@@ -346,45 +339,14 @@ watch(
       </template>
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
-    <div
-      v-if="displayedFrame && runtimeSuspect && statusOpen"
-      role="status"
-      class="preview-runtime-status px-3 py-2 text-caption"
-    >
-      <span v-if="displayedFrame.resourceId" :title="displayedFrame.resourceId">{{
-        t('work.room.preview.resourceIdentity', { id: displayedFrame.resourceId.slice(0, 12) })
-      }}</span>
-      <span v-if="displayedFrame.instance">
-        · {{ t('work.room.preview.instanceIdentity', { id: displayedFrame.instance.slice(0, 12) }) }}</span
-      >
-      <span v-else>
-        · {{ t(displayedFrame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile') }}</span
-      >
-      <span>
-        ·
-        {{
-          t(
-            displayedFrame.runtime === 'ready'
-              ? 'work.room.preview.runtimeReady'
-              : displayedFrame.runtime === 'failed'
-                ? 'work.room.preview.runtimeFailed'
-                : 'work.room.preview.runtimeUnconfirmed'
-          )
-        }}</span
-      >
-      <span v-if="displayedFrame.connection === 'disconnected'">
-        · {{ t('work.room.preview.instanceDisconnected') }}</span
-      >
-      <span v-if="displayedFrame.connection === 'gone'"> · {{ t('work.room.preview.instanceGone') }}</span>
-      <span v-if="compact && displayedFrame.version">
-        · {{ t('work.room.preview.readVersion', { version: displayedFrame.version }) }}</span
-      >
-      <div v-if="displayedFrame.runtimeError" role="alert">{{ displayedFrame.runtimeError }}</div>
-    </div>
     <div v-if="step" role="status" class="px-3 py-2 text-caption">
       {{ t(step === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
     </div>
-    <div v-if="navigationError || previewError || previewReadError" role="alert" class="px-3 py-2 text-error">
+    <div
+      v-if="!sleepKind && (navigationError || previewError || previewReadError)"
+      role="alert"
+      class="px-3 py-2 text-error"
+    >
       {{ navigationError || previewError || previewReadError }}
       <div v-if="previewAppNote && !previewUrl">
         {{
@@ -405,7 +367,11 @@ watch(
     <div
       v-show="!(showSource && canShowSource)"
       :data-viewport="viewport"
-      :class="['preview-frames', `preview-frames--${viewport}`]"
+      :class="[
+        'preview-frames',
+        `preview-frames--${viewport}`,
+        { 'preview-frames--asleep': sleepKind && !appSnapshot },
+      ]"
     >
       <template v-if="frames">
         <iframe
@@ -429,6 +395,18 @@ watch(
         class="preview-frame"
         :title="t('work.room.preview.frameTitle')"
         :sandbox="DEFAULT_SANDBOX"
+      />
+      <PreviewAppSleep
+        v-if="sleepKind"
+        :kind="sleepKind"
+        :snapshot-html="appSnapshot?.html ?? null"
+        :snapshot-age="appSnapshot?.age ?? ''"
+        :bare="!appSnapshot && !displayedFrame"
+        :steps="wakeSteps ?? null"
+        :wake-error="wakeError ?? ''"
+        :picking="pickOn"
+        :agent-name="agentName"
+        @wake="emit('wake')"
       />
       <PreviewRegionPick v-if="pickTarget === 'region' && pickOn" @pick="emit('pick-region', $event)" />
     </div>
@@ -460,26 +438,6 @@ watch(
 .preview-bar__name {
   flex: 0 1 auto;
   min-width: 0;
-}
-/* 出问题才亮的小圆点。条上只占这一点地方，细节留给点开之后那几行。 */
-button.preview-status-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border-radius: 50%;
-}
-.preview-status-dot__mark {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--warn);
-}
-button.preview-status-dot:hover {
-  background: var(--fill);
 }
 .preview-viewport {
   display: inline-flex;
@@ -520,8 +478,12 @@ button.preview-viewport__btn.preview-viewport__btn--active {
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #fff;
 }
-.preview-runtime-status {
-  overflow-wrap: anywhere;
+/* 应用睡着、又没有快照可顶时，屏幕上那张旧页面压暗、不收鼠标：它还是最后看到的样子，
+   但已经点不动了。 */
+.preview-frames--asleep .preview-frame {
+  filter: grayscale(1);
+  opacity: 0.55;
+  pointer-events: none;
 }
 .preview-frames {
   position: relative;

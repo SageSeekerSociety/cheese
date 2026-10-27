@@ -29,6 +29,8 @@ vi.mock('@vueuse/core', async (orig) => ({
 // 菜单只验「窄的时候那几件东西还在不在菜单里」，脚本里那几样原样摆出来即可：
 // 真 v-menu 要布局才开得了，而这里问的不是它开不开。
 const menuStubs = {
+  VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+  VSpacer: true,
   VMenu: { template: '<div><slot name="activator" :props="{}" /><slot /></div>' },
   VList: { template: '<div><slot /></div>' },
   VListItem: { template: '<button type="button" v-bind="$attrs"><slot /></button>' },
@@ -71,13 +73,14 @@ function mount(
       previewUrl: 'https://example.test/',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
       pickOn: false,
       agentName: '芝士',
     },
-    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' } } },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
   })
 }
 
@@ -108,6 +111,7 @@ function staticFileMount() {
       previewUrl: 'https://example.test/index.html',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
@@ -126,7 +130,7 @@ function staticFileMount() {
   })
 }
 
-it('正常状态不摆运行状态块：资源和实例标识收进 chip 的 title 里', () => {
+it('正常状态不另占一行：连通链三段都是绿勾，资源和实例标识收在链点开之后', () => {
   const okay = {
     ...frame(),
     resourceId: 'resource-abcdef123456',
@@ -144,29 +148,31 @@ it('正常状态不摆运行状态块：资源和实例标识收进 chip 的 tit
       previewFile: null,
       previewMime: 'text/html',
       previewUrl: 'https://example.test/',
-      previewAppNote: '',
+      previewAppNote: 'npm run dev',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
       pickOn: false,
       agentName: '芝士',
     },
-    global: { stubs: { VIcon: true, VChip: { template: '<span :title="$attrs.title"><slot /></span>' } } },
+    global: { stubs: { VIcon: true, ...menuStubs } },
   })
   expect(ui.queryByTestId('preview-runtime-alert')).toBeNull()
-  expect(ui.container.querySelector('.preview-runtime-status')).toBeNull()
-  expect(ui.container.textContent).not.toContain('应用已确认就绪')
-  // 标识没丢：它挂在 mime 那颗 chip 的 title 上。
-  const titles = [...ui.container.querySelectorAll('[title]')].map((el) => el.getAttribute('title') ?? '')
-  expect(titles.some((title) => title.includes('资源 resource-abc'))).toBe(true)
+  const chain = ui.getByTestId('preview-chain')
+  expect(chain.textContent?.replace(/\s+/g, '')).toBe('平台✓通道✓应用✓')
+  // 标识没丢：链点开之后最下面那一行。
+  const detail = ui.getByTestId('preview-chain-detail')
+  expect(detail.textContent).toContain('资源 resource-abc')
+  expect(detail.textContent).toContain('应用已确认就绪')
 })
 
-it('应用报错时条上亮一颗小圆点，点开才看得到状态文字', async () => {
+it('页面报错时链上「应用」那段变红，点开看得到原因', () => {
   const bad = {
     ...frame(),
     runtime: 'failed' as const,
-    connection: 'disconnected' as const,
+    connection: 'online' as const,
     runtimeError: '端口没起来',
   }
   const ui = render(PreviewFrameStage, {
@@ -179,25 +185,22 @@ it('应用报错时条上亮一颗小圆点，点开才看得到状态文字', a
       previewFile: null,
       previewMime: 'text/html',
       previewUrl: 'https://example.test/',
-      previewAppNote: '',
+      previewAppNote: 'npm run dev',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
       pickOn: false,
       agentName: '芝士',
     },
-    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' } } },
+    global: { stubs: { VIcon: true, ...menuStubs } },
   })
-  const dot = ui.getByTestId('preview-runtime-alert')
-  expect(dot.getAttribute('aria-expanded')).toBe('false')
-  // 没点开之前那几行字不在。
-  expect(ui.container.textContent).not.toContain('应用报告失败')
-
-  await fireEvent.click(dot)
-  expect(dot.getAttribute('aria-expanded')).toBe('true')
-  expect(ui.container.textContent).toContain('应用报告失败')
-  expect(ui.container.textContent).toContain('端口没起来')
+  const alert = ui.getByTestId('preview-runtime-alert')
+  expect(alert.querySelector('[data-state="down"]')?.textContent).toContain('应用')
+  const detail = ui.getByTestId('preview-chain-detail')
+  expect(detail.textContent).toContain('页面报错：端口没起来')
+  expect(detail.textContent).toContain('应用报告失败')
 })
 
 it('宽面板平铺：视口三键在，「…」菜单不在，刷新是一颗条上的图标按钮', () => {
@@ -209,14 +212,16 @@ it('宽面板平铺：视口三键在，「…」菜单不在，刷新是一颗�
   expect(ui.container.querySelector('.preview-bar__name')).toBeNull()
 })
 
-it('窄面板把「在新标签页打开」「下载」「刷新」收进「…」菜单，条上只留一颗', async () => {
+it('窄面板把「在新标签页打开」「下载」收进「…」菜单；刷新留在地址栏旁边', async () => {
   panelWidth.value = 390
   const ui = staticFileMount()
   // 视口三键在窄面板上藏起来。
   expect(ui.queryByTestId('viewport-desktop')).toBeNull()
   const more = ui.getByTestId('preview-more')
   expect(ui.container.textContent).toContain('下载')
-  expect(ui.container.textContent).toContain('刷新')
+  expect(ui.getByTestId('refresh-preview')).not.toBeNull()
+  // 连通链收成一颗点。
+  expect(ui.container.querySelector('.browser-chain--dot')).not.toBeNull()
   await fireEvent.click(more)
   expect(ui.container.textContent).toContain('在新标签页打开')
 })
@@ -271,6 +276,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
       previewUrl: 'https://example.test/diagram.svg',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
@@ -282,6 +288,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
         VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+        ...menuStubs,
       },
     },
   })
@@ -324,6 +331,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
       previewUrl: 'https://example.test/index.html',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
@@ -335,6 +343,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
         VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+        ...menuStubs,
       },
     },
   })

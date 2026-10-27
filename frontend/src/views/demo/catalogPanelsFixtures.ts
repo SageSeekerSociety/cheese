@@ -347,6 +347,7 @@ export function previewBundle(
     previewUrl: ref(v.previewUrl),
     previewAppNote: ref(v.previewAppNote),
     previewTunnelUp: ref(v.previewTunnelUp),
+    previewAppUp: ref(v.previewTunnelUp && !!v.previewUrl),
     previewNamedPath: ref(v.previewNamedPath),
     autoReloaded: ref(false),
     previewError: ref(v.previewError),
@@ -395,6 +396,12 @@ export function previewBundle(
     toggleHistory: noop,
     toggleDocPage: noop,
     setPickMode: noop,
+    stepHistory: () => false,
+    goTo: () => false,
+    appSnapshot: computed(() => null),
+    wakeSteps: computed(() => null),
+    wakeError: ref(''),
+    wakeApp: noopAsync,
   }
 }
 

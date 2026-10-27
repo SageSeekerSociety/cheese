@@ -182,6 +182,7 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     previewUrl: null,
     previewAppNote: '',
     previewTunnelUp: true,
+    previewAppUp: true,
     previewError: null,
     previewReadError: null,
     pickTarget: null,

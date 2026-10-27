@@ -77,6 +77,12 @@ const emit = defineEmits<{
   refresh: []
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
   download: []
+  /** 小浏览器：后退、前进、重载帧里那一页（帧里的桥执行）。 */
+  history: [action: 'back' | 'forward' | 'reload']
+  /** 地址栏里敲了一个地址。 */
+  navigate: [path: string]
+  /** 按了「唤醒并重启应用」。 */
+  wake: []
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   'document-changed': []
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
@@ -397,6 +403,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
+      :browsing="!!frames?.length || !!previewAppNote"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />
@@ -408,7 +415,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
     <PreviewFrameStage
-      v-else-if="frames ? frames.length > 0 : previewUrl"
+      v-else-if="frames ? frames.length > 0 || !!previewAppNote : previewUrl || previewAppNote"
       :topic-id="topicId"
       :path="path"
       :frame-name="frameName"
@@ -421,6 +428,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-url="previewUrl"
       :preview-app-note="previewAppNote"
       :preview-tunnel-up="previewTunnelUp"
+      :preview-app-up="previewAppUp"
+      :app-snapshot="appSnapshot"
+      :wake-steps="wakeSteps"
+      :wake-error="wakeError"
       :preview-error="previewError"
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
@@ -432,6 +443,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @toggle-pick="pick.toggle"
       @pick-region="pick.fromRegion"
       @download="emit('download')"
+      @history="emit('history', $event)"
+      @navigate="emit('navigate', $event)"
+      @wake="emit('wake')"
     />
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>

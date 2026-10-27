@@ -20,6 +20,25 @@ export interface PreviewInfo {
   artifact_id?: string
 }
 
+/** 一个跑着的应用最近一次成功加载时留下的静态快照（`/topics/{id}/preview/snapshot`）。 */
+export interface PreviewSnapshot {
+  html: string
+  href: string
+  title: string
+  /** Unix 秒。 */
+  taken_at: number
+}
+
+/** 唤醒那几步此刻走到哪了（`/topics/{id}/preview/wake-status`）。 */
+export interface PreviewWakeStatus {
+  /** 队友在这里的机器：`preparing`、`ready`，没有机器时是 null。 */
+  machine: string | null
+  tunnel_up: boolean
+  /** 这段对话有一轮在跑：队友正在重启应用。 */
+  agent_working: boolean
+  app_up: boolean
+}
+
 export interface PreviewSession {
   url: string
   grant: string

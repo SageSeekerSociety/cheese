@@ -24,6 +24,7 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewAppSleep } from './panelPreview/appWake'
 import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
@@ -69,11 +70,20 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onEscape: options.onEscape,
     onPick: options.onPick,
     onAppMessage: submitAppMessage,
+    // 应用那一帧拍的快照交给睡眠那一层存（它要用到下面才建的状态，所以晚一步接上）。
+    onSnapshot: (frame, shot) => sleep.keep(frame, shot),
   })
   const state = createPreviewState()
   const named = usePanelNamedFile({ props, state, frames })
   const target = useCurrentPreview({ props, options, state, frames, loadNamed: named.loadFile })
   const load = target.load
+  // 应用睡着时的快照和唤醒（`panelPreview/appWake.ts`）。
+  const sleep = usePanelPreviewAppSleep({
+    props,
+    state,
+    displayed: () => frames.displayed.value,
+    reload: () => load({ silent: true, reload: true }),
+  })
 
   watch(
     () => props.active,
@@ -194,6 +204,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     previewUrl: state.previewUrl,
     previewAppNote: state.previewAppNote,
     previewTunnelUp: state.previewTunnelUp,
+    previewAppUp: state.previewAppUp,
     previewNamedPath: state.previewNamedPath,
     autoReloaded: state.autoReloaded,
     previewError: state.previewError,
@@ -236,6 +247,14 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: frames.setPickMode,
+    // 小浏览器：后退、前进、重载帧里那一页，跳到地址栏里敲的地址（帧里的桥执行）。
+    stepHistory: frames.stepHistory,
+    goTo: frames.goTo,
+    // 应用睡着时：最近一次的快照、唤醒的分步进度
+    appSnapshot: sleep.appSnapshot,
+    wakeSteps: sleep.wakeSteps,
+    wakeError: sleep.wakeError,
+    wakeApp: sleep.wake,
   }
 }
 
