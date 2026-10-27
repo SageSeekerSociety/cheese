@@ -130,12 +130,24 @@ assert.deepEqual(plain(calls), [
 
 
 def _jsdom() -> Path | None:
+    """The jsdom to render the page with: the one CI installs, or the frontend's.
+
+    jsdom belongs to the frontend's devDependencies and the pure layer has no
+    frontend install, so CI installs it and names it in CHEESE_TEST_JSDOM (see
+    test.yml). Locally the frontend's own copy is what an install already left
+    in the tree.
+    """
+    named = os.environ.get("CHEESE_TEST_JSDOM")
+    if named:
+        return Path(named)
     root = Path(__file__).resolve().parents[3] / "frontend" / "node_modules" / "jsdom"
     return root if root.exists() else None
 
 
-@pytest.mark.skipif(_jsdom() is None, reason="jsdom from frontend/node_modules")
 def test_the_snapshot_is_the_rendered_page_without_scripts_or_network():
+    jsdom = _jsdom()
+    if jsdom is None:
+        pytest.skip("jsdom: the frontend install has none and CI names none")
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is required to execute the injected JavaScript bridge")
@@ -189,7 +201,7 @@ assert.equal(snap.querySelector('#grade option[selected]').textContent, '大一'
         text=True,
         capture_output=True,
         timeout=20,
-        env={**os.environ, "JSDOM": str(_jsdom())},
+        env={**os.environ, "JSDOM": str(jsdom)},
     )
     assert result.returncode == 0, result.stderr
 

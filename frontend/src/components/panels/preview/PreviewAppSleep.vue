@@ -68,7 +68,7 @@ const body = computed(() => {
           :class="`app-sleep__step--${step.state}`"
           :data-state="step.state"
         >
-          <v-icon size="16" aria-hidden="true" :class="{ 'mdi-spin': step.state === 'now' }">{{
+          <v-icon size="16" aria-hidden="true" :class="{ 'app-sleep__spin': step.state === 'now' }">{{
             step.state === 'done' ? 'mdi-check-circle' : step.state === 'now' ? 'mdi-loading' : 'mdi-circle-outline'
           }}</v-icon>
           <span>{{ t(step.label, { agent: agentName }) }}</span>
@@ -175,5 +175,18 @@ const body = computed(() => {
 .app-sleep__step--now {
   font-weight: 600;
   color: var(--ink);
+}
+/* 正在做的那一步转起来。不用字体自带的那个旋转类：它不是图标，写成类名会被图标
+ * 子集的守卫当成一个字体里没有的图标，直接判红。 */
+.app-sleep__spin {
+  animation: app-sleep-spin 1.6s linear infinite;
+}
+@keyframes app-sleep-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>

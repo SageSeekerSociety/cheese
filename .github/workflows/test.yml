@@ -506,6 +506,18 @@ jobs:
             esac
           done
 
+      # tests/unit/test_preview_runtime_browser.py renders a page with jsdom to
+      # check what the injected bridge's snapshot keeps and what it drops.
+      # jsdom is a frontend devDependency, and a pure shard has no frontend
+      # install; a skipped case fails the suite (scripts/assert_suite_ran.py),
+      # so it is installed here at the version the frontend pins.
+      - name: Install jsdom for the preview bridge's snapshot test
+        if: matrix.layer == 'pure'
+        run: |
+          version="$(node -p "require('$GITHUB_WORKSPACE/frontend/package.json').devDependencies.jsdom")"
+          npm install --prefix "$RUNNER_TEMP/jsdom" --no-audit --no-fund "jsdom@$version"
+          echo "CHEESE_TEST_JSDOM=$RUNNER_TEMP/jsdom/node_modules/jsdom" >> "$GITHUB_ENV"
+
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'
         env:
