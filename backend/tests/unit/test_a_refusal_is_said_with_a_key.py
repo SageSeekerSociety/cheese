@@ -323,7 +323,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/users_timezone.py": 2,
     "app/api/routes/webhooks.py": 2,
     "app/api/task_teaching.py": 2,
-    "app/api/write_access.py": 3,
+    "app/api/write_access.py": 2,
     "app/auth/checker.py": 1,
     "app/common/auth.py": 1,
     "app/core/config.py": 16,

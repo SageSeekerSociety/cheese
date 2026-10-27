@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES, Can, InChannel
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -1328,9 +1328,10 @@ async def summon_agent(
     return ok({"started": True})
 
 
-@router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/webhook-token")
 async def mint_webhook_token(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.mint_webhook_token, at="topic_id")],
+    db: DbSession,
 ) -> dict:
     """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
@@ -1339,19 +1340,13 @@ async def mint_webhook_token(
 
     The token is a write credential for this room: whoever holds it can post
     into the room's timeline as any source, and rotating it locks out every
-    token minted before. So minting takes the same door as writing to the room
-    — project membership — rather than being handed to whoever knows the id."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        project_id=place.project_id, topic_id=place.conversation_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    token minted before. So only the room's own AI teammate mints it, which
+    no person's role grants."""
+    place = at.place
     # Scoped to the place, because the webhook wakes the place: a thread's
     # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(
-        db, topic_id=topic_id, project_id=place.project_id
+        db, topic_id=place.conversation_id, project_id=place.project_id
     )
     await db.commit()
     return ok({"token": token})
