@@ -21,7 +21,7 @@ first, on the sealer's clock, and its row goes on a later pass.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     DateTime,
@@ -37,10 +37,17 @@ from sqlalchemy import (
 from app.core.db import SessionFactory
 from app.domain.conversation.models import Conversation
 from app.domain.session_record import service
-from app.domain.session_record.models import RETENTION, SessionRecord
+from app.domain.session_record.models import SessionRecord
 
 logger = logging.getLogger(__name__)
 
+#: How long a sealed run's row is kept. Its one home: the sweeper below reads
+#: it to decide what to delete, and `service.read` reads **this name** to decide
+#: whether the bucket's index can still name anything a page is missing. They
+#: have to be the same value at the same moment — a reader with its own copy
+#: would skip the listing while a sweep by the real value had taken the rows,
+#: and answer a short page as if it were complete.
+RETENTION = timedelta(days=30)
 #: How often the retention sweep looks.
 EVERY_S = 600
 

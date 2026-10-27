@@ -53,7 +53,7 @@ from app.domain.session_record.archive import (
     object_key,
 )
 from app.domain.session_record.images import keep as keep_images
-from app.domain.session_record.models import RETENTION, SessionRecord
+from app.domain.session_record.models import SessionRecord
 
 #: How old a record is before the sealer moves it out of the row. Long enough
 #: that the live end of a turn is read from the database; short enough that
@@ -721,7 +721,17 @@ async def read(
     # Nothing else may skip it. A backward read (`before`, or neither cursor)
     # has no floor under it: the record just above the page may be one whose
     # row the sweep has already taken.
-    window = datetime.now(UTC) - RETENTION
+    #
+    # The window is `retention.RETENTION`'s, read through its own module: that
+    # name is what the sweep above deletes by, and the reader has to share the
+    # live value rather than a copy — a reader holding its own would skip the
+    # listing while a sweep by the real value had taken the rows. The import is
+    # inside the function because `retention` imports this module.
+    from app.domain.session_record import (
+        retention,  # deferred-import: breaks the cycle retention -> service
+    )
+
+    window = datetime.now(UTC) - retention.RETENTION
     inside_the_window = after is not None and after[0] >= window
     archive = storage or bucket()
     if (
