@@ -285,7 +285,9 @@ async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
     The git relay and tunnel answer protocol errors, not JSON, so the refusal
     ``require_seated_agent`` raises is turned into a yes/no here."""
     try:
-        await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+        await require_seated_agent(
+            db, token, project_id=project_id, topic_id=None, allow_machine=True
+        )
     except (AuthenticationRequiredError, ForbiddenError):
         return False
     return True
@@ -303,13 +305,41 @@ async def sandbox_forge_token(
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
-    await require_seated_agent(db, token, project_id=project_id, topic_id=None)
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=None, allow_machine=True
+    )
     # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes. On GitHub it
     # may also rerun or cancel CI (`GitHubAppTokens.read_permissions`).
     kept = await session_keeps_work(db, claims.get("session"))
     binding = await binding_for_project(project_id, db)
+    if binding is not None and getattr(request.state, "from_machine_sandbox", False):
+        # A sandbox asking on its platform socket without the host-side proxy
+        # proof receives only repository metadata and a placeholder token; the
+        # real single-repository token is handed only to the proxy outside the
+        # sandbox (#4896).
+        response.headers["Cache-Control"] = "no-store"
+        return ok(
+            {
+                "kind": binding.kind,
+                "project_id": str(project_id),
+                "token": "placeholder",
+                "expires_at": None,
+                "expiry_enforcement": "platform"
+                if not kept and binding.kind == "forgejo"
+                else "provider",
+                "read_only": not kept,
+                "repo": binding.repo,
+                "url": binding.url,
+                "default_branch": binding.default_branch,
+                "api_url": binding.api_url,
+                "username": "x-access-token"
+                if binding.kind == "github_app"
+                else binding.repo.split("/", 1)[0],
+                "permissions": "",
+            }
+        )
     minter = await tokens_for_project(project_id, db)
     if binding is None or minter is None:
         raise GatewayUnavailableError(say("forgeCredentialMissing"))

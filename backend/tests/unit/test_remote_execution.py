@@ -1355,7 +1355,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
         # The room holds no credential; the preview helper asks its socket.
-        assert (home / ".cheese/cheese-preview.token").read_text() == ""
+        assert not (home / ".cheese/cheese-preview.token").exists()
         stored = json.loads((state / "config.json").read_text())["env"]
         assert stored["CHEESE_AUTHOR"] == "refreshed-while-busy"
         # A deferred upgrade merges the new install into the running one; the
@@ -1491,7 +1491,7 @@ def test_running_executor_prepares_updated_room_without_restart(
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
         assert ready["workspace"] == str(home / "room")
-        assert (home / ".cheese/cheese-preview.token").read_text() == ""
+        assert not (home / ".cheese/cheese-preview.token").exists()
         assert (
             json.loads((state / "config.json").read_text())["env"]["CHEESE_AUTHOR"]
             == "refreshed"

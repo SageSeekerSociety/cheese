@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Bring up / update the standing data-plane pair (#551). Run BY HAND, never
-# from a deploy pipeline — these services exist precisely so that deploys
-# cannot touch them.
+# Bring up the standing data-plane pair (#551) on a box for the first time, and
+# update api-front. Never from an app deploy: these services exist precisely so
+# that deploys cannot touch them. After the first cutover the tunnel itself is
+# released by .github/workflows/release-llm-tunnel.yml.
 #
 # First-time cutover order (each step verifiable, each reversible):
 #   1. Copy this directory to the box (e.g. ~/ops/llm-tunnel/) and write .env:

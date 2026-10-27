@@ -33,7 +33,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import Environment, dump, parse, stored
@@ -301,7 +301,7 @@ async def acquire_session_work_lease(
 
     token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
-    if claims is not None:
+    if claims is not None and not held_by_a_machine(claims):
         place = await place_or_404(db, topic_id)
         await require_seated_agent(
             db, token, project_id=place.project_id, topic_id=topic_id

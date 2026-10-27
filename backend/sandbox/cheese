@@ -155,20 +155,6 @@ def _urlopen(request, *args, **kwargs):
 API = f"http://{_SOCKET_HOST}/api" if PLATFORM_SOCKET else DIRECT_API
 
 
-def _handed_token() -> str:
-    """A credential for what cannot go down the socket (git's own requests,
-    the task backup's bundle, a body over the socket's limit): asked of the
-    socket right before that use, lasting a minute, so the machine keeps
-    none. Without a socket, the session's own token."""
-    if _OPENER is None:
-        return TOKEN
-    try:
-        with _urlopen(f"http://{_SOCKET_HOST}/credential", timeout=20) as response:
-            return str(json.load(response)["token"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return TOKEN
-
-
 def _direct_api() -> str:
     """The platform's own address, for what the socket does not carry: the
     same as `API` when there is no socket."""
@@ -5643,7 +5629,9 @@ def _git_task(
     pre_push_report: Path | None = None,
 ) -> str:
     env = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") or key == "GIT_SSL_CAINFO"
     }
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
@@ -5802,7 +5790,9 @@ def _git_credential(operation: str) -> None:
         destinations.append(
             (
                 _forge_git_relay(data["repo"]),
-                _handed_token() if data["kind"] == "github_app" else data["token"],
+                TOKEN
+                if data["kind"] == "github_app" and not PLATFORM_SOCKET
+                else data["token"],
             )
         )
     for destination, credential in destinations:
@@ -5830,6 +5820,11 @@ def _configure_git_transport(repo: Path, data: dict) -> None:
     existing = _git_task(repo, "config", "--list").splitlines()
     if any(line.startswith(f"url.{relay}.insteadof=") for line in existing):
         _git_task(repo, "config", "--unset-all", key)
+    if PLATFORM_SOCKET and (Path(PLATFORM_SOCKET).parent / "forge.sock").exists():
+        # With the host-side forge proxy on `forge.sock`, git keeps the
+        # canonical remote and the proxy outside the sandbox handles both
+        # direct connections and platform fallback (#4896).
+        return
     reachable = True
     try:
         root = data["remote"].rsplit("/", 2)[0]
@@ -6057,6 +6052,8 @@ def _wire_remote(repo: Path, data: dict) -> None:
     _git_task(repo, "config", "--replace-all", "credential.helper", "")
     _git_task(repo, "config", "--add", "credential.helper", "!cheese git-credential")
     _git_task(repo, "config", "credential.useHttpPath", "true")
+    if os.environ.get("GIT_SSL_CAINFO"):
+        _git_task(repo, "config", "http.sslCAInfo", os.environ["GIT_SSL_CAINFO"])
     if "origin" not in _git_task(repo, "remote").splitlines():
         _git_task(repo, "remote", "add", "origin", data["remote"])
     else:
@@ -6754,6 +6751,13 @@ def _sync_task(task_id: str) -> list[str]:
                     "!cheese git-credential",
                 )
                 _git_task(worktree, "config", "credential.useHttpPath", "true")
+                if os.environ.get("GIT_SSL_CAINFO"):
+                    _git_task(
+                        worktree,
+                        "config",
+                        "http.sslCAInfo",
+                        os.environ["GIT_SSL_CAINFO"],
+                    )
                 _git_task(worktree, "remote", "set-url", "origin", data["remote"])
                 _configure_git_transport(worktree, data)
             head = _git_task(worktree, "rev-parse", "HEAD")
@@ -6855,7 +6859,9 @@ def _warm_task_diff(worktree: Path, data: dict) -> None:
         # never fetched): there is nothing this can usefully warm.
         return
     env = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") or key == "GIT_SSL_CAINFO"
     }
     env["GIT_TERMINAL_PROMPT"] = "0"
     command = [

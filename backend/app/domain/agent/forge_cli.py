@@ -218,16 +218,6 @@ def credentials():
         return json.load(response)["data"]
 
 
-def _tunnel_secret():
-    """What a forge tunnel connection is opened with: a credential asked of
-    the platform socket for that connection, lasting a minute, or without a
-    socket the session's own token."""
-    socket_path = _platform_socket()
-    if socket_path:
-        return _ask_socket(socket_path, "/credential")["token"]
-    return os.environ["CHEESE_TOKEN"]
-
-
 def reaches(url):
     """Whether this machine reaches ``url`` without the platform, as one probe
     answered within ``REACH_KEPT_S``. An HTTP error over TLS is a route:
@@ -250,9 +240,75 @@ def reaches(url):
     return reached
 
 
+def _pipe_unix(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
+
+
 @contextlib.contextmanager
 def github_transport(data, env):
     """Choose a route before invoking the CLI, never replay a native mutation."""
+    socket_path = _platform_socket()
+    if socket_path:
+        platform_dir = Path(socket_path).parent
+        ca_bundle = platform_dir / "ca-bundle.pem"
+        if ca_bundle.is_file():
+            env["SSL_CERT_FILE"] = str(ca_bundle)
+        forge_sock = platform_dir / "forge.sock"
+        if forge_sock.exists():
+            if env.get("HTTPS_PROXY") or env.get("https_proxy"):
+                yield
+                return
+
+            class _BridgeHandler(socketserver.BaseRequestHandler):
+                def handle(self):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
+                        upstream.connect(str(forge_sock))
+                        t1 = threading.Thread(
+                            target=_pipe_unix,
+                            args=(self.request, upstream),
+                            daemon=True,
+                        )
+                        t2 = threading.Thread(
+                            target=_pipe_unix,
+                            args=(upstream, self.request),
+                            daemon=True,
+                        )
+                        t1.start()
+                        t2.start()
+                        t1.join()
+                        t2.join()
+
+            class _Bridge(socketserver.ThreadingTCPServer):
+                daemon_threads = True
+
+            with _Bridge(("127.0.0.1", 0), _BridgeHandler) as proxy:
+                thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+                thread.start()
+                destination = f"http://127.0.0.1:{proxy.server_address[1]}"
+                env.update(
+                    HTTPS_PROXY=destination,
+                    https_proxy=destination,
+                    NO_PROXY="127.0.0.1,localhost,127.0.0.2",
+                    no_proxy="127.0.0.1,localhost,127.0.0.2",
+                )
+                try:
+                    yield
+                finally:
+                    proxy.shutdown()
+                    thread.join()
+            return
+        yield
+        return
     if not reaches(data["api_url"]):
         helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
         api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
@@ -268,13 +324,8 @@ def github_transport(data, env):
 
         class Connection(socketserver.BaseRequestHandler):
             def handle(self):
-                try:
-                    secret = _tunnel_secret()
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    print(
-                        f"[cheese] 平台通道暂时没给出凭据，这次连接没能打开：{exc}",
-                        file=sys.stderr,
-                    )
+                secret = os.environ.get("CHEESE_TOKEN", "")
+                if not secret:
                     self.request.close()
                     return
                 helper["handle_connection"](self.request, tunnel, secret)
