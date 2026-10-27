@@ -125,6 +125,34 @@ def test_an_oversized_snapshot_or_a_file_preview_is_refused(client, preview_conf
     assert outsider.status_code in (403, 404), outsider.text
 
 
+def test_a_snapshot_the_bridge_accepted_is_not_refused_for_the_meta_we_add(
+    client, preview_config
+):
+    """The cap is measured on the html, before the platform stamps its CSP.
+
+    The bridge refuses anything over the same number before it uploads, so an
+    html it accepted must be storable. Measuring the sealed bytes instead leaves
+    a band of ~140 bytes that the bridge accepts and the platform then refuses —
+    and the caller swallows that error, so the room quietly loses the snapshot.
+    """
+    topic_id, seat = _room(client)
+    machine = FakeMachine().attach(topic_id, seat)
+    try:
+        artifact = _declare(client, topic_id)
+    finally:
+        machine.detach()
+    url = f"/topics/{topic_id}/preview/snapshot"
+    at_cap = "x" * topics_preview_app.SNAPSHOT_MAX_BYTES
+    saved = client.put(
+        url, json={"artifact_id": artifact, "html": at_cap}, headers=ALICE
+    )
+    assert saved.status_code == 200, saved.text
+    stored = client.get(url, headers=ALICE).json()["data"]
+    # Sealed anyway: the stored copy carries the platform's CSP.
+    assert stored["html"].startswith('<meta http-equiv="Content-Security-Policy"')
+    assert f'content="{SNAPSHOT_CSP}"' in stored["html"]
+
+
 def test_waking_a_sleeping_app_asks_its_teammate_once(client, preview_config, runner):
     topic_id, seat = _room(client)
     machine = FakeMachine().attach(topic_id, seat)

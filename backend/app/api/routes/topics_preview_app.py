@@ -118,13 +118,18 @@ async def put_preview_snapshot(
     art = await _current_app(db, place)
     if body.artifact_id != art.id:
         raise ValidationError(say("previewSnapshotStale"))
-    sealed = seal_snapshot(body.html.encode())
-    if sealed is None:
-        raise ValidationError(say("previewSnapshotUnsealed"))
-    if len(sealed) > SNAPSHOT_MAX_BYTES:
+    raw = body.html.encode()
+    # The cap is measured on what the browser produced, not on the sealed bytes:
+    # the bridge applies the same number to the same html before uploading, and a
+    # snapshot it accepted must be storable. Adding the CSP meta afterwards must
+    # not turn an accepted snapshot into a refused one.
+    if len(raw) > SNAPSHOT_MAX_BYTES:
         raise ValidationError(
             say("previewSnapshotTooLarge", mb=SNAPSHOT_MAX_BYTES // 1_000_000)
         )
+    sealed = seal_snapshot(raw)
+    if sealed is None:
+        raise ValidationError(say("previewSnapshotUnsealed"))
     # body.html is a JSON string, so its bytes are UTF-8 and inserting ASCII keeps
     # them valid UTF-8; the decode is lossless.
     shot = {
