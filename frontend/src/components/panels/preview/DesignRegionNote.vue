@@ -145,7 +145,7 @@ onBeforeUnmount(() => observer?.disconnect())
         @keydown.enter="close('send', $event)"
       />
       <select
-        v-if="canComment && !compact"
+        v-show="canComment && !compact"
         v-model="recipient"
         class="design-region-note__recipient"
         data-testid="region-note-recipient"
@@ -156,7 +156,7 @@ onBeforeUnmount(() => observer?.disconnect())
         <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
       </select>
       <button
-        v-if="canComment && !compact"
+        v-show="canComment && !compact"
         type="button"
         data-testid="region-note-comment"
         :aria-label="t('work.room.comments.commentHere')"
