@@ -127,8 +127,8 @@ describe('芝士摆出来的东西', () => {
     history = [block('artifact', 'build/out/结题报告.pdf', { mime_type: 'application/pdf' })]
     const { container } = await open()
 
-    // 能翻页的文档画成带封面的卡片（.im-doc），其余照旧是小卡片（.im-artifact）。
-    const card = container.querySelector('.im-doc')
+    // 能翻页的文档画成卡片，其余照旧是小卡片。
+    const card = container.querySelector('[data-testid="message-file-card"]')
     expect(card?.textContent).toContain('结题报告.pdf')
     expect(card?.textContent).toContain('PDF')
     // 路径的前几段是它在工作区里的位置，读的人用不上，也打不开。
@@ -145,9 +145,9 @@ describe('芝士摆出来的东西', () => {
 
     const card = container.querySelector('[data-testid="message-file-card"]') as HTMLElement
     expect(card).toBeTruthy()
-    expect(card.querySelector('.im-doc__cover')).toBeTruthy()
     expect(container.querySelector('.im-artifact')).toBeNull()
-    card.click()
+    // 点卡面（文件名那一块）就交出去开。
+    ;[...card.querySelectorAll('span')].find((el) => el.textContent === '结题报告.docx')!.click()
     await settle()
     expect(emitted()['open-file']?.[0]).toEqual(['output/结题报告.docx'])
   })

@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
 import { takeCodePoints } from '@/lib/codePoints'
+import { cellDisplay } from '@/lib/sheetCells'
 
 const props = withDefaults(
   defineProps<{
@@ -224,23 +225,6 @@ function parseCsv(text: string, sep: string): string[][] {
   return rows
 }
 
-/** 单元格里可能是数字、日期、公式结果或富文本，屏幕上要的都是它显示出来的样子。 */
-function display(value: unknown): string {
-  if (value === null || value === undefined) return ''
-  if (value instanceof Date) return value.toISOString().slice(0, 10)
-  if (typeof value === 'object') {
-    const v = value as Record<string, unknown>
-    if (typeof v.text === 'string') return v.text
-    if (Array.isArray(v.richText)) {
-      return (v.richText as { text?: string }[]).map((r) => r.text ?? '').join('')
-    }
-    if ('result' in v) return display(v.result)
-    if ('hyperlink' in v && typeof v.text === 'string') return v.text
-    return ''
-  }
-  return String(value)
-}
-
 /** 老版 `.xls`（Excel 97-2003）是 OLE2 复合文档，头八个字节固定是这几个；OOXML 是
  *  zip（`PK`）。exceljs 只读 OOXML，拿 OLE2 进去只会抛一句「找不到中央目录」——
  *  按魔数先认出来，才能把话说成人话。 */
@@ -338,7 +322,7 @@ async function open(data: ArrayBuffer) {
         const cells: string[] = []
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
           if (colNumber > MAX_COLS) return
-          const text = display(cell.value)
+          const text = cellDisplay(cell.value)
           if (text.length > MAX_CELL) shortened = true
           cells[colNumber - 1] = text
         })
