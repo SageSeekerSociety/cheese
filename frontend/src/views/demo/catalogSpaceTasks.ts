@@ -171,6 +171,41 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         props: { agentOpen: false },
         expectSelector: '[data-testid="publish-agent-open"]',
       },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s6.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s6.note')
+        },
+        props: { publishError: '这道题的提交项指向了不存在的阶段（HTTP 400）' },
+        expectSelector: '[data-testid="publish-failed"]',
+      },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s7.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s7.note')
+        },
+        props: {
+          currentDraftId: 42,
+          strip: {
+            source: '第二单元实验与作业.pdf',
+            flagged: true,
+            publishing: false,
+            note: {
+              text: '已发布 1 道；《Lab 4 矩阵转置优化》发布失败：这道题的提交项指向了不存在的阶段（HTTP 400）',
+              ok: false,
+            },
+            items: [
+              { id: 41, name: 'Lab 3 缓存模拟器', writing: false, missing: [], published: true },
+              { id: 42, name: 'Lab 4 矩阵转置优化', writing: false, missing: [], published: false },
+            ],
+          },
+        },
+        expectSelector: '[data-testid="draft-strip"]',
+      },
     ],
   },
   {

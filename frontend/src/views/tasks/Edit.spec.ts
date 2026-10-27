@@ -13,10 +13,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import { VApp } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api/http'
+import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskDraftsApi } from '@/api/taskDrafts'
 import i18n, { setLocale } from '@/i18n'
 
 const taskDetail = vi.fn()
@@ -229,5 +232,44 @@ describe('改题页：默认队友沿用的那一位', () => {
     const view = await mount()
 
     await waitFor(() => expect(view.getByTestId('default-teammate-inherited').textContent).toContain('学术研究'))
+  })
+})
+
+describe('改题页：保存', () => {
+  it('保存被服务端拒了：页面上留着服务端那句话，人还在这一页', async () => {
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    draftForTask.mockResolvedValue(draftOf(CATEGORY_A.id))
+    // No stage changes, so nothing for the stage check to ask about.
+    vi.mocked(TaskBoardApi.stageEffect).mockResolvedValue({ failing: 0, reopening: 0, failingNames: [] } as never)
+    vi.mocked(TaskDraftsApi.publish).mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
+    const view = await mount()
+
+    await fireEvent.click(view.getByRole('button', { name: '保存更改' }))
+    await waitFor(() => expect(TaskDraftsApi.publish).toHaveBeenCalledTimes(1))
+
+    // Still there after any toast would have faded: the sentence is on the page.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(await view.findByText(said)).toBeTruthy()
+    expect(view.container.querySelector('form')).not.toBeNull()
+  })
+
+  it('保存被拒以后放弃修改：重开的那份修改上不再挂着上一份的拒绝原因', async () => {
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    // The changes as they were, then — after they are discarded — a fresh copy of the task.
+    draftForTask
+      .mockResolvedValueOnce(draftOf(CATEGORY_A.id))
+      .mockResolvedValue({ ...draftOf(CATEGORY_A.id), id: 62, version: 0 })
+    vi.mocked(TaskBoardApi.stageEffect).mockResolvedValue({ failing: 0, reopening: 0, failingNames: [] } as never)
+    vi.mocked(TaskDraftsApi.publish).mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
+    const view = await mount()
+    await fireEvent.click(view.getByRole('button', { name: '保存更改' }))
+    expect(await view.findByText(said)).toBeTruthy()
+
+    await fireEvent.click(view.getByRole('button', { name: '放弃修改' }))
+
+    await waitFor(() => expect(draftForTask).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(view.queryByText(said)).toBeNull())
   })
 })

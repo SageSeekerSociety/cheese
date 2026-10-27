@@ -22,6 +22,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vu
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api/http'
 import i18n, { setLocale } from '@/i18n'
 
 const listTasks = vi.fn()
@@ -394,6 +395,22 @@ describe('发题页：发一道', () => {
 
     await waitFor(() => expect(view.getByTestId('publish-blocking').textContent).toMatch(/\d+ 项未填写或填写有误/))
     expect(publishDraft).not.toHaveBeenCalled()
+    expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
+  })
+
+  it('发布被服务端拒了：页面上留着服务端那句话，人还在这一页', async () => {
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    publishDraft.mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    // Still there after any toast would have faded: the sentence is on the page.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(await view.findByText(said)).toBeTruthy()
     expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
   })
 
@@ -831,6 +848,26 @@ describe('发题页：一份文件拆出几道题', () => {
     expect(await view.findByText('已发布 1 道；《Lab 4 矩阵转置》缺少难度')).toBeTruthy()
     // 眼前这道发出去了：切到没发出去的那道。
     await waitFor(() => expect(nameInput(view).value).toBe('Lab 4 矩阵转置'))
+  })
+
+  it('全部发布：服务端拒了的那道，说出服务端给的原因', async () => {
+    await boardAs(MEMBER)
+    pair()
+    listDrafts.mockImplementation(async () => [
+      { ...draftBody({}, 61), name: 'Lab 3 缓存模拟器', source: '实验3.pdf', conversationId: 'c9', missing: [] },
+      { ...draftBody({}, 62), name: 'Lab 4 矩阵转置', source: '实验3.pdf', conversationId: 'c9', missing: [] },
+    ])
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    publishDraft.mockImplementation(async (id: number) => {
+      if (id === 62) throw new ApiError(400, said, 'BadRequestError')
+      return { task: { id: 501, approved: false }, draftId: id }
+    })
+    const view = await mount('?draft=61')
+
+    await fireEvent.click(await view.findByTestId('draft-strip-publish-all'))
+
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledWith(62))
+    expect(await view.findByText(`已发布 1 道；《Lab 4 矩阵转置》发布失败：${said}`)).toBeTruthy()
   })
 })
 

@@ -148,6 +148,7 @@
       "publishedSome": "已发布 {n} 道",
       "lacks": "《{name}》缺少{fields}",
       "failed": "《{name}》发布失败",
+      "failedBecause": "《{name}》发布失败：{reason}",
       "separator": "；",
       "removeFailed": "删除失败"
     }

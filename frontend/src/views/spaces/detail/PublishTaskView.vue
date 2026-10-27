@@ -65,6 +65,8 @@ const props = withDefaults(
     materialsState: SpaceMaterialsState
     libraryTo: string
     publishing: boolean
+    /** 上一次发布没成的原因（服务端的原话）；没有就是空串。 */
+    publishError?: string
     /** 能当导师的人和默认的那一位（出题人自己，#3830）。 */
     mentorOptions?: { title: string; value: string }[]
     defaultMentor?: string
@@ -106,6 +108,7 @@ const props = withDefaults(
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
+    publishError: '',
     strip: null,
     agentWriting: null,
     spaceTeaching: null,
@@ -233,6 +236,9 @@ defineExpose({
           >
           <span v-if="blocking" class="pub__blocking" data-testid="publish-blocking">{{
             t('spaces.detail.publishTask.blocking', { n: blocking })
+          }}</span>
+          <span v-else-if="publishError" class="pub__blocking" role="alert" data-testid="publish-failed">{{
+            publishError
           }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
           <AgentEntryButton
