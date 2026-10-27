@@ -57,7 +57,11 @@ it('asleep means the machine is down, or the machine is up and the app does not 
 
 it('a page error and a restart are told apart from a dead app', () => {
   const failed = previewChain({ ...base, frame: frame({ runtime: 'failed', runtimeError: '端口没起来' }) })
-  expect(failed[2]).toMatchObject({ state: 'down', reason: 'work.room.preview.chain.pageError', params: { error: '端口没起来' } })
+  expect(failed[2]).toMatchObject({
+    state: 'down',
+    reason: 'work.room.preview.chain.pageError',
+    params: { error: '端口没起来' },
+  })
   expect(previewChain({ ...base, frame: frame({ connection: 'gone' }) })[2]).toMatchObject({
     state: 'wait',
     reason: 'work.room.preview.chain.appRestarted',

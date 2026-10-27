@@ -83,14 +83,15 @@ const chainTitle = computed(() =>
     .map((segment) => `${t(`work.room.preview.chain.${segment.key}`)} ${segment.state === 'ok' ? '✓' : '·'}`)
     .join(' › ')
 )
-/** 一段的颜色档：通的绿，页面报错的红，其余（断开、等前面那段）灰。 */
-function tone(segment: ChainSegment): 'ok' | 'error' | 'off' {
+/** 一段的颜色档：通的绿，页面报错的红，其余（断开、等前面那段）琥珀——和原型一样，
+ *  睡着的那两段是「在等」而不是「没有」，用跟小圆点同一档的警示色，不用灰。 */
+function tone(segment: ChainSegment): 'ok' | 'error' | 'wait' {
   if (segment.state === 'ok') return 'ok'
-  return segment.reason === 'work.room.preview.chain.pageError' ? 'error' : 'off'
+  return segment.reason === 'work.room.preview.chain.pageError' ? 'error' : 'wait'
 }
 const dotTone = computed(() => {
   const tones = props.segments.map(tone)
-  return tones.includes('error') ? 'error' : tones.includes('off') ? 'off' : 'ok'
+  return tones.includes('error') ? 'error' : tones.includes('wait') ? 'wait' : 'ok'
 })
 function segmentLabel(segment: ChainSegment): string {
   return t(
@@ -267,9 +268,9 @@ button.browser-chain--dot {
   color: var(--ok-ink);
   background: var(--ok-wash);
 }
-.browser-chain__seg--off {
-  color: var(--muted);
-  background: var(--fill-2);
+.browser-chain__seg--wait {
+  color: var(--warn-ink);
+  background: var(--warn-wash);
 }
 .browser-chain__seg--error {
   color: var(--danger-ink);
@@ -286,7 +287,7 @@ button.browser-chain--dot {
 .browser-chain__dot--ok {
   background: var(--ok);
 }
-.browser-chain__dot--off {
+.browser-chain__dot--wait {
   background: var(--warn);
 }
 .browser-chain__dot--error {
@@ -320,8 +321,8 @@ button.browser-chain--dot {
 .browser-chain__icon--ok {
   color: var(--ok);
 }
-.browser-chain__icon--off {
-  color: var(--faint);
+.browser-chain__icon--wait {
+  color: var(--warn);
 }
 .browser-chain__icon--error {
   color: var(--danger);

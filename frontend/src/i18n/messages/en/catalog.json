@@ -312,11 +312,11 @@
     },
     "s5": {
       "name": "The app is asleep",
-      "note": "The teammate's computer sleeps: the tunnel and app links turn grey, the page becomes the last static snapshot, dimmed, with a card offering to wake and restart the app."
+      "note": "The teammate's computer sleeps: the platform link stays green, the tunnel and app links turn amber (waiting), the page becomes the last static snapshot, dimmed, with a card offering to wake and restart the app."
     },
     "s6": {
       "name": "Waking",
-      "note": "After pressing wake the card becomes steps — start the computer, connect the tunnel, the teammate restarts the app, wait for the port — each ticked in turn."
+      "note": "After pressing wake the card becomes steps — start the computer, connect the tunnel, the teammate restarts the app, wait for the port — each ticked in turn; the ones after the current step stay empty."
     }
   },
   "previewPanelDocStage": {

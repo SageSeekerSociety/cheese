@@ -57,7 +57,9 @@ it('the four steps tick in order: done, the first not done spins, the rest wait'
     'todo',
     'todo',
   ])
-  expect(wakeSteps({ machine: true, tunnel: true, agent: true, port: true }).every((s) => s.state === 'done')).toBe(true)
+  expect(wakeSteps({ machine: true, tunnel: true, agent: true, port: true }).every((s) => s.state === 'done')).toBe(
+    true
+  )
 })
 
 it('a snapshot age reads as minutes, hours or days ago', () => {
@@ -85,7 +87,12 @@ it('a snapshot the frame took is kept on the platform and shown when the app sle
 })
 
 it('a sleeping app with no snapshot in hand reads the kept one once', async () => {
-  api.getPreviewSnapshot.mockResolvedValue({ html: '<p>kept</p>', href: '', title: '', taken_at: Date.now() / 1000 - 240 })
+  api.getPreviewSnapshot.mockResolvedValue({
+    html: '<p>kept</p>',
+    href: '',
+    title: '',
+    taken_at: Date.now() / 1000 - 240,
+  })
   const { state, sleep, scope } = setup()
   state.previewAppUp.value = false
   await flush()

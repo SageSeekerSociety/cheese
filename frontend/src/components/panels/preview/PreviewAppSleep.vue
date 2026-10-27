@@ -115,6 +115,8 @@ const body = computed(() => {
 }
 .app-sleep__card {
   position: absolute;
+  /* 和原型一样靠上：卡的上沿在页面往下约 100px 处（页面矮时按 18% 收），不是垂直居中——
+   * 居中会盖住页面正中的那几行。 */
   top: min(120px, 18%);
   left: 50%;
   display: flex;
@@ -140,12 +142,13 @@ const body = computed(() => {
 }
 .app-sleep__body,
 .app-sleep__hint {
-  font-size: 13px;
-  line-height: var(--lh-13);
+  font-size: 14px;
+  line-height: var(--lh-14);
   color: var(--muted);
 }
 .app-sleep__hint {
   font-size: 12px;
+  line-height: var(--lh-12);
 }
 .app-sleep__error {
   font-size: 13px;

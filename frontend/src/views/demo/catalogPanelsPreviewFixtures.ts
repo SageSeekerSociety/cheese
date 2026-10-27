@@ -151,6 +151,13 @@ export function previewFrame(over: Partial<PreviewFrame> = {}): PreviewFrame {
     instance: 'inst-7c41a9',
     runtime: 'ready',
     connection: 'online',
+    // 装了运行时桥的应用：地址栏写的是它此刻的地址，后退前进也亮得起来（和原型里那一行
+    // 同一个样子）。没装桥的页面这两样都不给，地址栏退回 label。
+    bridged: true,
+    href: 'http://127.0.0.1:4173/signup?step=2',
+    title: '第 2 步：填写信息',
+    canBack: true,
+    canForward: false,
     ...over,
   }
 }

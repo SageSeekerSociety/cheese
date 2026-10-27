@@ -192,7 +192,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         props: frameStageProps({
           displayedFrame: previewFrame(),
           previewAppNote: 'npm run dev',
-          previewTunnelUp: true,
+          previewTunnelUp: false,
           previewAppUp: false,
           appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
           wakeSteps: wakeSteps({ machine: true, tunnel: true, agent: false, port: false }),
