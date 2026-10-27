@@ -219,6 +219,52 @@ it('leaves crop mode when the picture it framed is deleted and another takes its
   expect(screen.queryByTestId('lightbox-crop')).toBeNull()
 })
 
+it('keeps the crop layer on the picture that arrives after the crop began', async () => {
+  const paths = ref(['up/a.png', 'up/b.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  // b 的字节迟迟没到：裁剪开始时浮层里连 <img> 都没有。
+  let release!: (url: string) => void
+  imageUrl.mockImplementationOnce(() => new Promise<string>((r) => (release = r)))
+  // 只靠观察者兜底的环境（观察者不回调）：新节点定下大小这件事只有「一直量」接得住。
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+  )
+  vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(1200)
+  vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(800)
+
+  // 图在浮层里占的那块：字节到了、load 之后才定下来，在那之前量到的是零。
+  let sized = false
+  const rect = (left: number, top: number, width: number, height: number) =>
+    ({ left, top, width, height, x: left, y: top, right: left + width, bottom: top + height }) as DOMRect
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.classList.contains('lightbox')) return rect(0, 0, 1200, 800)
+    if (this.tagName === 'IMG' && sized) return rect(100, 110, 800, 600)
+    return rect(0, 0, 0, 0)
+  })
+
+  mount(actions)
+  await fireEvent.keyDown(window, { key: 'ArrowRight' })
+  await waitFor(() => expect(screen.getByText('b.png · 2 / 2')).toBeTruthy())
+  expect(screen.queryByAltText('b.png')).toBeNull()
+  await fireEvent.click(screen.getByRole('button', { name: '裁剪' }))
+
+  release('blob:up/b.png')
+  await waitFor(() => expect(screen.getByAltText('b.png')).toBeTruthy())
+  // 新节点刚换上时还没定下大小，过几帧才铺开。
+  setTimeout(() => (sized = true), 50)
+
+  await waitFor(() => {
+    const style = (screen.getByTestId('lightbox-crop') as HTMLElement).style
+    expect([style.left, style.top, style.width, style.height]).toEqual(['100px', '110px', '800px', '600px'])
+  })
+})
+
 it('refits the picture when the strip appears and takes room away', async () => {
   const paths = ref(['up/a.png'])
   const actions = chat()
