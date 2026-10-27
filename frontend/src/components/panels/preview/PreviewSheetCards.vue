@@ -43,11 +43,16 @@ function label(col: number): string {
 }
 
 /** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方 —— 但这一版
- *  刚被改空的格子要留下：删掉的东西也得看得见，不然卡片上那一处改动凭空消失了。 */
+ *  刚被改空的格子、以及挂了评论的空格子要留下：删掉的东西和别人的一条评论都不能因为
+ *  「这一格没有字」就在卡片里凭空消失（表格里这两样照旧在）。 */
 function fields(row: string[], rowIndex: number): number[] {
   const out: number[] = []
   for (let col = 1; col < props.width; col += 1) {
-    if ((row[col] ?? '').trim() || beforeAt(rowIndex, col) !== undefined) out.push(col)
+    const kept =
+      (row[col] ?? '').trim() ||
+      beforeAt(rowIndex, col) !== undefined ||
+      (props.marks.get(props.addressAt(rowIndex, col))?.length ?? 0) > 0
+    if (kept) out.push(col)
   }
   return out
 }
@@ -71,19 +76,33 @@ function changedTitle(row: number, col: number): string | null {
   <ol class="ps-cards">
     <template v-for="(row, r) in rows" :key="r">
       <li v-if="r > 0" class="ps-card">
-        <button
-          type="button"
-          class="ps-card__title"
-          :class="{ 'is-on': selected === addressAt(r, 0), 'is-chg': changedTitle(r, 0) !== null }"
-          :title="changedTitle(r, 0) ?? undefined"
-          @click="emit('choose', r, 0)"
-        >
-          <span class="ps-card__name"
-            ><del v-if="showBefore && beforeAt(r, 0)" class="ps-card__was">{{ cellText(beforeAt(r, 0) ?? '') }}</del
-            >{{ cellText(row[0] ?? '') || label(0) }}</span
+        <!-- 标题那一格：按钮选这一格，评论点单独排在外面（按钮套按钮不合法）。 -->
+        <div class="ps-card__head">
+          <button
+            type="button"
+            class="ps-card__title"
+            :class="{ 'is-on': selected === addressAt(r, 0), 'is-chg': changedTitle(r, 0) !== null }"
+            :title="changedTitle(r, 0) ?? undefined"
+            @click="emit('choose', r, 0)"
           >
+            <span class="ps-card__name"
+              ><del v-if="showBefore && beforeAt(r, 0)" class="ps-card__was">{{ cellText(beforeAt(r, 0) ?? '') }}</del
+              >{{ cellText(row[0] ?? '') || label(0) }}</span
+            >
+          </button>
+          <button
+            v-for="mark in marks.get(addressAt(r, 0)) ?? []"
+            :key="mark.id"
+            type="button"
+            class="ps-card__cmt"
+            :class="{ 'is-active': mark.id === activeMark }"
+            :data-comment-mark="mark.id"
+            :aria-label="t('work.room.comments.commentHere')"
+            :title="t('work.room.comments.commentHere')"
+            @click="emit('mark', mark.id)"
+          />
           <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: r + 1 }) }}</span>
-        </button>
+        </div>
         <dl class="ps-card__fields">
           <div
             v-for="c in fields(row, r)"
@@ -139,12 +158,20 @@ function changedTitle(row: number, col: number): string | null {
   border-radius: var(--radius-sm);
 }
 
-.ps-card__title {
+/* 标题那一行：名字按得开（选这一格），评论点和行号排在右边。 */
+.ps-card__head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  width: 100%;
   padding: 10px 12px 6px;
+}
+
+.ps-card__title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   text-align: left;
 }
 .ps-card__name {

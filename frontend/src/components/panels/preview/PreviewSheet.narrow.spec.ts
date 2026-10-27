@@ -113,3 +113,22 @@ it('被改空的格子留在卡片上：删掉的东西也看得见', async () =
   const field = was?.closest('.ps-card__field') as HTMLElement
   expect(field.classList.contains('is-chg')).toBe(true)
 })
+
+it('标题那一格上的评论，卡片上也点得到', async () => {
+  const ui = mount([{ id: 'th0', sheet: '', address: 'A2' }])
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  const dot = ui.container.querySelector('.ps-card__head [data-comment-mark]') as HTMLElement
+  expect(dot).not.toBeNull()
+  await fireEvent.click(dot)
+  expect(ui.emitted('mark')).toEqual([['th0']])
+})
+
+it('挂了评论的空格子留在卡片上：没有字也点得到那一条评论', async () => {
+  // 张伟那一行的备注格是空的，但它有一条评论。
+  const ui = mount([{ id: 'th1', sheet: '', address: 'C2' }])
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  const dot = ui.container.querySelector('.ps-card__field [data-comment-mark]') as HTMLElement
+  expect(dot).not.toBeNull()
+  await fireEvent.click(dot)
+  expect(ui.emitted('mark')).toEqual([['th1']])
+})
