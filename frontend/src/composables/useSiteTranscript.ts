@@ -158,6 +158,10 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       // scrollHeight and compensating with a scrollHeight that already excludes them
       // pulls the reader up by their height on every page. See capAround.
       capSite()
+      // 这一次真的读成了才把上一次的失败收掉：错误态是在这里收的，不是在按下重试
+      // 那一刻收的（见 `retry`）。上面那几条守卫可能让这一趟一个请求都不发，那样
+      // 错误得留着——收掉就等于告诉读者「好了」，可屏上什么都没回来。
+      if (!quiet) clearError()
       return true
     } catch (e) {
       // 读者自己翻的那一页失败了要报出来；后台预取失败不报——那几行还在屏上、
@@ -428,21 +432,28 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     }
   }
 
-  /** 读者按下那颗「重试」：把上一次的失败收掉，再读**失败的那一次**。
-   *
-   *  收掉错误在先：不收掉的话，`loadPage` 认的是「这一格已经报错了」，骨架屏不会
-   *  出现（它只在 `errorMsg` 为空时才摆），读者点下去看见的还是同一条红条——以为
-   *  没反应。
+  /** 读者按下那颗「重试」：再读**失败的那一次**，读成了才把失败收掉。
    *
    *  再读哪一个由失败的那一次定：最新一页失败了就重读最新一页；读者往上翻的那一
    *  页失败了就重发那一页的请求（`before` 游标还在，`hasOlder` 也还立着）。拿最新
    *  一页去顶替它会把人拽回末尾，而且他停在历史中间、窗口又被裁过时（`hasNewer`
-   *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。 */
+   *  那条守卫），最新一页的读会被整个丢掉——一次请求都不发，按了等于没按。
+   *
+   *  错误不在这里收：两条路自己的守卫都可能让这一趟一个请求都不发（最新一页那条
+   *  `hasNewer` 守卫、往上翻那条 `olderBusy` / `hasOlder` / 游标守卫）。当场收掉的
+   *  话，读者看见红条凭空消失、屏上什么都没回来——正是这一颗按钮要避免的样子。收
+   *  在读到之后：`loadPage` 与 `loadOlder` 各自读完才 `clearError()`。
+   *
+   *  最新一页那一路要先把错误收掉再读，否则 `loadPage` 认的是「这一格已经报错了」，
+   *  骨架屏不会出现（它只在 `errorMsg` 为空时才摆）——按了像是没反应。往上翻那一路
+   *  没有这个顾虑：它自己摆的是「加载更早的现场…」，与错误态不冲突。 */
   function retry(): void {
-    const older = errorFromOlder.value
-    clearError()
-    if (older) void loadOlder()
-    else void load()
+    if (errorFromOlder.value) {
+      void loadOlder()
+    } else {
+      clearError()
+      void load()
+    }
   }
 
   // 一页读回来的，和这一栏手上已有的，按 id 合成一份。读的请求在路上的时候 socket

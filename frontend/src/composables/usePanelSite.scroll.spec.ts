@@ -531,6 +531,50 @@ describe('a read that is slow or fails', () => {
     expect(site.errorMsg.value, '读回来了就把错误收掉').toBeNull()
     scope.stop()
   })
+
+  it('keeps the error when a retry sends no request at all', async () => {
+    // 往上翻那条路有几条守卫会让重试一个请求都不发（预取已经在飞时 `olderBusy`
+    // 就是一条）。错误要留着：当场把它收掉，读者看见红条凭空消失、屏上什么都没
+    // 回来，还以为读好了。
+    api.getTranscript.mockResolvedValueOnce(
+      page([block('a', 1), block('b', 2)], { has_more: true, oldest_id: 'a', newest_id: 'b' })
+    )
+    const { box, el, site, scope } = await openAtBottom()
+
+    api.getTranscript.mockClear()
+    api.getTranscript.mockRejectedValueOnce(new Error('请求等待超时，请重试'))
+    box.scrollTop = 0
+    el.dispatchEvent(new Event('scroll'))
+    site.onSiteScroll()
+    await settle()
+    expect(site.errorMsg.value).toBe('请求等待超时，请重试')
+
+    // 读者这一页还立着「有更早的」，但后台预取已经占了这一个请求槽（`olderBusy`）：
+    // 这一刻按重试，`loadOlder` 直接早退。
+    let releasePrefetch!: () => void
+    api.getTranscript.mockClear()
+    api.getTranscript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releasePrefetch = () => resolve(page([block('p', -1)], { has_more: true, oldest_id: 'p' }))
+        })
+    )
+    box.scrollTop = 0
+    el.dispatchEvent(new Event('scroll'))
+    site.onSiteScroll()
+    await settle()
+    expect(api.getTranscript, '预取在飞').toHaveBeenCalledTimes(1)
+
+    api.getTranscript.mockClear()
+    site.retry()
+    await settle()
+    expect(api.getTranscript, '这一趟一个请求都发不出去').toHaveBeenCalledTimes(0)
+    expect(site.errorMsg.value, '错误得留着').toBe('请求等待超时，请重试')
+
+    releasePrefetch()
+    await settle()
+    scope.stop()
+  })
 })
 
 describe('a topic with no records yet', () => {
