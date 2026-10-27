@@ -22,6 +22,7 @@ import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vu
 import { createPinia, setActivePinia } from 'pinia'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api/http'
 import i18n, { setLocale } from '@/i18n'
 
 const listTasks = vi.fn()
@@ -394,6 +395,22 @@ describe('发题页：发一道', () => {
 
     await waitFor(() => expect(view.getByTestId('publish-blocking').textContent).toMatch(/\d+ 项未填写或填写有误/))
     expect(publishDraft).not.toHaveBeenCalled()
+    expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
+  })
+
+  it('发布被服务端拒了：页面上留着服务端那句话，人还在这一页', async () => {
+    const said = '这道题的提交项指向了不存在的阶段（HTTP 400）'
+    publishDraft.mockRejectedValue(new ApiError(400, said, 'BadRequestError'))
+    await boardAs(MEMBER)
+    const view = await mount()
+    await fillRequired(view)
+
+    await publish(view)
+    await waitFor(() => expect(publishDraft).toHaveBeenCalledTimes(1))
+
+    // Still there after any toast would have faded: the sentence is on the page.
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(await view.findByText(said)).toBeTruthy()
     expect(view.router.currentRoute.value.name).toBe('SpacesDetailPublishTask')
   })
 

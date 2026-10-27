@@ -727,3 +727,127 @@ def test_cheese_cannot_change_how_a_task_starts_once_someone_holds_a_claim(
         "data"
     ]["task"]
     assert task["startMode"] == "DIRECT"
+
+
+# What the publish page's form holds whichever form is chosen: it shows the team
+# fields only for 团队, but keeps their values (its defaults are 1 and 10) so
+# switching back to 团队 brings them back, and it saves them into the draft.
+FORM_TEAM_FIELDS = {"minTeamSize": 1, "maxTeamSize": 10, "teamLockingPolicy": "NO_LOCK"}
+
+
+def _task(api_client, teacher, task_id: int) -> dict:
+    return api_client.get(f"/tasks/{task_id}", headers=_headers(teacher)).json()[
+        "data"
+    ]["task"]
+
+
+def test_a_personal_task_publishes_from_a_draft_holding_the_forms_team_sizes(
+    api_client: TestClient, board: dict
+):
+    """A 个人 题目 has no team: the team sizes the form keeps in the draft do not
+    stop it from publishing, and the 题目 it publishes has none."""
+    teacher = board["teacher"]
+    draft = _start(
+        api_client,
+        board,
+        fields={**FORM, **FORM_TEAM_FIELDS, "deadline": _deadline_ms()},
+    )
+
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+
+    assert published.status_code == 200, published.text
+    task = _task(api_client, teacher, published.json()["data"]["task"]["id"])
+    assert task["submitterType"] == "USER"
+    assert task["minTeamSize"] is None
+    assert task["maxTeamSize"] is None
+
+
+def test_a_team_task_publishes_with_the_team_sizes_its_draft_holds(
+    api_client: TestClient, board: dict
+):
+    teacher = board["teacher"]
+    draft = _start(
+        api_client,
+        board,
+        fields={
+            **FORM,
+            "submitterType": "TEAM",
+            "minTeamSize": 2,
+            "maxTeamSize": 4,
+            "teamLockingPolicy": "LOCK_ON_APPROVAL",
+            "deadline": _deadline_ms(),
+        },
+    )
+
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+
+    assert published.status_code == 200, published.text
+    task = _task(api_client, teacher, published.json()["data"]["task"]["id"])
+    assert task["submitterType"] == "TEAM"
+    assert (task["minTeamSize"], task["maxTeamSize"]) == (2, 4)
+    assert task["teamLockingPolicy"] == "LOCK_ON_APPROVAL"
+
+
+def test_switching_a_draft_to_personal_and_back_to_team_keeps_its_team_sizes(
+    api_client: TestClient, board: dict
+):
+    teacher = board["teacher"]
+    draft = _start(
+        api_client,
+        board,
+        fields={
+            **FORM,
+            "submitterType": "TEAM",
+            "minTeamSize": 2,
+            "maxTeamSize": 4,
+            "deadline": _deadline_ms(),
+        },
+    )
+    for form in ("USER", "TEAM"):
+        switched = api_client.patch(
+            f"/task-drafts/{draft['id']}",
+            json={"fields": {"submitterType": form}},
+            headers=_headers(teacher),
+        )
+        assert switched.status_code == 200, switched.text
+
+    published = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    )
+
+    assert published.status_code == 200, published.text
+    task = _task(api_client, teacher, published.json()["data"]["task"]["id"])
+    assert (task["minTeamSize"], task["maxTeamSize"]) == (2, 4)
+
+
+def test_changes_to_a_personal_task_save_from_a_draft_holding_the_forms_team_sizes(
+    api_client: TestClient, board: dict
+):
+    """The edit page keeps the same form: saving changes to a published 个人 题目
+    is not refused over the team sizes the form holds."""
+    teacher = board["teacher"]
+    draft = _start(api_client, board, fields={**FORM, "deadline": _deadline_ms()})
+    task_id = api_client.post(
+        f"/task-drafts/{draft['id']}/publish", headers=_headers(teacher)
+    ).json()["data"]["task"]["id"]
+    changes = api_client.post(
+        "/task-drafts", json={"task": task_id}, headers=_headers(teacher)
+    ).json()["data"]
+    api_client.patch(
+        f"/task-drafts/{changes['id']}",
+        json={"fields": {**FORM_TEAM_FIELDS, "name": "Lab 3 缓存模拟器（修订）"}},
+        headers=_headers(teacher),
+    )
+
+    saved = api_client.post(
+        f"/task-drafts/{changes['id']}/publish", headers=_headers(teacher)
+    )
+
+    assert saved.status_code == 200, saved.text
+    task = _task(api_client, teacher, task_id)
+    assert task["name"] == "Lab 3 缓存模拟器（修订）"
+    assert task["minTeamSize"] is None

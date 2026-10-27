@@ -86,6 +86,8 @@ FORM_FIELDS = frozenset(
 PAGE_ONLY = frozenset(
     {"descriptionMarkdown", "teachingOwn", "attachmentFiles", "starterFile"}
 )
+#: What only a 团队 题目 has: its team sizes and when its team locks.
+TEAM_ONLY = ("minTeamSize", "maxTeamSize", "teamLockingPolicy")
 
 #: The longest a draft's whole form may be, as JSON.
 MAX_FORM_BYTES = 200_000
@@ -1293,6 +1295,11 @@ def published_form(draft: TaskDraft) -> dict:
     """The draft as ``POST /tasks`` / ``PATCH /tasks/{id}`` take it."""
     fields = {k: v for k, v in (draft.fields or {}).items() if k not in PAGE_ONLY}
     fields["intro"] = intro_of(draft.fields or {})
+    # A draft keeps the team fields whichever form is chosen, so switching back
+    # to 团队 brings them back; only a 团队 题目 publishes them.
+    if fields.get("submitterType") != "TEAM":
+        for key in TEAM_ONLY:
+            fields.pop(key, None)
     if not draft.fields.get("teachingOwn", False):
         fields.pop("teaching", None)
     # A new 题目 has no own default teammate to clear: "" and None both mean

@@ -171,6 +171,16 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         props: { agentOpen: false },
         expectSelector: '[data-testid="publish-agent-open"]',
       },
+      {
+        get name() {
+          return t('catalog.publishTaskView.s6.name')
+        },
+        get note() {
+          return t('catalog.publishTaskView.s6.note')
+        },
+        props: { publishError: '这道题的提交项指向了不存在的阶段（HTTP 400）' },
+        expectSelector: '[data-testid="publish-failed"]',
+      },
     ],
   },
   {

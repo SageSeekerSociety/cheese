@@ -136,6 +136,8 @@ const initialData = ref<Partial<TaskFormSubmitData>>({})
 /** 换一份初值就重挂表单。 */
 const formKey = ref(0)
 const publishedHere = ref(false)
+/** 上一次发布没成的原因，留在页头，直到再点发布或换一份草稿。 */
+const publishError = ref('')
 
 /** 不在表单里、但也存进草稿的几样：附件、AI 指导、默认队友。 */
 const teaching = ref<SpaceTeaching>({})
@@ -186,6 +188,7 @@ function fill(fields: TaskDraftFields) {
 async function openDraft(id: number | null) {
   draftReady.value = false
   publishedHere.value = false
+  publishError.value = ''
   await draft.flush()
   let row: TaskDraft | null = null
   if (id !== null) {
@@ -486,6 +489,7 @@ async function publish(form: TaskFormSubmitData) {
     return
   }
   publishing.value = true
+  publishError.value = ''
   try {
     await draft.flush()
     const row = await draft.ensure()
@@ -513,7 +517,9 @@ async function publish(form: TaskFormSubmitData) {
     )
     await router.replace(publishDoneRoute(spaceId.value))
   } catch (error) {
-    void errorHandler.handle(error as Error, { defaultMessage: t('spaces.detail.publishTask.createFailed') })
+    // 页头留着这句，不再另弹一条转眼就消失的提示。
+    publishError.value = errorHandler.sentence(error as Error, t('spaces.detail.publishTask.createFailed'))
+    void errorHandler.handle(error as Error, { showToast: false })
   } finally {
     publishing.value = false
   }
@@ -576,6 +582,7 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
+    :publish-error="publishError"
     :agent-types="agentTypes"
     :agent-types-failed="agentTypesFailed"
     :skill-catalog="skillCatalog"

@@ -527,6 +527,10 @@
     "s5": {
       "name": "Cheese closed",
       "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
+    },
+    "s6": {
+      "name": "Publish refused",
+      "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
     }
   },
   "basicInfoView": {
