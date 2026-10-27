@@ -286,6 +286,7 @@ defineExpose({ snapshot, clearMark })
             kind="ghost"
             icon="mdi-dots-horizontal"
             size="sm"
+            density="comfortable"
             data-testid="doc-more"
             :title="t('work.room.menu.more')"
             :aria-label="t('work.room.menu.more')"

@@ -138,6 +138,8 @@ const identityTitle = computed(() => {
   } else {
     parts.push(t(frame.live ? 'work.room.preview.mutableLive' : 'work.room.preview.mutableFile'))
   }
+  // 窄条上不摆「读到的版本」那行字，它挪到这里，悬停或长按还看得到。
+  if (compact.value && frame.version) parts.unshift(t('work.room.preview.readVersion', { version: frame.version }))
   return parts.join(' · ')
 })
 
@@ -223,7 +225,7 @@ watch(
       <span v-if="!path" class="preview-bar__name text-medium-emphasis">{{
         displayedFrame?.label || previewAppNote || previewFile?.path
       }}</span>
-      <span v-if="displayedFrame?.version" class="text-medium-emphasis ms-2">{{
+      <span v-if="displayedFrame?.version && !compact" class="text-medium-emphasis ms-2">{{
         t('work.room.preview.readVersion', { version: displayedFrame.version })
       }}</span>
       <v-chip
@@ -267,6 +269,7 @@ watch(
               kind="ghost"
               icon="mdi-dots-horizontal"
               size="sm"
+              density="comfortable"
               data-testid="preview-more"
               :title="t('work.room.menu.more')"
               :aria-label="t('work.room.menu.more')"
