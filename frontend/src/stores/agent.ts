@@ -78,8 +78,9 @@ export interface AgentForm {
 /** 一页登记的可写面：芝士写进这一页时页面怎么动。都可以不给。 */
 export interface AgentSurface {
   form?: AgentForm
-  /** 问之前：先把这一页存好，芝士读到的是存下的样子。 */
-  prepare?: () => Promise<void>
+  /** 问之前：先把这一页存好，芝士读到的是存下的样子。交回这一问要挂的那一份（这一页的
+   *  草稿）；不交回就挂这一页声明的那一页。 */
+  prepare?: () => Promise<AssistantPage | null | void>
   on?: AssistantHooks
   /** 面板上每一轮怎么画（改动卡能不能撤销、写着第几道）；不给就照没有表单的页面画。 */
   view?: () => AgentPanelView
@@ -104,11 +105,6 @@ function stack<T>() {
     }
     return null
   })
-  /** 眼下声明着的那一份的读法：之后再读，读的还是这一份，不是那时眼前的。 */
-  function topRead(): (() => T | null) | null {
-    for (let i = entries.value.length - 1; i >= 0; i--) if (entries.value[i].read()) return entries.value[i].read
-    return null
-  }
   function use(read: () => T | null) {
     const entry: Entry<T> = { read }
     const add = () => {
@@ -122,7 +118,7 @@ function stack<T>() {
     onDeactivated(remove)
     onScopeDispose(remove)
   }
-  return { top, topRead, use }
+  return { top, use }
 }
 
 const contexts = stack<AgentContext>()
@@ -174,11 +170,14 @@ function citedIn(question: string): AssistantCited[] {
 
 /** 全站那一条对话。事件交给此刻登记的可写面。 */
 export const agentThread = createAssistant({
-  // 人关没关「当前页面」、问的是哪一页，都按按下问的那一刻；挂哪一份等 prepare 之后再读。
-  page: () => {
-    if (agentPageOff.value) return null
-    const read = contexts.topRead()
-    return read ? () => read()?.page ?? null : null
+  // 按下问的那一刻：人关没关「当前页面」、是哪一页（抄下它的值）、那一页问之前要做什么。
+  target: () => {
+    const page = agentContext.value?.page
+    return {
+      on: !agentPageOff.value,
+      page: page ? { ...page } : null,
+      prepare: agentSurface.value?.prepare,
+    }
   },
   asking: (question) => {
     const selection = agentSelection.value
@@ -193,9 +192,6 @@ export const agentThread = createAssistant({
         ...(cited.length ? { cited } : {}),
       },
     }
-  },
-  prepare: async () => {
-    await agentSurface.value?.prepare?.()
   },
   on: {
     toolArgs: (call, name, raw) => surfaceHooks().toolArgs?.(call, name, raw),

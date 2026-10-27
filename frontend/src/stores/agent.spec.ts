@@ -256,6 +256,25 @@ describe('这一句带上什么', () => {
     next.stop()
   })
 
+  it('asked where the page declares nothing yet: a page it declares before the question goes out is not attached', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const scope = effectScope()
+    const page = ref<{ kind: 'project'; id: string } | null>(null)
+    scope.run(() => useAgentContext(() => ({ page: page.value, label: '项目' })))
+    await nextTick()
+
+    const asking = askAgent('这里是什么')
+    page.value = { kind: 'project', id: 'p-later' }
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ no_page: true })
+    expect(bodies[0]).not.toHaveProperty('page')
+    scope.stop()
+  })
+
   it('on a page 芝士 does not read, the question says it has no page', async () => {
     const bodies = serveAsk()
 
