@@ -8,5 +8,6 @@
   "creditWarningTeamMonth": "{remaining} left of this month's plan, reopening on {month}/{day}.",
   "creditWarningProject": "{remaining} left in this project. It does not reset on its own; an administrator has to raise it.",
   "creditWarningMember": "You have {remaining} left in this project; your tasks stop when it runs out.",
-  "creditWarningAgent": "The team's plan has {remaining} left; when it runs out, the calls you start will be refused."
+  "creditWarningAgent": "The team's plan has {remaining} left; when it runs out, the calls you start will be refused.",
+  "creditWarningAgentBudget": "This project has {remaining} left; when it runs out the calls you start will be refused, and the ceiling does not come back on its own."
 }

@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import NoticeText, notice_keys, notice_message, say
 from app.domain.team.models import Team
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import (
     ComputeGrant,
@@ -378,32 +379,51 @@ async def collect(session: AsyncSession) -> list[Warning]:
 async def agent_note(session: AsyncSession, project_id: uuid.UUID) -> str | None:
     """What 芝士 is told on the way into a turn, or None while there is room.
 
-    The figures are read here rather than in the prompt builder so the same
-    three layers decide both this and the inbox: one crossing, one figure.
-    Only the fact and its consequence — the platform does not explain the
-    project's settings to it.
+    The figures are read with the same functions the inbox uses, so a crossing
+    says the same sentence in both places. Only the fact and its consequence —
+    the platform does not explain the project's settings to it.
+
+    Both layers this project pays from are read — the team's plan and the
+    project's own budget — and the fuller of the two is said, because that is
+    the one that stops the call first. Each keeps its own sentence: the project
+    budget does not come back on its own. A member's task cap is not read: it
+    stops that person's tasks, not the calls this turn starts.
     """
     from app.domain.usage.ledger import payer_for_project
 
     payer = await payer_for_project(session, project_id)
-    if payer.terms.unlimited:
-        return None
-    month = month_of(datetime.now(UTC))
-    ledger = Ledger(session)
-    packs = await ledger.team_packs(payer.team_id)
-    pack = next(
-        (
-            p
-            for p in packs
-            if p.source == GrantSource.PLAN_PERIOD and p.period_start == month
-        ),
-        None,
-    )
-    uses = await ledger.window_uses([payer])
-    warning = _team_warning(payer.terms, pack, month, uses.get(payer.team_id, ()))
-    if warning is None:
-        return None
-    return str(say("creditWarningAgent", remaining=_points(warning.remaining)))
+    said: list[tuple[float, str]] = []
+    if not payer.terms.unlimited:
+        month = month_of(datetime.now(UTC))
+        ledger = Ledger(session)
+        packs = await ledger.team_packs(payer.team_id)
+        pack = next(
+            (
+                p
+                for p in packs
+                if p.source == GrantSource.PLAN_PERIOD and p.period_start == month
+            ),
+            None,
+        )
+        uses = await ledger.window_uses([payer])
+        team = _team_warning(payer.terms, pack, month, uses.get(payer.team_id, ()))
+        if team is not None:
+            said.append(
+                (
+                    _ratio(team.used, team.total),
+                    str(say("creditWarningAgent", remaining=_points(team.remaining))),
+                )
+            )
+    caps = await CreditBudgets(session).project_caps([project_id])
+    cap, spent = caps.get(project_id, (None, 0.0))
+    if cap is not None and _crossed(spent, cap):
+        said.append(
+            (
+                _ratio(spent, cap),
+                str(say("creditWarningAgentBudget", remaining=_points(cap - spent))),
+            )
+        )
+    return max(said, key=lambda pair: pair[0])[1] if said else None
 
 
 async def sweep(

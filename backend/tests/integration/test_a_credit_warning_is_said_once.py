@@ -196,3 +196,43 @@ async def test_a_member_cap_reaches_only_that_member(business_db_factory):
     rows = await _said(business_db_factory)
     assert len(rows) == 1
     assert rows[0].metadata_payload["layer"] == "member"
+
+
+@pytest.mark.anyio
+async def test_the_agent_hears_the_layer_that_stops_it_first(business_db_factory):
+    """A project budget that is nearly spent stops the call whatever the team's
+    plan says, so that is the layer the agent has to be told about."""
+    pid = await _seed(business_db_factory)
+    async with business_db_factory() as session:
+        await CreditBudgets(session).save(
+            pid, credits_limit=100.0, set_project_limit=True, member_limits={}
+        )
+        await session.commit()
+
+    # 80 spent: the project budget is at 80% and the team's plan (500 a month)
+    # is nowhere near it.
+    await _spend(business_db_factory, pid, 80)
+    async with business_db_factory() as session:
+        note = await alerts.agent_note(session, pid)
+    assert note is not None
+    assert "这个项目的预算" in note
+
+    # Past that, the team's plan is the fuller of the two and wins.
+    async with business_db_factory() as session:
+        await CreditBudgets(session).save(
+            pid, credits_limit=1000.0, set_project_limit=True, member_limits={}
+        )
+        await session.commit()
+    await _spend(business_db_factory, pid, 320)
+    async with business_db_factory() as session:
+        note = await alerts.agent_note(session, pid)
+    assert note is not None
+    assert "团队额度" in note
+
+
+@pytest.mark.anyio
+async def test_the_agent_is_told_nothing_while_there_is_room(business_db_factory):
+    pid = await _seed(business_db_factory)
+    await _spend(business_db_factory, pid, 100)
+    async with business_db_factory() as session:
+        assert await alerts.agent_note(session, pid) is None

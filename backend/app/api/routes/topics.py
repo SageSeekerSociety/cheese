@@ -1044,16 +1044,29 @@ async def topic_status(
     # （`usage.alerts` 的同一档）。项目预算这一层不会自动恢复，单独给个数。
     payer = await payer_for_project(db, place.project_id)
     balance = await Ledger(db).balance(payer)
-    credits["total"] = None if balance.unlimited else balance.credits_total
-    credits["resets_at"] = (
-        None if balance.resets_at is None else _credit_reset_text(balance.resets_at)
-    )
     budget = await CreditBudgets(db).report(place.project_id)
-    credits["project_remaining"] = (
-        None
-        if budget["credits_limit"] is None
-        else max(0.0, budget["credits_limit"] - budget["credits_used"])
+    cap = budget["credits_limit"]
+    cap_remaining = None if cap is None else max(0.0, cap - budget["credits_used"])
+    plan_remaining = None if balance.unlimited else balance.credits_remaining
+    # 哪一层先停：项目预算和团队方案哪边剩得少就是哪边。上限和恢复时间要跟着那一层
+    # 说，不能拿团队方案的上限去配项目预算的剩余。
+    by_budget = cap_remaining is not None and (
+        plan_remaining is None or cap_remaining <= plan_remaining
     )
+    total = None
+    reset = None
+    if by_budget:
+        total = cap
+    elif plan_remaining is not None:
+        total = balance.credits_total
+        # 按窗口的方案没有月包，`resets_at` 是空的；要回答「几时恢复」得看最紧的那
+        # 个窗口（`usage.alerts` 认的是同一个窗口）。
+        reset = balance.resets_at
+        if reset is None and balance.windows:
+            reset = min(balance.windows, key=lambda use: use.room).resets_at
+    credits["total"] = total
+    credits["resets_at"] = None if reset is None else _credit_reset_text(reset)
+    credits["project_remaining"] = cap_remaining
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
