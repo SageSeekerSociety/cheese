@@ -12,6 +12,7 @@ export const SPLIT_MIN_WIDTH = 720
 
 export function usePanelSplit(
   active: Ref<string>,
+  /** `exists` 要读响应式的页签表：一格不经「关掉」没了时，并排靠它重算才收得回来。 */
   opts: { width: Ref<number>; phone: Ref<boolean>; exists: (key: string) => boolean }
 ) {
   const split = ref<string | null>(null)

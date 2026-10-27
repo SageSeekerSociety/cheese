@@ -1,6 +1,6 @@
 // 并排看两格的规则：此刻这格在左，上一格在右；点右边那格就换边；关掉右边那格、面板
 // 变窄、在手机上，都收回一列。
-import { nextTick, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 import { expect, it } from 'vitest'
 
 import { SPLIT_MIN_WIDTH, usePanelSplit } from './usePanelSplit'
@@ -9,7 +9,8 @@ function setup(width = 1000, phone = false) {
   const active = ref('overview')
   const w = ref(width)
   const p = ref(phone)
-  const keys = new Set(['overview', 'preview', 'file:a.md', 'chat'])
+  // 响应式的：面板里 exists 读的是响应式的页签表，一格没了才会自己收回。
+  const keys = reactive(new Set(['overview', 'preview', 'file:a.md', 'chat']))
   const s = usePanelSplit(active, { width: w, phone: p, exists: (k) => keys.has(k) })
   return { active, w, p, keys, ...s }
 }
@@ -81,8 +82,6 @@ it('右边那一格不经「关掉」就没了（临时页签被下一份文件�
   s.toggle()
   expect(s.split.value).toBe('file:a.md')
   s.keys.delete('file:a.md')
-  // exists 读的是一份普通的 Set，这里换一次宽度让依赖重算；面板里读的是响应式的页签表。
-  s.w.value = 1001
   await nextTick()
   expect(s.split.value).toBeNull()
 })
