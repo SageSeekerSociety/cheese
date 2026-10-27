@@ -97,7 +97,7 @@ covers:
 
 ## 写面闸门：谁是芝士 {#gate}
 
-每条写路由在自己的依赖里声明谁能调它（`api/write_access.py`）：`CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT` 只收路径里那个频道或项目的芝士凭据，浏览器的登录会话一律拒；`Can(...)` 按权限判断（见[权限](/dev/seats)）；`ROUTE_DECIDES` 交给处理函数自己判断。凭据和别的请求一样从 `Authorization: Bearer` 读，是哪一种由 `core/credentials.py` 说了算。
+每条写路由在自己的依赖里声明谁能调它（`api/write_access.py`）：`CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT` 只收路径里那个频道或项目的芝士凭据，浏览器的登录会话一律拒；`Can(...)` 按权限判断（见[权限](/dev/seats)）；`ROUTE_DECIDES` 交给处理函数自己判断，只有 `Can` 还认不全调用方时写的那些旧路由还这样声明，正逐批改成 `Can`；新加的写路由不能再用它（`backend/scripts/check_route_decides.py` 拿合并基点比，只许减少）。凭据和别的请求一样从 `Authorization: Bearer` 读，是哪一种由 `core/credentials.py` 说了算。
 
 - 每轮凭据按 URL 里的 id 匹配（`is_valid_cheese_token`）；项目凭据能进项目里任何频道，所以不按字符串比，而是读库核对项目、是否撤销，再走 `resolver.authorize_topic` / `authorize_project`。
 - 不通过就是 401 `invalid sandbox token`。

@@ -18,7 +18,9 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   conversation (``at="topic_id"``), by whoever may be in that channel, and the
   parameter receives the conversation's place with who acts (``InChannel``).
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
-  itself (``ActorResolver`` and friends). Most routes are this.
+  itself (``ActorResolver`` and friends). The routes written before ``Can``
+  judged every caller still declare it and move onto ``Can`` a batch at a
+  time; a route added now may not (``scripts/check_route_decides.py``).
 
 A router may declare for all its routes
 (``APIRouter(dependencies=[ROUTE_DECIDES])``); a route may not declare twice.
