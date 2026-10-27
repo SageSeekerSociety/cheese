@@ -582,3 +582,53 @@ describe('页上已有的评论标记', () => {
     expect(mark.getAttribute('aria-label')).toBe('评论这一处')
   })
 })
+
+describe('手指放大', () => {
+  /** 点两下：两次抬起隔 150 毫秒、落在同一处。happy-dom 的触摸事件没有构造参数，自己挂。 */
+  function doubleTap(el: HTMLElement) {
+    for (const at of [1000, 1150]) {
+      for (const type of ['touchstart', 'touchend']) {
+        const event = new Event(type, { bubbles: true, cancelable: true })
+        const point = [{ clientX: 50, clientY: 50, identifier: 0 }]
+        Object.defineProperties(event, {
+          touches: { value: type === 'touchstart' ? point : [] },
+          changedTouches: { value: point },
+          timeStamp: { value: at },
+        })
+        el.dispatchEvent(event)
+      }
+    }
+  }
+  const boxWidth = (ui: ReturnType<typeof mount>) =>
+    Number.parseFloat((ui.container.querySelector('[data-page]') as HTMLElement).style.width)
+
+  it('点两下页放大，再点两下回到整页；画布不清空，等手停了再重画', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+
+    // happy-dom 量不出文字的位置，找不到「那一栏」，按两倍放大。
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(1136)
+    // 拉大的旧图留在页上，不是一块白。
+    expect(ui.container.querySelectorAll('canvas')).toHaveLength(2)
+
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
+  })
+
+  it('指位置开着时点两下不放大：那是在指两处', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
+  })
+})
