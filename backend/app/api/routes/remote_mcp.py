@@ -75,7 +75,7 @@ async def manager(at: InProject, db: AsyncSession, resolver: ActorResolver) -> s
     setting its secret changes what every room of the project can reach, which
     no agent decides, prompted by whatever it last read."""
     if not at.actor.authenticated:
-        raise AuthenticationRequiredError("Login required")
+        raise AuthenticationRequiredError(say("signInFirst"))
     await resolver.refuse_unseated_agent(at.actor, project_id=at.project.id)
     refusal = await policy.refuse_management_action(
         at.actor, carries_agent_binding=IdentityService(db).is_agent
