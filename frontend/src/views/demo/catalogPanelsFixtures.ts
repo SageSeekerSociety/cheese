@@ -21,6 +21,7 @@
  */
 import type { MaybeRef, Ref } from 'vue'
 import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
 import type { DocSession } from '@/composables/useDocCollab'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
@@ -320,6 +321,28 @@ type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isIm
 /** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
 type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
 
+/** 「文档条上的版本」那一包（`usePanelPreviewVersions` 的返回）。预览站不连后端、也没有
+ *  保存历史，所以给一份空的：`PreviewDocStage` 只在 `current` 有值时才摆版本行。 */
+export function versionsBundle(): PreviewVersionsBundle {
+  return {
+    list: computed(() => []),
+    changedCells: computed(() => null),
+    changedBy: computed(() => ''),
+    current: computed(() => null),
+    canCompare: computed(() => false),
+    canView: computed(() => false),
+    hint: computed(() => null),
+    compare: computed(() => null),
+    oldView: computed(() => null),
+    oldError: ref(''),
+    openCompare: noop,
+    exitCompare: noop,
+    dismissHint: noop,
+    choose: noop,
+    backToLatest: noop,
+  }
+}
+
 /** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、网页
  *  那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。后缀、类型、名字、
  *  文档身份从 `previewFile` 算 —— 没有文件时它们就是产品里那时的值，夹具不必另写一遍。 */
@@ -386,6 +409,7 @@ export function previewBundle(
     showHistory: ref(v.showHistory),
     editor: v.editor,
     fileHistory: v.fileHistory,
+    versions: versionsBundle(),
     load: noopAsync,
     downloadArtifact: noopAsync,
     refreshDocument: noop,
