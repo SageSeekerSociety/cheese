@@ -42,37 +42,52 @@
           {{ folded(piece.steps) }}
         </button>
         <ul v-if="!foldable(piece.steps) || opened.has(piece.key)" class="at__steps">
-          <li v-for="step in piece.steps" :key="step.key" class="at__step" :class="`at__step--${step.state}`">
-            <span class="at__ico" aria-hidden="true">
-              <span v-if="step.state === 'run'" class="at__spin" />
-              <v-icon v-else-if="step.state === 'done'" size="14">mdi-check</v-icon>
-              <v-icon v-else size="14">mdi-close</v-icon>
-            </span>
-            <button
-              v-if="step.subagent?.steps.length"
-              type="button"
-              class="at__sub-open"
-              :aria-expanded="opened.has(`sub-${step.key}`)"
-              @click="toggle(`sub-${step.key}`)"
-            >
-              <span class="at__verb">{{ step.verb }}</span>
-              <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
-            </button>
-            <template v-else>
-              <span class="at__verb">{{ step.verb }}</span>
-              <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
-            </template>
-            <span v-if="step.subagent" class="at__sub-state">{{
-              t(`tasks.assistant.subagent.${step.subagent.status}`)
-            }}</span>
-            <span v-if="step.state === 'failed' && step.error" class="at__err">{{ step.error }}</span>
-            <ul v-if="step.subagent && opened.has(`sub-${step.key}`)" class="at__steps at__sub-steps">
-              <li v-for="done in step.subagent.steps" :key="done.key" class="at__step">
-                <span class="at__verb">{{ done.verb }}</span>
-                <span v-if="done.arg" class="at__arg" data-user-content>{{ done.arg }}</span>
-              </li>
-            </ul>
-          </li>
+          <template v-for="row in stepRows(piece.steps)" :key="row.key">
+            <li v-if="row.kind === 'reads'" class="at__step" :class="`at__step--${readsState(row.steps)}`">
+              <span class="at__ico" aria-hidden="true">
+                <span v-if="readsState(row.steps) === 'run'" class="at__spin" />
+                <v-icon v-else size="14">mdi-check</v-icon>
+              </span>
+              <span class="at__verb">{{ readsLine(row.steps) }}</span>
+              <ul class="at__steps at__reads">
+                <li v-for="read in row.steps" :key="read.key" class="at__step">
+                  <span>{{ read.verb }}</span>
+                  <span v-if="read.arg" class="at__arg" data-user-content>{{ read.arg }}</span>
+                </li>
+              </ul>
+            </li>
+            <li v-else class="at__step" :class="[`at__step--${row.step.state}`, { 'at__step--act': acts(row.step) }]">
+              <span class="at__ico" aria-hidden="true">
+                <span v-if="row.step.state === 'run'" class="at__spin" />
+                <v-icon v-else-if="row.step.state === 'done'" size="14">mdi-check</v-icon>
+                <v-icon v-else size="14">mdi-close</v-icon>
+              </span>
+              <button
+                v-if="row.step.subagent?.steps.length"
+                type="button"
+                class="at__sub-open"
+                :aria-expanded="opened.has(`sub-${row.step.key}`)"
+                @click="toggle(`sub-${row.step.key}`)"
+              >
+                <span class="at__verb">{{ row.step.verb }}</span>
+                <span v-if="row.step.arg" class="at__arg" data-user-content>{{ row.step.arg }}</span>
+              </button>
+              <template v-else>
+                <span class="at__verb">{{ row.step.verb }}</span>
+                <span v-if="row.step.arg" class="at__arg" data-user-content>{{ row.step.arg }}</span>
+              </template>
+              <span v-if="row.step.subagent" class="at__sub-state">{{
+                t(`tasks.assistant.subagent.${row.step.subagent.status}`)
+              }}</span>
+              <span v-if="row.step.state === 'failed' && row.step.error" class="at__err">{{ row.step.error }}</span>
+              <ul v-if="row.step.subagent && opened.has(`sub-${row.step.key}`)" class="at__steps at__sub-steps">
+                <li v-for="done in row.step.subagent.steps" :key="done.key" class="at__step">
+                  <span class="at__verb">{{ done.verb }}</span>
+                  <span v-if="done.arg" class="at__arg" data-user-content>{{ done.arg }}</span>
+                </li>
+              </ul>
+            </li>
+          </template>
         </ul>
       </template>
     </template>
@@ -214,6 +229,7 @@ import { useI18n } from 'vue-i18n'
 import AgentProposal from '@/components/agent/AgentProposal.vue'
 import AssistantRuleCard from '@/components/assistant/AssistantRuleCard.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { foldedLine, readsLine, stepRows } from '@/lib/assistantView'
 import { fmtBytes } from '@/lib/changesTree'
 import { leafOf } from '@/lib/libraryFolders'
 import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
@@ -283,10 +299,19 @@ function foldable(steps: PanelStep[]): boolean {
   return !props.live && steps.length > 1
 }
 
-/** 收起的那一行：第一个工具做了什么，一共几步（推理的那几段不算步数）。 */
+/** 收起的那一行：做了什么，查阅了几项（`foldedLine`）。 */
 function folded(steps: PanelStep[]): string {
-  const calls = steps.filter((step) => !step.thinking)
-  return t('tasks.assistant.steps.folded', { first: (calls[0] ?? steps[0]).verb, n: calls.length || steps.length })
+  return foldedLine(steps)
+}
+
+/** 一组查阅还有一项没读完时转圈，都读完了打勾。 */
+function readsState(steps: PanelStep[]): 'run' | 'done' {
+  return steps.some((step) => step.state === 'run') ? 'run' : 'done'
+}
+
+/** 做了事的一步（改了东西、影响到别人）：加重，好和查阅分开。 */
+function acts(step: PanelStep): boolean {
+  return step.effect === 'changes' || step.effect === 'reaches others'
 }
 
 const notes = computed(() =>
@@ -486,6 +511,19 @@ function undoable(change: PanelChange): number {
 
 .at__verb {
   color: var(--text);
+}
+
+/* 做了事的一步：比查阅重一级。 */
+.at__step--act .at__verb {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 一组查阅里的每一项：缩在组那一行下面。 */
+.at__steps.at__reads {
+  flex-basis: 100%;
+  gap: 2px;
+  padding-left: 20px;
 }
 
 .at__arg {

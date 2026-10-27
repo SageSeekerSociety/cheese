@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.agent.personal.reading import Read
 from app.domain.space import permissions as space_seats
 from app.domain.space.models import (
     Space,
@@ -77,7 +78,7 @@ def _date(moment: datetime | None) -> str:
     return moment.strftime("%Y-%m-%d") if moment else "不过期"
 
 
-async def desk(session: AsyncSession, user_id: int, space_id: int) -> str:
+async def desk(session: AsyncSession, user_id: int, space_id: int) -> Read:
     space = await managed(session, user_id, space_id)
     limit = space.visible_task_limit
     lines = [
@@ -142,4 +143,4 @@ async def desk(session: AsyncSession, user_id: int, space_id: int) -> str:
         + setters.get(t.creator_id, "?")
         for t in waiting
     ] or ["（无）"]
-    return "\n".join(lines)
+    return Read(f"空间「{space.name}」的设置", "\n".join(lines))

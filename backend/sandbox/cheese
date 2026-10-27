@@ -3207,13 +3207,17 @@ class Said(str):
     """What a tool says, with pictures for an agent that can look at them:
     `images` holds {"data": base64, "mimeType": ...}. Every caller takes it as
     the text it is; a session runner that can hand pictures to its model (pi,
-    Codex) hands these over as well."""
+    Codex) hands these over as well. `subject` is what the call acted on, the
+    way a person knows it (「空间「操作系统」」): a person's 芝士 shows it as
+    the call's step (`_subject`)."""
 
     images: tuple = ()
+    subject: str = ""
 
-    def __new__(cls, text: str, images=()):
+    def __new__(cls, text: str, images=(), subject: str = ""):
         said = super().__new__(cls, text)
         said.images = tuple(images)
+        said.subject = subject
         return said
 
 
@@ -3279,14 +3283,74 @@ def run_platform_tool(tool: str, args: dict, host, *, delegated: bool = False) -
     step = (
         _DELEGATED_STEPS.get(key) if table is DELEGATED_TOOLS else None
     ) or _STEPS.get(key)
+    data = None
     try:
         if step is not None:
-            return step(args, host)
-        plan = request_plan(key, args, host.environ)
+            said = step(args, host)
+        else:
+            plan = request_plan(key, args, host.environ)
     except ValueError as exc:
         raise PlatformToolError(str(exc)) from exc
-    data = host.request(plan).get("data")
-    return _SAY[key](args, data, host.environ)
+    if step is None:
+        data = host.request(plan).get("data")
+        said = _SAY[key](args, data, host.environ)
+    if not delegated or getattr(said, "subject", ""):
+        return said
+    return Said(said, getattr(said, "images", ()), _subject(key, args, data))
+
+
+#: What a read that names nothing in particular read, by the ref it was given.
+_READ_WHOLE = {
+    "me": "你领取的题目",
+    "settings": "你的通知设置",
+    "library": "你的资料库",
+}
+
+
+def _subject(key: str, args: dict, data) -> str:
+    """What one call of a person's 芝士 acted on, the way the person knows it:
+    shown as its step in place of the reference it was given. Where the
+    backend knows the name it says it (`subject` in its answer); what the
+    call's own arguments name is named here. Empty when neither names one."""
+    given = data.get("subject") if isinstance(data, dict) else None
+    if isinstance(given, str) and given.strip():
+        return given.strip()
+    if key == "cheese_read":
+        ref = (args.get("ref") or "").strip().strip("/")
+        if ref in _READ_WHOLE:
+            return _READ_WHOLE[ref]
+        if ref.startswith("library/"):
+            return f"资料库「{ref.rsplit('/', 1)[-1]}」"
+        return ""
+    if key in ("cheese_find", "cheese_project_search", "cheese_web.search"):
+        return (args.get("query") or "").strip()
+    if key == "cheese_help":
+        if args.get("page"):
+            title = data.get("title") if isinstance(data, dict) else None
+            return f"帮助文档「{title or args['page']}」"
+        return f"帮助文档：{(args.get('query') or '').strip()}"
+    if key == "cheese_web.fetch":
+        return _page_named(args.get("url") or "")
+    if key in ("cheese_memory.read", "cheese_memory.save", "cheese_memory.forget"):
+        return f"记忆「{(args.get('name') or '').strip()}」"
+    if key == "cheese_memory.project":
+        return f"项目记忆「{(args.get('name') or '').strip()}」"
+    if key == "cheese_library.read":
+        return f"资料库「{(args.get('path') or '').rstrip('/').rsplit('/', 1)[-1]}」"
+    return ""
+
+
+def _page_named(url: str) -> str:
+    """A web page as a step names it: its site, or a documentation site's
+    index (`llms.txt`) as that."""
+    parts = urllib.parse.urlsplit(url.strip())
+    if parts.path.rstrip("/").endswith("/llms.txt"):
+        return (
+            "帮助文档目录"
+            if "okcheese" in parts.netloc
+            else f"{parts.netloc} 的文档目录"
+        )
+    return parts.netloc or url.strip()
 
 
 def _unsaid(value) -> bool:
@@ -4919,7 +4983,9 @@ def _carry_out(key: str, args: dict, host):
             plan["path"] = plan["path"].replace("{prev}", str(made))
         answered = host.request(plan).get("data")
         made = answered.get("id") if isinstance(answered, dict) else None
-    return answered, data.get("said") or "已完成。"
+    return answered, Said(
+        data.get("said") or "已完成。", subject=data.get("subject") or ""
+    )
 
 
 def _decided(card: dict, host) -> str:
@@ -4951,7 +5017,11 @@ def _carried(key: str):
 
 def _web_fetch(args: dict, host):
     answered, said = _carry_out("cheese_web.fetch", args, host)
-    return _say_fetch(args, answered, host.environ) if answered is not None else said
+    if answered is None:
+        return said
+    return Said(
+        _say_fetch(args, answered, host.environ), subject=_page_named(args["url"])
+    )
 
 
 _STEPS = {

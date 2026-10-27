@@ -9,7 +9,7 @@
   "bashStart": "Start a background task",
   "bashWrite": "Send input to the task",
   "chatEdit": "Edit a message",
-  "chatSend": "Post a message",
+  "chatSend": "Send a message",
   "cheeseAcceptRequest": "Submit for review",
   "cheeseApp": "Work on a mini-app",
   "cheeseAppGet": "Read a mini-app",

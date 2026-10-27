@@ -125,6 +125,20 @@ def ask_for_action(tool: str, verbs: list[str]) -> str:
     return _module().ask_for_action(tool, verbs)
 
 
+def effect_of(tool: str, arguments: dict) -> str | None:
+    """What one call of a person's 芝士 does (`ToolTable.effect`): reads,
+    changes, or reaches others; None for a call that does not say."""
+    module = _module()
+    table = next(
+        (t for t in (module.DELEGATED_TOOLS, module.PLATFORM_TOOLS) if tool in t),
+        None,
+    )
+    if table is None:
+        return None
+    action = arguments.get("action") if isinstance(arguments, dict) else None
+    return table.effect(f"{tool}.{action}" if table.actions(tool) and action else tool)
+
+
 def is_platform_tool(tool: str) -> bool:
     return tool in _module().PLATFORM_TOOLS
 
