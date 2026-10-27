@@ -9,15 +9,15 @@ request — headers, DB, WebSocket. Routes call ``resolve(...)`` (replacing ever
 ``authorize_topic(...)``.
 
 The wiring routes import — ``ActorResolverDep``, ``MediaActorResolverDep``,
-``DELEGATED_ROUTES``, the media cookie, ``require_seated_agent`` — is in the
-kernel of the same package, ``app/api/auth/__init__.py``. Import that.
+the media cookie, ``require_seated_agent`` — is in the kernel of the same
+package, ``app/api/auth/__init__.py``. Import that.
 
 **Read through ``pkg``, never imported here.** ``pkg`` is the facade, and the
 names below come off it at CALL time on purpose: the two repositories the tests
 replace to watch this class (``UserRepository`` in
 ``tests/unit/test_actor_numeric_handle.py`` and
 ``tests/unit/test_token_scope_violation.py``, plus ``TopicMemberService`` in
-those same two), the delegated-route table, the token verifier, and
+those same two), the token verifier, and
 ``require_seated_in_its_room``. A module-local import would step past every one
 of those replacements in silence; the facade is the only place a replacement is
 seen (``app/domain/review/services`` reads its own patch points the same way).
@@ -55,7 +55,6 @@ from app.core.sandbox_auth import (
     is_global_sandbox_token,
     looks_like_delegated_credential,
     looks_like_project_agent_credential,
-    pass_id,
     project_agent_claims,
     scoped_token_claims,
     token_agent_handle,
@@ -63,7 +62,6 @@ from app.core.sandbox_auth import (
 )
 from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.assistant import passes
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.conversation import services as conversations
 from app.domain.identity.actor import Actor, resolve_actor
@@ -92,21 +90,10 @@ class ActorResolver:
         bearer: str | None,
         cheese_token: str,
         writes: bool = False,
-        endpoint: str | None = None,
-        path_ids: frozenset[str] = frozenset(),
         allow_machine: bool = False,
     ):
         self._session = session
         self._allow_machine = allow_machine
-        # The ids the route's path names (a team's, a space's, an invitation's):
-        # where a pass may be spent, besides the project and room it resolves.
-        self._path_ids = path_ids
-        # Whether a person's 芝士 has already been let through a gated route
-        # (``GATED_ROUTES``) by the pass it presented, this request.
-        self._through_gate = False
-        # Which route this is (``module.function``), for a delegated credential,
-        # which opens only the routes in ``DELEGATED_ROUTES``.
-        self._endpoint = endpoint
         # Whether this request changes something. A write that names a project,
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
@@ -184,39 +171,20 @@ class ActorResolver:
     ) -> Actor:
         """The person a 芝士 answers for, as the actor: what the route allows is
         judged by what that person may do. Refused outright (never anonymous)
-        when the credential is not valid, the route is not one it opens, the
-        route changes something and the question may only be answered, or the
-        route acts somewhere the credential was not minted for."""
+        when the credential is not valid, the request changes something and the
+        question may only be answered, or the route acts somewhere the
+        credential was not minted for.
+
+        Which of the person's actions 芝士 takes, and which it asks about
+        first, is its harness's to decide before a tool runs
+        (``run_platform_tool``), not this credential's: it never reaches a
+        place the model could use it from."""
         claims = self.delegation()
         if claims is None:
             raise AuthenticationRequiredError(
                 "Delegated credential is invalid or expired"
             )
-        writes = pkg.DELEGATED_ROUTES.get(self._endpoint or "")
-        if (
-            writes is None
-            and (self._endpoint or "") in pkg.GATED_ROUTES
-            and claims.agent is None
-            and claims.topic_id is None
-        ):
-            # A person's own 芝士, only as far as its gate let it through
-            # (`assistant.passes`).
-            if topic_id is not None and project_id is None:
-                project_id = await self.project_of_topic(topic_id)
-            if not self._through_gate:
-                self._through_gate = await passes.use(
-                    pass_id(self._cheese_token) or "",
-                    work=claims.work,
-                    endpoint=self._endpoint or "",
-                    places={str(p) for p in (topic_id, project_id) if p is not None}
-                    | self._path_ids,
-                )
-            if not self._through_gate:
-                raise ForbiddenError(say("assistantGateNotPassed"))
-            writes = True
-        if writes is None:
-            raise ForbiddenError("This credential does not open this route")
-        if writes and claims.read_only:
+        if self._writes and not read_only and claims.read_only:
             raise ForbiddenError("This question may only be answered, not act")
         if topic_id is not None and project_id is None:
             project_id = await self.project_of_topic(topic_id)

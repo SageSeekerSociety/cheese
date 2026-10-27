@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.assistant_deps import ProjectPages
+from app.api.assistant_deps import ProjectPages, not_by_their_assistant
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
 from app.api.refusal import refuse
@@ -71,7 +71,11 @@ from app.domain.user.services import timezones_by_ids, usernames_by_ids
 from app.domain.voice.service import VoiceInputs
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/assistant", tags=["assistant"])
+router = APIRouter(
+    prefix="/assistant",
+    tags=["assistant"],
+    dependencies=[Depends(not_by_their_assistant)],
+)
 
 
 People = Annotated[SessionHost, Depends(get_session_host)]

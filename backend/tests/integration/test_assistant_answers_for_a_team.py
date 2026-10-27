@@ -1,5 +1,5 @@
 """A person's 芝士 answers what waits on them from a team: an invitation into
-one, someone asking to join one they run. Let through, it is done as the
+one, someone asking to join one they run. Taken by its gate, it is done as the
 person, on that team and no other."""
 
 import uuid
@@ -14,6 +14,7 @@ from tests.integration.test_assistant_agent import (
     _asked_in,
     _Gatekeeper,
 )
+from tests.support import assistant_actions
 
 
 def _bearer(client, handle: str) -> dict[str, str]:
@@ -40,22 +41,13 @@ def _let_through(client, monkeypatch, token: str, act: dict) -> dict:
         return _Gatekeeper("放", "放")
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
-    got = client.post("/assistant/agent/act", json=act, headers=_as(token))
-    assert got.status_code == 200, got.text
-    got = got.json()["data"]
-    assert got["done"] is True, got
-    return got
+    got = assistant_actions.review(client, token, act)
+    assert got["allowed"] is True, got
+    return act
 
 
-def _carry_out(client, token: str, got: dict) -> None:
-    for call in got["calls"]:
-        sent = client.request(
-            call["method"],
-            call["path"],
-            json=call.get("body"),
-            headers=_as(got["pass"]),
-        )
-        assert 200 <= sent.status_code < 300, sent.text
+def _carry_out(client, token: str, act: dict) -> None:
+    assistant_actions.carry_out(client, token, act)
 
 
 def test_a_team_invitation_is_accepted_for_the_person(client, monkeypatch):
@@ -97,12 +89,12 @@ def test_a_request_to_join_the_persons_team_is_approved_there_only(client, monke
     carol = _ledger_user(client, "carol")[0]
     carols = seed_user(client, "carol")
     asked = ask_to_join(client, mine, carols, "想加入")
-    elsewhere = ask_to_join(client, other, carols, "也想加入")
+    ask_to_join(client, other, carols, "也想加入")
     token = _acting(
         client, "alice", _asked_in(client, "alice", "批准 carol 加入我的团队")
     )
 
-    got = _let_through(
+    act = _let_through(
         client,
         monkeypatch,
         token,
@@ -112,14 +104,9 @@ def test_a_request_to_join_the_persons_team_is_approved_there_only(client, monke
             "choice": "accept",
         },
     )
-    assert len(got["calls"]) == 1
-    stray = client.post(
-        f"/teams/{other}/join-requests/{elsewhere}/approve",
-        headers=_as(got["pass"]),
-    )
-    _carry_out(client, token, got)
+    assert len(assistant_actions.calls(client, token, act)) == 1
+    _carry_out(client, token, act)
 
-    assert stray.status_code == 403
     assert carol in _members(client, mine, "alice")
     assert carol not in _members(client, other, "alice")
 
@@ -213,12 +200,12 @@ def test_the_person_manages_their_spaces_members_and_managers(client, monkeypatc
 
     # Stepping someone down is asked first, by the person's default rule.
     token = _acting(client, "alice", _asked_in(client, "alice", "撤掉 erin 的管理员"))
-    asked = client.post(
-        "/assistant/agent/act",
-        json={"kind": "member", "where": where, "who": "erin", "role": "member"},
-        headers=_as(token),
-    ).json()["data"]
-    assert asked["done"] is False
+    asked = assistant_actions.review(
+        client,
+        token,
+        {"kind": "member", "where": where, "who": "erin", "role": "member"},
+    )
+    assert asked["allowed"] is False
     assert (
         asked["card"]["summary"]
         == f"撤掉 erin 在空间「{_name(client, space)}」的管理员身份"
