@@ -15,6 +15,7 @@
   "reviewTitle": "{name} 的提交",
   "state": {
     "closed": "已截止",
+    "expired": "已过期",
     "full": "人数已满",
     "notStarted": "未开始",
     "open": "可申请",

@@ -157,9 +157,12 @@ const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.val
  *  开始做就是用这道题新建项目。 */
 const approvedWithoutProject = computed(() => joined.value && !myProject.value)
 
-/** 我这一份走到哪了，挂在题目名旁边：等通过、没通过、在做。没领过就没有。 */
+/** 我这一份走到哪了，挂在题目名旁边：等通过、没通过、在做。没领过就没有。再也动不了的那一份
+ *  （`canStillAct` 说不能：过了我的截止、题目结束了）不写「进行中」，旁边那一枚已经说了
+ *  「已过期」或「已截止」。 */
 const myState = computed(() => {
-  if (joined.value) return { label: t('tasks.page.mine.doing'), tone: 'ok' }
+  if (joined.value)
+    return taskData.value && canStillAct(taskData.value) ? { label: t('tasks.page.mine.doing'), tone: 'ok' } : null
   if (myClaimPending.value) return { label: t('tasks.page.mine.pending'), tone: 'muted' }
   if (myClaimRejected.value) return { label: t('tasks.page.mine.rejected'), tone: 'danger' }
   return null

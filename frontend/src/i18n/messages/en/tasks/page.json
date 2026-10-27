@@ -15,6 +15,7 @@
   "reviewTitle": "Submissions from {name}",
   "state": {
     "closed": "Closed",
+    "expired": "Expired",
     "full": "Full",
     "notStarted": "Not started",
     "open": "Open",

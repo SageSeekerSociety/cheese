@@ -8,7 +8,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
-import { taskStateFor } from '@/utils/tasks'
+import { canStillAct, taskStateFor } from '@/utils/tasks'
 
 import { splitOrigin } from '@/views/spaces/model'
 
@@ -27,8 +27,9 @@ const publisher = computed(() => props.task.creator.nickname || props.task.creat
 const date = (at: number) => dayjs(at).format(t('tasks.page.dateFormat'))
 
 /** 我在这道题上有一份没被拒的申请（个人或所在团队的）。`joined` 已经排除了被拒的；`joinedTeams`
- *  不看审核，被拒的团队申请也在里面，所以不拿它判。 */
-const mine = computed(() => !!props.task.joined)
+ *  不看审核，被拒的团队申请也在里面，所以不拿它判。通过了却再也动不了的（`canStillAct`）不标：
+ *  右边那一行已经说了「已过期」或「已截止」，再写「在做」就是错的。 */
+const mine = computed(() => !!props.task.joined && !(props.task.submittable && !canStillAct(props.task)))
 /** 申请通过了才算在做（`submittable` 是服务端按通过的那份算的）；还在等的写「已申请」。 */
 const mineLabel = computed(() =>
   props.task.submittable ? t('spaces.detail.tasks.row.mine') : t('spaces.detail.tasks.row.applied')

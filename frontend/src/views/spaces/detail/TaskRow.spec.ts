@@ -83,25 +83,32 @@ describe('题目列表的一行', () => {
     expect(view.queryByText(t('tasks.page.state.closed'))).toBeNull()
   })
 
+  // 一份再也动不了的领取不标「在做」（Zhifei 2026-10-26），和题目页标题旁同一条判据。
   it.each([
-    ['直接开始的题过了截止', { startMode: 'DIRECT', userDeadline: Date.now() + DAY }],
-    ['申请制的题、自己的截止也过了', { startMode: 'APPLY', userDeadline: Date.now() - DAY }],
-  ] as const)('%s：这一行照样写「已截止」', (_, more) => {
-    const view = show({ deadline: Date.now() - DAY, joined: true, submittable: true, ...more })
+    ['直接开始的题过了截止', { startMode: 'DIRECT', deadline: Date.now() - DAY, userDeadline: Date.now() + DAY }],
+    ['题目已结束', { endedAt: Date.now() - DAY, userDeadline: Date.now() + DAY }],
+  ] as const)('%s：这一行写「已截止」，不标「在做」', (_, more) => {
+    const view = show({ joined: true, submittable: true, ...more })
 
     view.getByText(t('tasks.page.state.closed'))
+    expect(view.queryByText(t('spaces.detail.tasks.row.mine'))).toBeNull()
   })
 
-  it('申请制的题还在收申请、我的截止已经过了：这一行写「已截止」，不写「可申请」', () => {
+  it.each([
+    ['申请制的题、题目和我的截止都过了', Date.now() - 2 * DAY],
+    ['申请制的题还在收申请', Date.now() + 7 * DAY],
+  ])('%s、我自己的截止过了：这一行只写「已过期」，不标「在做」，不写「已截止」「可申请」', (_, deadline) => {
     const view = show({
       startMode: 'APPLY',
-      deadline: Date.now() + 7 * DAY,
+      deadline,
       joined: true,
       submittable: true,
       userDeadline: Date.now() - DAY,
     })
 
-    view.getByText(t('tasks.page.state.closed'))
+    view.getByText(t('tasks.page.state.expired'))
+    expect(view.queryByText(t('spaces.detail.tasks.row.mine'))).toBeNull()
+    expect(view.queryByText(t('tasks.page.state.closed'))).toBeNull()
     expect(view.queryByText(t('tasks.page.state.open'))).toBeNull()
   })
 

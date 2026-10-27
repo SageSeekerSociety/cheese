@@ -2,7 +2,7 @@ import type { Task } from '@/types'
 
 import { describe, expect, it } from 'vitest'
 
-import { deadlineState, taskState } from './tasks'
+import { deadlineState, taskState, taskStateFor } from './tasks'
 
 const NOW = 1000
 
@@ -67,5 +67,22 @@ describe('一个截止时刻此刻是什么情形', () => {
 
   it('没有截止就没有情形', () => {
     expect(deadlineState(null, now)).toBeNull()
+  })
+})
+
+describe('这道题对手上有一份通过了的领取的人是什么状态', () => {
+  const mine = (overrides: Partial<Task>) => task({ submittable: true, startMode: 'APPLY', ...overrides })
+
+  it.each([
+    // 过的是我自己的截止：「已过期」，题目还收不收申请都一样。
+    [{ userDeadline: 500, deadline: 2000 }, 'expired'],
+    [{ userDeadline: 500, deadline: 400 }, 'expired'],
+    // 过的是题目：结束了，或直接开始的题过了所有人的截止。
+    [{ userDeadline: 2000, endedAt: 900 }, 'closed'],
+    [{ userDeadline: 2000, startMode: 'DIRECT' as const, deadline: 500 }, 'closed'],
+    // 申请截止只挡申请，我的截止还没到：不写「已截止」。
+    [{ userDeadline: 2000, deadline: 500 }, null],
+  ])('%o → %s', (overrides, key) => {
+    expect(taskStateFor(mine(overrides), NOW)?.key ?? null).toBe(key)
   })
 })

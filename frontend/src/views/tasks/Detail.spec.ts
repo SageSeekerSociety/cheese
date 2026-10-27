@@ -356,7 +356,7 @@ describe('题目详情', () => {
     expect(textsExactly(container, t('tasks.side.deadlineApply'))).toHaveLength(0)
   })
 
-  it('申请制的题还在收申请、我的截止已经过了：标题旁写「已截止」，不写「可申请」，也开始不了', async () => {
+  it('申请制的题还在收申请、我的截止已经过了：标题旁写「已过期」，不写「可申请」，也开始不了', async () => {
     const { container } = await mount(
       {
         startMode: 'APPLY',
@@ -373,8 +373,58 @@ describe('题目详情', () => {
     )
 
     expect(textsExactly(container, t('tasks.page.state.open'))).toHaveLength(0)
-    expect(textsExactly(container, t('tasks.page.state.closed')).length).toBeGreaterThan(0)
+    expect(textsExactly(container, t('tasks.page.state.expired'))).toHaveLength(1)
     expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  // 一份再也动不了的领取，标题旁不写「进行中」（Zhifei 2026-10-26）。过的是我自己的截止，就只写
+  // 「已过期」一枚 —— 截止的是我这一份，不是题目，别人可能还能申请；按钮照旧是灰的「已截止」。
+  it.each([
+    ['通过了还没开始', null],
+    ['开始做了', MY_PROJECT],
+  ])('我自己的截止过了、%s：标题旁只有「已过期」，没有「进行中」', async (_, myProject) => {
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject,
+        deadline: Date.now() - 2 * DAY,
+        userDeadline: Date.now() - DAY,
+      },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() - DAY }],
+      }
+    )
+
+    expect(container.querySelector('[data-testid="my-claim-state"]')).toBeNull()
+    expect(textsExactly(container, t('tasks.page.mine.doing'))).toHaveLength(0)
+    expect(textsExactly(container, t('tasks.page.state.expired'))).toHaveLength(1)
+    if (!myProject) {
+      // 「已截止」只剩按钮上那一处。
+      expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
+      expect(textsExactly(container, t('tasks.page.state.closed'))).toHaveLength(1)
+    } else {
+      expect(textsExactly(container, t('tasks.page.state.closed'))).toHaveLength(0)
+    }
+  })
+
+  it.each([
+    ['直接开始的题截止了', { startMode: 'DIRECT', deadline: Date.now() - DAY }],
+    ['题目已结束', { endedAt: Date.now() - DAY }],
+  ])('%s、我的截止还没到：标题旁写「已截止」，没有「进行中」', async (_, task) => {
+    const { container } = await mount(
+      { joined: true, submittable: true, myProject: MY_PROJECT, userDeadline: Date.now() + DAY, ...task },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }],
+      }
+    )
+
+    expect(container.querySelector('[data-testid="my-claim-state"]')).toBeNull()
+    expect(textsExactly(container, t('tasks.page.state.closed')).length).toBeGreaterThan(0)
+    expect(textsExactly(container, t('tasks.page.state.expired'))).toHaveLength(0)
   })
 
   it('我的申请通过了：主操作是「继续做」，打开从这道题来的那个项目', async () => {

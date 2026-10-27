@@ -2,7 +2,15 @@ import type { Task } from '@/types'
 
 import dayjs from 'dayjs'
 
-export type TaskStateKey = 'pending' | 'rejected' | 'closed' | 'notStarted' | 'full' | 'open' | 'openToStart'
+export type TaskStateKey =
+  | 'pending'
+  | 'rejected'
+  | 'closed'
+  | 'expired'
+  | 'notStarted'
+  | 'full'
+  | 'open'
+  | 'openToStart'
 
 /**
  * 一道题此刻对所有人是什么状态（和我领没领无关）。题目页标题旁那一枚、列表每一行右边那一行
@@ -40,8 +48,9 @@ export function canStillAct(task: TaskForViewer, now = Date.now()): boolean {
 
 /**
  * 这道题对正在看的人是什么状态。没有通过了的领取的人，看的是题目对所有人的状态（`taskState`）。
- * 有一份的人，开着还是截止只看自己还能不能动（`canStillAct`）：动不了就是「已截止」，哪怕题目还在
- * 收申请；还能动就不写「已截止」，哪怕题目对别人已经截止。和服务端列表分组
+ * 有一份的人，开着还是截止只看自己还能不能动（`canStillAct`）：动不了，因为题目结束了或直接开始的题
+ * 截止了，是「已截止」；因为过了自己的截止，是「已过期」—— 截止的是这一份领取，不是题目，题目也许
+ * 还在收别人的申请。还能动就不写「已截止」，哪怕题目对别人已经截止。和服务端列表分组
  * （`TaskRepository._apply_lifecycle_filter` 按看的人算）是同一条判据。
  */
 export function taskStateFor(
@@ -50,7 +59,10 @@ export function taskStateFor(
 ): { key: TaskStateKey; tone: 'ok' | 'muted' | 'danger' } | null {
   const state = taskState(task, now)
   if (!task.submittable) return state
-  if (!canStillAct(task, now)) return { key: 'closed', tone: 'muted' }
+  if (!canStillAct(task, now)) {
+    const ownDeadlinePassed = task.endedAt == null && task.userDeadline != null && task.userDeadline <= now
+    return { key: ownDeadlinePassed ? 'expired' : 'closed', tone: 'muted' }
+  }
   return state.key === 'closed' ? null : state
 }
 
