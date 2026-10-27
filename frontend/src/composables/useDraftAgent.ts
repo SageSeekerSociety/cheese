@@ -118,9 +118,11 @@ export function useDraftAgent(options: DraftAgentOptions) {
       marks: () => draft.marks.value,
       undoMark: (key) => void undoMark(key),
     },
+    // 这一问挂在这一页的这份草稿上：问之前建好、存好，交回它。
     prepare: async () => {
       await draft.flush()
-      await draft.ensure()
+      const row = await draft.ensure()
+      return { kind: 'draft' as const, id: row.id }
     },
     on: {
       toolArgs: (call, name, raw) => {

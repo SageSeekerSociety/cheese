@@ -3,7 +3,8 @@
 // 题上摘，AI 指导和发题时一样单独写或沿用空间的默认。没有导入和模板。
 //
 // 改动先存成这道题的修改草稿（`useTaskDraft`）：边改边存，离开再回来还在，点「保存更改」
-// 才落到题目上，学生在那之前看到的是原来的题目。芝士停在右边，接着的是题目页「问芝士」
+// 才落到题目上，学生在那之前看到的是原来的题目。只打开、没改一格时没有这份草稿：第一次
+// 改动或第一次问芝士才建。芝士停在右边，接着的是题目页「问芝士」
 // 的那段对话；它改的也是这份草稿，表单跟着动（`useDraftAgent`）。
 import type { SpaceTeaching, TaskDraftFields, TaskFormSubmitData, TaskStage } from '@/types'
 
@@ -130,20 +131,21 @@ function setTeaching(value: SpaceTeaching) {
 
 // --- 修改草稿 ------------------------------------------------------------------------
 
-const draft = useTaskDraft({ spaceId: () => spaceId.value })
+const draft = useTaskDraft({ spaceId: () => spaceId.value, taskId: () => taskId })
 const initialData = ref<Partial<TaskFormSubmitData>>({})
 const formKey = ref(0)
 const draftReady = ref(false)
 
 async function openChanges() {
   draftReady.value = false
-  const row = await TaskDraftsApi.forTask(taskId)
-  draft.open(row)
-  initialData.value = row.fields as Partial<TaskFormSubmitData>
-  teaching.value = { ...(row.fields.teaching ?? {}) }
-  teachingOwn.value = !!row.fields.teachingOwn && !isTeachingBlank(teaching.value)
+  // 已有的修改，或者题目现在的样子：只读，打开不建草稿。
+  const { draft: row, form } = await TaskDraftsApi.changes(taskId)
+  draft.open(row, form)
+  initialData.value = form as Partial<TaskFormSubmitData>
+  teaching.value = { ...(form.teaching ?? {}) }
+  teachingOwn.value = !!form.teachingOwn && !isTeachingBlank(teaching.value)
   // `null` 是「不动」：这一格就是这道题原来的样子。
-  defaultRole.value = row.fields.defaultRole ?? defaultRoleRaw.value ?? ''
+  defaultRole.value = form.defaultRole ?? defaultRoleRaw.value ?? ''
   draft.baseline({ teaching: teaching.value, teachingOwn: teachingOwn.value, defaultRole: rolePayload() })
   formKey.value++
   draftReady.value = true
@@ -340,11 +342,9 @@ onMounted(async () => {
   await loadTaskData()
   const task = taskData.value
   if (!task) return
-  teaching.value = { ...(task.teaching ?? {}) }
-  teachingOwn.value = !isTeachingBlank(teaching.value)
-  // 这道题自己写的默认队友（原始覆盖值）；没写过就是 `null` → 选「继承」。
+  // 这道题自己写的默认队友（原始覆盖值）；没写过就是 `null` → 选「继承」。AI 指导和默认队友
+  // 这两格由 `openChanges` 填，填的同时记成起点：在这里先填，草稿还没打开，就会被当成人改的。
   defaultRoleRaw.value = task.defaultRole ?? null
-  defaultRole.value = task.defaultRole ?? ''
   if (task.space?.id) {
     spaceStore.setCurrentSpaceId(task.space.id)
     await Promise.all([spaceData.fetchDomainGroups(), spaceData.fetchCategories()])
