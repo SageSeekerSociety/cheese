@@ -265,6 +265,42 @@ it('keeps the crop layer on the picture that arrives after the crop began', asyn
   })
 })
 
+it('keeps one measuring loop when the picture arrives as the crop opens', async () => {
+  const paths = ref(['up/a.png', 'up/b.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  let release!: (url: string) => void
+  imageUrl.mockImplementationOnce(() => new Promise<string>((r) => (release = r)))
+
+  // 数一数同时挂着几个观察者：同一帧里两个入口都进来时，被覆盖的那个再也停不掉。
+  const observers: { live: boolean }[] = []
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      live = true
+      constructor() {
+        observers.push(this)
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {
+        this.live = false
+      }
+    }
+  )
+
+  mount(actions)
+  await fireEvent.keyDown(window, { key: 'ArrowRight' })
+  await waitFor(() => expect(screen.getByText('b.png · 2 / 2')).toBeTruthy())
+
+  const clicking = fireEvent.click(screen.getByRole('button', { name: '裁剪' }))
+  release('blob:up/b.png')
+  await clicking
+  await waitFor(() => expect(screen.getByAltText('b.png')).toBeTruthy())
+
+  expect(observers.filter((o) => o.live).length).toBe(1)
+})
+
 it('refits the picture when the strip appears and takes room away', async () => {
   const paths = ref(['up/a.png'])
   const actions = chat()

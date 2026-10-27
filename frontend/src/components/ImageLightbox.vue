@@ -118,6 +118,9 @@ function measureArea() {
 let settleFrame = 0
 let settleObserver: ResizeObserver | null = null
 function followUntilSettled() {
+  // 自己先把上一轮停干净：进裁剪和图节点换掉是两个入口，同一帧里都可能走到这里，
+  // 后一个进来时前一个的帧循环和观察者还挂着——槽只有一个，被覆盖的那个就再也停不掉了。
+  stopFollowing()
   let last = ''
   const tick = () => {
     measureArea()
@@ -148,7 +151,6 @@ function stopFollowing() {
 // 是零。重新跟着量到它不动，和刚进裁剪时走同一条路。
 watch(figure, () => {
   if (!cropping.value) return
-  stopFollowing()
   followUntilSettled()
 })
 
