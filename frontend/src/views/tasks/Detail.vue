@@ -172,7 +172,7 @@ const myState = computed(() => {
  *  就不能，开始只会建出一个已经判了未通过的项目；直接开始的题过了题目的截止也不能。 */
 const startClosed = computed(() => !taskData.value || !canStillAct(taskData.value))
 /** 题目名旁边那一枚：这道题此刻对我是什么状态（`taskStateFor`）。没领的人看题目对所有人的状态；
- *  有一份通过了的领取的人，看自己还能不能开始或接着做。 */
+ *  有一份通过了的领取的人，动不了才有这一枚（已过期 / 已截止），还能动就只有「进行中」。 */
 const taskState = computed(() => {
   if (!taskData.value) return null
   const state = taskStateFor(taskData.value)
@@ -235,13 +235,14 @@ async function loadMine() {
   }
 }
 
-/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：题目已结束，
+/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：这一份再也动不了，
  *  或者只能交一次而且已经交过。 */
 const submitAction = computed(() => {
   if (!joined.value || !taskData.value) return null
   // 已经在交作业的表单上：表单自己有「提交」，这一行不再给第二颗。
   if (route.name === routeNames.submit) return null
-  if (taskData.value.endedAt) return null
+  // 交不了的不给：过了我自己的截止、题目结束了、直接开始的题截止了，服务端都不收（`canStillAct`）。
+  if (!canStillAct(taskData.value)) return null
   if (myLatest.value && !taskData.value.resubmittable) return null
   return myLatest.value ? t('tasks.page.submit.again') : t('tasks.page.submit.first')
 })

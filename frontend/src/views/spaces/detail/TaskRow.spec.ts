@@ -112,6 +112,19 @@ describe('题目列表的一行', () => {
     expect(view.queryByText(t('tasks.page.state.open'))).toBeNull()
   })
 
+  it('申请制的题还在收申请、我的申请通过了：这一行写在做，不写「可申请」', () => {
+    const view = show({
+      startMode: 'APPLY',
+      deadline: Date.now() + 7 * DAY,
+      joined: true,
+      submittable: true,
+      userDeadline: Date.now() + 5 * DAY,
+    })
+
+    view.getByText(t('spaces.detail.tasks.row.mine'))
+    expect(view.queryByText(t('tasks.page.state.open'))).toBeNull()
+  })
+
   it('没有领取的人：还在收申请的题写「可申请」', () => {
     const view = show({ startMode: 'APPLY', deadline: Date.now() + 7 * DAY })
 

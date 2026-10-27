@@ -82,6 +82,8 @@ describe('这道题对手上有一份通过了的领取的人是什么状态', (
     [{ userDeadline: 2000, startMode: 'DIRECT' as const, deadline: 500 }, 'closed'],
     // 申请截止只挡申请，我的截止还没到：不写「已截止」。
     [{ userDeadline: 2000, deadline: 500 }, null],
+    // 还在收申请、我已经通过了：申请这一步与我无关，不写「可申请」。
+    [{ userDeadline: 2000, deadline: 2000 }, null],
   ])('%o → %s', (overrides, key) => {
     expect(taskStateFor(mine(overrides), NOW)?.key ?? null).toBe(key)
   })

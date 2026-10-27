@@ -48,9 +48,10 @@ export function canStillAct(task: TaskForViewer, now = Date.now()): boolean {
 
 /**
  * 这道题对正在看的人是什么状态。没有通过了的领取的人，看的是题目对所有人的状态（`taskState`）。
- * 有一份的人，开着还是截止只看自己还能不能动（`canStillAct`）：动不了，因为题目结束了或直接开始的题
- * 截止了，是「已截止」；因为过了自己的截止，是「已过期」—— 截止的是这一份领取，不是题目，题目也许
- * 还在收别人的申请。还能动就不写「已截止」，哪怕题目对别人已经截止。和服务端列表分组
+ * 有一份的人只看自己还能不能动（`canStillAct`）：动不了，因为题目结束了或直接开始的题截止了，是
+ * 「已截止」；因为过了自己的截止，是「已过期」—— 截止的是这一份领取，不是题目，题目也许还在收别人的
+ * 申请。还能动就没有这一枚（`null`）：「可申请」「已截止」说的是题目对别人的状态，他已经过了申请这一步，
+ * 旁边那一枚「进行中」/「在做」说的就是他。和服务端列表分组
  * （`TaskRepository._apply_lifecycle_filter` 按看的人算）是同一条判据。
  */
 export function taskStateFor(
@@ -63,7 +64,8 @@ export function taskStateFor(
     const ownDeadlinePassed = task.endedAt == null && task.userDeadline != null && task.userDeadline <= now
     return { key: ownDeadlinePassed ? 'expired' : 'closed', tone: 'muted' }
   }
-  return state.key === 'closed' ? null : state
+  // 还能动：申请、名额这些已经与他无关，状态由他自己那一份（「进行中」/「在做」）说。
+  return null
 }
 
 /**

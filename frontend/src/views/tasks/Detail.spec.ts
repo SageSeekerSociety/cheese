@@ -501,6 +501,38 @@ describe('题目详情', () => {
     expect(hrefs(container)).not.toContain(`${BASE}/submit`)
   })
 
+  // 交不了的领取不给「提交作业」：服务端过了自己的截止、或题目对他截止了都不收（canStillAct）。
+  it.each([
+    ['我自己的截止过了', { startMode: 'APPLY', userDeadline: Date.now() - DAY }],
+    ['直接开始的题截止了', { startMode: 'DIRECT', deadline: Date.now() - DAY, userDeadline: Date.now() + DAY }],
+  ])('%s：不再给交作业的入口', async (_, task) => {
+    const { container } = await mount({ joined: true, submittable: true, myProject: MY_PROJECT, ...task }, APPROVED_ME)
+
+    await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submissions`))
+    expect(hrefs(container)).not.toContain(`${BASE}/submit`)
+  })
+
+  // 手上有一份还能动的领取的人已经过了申请这一步：标题旁只说他这一份（进行中），不说「可申请」。
+  it('申请制的题还在收申请、我的申请通过了：标题旁只有「进行中」，没有「可申请」', async () => {
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() + 7 * DAY,
+        userDeadline: Date.now() + 5 * DAY,
+      },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + 5 * DAY }],
+      }
+    )
+
+    expect(container.querySelector('[data-testid="my-claim-state"]')?.textContent).toContain(t('tasks.page.mine.doing'))
+    expect(textsExactly(container, t('tasks.page.state.open'))).toHaveLength(0)
+  })
+
   it('题目已结束：不再给交作业的入口', async () => {
     const { container } = await mount({ endedAt: Date.now() - DAY }, APPROVED_ME)
 
