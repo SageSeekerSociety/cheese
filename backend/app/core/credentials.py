@@ -43,7 +43,6 @@ class Kind(enum.StrEnum):
     PERSONAL = "personal"
     PERSONAL_EXECUTION = "personal-execution"
     DELEGATED = "delegated"
-    PASS = "pass"
     #: Pasted into another system (a CI pipeline, an Actions secret) to post
     #: into one room: no expiry, retired by the version it names
     #: (`app.core.webhook_auth`).

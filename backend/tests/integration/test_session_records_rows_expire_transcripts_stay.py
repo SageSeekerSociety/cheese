@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select, text
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.session_record import retention, service
+from app.domain.session_record import models, retention, service
 from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
@@ -56,8 +56,12 @@ def _seal(client, bucket) -> None:
 
 
 def _sweep(client, monkeypatch, *, days: float = 0) -> None:
-    """The periodic retention job, run as if `days` had passed since now."""
-    monkeypatch.setattr(retention, "RETENTION", retention.RETENTION - timedelta(days))
+    """The periodic retention job, run as if `days` had passed since now.
+
+    The window is patched on `models`, its one home: the sweep and `service.read`
+    both read `models.RETENTION` through the module, so moving it here is the
+    same passage of time to each of them."""
+    monkeypatch.setattr(models, "RETENTION", models.RETENTION - timedelta(days))
     _call(client, lambda: retention.sweep(client.test_request_factory))
 
 

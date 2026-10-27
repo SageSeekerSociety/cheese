@@ -102,8 +102,8 @@ def _said(text: str) -> dict:
     return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
 
 
-#: The kinds of credential that act for a person (``app.core.credentials``).
-_DELEGATED_KINDS = ("delegated+jwt", "pass+jwt")
+#: The kind of credential that acts for a person (``app.core.credentials``).
+_DELEGATED_KIND = "delegated+jwt"
 
 
 def _part(token: str, i: int) -> dict:
@@ -121,7 +121,7 @@ def _part(token: str, i: int) -> dict:
 
 
 def is_delegated(token: str) -> bool:
-    return _part(token, 0).get("typ") in _DELEGATED_KINDS
+    return _part(token, 0).get("typ") == _DELEGATED_KIND
 
 
 def _scope_of(token: str) -> dict[str, str]:
