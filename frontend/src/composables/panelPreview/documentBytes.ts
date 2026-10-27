@@ -59,9 +59,10 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     rendererMissing: bytesRendererMissing,
   } = useDocumentBytes({
     ...docSource,
+    // markdown 和代码读的就是 `previewFile.content` 那段文字，不取字节。
     enabled: () =>
       !wantPage.value &&
-      ((!!state.documentType.value && state.documentType.value.view !== 'markdown') ||
+      ((!!state.documentType.value && !['markdown', 'code'].includes(state.documentType.value.view)) ||
         (!!props.path && state.isImageArtifact.value)),
   })
   const {

@@ -12,6 +12,7 @@ import type { WebRect, WebViewport } from '@/lib/quotedContext'
 import { computed, ref, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
 
+import PreviewCode from './PreviewCode.vue'
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
 import PreviewRegionPick from './PreviewRegionPick.vue'
@@ -399,9 +400,13 @@ watch(
       }}</BaseButton>
     </div>
     <!-- Authorization still POSTs only to named sandboxed content-domain frames. -->
-    <pre v-if="showSource && canShowSource" class="preview-source" data-testid="frame-source">{{
-      previewFile?.content ?? ''
-    }}</pre>
+    <PreviewCode
+      v-if="showSource && canShowSource"
+      class="preview-source"
+      data-testid="frame-source"
+      :source="previewFile?.content ?? ''"
+      language="xml"
+    />
     <div
       v-show="!(showSource && canShowSource)"
       :data-viewport="viewport"
@@ -548,16 +553,6 @@ button.preview-viewport__btn.preview-viewport__btn--active {
   pointer-events: none;
 }
 .preview-source {
-  flex: 1 1 auto;
   min-height: var(--preview-min);
-  margin: 0;
-  padding: 12px 16px 24px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 </style>
