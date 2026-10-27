@@ -5,6 +5,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, render } from '@testing-library/vue'
+import dayjs from 'dayjs'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import PublishedTaskRow from './PublishedTaskRow.vue'
@@ -13,7 +14,7 @@ import i18n, { setLocale } from '@/i18n'
 
 const stub = { render: () => null }
 
-function row(startMode: 'DIRECT' | 'APPLY') {
+function row(startMode: 'DIRECT' | 'APPLY', deadline: number | null = null) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -35,7 +36,7 @@ function row(startMode: 'DIRECT' | 'APPLY') {
         createdAt: Date.now(),
         publishedAt: Date.now(),
         endedAt: null,
-        deadline: null,
+        deadline,
         participantLimit: null,
         participantCount: 1,
         approvedParticipantCount: 1,
@@ -69,5 +70,16 @@ describe('我发布的题目行', () => {
 
     expect(container.textContent).toContain('申请 1')
     expect(container.textContent).toContain('参与 1')
+  })
+
+  // 出题人手上没有领取：申请制的题写的是申请截止，直接开始的题照旧。
+  it.each([
+    ['APPLY', 'spaces.detail.tasks.row.applyDeadline'],
+    ['DIRECT', 'spaces.detail.tasks.row.deadline'],
+  ] as const)('%s 的题：截止那一格说清是哪一个截止', (startMode, key) => {
+    const at = Date.UTC(2026, 10, 2, 4)
+    const view = row(startMode, at)
+
+    view.getByText(i18n.global.t(key, { date: dayjs(at).format(i18n.global.t('tasks.page.dateFormat')) }))
   })
 })

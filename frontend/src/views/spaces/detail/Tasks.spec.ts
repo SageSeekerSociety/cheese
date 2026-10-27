@@ -113,10 +113,16 @@ async function mount(query: Record<string, string> = {}) {
 describe('题目列表的范围', () => {
   beforeEach(() => {
     setLocale('zh-CN')
-    taskList.mockImplementation(async (params: { joined?: boolean }) => ({
-      tasks: params.joined ? [task(2, '我领过的题')] : [task(1, '别人的题'), task(2, '我领过的题')],
-      page: { hasMore: false, nextStart: null },
-    }))
+    // 接口按 joined 分：true 只给我领过的，false 只给别的，不传两种都给。
+    taskList.mockImplementation(async (params: { joined?: boolean }) => {
+      const tasks =
+        params.joined === true
+          ? [{ ...task(2, '我领过的题'), joined: true, submittable: true }]
+          : params.joined === false
+            ? [task(1, '别人的题')]
+            : [task(1, '别人的题'), { ...task(2, '我领过的题'), joined: true, submittable: true }]
+      return { tasks, page: { hasMore: false, nextStart: null, total: tasks.length } }
+    })
     myPublished.mockImplementation(async () => ({ tasks: [publishedTask(5, '还在审核的题')] }))
   })
 
@@ -139,10 +145,13 @@ describe('题目列表的范围', () => {
     expect(taskList).toHaveBeenLastCalledWith(expect.objectContaining({ joined: true, categoryId: 7 }))
   })
 
-  it('「全部」不按参与筛', async () => {
+  // 「全部」是一张表：我手上有的题在最上面单列一组「我参与的」，不收起；下面是别的题（Zhifei 2026-10-26）。
+  it('「全部」把我领过的题列在最上面的「我参与的」一组，下面不再列一遍', async () => {
     await mount()
-    await waitFor(() => expect(taskList).toHaveBeenCalled())
-    for (const [params] of taskList.mock.calls) expect((params as { joined?: boolean }).joined).toBeUndefined()
+
+    await waitFor(() => expect(screen.getByText('我参与的（1）')).toBeTruthy())
+    expect(screen.getAllByText('我领过的题')).toHaveLength(1)
+    expect(screen.getByText('别人的题')).toBeTruthy()
   })
 
   it('「我发布的」列出还没过审的题', async () => {

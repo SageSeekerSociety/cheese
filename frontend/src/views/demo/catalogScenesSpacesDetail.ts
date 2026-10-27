@@ -220,6 +220,10 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       refreshing: false,
       tasks: [task()],
       total: 1,
+      mineTasks: [],
+      mineTotal: 0,
+      mineHasMore: false,
+      mineLoadingMore: false,
       closedTasks: [],
       closedTotal: 0,
       closedHasMore: false,
@@ -259,6 +263,25 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
           closedOpen: true,
         },
         expectSelector: '[data-testid="tasks-closed"]',
+      },
+      {
+        name: '我参与的在最上面',
+        note: '「全部」最上面一组「我参与的」：我手上有一份的题，不收起；每一行写我这一份的状态和我自己的提交截止，右边不写题目的状态。',
+        props: {
+          mineTasks: [
+            task({
+              id: 3,
+              name: '动态规划入门',
+              startMode: 'APPLY',
+              joined: true,
+              submittable: true,
+              // 2030 年：截图哪天拍都还没到，这一行写「在做」。
+              userDeadline: 1893456000000,
+            }),
+          ],
+          mineTotal: 1,
+        },
+        expectSelector: '[data-testid="tasks-mine"]',
       },
     ],
   },
