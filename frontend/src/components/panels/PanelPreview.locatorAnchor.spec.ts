@@ -101,17 +101,26 @@ it('选中一段以后，定位框弹在那一段旁边，而不是贴在面板�
   window.getSelection()!.addRange(range)
   await fireEvent.mouseUp(md)
 
+  // 选中一段字先只出一颗「添加批注」，贴在选区左下（不压选区），整张卡不出来。
+  const arm = await waitFor(() => ui.getByTestId('locator-arm'))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  // 交过去的是选中的那一段本身（克隆的一份），不是空的。
+  expect(measured.at(-1)?.range?.toString()).toBe(range.toString())
+  expect(arm.style.top).toBe('68px')
+  expect(arm.style.left).toBe('30px')
+
+  // 点了才展开成卡，弹在同一处，光标交给输入框。
+  await fireEvent.click(arm)
   const card = await waitFor(() => {
-    const el = ui.getByPlaceholderText('就这一处说点什么').closest('.locator') as HTMLElement
+    const el = ui.getByPlaceholderText('输入修改要求或批注内容…').closest('.locator') as HTMLElement
     expect(el.classList.contains('locator--floating')).toBe(true)
     return el
   })
-  // 交过去的是选中的那一段本身（克隆的一份），不是空的。
-  expect(measured.at(-1)?.range?.toString()).toBe(range.toString())
   expect(card.style.top).toBe('68px')
   expect(card.style.left).toBe('30px')
+  expect(document.activeElement).toBe(ui.getByPlaceholderText('输入修改要求或批注内容…'))
 
   // 取消以后不再留着位置：下一次指认重新记。
   await fireEvent.click(card.querySelector('button[aria-label="取消"]')!)
-  await waitFor(() => expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeNull())
+  await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull())
 })

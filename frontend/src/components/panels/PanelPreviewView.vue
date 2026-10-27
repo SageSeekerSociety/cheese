@@ -168,6 +168,8 @@ let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
 const locatorAnchor = ref<LocatorAnchor | null>(null)
+/** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
+const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   const panel = panelElement.value
   if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
@@ -187,15 +189,18 @@ watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
+    locatorFromSelection.value = false
     return
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  locatorFromSelection.value = !!anchorRange && !anchorRange.collapsed
   anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
   lastPointer = null
   void nextTick(placeLocator)
 })
 useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+
 useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
 
 // ---- 这一份文件上的评论 ----
@@ -382,7 +387,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview" tabindex="-1">
+  <!-- 预览里选中一段有自己的「添加批注」，全局划词的「问芝士」在这里不出，免得一段选区上
+       同时冒出两颗按钮（见 AgentSelectionAsk 的 data-agent-select）。 -->
+  <div ref="panelElement" class="panel-preview" tabindex="-1" data-agent-select="off">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见 PreviewFrameStage）。 -->
@@ -612,6 +619,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-comment="!!commentTarget"
       :comment-error="commentError"
       :anchor="locatorAnchor"
+      :arm-first="locatorFromSelection"
       @send="sendLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"

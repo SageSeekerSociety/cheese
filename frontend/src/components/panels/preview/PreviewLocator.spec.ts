@@ -35,7 +35,8 @@ it('指出一处以后去处由一个下拉定：默认发进对话，切到「�
   send.click()
   expect(ui.emitted().send).toHaveLength(1)
 
-  await fireEvent.update(ui.getByTestId('locator-recipient'), 'comment')
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
   // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给芝士的那一篮）。
   expect(labels()).toContain('评论')
   expect(labels()).not.toContain('加入待发')
@@ -54,8 +55,8 @@ it('给了位置就弹在那一处下面；下面放不下就翻到上面；左�
   expect(card.classList.contains('locator--floating')).toBe(true)
   expect(card.dataset.side).toBe('below')
   expect(card.style.top).toBe('128px')
-  // 面板 700 宽、卡片最宽 400、边距 12：左边最多到 288，不会伸出面板。
-  expect(card.style.left).toBe('288px')
+  // 面板 700 宽、卡片最宽 348、边距 12：左边最多到 340，不会伸出面板。
+  expect(card.style.left).toBe('340px')
 
   await ui.rerender({ anchor: { ...anchor, top: 700, bottom: 720 } })
   expect(card.dataset.side).toBe('above')
@@ -99,9 +100,9 @@ it('弹出时不去抢正文那边的焦点', async () => {
     note: '',
   })
   const input = await waitFor(() => {
-    const box = ui.container.querySelector('.locator__input') as HTMLInputElement | null
+    const box = ui.container.querySelector('.locator__input') as HTMLTextAreaElement | null
     expect(box).toBeTruthy()
-    return box as HTMLInputElement
+    return box as HTMLTextAreaElement
   })
 
   expect(document.activeElement).not.toBe(input)
@@ -144,10 +145,76 @@ it('支持通过投递目标下拉切换为「仅留评论」并回车提交', a
       },
     },
   })
-  const select = ui.getByTestId('locator-recipient') as HTMLSelectElement
-  await fireEvent.update(select, 'comment')
-  const input = ui.container.querySelector('.locator__input') as HTMLInputElement
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
+  const input = ui.container.querySelector('.locator__input') as HTMLTextAreaElement
   await fireEvent.keyDown(input, { key: 'Enter' })
   expect(ui.emitted().comment).toHaveLength(1)
   expect(ui.emitted().send).toBeUndefined()
+})
+
+it('拖选一段字：先只出「添加批注」，点了才展开整张卡；Esc 撤掉', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: '第 1 页 · 二、时间安排', quote: '报名截止 11 月 8 日' },
+      note: '',
+      anchor,
+      armFirst: true,
+    },
+    global: { stubs },
+  })
+  const arm = ui.getByTestId('locator-arm')
+  expect(arm.textContent).toContain('添加批注')
+  expect(ui.container.querySelector('.locator')).toBeNull()
+  // 贴在选区左下 8px，不压选区。
+  expect(arm.style.top).toBe('128px')
+  expect(arm.style.left).toBe('40px')
+  await fireEvent.click(arm)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  expect(document.activeElement).toBe(field)
+  expect(ui.container.textContent).toContain('第 1 页 · 二、时间安排')
+
+  // 换一处又先出按钮。
+  await ui.rerender({ target: { label: '第 2 页', quote: '另一段' } })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+  await fireEvent.keyDown(ui.getByTestId('locator-arm'), { key: 'Escape' })
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('没有位置可贴（键盘选中、面板太窄）时不先出按钮，直接出卡', () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor: null, armFirst: true },
+    global: { stubs },
+  })
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy()
+})
+
+it('两行输入：Shift+Enter 换行不发送，Enter 发送；卡底写着怎么发', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '第一行' },
+    global: { stubs },
+  })
+  const field = ui.getByPlaceholderText('输入修改要求或批注内容…') as HTMLTextAreaElement
+  expect(field.tagName).toBe('TEXTAREA')
+  expect(field.getAttribute('rows')).toBe('2')
+  await fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+  expect(ui.emitted().send).toBeUndefined()
+  await fireEvent.keyDown(field, { key: 'Enter' })
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.container.textContent).toContain('「加入待发」可合并多处一起发')
+})
+
+it('去处菜单每一项都说清会发生什么', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const text = ui.getByRole('listbox').textContent ?? ''
+  expect(text).toContain('发给芝士')
+  expect(text).toContain('由芝士按这一处修改文件')
+  expect(text).toContain('仅留评论')
+  expect(text).toContain('不触发芝士修改')
 })
