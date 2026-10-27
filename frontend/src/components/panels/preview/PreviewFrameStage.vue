@@ -144,6 +144,17 @@ const segments = computed(() =>
 const asleep = computed(() => (live.value ? appAsleep(segments.value) : null))
 const sleepKind = computed(() => asleep.value ?? (props.wakeSteps ? 'machine' : null))
 
+/** 帧那一层的两个状态类。
+ *
+ *  `--asleep` 是「没有快照、屏幕上留着上一页」那一档：压暗它、收掉它的鼠标。
+ *  `--covered` 是「快照盖在上面」那一档：下面那一帧留着只是为了不重挂，不该再接点击
+ *  和键盘——读者看到的、能操作的是快照，旧页面被点一下会走进错误页，从半透明的快照底
+ *  下透出来。 */
+const framesClass = computed(() => ({
+  'preview-frames--asleep': !!sleepKind.value && !props.appSnapshot,
+  'preview-frames--covered': !!sleepKind.value && !!props.appSnapshot,
+}))
+
 /** 链点开后最下面那几行：资源、实例、读到的版本、就绪与否。平时不读，要查时还在。 */
 const details = computed(() => {
   const frame = props.displayedFrame
@@ -367,14 +378,7 @@ watch(
     <div
       v-show="!(showSource && canShowSource)"
       :data-viewport="viewport"
-      :class="[
-        'preview-frames',
-        `preview-frames--${viewport}`,
-        { 'preview-frames--asleep': sleepKind && !appSnapshot },
-        // 快照盖在上面时，下面那一帧留着不重挂，但不该再接点击和键盘：读者看到的、
-        // 能操作的是快照。旧页面被点一下就会走进错误页，从半透明的快照底下透出来。
-        { 'preview-frames--covered': !!sleepKind && !!appSnapshot },
-      ]"
+      :class="['preview-frames', `preview-frames--${viewport}`, framesClass]"
     >
       <template v-if="frames">
         <iframe
