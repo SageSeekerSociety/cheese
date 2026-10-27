@@ -71,12 +71,13 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
    *  - `opening` 说这是「另开一格」（第一次读、换视角、换对话）：上一格的错误跟它
    *    没关系，读成了就该收，不看方向。
    *
-   *  两处调用，判据只在这一处——散在调用点上写，漏一处就是一个方向被另一个方向抹掉
-   *  （改这一颗按钮时连着踩了四次，就是这么来的）：
+   *  调用点是这几处，判据只在这一处——散在调用点上写，漏一处就是一个方向被另一个
+   *  方向抹掉（改这一颗按钮时连着踩了四次，就是这么来的）：
    *
-   *  - `loadOlder` **发请求之前**（只非 quiet 那一路）：错误态占着整块地方，不收的话
-   *    读者看不见「加载更早的现场…」，按下去像是没反应。
-   *  - `loadOlder` / `loadPage` **读到之后**：这一次真的回来了，把它自己的那一条收掉。
+   *  - `loadOlder` 发请求之前（只非 quiet 那一路）：错误态占着整块地方，不收的话读者
+   *    看不见「加载更早的现场…」，按下去像是没反应。
+   *  - `loadOlder` 读到之后：往回读这一次真的回来了，收掉它自己的那一条。
+   *  - `loadPage` 读到之后：最新一页这一次真的回来了，收掉它自己的那一条。
    */
   function settleRead({ older, opening }: { older: boolean; opening: boolean }): void {
     if (opening || errorFromOlder.value === older) clearError()
