@@ -328,10 +328,12 @@ onBeforeUnmount(() => {
         @download="download"
         @close="emit('close')"
       />
+      <!-- 换节点也按地址：只是位置变了、图没变时不换节点——裁剪框量的是图上那一块，
+           换了节点量过的那块就飘了。 -->
       <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the double-click shortcut; the toolbar and Escape are the keyboard path -->
       <img
         v-if="gallery.current.value"
-        :key="gallery.index.value"
+        :key="gallery.currentPath.value"
         ref="figure"
         class="lightbox__figure"
         :class="{ 'lightbox__figure--moving': moving, 'lightbox__figure--zoomed': scale > 1 }"
