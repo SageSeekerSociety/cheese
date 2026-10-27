@@ -40,7 +40,7 @@ from app.api.task_serialization import (
     _task_to_api_model,
 )
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.space_access import may_publish_in_space, may_teach_task
+from app.auth import task_roles as task_seats
 from app.core import model_roles
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -57,6 +57,7 @@ from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
 from app.domain.library import records as library_records
+from app.domain.space import permissions as space_seats
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceService
 from app.domain.task import drafts, package
@@ -162,7 +163,9 @@ async def _zone(db, user_id: int) -> str | None:
 
 
 async def _publishable_space(db, space_id: int, user_id: int) -> None:
-    if not await may_publish_in_space(session=db, space_id=space_id, user_id=user_id):
+    if not await space_seats.SPACE.allows(
+        db, space_id, user_id, space_seats.Permission.publish
+    ):
         raise NotFoundError.for_resource("space", space_id)
 
 
@@ -170,7 +173,7 @@ async def _editable_task(db, task_id: int, user_id: int):
     task = await TaskService.of(db).get_task(task_id)
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
-    if not await may_teach_task(session=db, task=task, user_id=user_id):
+    if not await task_seats.teaches(db, task, user_id):
         raise ForbiddenError(say("draftTaskNotYours"))
     return task
 
@@ -179,7 +182,7 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     """The published 题目 as its edit form starts out: every field the form
     saves back, so a change draft saved with one field changed leaves the rest
     as they are — its stages, submission items, rubric and tags included.
-    ``private``: the reader may teach the 题目 (``may_teach_task``), so its
+    ``private``: the reader may teach the 题目 (``task_roles.teaches``), so its
     private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
@@ -527,7 +530,7 @@ async def agent_read(
         raise NotFoundError.for_resource("task", body.task)
     await ensure_task_readable(session=db, task=task, user_id=user_id)
     terms = await _space_terms(db, spaces, task.space_id, user_id)
-    teaches = await may_teach_task(session=db, task=task, user_id=user_id)
+    teaches = await task_seats.teaches(db, task, user_id)
     text = drafts.published_view(
         task.id,
         task.name,
@@ -698,7 +701,7 @@ async def _stage_effect(db, row, user_id: int) -> list[NoticeText] | None:
     rights, and the counts are the 题目's, like its private guidance
     (``_editable_task``)."""
     task = await TaskService.of(db).get_task(row.task_id)
-    if task is None or not await may_teach_task(session=db, task=task, user_id=user_id):
+    if task is None or not await task_seats.teaches(db, task, user_id):
         return None
     stages = drafts.published_form(row).get("stages") or []
     if _stage_rows(stages) == _stage_rows(

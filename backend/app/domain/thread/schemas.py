@@ -17,3 +17,6 @@ class ThreadOut(BaseModel):
     last_reply_at: str | None
     created_by: str
     created_at: str
+    #: 收起来的时刻（`thread/recycle.py`）；开着的是 None。收起来的支线仍然读得到，
+    #: 只是从默认那一栏挪到了「已回收」。
+    recycled_at: str | None = None

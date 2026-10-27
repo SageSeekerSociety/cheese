@@ -36,10 +36,16 @@ const history = Array.from({ length: 60 }, (_, i) => ({
   content: i === 59 ? '最新的一条' : (i % 2 ? Array(6).fill(paragraph).join('\\n\\n') : '第 ' + i + ' 个问题'),
   reply_to: null, refs: [], created_at: new Date(Date.UTC(2026, 9, 9, 8, i)).toISOString(), task_id: null,
 }));
+// Two bookmarks, one far up the conversation and one near the newest message,
+// so a jump has somewhere to go in each direction.
+const chapters = [10, 57].map((i) => ({
+  pinned_by: 'me', pinned_at: '2026-10-09T09:00:00Z', title: '书签 ' + i, block: history[i],
+}));
 window.fetch = async (url) => {
   const u = String(url);
   let data;
-  if (u.includes('/members')) data = { data: [
+  if (u.includes('/chapters')) data = chapters;
+  else if (u.includes('/members')) data = { data: [
     { id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },
     { id: '2', member_handle: 'cheese-bot', name: '芝士', role: 'member', agent: true },
   ], total: 2 };
@@ -57,7 +63,7 @@ const topic = {
 };
 createApp({ render: () => h(VApp, {}, { default: () => h('main', {
   style: 'width: min(720px, calc(100vw - 32px)); height: calc(100vh - 32px); margin: 16px; display: flex; flex-direction: column',
-}, [h(ChatPanel, { topic, conversationId: 'task-1', hideHeader: true, showComposer: true })]) }) })
+}, [h(ChatPanel, { topic, conversationId: 'task-1', hideHeader: true, showComposer: true, chapterable: true, chapters })]) }) })
   .use(vuetify).use(i18n).mount('#fixture');
 </script></body></html>`;
 
@@ -234,5 +240,65 @@ for (const arrival of ["already at the top", "arrow key"] as const) {
     });
     expect(box.top).toBeGreaterThanOrEqual(box.listTop);
     expect(box.bottom).toBeLessThanOrEqual(box.listBottom);
+  });
+}
+
+// Parked at the bottom, clicking a bookmark has to go where it points. The jump
+// scroll is not the reader's and not the browser's anchoring, and until it was
+// told apart from both, a pane at the bottom was pinned right back there: the
+// bookmark could not be reached at all, on every screen, with nothing else
+// happening (2026-10-26). Same fixture; measured in a real browser because
+// whether the pane is left at the bottom is a layout question.
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`a bookmark jump from the bottom lands on that message (${viewport.width}px)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.route("**/__chat-back-to-latest__", (route) =>
+      route.fulfill({ contentType: "text/html", body: fixture }),
+    );
+    await page.goto("/__chat-back-to-latest__", { waitUntil: "commit" });
+    await expect(page.locator('[data-mid="m59"]')).toBeVisible({ timeout: 30_000 });
+    // Parked at the bottom, and the layout has settled there (no row still
+    // changing height under the pane).
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const el = document.querySelector<HTMLElement>('[data-testid="chat-scroll"]')!;
+          return Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+        }),
+      )
+      .toBeLessThan(2);
+
+    const rail = page.getByTestId("bookmark-rail");
+    await rail.hover();
+    await rail.getByRole("button", { name: "书签 10" }).click();
+
+    // The message the bookmark points at is the one on screen, and the pane is
+    // not back at the bottom. Rows above it were never rendered and change
+    // height as they come on screen, so poll until the jump settles.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => {
+            const row = document.querySelector<HTMLElement>('[data-mid="m10"]')!;
+            const pane = document.querySelector<HTMLElement>('[data-testid="chat-scroll"]')!;
+            const r = row.getBoundingClientRect();
+            const p = pane.getBoundingClientRect();
+            return r.bottom > p.top && r.top < p.bottom;
+          }),
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+    expect(
+      await page.evaluate(() => {
+        const el = document.querySelector<HTMLElement>('[data-testid="chat-scroll"]')!;
+        return Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+      }),
+    ).toBeGreaterThan(100);
+    await expect(page.getByRole("button", { name: "回到最新" })).toBeVisible();
   });
 }

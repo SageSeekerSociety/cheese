@@ -1331,7 +1331,7 @@
     }
   },
   "alertsView": {
-    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, applications to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
     "s1": {
       "name": "Counts with alerts",
       "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."

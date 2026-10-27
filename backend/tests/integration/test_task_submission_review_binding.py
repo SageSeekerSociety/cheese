@@ -5,7 +5,7 @@
     /tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review
 
 从前的实现把 ``participantId`` 丢掉、鉴权只看 path 的 ``taskId``，于是
-``submissionId`` 成了全局自由主键：任何在**别的**题上通过 ``may_teach_task`` 的人
+``submissionId`` 成了全局自由主键：任何在**别的**题上通过 ``task_roles.teaches`` 的人
 （板上成员在板上发一道题就是那道题的出题者）都能给别的课上的任意提交打分、改分、
 删分；GET 更是连鉴权都没有，知道一个 id 就能读到它的成绩与评语。
 
@@ -369,10 +369,11 @@ class TestReadingAReview:
     def test_reading_a_review_takes_reading_its_submission(
         self, scene: _Scene, api_client: TestClient
     ):
-        """出题人 / 板的管理员 / 提交者本人：200；其余在读得通的路径上：403。
+        """出题人 / 板的管理员 / 提交者本人：200；同一块板里的其他人：403；不在这块板
+        里的人（别的板的老师、陌生人）：404 —— 这道题对他们不存在。
 
-        路径自洽而人不自洽时答 403（而不是 404）：这条路是真实存在的，403 说的才是
-        「你没资格」。
+        路径自洽而人不自洽时，看得见这道题的人答 403：这条路是真实存在的，403 说的
+        才是「你没资格」。
         """
         url = _review_url(
             scene.victim_task, scene.victim_membership, scene.victim_submission
@@ -385,9 +386,13 @@ class TestReadingAReview:
             assert review["detail"] == _ORIGINAL
 
         # 攻击者在自己的题上通过鉴权，但这条提交不是他这道题的。
-        for refused in (scene.attacker, scene.bystander, scene.stranger):
+        for refused, status in (
+            (scene.bystander, 403),
+            (scene.attacker, 404),
+            (scene.stranger, 404),
+        ):
             resp = api_client.get(url, headers=_auth(refused.token))
-            assert resp.status_code == 403, f"{resp.status_code}: {resp.text}"
+            assert resp.status_code == status, f"{resp.status_code}: {resp.text}"
 
 
 class TestTheNormalPathsStillWork:

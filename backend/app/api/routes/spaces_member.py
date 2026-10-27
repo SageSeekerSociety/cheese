@@ -3,7 +3,7 @@
 A slice of `app/api/routes/spaces.py` (arch review, tracking issue #2143): the
 `/me/publishing/tasks` route behind the task list's 我发布的 filter. It scopes its
 query to the caller (`auth_user.user_id`) inside the space named in the path, and
-declares `needs(SpacePermission.view)` -- the same 404 every space route gives
+declares `Can(SpacePermission.view)` -- the same 404 every space route gives
 a space you are not in. The module mounts itself
 through `app.main._discover_routers` like every other route module.
 
@@ -26,7 +26,7 @@ from app.api.space_deps import (
     get_space_member_publishing_service,
     require_reviewed_space,
 )
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -46,7 +46,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/me/publishing/tasks",
     summary="Get Space My Published Tasks",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def get_space_me_published_tasks(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

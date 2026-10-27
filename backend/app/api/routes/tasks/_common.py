@@ -16,11 +16,11 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
-from app.auth.space_access import may_publish_in_space
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
+from app.domain.space import permissions as space_seats
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
@@ -402,13 +402,13 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
-    # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
+    # 发题的门是「本板的成员」，判据在 ``app.domain.space.permissions``（``publish``）
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
     # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
     # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
-    if not await may_publish_in_space(
-        session=db, space_id=space_id, user_id=creator_user_id
+    if not await space_seats.SPACE.allows(
+        db, space_id, creator_user_id, space_seats.Permission.publish
     ):
         raise ForbiddenError("Only a member of this board can publish tasks here")
 

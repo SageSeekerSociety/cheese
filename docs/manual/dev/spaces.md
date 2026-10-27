@@ -46,7 +46,7 @@ covers:
 
 公告一条一行，存在 `SpaceAnnouncement`（`space_announcement` 表）：作者、标题、富文本正文、`pinned`、可空的 `expires_at`。路由在 `api/routes/space_announcements.py`，逻辑在 `domain/space/announcement_service.py`。
 
-- **读是成员，写是管理员。** 列表和空间本身同一道门（`_ensure_space_visible`），发布、修改、删除走 `is_space_admin`。每条有自己的地址，改一条只写那一条。
+- **读是成员，写是管理员。** 列表要 `SpacePermission.view`，发布、修改、删除要 `SpacePermission.announce`。每条有自己的地址，改一条只写那一条。
 - **到没到期由服务端答。** 列表回 `current`（置顶在前，再按新到旧）和 `expired` 两组；题目列表顶上那一栏只读 `current` 里置顶的。`updated_at` 只在标题、正文、到期日变化时挪动，置顶不算「已编辑」。
 - **发布时通知一次。** 收件人是发布那一刻空间里除作者以外的每个人（成员加管理员），经投递账本发出，类型 `SPACE_ANNOUNCEMENT`，只进站内（见[通知与待办](/dev/notifications#ledger)）。修改不再通知，只把已发出的标题和摘要改成新的（`ledger.amend`）；删除连同它发出的通知一起撤回（`ledger.retract`）。
 

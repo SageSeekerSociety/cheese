@@ -193,6 +193,13 @@ function buttonWith(scope: Element, text: string): HTMLButtonElement | null {
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.includes(text)) ?? null
 }
 
+/** 字样正好是这一句的元素（不含子元素里的字）。 */
+function textsExactly(container: Element, text: string): Element[] {
+  return Array.from(container.querySelectorAll('*')).filter(
+    (el) => el.children.length === 0 && el.textContent?.trim() === text
+  )
+}
+
 describe('题目详情', () => {
   beforeEach(() => {
     setLocale('zh-CN')
@@ -293,15 +300,80 @@ describe('题目详情', () => {
   })
 
   it.each([
-    ['整道题已经截止', { deadline: Date.now() - DAY }, null],
-    ['我自己的截止已经过了', {}, Date.now() - DAY],
-  ])('申请通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, task, mine) => {
+    ['申请制的题、我自己的截止已经过了', 'APPLY', {}, Date.now() - DAY],
+    ['直接开始的题、整道题已经截止', 'DIRECT', { deadline: Date.now() - DAY }, Date.now() + DAY],
+  ])('通过了还没开始、%s：不能再开始做，按钮写「已截止」', async (_, startMode, task, mine) => {
     const { container } = await mount(
-      { startMode: 'APPLY', joined: true, submittable: true, myProject: null, ...task },
+      { startMode, joined: true, submittable: true, myProject: null, userDeadline: mine, ...task },
       { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }] }
     )
 
     expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it('申请制的题过了申请截止才通过：在我自己的截止之前照样能开始做', async () => {
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() - DAY,
+        userDeadline: Date.now() + DAY,
+      },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }],
+      }
+    )
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.start'))
+    expect(claimButton(container)?.disabled).toBe(false)
+    // 题目对他还没截止：标题旁不写「已截止」；右栏那一格说的是申请截止。
+    expect(textsExactly(container, t('tasks.page.state.closed'))).toHaveLength(0)
+    expect(textsExactly(container, t('tasks.side.deadlineApply'))).toHaveLength(1)
+  })
+
+  it('直接开始的题截止了：标题旁照样写「已截止」，右栏那一格叫「截止」', async () => {
+    const { container } = await mount(
+      {
+        startMode: 'DIRECT',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() - DAY,
+        userDeadline: Date.now() + DAY,
+      },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() + DAY }],
+      }
+    )
+
+    expect(textsExactly(container, t('tasks.page.state.closed')).length).toBeGreaterThan(0)
+    expect(textsExactly(container, t('tasks.side.deadline'))).toHaveLength(1)
+    expect(textsExactly(container, t('tasks.side.deadlineApply'))).toHaveLength(0)
+  })
+
+  it('申请制的题还在收申请、我的截止已经过了：标题旁写「已截止」，不写「可申请」，也开始不了', async () => {
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() + 7 * DAY,
+        userDeadline: Date.now() - DAY,
+      },
+      {
+        hasParticipation: true,
+        identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: Date.now() - DAY }],
+      }
+    )
+
+    expect(textsExactly(container, t('tasks.page.state.open'))).toHaveLength(0)
+    expect(textsExactly(container, t('tasks.page.state.closed')).length).toBeGreaterThan(0)
     expect(claimButton(container)?.disabled).toBe(true)
   })
 
@@ -577,7 +649,7 @@ describe('题目详情', () => {
 
   it.each([
     ['DIRECT', '这道题还没开放'],
-    ['APPLY', '还没到报名时间'],
+    ['APPLY', '还没到申请时间'],
   ])('%s 的题还没开放：领不了的原因按开始方式说', async (startMode, said) => {
     const { container } = await mount({
       startMode,

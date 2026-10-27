@@ -23,10 +23,11 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _membership_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
+from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -39,9 +40,6 @@ from app.domain.notification.preferences import local_time
 from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
-)
-from app.domain.task.access import (
-    ensure_task_joinable,
 )
 from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
@@ -137,7 +135,7 @@ async def _participation_response(
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -165,7 +163,7 @@ async def create_task_participant(
 
     # 出题者或本版管理员可以替成员报名，也可以把没审过的题先加进课程，
     # 不必等它 approved —— 这两条都是「管理员对这道题能做的事」，和评审同一个判据。
-    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+    is_teacher = await task_seats.teaches(db, task, auth_user.user_id)
     if member != auth_user.user_id and not is_teacher:
         raise ForbiddenError("Only task owner can add other participants")
 
@@ -175,7 +173,6 @@ async def create_task_participant(
         raise BadRequestError("Cannot join an ended task")
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -239,7 +236,7 @@ async def create_task_participant(
 @router.post(
     "/{taskId}/participations/user",
     summary="Join Task as User (self-join)",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_user(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -268,7 +265,6 @@ async def join_task_as_user(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
     await consent_before_a_direct_start(
         db,
         membership_service,
@@ -307,7 +303,7 @@ async def join_task_as_user(
 @router.post(
     "/{taskId}/participations/team",
     summary="Join Task as Team",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_team(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -339,7 +335,6 @@ async def join_task_as_team(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
     await consent_before_a_direct_start(
         db,
         membership_service,
@@ -376,7 +371,7 @@ async def join_task_as_team(
 @router.patch(
     "/{taskId}/participants/{participantId}",
     summary="Update TaskMembership",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -391,9 +386,6 @@ async def patch_task_participant(
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:

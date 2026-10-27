@@ -41,6 +41,7 @@ interface LocatorDeps {
 export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
+  const queued = ref<string[]>([])
   /** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
   const annotateError = ref('')
 
@@ -118,7 +119,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       () => props.slideContext?.topicId,
       () => props.slideContext?.taskId,
     ],
-    clearLocator,
+    () => {
+      clearLocator()
+      queued.value = []
+    },
     { flush: 'sync' }
   )
 
@@ -168,12 +172,56 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     return t('work.room.preview.locateContextAfter', { suffix })
   }
 
+  function formatLocateMessage(
+    target: { label: string; quote: string; address: string; context?: QuoteContext },
+    note: string
+  ): string {
+    const message = t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address || target.label,
+      quote: target.quote,
+      note,
+    })
+    const ctx = target.context
+    const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
+    return context ? `${message}\n${context}` : message
+  }
+
+  function queueLocator() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    if (!target || !note || pageLocator.pin.value) return
+    queued.value = [...queued.value, formatLocateMessage(target, note)]
+    clearLocator()
+  }
+
+  function clearQueued() {
+    queued.value = []
+  }
+
+  function sendQueued() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    const pending = [...queued.value]
+    if (target && note && !pageLocator.pin.value) {
+      pending.push(formatLocateMessage(target, note))
+    }
+    if (!pending.length) return
+    deps.onLocate({ message: pending.join('\n\n') })
+    queued.value = []
+    if (!pageLocator.pin.value) clearLocator()
+  }
+
   function sendLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note) return
     if (pageLocator.pin.value) {
       void pageLocator.send(note)
+      return
+    }
+    if (queued.value.length > 0) {
+      sendQueued()
       return
     }
     if (imageRegion.target.value) {
@@ -196,16 +244,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       if (sent) clearLocator()
       return
     }
-    const message = t('work.room.preview.locateMessage', {
-      path: props.previewFile?.path ?? '',
-      address: target.address,
-      quote: target.quote,
-      note,
-    })
-    // 选中那段文字的两侧（markdown 才有）。两侧都是空的时候没什么可分辨的，别写进去。
-    const ctx = target.context
-    const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
-    deps.onLocate({ message: context ? `${message}\n${context}` : message })
+    deps.onLocate({ message: formatLocateMessage(target, note) })
     clearLocator()
   }
 
@@ -244,6 +283,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   return {
     locator,
     locatorNote,
+    queued,
     annotateError,
     imageRegion,
     pageLocator,
@@ -251,6 +291,9 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     pick,
     openLocator,
     clearLocator,
+    queueLocator,
+    clearQueued,
+    sendQueued,
     sendLocator,
     onImageRegion,
     onPageContext,

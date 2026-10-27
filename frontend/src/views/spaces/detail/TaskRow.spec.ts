@@ -67,4 +67,47 @@ describe('题目列表的一行', () => {
 
     view.getByText(t('spaces.detail.tasks.row.applied'))
   })
+
+  const DAY = 86_400_000
+
+  it('申请截止之后通过、自己的截止还没到：这一行写在做，不写「已截止」', () => {
+    const view = show({
+      startMode: 'APPLY',
+      deadline: Date.now() - DAY,
+      joined: true,
+      submittable: true,
+      userDeadline: Date.now() + DAY,
+    })
+
+    view.getByText(t('spaces.detail.tasks.row.mine'))
+    expect(view.queryByText(t('tasks.page.state.closed'))).toBeNull()
+  })
+
+  it.each([
+    ['直接开始的题过了截止', { startMode: 'DIRECT', userDeadline: Date.now() + DAY }],
+    ['申请制的题、自己的截止也过了', { startMode: 'APPLY', userDeadline: Date.now() - DAY }],
+  ] as const)('%s：这一行照样写「已截止」', (_, more) => {
+    const view = show({ deadline: Date.now() - DAY, joined: true, submittable: true, ...more })
+
+    view.getByText(t('tasks.page.state.closed'))
+  })
+
+  it('申请制的题还在收申请、我的截止已经过了：这一行写「已截止」，不写「可申请」', () => {
+    const view = show({
+      startMode: 'APPLY',
+      deadline: Date.now() + 7 * DAY,
+      joined: true,
+      submittable: true,
+      userDeadline: Date.now() - DAY,
+    })
+
+    view.getByText(t('tasks.page.state.closed'))
+    expect(view.queryByText(t('tasks.page.state.open'))).toBeNull()
+  })
+
+  it('没有领取的人：还在收申请的题写「可申请」', () => {
+    const view = show({ startMode: 'APPLY', deadline: Date.now() + 7 * DAY })
+
+    view.getByText(t('tasks.page.state.open'))
+  })
 })

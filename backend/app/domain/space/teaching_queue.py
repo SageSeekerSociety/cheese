@@ -1,7 +1,7 @@
 """What waits on the people who teach a 题目: claims to approve and
 submissions to review.
 
-The people are the ones who may teach it (`auth.space_access.may_teach_task`):
+The people are the ones who may teach it (`app.auth.task_roles.teaches`):
 its publisher and the admins of its space. Counted from the rows as they are
 now, so a claim decided or a submission reviewed drops out by itself; a 题目
 that ended or was deleted waits on nobody.

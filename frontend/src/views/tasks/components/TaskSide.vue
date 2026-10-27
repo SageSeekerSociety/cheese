@@ -46,7 +46,8 @@
           <dd>{{ formText }}</dd>
         </div>
         <div>
-          <dt>{{ t('tasks.side.deadline') }}</dt>
+          <!-- On an applied-for task the task's deadline closes applying only (申请截止). -->
+          <dt>{{ task.startMode === 'DIRECT' ? t('tasks.side.deadline') : t('tasks.side.deadlineApply') }}</dt>
           <dd>{{ deadlineText }}</dd>
         </div>
         <div v-if="defaultDeadline">

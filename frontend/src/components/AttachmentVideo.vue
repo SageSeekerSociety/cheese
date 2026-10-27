@@ -6,8 +6,8 @@ import BaseButton from './base/BaseButton.vue'
 import { t } from '@/i18n'
 import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
 
-const props = defineProps<{ topicId: string | null; path: string }>()
-const emit = defineEmits<{ download: [] }>()
+const props = defineProps<{ topicId: string | null; path: string; canOpen?: boolean }>()
+const emit = defineEmits<{ open: []; download: [] }>()
 const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 const name = computed(() => props.path.split('/').pop() ?? props.path)
 const url = ref('')
@@ -78,17 +78,31 @@ onBeforeUnmount(reset)
         {{ loading ? t('work.room.video.loading') : failure ? t('work.room.video.retry') : t('work.room.video.open') }}
       </BaseButton>
     </div>
-    <BaseButton
-      kind="ghost"
-      prepend-icon="mdi-video-outline"
-      append-icon="mdi-download-outline"
-      class="attachment-video__download"
-      :title="t('work.room.message.downloadFile', { name })"
-      :aria-label="t('work.room.message.downloadFile', { name })"
-      @click="emit('download')"
-    >
-      <span class="text-truncate">{{ name }}</span>
-    </BaseButton>
+    <div class="attachment-video__actions">
+      <BaseButton
+        kind="ghost"
+        prepend-icon="mdi-video-outline"
+        append-icon="mdi-download-outline"
+        class="attachment-video__download"
+        :title="t('work.room.message.downloadFile', { name })"
+        :aria-label="t('work.room.message.downloadFile', { name })"
+        @click="emit('download')"
+      >
+        <span class="text-truncate">{{ name }}</span>
+      </BaseButton>
+      <BaseButton
+        v-if="canOpen"
+        kind="ghost"
+        size="sm"
+        prepend-icon="mdi-dock-right"
+        class="attachment-video__open"
+        :title="t('work.room.message.openFile', { name })"
+        :aria-label="t('work.room.message.openFile', { name })"
+        @click="emit('open')"
+      >
+        {{ t('work.room.file.open') }}
+      </BaseButton>
+    </div>
   </div>
 </template>
 
@@ -128,8 +142,14 @@ onBeforeUnmount(reset)
 .attachment-video__placeholder p {
   margin: 0;
 }
+.attachment-video__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
 .attachment-video__download {
   max-width: 100%;
-  margin-top: 4px;
 }
 </style>

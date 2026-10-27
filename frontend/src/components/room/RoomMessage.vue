@@ -24,7 +24,7 @@ import {
   isVideoBlock,
   replySnippet,
 } from '../../lib/blockDisplay'
-import { fileIcon } from '../../lib/fileKind'
+import { fileIcon, previewCanShowInRoom } from '../../lib/fileKind'
 import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -176,6 +176,7 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
@@ -298,10 +299,40 @@ const told = computed(() => toldByMessage(props.refs))
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
         <AttachmentVideo
           v-else-if="isVideoBlock(block)"
+          can-open
           :topic-id="topicId"
           :path="block.content"
+          @open="emit('open-file', block.content)"
           @download="emit('download', block)"
         />
+        <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
+           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <template v-else-if="canOpenFile">
+          <button
+            type="button"
+            class="im-artifact"
+            :title="t('work.room.message.openFile', { name: artifactName(block) })"
+            @click="emit('open-file', block.content)"
+          >
+            <span class="att-face im-artifact__face">
+              <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
+            </span>
+            <span class="im-artifact__text">
+              <span class="im-artifact__name">{{ artifactName(block) }}</span>
+              <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
+            </span>
+            <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
+          </button>
+          <BaseButton
+            v-if="block.kind === 'attachment'"
+            kind="ghost"
+            size="sm"
+            icon="mdi-download-outline"
+            :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
+            :aria-label="t('work.room.message.downloadFile', { name: artifactName(block) })"
+            @click="emit('download', block)"
+          />
+        </template>
         <BaseButton
           v-else-if="block.kind === 'attachment'"
           kind="ghost"
@@ -313,31 +344,10 @@ const told = computed(() => toldByMessage(props.refs))
         >
           <span class="text-truncate">{{ artifactName(block) }}</span>
         </BaseButton>
-        <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
-           写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
-           分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
-           和芝士随口说了个路径长得一模一样。
-           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
-        <button
-          v-else-if="block.kind === 'artifact'"
-          type="button"
-          class="im-artifact"
-          :title="t('work.room.message.openFile', { name: artifactName(block) })"
-          @click="emit('open-file', block.content)"
-        >
-          <span class="att-face im-artifact__face">
-            <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
-          </span>
-          <span class="im-artifact__text">
-            <span class="im-artifact__name">{{ artifactName(block) }}</span>
-            <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
-          </span>
-          <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
-        </button>
         <v-icon v-if="pinned" size="14" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')">mdi-pin</v-icon>
         <FileBlockMenu
           :name="artifactName(block)"
-          :can-open="block.kind === 'artifact'"
+          :can-open="canOpenFile"
           :can-download="block.kind === 'attachment'"
           :can-keep="
             (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId

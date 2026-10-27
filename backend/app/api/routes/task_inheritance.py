@@ -26,9 +26,11 @@ from fastapi import APIRouter, Depends, Path
 from app.api.response import ok
 from app.api.space_payloads import teaching_to_api
 from app.api.task_deps import _require_task
+from app.api.write_access import Can
+from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
@@ -38,7 +40,6 @@ from app.domain.space.material_service import (
     member_readable_material_ids,
 )
 from app.domain.task.inheritance import TaskInheritance, for_task
-from app.domain.task.services import ensure_task_readable
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -54,7 +55,7 @@ def _teaching_to_api(
     点名、但只在「仅管理员」档里的课件，不该出现在这份「会继承什么」的预览里 ——
     否则点名的 id 说会继承、下面的清单里却没有，同一份响应自相矛盾。
 
-    ``include_private``：私有指导只给出题人/管理员（`may_teach_task`）—— 这份
+    ``include_private``：私有指导只给出题人/管理员（`task_seats.teaches`）—— 这份
     预览学生也看得到（领题前那道门），所以默认不给，只有出题人看得见那一份。
     """
     return {
@@ -116,6 +117,7 @@ def _to_api(
 @router.get(
     "/{taskId}/inheritance",
     summary="Get Task Inheritance",
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task_inheritance(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -137,16 +139,15 @@ async def get_task_inheritance(
     —— 那不是错误，只是「这题带的资料你一份也拿不到」。
     """
     task = await _require_task(db, task_id)
-    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
     found = await for_task(session=db, task_id=task_id, user_id=auth_user.user_id)
     if found is None:
         raise NotFoundError("Task not found", data={"type": "task", "id": task_id})
 
     # 私有指导只给出题人 / 板管理员：这份预览领题的学生也看得到，判据用既有的
-    # `may_teach_task`（发题、打分同一个答案），不新造权限开关。
-    may_teach = auth_user.user_id > 0 and await may_teach_task(
-        session=db, task=task, user_id=auth_user.user_id
+    # `task_seats.teaches`（发题、打分同一个答案），不新造权限开关。
+    may_teach = auth_user.user_id > 0 and await task_seats.teaches(
+        db, task, auth_user.user_id
     )
 
     try:

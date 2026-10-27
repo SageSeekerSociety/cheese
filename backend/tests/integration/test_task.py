@@ -2165,8 +2165,8 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert delete_resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {delete_resp.status_code}"
+        assert delete_resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {delete_resp.status_code}"
         )
 
     def test_delete_task_success_for_owner(
@@ -2225,8 +2225,8 @@ class TestTaskPermissions:
             json={"name": "Should Fail"},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert update_resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {update_resp.status_code}"
+        assert update_resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {update_resp.status_code}"
         )
 
     def test_join_unapproved_task_fails(
@@ -2257,8 +2257,8 @@ class TestTaskPermissions:
             json={},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert join_resp.status_code == 400, (
-            f"Expected 400, got {join_resp.status_code}"
+        assert join_resp.status_code == 404, (
+            f"Expected 404, got {join_resp.status_code}"
         )
 
     def test_enumerate_unapproved_tasks_as_space_admin(
@@ -2394,8 +2394,8 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert get_resp.status_code == 403, (
-            f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
+        assert get_resp.status_code == 404, (
+            f"Expected 404, got {get_resp.status_code}: {get_resp.text}"
         )
 
 
@@ -2782,7 +2782,7 @@ class TestParticipantPermissions:
             json={"deadline": deadline_ms, "email": "test@example.com"},
             headers={"Authorization": f"Bearer {user1.token}"},
         )
-        assert add_resp.status_code == 403, f"Expected 403, got {add_resp.status_code}"
+        assert add_resp.status_code == 404, f"Expected 404, got {add_resp.status_code}"
 
 
 class TestTeamParticipant:
@@ -3367,8 +3367,8 @@ class TestArchivedCategoryAndRejectReason:
             json={"rejectReason": "Some reason"},
             headers={"Authorization": f"Bearer {non_admin.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
         )
 
     def test_patch_reject_reason_success_for_admin(

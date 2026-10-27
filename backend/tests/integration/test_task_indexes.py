@@ -34,8 +34,6 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.auth.core import Role
-from app.auth.domains.task import get_task_roles
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import (
     TaskMembership,
@@ -44,6 +42,7 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.repositories import (
+    TaskMembershipRepository,
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
@@ -354,9 +353,12 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
         await session.execute(text("SET LOCAL enable_seqscan = off"))
 
         with statements(session) as seen:
-            assert await get_task_roles(session, MEMBER, "task", task_id) == {
-                Role.PARTICIPANT
-            }
+            assert (
+                await TaskMembershipRepository(session).get_user_membership(
+                    task_id=task_id, user_id=MEMBER
+                )
+                is not None
+            )
             assert await seat_of(session, team_id, MEMBER) is Seat.member
             assert (
                 await TaskSubmissionRepository(

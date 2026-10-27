@@ -44,7 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
 from app.api.space_deps import require_reviewed_space
-from app.api.write_access import needs
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -75,7 +75,7 @@ async def get_space_material_service(db=Depends(get_db)) -> SpaceMaterialService
 @router.get(
     "/{spaceId}/materials",
     summary="List Space Materials",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def list_space_materials(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -105,7 +105,7 @@ async def list_space_materials(
     "/{spaceId}/materials",
     summary="Upload Space Material",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
+    dependencies=[Can(SpacePermission.manage_materials)],
 )
 async def upload_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -137,7 +137,7 @@ async def upload_space_material(
 @router.patch(
     "/{spaceId}/materials/{materialId}",
     summary="Patch Space Material",
-    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
+    dependencies=[Can(SpacePermission.manage_materials)],
 )
 async def patch_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -159,7 +159,7 @@ async def patch_space_material(
     "/{spaceId}/materials/{materialId}",
     summary="Delete Space Material",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[needs(SpacePermission.manage_materials, on="spaceId")],
+    dependencies=[Can(SpacePermission.manage_materials)],
 )
 async def delete_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -175,7 +175,7 @@ async def delete_space_material(
 @router.get(
     "/{spaceId}/materials/{materialId}/download",
     summary="Download Space Material",
-    dependencies=[needs(SpacePermission.view, on="spaceId")],
+    dependencies=[Can(SpacePermission.view)],
 )
 async def download_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

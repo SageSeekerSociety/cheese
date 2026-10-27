@@ -10,14 +10,14 @@ from app.api.admin_deps import PlatformAdminDep
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok, typed_response
-from app.api.write_access import ROUTE_DECIDES, needs
-from app.auth.core import AuthUserInfo
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.core.errors import BadRequestError, ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.model_catalog import model_choices
 from app.domain.authz import policy
 from app.domain.identity.services import IdentityService
 from app.domain.team.permissions import Permission as TeamPermission
+from app.domain.team.protocol import TeamView
 from app.domain.usage import referrals
 from app.domain.usage.incentives import CreditIncentives
 from app.domain.usage.plans import PlanService
@@ -33,8 +33,8 @@ from app.domain.user.services import usernames_by_ids
 
 router = APIRouter(tags=["credits"])
 TeamId = Annotated[int, Path(ge=1, alias="teamId")]
-TeamReader = Annotated[AuthUserInfo, needs(TeamPermission.view_members, on="teamId")]
-TeamManager = Annotated[AuthUserInfo, needs(TeamPermission.edit_settings, on="teamId")]
+TeamReader = Annotated[TeamView, Can(TeamPermission.view_members)]
+TeamManager = Annotated[TeamView, Can(TeamPermission.edit_settings)]
 
 
 class CreditRequestIn(BaseModel):
@@ -103,8 +103,8 @@ async def claim_beta_credits(db: DbSession, user: AuthUser) -> dict:
 
 
 @router.get("/teams/{teamId}/credits/requests", **typed_response(CreditRequestsOut))
-async def credit_requests(team_id: TeamId, db: DbSession, user: TeamReader) -> dict:
-    return ok({"items": await CreditIncentives(db).requests(team_id)})
+async def credit_requests(team: TeamReader, db: DbSession) -> dict:
+    return ok({"items": await CreditIncentives(db).requests(team.id)})
 
 
 @router.post(
@@ -113,13 +113,13 @@ async def credit_requests(team_id: TeamId, db: DbSession, user: TeamReader) -> d
     **typed_response(CreditRequestOut),
 )
 async def request_credits(
-    team_id: TeamId, body: CreditRequestIn, db: DbSession, user: TeamManager
+    team: TeamManager, body: CreditRequestIn, db: DbSession, user: AuthUser
 ) -> dict:
     if body.kind == "top_up" and body.credits is None:
         raise BadRequestError(say("creditAmountRequired"))
     handle = (await usernames_by_ids(db, [user.user_id]))[user.user_id]
     result = await CreditIncentives(db).request(
-        team_id, kind=body.kind, credits=body.credits, actor=handle
+        team.id, kind=body.kind, credits=body.credits, actor=handle
     )
     await db.commit()
     return ok(result)

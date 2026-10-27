@@ -1651,7 +1651,7 @@ TASK_WRITE_DESCRIPTION = (
     "days_to_submit 天）；有人领了这道题之后 start_mode 不能再改；deadline 截止时间，"
     "写用户时区的「YYYY-MM-DD HH:MM」；"
     "days_to_submit 申请制下限时几天，从申请通过那天算起；category 分类名称；tags 标签名称；"
-    "real_name 是否要求实名；registration_start 报名开始时间，格式同 deadline；"
+    "real_name 是否要求实名；registration_start 开始日期，从这天起可以申请或开始做这道题，格式同 deadline；"
     "team_locking 队伍成员开始后能否变更（直接开始的题是开始做这道题后，申请制的题是"
     "申请通过后）；mentors 导师，把他们加入每个参与者的"
     "项目，写名字或账号，空列表是不设导师；access 只让这几个邮箱域名组的人做这道题，"
@@ -5264,6 +5264,8 @@ def _say_ask(args, data, env) -> str:
         f"已在房间里问了 {len(blocks)} 个问题（消息 id {ids}；"
         f"request_id {(data or {}).get('request_id')}）。"
         "现在就停下，不要等：有人回复时，回复会作为新消息再把你叫起来。"
+        "没人答的题 72 小时后自己收起、不再等人答；想早点收回某一道，"
+        '用 platform_request(method="DELETE", path="/blocks/<消息 id>/question")。'
     )
 
 

@@ -113,3 +113,115 @@ def test_what_can_still_be_claimed_is_listed_apart_from_the_rest(
 
     assert _names(api_client, board, "recruiting") == {"报名中", "不限人数"}
     assert _names(api_client, board, "closed") == {"报名已截止", "名额已满", "已结束"}
+
+
+def _names_for(api_client: TestClient, board: dict, token: str, lifecycle: str):
+    resp = api_client.get(
+        f"/tasks?space={board['space_id']}&approved=APPROVED&lifecycle={lifecycle}",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return {t["name"] for t in resp.json()["data"]["tasks"]}
+
+
+def test_a_task_still_open_to_its_approved_claimant_is_not_folded_away_for_them(
+    api_client: TestClient,
+    user_client: UserCreator,
+    board: dict,
+    db_session,
+    _portal,
+):
+    """On a task applied for, 申请截止 closes applying only: someone approved
+    whose own deadline is still ahead can start or keep working, so for them
+    the task is listed with what is open; for everyone else it is closed. On a
+    task started directly, its deadline is everyone's."""
+    student = user_client.create_user()
+    token = user_client.login(api_client, student.username, student.password)
+    joined = api_client.post(
+        f"/spaces/{board['space_id']}/members",
+        json={"userId": student.user_id},
+        headers=_auth(board["token"]),
+    )
+    assert joined.status_code == 201, joined.text
+    mine = _task(api_client, board, "申请截止后通过", startMode="APPLY")
+    mine_over = _task(api_client, board, "自己的截止也过了", startMode="APPLY")
+    direct = _task(api_client, board, "直接开始已截止", startMode="DIRECT")
+
+    async def close_and_approve() -> None:
+        from app.domain.task.models import Task, TaskMembership
+
+        now = datetime.now(UTC)
+        for task_id, own in (
+            (mine, now + timedelta(days=7)),
+            (mine_over, now - timedelta(days=1)),
+            (direct, now + timedelta(days=7)),
+        ):
+            (await db_session.get(Task, task_id)).deadline = now - timedelta(days=1)
+            db_session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=student.user_id,
+                    approved=0,
+                    is_team=False,
+                    deadline=own,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await db_session.flush()
+
+    _portal.call(close_and_approve)
+
+    assert _names_for(api_client, board, token, "recruiting") == {"申请截止后通过"}
+    assert _names_for(api_client, board, token, "closed") == {
+        "自己的截止也过了",
+        "直接开始已截止",
+    }
+    # Nobody else holds it open: for the publisher it is closed.
+    assert "申请截止后通过" in _names(api_client, board, "closed")
+
+
+def test_a_task_its_approved_claimant_can_no_longer_act_on_is_closed_for_them(
+    api_client: TestClient,
+    user_client: UserCreator,
+    board: dict,
+    db_session,
+    _portal,
+):
+    """The mirror case: the task still takes applications, but the
+    claimant's own deadline has passed, so they can neither start nor hand
+    in. For them it is closed; for everyone else it is still open."""
+    student = user_client.create_user()
+    token = user_client.login(api_client, student.username, student.password)
+    joined = api_client.post(
+        f"/spaces/{board['space_id']}/members",
+        json={"userId": student.user_id},
+        headers=_auth(board["token"]),
+    )
+    assert joined.status_code == 201, joined.text
+    task_id = _task(api_client, board, "还在收申请，我的截止过了", startMode="APPLY")
+
+    async def approve_with_a_passed_deadline() -> None:
+        from app.domain.task.models import TaskMembership
+
+        now = datetime.now(UTC)
+        db_session.add(
+            TaskMembership(
+                task_id=task_id,
+                member_id=student.user_id,
+                approved=0,
+                is_team=False,
+                deadline=now - timedelta(days=1),
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await db_session.flush()
+
+    _portal.call(approve_with_a_passed_deadline)
+
+    assert _names_for(api_client, board, token, "closed") == {
+        "还在收申请，我的截止过了"
+    }
+    assert _names_for(api_client, board, token, "recruiting") == set()
+    assert "还在收申请，我的截止过了" in _names(api_client, board, "recruiting")

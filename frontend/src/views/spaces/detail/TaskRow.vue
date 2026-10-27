@@ -8,7 +8,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
-import { taskState } from '@/utils/tasks'
+import { taskStateFor } from '@/utils/tasks'
 
 import { splitOrigin } from '@/views/spaces/model'
 
@@ -20,7 +20,8 @@ const props = defineProps<{
 
 const { t } = useI18n()
 
-const state = computed(() => taskState(props.task))
+/** 这道题此刻对我的状态（`taskStateFor`），和题目页标题旁那一枚同一条判据。 */
+const state = computed(() => taskStateFor(props.task))
 const summary = computed(() => splitOrigin(props.task.intro ?? '').summary)
 const publisher = computed(() => props.task.creator.nickname || props.task.creator.username)
 const date = (at: number) => dayjs(at).format(t('tasks.page.dateFormat'))
@@ -65,7 +66,7 @@ const deadline = computed(() =>
       </div>
     </div>
     <div class="tr__side">
-      <span class="tr__state" :class="`tr__state--${state.tone}`">
+      <span v-if="state" class="tr__state" :class="`tr__state--${state.tone}`">
         <span class="tr__dot" aria-hidden="true" />{{ t(`tasks.page.state.${state.key}`) }}
       </span>
       <span class="t-num">{{ claimed }}</span>

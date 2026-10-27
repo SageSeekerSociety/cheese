@@ -8,6 +8,7 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent import spend_cap_alerts, turn_resume
+from app.domain.agent.ask import expire_due_questions
 from app.domain.agent.chat import ChatService
 from app.domain.agent.gateway_models import roles as model_roles_store
 from app.domain.agent.runtime import AgentWorkRunner
@@ -31,6 +32,14 @@ async def sweep_orphan_turns(
     return await get_runner().sweep_orphans(
         chat, last_activity=last_activity, silence_s=settings.turn_silence_timeout_s
     )
+
+
+async def expire_questions(sessions: SessionFactory) -> int:
+    """Take back the questions whose deadline has passed, in one transaction."""
+    async with sessions() as session:
+        taken = await expire_due_questions(session)
+        await session.commit()
+    return taken
 
 
 def register_periodic_jobs(
@@ -97,6 +106,15 @@ def register_periodic_jobs(
         "task state reminder",
         settings.chat_progress_check_interval_s,
         lambda: task_state_reminder(datetime.now(UTC)),
+    )
+    # A question nobody answered stops waiting when its deadline passes
+    # (`agent.ask.expire_due_questions`): the point of the deadline is that a
+    # stale one leaves the 待你回答 lists and the channel's yellow light on its
+    # own, without anybody touching it.
+    jobs.register(
+        "question expiry",
+        settings.question_expiry_sweep_interval_s,
+        lambda: expire_questions(sessions),
     )
     # Hands due resumes to the delivery ledger; the timed-delivery clock, next
     # in the manifest, dispatches them.

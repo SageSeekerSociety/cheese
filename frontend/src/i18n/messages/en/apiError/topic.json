@@ -63,5 +63,8 @@
   "topicMuteUntilPast": "The end of a mute must be in the future",
   "topicNotifyLevelInvalid": "Choose one of the three notification levels",
   "unarchiveSignIn": "Sign in to unarchive",
-  "unarchiveWhileSessionStopping": "The channel's AI teammate is stopping and saving its record. You can unarchive once that's done"
+  "unarchiveWhileSessionStopping": "The channel's AI teammate is stopping and saving its record. You can unarchive once that's done",
+  "threadRestoreNotYours": "Only whoever started this thread, or a channel admin, can restore it",
+  "threadRestoreSignIn": "Sign in to restore this thread",
+  "threadNotFound": "Thread not found"
 }

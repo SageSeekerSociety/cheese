@@ -195,7 +195,7 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
         // text/markdown 发出来浏览器只显示源码；其余是因为「读得成文本」不代表它是
         // 网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
         // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
-        if (state.documentType.value) {
+        if (state.documentType.value || state.isVideoArtifact.value) {
           host.reset()
           state.previewUrl.value = null
           return

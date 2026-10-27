@@ -22,7 +22,7 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
@@ -30,7 +30,6 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.space.repositories import (
-    SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
@@ -114,12 +113,13 @@ async def update_task(
     if task is None:
         raise NotFoundError.for_resource("task", task_id)
 
-    # is_space_admin 仍单独保留：下面「审批/驳回」只认管理员，出题者不可自审 ——
-    # 那是一个比「管理员」更窄的问题，不能拿 may_teach_task 顶。
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = await admin_repo.get_relation(task.space_id, user_id) is not None
+    # 「审批/驳回」只认教这块板的人，出题者不可自审 —— 比「教这道题」更窄，
+    # 不能拿 ``teaches`` 顶。
+    is_space_admin = await task_seats.TASK.allows(
+        db, task.id, user_id, task_seats.Permission.approve
+    )
 
-    if not await may_teach_task(session=db, task=task, user_id=user_id):
+    if not await task_seats.teaches(db, task, user_id):
         raise ForbiddenError(say("draftTaskNotYours"))
 
     # 「给 AI 队友的指导」(#944) 的引用先查再改：拒了就不该动这一行的任何一格
@@ -222,7 +222,7 @@ async def update_task(
         task.reviewed_at = datetime.now(UTC)
 
     if "ended_at" in payload.model_fields_set or payload.has_ended_at is not None:
-        if not await may_teach_task(session=db, task=task, user_id=user_id):
+        if not await task_seats.teaches(db, task, user_id):
             raise ForbiddenError(say("draftTaskNotYours"))
         if payload.has_ended_at is False or (
             "ended_at" in payload.model_fields_set

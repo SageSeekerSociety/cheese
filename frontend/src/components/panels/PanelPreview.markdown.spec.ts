@@ -439,6 +439,44 @@ it('拿不到文件身份时退回拼一句话那条老路', async () => {
   expect(payload[0].message).toContain('改这句')
 })
 
+it('支持把多处指认先加入待发列表，再一键合并成一条消息发出', async () => {
+  const ui = mount()
+  await selectPassage(ui, 4, 10)
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '改成 5 次')
+  await fireEvent.click(ui.getByText('加入待发'))
+
+  expect(ui.emitted().locate).toBeUndefined()
+  expect(ui.getByText('待发批注 1 处')).toBeTruthy()
+
+  await selectPassage(ui, 0, 4)
+  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '补充超时原因')
+  await fireEvent.click(ui.getByText('加入待发'))
+
+  expect(ui.getByText('待发批注 2 处')).toBeTruthy()
+  await fireEvent.click(ui.getByText('全部发送（2）'))
+
+  const [payload] = ui.emitted().locate as { message: string }[][]
+  expect(payload[0].message).toContain('重试 3 次')
+  expect(payload[0].message).toContain('改成 5 次')
+  expect(payload[0].message).toContain('失败以后')
+  expect(payload[0].message).toContain('补充超时原因')
+})
+
+it('支持在 Markdown 渲染视图与看原文之间切换，换文件时恢复为渲染视图', async () => {
+  const ui = mount()
+  const md = ui.getByTestId('markdown')
+  await firstLine(md)
+  expect(ui.queryByTestId('markdown-source')).toBeNull()
+
+  await fireEvent.click(ui.getByText('看原文'))
+  expect(ui.getByTestId('markdown-source').textContent).toContain('# 配置')
+  expect(ui.queryByTestId('markdown')).toBeNull()
+
+  await ui.rerender(props('output/另一份.md', '# 另一节\n\n正文。\n'))
+  expect(ui.queryByTestId('markdown-source')).toBeNull()
+  expect(ui.getByTestId('markdown')).toBeTruthy()
+})
+
 // ---- 已有的评论画在文件上 ----
 //
 // 哪几条画得出来，是在面板这一层定的：锚点里那段原文要找得回来，而且记的得是**这一版**。

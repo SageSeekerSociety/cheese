@@ -58,7 +58,7 @@ async def register(db, ticket: str, transport_token: str, computer_name: str):
         )
     except jwt.PyJWTError:
         raise UnauthorizedError(say("modelLoginAuthorizationInvalid")) from None
-    if not await team_seats.may(
+    if not await team_seats.TEAM.allows(
         db, claims["team"], claims["user"], TeamPermission.manage_machines
     ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))

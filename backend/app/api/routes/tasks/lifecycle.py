@@ -30,16 +30,20 @@ from app.api.task_serialization import (
     _task_requirements,
     _task_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
+from app.auth import can
+from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import ClaimPermission
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.space import permissions as space_seats
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceRepository,
@@ -54,7 +58,6 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
     count_distinct_participants,
-    ensure_task_readable,
 )
 from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
@@ -146,6 +149,7 @@ async def search_my_tasks(
 @router.get(
     "/{taskId}",
     summary="Query Task",
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -170,7 +174,6 @@ async def get_task(
     # 权限检查：未审批的题只有出题者与本版管理员能看 —— 一道还没过审的题在他们手上
     # 是「草稿」，对其他人来说还不该存在。三道闸都在 `ensure_task_readable` 里，
     # 题目的附属读路由（材料清单）走同一个判断。
-    await ensure_task_readable(session=db, task=task, user_id=auth_user.user_id)
 
     # participation 信息：当前实现支持 USER 类型的直接参与者，以及 TEAM 任务中用户所在的团队。
     participation: dict
@@ -240,9 +243,9 @@ async def get_task(
 
     # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。
     # 私有指导只给出题人/板管理员：这条读是学生也看得到的题详情，判据用同一只
-    # `may_teach_task`（与发题、打分同一个答案），不新造开关。
-    may_teach = auth_user.user_id > 0 and await may_teach_task(
-        session=db, task=task, user_id=auth_user.user_id
+    # `task_seats.teaches`（与发题、打分同一个答案），不新造开关。
+    may_teach = auth_user.user_id > 0 and await task_seats.teaches(
+        db, task, auth_user.user_id
     )
     task_dict = _task_to_api_model(task, include_private_teaching=may_teach)
 
@@ -315,8 +318,8 @@ async def get_task(
     # 阶段、提交表单与评分要点。评分要点：批改的人（出题人、空间管理员）总能读到；
     # 别人只在它公开时读到。
     requirements = await _task_requirements(service, task_id)
-    may_grade = auth_user.user_id > 0 and await may_teach_task(
-        session=db, task=task, user_id=auth_user.user_id
+    may_grade = auth_user.user_id > 0 and await task_seats.teaches(
+        db, task, auth_user.user_id
     )
     if not (task.rubric_public or may_grade):
         requirements["rubric"] = []
@@ -358,7 +361,11 @@ async def get_task(
     )
 
 
-@router.patch("/{taskId}", summary="Update Task", dependencies=[ROUTE_DECIDES])
+@router.patch(
+    "/{taskId}",
+    summary="Update Task",
+    dependencies=[Can(TaskPermission.teach)],
+)
 async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: PatchTaskRequest,
@@ -449,14 +456,9 @@ async def get_tasks(
         sort_order = "asc"
 
     # 权限检查：查询未审批任务需要是空间管理员
-    if approved_value == 2:  # NONE = 未审批
-        admin_repo = SpaceAdminRelationRepository(session=db)
-        relation = await admin_repo.get_relation(space, auth_user.user_id)
-        if relation is None:
-            raise ForbiddenError("Only space admins can view unapproved tasks")
-
-    admin_repo = SpaceAdminRelationRepository(session=db)
-    is_space_admin = await admin_repo.get_relation(space, auth_user.user_id) is not None
+    is_space_admin = await space_seats.runs(db, space, auth_user.user_id)
+    if approved_value == 2 and not is_space_admin:  # NONE = 未审批
+        raise ForbiddenError("Only space admins can view unapproved tasks")
     viewer_email_domain = await resolve_user_email_domain(db, auth_user.user_id)
     space_repo = SpaceRepository(session=db)
     space_entity = await space_repo.get_by_id(space)
@@ -578,7 +580,7 @@ async def get_tasks(
     "/{taskId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete Task",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -595,9 +597,6 @@ async def delete_task(
     task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can delete this task")
 
     now = datetime.now(UTC)
     task.deleted_at = now
@@ -616,7 +615,7 @@ async def delete_task(
     "/{taskId}/participants/{participantId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -636,13 +635,7 @@ async def delete_task_participant(
         raise NotFoundError("Participant not found")
 
     # 出题者或本版管理员能撤任何报名；成员只能撤自己的。
-    is_self = not membership.is_team and membership.member_id == auth_user.user_id
-    if not is_self and not await may_teach_task(
-        session=db, task=task, user_id=auth_user.user_id
-    ):
-        raise ForbiddenError(
-            "Only task owner, space admin, or the participant can remove participation"
-        )
+    await can.require(db, auth_user.user_id, ClaimPermission.withdraw, membership)
 
     await membership_service.soft_delete_membership(membership)
 
@@ -651,7 +644,7 @@ async def delete_task_participant(
     "/{taskId}/participants",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership by member",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -674,13 +667,7 @@ async def delete_task_participant_by_member(
     if membership is None:
         raise NotFoundError("Participant not found")
 
-    is_self = not membership.is_team and membership.member_id == auth_user.user_id
-    if not is_self and not await may_teach_task(
-        session=db, task=task, user_id=auth_user.user_id
-    ):
-        raise ForbiddenError(
-            "Only task owner, space admin, or the participant can remove participation"
-        )
+    await can.require(db, auth_user.user_id, ClaimPermission.withdraw, membership)
 
     await membership_service.soft_delete_membership(membership)
 
@@ -688,7 +675,7 @@ async def delete_task_participant_by_member(
 @router.patch(
     "/{taskId}/participants",
     summary="Update TaskMembership by member",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_membership_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -703,9 +690,6 @@ async def patch_task_membership_by_member(
     task = await service.get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_task_and_member(
         task_id=task_id,

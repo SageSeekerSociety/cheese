@@ -40,7 +40,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "e3f9a1c62b47"
-down_revision: str | Sequence[str] | None = "a9c3e5f7b1d2"
+down_revision: str | Sequence[str] | None = "f4b8c2a91d37"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
