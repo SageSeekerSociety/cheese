@@ -241,9 +241,10 @@ export interface AssistantTopic {
 }
 
 export interface AssistantOptions {
-  /** 这一问挂在哪一页；`null` 是这一问不带页面（`no_page`）。在 `prepare` 之后读：发布页、
-   *  改题页上的草稿是 `prepare` 才建出来的。 */
-  page?: () => AssistantPage | null
+  /** 按下问的那一刻读：这一问带不带页面。带，就交回问的那一页的读法，`prepare` 之后用它
+   *  读出要挂的那一份（发布页、改题页上的草稿是 `prepare` 才建出来的；这期间换了页也
+   *  还是问的那一页）；读出 `null`、或这里就交回 `null`，这一问不带页面（`no_page`）。 */
+  page?: () => (() => AssistantPage | null) | null
   /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
   prepare?: () => Promise<void>
   on?: AssistantHooks
@@ -470,6 +471,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     streaming.value = ''
     const at = new Date().toISOString()
     const asking = opts.asking?.(text)
+    const pageOf = opts.page?.() ?? null
     if (!kept)
       messages.value = [
         ...messages.value,
@@ -481,7 +483,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     try {
       await opts.prepare?.()
       const id = await ensureConversation()
-      const page = opts.page?.() ?? null
+      const page = pageOf?.() ?? null
       unheard = await follow(
         id,
         (onEvent) =>

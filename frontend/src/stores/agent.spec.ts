@@ -151,7 +151,8 @@ describe('这一句带上什么', () => {
     vi.unstubAllGlobals()
   })
 
-  function serveAsk() {
+  /** `hold`：开新话题的请求停在这里，等它放行（量这一阵里换了页）。 */
+  function serveAsk(hold?: Promise<void>) {
     const bodies: Record<string, unknown>[] = []
     vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
       const json = (data: unknown, status = 200) =>
@@ -159,8 +160,10 @@ describe('这一句带上什么', () => {
           status,
           headers: { 'content-type': 'application/json' },
         })
-      if (url.endsWith('/assistant/conversations') && (init?.method ?? 'GET') === 'POST')
+      if (url.endsWith('/assistant/conversations') && (init?.method ?? 'GET') === 'POST') {
+        await hold
         return json({ id: 'c1', title: '', lastActiveAt: '2026-10-24T08:00:00Z' }, 201)
+      }
       if (url.endsWith('/assistant/conversations')) return json({ conversations: [] })
       if (url.endsWith('/ask')) {
         bodies.push(JSON.parse(String(init?.body)))
@@ -212,6 +215,45 @@ describe('这一句带上什么', () => {
 
     expect(agentPageOff.value).toBe(false)
     scope.stop()
+  })
+
+  it('page taken off when asking: still off if the person moves to another page before it goes out', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const scope = effectScope()
+    const page = ref<{ kind: 'topic' | 'doc'; id: string }>({ kind: 'topic', id: 'room-a' })
+    scope.run(() => useAgentContext(() => ({ page: page.value })))
+    await nextTick()
+    agentPageOff.value = true
+
+    const asking = askAgent('不要带页面')
+    page.value = { kind: 'doc', id: 'private-doc-b' }
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ question: '不要带页面', no_page: true })
+    expect(bodies[0]).not.toHaveProperty('page')
+    scope.stop()
+  })
+
+  it('the question goes with the page it was asked on, not the one open when it goes out', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const asked = effectScope()
+    asked.run(() => useAgentContext(() => ({ page: { kind: 'topic', id: 'room-a' } })))
+    await nextTick()
+
+    const asking = askAgent('这个频道在说什么')
+    asked.stop()
+    const next = effectScope()
+    next.run(() => useAgentContext(() => ({ page: { kind: 'doc', id: 'private-doc-b' } })))
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ page: { kind: 'topic', id: 'room-a' } })
+    next.stop()
   })
 
   it('on a page 芝士 does not read, the question says it has no page', async () => {

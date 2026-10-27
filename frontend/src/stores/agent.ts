@@ -104,6 +104,11 @@ function stack<T>() {
     }
     return null
   })
+  /** 眼下声明着的那一份的读法：之后再读，读的还是这一份，不是那时眼前的。 */
+  function topRead(): (() => T | null) | null {
+    for (let i = entries.value.length - 1; i >= 0; i--) if (entries.value[i].read()) return entries.value[i].read
+    return null
+  }
   function use(read: () => T | null) {
     const entry: Entry<T> = { read }
     const add = () => {
@@ -117,7 +122,7 @@ function stack<T>() {
     onDeactivated(remove)
     onScopeDispose(remove)
   }
-  return { top, use }
+  return { top, topRead, use }
 }
 
 const contexts = stack<AgentContext>()
@@ -169,7 +174,12 @@ function citedIn(question: string): AssistantCited[] {
 
 /** 全站那一条对话。事件交给此刻登记的可写面。 */
 export const agentThread = createAssistant({
-  page: () => (agentPageOn.value ? agentContext.value?.page ?? null : null),
+  // 人关没关「当前页面」、问的是哪一页，都按按下问的那一刻；挂哪一份等 prepare 之后再读。
+  page: () => {
+    if (agentPageOff.value) return null
+    const read = contexts.topRead()
+    return read ? () => read()?.page ?? null : null
+  },
   asking: (question) => {
     const selection = agentSelection.value
     const cited = citedIn(question)

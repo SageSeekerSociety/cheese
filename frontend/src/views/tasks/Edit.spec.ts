@@ -410,4 +410,23 @@ describe('改题页：修改草稿', () => {
     expect(asked.at(-1)).toMatchObject({ question: '请检查这道题', page: { kind: 'draft', id: row.id } })
     expect(asked.at(-1)).not.toHaveProperty('no_page')
   })
+
+  it('先问芝士、建修改的那一阵里改了名称、没等建好就离开：改的名称存下了', async () => {
+    resetAgent()
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    let release = () => {}
+    holdCreate = new Promise((resolve) => (release = resolve))
+    const view = await mount()
+    await waitFor(() => expect(nameInput(view).value).toBe('Lab 3 缓存模拟器'))
+
+    const asking = askAgent('请检查这道题')
+    await fireEvent.update(nameInput(view), '问芝士那一阵里改的')
+    cleanup()
+    release()
+    await asking
+
+    const [row] = [...drafts.values()]
+    await waitFor(() => expect(row.fields.name).toBe('问芝士那一阵里改的'), { timeout: 3000 })
+  })
 })
