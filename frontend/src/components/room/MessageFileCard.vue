@@ -243,6 +243,9 @@ const badgeHint = computed(() =>
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   background: var(--surface);
+  /* 原型里这张卡是浮在对话上的（--shadow-1）。不加它，白底卡片在白底对话里只剩
+     一圈线，比原型平。 */
+  box-shadow: var(--shadow-1);
 }
 .fcard__main {
   display: flex;
