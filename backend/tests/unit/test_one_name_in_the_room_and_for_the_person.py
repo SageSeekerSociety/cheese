@@ -60,7 +60,7 @@ def test_a_persons_cheese_reads_a_page_only_through_the_gate():
     room = Host(answers={"/fetch": {"ok": True, "text": "正文"}})
     person = Host(
         environ={"CHEESE_TOPIC": ""},
-        answers={"/assistant/agent/act": {"done": False, "reason": "用户没要求"}},
+        answers={"/assistant/agent/review": {"allowed": False, "reason": "用户没要求"}},
     )
 
     cheese.run_platform_tool(
@@ -74,7 +74,7 @@ def test_a_persons_cheese_reads_a_page_only_through_the_gate():
     )
 
     assert [p["path"] for p in room.requests] == ["/fetch"]
-    assert [p["path"] for p in person.requests] == ["/assistant/agent/act"]
+    assert [p["path"] for p in person.requests] == ["/assistant/agent/review"]
     assert person.requests[0]["body"]["kind"] == "fetch"
     assert "没有做" in said
 

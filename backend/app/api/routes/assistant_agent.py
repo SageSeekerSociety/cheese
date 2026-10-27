@@ -24,8 +24,6 @@ from pydantic import BaseModel, Field
 
 from app.api.assistant_acts import (
     ASK,
-    DOORS,
-    MESSAGE,
     RANK,
     ROLE,
     ActIn,
@@ -64,7 +62,7 @@ from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFou
 from app.core.sentences import say
 from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
-from app.domain.assistant import changes, gate, passes, proposals, refs
+from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
 from app.domain.fetch.preapproved import preapproved
 from app.domain.library import listing as library_listing
@@ -387,7 +385,6 @@ async def _message(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"content": text, "request_id": str(uuid.uuid4())},
             }
         ],
-        [(MESSAGE, str(place.conversation_id))],
         card=(
             "message",
             {
@@ -423,7 +420,6 @@ async def _task(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"content": text, "request_id": str(uuid.uuid4())},
             },
         ],
-        [(DOORS["task"], str(room.id)), (MESSAGE, None)],
         card=(
             "task",
             {
@@ -474,7 +470,6 @@ async def _review(db, access, body: ActIn, me: Person) -> Plan:
         )
     else:
         raise BadRequestError(say("assistantActNeeds", what="choice: accept / reject"))
-    door = DOORS["accept" if body.choice == "accept" else "reject"]
     return Plan(
         gate.Action(
             "review",
@@ -484,7 +479,6 @@ async def _review(db, access, body: ActIn, me: Person) -> Plan:
             + (f"，{verb.split('，', 1)[1]}" if "，" in verb else ""),
         ),
         [call],
-        [(door, None)],
         card=("act", {}),
         done=f"已{verb.split('，')[0]}任务「{place.task.title}」。",
     )
@@ -509,7 +503,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     ("remove_member",),
                 ),
                 [{"method": "DELETE", "path": f"/topics/{room.id}/members/{who}"}],
-                [(DOORS["channel_remove"], str(room.id))],
                 card=("act", {}),
                 done=f"已把 {shown} 移出频道「{room.title}」。",
             )
@@ -529,7 +522,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     "body": {"handle": who},
                 }
             ],
-            [(DOORS["channel_add"], str(room.id))],
             card=("act", {}),
             done=f"已把 {shown} 加进频道「{room.title}」。",
         )
@@ -550,7 +542,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                 ("remove_member",),
             ),
             [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
-            [(DOORS["project_remove"], pid)],
             card=("act", {}),
             done=f"已把 {shown} 移出项目「{project.name}」。",
         )
@@ -574,7 +565,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     "body": {"user_handle": who, "role": role},
                 }
             ],
-            [(DOORS["project_invite"], pid)],
             card=("act", {}),
             done=f"已邀请 {shown} 加入项目「{project.name}」，等对方接受。",
         )
@@ -592,7 +582,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"role": role},
             }
         ],
-        [(DOORS["project_role"], pid)],
         card=("act", {}),
         done=f"已把 {shown} 改成{ROLE[role]}。",
     )
@@ -629,7 +618,6 @@ async def _channel(db, access, body: ActIn, me: Person) -> Plan:
                 },
             }
         ],
-        [(DOORS["channel"], str(project.id))],
         card=("act", {}),
         done=f"已在项目「{project.name}」建好频道「{title}」。",
     )
@@ -652,7 +640,6 @@ def _fetch(body: ActIn) -> Plan:
                 },
             }
         ],
-        [(DOORS["fetch"], None)],
         card=None,
     )
 
@@ -667,23 +654,9 @@ _SPACE_ACTS = {
 }
 
 
-@router.post("/act", include_in_schema=False)
-async def agent_act(
-    body: ActIn,
-    resolver: ActorResolverDep,
-    db: DbSession,
-    questions: Questions,
-) -> dict:
-    """An action 芝士 is about to take for the person, through its gate: let
-    through (``done``, with the pass and the calls that do it), handed back to
-    芝士 with the reason (``returned``), or turned into a card the person
-    confirms (``card``). A look's stop goes back to 芝士 the first few times in
-    an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
-    (``confirm``) or nobody is there to ask."""
-    started = time.monotonic()
-    claims = resolver.delegation()
-    if claims is None or claims.user_id is None or not claims.work:
-        raise AuthenticationRequiredError(say("invalidToken"))
+async def _planned(db, resolver, body: ActIn) -> tuple[Plan, Person]:
+    """The action ``body`` names, written out for the person the credential
+    acts for (``assistant_acts``)."""
     me = await _person(resolver, db)
     access = ProjectPages(db, resolver)
     if body.kind == "message":
@@ -704,6 +677,27 @@ async def agent_act(
         plan = await _SPACE_ACTS[body.kind](db, me, body)
     else:
         plan = _fetch(body)
+    return plan, me
+
+
+@router.post("/review", include_in_schema=False)
+async def agent_review(
+    body: ActIn,
+    resolver: ActorResolverDep,
+    db: DbSession,
+    questions: Questions,
+) -> dict:
+    """Whether 芝士 takes an action others will see, asked by its harness
+    before the tool runs (``run_platform_tool``): take it (``allowed``), hand it
+    back to 芝士 with the reason (``returned``), or turn it into a card the
+    person confirms (``card``). A look's stop goes back to 芝士 the first few
+    times in an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
+    (``confirm``) or nobody is there to ask."""
+    started = time.monotonic()
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    plan, me = await _planned(db, resolver, body)
     conversation = uuid.UUID(claims.conversation) if claims.conversation else None
     verdict = await gate.judge(
         db, user_id=me.user_id, conversation_id=conversation, action=plan.action
@@ -730,20 +724,16 @@ async def agent_act(
     if returned:
         return ok(
             {
-                "done": False,
+                "allowed": False,
                 "returned": True,
                 "reason": verdict.reason,
                 "said": say("assistantActReturned", reason=verdict.reason),
             }
         )
     if verdict.allowed:
-        token = await passes.issue(claims, plan.doors)
-        if token is not None:
-            return ok(
-                {"done": True, "pass": token, "calls": plan.calls, "said": plan.done}
-            )
+        return ok({"allowed": True})
     if plan.card is None:
-        return ok({"done": False, "reason": verdict.reason, "card": None})
+        return ok({"allowed": False, "reason": verdict.reason, "card": None})
     kind, payload = plan.card
     if kind == "act":
         payload = {
@@ -753,7 +743,16 @@ async def agent_act(
             "said": plan.done,
         }
     card = await show_proposal(db, questions, claims, kind, payload)
-    return ok({"done": False, "reason": verdict.reason, "card": card})
+    return ok({"allowed": False, "reason": verdict.reason, "card": card})
+
+
+@router.post("/plan", include_in_schema=False)
+async def agent_plan(body: ActIn, resolver: ActorResolverDep, db: DbSession) -> dict:
+    """How an action is carried out: the calls the person's own pages make
+    for it, which 芝士's tool makes as the person once its harness has taken
+    the action, and what 芝士 is told when they are made."""
+    plan, _ = await _planned(db, resolver, body)
+    return ok({"calls": plan.calls, "said": plan.done})
 
 
 #: How long one wait on a card holds its request open; 芝士's tool asks again

@@ -15,13 +15,12 @@ from tests.integration.test_assistant_answers_for_a_team import (
     _read,
     _space,
 )
+from tests.support import assistant_actions
 
 
 def _act(client, handle: str, said: str, act: dict) -> dict:
     token = _acting(client, handle, _asked_in(client, handle, said))
-    got = client.post("/assistant/agent/act", json=act, headers=_as(token))
-    assert got.status_code == 200, got.text
-    return got.json()["data"]
+    return assistant_actions.review(client, token, act)
 
 
 def _space_row(client, space: int) -> dict:
@@ -74,7 +73,7 @@ def test_an_announcement_to_everyone_waits_for_the_person(client):
         },
     )
 
-    assert got["done"] is False
+    assert got["allowed"] is False
     assert "发给所有人的消息" in got["reason"]
     listed = client.get(
         f"/spaces/{space}/announcements", headers=_bearer(client, "alice")
@@ -110,7 +109,7 @@ def test_an_invite_code_is_made_and_stopping_it_waits_for_the_person(
         "把给助教的那个邀请码停掉",
         {"kind": "invite_code", "where": where, "ref": str(made["id"]), "remove": True},
     )
-    assert stop["done"] is False
+    assert stop["allowed"] is False
     assert "删除内容" in stop["reason"]
 
 
@@ -160,7 +159,7 @@ def test_someone_who_does_not_run_the_space_is_told_it_is_not_there(client):
     token = _acting(client, "mallory", _asked_in(client, "mallory", "把这个空间改个名"))
 
     got = client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={
             "kind": "space_set",
             "where": f"spaces/{space}",

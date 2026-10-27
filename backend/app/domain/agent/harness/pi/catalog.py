@@ -83,7 +83,12 @@ def schemas_of(names: list[str]) -> list[dict]:
     under the question's credential, and `run_platform_tool` runs it so.
 
     A name may be one verb of an object (`cheese_doc.get`): the session is then
-    handed that object with the verbs it was named with and no others."""
+    handed that object with the verbs it was named with and no others.
+
+    Each call handed must say what it does (`ToolTable.effect`), which is what
+    the session's harness weighs before running one: a call that does not —
+    `platform_request`, which reaches any route — is refused here, so the
+    session does not start rather than hold it."""
     module = _module()
     tables = (module.DELEGATED_TOOLS, module.PLATFORM_TOOLS)
     verbs: dict[str, list[str] | None] = {}
@@ -99,6 +104,14 @@ def schemas_of(names: list[str]) -> list[dict]:
         table = next((t for t in tables if tool in t), None)
         if table is None:
             continue
+        keys = [
+            f"{tool}.{verb}" if verb else tool
+            for verb in (only or list(table.actions(tool) or [None]))
+        ]
+        unsaid = [key for key in keys if table.effect(key) is None]
+        if unsaid:
+            # i18n-exempt: a session started wrong, for a developer; no screen shows it
+            raise ValueError(f"{', '.join(unsaid)} do not say what they do")
         if only is None:
             schemas.append(next(s for s in table.schemas() if s["name"] == tool))
         else:

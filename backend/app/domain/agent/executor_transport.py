@@ -778,10 +778,7 @@ class RemoteClient:
                     headers={
                         **transport.transport.headers,
                         "Content-Type": "application/json",
-                        # What a person's 芝士 does for them once its gate let
-                        # it is done with the pass it was given, in place of
-                        # its own credential (`assistant.passes`).
-                        "Authorization": f"Bearer {args.get('pass') or token}",
+                        "Authorization": f"Bearer {token}",
                         **(
                             {"X-Cheese-Turn": os.environ["CHEESE_TURN"]}
                             if os.environ.get("CHEESE_TURN")
