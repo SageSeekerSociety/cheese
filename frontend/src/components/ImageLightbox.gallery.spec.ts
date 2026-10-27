@@ -144,6 +144,16 @@ it('freezes the transform controls while a crop box is being placed', async () =
   expect(screen.getByRole('button', { name: '放大' })).toHaveProperty('disabled', true)
 })
 
+it('still steps with the arrow keys while focus is on the toolbar (it starts there)', async () => {
+  mount(chat())
+  const close = screen.getByRole('button', { name: '关闭' })
+  expect(document.activeElement).toBe(close)
+
+  await fireEvent.keyDown(close, { key: 'ArrowRight' })
+
+  await waitFor(() => expect(screen.getByText('b.png · 2 / 3')).toBeTruthy())
+})
+
 it('stays on the same picture when the conversation changes under it', async () => {
   const paths = ref(['up/a.png', 'up/b.png', 'up/c.png'])
   const actions = chat()

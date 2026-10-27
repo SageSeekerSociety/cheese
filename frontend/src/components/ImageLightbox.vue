@@ -241,9 +241,10 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
   // 焦点在滑杆、输入框里时方向键是它们的（亮度的滑杆上，←/→ 是减一档）：别顺手换图，
-  // 那会让刚调的那一档落到正在看的另一张上。
+  // 那会让刚调的那一档落到正在看的另一张上。按钮不算：打开时焦点就在关闭按钮上，
+  // 把按钮也排除掉的话，一进来按 ←/→ 就换不了图了（按钮自己也不用方向键）。
   const target = event.target as HTMLElement | null
-  if (target && /^(input|select|textarea|button)$/i.test(target.tagName)) return
+  if (target && /^(input|select|textarea)$/i.test(target.tagName)) return
   if (event.key === 'ArrowRight') gallery.go(1)
   else if (event.key === 'ArrowLeft') gallery.go(-1)
 }
