@@ -72,6 +72,7 @@
   "retainedPage": "新内容未加载，当前仍显示上次打开的页面。",
   "retryTarget": "重试新内容",
   "runningApp": "运行中的应用",
+  "runtimeAlert": "应用有异常，点开看详情",
   "runtimeFailed": "应用报告失败",
   "runtimeReady": "应用已确认就绪",
   "runtimeUnconfirmed": "导航已加载，应用就绪未确认",

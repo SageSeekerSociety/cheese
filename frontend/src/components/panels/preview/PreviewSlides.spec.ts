@@ -134,10 +134,13 @@ describe('slide reader contract (PDF.js substituted)', () => {
     const reader = ui.getByRole('region', { name: '幻灯片阅读' })
     expect(document.activeElement).toBe(reader)
     expect(ui.queryByRole('navigation', { name: '缩略图' })).toBeNull()
+    // 放映时挪到 body 下，不受面板外层绘制层级的限制（否则左边被侧栏盖住）。
+    expect(reader.parentElement).toBe(document.body)
     await fireEvent.keyDown(reader, { key: 'ArrowRight' })
     expect(pageInput(ui).value).toBe('3')
     await fireEvent.keyDown(reader, { key: 'Escape' })
     await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '演示' })))
+    expect(ui.getByRole('region', { name: '幻灯片阅读' }).parentElement).not.toBe(document.body)
     expect(pageInput(ui).value).toBe('3')
     expect(pdf.requests).toHaveLength(1)
   })

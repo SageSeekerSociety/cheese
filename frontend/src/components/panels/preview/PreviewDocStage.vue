@@ -28,6 +28,7 @@ import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
+import { useElementSize } from '@vueuse/core'
 
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewMarkdownLive from './PreviewMarkdownLive.vue'
@@ -86,6 +87,8 @@ const props = defineProps<{
   liveEdit?: PanelPreviewLiveEdit
   /** 现在打开的那一条：它那颗标记画得显眼些。 */
   activeAnchor?: string | null
+  /** 这一格挂在写着文件名的页签上：文档条上不再重复一遍文件名，只留图标和类型。 */
+  namedTab?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -174,6 +177,12 @@ const stage = computed(() =>
 //   修订清单 —— 页面上已经能看见改动了（LibreOffice 会把修订画出来），这里是用来逐条
 //   处理的；改动那一格用的是同一个组件。
 
+// 「窄」按这一格自己的宽度算（右栏、手机上的一格），不看窗口：窄到放不下这几颗按钮
+// 就把它们收进「…」，文档条始终一行。还没量到宽度时按宽处画，量到了再收。
+const docRef = ref<HTMLElement | null>(null)
+const { width: docWidth } = useElementSize(docRef)
+const compact = computed(() => docWidth.value > 0 && docWidth.value < 560)
+
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
 watch(
@@ -182,6 +191,63 @@ watch(
     showSource.value = false
   }
 )
+
+/** 文档条上「编辑」之外的那几件：宽时平铺成 BaseButton，窄时收进「…」里的一行。
+ *  「编辑」不在这里——它是这一格里让事情往下走的那一颗，留在条上不折叠。 */
+type DocAction = {
+  key: string
+  label: string
+  icon: string
+  title?: string
+  /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
+  testid?: string
+  disabled?: boolean
+  run: () => void
+}
+const actions = computed<DocAction[]>(() => {
+  const list: DocAction[] = []
+  if (props.previewFile && !props.previewFile.path.startsWith('library/')) {
+    list.push({
+      key: 'history',
+      icon: 'mdi-history',
+      label: t('work.room.preview.history'),
+      testid: 'file-history',
+      run: () => emit('toggle-history'),
+    })
+  }
+  if (props.canPage) {
+    list.push({
+      key: 'doc-page',
+      icon: props.docPage ? 'mdi-file-document-outline' : 'mdi-web',
+      label: t(props.docPage ? 'work.room.preview.printView' : 'work.room.preview.webView'),
+      title: t(props.docPage ? 'work.room.preview.printViewTitle' : 'work.room.preview.webViewTitle'),
+      testid: 'toggle-doc-page',
+      run: () => emit('toggle-doc-page'),
+    })
+  }
+  if (
+    props.documentType?.view === 'markdown' &&
+    !props.liveEdit?.editingPath.value &&
+    props.previewFile?.content !== null
+  ) {
+    list.push({
+      key: 'md-source',
+      icon: showSource.value ? 'mdi-eye-outline' : 'mdi-code-tags',
+      label: t(showSource.value ? 'work.room.preview.webView' : 'work.room.preview.showSource'),
+      testid: 'toggle-md-source',
+      run: () => {
+        showSource.value = !showSource.value
+      },
+    })
+  }
+  list.push({
+    key: 'download',
+    icon: 'mdi-download',
+    label: t('work.room.preview.download'),
+    run: () => emit('download'),
+  })
+  return list
+})
 
 /** 这一页此刻长什么样：钉一处时随行带上（`usePreviewLocator` 借它）。
  *
@@ -197,10 +263,10 @@ defineExpose({ snapshot, clearMark })
 </script>
 
 <template>
-  <div v-if="documentType && previewFile" class="doc">
+  <div v-if="documentType && previewFile" ref="docRef" class="doc">
     <div class="doc__bar">
       <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
-      <span class="doc__name">{{ documentName }}</span>
+      <span v-if="!namedTab" class="doc__name">{{ documentName }}</span>
       <span class="doc__type t-meta">{{ documentType.label }}</span>
       <v-spacer />
       <BaseButton
@@ -213,40 +279,47 @@ defineExpose({ snapshot, clearMark })
       >
         {{ t('work.room.preview.edit') }}
       </BaseButton>
-      <BaseButton
-        v-if="previewFile && !previewFile.path.startsWith('library/')"
-        kind="ghost"
-        size="sm"
-        prepend-icon="mdi-history"
-        data-testid="file-history"
-        @click="emit('toggle-history')"
-      >
-        {{ t('work.room.preview.history') }}
-      </BaseButton>
-      <BaseButton
-        v-if="canPage"
-        kind="ghost"
-        size="sm"
-        :prepend-icon="docPage ? 'mdi-file-document-outline' : 'mdi-web'"
-        :title="t(docPage ? 'work.room.preview.printViewTitle' : 'work.room.preview.webViewTitle')"
-        data-testid="toggle-doc-page"
-        @click="emit('toggle-doc-page')"
-      >
-        {{ t(docPage ? 'work.room.preview.printView' : 'work.room.preview.webView') }}
-      </BaseButton>
-      <BaseButton
-        v-if="documentType.view === 'markdown' && !liveEdit?.editingPath.value && previewFile?.content !== null"
-        kind="ghost"
-        size="sm"
-        :prepend-icon="showSource ? 'mdi-eye-outline' : 'mdi-code-tags'"
-        data-testid="toggle-md-source"
-        @click="showSource = !showSource"
-      >
-        {{ t(showSource ? 'work.room.preview.webView' : 'work.room.preview.showSource') }}
-      </BaseButton>
-      <BaseButton kind="ghost" size="sm" prepend-icon="mdi-download" @click="emit('download')">
-        {{ t('work.room.preview.download') }}
-      </BaseButton>
+      <v-menu v-if="compact" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <BaseButton
+            v-bind="menuProps"
+            kind="ghost"
+            icon="mdi-dots-horizontal"
+            size="sm"
+            density="comfortable"
+            data-testid="doc-more"
+            :title="t('work.room.menu.more')"
+            :aria-label="t('work.room.menu.more')"
+          />
+        </template>
+        <v-list density="compact" role="menu">
+          <v-list-item
+            v-for="action in actions"
+            :key="action.key"
+            role="menuitem"
+            :prepend-icon="action.icon"
+            :disabled="action.disabled"
+            @click="action.run()"
+          >
+            <v-list-item-title>{{ action.label }}</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
+      <template v-else>
+        <BaseButton
+          v-for="action in actions"
+          :key="action.key"
+          kind="ghost"
+          size="sm"
+          :prepend-icon="action.icon"
+          :title="action.title"
+          :disabled="action.disabled"
+          :data-testid="action.testid"
+          @click="action.run()"
+        >
+          {{ action.label }}
+        </BaseButton>
+      </template>
     </div>
     <RoomFileHistory
       v-if="showHistory && topicId && previewFile"
@@ -365,6 +438,7 @@ defineExpose({ snapshot, clearMark })
 .doc__bar {
   flex: none;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   padding: 4px 6px 4px 12px;
@@ -373,7 +447,10 @@ defineExpose({ snapshot, clearMark })
 .doc__icon {
   color: var(--muted);
 }
+/* 只有文件名让位：条上其余几件（图标、类型标签、按钮）都不该被挤变形。 */
 .doc__name {
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 13px;
   color: var(--ink);
   overflow: hidden;
@@ -383,6 +460,9 @@ defineExpose({ snapshot, clearMark })
 .doc__type {
   color: var(--faint);
   flex: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 文档和修订清单并排。面板本来就窄，所以窄到一定程度就改成上下排，清单收在下面

@@ -232,85 +232,90 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
-  <section
-    ref="root"
-    class="slides"
-    :class="{ 'slides--presenting': presenting }"
-    tabindex="0"
-    :aria-label="t('slides.reader')"
-    @keydown="keyboard"
-  >
-    <header class="slides__toolbar">
-      <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
-      <button v-if="ready && !presenting" type="button" :aria-pressed="showRail" @click="railOverride = !showRail">
-        {{ t('slides.thumbnails') }}
-      </button>
-      <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
-        {{ t('slides.previous') }}
-      </button>
-      <form class="slides__jump" @submit.prevent="jumpTo">
-        <input
-          v-model="jump"
-          type="number"
-          min="1"
-          :max="count || 1"
-          :disabled="!ready"
-          :aria-label="t('slides.pageNumber')"
-          @change="jumpTo"
-        />
-        <span class="t-meta" aria-live="polite">/ {{ count }}</span>
-      </form>
-      <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
-        {{ t('slides.next') }}
-      </button>
-      <button v-if="!presenting" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
-        {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
-      </button>
-      <button type="button" :disabled="!ready" @click="presentation">
-        {{ t(presenting ? 'slides.exit' : 'slides.present') }}
-      </button>
-      <button
-        v-if="context && !presenting"
-        type="button"
-        :disabled="!canAskPage || pageBusy"
-        :title="t('slides.wholePageHint')"
-        @click="askPage"
-      >
-        {{ t('slides.askPage') }}
-      </button>
-      <button v-if="canDownload && !presenting" type="button" @click="emit('download')">
-        {{ t('slides.download') }}
-      </button>
-    </header>
-    <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
-    <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
-      <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
-      <p v-if="problem" class="t-meta">{{ problem }}</p>
-    </div>
-    <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
-    <div v-else class="slides__body">
-      <SlideThumbRail
-        v-if="showRail"
-        :count="count"
-        :current="current"
-        :revision="revision"
-        :paint="paint"
-        :cancel-paint="cancelPaint"
-        @select="go"
-      />
-      <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
-      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
-      <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
-        <div ref="sheet" class="slides__sheet" :data-page="current" />
+  <!-- 放映时整块挪到 body 下：面板外面有两层带 view-transition-name 的容器（话题页、面板页签区），
+       它们各自成一个绘制层级，留在里面的话 z-index 再高也压不过侧栏和分隔线，左边被侧栏盖住、
+       中间透出分隔线。不放映时原地渲染。 -->
+  <Teleport to="body" :disabled="!presenting">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
+    <section
+      ref="root"
+      class="slides"
+      :class="{ 'slides--presenting': presenting }"
+      tabindex="0"
+      :aria-label="t('slides.reader')"
+      @keydown="keyboard"
+    >
+      <header class="slides__toolbar">
+        <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
+        <button v-if="ready && !presenting" type="button" :aria-pressed="showRail" @click="railOverride = !showRail">
+          {{ t('slides.thumbnails') }}
+        </button>
+        <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
+          {{ t('slides.previous') }}
+        </button>
+        <form class="slides__jump" @submit.prevent="jumpTo">
+          <input
+            v-model="jump"
+            type="number"
+            min="1"
+            :max="count || 1"
+            :disabled="!ready"
+            :aria-label="t('slides.pageNumber')"
+            @change="jumpTo"
+          />
+          <span class="t-meta" aria-live="polite">/ {{ count }}</span>
+        </form>
+        <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
+          {{ t('slides.next') }}
+        </button>
+        <button v-if="!presenting" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
+          {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
+        </button>
+        <button type="button" :disabled="!ready" @click="presentation">
+          {{ t(presenting ? 'slides.exit' : 'slides.present') }}
+        </button>
+        <button
+          v-if="context && !presenting"
+          type="button"
+          :disabled="!canAskPage || pageBusy"
+          :title="t('slides.wholePageHint')"
+          @click="askPage"
+        >
+          {{ t('slides.askPage') }}
+        </button>
+        <button v-if="canDownload && !presenting" type="button" @click="emit('download')">
+          {{ t('slides.download') }}
+        </button>
+      </header>
+      <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
+      <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
+        <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
+        <p v-if="problem" class="t-meta">{{ problem }}</p>
       </div>
-    </div>
-    <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
-    <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
-      {{ problem || t('slides.rendererMissing') }}
-    </p>
-    <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
-  </section>
+      <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
+      <div v-else class="slides__body">
+        <SlideThumbRail
+          v-if="showRail"
+          :count="count"
+          :current="current"
+          :revision="revision"
+          :paint="paint"
+          :cancel-paint="cancelPaint"
+          @select="go"
+        />
+        <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
+        <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
+          <div ref="sheet" class="slides__sheet" :data-page="current" />
+        </div>
+      </div>
+      <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
+      <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
+        {{ problem || t('slides.rendererMissing') }}
+      </p>
+      <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -331,7 +336,9 @@ onBeforeUnmount(() => {
 .slides--presenting {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay);
+  /* 挪到 body 下以后它和弹窗同在一层比高低：放在 Vuetify 弹窗下面一档，放映中按 ? 打开的
+     快捷键帮助、确认框这些照样盖在放映上面，而侧栏、分隔线都在它下面。 */
+  z-index: var(--z-overlay-below-vuetify);
   /* 放映是整屏的：顶上那条工具栏（上一页 / 页码 / 下一页 / 退出）钻进刘海。让出顶部
      安全区；底边不补，幻灯片照旧铺满——Home 横杠压在画面上是放映的常态。 */
   padding-top: env(safe-area-inset-top, 0px);
