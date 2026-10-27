@@ -77,7 +77,7 @@ const style = computed(() =>
     : undefined
 )
 watch(
-  () => [props.anchor, props.target, props.queuedCount, props.commentError, props.canComment],
+  () => [!!props.anchor, props.target, props.queuedCount, props.commentError, props.canComment],
   async () => {
     await nextTick()
     if (card.value?.offsetHeight) height.value = card.value.offsetHeight
@@ -171,7 +171,15 @@ function send(event: KeyboardEvent | MouseEvent) {
           >
             {{ t('work.room.preview.queue') }}
           </BaseButton>
-          <BaseButton kind="primary" size="sm" :disabled="!note.trim() || busy" @click="send">
+          <!-- 切到评论时主按钮也叫「评论」，而面板上还有一颗开评论栏的「评论」：无障碍名说清
+               这一颗是「评论这一处」，读屏和按名字找控件时不会撞在一起。 -->
+          <BaseButton
+            kind="primary"
+            size="sm"
+            :aria-label="canComment && recipient === 'comment' ? t('work.room.comments.commentHere') : undefined"
+            :disabled="!note.trim() || busy"
+            @click="send"
+          >
             {{
               canComment && recipient === 'comment'
                 ? t('work.room.comments.comment')

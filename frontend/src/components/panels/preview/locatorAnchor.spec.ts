@@ -28,7 +28,7 @@ it('选中的一段：用它的矩形，换成面板内容坐标', () => {
 it('点出来的一处：那一层往下滚了多少，点就往上挪多少', () => {
   const scroller = document.createElement('div')
   scroller.scrollTop = 0
-  const pointer = { x: 250, y: 400, scroller, scrollTop: 0 }
+  const pointer = { x: 250, y: 400, scroller, scrollTop: 0, panelScrollTop: 0 }
   Object.defineProperty(scroller, 'scrollTop', { value: 120, writable: true })
   const a = measureAnchor(panel(), null, pointer)
   expect(a?.top).toBe(400 - 120 - 100)
@@ -49,4 +49,13 @@ it('选中的一段没有矩形（已经不在页面上）且没有点：不弹'
     getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, width: 0, height: 0 }),
   } as unknown as Range
   expect(measureAnchor(panel(), empty, null)).toBeNull()
+})
+
+it('点出来的一处：面板自己往下滚，那一点在内容里的位置不变（框跟着内容走）', () => {
+  const pointer = { x: 250, y: 400, scroller: null, scrollTop: 0, panelScrollTop: 0 }
+  const before = measureAnchor(panel({ scrollTop: 0 }), null, pointer)
+  // 面板往下滚了 150：那一点在屏幕上上移 150，换算回内容坐标还是同一处。
+  const after = measureAnchor(panel({ scrollTop: 150 }), null, pointer)
+  expect(before?.top).toBe(300)
+  expect(after?.top).toBe(300)
 })

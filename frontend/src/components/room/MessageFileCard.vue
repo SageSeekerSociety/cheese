@@ -6,8 +6,9 @@
 // 同一条线。
 //
 // 封面等卡片滚进视野才画：一段长对话里几十份文件，没人往上翻的那些不该一份份去转
-// 格式（Word、幻灯片要平台转一次，约 2.5 秒，按内容哈希缓存）。画不出来时方格里摆
-// 类型图标，见 AttachmentDocThumb。
+// 格式（Word、幻灯片要平台转一次，约 2.5 秒，按内容哈希缓存）。浏览器没有
+// IntersectionObserver 时直接画：宁可多转一份，也不能让方格一直空着。画不出来时方格
+// 里摆类型图标，见 AttachmentDocThumb。
 import { ref } from 'vue'
 import { useIntersectionObserver } from '@vueuse/core'
 
@@ -26,15 +27,11 @@ const emit = defineEmits<{ open: [] }>()
 
 const card = ref<HTMLElement | null>(null)
 const seen = ref(false)
-const { stop } = useIntersectionObserver(
-  card,
-  ([entry]) => {
-    if (!entry?.isIntersecting) return
-    seen.value = true
-    stop()
-  },
-  { rootMargin: '200px' }
-)
+const { stop, isSupported } = useIntersectionObserver(card, ([entry]) => {
+  if (!entry?.isIntersecting) return
+  seen.value = true
+  stop()
+})
 </script>
 
 <template>
@@ -47,7 +44,7 @@ const { stop } = useIntersectionObserver(
     @click="emit('open')"
   >
     <span class="im-doc__cover">
-      <AttachmentDocThumb v-if="seen" :topic-id="topicId" :path="path" :icon-size="28" />
+      <AttachmentDocThumb v-if="seen || !isSupported" :topic-id="topicId" :path="path" :icon-size="28" />
     </span>
     <span class="im-doc__text">
       <span class="im-doc__name">{{ name }}</span>

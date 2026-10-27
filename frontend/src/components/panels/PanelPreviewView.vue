@@ -173,22 +173,26 @@ useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
   lastPointer = { ...markPointer(event, panel), at: performance.now() }
 })
+let placing = 0
 function placeLocator() {
-  const panel = panelElement.value
-  locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+  // 滚动一帧可能来好几次事件：合成一帧量一次，免得每个事件都强制排一次版。
+  if (placing || !locator.value) return
+  placing = requestAnimationFrame(() => {
+    placing = 0
+    const panel = panelElement.value
+    locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+  })
 }
-watch(locator, (now, before) => {
+watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
     return
   }
-  if (now !== before) {
-    const panel = panelElement.value
-    anchorRange = panel ? selectionIn(panel) : null
-    anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
-    lastPointer = null
-  }
+  const panel = panelElement.value
+  anchorRange = panel ? selectionIn(panel) : null
+  anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
+  lastPointer = null
   void nextTick(placeLocator)
 })
 useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })

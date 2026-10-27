@@ -75,7 +75,7 @@ it('图上框选批注卡的去处由一个下拉定：默认发进对话，切�
 
   const select = ui.getByTestId('region-note-recipient') as HTMLSelectElement
   await fireEvent.update(select, 'comment')
-  expect(ui.getByRole('button', { name: '评论' })).toBeTruthy()
+  expect(ui.getByRole('button', { name: '评论这一处' })).toBeTruthy()
   await fireEvent.keyDown(input, { key: 'Enter' })
   expect(ui.emitted().comment).toHaveLength(1)
   expect(ui.emitted().send).toHaveLength(1)

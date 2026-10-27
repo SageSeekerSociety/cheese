@@ -158,6 +158,7 @@ onBeforeUnmount(() => observer?.disconnect())
       <button
         type="button"
         class="design-region-note__send"
+        :aria-label="canComment && recipient === 'comment' ? t('work.room.comments.commentHere') : undefined"
         :disabled="!note.trim() || busy"
         @click="close('send', $event)"
       >
@@ -272,6 +273,10 @@ onBeforeUnmount(() => observer?.disconnect())
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.design-region-note__recipient:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
 }
 .design-region-note__error {
   margin: 0;
