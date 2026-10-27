@@ -250,9 +250,10 @@ function onKeydown(event: KeyboardEvent) {
   else if (event.key === 'ArrowLeft') gallery.go(-1)
 }
 
-// 换了一张：缩放回一倍，裁剪框收起。框是不是在裁剪中，这里也得停掉量的那一套：
-// 缩略图条在裁剪中照样能点，点走之后是这条路把 `cropping` 关掉的。
-watch(gallery.index, () => {
+// 换了一张：缩放回一倍，裁剪框收起。按地址而不是按第几张：正在看的这张被删掉时，
+// 后面那张会顶到同一个位置上，位置没变、看的却已经是别人了。框是不是在裁剪中，这里
+// 也得停掉量的那一套——缩略图条在裁剪中照样能点，点走之后是这条路把 `cropping` 关掉的。
+watch(gallery.currentPath, () => {
   cropping.value = false
   stopFollowing()
   notice.value = ''

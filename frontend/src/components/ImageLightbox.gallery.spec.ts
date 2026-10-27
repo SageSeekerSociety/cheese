@@ -200,3 +200,21 @@ it('keeps a picture’s own edits with the picture when the list shifts under it
   // 调整跟着这张图走，不是跟着它原来排第几：否则它在这里变回原样，转过的样子落到 b 的位置上。
   expect(screen.getByAltText('b.png').style.transform).toContain('rotate(90deg)')
 })
+
+it('leaves crop mode when the picture it framed is deleted and another takes its place', async () => {
+  const paths = ref(['up/a.png', 'up/b.png', 'up/c.png'])
+  const actions = chat()
+  actions.gallery = () => paths.value
+  mount(actions)
+  await fireEvent.keyDown(window, { key: 'ArrowRight' })
+  await waitFor(() => expect(screen.getByText('b.png · 2 / 3')).toBeTruthy())
+
+  await fireEvent.click(screen.getByRole('button', { name: '裁剪' }))
+  await waitFor(() => expect(screen.queryByTestId('lightbox-crop')).toBeTruthy())
+
+  // b 那条消息被删了：c 还在第 2 个，位置没变，看的已经是 c。
+  paths.value = ['up/a.png', 'up/c.png']
+
+  await waitFor(() => expect(screen.getByText('c.png · 2 / 2')).toBeTruthy())
+  expect(screen.queryByTestId('lightbox-crop')).toBeNull()
+})
