@@ -77,8 +77,10 @@
 #                        the pinned one. The install, the sha256 check and the
 #                        package-version check are all skipped: the point of the
 #                        pin is what runs by DEFAULT, and a path given here is a
-#                        deliberate choice by the caller. `--self-test` uses it
-#                        to exercise the wall clock without a 54 MB download
+#                        deliberate choice by the caller, and it is announced
+#                        on stderr so a run that was not the pinned one is
+#                        visible in the log. `--self-test` does not use it: it
+#                        calls run_ocr directly with a stand-in executable
 #
 # The binary is not committed: it is 54 MB, and a pinned npm install into a
 # per-version cache takes about seven seconds. Before anything runs, the native
@@ -106,8 +108,17 @@ PINNED_PLATFORM="linux-x64"
 
 die() { echo "ocr-review: $*" >&2; exit 1; }
 
-# Run the CLI under the wall clock, writing the result to $OUT and the run's own
-# output to the log beside it. $1 is the command as an array's first element.
+# A ceiling that cannot be read is not a ceiling: awk coerces a non-numeric
+# value to 0, and `timeout 0s` means no timeout at all, so a typo would silently
+# remove the bound this script exists to provide. Every zero form disarms it.
+case "$WALL_CLOCK_MIN" in
+  ''|*[!0-9.]*) die "OCR_WALL_CLOCK must be a number of minutes (0 disables it), got '$WALL_CLOCK_MIN'" ;;
+esac
+[ "$(awk -v m="$WALL_CLOCK_MIN" 'BEGIN { print (m == 0) ? "0" : "1" }')" = 0 ] \
+  && WALL_CLOCK_MIN=0
+
+# Run the CLI under the wall clock, writing the run's result to $1 and its own
+# output to the log $2. Everything after those two is the command.
 #
 # The run gets a session of its own: `setsid` puts the wrapper, the native
 # binary and the git subprocesses it spawns in one process group, which is what
@@ -145,7 +156,10 @@ run_ocr() {
     else
       status=$?
     fi
-    [ "$status" != 124 ] || printf ' (closed at the %sm wall clock)' "$WALL_CLOCK_MIN"
+    case "$status" in
+      124) printf ' (closed at the %sm wall clock; OCR wrote what it had)' "$WALL_CLOCK_MIN" ;;
+      137) printf ' (closed at the %sm wall clock; it ignored SIGTERM and was killed, so the partial result may be incomplete)' "$WALL_CLOCK_MIN" ;;
+    esac
   fi
   return "$status"
 }
@@ -160,7 +174,10 @@ run_ocr() {
 self_test() {
   local dir fail=0 fake got killed
   dir=$(mktemp -d "${TMPDIR:-/tmp}/ocr-review-self-test.XXXXXX") || return 1
-  trap 'rm -rf "$dir"' RETURN
+  # Explicit cleanup, not a RETURN trap: that trap is shell-global, so it would
+  # stay installed after this function returned and fire on the next one's
+  # return with $dir out of scope — an unbound variable under set -u.
+  st_cleanup() { rm -rf "$dir"; }
   fake="$dir/ocr"
   cat >"$fake" <<'FAKE'
 #!/usr/bin/env bash
@@ -179,13 +196,14 @@ FAKE
     run_ocr "$dir/out.json" "$dir/out.log" "$fake" >"$dir/note" &
   local run_pid=$!
   local waited=0
-  while kill -0 "$run_pid" 2>/dev/null && [ "$waited" -lt 20 ]; do
-    sleep 0.5; waited=$((waited + 1))   # 20 x 0.5s = 10s
+  while kill -0 "$run_pid" 2>/dev/null && [ "$waited" -lt 40 ]; do
+    sleep 0.5; waited=$((waited + 1))   # 40 x 0.5s = 20s
   done
   if kill -0 "$run_pid" 2>/dev/null; then
-    echo "self-test FAILED: nothing stopped the run; it was still going after 10s" >&2
+    echo "self-test FAILED: nothing stopped the run; it was still going after 20s" >&2
     kill "$run_pid" 2>/dev/null || true
     pkill -f "sleep 9137" 2>/dev/null || true
+    st_cleanup
     return 1
   fi
   got=$(cat "$dir/out.json" 2>/dev/null || true)
@@ -212,6 +230,7 @@ FAKE
     || { echo "self-test FAILED: a disarmed ceiling reported itself as an active one"; fail=1; }
   pkill -f "sleep 9137" 2>/dev/null || true
 
+  st_cleanup
   [ "$fail" = 0 ] || return 1
   echo "self-test ok: the wall clock stops the run with SIGTERM, reports it, and takes the grandchildren with it"
 }
@@ -241,7 +260,10 @@ done
 # The helper lives exactly as long as this script.
 exec {LOOPBACK}< <(exec python3 "$(dirname "${BASH_SOURCE[0]}")/platform_loopback.py")
 LOOPBACK_PID=$!
-trap 'kill "$LOOPBACK_PID" 2>/dev/null' EXIT
+# `|| true`: under set -e a failing command in an EXIT trap becomes the exit
+# status, so a loopback that had already died would turn a clean run into a
+# failed one.
+trap 'kill "$LOOPBACK_PID" 2>/dev/null || true' EXIT
 read -r -t 10 -u "$LOOPBACK" BASE || die "platform_loopback.py did not start"
 LLM_URL="$BASE/llm" LLM_TOKEN="machine"
 
@@ -310,6 +332,11 @@ if [ -z "${OCR_CLI:-}" ]; then
     || die "installed package version '$INSTALLED_VERSION' is not the pinned $VERSION"
 else
   CLI="$OCR_CLI"
+  # The pin is the reason a compromised registry artifact cannot become this
+  # repo's reviewer. A caller may still name its own executable, but the run it
+  # gets is then not the pinned one, and that has to show in the log: the result
+  # and the exit status look identical either way.
+  echo "ocr-review: OCR_CLI=$OCR_CLI, so the pinned install and its sha256 check are skipped; this run is not the pinned reviewer" >&2
 fi
 
 # Results live beside the cached binary, not inside the worktree: a review
@@ -322,11 +349,11 @@ fi
 OUT="${OUT:-$CACHE/results/$(printf '%s..%s' "$FROM" "$TO" | sha256sum | cut -c1-16).json}"
 mkdir -p "$(dirname "$OUT")"
 
+# Exported rather than passed through `env`: `env VAR=value` puts the values in
+# env's argv, which /proc/<pid>/cmdline shows to any process of this user, and
+# the loopback URL carries the random prefix that is the whole access handle.
+export OCR_LLM_URL="$LLM_URL" OCR_LLM_TOKEN="$LLM_TOKEN" OCR_LLM_MODEL="$MODEL"
 RUN=(
-  env
-  "OCR_LLM_URL=$LLM_URL"
-  "OCR_LLM_TOKEN=$LLM_TOKEN"
-  "OCR_LLM_MODEL=$MODEL"
   "$CLI" review
     --repo "$REPO"
     --from "$FROM" --to "$TO"
@@ -343,10 +370,19 @@ if ceiled=$(run_ocr "$OUT" "${OUT%.json}.log" "${RUN[@]}"); then
 else
   status=$?
 fi
+# A run the ceiling closed is not a failed run when OCR wrote a result: the
+# method the caller follows reads a non-zero exit as "the review did not
+# happen", so exiting 1 here would throw away the partial ledger this ceiling
+# exists to preserve. It exits 0 and says what it is; every other non-zero
+# status keeps the old meaning.
 if [ "$status" != 0 ]; then
-  echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
-  [ -s "$OUT" ] && echo "ocr-review: partial result: $OUT" >&2
-  exit 1
+  if [ -n "$ceiled" ] && [ -s "$OUT" ] && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$OUT" 2>/dev/null; then
+    echo "ocr-review: closed at the ${WALL_CLOCK_MIN}m wall clock — a partial result, not a failed run: $OUT" >&2
+  else
+    echo "ocr-review: review exited $status$ceiled; log: ${OUT%.json}.log" >&2
+    [ -s "$OUT" ] && echo "ocr-review: partial result: $OUT" >&2
+    exit 1
+  fi
 fi
 
 python3 - "$OUT" <<'PY'
