@@ -110,6 +110,7 @@ def schemas_of(names: list[str]) -> list[dict]:
         ]
         unsaid = [key for key in keys if table.effect(key) is None]
         if unsaid:
+            # i18n-exempt: a session started wrong, for a developer; no screen shows it
             raise ValueError(f"{', '.join(unsaid)} do not say what they do")
         if only is None:
             schemas.append(next(s for s in table.schemas() if s["name"] == tool))

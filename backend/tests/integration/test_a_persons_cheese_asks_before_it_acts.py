@@ -58,10 +58,7 @@ class PersonHost:
 def _said_in(client, room: str) -> list[tuple[str, str]]:
     got = client.get(f"/topics/{room}/blocks", headers=session_auth_headers("alice"))
     assert got.status_code == 200, got.text
-    return [
-        (b.get("author"), (b.get("content") or {}).get("text") or "")
-        for b in got.json()["data"]["data"]
-    ]
+    return [(b.get("author"), b.get("content")) for b in got.json()["data"]["data"]]
 
 
 def _send(client, monkeypatch, verdict: str, said: str):
