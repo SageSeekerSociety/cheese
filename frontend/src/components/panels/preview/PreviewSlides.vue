@@ -2,6 +2,7 @@
 import type { SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { DragGesture } from '@use-gesture/vanilla'
 
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
@@ -11,6 +12,7 @@ import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
+import { NARROW_PX } from '@/lib/previewNarrow'
 
 const props = withDefaults(
   defineProps<{
@@ -58,7 +60,7 @@ const ready = computed(() => !loading.value && !failure.value && count.value > 0
  *  松一档只会选出一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
-const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
+const showRail = computed(() => ready.value && !presenting.value && !narrow.value && (railOverride.value ?? true))
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
 let textGeneration = 0
@@ -167,13 +169,15 @@ async function askPage() {
   }
 }
 watch(
-  [current, revision, fit, size, sheet, presenting, ready],
+  [current, revision, fit, size, sheet, presenting, ready, narrow],
   () => {
     const host = sheet.value
     if (!host || !ready.value) return
+    // 窄处四周只留 8px：手机上一页本来就只有屏宽那么大，省下的边都给这一页。
+    const gutter = narrow.value && !presenting.value ? 16 : 32
     void paint(current.value, host, {
-      width: Math.max(32, size.value.width - 32),
-      height: fit.value || presenting.value ? Math.max(32, size.value.height - 32) : undefined,
+      width: Math.max(32, size.value.width - gutter),
+      height: fit.value || presenting.value ? Math.max(32, size.value.height - gutter) : undefined,
       text: true,
     })
   },
@@ -215,7 +219,7 @@ watch(
   () => {
     observer?.disconnect()
     observer = new ResizeObserver(() => {
-      narrow.value = (root.value?.clientWidth ?? 800) < 560
+      narrow.value = (root.value?.clientWidth ?? 800) < NARROW_PX
       if (stage.value) size.value = { width: stage.value.clientWidth, height: stage.value.clientHeight }
     })
     if (root.value) observer.observe(root.value)
@@ -223,8 +227,37 @@ watch(
   },
   { flush: 'post' }
 )
+// ---- 左右滑翻页 ----
+//
+// 手指横着拖，这一页跟着走；松手时甩得够快、或者拖过了三分之一页宽，就翻到下一页 / 上一页，
+// 不够就弹回原处。只认手指：鼠标在页上拖是在选字。竖着的滑动留给浏览器（`touch-action:
+// pan-y`），这一格比一页高的时候照样能上下滚。
+const dragX = ref(0)
+let swipe: DragGesture | null = null
+watch(
+  stage,
+  (el) => {
+    swipe?.destroy()
+    swipe = null
+    if (!el) return
+    swipe = new DragGesture(
+      el,
+      ({ active, movement: [mx], swipe: [sx], last }) => {
+        if (!ready.value) return
+        dragX.value = active ? mx : 0
+        if (!last) return
+        const page = sx ? -sx : Math.abs(mx) > el.clientWidth / 3 ? -Math.sign(mx) : 0
+        if (page) go(current.value + page)
+      },
+      { axis: 'x', filterTaps: true, pointer: { touch: true } }
+    )
+  },
+  { flush: 'post' }
+)
+
 onBeforeUnmount(() => {
   textGeneration += 1
+  swipe?.destroy()
   observer?.disconnect()
   if (sheet.value) cancelPaint(sheet.value)
   if (presenting.value && restoreFocus?.isConnected) restoreFocus.focus()
@@ -240,14 +273,19 @@ onBeforeUnmount(() => {
     <section
       ref="root"
       class="slides"
-      :class="{ 'slides--presenting': presenting }"
+      :class="{ 'slides--presenting': presenting, 'slides--narrow': narrow }"
       tabindex="0"
       :aria-label="t('slides.reader')"
       @keydown="keyboard"
     >
       <header class="slides__toolbar">
         <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
-        <button v-if="ready && !presenting" type="button" :aria-pressed="showRail" @click="railOverride = !showRail">
+        <button
+          v-if="ready && !presenting && !narrow"
+          type="button"
+          :aria-pressed="showRail"
+          @click="railOverride = !showRail"
+        >
           {{ t('slides.thumbnails') }}
         </button>
         <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
@@ -268,7 +306,7 @@ onBeforeUnmount(() => {
         <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
           {{ t('slides.next') }}
         </button>
-        <button v-if="!presenting" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
+        <button v-if="!presenting && !narrow" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
           {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
         </button>
         <button type="button" :disabled="!ready" @click="presentation">
@@ -306,7 +344,13 @@ onBeforeUnmount(() => {
         <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
         <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
-          <div ref="sheet" class="slides__sheet" :data-page="current" />
+          <div
+            ref="sheet"
+            class="slides__sheet"
+            :class="{ 'is-dragging': dragX !== 0 }"
+            :data-page="current"
+            :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
+          />
         </div>
       </div>
       <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
@@ -418,6 +462,17 @@ onBeforeUnmount(() => {
   position: relative;
   flex: none;
   background: var(--surface);
+  /* 松手弹回原处时有个过程；跟着手指走的那一段不能有，否则一路慢半拍。 */
+  transition: transform var(--dur-quick) var(--ease-standard);
+}
+.slides__sheet.is-dragging {
+  transition: none;
+}
+/* 窄处：一页铺满宽度，四周只留 8px；横着滑归翻页，竖着滑照旧滚。缩略图和「适合页面」
+   不摆——一栏缩略图在手机上要占掉三分之一屏，而一页本来就是按宽度铺的。 */
+.slides--narrow .slides__stage {
+  padding: 8px;
+  touch-action: pan-y;
 }
 .slides__state {
   padding: 32px 16px;
