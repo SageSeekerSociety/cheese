@@ -78,7 +78,9 @@ def device(tmp_path, monkeypatch):
                         json.dumps(
                             {
                                 "path": self.path,
-                                "token": self.headers["X-Cheese-Token"],
+                                "token": self.headers["Authorization"].removeprefix(
+                                    "Bearer "
+                                ),
                                 "turn": self.headers.get("X-Cheese-Turn"),
                                 "body": json.loads(payload),
                             }

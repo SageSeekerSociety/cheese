@@ -409,7 +409,7 @@ def test_image_pixels_survive_mirroring_and_are_room_authorized(
     assert response.status_code == 200, response.text
     assert response.content == pixels
     assert response.headers["content-type"] == "image/png"
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("stranger")}
     assert client.get(path, headers=stranger).status_code in (401, 403, 404)
     other = _room_for(client)
     assert (
@@ -426,7 +426,7 @@ def test_image_pixels_survive_mirroring_and_are_room_authorized(
     )
     exact = f"/topics/{session.ref.topic_id}/session-records/{cursor}"
     assert client.get(exact).status_code == 200
-    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    owner = {"Authorization": "", **session_auth_headers("user-1")}
     assert (
         client.delete(f"/topics/{session.ref.topic_id}", headers=owner).status_code
         == 200
@@ -851,7 +851,7 @@ def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):
     assert {row["conversation"] for row in rows} == {None}
     assert all(row["author"] == mine.ref.agent_handle for row in rows)
 
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("a-stranger")}
     for params in ({}, {"lines": True}):
         refused = client.get(
             f"/topics/{mine.ref.topic_id}/session-records",
@@ -869,7 +869,7 @@ def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):
     session.drain()
     assert session.read()
     room = session.ref.topic_id
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("a-stranger")}
     site = client.get(f"/topics/{room}/transcript", headers=stranger)
     record = client.get(f"/topics/{room}/session-records", headers=stranger)
     assert site.status_code in (401, 403, 404), site.text

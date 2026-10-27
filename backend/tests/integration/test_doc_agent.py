@@ -149,7 +149,7 @@ async def _tool(
             plan["method"],
             plan["path"],
             json=plan.get("body"),
-            headers={"X-Cheese-Token": credential},
+            headers={"Authorization": f"Bearer {credential}"},
         )
 
 

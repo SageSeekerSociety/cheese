@@ -527,7 +527,7 @@ async def _invoke(client: AsyncClient, topic_id, token: str, *, key: str = "tool
             "method": "invoke",
             "params": {"id": key, "tool": "Bash", "args": {"command": "git push"}},
         },
-        headers={"x-cheese-token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
 
@@ -694,7 +694,7 @@ async def test_a_call_without_an_id_records_nothing(
     response = await owner_client.post(
         f"/topics/{topic}/execution/{topic}",
         json={"method": "ping", "params": {}},
-        headers={"x-cheese-token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 504

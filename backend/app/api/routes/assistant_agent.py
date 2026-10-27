@@ -737,7 +737,7 @@ async def agent_act(
             }
         )
     if verdict.allowed:
-        token = await passes.issue(claims.work, plan.doors)
+        token = await passes.issue(claims, plan.doors)
         if token is not None:
             return ok(
                 {"done": True, "pass": token, "calls": plan.calls, "said": plan.done}

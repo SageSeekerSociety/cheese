@@ -56,10 +56,7 @@ async def test_a_token_the_sandbox_sends_is_not_who_it_is_served_as(client):
         client,
         f"topics/{room.topic_id}",
         device=room.old_device,
-        headers={
-            "x-cheese-token": other.agent["X-Cheese-Token"],
-            "authorization": "Bearer nonsense",
-        },
+        headers=other.agent,
     )
     assert answer.status_code == 200, answer.text
     # Served as the session leasing this sandbox, not the token it sent.
@@ -67,7 +64,7 @@ async def test_a_token_the_sandbox_sends_is_not_who_it_is_served_as(client):
         client,
         f"topics/{other.topic_id}",
         device=room.old_device,
-        headers={"x-cheese-token": other.agent["X-Cheese-Token"]},
+        headers=other.agent,
     )
     assert elsewhere.status_code in (403, 404), elsewhere.text
 

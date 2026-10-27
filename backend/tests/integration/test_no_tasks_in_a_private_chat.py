@@ -67,7 +67,7 @@ def test_an_ai_teammate_creates_no_task_in_a_private_chat(client):
     r = client.post(
         f"/topics/{chat}/teammate-tasks",
         json={"title": "整理周报", "summary": "每周五汇总", "start": True},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert 400 <= r.status_code < 500

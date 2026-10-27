@@ -40,7 +40,7 @@ def room(client):
     # 芝士 answers in a 支线 of the channel: that is where it publishes.
     thread = in_thread(client, topic["id"], "alice")
     token = mint_scoped_token(project_id=project["id"], topic_id=thread)
-    return thread, {"X-Cheese-Token": token}
+    return thread, {"Authorization": f"Bearer {token}"}
 
 
 def private_room(client):
@@ -52,7 +52,7 @@ def private_room(client):
         f"/projects/{project['id']}/private-chat", params={"user_handle": "user-1"}
     ).json()["data"]
     token = mint_scoped_token(project_id=project["id"], topic_id=topic["id"])
-    return topic["id"], {"X-Cheese-Token": token}
+    return topic["id"], {"Authorization": f"Bearer {token}"}
 
 
 def publish(client, topic, headers, content="我先核对当前流程。", **extra):
@@ -576,7 +576,7 @@ def room_with_project(client):
     ).json()["data"]
     thread = in_thread(client, topic["id"], "alice")
     token = mint_scoped_token(project_id=project["id"], topic_id=thread)
-    return thread, project["id"], {"X-Cheese-Token": token}
+    return thread, project["id"], {"Authorization": f"Bearer {token}"}
 
 
 def test_a_retry_of_a_picture_keeps_one_copy(client, stub_hooks):

@@ -925,11 +925,13 @@ def test_a_title_the_tasks_own_session_gives_is_still_the_platforms(
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     own = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"],
-            topic_id=tid,
-            agent_handle=room_agent_seat(client, room),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'],
+                topic_id=tid,
+                agent_handle=room_agent_seat(client, room),
+            )
+        }"
     }
     r = client.post(f"/topics/{tid}/title", json={"title": "限流开关"}, headers=own)
     assert r.status_code == 200, r.text

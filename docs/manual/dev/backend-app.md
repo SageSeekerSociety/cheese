@@ -40,7 +40,7 @@ covers:
 三个旁路进程都不做路由自动发现：它们显式 `include_router` 自己那几条，另加一个 `/healthz`。
 
 - **机器连接服务**用请求头 `x_device_connection_secret` 与 `settings.device_connection_auth_secret` 做常量比较（`_authorize`），不一致直接 403。它另外导出 `/internal/device-connection/{release-drain,release-resume,snapshot,call/<name>}`：`release-drain` 只在没有任何在跑的 RPC、没有待处理设备调用时返回 200，否则 409 —— 这是「现在就换，还是再等等」的判据。`call_executor` 那条路带 `asyncio.shield`：调用方（主 API）在发版中掉线，不能让已经发给设备的调用被取消。
-- **模型隧道**故意不 import `app.main` 的任何东西，也不碰数据库：它只按 scoped token 自己的 claims 做 HMAC 校验，这正是它能脱离整个应用单独跑的原因。
+- **模型隧道**故意不 import `app.main` 的任何东西，也不碰数据库：它只按 scoped token 自己的 claims 验签名，这正是它能脱离整个应用单独跑的原因。
 - **事件中继**按订阅投递。它维护 `connections: dict[deployment, Connection]`，没有连着的部署就返回 HTTP 503（发送方把这次 webhook 当作失败，之后靠重建订阅补上）；同一个部署要连第二次时回 `1013` 关闭，让滚动发版中的新后端重试到旧后端退出为止。校验分两种：Forgejo 看 `x-forgejo-signature`，GitHub 看 `x-hub-signature-256`，都按部署的 relay key（可再按 `project_id` 派生）算 HMAC-SHA256，请求体上限 5 MiB。
 
 ## 路由是按目录发现的 {#routers}
@@ -97,16 +97,15 @@ covers:
 
 ## 写面闸门：谁是芝士 {#gate}
 
-`main.py` 里 `cheese_token_gate` 这个中间件守着一张**用字符串写的**表 `_CHEESE_WRITE_PATHS`（8 条 `(方法, 正则)`）：会话里的 `cheese` CLI 能写、浏览器只读的那些接口。正则的捕获组必须叫 `topic` 或 `project`，闸门拿它和 `x-cheese-token` 比对。
+每条写路由在自己的依赖里声明谁能调它（`api/write_access.py`）：`CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT` 只收路径里那个频道或项目的芝士凭据，浏览器的登录会话一律拒；`Can(...)` 按权限判断（见[权限](/dev/seats)）；`ROUTE_DECIDES` 交给处理函数自己判断。凭据和别的请求一样从 `Authorization: Bearer` 读，是哪一种由 `core/credentials.py` 说了算。
 
-- 令牌先试 `is_valid_cheese_token(token, project_id=..., topic_id=...)`（每轮一次性令牌，按 URL 里的 id 匹配）。
-- 再试项目级凭据：`looks_like_project_agent_credential` 为真时不能按字符串比对（topic 路径里不带 project），走 `_credential_opens_gate` —— 它**在路由之前**就要读库，所以借 `app.dependency_overrides` 拿 `get_db` 的会话，保证测试换库时闸门和请求看的是同一个库。校验包含项目匹配、凭据未撤销、以及 `resolver.authorize_topic` / `authorize_project`。
-- 不通过就返回 `{"code": 401, "message": "invalid sandbox token", "data": null}`。
-- 通过之后把 `x-cheese-turn` 解析成 `current_work_id` 塞进 contextvar，这个请求写下的所有 block 都继承它。
+- 每轮凭据按 URL 里的 id 匹配（`is_valid_cheese_token`）；项目凭据能进项目里任何频道，所以不按字符串比，而是读库核对项目、是否撤销，再走 `resolver.authorize_topic` / `authorize_project`。
+- 不通过就是 401 `invalid sandbox token`。
+- 应用启动时 `seal` 检查每条写路由都声明了一种；没声明的启动不了，启动后才建的路由一律 403。
 
-这张表的正则就是闸门本身，**路由改名它不会跟着改**：#370 那次把路由前缀拍平之后 8 条全部失配 —— 失配不报错，它只是静默地把芝士的写面开放给任何够得到端口的人。测试抓到了这一条（`test_project_agent_credential`、`test_ask_options` 从「拒绝」变「放行」），这是唯一一次被发现。
+声明跟着路由走，路由改名不会让它失配。它取代的是一张和路由分开放的路径正则表：#370 把路由前缀拍平后那张表全部失配，芝士的写面静默地对任何够得到端口的人开放。
 
-「没列进白名单」本身拦不住任何东西：没列进去的写路由压根不过这个中间件，症状是静默放行而不是 401；真正拦住芝士的是路由上的登录校验加服务里的 `_forbid_ai`（同一形状的坑见[验收与采纳](/dev/accept#traps)）。
+`x-cheese-turn` 由 `main.py` 的中间件解析成 `current_work_id` 放进 contextvar，这个请求写下的所有 block 都继承它。
 
 ## 幂等：两张完全不同的表 {#idempotency}
 

@@ -36,7 +36,7 @@ def _as_cheese(user) -> dict:
         ttl_s=300,
         read_only=False,
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture

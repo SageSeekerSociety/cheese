@@ -122,7 +122,7 @@ def test_execution_endpoint_reaches_wire(tmp_path, monkeypatch):
             json.dumps({"method": "ping", "params": {}}),
             {
                 "Content-Type": "application/json",
-                "X-Cheese-Token": "fixture-place-token",
+                "Authorization": f"Bearer {'fixture-place-token'}",
             },
         )
         response = connection.getresponse()
@@ -187,7 +187,7 @@ def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
                     content,
                     {
                         "Content-Type": "application/x-git-bundle",
-                        "X-Cheese-Token": "room-handed-token",
+                        "Authorization": f"Bearer {'room-handed-token'}",
                         "X-Content-SHA256": digest,
                         "X-Cheese-Head": snapshot_sha,
                     },

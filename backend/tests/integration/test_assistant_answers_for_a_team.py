@@ -53,7 +53,7 @@ def _carry_out(client, token: str, got: dict) -> None:
             call["method"],
             call["path"],
             json=call.get("body"),
-            headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+            headers=_as(got["pass"]),
         )
         assert 200 <= sent.status_code < 300, sent.text
 
@@ -115,7 +115,7 @@ def test_a_request_to_join_the_persons_team_is_approved_there_only(client, monke
     assert len(got["calls"]) == 1
     stray = client.post(
         f"/teams/{other}/join-requests/{elsewhere}/approve",
-        headers={**_as(token), "X-Cheese-Pass": got["pass"]},
+        headers=_as(got["pass"]),
     )
     _carry_out(client, token, got)
 

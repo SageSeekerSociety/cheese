@@ -45,7 +45,8 @@ def test_the_bundle_is_served_by_its_own_digest(tmp_path, monkeypatch):
     digest = hashlib.sha256(bundle).hexdigest()
 
     got = TestClient(app).get(
-        f"/connector/skill-bundles/{digest}", headers={"x-cheese-token": _token(A)}
+        f"/connector/skill-bundles/{digest}",
+        headers={"Authorization": f"Bearer {_token(A)}"},
     )
 
     assert got.status_code == 200
@@ -64,7 +65,8 @@ def test_a_credential_only_reaches_its_own_projects_bundle(tmp_path, monkeypatch
 
     # A's credential asks for A's digest: its own bytes.
     allowed = client.get(
-        f"/connector/skill-bundles/{digest_a}", headers={"x-cheese-token": _token(A)}
+        f"/connector/skill-bundles/{digest_a}",
+        headers={"Authorization": f"Bearer {_token(A)}"},
     )
     assert allowed.status_code == 200
     assert allowed.content == session_skill_bundle(A)
@@ -73,7 +75,8 @@ def test_a_credential_only_reaches_its_own_projects_bundle(tmp_path, monkeypatch
     # B's credential asks for the same digest: B's bundle hashes differently, so
     # this is a miss — B is never handed A's skills.
     refused = client.get(
-        f"/connector/skill-bundles/{digest_a}", headers={"x-cheese-token": _token(B)}
+        f"/connector/skill-bundles/{digest_a}",
+        headers={"Authorization": f"Bearer {_token(B)}"},
     )
     assert refused.status_code == 404
 
@@ -88,7 +91,7 @@ def test_no_project_credential_no_bundle():
     assert (
         client.get(
             f"/connector/skill-bundles/{digest}",
-            headers={"x-cheese-token": SANDBOX_TOKEN},
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
         ).status_code
         == 401
     )
@@ -96,7 +99,8 @@ def test_no_project_credential_no_bundle():
 
 def test_a_malformed_digest_is_a_bad_request():
     got = TestClient(app).get(
-        "/connector/skill-bundles/not-a-digest", headers={"x-cheese-token": _token(A)}
+        "/connector/skill-bundles/not-a-digest",
+        headers={"Authorization": f"Bearer {_token(A)}"},
     )
     assert got.status_code == 400
 
@@ -121,13 +125,15 @@ def test_a_launch_gets_the_bundle_it_was_built_with_after_the_skills_change(
     client = TestClient(app)
 
     got = client.get(
-        f"/connector/skill-bundles/{digest}", headers={"x-cheese-token": _token(A)}
+        f"/connector/skill-bundles/{digest}",
+        headers={"Authorization": f"Bearer {_token(A)}"},
     )
     assert got.status_code == 200
     assert got.content == frozen
     assert got.headers["Cache-Control"].startswith("private")
 
     other = client.get(
-        f"/connector/skill-bundles/{digest}", headers={"x-cheese-token": _token(B)}
+        f"/connector/skill-bundles/{digest}",
+        headers={"Authorization": f"Bearer {_token(B)}"},
     )
     assert other.status_code == 404

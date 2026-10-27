@@ -150,7 +150,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
             new_device=new_device,
             lease=dict(session.work_lease),
             person=person,
-            agent={"X-Cheese-Token": agent_token},
+            agent={"Authorization": f"Bearer {agent_token}"},
             lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
             agent_handle=agent.username,
             path=f"/topics/{conversation_id}/sessions/{session.id}/environment",
@@ -445,7 +445,9 @@ class _PushingMachine(_IdleMachine):
         [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', self.installs[-1][1])
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
-            asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+            asked = await api.get(
+                self.path, headers={"Authorization": f"Bearer {token}"}
+            )
         self.answered = asked.status_code
         if asked.status_code != 200:
             said = (

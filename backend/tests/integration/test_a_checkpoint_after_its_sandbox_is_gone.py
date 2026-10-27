@@ -70,7 +70,7 @@ def test_a_checkpoint_after_the_sandbox_was_destroyed_asks_no_host(cloud, monkey
     def checkpoint():
         return cloud.client.post(
             urlsplit(hands["target"]["url"]).path,
-            headers={"X-Cheese-Token": hands["token"]},
+            headers={"Authorization": f"Bearer {hands['token']}"},
             json=CHECKPOINT,
         )
 

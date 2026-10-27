@@ -46,7 +46,7 @@ def _agent_in(client, project_id: str, topic_id: str) -> dict[str, str]:
     seat = next(row["member_handle"] for row in members if row["agent"])
     client.headers.pop("Authorization", None)
     client.cookies.clear()
-    return {"X-Cheese-Token": mint_session_token(project_id, topic_id, seat)}
+    return {"Authorization": f"Bearer {mint_session_token(project_id, topic_id, seat)}"}
 
 
 def _library(client, project_id: str) -> list[dict]:

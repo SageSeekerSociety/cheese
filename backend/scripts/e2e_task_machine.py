@@ -164,8 +164,10 @@ async def main():
         )
         response.raise_for_status()
         device = await poll_approved_device(client, code, start["interval"])
-    url = base.replace("http", "ws", 1) + "/connector/agent?token=" + device["token"]
-    async with connect(url) as socket:
+    url = base.replace("http", "ws", 1) + "/connector/agent"
+    async with connect(
+        url, additional_headers={"Authorization": "Bearer " + device["token"]}
+    ) as socket:
         assert json.loads(await socket.recv())["t"] == "welcome"
         await socket.send(json.dumps({"t": "hello", "executor": True}))
         async with async_session_factory() as session:

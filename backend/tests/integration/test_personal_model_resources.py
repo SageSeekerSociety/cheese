@@ -166,7 +166,9 @@ def test_subscription_login_registers_without_any_device_and_keeps_its_own_team(
     monkeypatch.setattr(
         "app.api.routes.connector.devices.recover_business_state", recovered
     )
-    with client.websocket_connect(f"/connector/agent?token={login['token']}") as ws:
+    with client.websocket_connect(
+        "/connector/agent", headers={"Authorization": f"Bearer {login['token']}"}
+    ) as ws:
         ws.close()
     assert (
         client.post(

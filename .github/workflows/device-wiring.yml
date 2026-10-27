@@ -68,7 +68,7 @@ jobs:
           #    the device and made every platform action unavailable to the agent.
           body="$(docker exec "$BACKEND" python -c "
           import urllib.request, urllib.error
-          req = urllib.request.Request('http://localhost:8081/sandbox/cli/cheese', headers={'X-Cheese-Token': '$TOK'})
+          req = urllib.request.Request('http://localhost:8081/sandbox/cli/cheese', headers={'Authorization': 'Bearer $TOK'})
           try:
               with urllib.request.urlopen(req, timeout=20) as r: print(r.read().decode('utf-8', 'replace'))
           except urllib.error.HTTPError as e: print('HTTP', e.code, e.read()[:200].decode('utf-8', 'replace'))")"
@@ -142,11 +142,11 @@ jobs:
           if [ -e "$DEVICE_TREE" ]; then
             rm -rf -- "$DEVICE_TREE"
           fi
-          if git -c http.extraHeader="X-Cheese-Token: $TOKEN" \
+          if git -c http.extraHeader="Authorization: Bearer $TOKEN" \
               clone -q --branch "$BRANCH" --single-branch "$REMOTE" "$DEVICE_TREE"; then
             git -C "$DEVICE_TREE" config user.name "Cheese device check"
             git -C "$DEVICE_TREE" config user.email "device-check@zhishi.local"
-            git -C "$DEVICE_TREE" config http.extraHeader "X-Cheese-Token: $TOKEN"
+            git -C "$DEVICE_TREE" config http.extraHeader "Authorization: Bearer $TOKEN"
             printf 'device probe %s\n' "$MARKER" > "$DEVICE_TREE/DEVICE_PROBE.txt"
             git -C "$DEVICE_TREE" add DEVICE_PROBE.txt
             git -C "$DEVICE_TREE" commit -q -m "test: add device capability marker"
@@ -162,7 +162,7 @@ jobs:
           # #95 — fetch the CLI the way the screen launcher does, then FILE A CARD
           # with it using the screen's scoped token. This is the whole platform-
           # action path, end to end, on the device.
-          curl -sS -f -m 15 -H "X-Cheese-Token: $TOKEN" \
+          curl -sS -f -m 15 -H "Authorization: Bearer $TOKEN" \
             "http://192.168.16.5:8081/sandbox/cli/cheese" -o "$CLI_PROBE" || true
           chmod +x "$CLI_PROBE" 2>/dev/null || true
           out="$(CHEESE_API=http://192.168.16.5:8081 CHEESE_PROJECT="$PROJECT" \

@@ -36,7 +36,7 @@ def _recording(seen):
                 {
                     "method": self.command,
                     "path": self.path,
-                    "token": self.headers.get("x-cheese-token"),
+                    "token": self.headers.get("authorization"),
                     "bytes": len(body),
                 }
             )

@@ -74,7 +74,7 @@ def _tool_call(case, seat, *, tells_agent: bool) -> dict:
     called does and a project hook does not."""
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": 5, "tells_agent": tells_agent},
     ).json()["data"]
 

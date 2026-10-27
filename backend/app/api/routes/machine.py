@@ -28,17 +28,18 @@ router = APIRouter(prefix="/machine", tags=["machine"], include_in_schema=False)
 
 #: The platform's own headers a sandbox's request keeps: what the machine's
 #: CLI sends besides who it is (`sandbox/cheese`). Every other ``x-`` header,
-#: and the standard ones that say who is calling, are dropped: a header such
-#: as ``x-cheese-screen`` would otherwise change whom the route serves.
+#: and the standard ones that say who is calling, are dropped: whatever the
+#: sandbox sent as a credential would otherwise change whom the route serves.
 _KEPT = frozenset(
     {
         b"x-cheese-turn",
-        b"x-cheese-pass",
         b"x-cheese-head",
         b"x-content-sha256",
     }
 )
-_DROPPED = frozenset({b"authorization", b"cookie", b"proxy-authorization"})
+_DROPPED = frozenset(
+    {b"authorization", b"x-api-key", b"cookie", b"proxy-authorization"}
+)
 
 
 def _kept(name: bytes) -> bool:
@@ -113,7 +114,7 @@ class _AsTheSession(Response):
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         headers = [(name, value) for name, value in scope["headers"] if _kept(name)]
-        headers.append((b"x-cheese-token", self._credential.encode()))
+        headers.append((b"authorization", b"Bearer " + self._credential.encode()))
         inner = {
             **scope,
             "path": self._path,

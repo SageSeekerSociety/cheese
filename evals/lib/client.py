@@ -68,7 +68,9 @@ class EvalApi:
         return body.get("data")
 
     async def get(self, path: str, *, cheese: bool = False, **params: Any) -> Any:
-        headers = {"X-Cheese-Token": self._sandbox_token} if cheese else None
+        headers = (
+            {"Authorization": f"Bearer {self._sandbox_token}"} if cheese else None
+        )
         return self._unwrap(
             await self._http.get(path, params=params or None, headers=headers)
         )
@@ -81,10 +83,13 @@ class EvalApi:
         cheese: bool = False,
         as_handle: str | None = None,
     ) -> Any:
-        """POST body; as_handle signs the request in as that person."""
+        """POST body; as_handle signs the request in as that person, cheese
+        makes it as the platform. A request carries one credential."""
+        if cheese and as_handle is not None:
+            raise ValueError("a request is made as the platform or as a person")
         headers: dict[str, str] = {}
         if cheese:
-            headers["X-Cheese-Token"] = self._sandbox_token
+            headers["Authorization"] = f"Bearer {self._sandbox_token}"
         if as_handle is not None:
             headers["Authorization"] = f"Bearer {self.session_token(as_handle)}"
         return self._unwrap(

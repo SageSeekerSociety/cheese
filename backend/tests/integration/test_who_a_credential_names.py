@@ -41,7 +41,7 @@ def team(client):
 
 def _as(client, headers: dict[str, str]):
     """Requests carrying these headers and nothing the test client adds."""
-    client.headers.pop("X-Cheese-Token", None)
+    client.headers.pop("Authorization", None)
     return headers
 
 
@@ -70,11 +70,13 @@ def test_an_ai_teammates_room_credential_is_no_person(client, team):
         headers=team["bearer"],
     ).json()["data"]["id"]
     teammate = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id,
-            topic_id=room,
-            agent_handle=room_agent_seat(client, room),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id,
+                topic_id=room,
+                agent_handle=room_agent_seat(client, room),
+            )
+        }"
     }
 
     assert _rename(client, team, teammate) >= 400
@@ -88,13 +90,15 @@ def test_a_persons_assistant_reaches_only_the_routes_it_was_given(client, team):
     """芝士 acts for the person on the routes listed for it; a team's own
     settings are not among them, so it changes nothing there."""
     assistant = {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=team["user_id"],
-            handle=team["handle"],
-            work=uuid.uuid4().hex,
-            ttl_s=600,
-            read_only=False,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=team['user_id'],
+                handle=team['handle'],
+                work=uuid.uuid4().hex,
+                ttl_s=600,
+                read_only=False,
+            )
+        }"
     }
 
     assert _rename(client, team, assistant) >= 400
@@ -106,7 +110,9 @@ def test_a_persons_assistant_reaches_only_the_routes_it_was_given(client, team):
     [
         pytest.param({}, id="nothing"),
         pytest.param({"Authorization": "Bearer not-a-token"}, id="garbage"),
-        pytest.param({"X-Cheese-Token": SANDBOX_TOKEN}, id="development override"),
+        pytest.param(
+            {"Authorization": f"Bearer {SANDBOX_TOKEN}"}, id="development override"
+        ),
     ],
 )
 def test_without_a_persons_sign_in_it_is_no_one(client, team, headers):

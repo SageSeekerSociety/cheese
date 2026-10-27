@@ -173,13 +173,15 @@ async def test_running_sessions_roles_visibility_and_completion(
     assert visible.status_code == 200, visible.text
     assert [row["agent_name"] for row in visible.json()["sessions"]] == ["public"]
     local = await client.get(
-        "/connector/device/running-sessions", headers={"X-Cheese-Session": device_token}
+        "/connector/device/running-sessions",
+        headers={"Authorization": f"Bearer {device_token}"},
     )
     assert local.status_code == 200, local.text
     assert local.json() == response.json()
     assert (
         await client.get(
-            "/connector/device/running-sessions", headers={"X-Cheese-Session": "wrong"}
+            "/connector/device/running-sessions",
+            headers={"Authorization": f"Bearer {'wrong'}"},
         )
     ).status_code == 401
 

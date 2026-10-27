@@ -348,7 +348,7 @@ api = os.environ.get("CHEESE_API", "").rstrip("/")
 if blob is None and api:
     request = urllib.request.Request(
         api + "/connector/skill-bundles/" + want,
-        headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
+        headers={{"Authorization": "Bearer " + os.environ.get("CHEESE_TOKEN", "")}},
     )
     # The pause between attempts grows from this step; a test sets it to 0.
     step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))

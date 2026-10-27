@@ -150,7 +150,7 @@ def _execute(client, monkeypatch, held: dict, method: str, params: dict):
     monkeypatch.setattr(execution, "call", remote)
     response = client.post(
         f"/topics/{held['conversation']}/execution/session-{held['resource']}",
-        headers={"X-Cheese-Token": held["turn"]},
+        headers={"Authorization": f"Bearer {held['turn']}"},
         json={"method": method, "params": params},
     )
     return response, remote
@@ -266,7 +266,7 @@ def _forge_token(client, monkeypatch, held: dict) -> dict:
         AsyncMock(return_value=_Forge()),
     )
     response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
+        "/sandbox/forge-token", headers={"Authorization": f"Bearer {held['machine']}"}
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
@@ -342,7 +342,7 @@ def _github_minted(client, monkeypatch, tmp_path, held: dict) -> tuple[dict, dic
         AsyncMock(return_value=minter),
     )
     response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
+        "/sandbox/forge-token", headers={"Authorization": f"Bearer {held['machine']}"}
     )
     assert response.status_code == 200, response.text
     [permissions] = asked
@@ -386,7 +386,7 @@ async def _move(client, monkeypatch, held: dict) -> dict:
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
     response = client.put(
         f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
-        headers={"X-Cheese-Token": held["turn"]},
+        headers={"Authorization": f"Bearer {held['turn']}"},
         json={"environment": {"kind": "sandbox", "spec": "team_devices"}},
     )
     assert response.status_code == 200, response.text

@@ -32,7 +32,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.common.auth import create_access_token
+from app.core import credentials
 from app.core.config import settings
+from app.core.credentials import Kind
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import seed_user
 
@@ -76,16 +78,17 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
 
 
 def _caller_handle(headers: dict | None) -> str | None:
-    """The handle a bearer token in ``headers`` names, as the route resolves it."""
+    """The person a bearer token in ``headers`` signs in, as the route resolves
+    it; None for no token or another kind (the platform's own secret)."""
+    from app.common.auth import verify_access_token
+
     auth = next(
         (v for k, v in (headers or {}).items() if k.lower() == "authorization"), ""
     )
     if not auth.startswith("Bearer "):
         return None
-    import jwt
-
-    claims = jwt.decode(auth[7:], options={"verify_signature": False})
-    return claims.get("handle") or claims.get("sub")
+    claims = verify_access_token(auth[7:])
+    return claims.handle if claims is not None else None
 
 
 async def shared_team_of(
@@ -462,9 +465,9 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     token = create_access_token(None, handle=handle)
     if ttl_s is None:
         return token
-    claims = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    claims = jwt.decode(token, options={"verify_signature": False})
     claims["exp"] = int(time.time()) + ttl_s
-    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
+    return credentials.mint(Kind.ACCESS, claims)
 
 
 def room_agent_seat(client, topic_id) -> str:
@@ -487,7 +490,7 @@ def room_agent_headers(client, topic_id) -> dict[str, str]:
         topic_id=str(topic_id),
         agent_handle=room_agent_seat(client, topic_id),
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def task_agent_headers(project_id, task_id, seat: str) -> dict[str, str]:
@@ -497,7 +500,7 @@ def task_agent_headers(project_id, task_id, seat: str) -> dict[str, str]:
     token = mint_scoped_token(
         project_id=str(project_id), topic_id=str(task_id), agent_handle=seat
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def session_auth_headers(handle: str) -> dict[str, str]:
@@ -571,7 +574,7 @@ def teammate_task(
                 "summary": summary,
                 "owner_handle": owner,
             },
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
     finally:
         if bearer is not None:

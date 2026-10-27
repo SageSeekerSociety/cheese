@@ -115,7 +115,7 @@ async def test_execution_survives_an_unrelated_room_column_rename(
             )
             response = client.post(
                 f"/topics/{topic}/execution/{resource}",
-                headers={"X-Cheese-Token": token},
+                headers={"Authorization": f"Bearer {token}"},
                 json={"method": "ping"},
             )
             assert response.status_code == 200, response.text
@@ -481,7 +481,7 @@ async def test_a_task_s_session_is_handed_a_machine_path_its_credential_opens(
     target = json.loads(opening["env"]["CHEESE_EXECUTION_TARGET"])
     answer = client.post(
         target["lease_path"],
-        headers={"X-Cheese-Token": opening["token"]},
+        headers={"Authorization": f"Bearer {opening['token']}"},
         json={"env": {}, "timeout": 1},
     )
 
@@ -558,7 +558,7 @@ async def test_scoped_execution_does_not_hold_admission_connection_during_remote
         asyncio.to_thread(
             client.post,
             f"/topics/{topic}/execution/{resource}",
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
             json={"method": "invoke", "params": {}},
         )
     )
@@ -637,7 +637,9 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             base_url="http://owner", transport=transport
         ) as owner:
             waiter = asyncio.create_task(
-                owner.post(endpoint, headers={"X-Cheese-Token": token}, json=payload)
+                owner.post(
+                    endpoint, headers={"Authorization": f"Bearer {token}"}, json=payload
+                )
             )
             call = await connector.next_call()
             assert call.path == dialled
@@ -655,14 +657,14 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
             assert (
                 await owner.post(
                     endpoint,
-                    headers={"X-Cheese-Token": token},
+                    headers={"Authorization": f"Bearer {token}"},
                     json={"method": "configure"},
                 )
             ).status_code == 403
             assert (
                 await owner.post(
                     f"/topics/{topic}/execution/{uuid.uuid4()}",
-                    headers={"X-Cheese-Token": token},
+                    headers={"Authorization": f"Bearer {token}"},
                     json=payload,
                 )
             ).status_code == 409
@@ -700,7 +702,7 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
     response = await asyncio.to_thread(
         client.post,
         f"/topics/{topic}/execution/{resource}",
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
         json={"method": "invoke", "params": {"tool": "Read"}},
     )
     assert response.status_code == 504, response.text
@@ -738,7 +740,7 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
     )
     endpoint = f"/topics/{topic}/execution/{resource}"
     payload = {"method": "invoke", "params": {"tool": "Read"}}
-    headers = {"X-Cheese-Token": token}
+    headers = {"Authorization": f"Bearer {token}"}
 
     # 房间里只有那条没有租约的会话：这一代没有手可借。
     assert client.post(endpoint, headers=headers, json=payload).status_code == 409
@@ -779,7 +781,7 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
         topic_id=str(topic),
         resource_id=str(resource),
     )
-    headers = {"X-Cheese-Token": token}
+    headers = {"Authorization": f"Bearer {token}"}
     payload = {
         "method": "invoke",
         "params": {"tool": "Read", "args": {"file_path": "draft.md"}},
@@ -809,7 +811,7 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     wrong = mint_scoped_token(project_id=str(project), topic_id=str(uuid.uuid4()))
     assert (
         client.post(
-            endpoint, headers={"X-Cheese-Token": wrong}, json=payload
+            endpoint, headers={"Authorization": f"Bearer {wrong}"}, json=payload
         ).status_code
         == 401
     )

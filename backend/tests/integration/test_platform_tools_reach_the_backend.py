@@ -52,9 +52,9 @@ class BackendHost:
         # The credential a session launches with (`mint_session_token`): its
         # room's agent, in this conversation.
         self.headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, topic, room_agent_seat(client, topic)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, topic, room_agent_seat(client, topic))
+            }"
         }
         self.doc_versions: dict = {}
         self.synced: list[str] = []
@@ -322,12 +322,14 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
     project, topic = room
     host = BackendHost(client, project, topic)
     host.headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project,
-            topic_id=topic,
-            agent_handle=room_agent_seat(client, topic),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project,
+                topic_id=topic,
+                agent_handle=room_agent_seat(client, topic),
+                access_scope='project',
+            )
+        }"
     }
 
     said = cheese.run_platform_tool(
@@ -383,12 +385,14 @@ def test_a_document_made_in_a_thread_is_shown_in_that_thread(client, room):
     ).json()["data"]["id"]
     host = BackendHost(client, project, thread)
     host.headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project,
-            topic_id=thread,
-            agent_handle=room_agent_seat(client, topic),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project,
+                topic_id=thread,
+                agent_handle=room_agent_seat(client, topic),
+                access_scope='project',
+            )
+        }"
     }
 
     cheese.run_platform_tool(

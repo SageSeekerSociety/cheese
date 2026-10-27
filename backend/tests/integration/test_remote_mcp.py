@@ -130,7 +130,7 @@ def _call(client, tid, pid, name, method, params=None) -> dict:
         f"/topics/{tid}/mcp/{name}",
         json={"method": method, "params": params or {}},
         headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=str(pid), topic_id=tid)
+            "Authorization": f"Bearer {mint_scoped_token(project_id=str(pid), topic_id=tid)}"
         },
     )
     assert response.status_code == 200, response.text
@@ -220,7 +220,7 @@ def test_a_room_credential_of_another_project_is_refused(client, upstream):
         f"/topics/{tid}/mcp/tracker",
         json={"method": "tools/list"},
         headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=str(other), topic_id=tid)
+            "Authorization": f"Bearer {mint_scoped_token(project_id=str(other), topic_id=tid)}"
         },
     )
     assert response.status_code == 403
@@ -391,12 +391,14 @@ def test_an_agent_reads_the_servers_but_does_not_manage_them(client, upstream):
     ).json()["data"]["data"]
     seat = next(row["member_handle"] for row in rows if row["agent"])
     agent = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=str(pid),
-            topic_id=tid,
-            access_scope="project",
-            agent_handle=seat,
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=str(pid),
+                topic_id=tid,
+                access_scope='project',
+                agent_handle=seat,
+            )
+        }"
     }
 
     listed = client.get(f"/projects/{pid}/mcp/servers", headers=agent)
