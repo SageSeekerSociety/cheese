@@ -1036,19 +1036,20 @@ async def get_project_upstream(
     return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
-@router.put("/{project_id}/upstream", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Select a GitHub repository before binding its installation."""
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    project_id = at.project.id
+    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
     service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    project = at.project
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
