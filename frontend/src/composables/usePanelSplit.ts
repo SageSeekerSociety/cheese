@@ -6,7 +6,7 @@
 // 收回一列。
 import type { Ref } from 'vue'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, watchEffect } from 'vue'
 
 export const SPLIT_MIN_WIDTH = 720
 
@@ -26,21 +26,32 @@ export function usePanelSplit(
   watch(allowed, (ok) => {
     if (!ok) split.value = null
   })
+  // 一格可能不经「关掉」就没了：没钉住的临时文件页签会被下一份文件原地顶掉。右边那格
+  // 指着一个已经不在的页签时收回一列，不留一栏空白。
+  watchEffect(() => {
+    if (split.value && !opts.exists(split.value)) split.value = null
+    if (previous.value && !opts.exists(previous.value)) previous.value = null
+  })
 
   const canSplit = computed(
     () => allowed.value && !!previous.value && previous.value !== active.value && opts.exists(previous.value)
   )
   function toggle() {
-    split.value = split.value ? null : canSplit.value ? previous.value : null
+    if (split.value) split.value = null
+    else if (canSplit.value) split.value = previous.value
   }
   /** 这一格此刻画不画：左边那格，或者并排时右边那格。 */
   function shown(key: string): boolean {
     return active.value === key || split.value === key
+  }
+  /** 右边那一格的样子：排在后面、带分隔线（WorkPanel 里 `.tabpane--side`）。 */
+  function sideClass(key: string): string | undefined {
+    return split.value === key ? 'tabpane--side' : undefined
   }
   /** 右边那一格被关掉了：收回一列。 */
   function drop(key: string) {
     if (split.value === key) split.value = null
     if (previous.value === key) previous.value = null
   }
-  return { split, canSplit, toggle, shown, drop }
+  return { split, canSplit, toggle, shown, sideClass, drop }
 }

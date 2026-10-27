@@ -71,3 +71,18 @@ it('「对话」那一格（手机上）不当作上一格：越过它，和再�
   s.toggle()
   expect(s.split.value).toBe('overview')
 })
+
+it('右边那一格不经「关掉」就没了（临时页签被下一份文件顶掉）：自己收回一列', async () => {
+  const s = setup()
+  s.active.value = 'file:a.md'
+  await nextTick()
+  s.active.value = 'preview'
+  await nextTick()
+  s.toggle()
+  expect(s.split.value).toBe('file:a.md')
+  s.keys.delete('file:a.md')
+  // exists 读的是一份普通的 Set，这里换一次宽度让依赖重算；面板里读的是响应式的页签表。
+  s.w.value = 1001
+  await nextTick()
+  expect(s.split.value).toBeNull()
+})

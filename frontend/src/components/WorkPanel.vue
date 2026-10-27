@@ -317,8 +317,7 @@ watch(active, (now, before) => {
 })
 function enterClass(key: string) {
   const e = entering.value
-  const side = split.value === key ? 'tabpane--side ' : ''
-  return e?.key === key ? `${side}tabpane-in tabpane-in--${e.from}` : side || undefined
+  return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
 }
 
 const changesRef = ref<InstanceType<typeof PanelChangesHost> | null>(null)
@@ -487,6 +486,7 @@ const {
   canSplit,
   toggle: toggleSplit,
   shown,
+  sideClass,
   drop: dropSplit,
 } = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
 const activeTabLabel = computed(() =>
@@ -791,17 +791,22 @@ defineExpose({
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
-          <div v-show="shown('overview')" class="tabpane-slot" :class="enterClass('overview')">
+          <div v-show="shown('overview')" class="tabpane-slot" :class="[enterClass('overview'), sideClass('overview')]">
             <slot name="overview" />
           </div>
-          <div v-if="!taskId" v-show="shown('threads')" class="tabpane-slot" :class="enterClass('threads')">
+          <div
+            v-if="!taskId"
+            v-show="shown('threads')"
+            class="tabpane-slot"
+            :class="[enterClass('threads'), sideClass('threads')]"
+          >
             <slot name="threads" />
           </div>
           <PanelSiteHost
             v-if="mounted.has('site')"
             v-show="shown('site')"
             ref="siteRef"
-            :class="enterClass('site')"
+            :class="[enterClass('site'), sideClass('site')]"
             :agent-name="agentName"
             :topic-id="conversationId"
             :project-id="projectId"
@@ -820,7 +825,7 @@ defineExpose({
             v-if="mounted.has('changes')"
             v-show="shown('changes')"
             ref="changesRef"
-            :class="enterClass('changes')"
+            :class="[enterClass('changes'), sideClass('changes')]"
             :topic-id="topicId"
             :task-id="taskId"
             :read-only="topic?.status === 'archived' || taskReadOnly"
@@ -834,7 +839,7 @@ defineExpose({
             v-if="mounted.has('preview')"
             v-show="shown('preview')"
             :submit-question="submitQuestion"
-            :class="enterClass('preview')"
+            :class="[enterClass('preview'), sideClass('preview')]"
             :topic-id="conversationId"
             :project-id="projectId"
             :active="shown('preview')"
@@ -853,7 +858,7 @@ defineExpose({
           <RoomFilesPanelHost
             v-if="mounted.has('files')"
             v-show="shown('files')"
-            :class="enterClass('files')"
+            :class="[enterClass('files'), sideClass('files')]"
             :topic-id="taskId ?? topicId"
             :seats-only="!!topic?.members_only"
             @open="openConversationFile"
@@ -861,7 +866,7 @@ defineExpose({
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="shown('routines')"
-            :class="enterClass('routines')"
+            :class="[enterClass('routines'), sideClass('routines')]"
             :topic-id="topicId"
             :project-id="projectId"
             :room-title="topic?.title ?? ''"
@@ -875,7 +880,7 @@ defineExpose({
               v-if="f.document && mounted.has(fileKey(f.path))"
               v-show="shown(fileKey(f.path))"
               :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic="null"
               :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
               :activity-tick="activityTick"
@@ -890,7 +895,7 @@ defineExpose({
             <ProjectFileTab
               v-else-if="f.project && mounted.has(fileKey(f.path))"
               v-show="shown(fileKey(f.path))"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :project-id="projectId ?? topic?.project_id ?? null"
               :channel-id="topicId"
               :path="f.path"
@@ -901,7 +906,7 @@ defineExpose({
               v-else-if="mounted.has(fileKey(f.path))"
               v-show="shown(fileKey(f.path))"
               :submit-question="submitQuestion"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic-id="conversationId"
               :project-id="projectId"
               :path="f.path"
