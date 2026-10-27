@@ -22,7 +22,11 @@ from app.api.machine_caller import Caller
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db, release_read_session
 from app.core.errors import ForbiddenError, NotFoundError
-from app.domain.machine.caller import HANDED_CREDENTIAL_TTL_S, credential_of
+from app.domain.machine.caller import (
+    HANDED_CREDENTIAL_TTL_S,
+    credential_of,
+    valid_proxy_proof,
+)
 
 router = APIRouter(prefix="/machine", tags=["machine"], include_in_schema=False)
 
@@ -35,6 +39,7 @@ _KEPT = frozenset(
         b"x-cheese-turn",
         b"x-cheese-head",
         b"x-content-sha256",
+        b"x-cheese-proxy-proof",
     }
 )
 _DROPPED = frozenset(
@@ -83,20 +88,24 @@ async def whoami(caller: Caller) -> dict:
     }
 
 
-@router.get("/credential")
-async def credential(
-    caller: Caller, db: Annotated[AsyncSession, Depends(get_db)]
+@router.get("/proxy-credential")
+async def proxy_credential(
+    request: Request,
+    caller: Caller,
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
-    """The session's credential for what cannot go down the socket: git's
-    own requests to the forge relay, the preview tunnel, a body over the
-    socket's limit. It lasts a minute and is asked for right before that use,
-    so the machine keeps none; held by a machine, it calls no model."""
+    """The session's short-lived credential for the host-side proxy and preview
+    helper running outside the sandbox (`X-Cheese-Proxy-Proof`). Refused to any
+    caller inside the sandbox."""
+    if not valid_proxy_proof(
+        caller.project_id, request.headers.get("x-cheese-proxy-proof", "")
+    ):
+        raise ForbiddenError()
     token = await credential_of(db, caller, ttl_s=HANDED_CREDENTIAL_TTL_S)
     if token is None:
         raise ForbiddenError()
     return JSONResponse(
         {"token": token, "expires_in": HANDED_CREDENTIAL_TTL_S},
-        # A credential: nothing between here and the sandbox keeps a copy.
         headers={"Cache-Control": "no-store"},
     )
 
@@ -106,11 +115,19 @@ class _AsTheSession(Response):
     credential in place of whatever said who was calling; that route's answer
     is streamed back as it is."""
 
-    def __init__(self, request: Request, path: str, credential: str) -> None:
+    def __init__(
+        self,
+        request: Request,
+        path: str,
+        credential: str,
+        *,
+        from_machine_sandbox: bool = True,
+    ) -> None:
         super().__init__()
         self._request = request
         self._path = path
         self._credential = credential
+        self._from_machine_sandbox = from_machine_sandbox
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         headers = [(name, value) for name, value in scope["headers"] if _kept(name)]
@@ -123,7 +140,10 @@ class _AsTheSession(Response):
             "headers": headers,
             # Its own copy: what the route asked keeps on its request stays
             # off this one's.
-            "state": dict(scope.get("state") or {}),
+            "state": {
+                **dict(scope.get("state") or {}),
+                "from_machine_sandbox": self._from_machine_sandbox,
+            },
         }
         await _routes(self._request.app)(inner, receive, send)
 
@@ -148,6 +168,11 @@ async def platform(
     credential = await credential_of(db, caller, held=False)
     if credential is None:
         raise ForbiddenError()
+    from_sandbox = not valid_proxy_proof(
+        caller.project_id, request.headers.get("x-cheese-proxy-proof", "")
+    )
     # The route asked may hold the request for minutes.
     await release_read_session(db)
-    return _AsTheSession(request, "/" + path, credential)
+    return _AsTheSession(
+        request, "/" + path, credential, from_machine_sandbox=from_sandbox
+    )

@@ -7,12 +7,15 @@ that state on that device. It is looked up on every request, so a session that
 ended, moved or was given another lease is nobody from its next request on.
 """
 
+import hashlib
+import hmac
 import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, for_a_machine, mint_scoped_token
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
 from app.domain.agent_session.models import AgentSession
@@ -43,6 +46,22 @@ class MachineCaller:
     #: (`session_work.session_author`): its teammate's handle, not the key the
     #: session row is stored under.
     agent_handle: str
+
+
+def machine_proxy_proof(project_id: str) -> str:
+    """The proof a host-side proxy outside the sandbox presents on its
+    platform socket (`X-Cheese-Proxy-Proof`): derived from the platform's
+    signing secret and the project id, handed to `bootstrap.configure_idle`
+    outside the sandbox and stripped before the sandbox starts."""
+    return hmac.new(
+        settings.sandbox_signing_secret.encode(),
+        f"machine-proxy:{project_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def valid_proxy_proof(project_id: str, proof: str) -> bool:
+    return bool(proof) and hmac.compare_digest(proof, machine_proxy_proof(project_id))
 
 
 def _names(state: str, tag: str) -> bool:
