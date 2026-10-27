@@ -227,7 +227,7 @@ it('窄面板上视口三档进了「…」菜单，照样能切', async () => {
   const text = ui.container.textContent ?? ''
   expect(text).toContain('桌面')
   expect(text).toContain('手机')
-  const items = ui.getAllByRole('menuitem')
+  const items = ui.getAllByRole('menuitemradio')
   const mobile = items.find((el) => (el.textContent ?? '').includes('手机'))!
   await fireEvent.click(mobile)
   expect(ui.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()

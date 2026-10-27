@@ -166,7 +166,7 @@ type BarAction = {
   /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
   testid?: string
   disabled?: boolean
-  /** 菜单里那一行是不是当前选中的那一档（视口三档）。 */
+  /** 菜单里那一行是不是当前选中的那一档（视口三档）；不是单选的那几行不给。 */
   active?: boolean
   run: () => void
 }
@@ -300,7 +300,8 @@ watch(
             <v-list-item
               v-for="action in actions"
               :key="action.key"
-              role="menuitem"
+              :role="action.active === undefined ? 'menuitem' : 'menuitemradio'"
+              :aria-checked="action.active"
               :prepend-icon="action.icon"
               :active="action.active"
               :disabled="action.disabled"
@@ -328,40 +329,18 @@ watch(
         </BaseButton>
         <div v-if="!showSource" class="preview-viewport ms-2">
           <button
+            v-for="mode in VIEWPORTS"
+            :key="mode.key"
             type="button"
             class="preview-viewport__btn"
-            :class="{ 'preview-viewport__btn--active': viewport === 'desktop' }"
-            data-testid="viewport-desktop"
-            :aria-pressed="viewport === 'desktop'"
-            :title="t('work.room.preview.viewportDesktop')"
-            :aria-label="t('work.room.preview.viewportDesktop')"
-            @click="viewport = 'desktop'"
+            :class="{ 'preview-viewport__btn--active': viewport === mode.key }"
+            :data-testid="`viewport-${mode.key}`"
+            :aria-pressed="viewport === mode.key"
+            :title="t(mode.label)"
+            :aria-label="t(mode.label)"
+            @click="viewport = mode.key"
           >
-            <v-icon size="15">mdi-monitor</v-icon>
-          </button>
-          <button
-            type="button"
-            class="preview-viewport__btn"
-            :class="{ 'preview-viewport__btn--active': viewport === 'tablet' }"
-            data-testid="viewport-tablet"
-            :aria-pressed="viewport === 'tablet'"
-            :title="t('work.room.preview.viewportTablet')"
-            :aria-label="t('work.room.preview.viewportTablet')"
-            @click="viewport = 'tablet'"
-          >
-            <v-icon size="15">mdi-tablet</v-icon>
-          </button>
-          <button
-            type="button"
-            class="preview-viewport__btn"
-            :class="{ 'preview-viewport__btn--active': viewport === 'mobile' }"
-            data-testid="viewport-mobile"
-            :aria-pressed="viewport === 'mobile'"
-            :title="t('work.room.preview.viewportMobile')"
-            :aria-label="t('work.room.preview.viewportMobile')"
-            @click="viewport = 'mobile'"
-          >
-            <v-icon size="15">mdi-cellphone</v-icon>
+            <v-icon size="15">{{ mode.icon }}</v-icon>
           </button>
         </div>
       </template>
