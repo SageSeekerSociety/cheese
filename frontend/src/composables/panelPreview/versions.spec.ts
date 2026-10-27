@@ -160,3 +160,35 @@ it('PDF 这类比不了的：没有对比，旧版能直接看', () => {
   expect(bundle.canView.value).toBe(true)
   expect(bundle.hint.value).toBeNull()
 })
+
+it('老版 .xls（OLE2 读不开）：不摆对比、也不摆看旧版', () => {
+  const { bundle } = setup('h.xls', revisions('h.xls', ['旧的', '新的']))
+  expect(bundle.canCompare.value).toBe(false)
+  expect(bundle.canView.value).toBe(false)
+  expect(bundle.hint.value).toBeNull()
+})
+
+it('换版快时，上一版读失败的错不写在已经画好的这一版旁边', async () => {
+  const rows = revisions('i.md', ['第一版正文', '第二版正文', '第三版正文'])
+  const slow = rows.find((r) => r.seq === 1)!.id
+  const fast = rows.find((r) => r.seq === 2)!.id
+  // 第一版那一次读先挂住，等第二版画好了再让它失败：两版撞在一起的样子就是这样。
+  let failSlow: (e: Error) => void = () => {}
+  const gate = new Promise<never>((_resolve, reject) => {
+    failSlow = reject
+  })
+  api.roomFileRevisionBytes.mockImplementation(async (_t: string, id: string) => {
+    if (id === slow) return gate
+    if (id === fast) return new TextEncoder().encode('第二版正文').buffer
+    throw new Error('missing')
+  })
+  const { bundle } = setup('i.md', rows)
+  bundle.choose(1)
+  await vi.waitFor(() => expect(api.roomFileRevisionBytes).toHaveBeenCalledWith('room', slow))
+  bundle.choose(2)
+  await vi.waitFor(() => expect(bundle.oldView.value?.seq).toBe(2))
+  failSlow(new Error('boom'))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(bundle.oldError.value).toBe('')
+  expect(bundle.oldView.value?.seq).toBe(2)
+})
