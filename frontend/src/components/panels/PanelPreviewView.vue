@@ -179,7 +179,10 @@ const locatorAnchor = ref<LocatorAnchor | null>(null)
 const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   const panel = panelElement.value
-  if (!panel || (event.target instanceof Element && event.target.closest('.locator, .locator-arm'))) return
+  // 定位框自己的部件（那颗「添加批注」和整张卡）都标着 `data-locator-ui`：点它们不是在
+  // 指正文里的一处，别记成下一次指认的那一点。按标记找，不按类名——定位框以后再多一个
+  // 部件时，外面的守卫不用跟着改。
+  if (!panel || (event.target instanceof Element && event.target.closest('[data-locator-ui]'))) return
   lastPointer = { ...markPointer(event, panel), at: performance.now() }
 })
 let placing = 0

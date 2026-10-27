@@ -230,6 +230,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       v-if="armed && anchor"
       type="button"
       class="locator-arm"
+      data-locator-ui
       :data-side="placement?.side"
       :style="style"
       data-testid="locator-arm"
@@ -244,6 +245,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       v-else-if="(target && !armed) || (queuedCount && !target)"
       ref="card"
       class="locator"
+      data-locator-ui
       :class="{ 'locator--floating': floating }"
       :data-side="placement?.side"
       :style="style"
