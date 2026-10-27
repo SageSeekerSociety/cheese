@@ -6,7 +6,7 @@
 import type { FileContent } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import * as api from '../../api'
