@@ -14,7 +14,7 @@ import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { chainBroken } from '@/lib/previewChain'
+import { chainBroken, isPageSegment, PAGE_ERROR } from '@/lib/previewChain'
 import { ROOM_FILE_PATH } from '@/lib/previewSession'
 
 const props = defineProps<{
@@ -39,6 +39,21 @@ const emit = defineEmits<{
   navigate: [path: string]
 }>()
 
+/** 把地址里那一串转义读成人话——但只在读回来还能转回去的时候。
+ *
+ *  `%2F`、`%3F`、`%23` 解出来会变成真的分隔符，读者原样再按一次回车就跳到别处去了；所以
+ *  解一步、用 `encodeURI` 转回去对比，一样才显示解好的那一版（房间路径常是中文，`%E6…`
+ *  解出来是文件名的本来样子），不一样就照原样显示转义写法——地址栏里看到什么，按下去就
+ *  跳什么。 */
+function readable(spec: string): string {
+  try {
+    const decoded = decodeURIComponent(spec)
+    return encodeURI(decoded) === spec ? decoded : spec
+  } catch {
+    return spec
+  }
+}
+
 /** 地址栏里显示的那一截：路径、查询、片段。房间文件挂在 `/_cheese/room/` 下，把这层平台
  *  自己的前缀去掉，读者看到的是文件在房间里的路径。
  *
@@ -50,7 +65,7 @@ function displayPath(href: string): { shown: string; room: boolean } {
     const url = new URL(href)
     const room = url.pathname.startsWith(ROOM_FILE_PATH)
     const path = room ? '/' + url.pathname.slice(ROOM_FILE_PATH.length) : url.pathname
-    return { shown: decodeURIComponent(path) + url.search + url.hash, room }
+    return { shown: readable(path + url.search + url.hash), room }
   } catch {
     return { shown: href, room: false }
   }
@@ -79,7 +94,13 @@ function submit(event: KeyboardEvent) {
   ;(event.target as HTMLInputElement).blur()
   if (!value || value === shown.value) return
   // 房间文件那一档补回被剥掉的前缀：否则 `new URL('/pages/b.html', …)` 会离开房间。
-  emit('navigate', display.value.room && value.startsWith('/') ? ROOM_FILE_PATH + value.slice(1) : value)
+  // 带着前缀的原样递回去（地址栏的提示里就是完整地址，照抄一份下来不该跳到 `/_cheese/
+  // room/_cheese/room/…` 那个 404 上）；不是以 `/` 开头的（相对、或完整 URL）本来就不加。
+  if (!display.value.room || !value.startsWith('/') || value.startsWith(ROOM_FILE_PATH)) {
+    emit('navigate', value)
+    return
+  }
+  emit('navigate', ROOM_FILE_PATH + value.slice(1))
 }
 function revert(event: KeyboardEvent) {
   draft.value = shown.value
@@ -96,7 +117,7 @@ const chainTitle = computed(() =>
  *  睡着的那两段是「在等」而不是「没有」，用跟小圆点同一档的警示色，不用灰。 */
 function tone(segment: ChainSegment): 'ok' | 'error' | 'wait' {
   if (segment.state === 'ok') return 'ok'
-  return segment.reason === 'work.room.preview.chain.pageError' ? 'error' : 'wait'
+  return segment.reason === PAGE_ERROR ? 'error' : 'wait'
 }
 const dotTone = computed(() => {
   const tones = props.segments.map(tone)
@@ -104,7 +125,7 @@ const dotTone = computed(() => {
 })
 function segmentLabel(segment: ChainSegment): string {
   return t(
-    segment.key === 'app' && props.segments.length === 2
+    segment.key === 'app' && isPageSegment(props.segments)
       ? 'work.room.preview.chain.page'
       : `work.room.preview.chain.${segment.key}`
   )

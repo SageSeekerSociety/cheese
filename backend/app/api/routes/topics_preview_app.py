@@ -104,14 +104,20 @@ async def put_preview_snapshot(
 ) -> dict:
     """Keep the latest snapshot of the app this room previews.
 
-    Anyone who can see the preview may write it: the snapshot is what they just
-    saw, and every reader of the room is shown it later in a frame that runs no
-    script and reaches no network (``sandbox=""``). That frame runs no script
-    because the sandbox says so; it reaches no network because the CSP the
-    platform stamps into the stored bytes says so — whoever wrote the snapshot
-    does not get to decide that, or a crafted page would phone home from every
-    reader's browser. Sealing happens here, on the way in, so a stored snapshot
-    is already safe to render."""
+    Written by whoever may change this room's content (``edit_content``, this
+    route's own declaration): the snapshot is what one reader just saw, but
+    every reader of the room is shown it later, so putting one there is a write
+    to shared content and takes the permission that says so. A mentor sees the
+    preview without it, so their browser's PUT is refused and ``keep()`` drops
+    it — the snapshot on the platform is then whatever an editor last saw.
+
+    It is shown in a frame that runs no script and reaches no network
+    (``sandbox=""``). That frame runs no script because the sandbox says so; it
+    reaches no network because the CSP the platform stamps into the stored
+    bytes says so — whoever wrote the snapshot does not get to decide that, or
+    a crafted page would phone home from every reader's browser. Sealing
+    happens here, on the way in, so a stored snapshot is already safe to
+    render."""
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     art = await _current_app(db, place)

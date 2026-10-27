@@ -20,6 +20,12 @@ name: Warm dependency caches
 # Changing a key or an install step in one of those suites means changing it
 # here in the same PR.
 #
+# One key is deliberately absent: test.yml's `jsdom-npm-v1-*`, which caches the
+# unpacked jsdom one pure shard's snapshot test imports. That shard saves it
+# itself (actions/cache, not cache/restore), so a push to main leaves one every
+# ref can read; a job here would install the package this cache exists to stop
+# re-installing.
+#
 # The `plan` job reads the push's own commit range and skips the jobs whose
 # dependency did not move, so a guard-only push starts one runner instead of
 # six. Anything it cannot establish starts all six.

@@ -315,7 +315,14 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
 }
 
 /** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
-type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
+type PreviewDerived =
+  | 'documentSuffix'
+  | 'documentType'
+  | 'documentName'
+  | 'isImageArtifact'
+  | 'docIdentity'
+  | 'canPage'
+  | 'previewAppUp'
 
 /** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
 type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'

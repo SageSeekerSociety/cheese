@@ -407,7 +407,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
-      :browsing="!!frames?.length || !!previewAppNote"
+      :browsing="frames ? frames.length > 0 || !!previewAppNote : !!previewUrl || !!previewAppNote"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />

@@ -12,6 +12,8 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 
 import { getPreviewSnapshot, getPreviewWakeStatus, putPreviewSnapshot, wakePreviewApp } from '../../api'
 import { t } from '../../i18n'
+import { appAsleepFrom } from '../../lib/previewChain'
+import { frameArtifactId } from '../usePreviewFrames'
 
 /** 唤醒进度里的一步。 */
 export interface AppWakeStep {
@@ -79,13 +81,22 @@ export function usePanelPreviewAppSleep(deps: {
   let poll: ReturnType<typeof setTimeout> | null = null
   let wakeStarted = 0
   let sawWorking = false
+  /** 四步走完、卡收掉之后，还在重新载入预览的这一段。 */
+  let settling = false
 
   /** 帧里的桥拍了一张：存到平台上，也立刻记在这里（睡着时不用再取一次）。存不上不打扰
-   *  读者——下一次加载成功还会再拍。 */
+   *  读者——下一次加载成功还会再拍。
+   *
+   *  桥上不来（`identity` 里读不出件）的帧照收：那是还没走到授权、或者测试里搭的裸帧，
+   *  认不出是哪一件也不能就把它当别人的。 */
   function keep(frame: PreviewFrame, shot: FrameSnapshot) {
     const topicId = props.topicId
     const artifactId = state.previewArtifactId.value
     if (!topicId || !artifactId || !frame.live || props.path) return
+    // 这张快照得确实是这一件拍的：换件时指针先动、新文档还在路上，旧帧仍会报一张上来，
+    // 照收就会署成新那一件的快照——那一件睡着时显示的会是上一件的页面。
+    const shotFor = frameArtifactId(frame)
+    if (shotFor && shotFor !== artifactId) return
     snapshot.value = { html: shot.html, takenAt: Date.now() / 1000 }
     snapshotOf = artifactId
     void putPreviewSnapshot(topicId, artifactId, { html: shot.html, href: shot.href, title: shot.title }).catch(
@@ -93,8 +104,18 @@ export function usePanelPreviewAppSleep(deps: {
     )
   }
 
-  const asleep = computed(
-    () => !!state.previewAppNote.value && !props.path && (!state.previewTunnelUp.value || !state.previewAppUp.value)
+  // 「睡着了」的判据和画那一半是同一个（`lib/previewChain` 的 `appAsleepFrom`）：这里
+  // 自己再写一份的话，平台读不到预览信息时这一半仍会说睡着、白白去平台上取一次快照——
+  // 那一次既没人看得到，也拿不到东西。
+  const asleep = computed(() =>
+    props.path || !state.previewAppNote.value
+      ? null
+      : appAsleepFrom({
+          platformOk: !state.previewError.value,
+          live: true,
+          tunnelUp: state.previewTunnelUp.value,
+          appAnswering: state.previewAppUp.value,
+        })
   )
 
   // 睡着了、手上又没有这一件的快照：去平台上取一次（换了产物再取）。
@@ -134,6 +155,7 @@ export function usePanelPreviewAppSleep(deps: {
   function finish(error = '') {
     stopPolling()
     progress.value = null
+    settling = false
     wakeError.value = error
   }
 
@@ -146,7 +168,12 @@ export function usePanelPreviewAppSleep(deps: {
     // 四步打满之后立刻收进度：再留着，舞台上那句「运行环境已休眠」会继续盖在一个已经
     // 答上、正在重新载入的应用上；收掉之后由 `asleep` 决定要不要再出卡——载入失败或载
     // 回来还是睡着，都会退回普通休眠态（按钮能再按）。
+    //
+    // 但重新载入还没走完之前不能算「没人正在干」：进度一收，卡上就换回那颗「唤醒」按钮，
+    // 谁在这时再按一下就会再起一轮唤醒、再排一次载入，两次导航互相顶掉。`settling` 就是
+    // 这段空档的占位，它和 progress 一起挡重入。
     progress.value = null
+    settling = true
     try {
       await deps.reload()
     } catch {
@@ -184,7 +211,7 @@ export function usePanelPreviewAppSleep(deps: {
 
   async function wake() {
     const topicId = props.topicId
-    if (!topicId || progress.value) return
+    if (!topicId || progress.value || settling) return
     wakeError.value = ''
     wakeStarted = Date.now()
     sawWorking = false

@@ -416,6 +416,25 @@ it('房间文件的地址栏剥掉平台前缀显示，回车再补回去', asyn
   expect(ui.emitted('navigate')).toEqual([['/_cheese/room/pages/b.html']])
 })
 
+it('地址栏里带着房间前缀的那串原样提交，不再补一层', async () => {
+  // 地址栏的提示里写的是完整地址，照抄一份下来再按回车不该跳到 `/_cheese/room/_cheese/
+  // room/…` 那个 404 上。
+  const ui = appMount({}, { href: 'https://preview-x.example/_cheese/room/pages/a.html', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  await fireEvent.update(address, '/_cheese/room/pages/b.html')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/_cheese/room/pages/b.html']])
+})
+
+it('地址里解不出正确回路的转义照原样显示原样提交', async () => {
+  // `%2F` 解出来是真分隔符，解了就写不回去：显示和提交都照原样，看到什么就跳什么。
+  const ui = appMount({}, { href: 'https://preview-x.example/a%2Fb?q=1', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/a%2Fb?q=1')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toBeUndefined()
+})
+
 it('输入法拼字时那一下回车不算跳转', async () => {
   const ui = appMount({}, { href: 'https://preview-x.example/signup', bridged: true })
   const address = ui.getByTestId('browser-address') as HTMLInputElement

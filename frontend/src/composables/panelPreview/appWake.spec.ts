@@ -140,6 +140,49 @@ it('a reload that throws after the app answers still gives the card back', async
   scope.stop()
 })
 
+it('a snapshot the previous artifact took is not stored under the new one', async () => {
+  // 换件时「现在这一件」的指针先动、新文档才在路上，旧帧仍会在台前拍一张。照收就会
+  // 署成新那一件——它睡着时显示的是上一件的页面。
+  const { state, sleep, scope } = setup()
+  state.previewArtifactId.value = 'art-2'
+  const stale = { id: 1, live: true, identity: '["t","app","art-1","u",null,null]' } as PreviewFrame
+  sleep.keep(stale, { html: '<p>old</p>', href: 'u', title: 't', viewport: { w: 1, h: 1 } })
+  expect(api.putPreviewSnapshot).not.toHaveBeenCalled()
+  expect(sleep.appSnapshot.value).toBeNull()
+  // 这一件自己拍的照收。
+  sleep.keep({ id: 2, live: true, identity: '["t","app","art-2","u",null,null]' } as PreviewFrame, {
+    html: '<p>new</p>',
+    href: 'u',
+    title: 't',
+    viewport: { w: 1, h: 1 },
+  })
+  expect(api.putPreviewSnapshot).toHaveBeenCalledWith(
+    'task-1',
+    'art-2',
+    expect.objectContaining({ html: '<p>new</p>' })
+  )
+  scope.stop()
+})
+
+it('waking again while the reload is still running does not start a second one', async () => {
+  api.wakePreviewApp.mockResolvedValue({ started: true })
+  api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: false, app_up: true })
+  let release: () => void = () => {}
+  const { state, sleep, reload, scope } = setup()
+  reload.mockImplementationOnce(() => new Promise<void>((ok) => (release = ok)))
+  state.previewTunnelUp.value = false
+  state.previewAppUp.value = false
+  await sleep.wake()
+  await vi.advanceTimersByTimeAsync(2_000)
+  // 进度收了、卡上又出现「唤醒」按钮，但载入还没走完：这时按下去不该再起一轮。
+  expect(sleep.wakeSteps.value).toBeNull()
+  await sleep.wake()
+  expect(api.wakePreviewApp).toHaveBeenCalledTimes(1)
+  release()
+  await flush()
+  scope.stop()
+})
+
 it('a snapshot read that fails is retried the next time the app sleeps', async () => {
   api.getPreviewSnapshot.mockRejectedValueOnce(new Error('网络抖了一下'))
   const { state, sleep, scope } = setup()

@@ -7,6 +7,10 @@
 // 盖的——写快照的人自己带不带都不算数）。它是一份冻住的 DOM，只求看上去一样，零沙箱开
 // 销。压暗那一层不收鼠标，所以宿主盖在上面的圈选遮罩照样能在快照上框一块发批注；圈选开
 // 着时说明卡让开，免得挡住要框的那一处。
+//
+// `no-referrer` 是第二道（2026-10-27 实测 Chromium 156 下这道用不上：`srcdoc` 的框发起
+// 的请求不带 Referer）。留着的理由是它只花一个属性：快照里只要有谁点得动一下（`sandbox=""`
+// 挡不住框自己发起导航，点得到链结就会走），那一跳到外站时面板地址不该跟着过去。
 import type { AppWakeStep } from '@/composables/panelPreview/appWake'
 
 import { computed } from 'vue'
@@ -52,6 +56,7 @@ const body = computed(() => {
       class="app-sleep__snapshot"
       data-testid="preview-snapshot"
       sandbox=""
+      referrerpolicy="no-referrer"
       tabindex="-1"
       :title="t('work.room.preview.sleep.snapshotTitle')"
       :srcdoc="snapshotHtml"

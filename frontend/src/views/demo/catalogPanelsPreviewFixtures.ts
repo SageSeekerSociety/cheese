@@ -181,12 +181,15 @@ export function headBarProps(over: Record<string, unknown> = {}): Record<string,
 /** 应用那一档（网页/应用帧）要的那几样。 */
 export function frameStageProps(over: Record<string, unknown> = {}): Record<string, unknown> {
   const all = previewPanelProps()
-  return {
+  const merged: Record<string, unknown> = {
     topicId: all.topicId,
     frameName: all.frameName,
     previewFile: null,
     previewMime: 'text/html',
-    previewUrl: null,
+    // 这里给的是「应用跑着」那一档的输入，所以带一个地址：产品里 `previewAppUp` 是
+    // `!!url && !!tunnel_up` 算出来的（`panelPreview/currentPreview.ts`），没有地址就没有
+    // 应答着的应用——「有端口应答却没有地址」是产品到不了的状态，夹具别造它。
+    previewUrl: 'http://127.0.0.1:4173/',
     previewAppNote: '',
     previewTunnelUp: true,
     previewAppUp: true,
@@ -197,6 +200,12 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     agentName: AGENT_NAME,
     ...over,
   }
+  // 没明说的按产品那套算：通道在、地址也在，应用才算有应答。要摆睡着那几档，把
+  // `previewTunnelUp` 或 `previewUrl` 说成假的就够了，不用另给一个和它们对不上的值。
+  if (over.previewAppUp === undefined) {
+    merged.previewAppUp = !!merged.previewTunnelUp && !!merged.previewUrl
+  }
+  return merged
 }
 
 /** 文档那一档要的那几样：默认是那篇 markdown。 */

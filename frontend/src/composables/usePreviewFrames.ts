@@ -46,6 +46,21 @@ export interface FrameSnapshot {
   viewport: { w: number; h: number }
 }
 
+/** 这一帧是为哪一件产物授权的：身份串的第 3 项（见 `currentPreview` 里怎么拼的）。
+ *
+ *  换件时状态里那个「现在这一件」的指针先动、新文档才在路上，这中间旧帧仍然在台前、
+ *  报上来的快照还是旧件的页面——存快照的人拿这个来确认「这张确实是那一件拍的」。
+ *  读不出来（还没授权、串坏了）就没有答案。 */
+export function frameArtifactId(frame: Pick<PreviewFrame, 'identity'> | null | undefined): string | null {
+  if (!frame?.identity) return null
+  try {
+    const parts = JSON.parse(frame.identity)
+    return Array.isArray(parts) && typeof parts[2] === 'string' ? parts[2] : null
+  } catch {
+    return null
+  }
+}
+
 /** 地址换了以后等多久再取快照：页面多半还在补数据，等它安静一点。 */
 const SNAPSHOT_SETTLE_MS = 2_000
 
@@ -454,6 +469,11 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     frame.bridged = false
     frame.canBack = false
     frame.canForward = false
+    // 旧文档排下的那次「拍张快照」不算数了：帧 id 没变，光看 id 它照样会命中，拿新会话
+    // 向刚装上的文档要一张——那时的页面还在补数据，取到的半成品会被当成「最近一次成功
+    // 加载」存下来。新文档自己会按新的地址重排一次（`scheduleSnapshot`）。
+    if (snapshotTimer) clearTimeout(snapshotTimer)
+    snapshotTimer = null
     // 装成了：这一帧上一次的失败（如果有）到此为止。
     frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
