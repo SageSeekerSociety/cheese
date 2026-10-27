@@ -148,6 +148,7 @@ const {
   onCell,
   onSheetRange,
   onMarkdownQuote,
+  onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
   onLocate: (payload) => emit('locate', payload),
@@ -488,15 +489,25 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :annotate-error="annotateError"
       :marks="imageAnchors"
       :active-mark="focusedThread"
+      :can-comment="!!commentTarget"
+      :busy="commenting"
+      :comment-error="commentError"
       @region="onImageRegion"
       @annotate="onAnnotate"
       @update:locator-note="locatorNote = $event"
       @send="sendLocator"
+      @comment="commentHere"
       @cancel="clearLocator"
       @mark="openAnchor"
     />
     <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
-      <AttachmentVideo :topic-id="topicId" :path="previewFile.path" @download="emit('download')" />
+      <AttachmentVideo
+        can-locate
+        :topic-id="topicId"
+        :path="previewFile.path"
+        @locate="onVideoLocate"
+        @download="emit('download')"
+      />
     </div>
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>

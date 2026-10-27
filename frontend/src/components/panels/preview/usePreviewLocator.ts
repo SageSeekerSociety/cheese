@@ -165,6 +165,11 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     quoted.range(payload)
   }
 
+  function onVideoLocate(payload: { seconds: number; timestamp: string }) {
+    const where = t('work.room.video.timePoint', { time: payload.timestamp })
+    openLocator(where, t('work.room.video.atTime', { time: payload.timestamp }), where)
+  }
+
   function contextLine({ prefix, suffix }: QuoteContext): string {
     if (prefix && suffix) return t('work.room.preview.locateContext', { prefix, suffix })
     // 空的那一侧不写——写出来只是一对空引号。
@@ -301,6 +306,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onCell,
     onSheetRange,
     onMarkdownQuote,
+    onVideoLocate,
     onAnnotate,
   }
 }

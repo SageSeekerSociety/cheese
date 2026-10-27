@@ -159,6 +159,9 @@ it('shows a video deliverable in the video viewer instead of calling it unreadab
   await waitFor(() => expect(screen.getByRole('button', { name: '打开视频' })).toBeTruthy())
   expect(requestPreviewSession).not.toHaveBeenCalled()
   expect(screen.queryByText('这个文件不是文本')).toBeNull()
+
+  // 视频还没打开时没有「此刻」可指：入口先关着，不交出一个谁也没选过的 00:00。
+  expect((screen.getByTestId('video-locate') as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('still says a file the browser cannot draw is not text', async () => {
