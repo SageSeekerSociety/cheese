@@ -18,6 +18,12 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _lasting(ttl_s: int) -> dict[str, int]:
+    """Issued now and expiring in ``ttl_s``, on this module's clock."""
+    now = int(_utcnow().timestamp())
+    return {"iat": now, "exp": now + ttl_s}
+
+
 def create_access_token(
     user_id: int | None, handle: str | None = None, *, sid: uuid.UUID | None = None
 ) -> str:
@@ -40,7 +46,7 @@ def create_access_token(
     if sid is not None:
         payload["sid"] = str(sid)
     return credentials.mint(
-        Kind.ACCESS, payload, ttl_s=settings.access_token_expires_seconds
+        Kind.ACCESS, payload | _lasting(settings.access_token_expires_seconds)
     )
 
 
@@ -79,6 +85,7 @@ def mint_2fa_pending_token(
     payload = {
         "sub": str(user_id),
         "jti": jti,
+        "iat": now,
         "exp": expires_at if expires_at is not None else now + PENDING_2FA_TTL_S,
     }
     return Minted2faPendingToken(
@@ -166,7 +173,8 @@ def mint_sudo_ticket(user_id: int, purpose: SudoPurpose) -> MintedSudoTicket:
     jti = uuid.uuid4().hex
     payload = {"sub": str(user_id), "purpose": purpose.value, "jti": jti}
     return MintedSudoTicket(
-        token=credentials.mint(Kind.SUDO, payload, ttl_s=SUDO_TICKET_TTL_S), jti=jti
+        token=credentials.mint(Kind.SUDO, payload | _lasting(SUDO_TICKET_TTL_S)),
+        jti=jti,
     )
 
 
@@ -230,7 +238,10 @@ def create_notice_token(user_id: int, sid: uuid.UUID) -> str:
     takes an access token. It carries no expiry of its own; it is good for
     as long as the sign-in session ``sid`` is, which that connection checks.
     """
-    return credentials.mint(Kind.NOTICES, {"sub": str(user_id), "sid": str(sid)})
+    now = int(_utcnow().timestamp())
+    return credentials.mint(
+        Kind.NOTICES, {"sub": str(user_id), "sid": str(sid), "iat": now}
+    )
 
 
 def verify_notice_token(token: str) -> tuple[int, uuid.UUID] | None:
@@ -265,7 +276,7 @@ def create_app_sign_in_code(user_id: int, challenge: str) -> str:
     could have registered for.
     """
     payload = {"sub": str(user_id), "chl": challenge, "jti": uuid.uuid4().hex}
-    return credentials.mint(Kind.APP_SIGN_IN, payload, ttl_s=APP_SIGN_IN_TTL_S)
+    return credentials.mint(Kind.APP_SIGN_IN, payload | _lasting(APP_SIGN_IN_TTL_S))
 
 
 def verify_app_sign_in_code(code: str) -> AppSignInClaims | None:

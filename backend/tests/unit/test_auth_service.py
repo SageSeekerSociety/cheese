@@ -73,12 +73,7 @@ class TestAccessToken:
         assert verify_access_token(forged) is None
 
     def test_a_token_of_another_type_is_not_an_access_token(self) -> None:
-        other = credentials.mint(
-            Kind.TWO_FA_PENDING,
-            {
-                "sub": "123",
-            },
-        )
+        other = credentials.mint(Kind.TWO_FA_PENDING, {"sub": "123"}, ttl_s=300)
 
         assert verify_access_token(other) is None
 

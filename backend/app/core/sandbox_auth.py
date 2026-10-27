@@ -485,7 +485,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
     """The claims of a well-formed, correctly-signed, unexpired delegated
     credential or pass, else ``None`` — never an exception."""
     kind = credentials.kind_of(token)
-    if kind not in (Kind.DELEGATED, Kind.PASS):
+    if kind is not Kind.DELEGATED and kind is not Kind.PASS:
         return None
     return _delegated(credentials.read(token, kind))
 

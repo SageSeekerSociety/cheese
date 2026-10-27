@@ -172,11 +172,28 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
+#: The kinds of credential an agent acts with, rather than a person's own.
+_AGENT_KINDS = frozenset(
+    {
+        Kind.AGENT,
+        Kind.PROJECT_AGENT,
+        Kind.PERSONAL,
+        Kind.PERSONAL_EXECUTION,
+        Kind.DELEGATED,
+        Kind.PASS,
+    }
+)
+
+
 def resolver_for(request: Request, db: AsyncSession, token: str) -> ActorResolver:
-    """The resolver for a request presenting ``token``: a person's access
-    token, or one of the credentials the platform hands its agents — the kind
-    it says it is decides which (`app.core.credentials`)."""
-    person = credentials.kind_of(token) is Kind.ACCESS
+    """The resolver for a request presenting ``token``: one of the credentials
+    the platform hands its agents, by the kind it says it is
+    (`app.core.credentials`), or else a person's sign-in — one that does not
+    verify included, which is told to sign in again."""
+    person = not (
+        credentials.kind_of(token) in _AGENT_KINDS
+        or credentials.is_platform_secret(token)
+    )
     return ActorResolver(
         session=db,
         bearer=token if person else None,

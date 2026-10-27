@@ -32,7 +32,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.common.auth import create_access_token
+from app.core import credentials
 from app.core.config import settings
+from app.core.credentials import Kind
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import seed_user
 
@@ -465,7 +467,7 @@ def session_token(handle: str, *, ttl_s: int | None = None) -> str:
         return token
     claims = jwt.decode(token, options={"verify_signature": False})
     claims["exp"] = int(time.time()) + ttl_s
-    return jwt.encode(claims, settings.jwt_secret, algorithm="HS256")
+    return credentials.mint(Kind.ACCESS, claims)
 
 
 def room_agent_seat(client, topic_id) -> str:
