@@ -1,15 +1,7 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
 import { expect, test, type Page } from '@playwright/test'
-
-// 批注框那一格输入框的占位从产品文案里取，不在这里再抄一份：改版换过这句话（#4933），
-// 抄了一份的用例只在主干上才跑到，红了才知道对不上。
-const PREVIEW_COPY: Record<string, string> = JSON.parse(
-  readFileSync(new URL('../../frontend/src/i18n/messages/zh-CN/work/room/preview/index.json', import.meta.url), 'utf8')
-)
-const NOTE_PLACEHOLDER = PREVIEW_COPY.locatorPlaceholder
 
 // Real PNG decoding + PanelPreview's original-byte identity owner. Only the API
 // is substituted; pointer selection, layout, observers, focus and send are real.
@@ -100,7 +92,7 @@ async function select(page: Page, handFocusAway = false) {
   await page.mouse.down()
   await page.mouse.move(image.x + 180, image.y + 140, { steps: 8 })
   await page.mouse.up()
-  await expect(page.getByPlaceholder(NOTE_PLACEHOLDER)).toBeVisible()
+  await expect(page.getByPlaceholder('就这一处说点什么')).toBeVisible()
 }
 
 // Exercise both unchanged standalone callers, with decoded PNG bytes and a
@@ -206,7 +198,7 @@ test('the initially focused compact entry cancels once with Escape and hands foc
     fixture.height(150)
   })
   await dragImage(page, true)
-  const entry = page.getByRole('button', { name: NOTE_PLACEHOLDER, exact: true })
+  const entry = page.getByRole('button', { name: '就这一处说点什么', exact: true })
   await expect(entry).toBeFocused()
   await testInfo.attach('compact-initial-focus', { body: await page.screenshot(), contentType: 'image/png' })
   await entry.press('Escape')
@@ -241,7 +233,7 @@ test('a short wide real panel settles into one compact placement without measure
   await testInfo.attach('short-wide-panel', { body: await page.screenshot(), contentType: 'image/png' })
   expect(new Set(samples.map(sample => `${sample.placement}:${sample.compact}:${sample.top}:${sample.height}`)).size).toBe(1)
   expect(samples.every(sample => sample.compact && sample.bottom <= sample.panelBottom)).toBe(true)
-  await expect(page.getByRole('button', { name: NOTE_PLACEHOLDER, exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '就这一处说点什么', exact: true })).toBeFocused()
   expect(errors).toEqual([])
 })
 async function insidePane(page: Page) {
@@ -251,19 +243,19 @@ async function insidePane(page: Page) {
   }).toBe(true)
 }
 async function geometry(page: Page) {
-  return page.evaluate((placeholder) => {
+  return page.evaluate(() => {
     const rect = (element: Element) => {
       const box = element.getBoundingClientRect()
       return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
     }
-    const input = document.querySelector(`input[placeholder="${placeholder}"]`)!
+    const input = document.querySelector('input[placeholder="就这一处说点什么"]')!
     return { card: rect(input.closest('[data-region-note],.locator')!), region: rect(document.querySelector('.design-image__selection')!), pane: rect(document.querySelector('.design-image__pane')!) }
-  }, NOTE_PLACEHOLDER)
+  })
 }
 test('accepted image region keeps its note beside the visible region in the real panel', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder(NOTE_PLACEHOLDER)
+  const input = page.getByPlaceholder('就这一处说点什么')
   await input.fill('把这块留白收紧')
   const measured = await geometry(page)
   await testInfo.attach('actual-layout', { body: JSON.stringify(measured, null, 2), contentType: 'application/json' })
@@ -283,7 +275,7 @@ test('accepted image region keeps its note beside the visible region in the real
 test('zoom, scroll and local resize retain the same input, draft and original region', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder(NOTE_PLACEHOLDER)
+  const input = page.getByPlaceholder('就这一处说点什么')
   await input.fill('保留中文草稿')
   await input.evaluate(element => {
     const field = element as HTMLInputElement
@@ -309,13 +301,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
     await insidePane(page)
     await expect(input).toHaveValue('保留中文草稿')
     await testInfo.attach(`width-${width}`, { body: await page.screenshot(), contentType: 'image/png' })
-    expect(
-      await page.evaluate(
-        (placeholder) =>
-          document.querySelector(`input[placeholder="${placeholder}"]`) === (window as unknown as { originalInput: Element }).originalInput,
-        NOTE_PLACEHOLDER
-      )
-    ).toBe(true)
+    expect(await page.evaluate(() => document.querySelector('input[placeholder="就这一处说点什么"]') === (window as unknown as { originalInput: Element }).originalInput)).toBe(true)
     expect(await input.evaluate(element => [(element as HTMLInputElement).selectionStart, (element as HTMLInputElement).selectionEnd])).toEqual([2, 4])
   }
   expect(await page.evaluate(() => (window as unknown as { focusedAgain: number }).focusedAgain)).toBe(0)
@@ -332,7 +318,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
 test('composition, explicit cancellation and external focus respect draft ownership', async ({ page }) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder(NOTE_PLACEHOLDER)
+  const input = page.getByPlaceholder('就这一处说点什么')
   await expect(input).toBeFocused()
   await input.fill('正在输入中文')
   await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true })))
@@ -350,7 +336,7 @@ test('composition, explicit cancellation and external focus respect draft owners
 test('replacement metadata retires the draft while new bytes are pending, without restoring old focus', async ({ page }) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder(NOTE_PLACEHOLDER).fill('旧图说明')
+  await page.getByPlaceholder('就这一处说点什么').fill('旧图说明')
   await page.getByLabel('聊天输入', { exact: true }).focus()
   await page.evaluate(() => {
     const fixture = window as unknown as { metadata: { version: string }; blockBytes: boolean; fixture: { refresh: () => void } }
@@ -358,7 +344,7 @@ test('replacement metadata retires the draft while new bytes are pending, withou
     fixture.blockBytes = true
     fixture.fixture.refresh()
   })
-  await expect(page.getByPlaceholder(NOTE_PLACEHOLDER)).toHaveCount(0)
+  await expect(page.getByPlaceholder('就这一处说点什么')).toHaveCount(0)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeDisabled()
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
@@ -370,15 +356,15 @@ test('replacement metadata retires the draft while new bytes are pending, withou
 test('a compact image viewport keeps the draft entry and close button physically reachable', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder(NOTE_PLACEHOLDER).fill('短视口中的草稿')
+  await page.getByPlaceholder('就这一处说点什么').fill('短视口中的草稿')
   for (const height of [80, 48, 32]) {
     await page.locator('.design-image__viewport').evaluate((element, height) => {
       const viewport = element as HTMLElement
       viewport.style.flex = 'none'
       viewport.style.height = height + 'px'
     }, height)
-    await expect.poll(async () => page.getByRole('button', { name: NOTE_PLACEHOLDER, exact: true }).count()).toBe(1)
-    for (const name of [NOTE_PLACEHOLDER, '取消']) {
+    await expect.poll(async () => page.getByRole('button', { name: '就这一处说点什么', exact: true }).count()).toBe(1)
+    for (const name of ['就这一处说点什么', '取消']) {
       const control = page.getByRole('button', { name, exact: true })
       await expect.poll(async () => control.evaluate(element => {
         const box = element.getBoundingClientRect()
@@ -389,7 +375,7 @@ test('a compact image viewport keeps the draft entry and close button physically
     await testInfo.attach(`compact-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
   await page.getByRole('button', { name: '取消', exact: true }).click()
-  await expect(page.getByPlaceholder(NOTE_PLACEHOLDER)).toHaveCount(0)
+  await expect(page.getByPlaceholder('就这一处说点什么')).toHaveCount(0)
 })
 
 test('a pointerup handoff before Vue layout wins over the initial composer focus', async ({ page }) => {
@@ -404,7 +390,7 @@ test('a pointerup handoff before Vue layout wins over the initial composer focus
 test('a short real PanelPreview clips the note to its parent rather than the taller image pane', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder(NOTE_PLACEHOLDER).fill('真实短面板草稿')
+  await page.getByPlaceholder('就这一处说点什么').fill('真实短面板草稿')
   await page.evaluate(() => (window as unknown as { fixture: { resize: (width: number) => void } }).fixture.resize(240))
   for (const height of [150, 220, 660]) {
     await page.evaluate(value => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(value), height)
@@ -422,7 +408,7 @@ test('a short real PanelPreview clips the note to its parent rather than the tal
     }
     await testInfo.attach(`parent-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
-  await expect(page.getByPlaceholder(NOTE_PLACEHOLDER)).toHaveValue('真实短面板草稿')
+  await expect(page.getByPlaceholder('就这一处说点什么')).toHaveValue('真实短面板草稿')
 })
 
 test('a real pointer on a comment mark opens the thread instead of starting a region', async ({ page }) => {
