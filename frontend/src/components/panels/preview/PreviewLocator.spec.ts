@@ -37,7 +37,7 @@ it('指出一处以后去处由一个下拉定：默认发进对话，切到「�
 
   await fireEvent.click(ui.getByTestId('locator-recipient'))
   await fireEvent.click(ui.getByTestId('locator-recipient-comment'))
-  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给芝士的那一篮）。
+  // 切到评论以后：主按钮改叫「评论」，「加入待发」收起（评论不进发给任务芝士的那一篮）。
   expect(labels()).toContain('评论')
   expect(labels()).not.toContain('加入待发')
   ;[...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '评论')!.click()
@@ -100,7 +100,7 @@ it('问不了个人芝士时那一项不列出来：留着一条按下去没反�
   expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
 })
 
-it('停在个人芝士上、这一项又没了（换了人）：切回发给芝士，不能让发送键按下去悄没声', async () => {
+it('停在个人芝士上、这一项又没了（换了人）：切回发给任务芝士，不能让发送键按下去悄没声', async () => {
   const ui = render(PreviewLocator, {
     props: {
       target: { label: 'week-1.md', quote: '第一段' },
@@ -118,7 +118,7 @@ it('停在个人芝士上、这一项又没了（换了人）：切回发给芝�
     canComment: true,
     canAskPersonal: false,
   })
-  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给芝士')
+  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给任务芝士')
   const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
   send.click()
   expect(ui.emitted().send).toHaveLength(1)
@@ -349,8 +349,8 @@ it('去处菜单每一项都说清会发生什么', async () => {
   })
   await fireEvent.click(ui.getByTestId('locator-recipient'))
   const text = ui.getByRole('listbox').textContent ?? ''
-  expect(text).toContain('发给芝士')
-  expect(text).toContain('由芝士按这一处修改文件')
+  expect(text).toContain('发给任务芝士')
+  expect(text).toContain('由任务芝士按这一处修改文件')
   expect(text).toContain('仅留评论')
   expect(text).toContain('不触发芝士修改')
 })
