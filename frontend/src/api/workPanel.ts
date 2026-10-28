@@ -3,6 +3,9 @@ import type {
   FileSource,
   ListPayload,
   PreviewInfo,
+  PreviewSnapshot,
+  PreviewWakeAnswer,
+  PreviewWakeStatus,
   TopicWorkSummary,
   UsageStats,
   WorkspaceFile,
@@ -24,13 +27,24 @@ import { ApiError, authHeaders, BASE, request } from './http'
 export const SITE_PAGE_SIZE = 120
 export function getTranscript(
   topicId: string,
-  opts: { limit?: number; before?: string; after?: string; author?: string | null } = {}
+  opts: {
+    limit?: number
+    before?: string
+    after?: string
+    author?: string | null
+    /** Answer from the database's rows, bounded by a short wait on the bucket.
+     *  The panel opens 现场 with this so it paints without waiting on the slow
+     *  leg; the page says `deferred` when it skipped the archive, and the panel
+     *  then re-reads without the flag. */
+    resident?: boolean
+  } = {}
 ): Promise<SitePage> {
   const q = new URLSearchParams()
   if (opts.limit != null) q.set('limit', String(opts.limit))
   if (opts.before) q.set('before', opts.before)
   if (opts.after) q.set('after', opts.after)
   if (opts.author) q.set('author', opts.author)
+  if (opts.resident) q.set('resident', 'true')
   const qs = q.toString()
   return request<SitePage>(`/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`)
 }
@@ -122,6 +136,33 @@ export function writeFile(
 // or null if none is set. Content is fetched separately via readFile.
 export function getPreview(topicId: string): Promise<PreviewInfo | null> {
   return request<PreviewInfo | null>(`/topics/${encodeURIComponent(topicId)}/preview`)
+}
+
+/** 预览里那个应用最近一次成功加载时留的静态快照；从没留过是 null。 */
+export function getPreviewSnapshot(topicId: string): Promise<PreviewSnapshot | null> {
+  return request<PreviewSnapshot | null>(`/topics/${encodeURIComponent(topicId)}/preview/snapshot`)
+}
+
+/** 留下预览里那个应用此刻的快照（帧里的运行时桥拍的）。`artifactId` 是拍的时候摆着的那一件。 */
+export function putPreviewSnapshot(
+  topicId: string,
+  artifactId: string,
+  shot: { html: string; href: string; title: string }
+): Promise<PreviewSnapshot> {
+  return request<PreviewSnapshot>(`/topics/${encodeURIComponent(topicId)}/preview/snapshot`, {
+    method: 'PUT',
+    body: JSON.stringify({ artifact_id: artifactId, ...shot }),
+  })
+}
+
+/** 请声明这个应用的队友把它重新跑起来。没起新的一轮时 `reason` 说为什么。 */
+export function wakePreviewApp(topicId: string): Promise<PreviewWakeAnswer> {
+  return request<PreviewWakeAnswer>(`/topics/${encodeURIComponent(topicId)}/preview/wake`, { method: 'POST' })
+}
+
+/** 唤醒那几步此刻走到哪了。 */
+export function getPreviewWakeStatus(topicId: string): Promise<PreviewWakeStatus> {
+  return request<PreviewWakeStatus>(`/topics/${encodeURIComponent(topicId)}/preview/wake-status`)
 }
 
 /** 预览正在显示的那份文件，或者房间里指名的某一份。

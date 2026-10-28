@@ -103,8 +103,16 @@ watch(pdf.revision, async () => {
   await nextTick()
   if (family.value === 'doc' && cover.value) {
     void pdf.paint(1, cover.value, { width: 72, height: 96 })
-    const text = (await pdf.pageText(1)) ?? ''
-    snippet.value = text.replace(/\s+/g, ' ').trim().slice(0, 140)
+    // 摘要取不到就是没有摘要，和版本一样是「能读到才说」：卡片照常能打开、能下载。
+    // 这一步在 watch 回调里，抛出去会被时间线的 ErrorBoundary 接走——整段对话换成
+    // 「无法显示这块内容」，只为了两行可读可不读的字。取文字失败的原因（内核缺某个
+    // 接口、这一页的字体读不出来、内存不够）都不归这张卡片管。
+    try {
+      const text = (await pdf.pageText(1)) ?? ''
+      snippet.value = text.replace(/\s+/g, ' ').trim().slice(0, 140)
+    } catch {
+      snippet.value = ''
+    }
   }
   if (family.value === 'slides')
     strip.value.forEach((host, i) => void pdf.paint(i + 1, host, { width: 120, height: 68 }))

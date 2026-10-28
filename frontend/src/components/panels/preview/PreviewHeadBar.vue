@@ -30,6 +30,8 @@ const props = defineProps<{
   isImageArtifact: boolean
   previewFull: boolean
   refreshing: boolean
+  /** 网页/应用那一档自己的小浏览器条上已经有刷新：这里不再摆第二颗。 */
+  browsing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -62,6 +64,7 @@ const emit = defineEmits<{
       />
     </template>
     <BaseButton
+      v-if="!browsing"
       kind="ghost"
       icon="mdi-refresh"
       size="sm"

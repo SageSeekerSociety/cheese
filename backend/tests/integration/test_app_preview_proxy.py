@@ -7,6 +7,7 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.api.preview_host import cookie_name, preview_origin
+from app.api.preview_runtime import HTML_MEDIA, inject_runtime_script
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import preview_tunnel as wire
@@ -195,7 +196,11 @@ def test_app_assets_keep_root_urls_bytes_and_query(
     machine.body, machine.content_type = body, mime
     response = client.get(preview_origin(topic_id) + path + "?x=1&token=app-value&x=2")
     assert response.status_code == 200, response.text
-    assert response.content == body
+    # The page keeps its bytes, its root-relative URLs and its query; the only
+    # change is the runtime bridge the panel's little browser needs, and that
+    # goes into HTML documents alone.
+    expected = inject_runtime_script(body) if mime in HTML_MEDIA else body
+    assert response.content == expected
     assert response.headers["content-type"].startswith(mime)
     assert machine.asked == [f"GET {path}?x=1&token=app-value&x=2"]
     assert "set-cookie" not in response.headers
@@ -578,7 +583,7 @@ def test_the_room_preview_shows_the_app_of_the_teammate_who_served_it(
         response = client.get(preview_origin(topic_id) + "/")
 
         assert response.status_code == 200, response.text
-        assert response.content == b"the teammate's app"
+        assert response.content == inject_runtime_script(b"the teammate's app")
         assert other.asked == []
     finally:
         theirs.detach()

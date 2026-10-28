@@ -18,6 +18,9 @@ vi.mock('../../api', () => ({
   getPreview: (...args: unknown[]) => getPreview(...args),
   readPreviewFile: (...args: unknown[]) => readPreviewFile(...args),
   requestPreviewSession: (...args: unknown[]) => requestPreviewSession(...args),
+  // 应用睡着时去取快照：这里都还没留过。
+  getPreviewSnapshot: () => Promise.resolve(null),
+  putPreviewSnapshot: () => Promise.resolve(null),
 }))
 
 import PanelPreviewHost from '@/components/work/PanelPreviewHost.vue'
@@ -32,6 +35,11 @@ const artifact = (kind: 'app' | 'file' = 'app', id = 'artifact-a'): PreviewInfo 
   tunnel_up: true,
 })
 let submissions: { action: string; target: string; body: string }[]
+/** 条上说的此刻摆着的是哪一份：地址栏里的那一截，和它悬停时的那一行（含读到的版本）。 */
+function shown(container: Element): string {
+  const address = container.querySelector('[data-testid="browser-address"]') as HTMLInputElement | null
+  return address ? `${address.value} ${address.title}` : ''
+}
 function opaqueNavigation(frame: Element) {
   Object.defineProperty(frame, 'contentDocument', { configurable: true, get: () => null })
   frame.dispatchEvent(new Event('load'))
@@ -174,7 +182,7 @@ it('shows the unsupported file and its own launch target after a loaded app', as
   const opened = vi.spyOn(window, 'open').mockReturnValue(null)
   const { container, rerender, findByText, getByText } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
-  await waitFor(() => expect(container.textContent).toContain('Dev server'))
+  await waitFor(() => expect(shown(container)).toContain('Dev server'))
   getPreview.mockResolvedValue({
     ...artifact('file', 'binary-b'),
     path: 'weights.bin',
@@ -192,7 +200,7 @@ it('shows the unsupported file and its own launch target after a loaded app', as
   await rerender({ refreshTick: 1 })
   expect(await findByText('这个文件不是文本')).toBeTruthy()
   expect(container.textContent).toContain('weights.bin')
-  expect(container.textContent).not.toContain('Dev server')
+  expect(shown(container)).not.toContain('Dev server')
   expect(container.querySelector('iframe')).toBeNull()
   expect(submissions).toHaveLength(1)
   await fireEvent.click(getByText('在新窗口打开'))
@@ -282,8 +290,8 @@ it('labels the default launch as latest when a failed static target retains a li
   await rerender({ refreshTick: 1 })
   expect((await findByRole('alert')).textContent).toContain('denied-static-b')
   expect(container.querySelector('iframe')).toBe(retained)
-  expect(container.textContent).toContain('Dev server')
-  expect(container.textContent).not.toContain('b.html')
+  expect(shown(container)).toContain('Dev server')
+  expect(shown(container)).not.toContain('b.html')
   expect(container.querySelector('[title="在新标签页打开当前连接的应用"]')).toBeNull()
   await fireEvent.click(getByTitle('在新标签页打开最新预览'))
   expect(opened).toHaveBeenLastCalledWith('/previews/topic-a', '_blank', 'noopener')
@@ -370,8 +378,8 @@ it('keeps the displayed v1 context and announces failed v2 authorization', async
   expect(alert.textContent).toContain('授权被拒绝')
   expect(alert.textContent).toContain('当前仍显示上次打开的页面')
   expect(container.querySelector('iframe')).toBe(oldFrame)
-  expect(container.textContent).toContain('v1')
-  expect(container.textContent).not.toContain('v2')
+  expect(shown(container)).toContain('v1')
+  expect(shown(container)).not.toContain('v2')
   expect(submissions).toHaveLength(1)
 })
 
@@ -389,7 +397,7 @@ it('performs a true manual navigation for unchanged named HTML', async () => {
 it('retries canceled pending v2 after reactivating a pane displaying v1', async () => {
   readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: '<p>one</p>', version: 'v1' })
   const { container, rerender } = mountFile('site/index.html')
-  await waitFor(() => expect(container.textContent).toContain('v1'))
+  await waitFor(() => expect(shown(container)).toContain('v1'))
   vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
     submissions.push({ action: this.action, target: this.target, body: '' })
   })
@@ -403,22 +411,23 @@ it('retries canceled pending v2 after reactivating a pane displaying v1', async 
   opaqueNavigation(canceledFrame)
   await rerender({ active: true })
   await waitFor(() => expect(submissions).toHaveLength(3))
-  expect(container.textContent).toContain('v1')
+  expect(shown(container)).toContain('v1')
   opaqueNavigation(container.querySelector(`iframe[name="${submissions[2].target}"]`)!)
-  await waitFor(() => expect(container.textContent).toContain('v2'))
+  await waitFor(() => expect(shown(container)).toContain('v2'))
 })
 
 it('exposes app unavailability while retaining a previously displayed page', async () => {
-  const { container, rerender, findByRole } = mount()
+  const { container, rerender, findByTestId } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
   const oldFrame = container.querySelector('iframe')
   getPreview.mockResolvedValue({ ...artifact('app'), url: null, tunnel_up: false })
   await rerender({ refreshTick: 1 })
-  const alert = await findByRole('alert')
-  expect(alert.textContent).toContain('应用预览暂不可用')
-  expect(alert.textContent).toContain('当前仍显示上次打开的页面')
+  // 电脑睡了：盖一张「运行环境已休眠」的卡，上次打开的页面压暗留在底下（还没留过快照）。
+  const card = await findByTestId('preview-app-sleep')
+  expect(card.getAttribute('data-kind')).toBe('machine')
+  expect(card.textContent).toContain('运行环境已休眠')
   expect(container.querySelector('iframe')).toBe(oldFrame)
-  expect(container.textContent).not.toContain('运行中的应用')
+  expect(container.querySelector('.preview-frames--asleep')).not.toBeNull()
 })
 
 it.each(['app', 'file'] as const)(
@@ -437,7 +446,7 @@ it.each(['app', 'file'] as const)(
     getPreview.mockResolvedValue({ ...artifact(kind, 'artifact-c'), version: 'v3' })
     await rerender({ refreshTick: 3 })
     await waitFor(() => expect(submissions).toHaveLength(2))
-    await waitFor(() => expect(container.textContent).toContain('v3'))
+    await waitFor(() => expect(shown(container)).toContain('v3'))
   }
 )
 
@@ -455,7 +464,7 @@ it('keeps reading named metadata after failure and navigates a new version', asy
   readPreviewFile.mockResolvedValue({ path: 'site/index.html', content: 'three', version: 'v3' })
   await rerender({ refreshTick: 3 })
   await waitFor(() => expect(submissions).toHaveLength(2))
-  await waitFor(() => expect(container.textContent).toContain('v3'))
+  await waitFor(() => expect(shown(container)).toContain('v3'))
 })
 
 it('waits for navigation load rather than treating a grant as readiness', async () => {
