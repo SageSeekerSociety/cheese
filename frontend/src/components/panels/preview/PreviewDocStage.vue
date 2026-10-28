@@ -226,10 +226,10 @@ const codeSource = computed(() => (props.documentType?.view === 'code' ? props.p
 // `MAX_TEXT_BYTES`，1 MB）：`content` 也是 null，但那份文件写得回去、也读得回来，
 // 和「不是文本」（`binary`）不是一回事——这里说的是「这份文件的正文这次没取」。
 // 上面那句「不是文本」对 .md 不成立：它明明白白是文本，只是太大。
-const mdEmpty = computed(
-  () =>
-    props.documentType?.view === 'markdown' && props.previewFile?.content !== null && !props.previewFile?.content.trim()
-)
+const mdEmpty = computed(() => {
+  const content = props.previewFile?.content
+  return props.documentType?.view === 'markdown' && typeof content === 'string' && !content.trim()
+})
 const mdTooLarge = computed(
   () => props.documentType?.view === 'markdown' && props.previewFile?.content === null && !!props.previewFile?.too_large
 )
