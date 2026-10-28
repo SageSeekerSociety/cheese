@@ -95,7 +95,6 @@ const props = {
   documentType: { view: 'pages' as const, label: 'slides', icon: 'mdi-file-powerpoint-outline' },
   documentName: 'deck.pptx',
   isImageArtifact: false,
-  downloadError: '',
   docBytes,
   docIdentity: context,
   docSnapshot: { bytes: docBytes, identity: context, sourceVersion: context.version },

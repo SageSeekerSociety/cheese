@@ -74,7 +74,6 @@ const props = defineProps<{
   docLoading: boolean
   docError: string
   docRendererMissing: boolean
-  downloadError: string
   slideContext?: SlideSource
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
@@ -446,10 +445,7 @@ defineExpose({ snapshot, clearMark })
       @next="goChange(changeIndex + 1)"
     />
 
-    <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
-      {{ downloadError }}
-    </v-alert>
-    <v-alert v-else-if="stage.stage === 'shown' && stage.stale" type="warning" density="compact" class="mx-3 mb-2">
+    <v-alert v-if="stage.stage === 'shown' && stage.stale" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
     <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，

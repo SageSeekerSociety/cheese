@@ -182,7 +182,6 @@ export function useAcceptCard(props: AcceptCardHost) {
     showForceMergeInput: actions.showForceMergeInput,
     forceMergeReason: actions.forceMergeReason,
     deliverableBusy: actions.deliverableBusy,
-    deliverableError: actions.deliverableError,
     // 这件任务的批注
     comments,
     // 动作

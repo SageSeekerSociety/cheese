@@ -1,7 +1,9 @@
-// 「导出项目」的动作。三件事值得被盯着：
+// 「导出项目」的动作。两件事值得被盯着：
 //   1. 打的是后端那条现成的打包端点（`/projects/<id>/export`），不是另造一条；
-//   2. 落盘的是一份以项目名命名的 tar；名字还没读到就退回项目 id；
-//   3. 打包在服务端现算，期间处于 busy；失败把那句话留着，busy 归位。
+//   2. 落盘的是一份以项目名命名的 tar；名字还没读到就退回项目 id。
+//
+// 打包在服务端现算，期间处于 busy。成没成由 `downloadFile` 那一层弹一句（`lib/download`），
+// 这里不再留一行错话，所以本文件不再有那两条失败用例。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const downloadFile = vi.fn()
@@ -67,28 +69,17 @@ describe('useProjectExport', () => {
     expect(exporting.value).toBe(false)
   })
 
-  it('失败时留下抛出那句话', async () => {
+  it('底下没成时也不把 busy 卡住', async () => {
+    // 真实的 `downloadFile` 现在自己把失败说掉、不再往上抛，所以这一条是防它哪天
+    // 又开始抛时 busy 被卡住。
     downloadFile.mockRejectedValue(new Error('导出失败：网络'))
-    const { exportProject, exportError, exporting } = useProjectExport(
+    const { exportProject, exporting } = useProjectExport(
       () => PROJECT,
       () => '毕业设计'
     )
 
-    await exportProject()
+    await exportProject().catch(() => undefined)
 
-    expect(exportError.value).toBe('导出失败：网络')
     expect(exporting.value).toBe(false)
-  })
-
-  it('抛出非 Error 时兜一句通用的失败话术', async () => {
-    downloadFile.mockRejectedValue('nope')
-    const { exportProject, exportError } = useProjectExport(
-      () => PROJECT,
-      () => '毕业设计'
-    )
-
-    await exportProject()
-
-    expect(exportError.value).toBe('导出失败')
   })
 })

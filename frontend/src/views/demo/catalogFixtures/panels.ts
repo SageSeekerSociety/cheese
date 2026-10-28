@@ -176,7 +176,6 @@ const PREVIEW_BASE = {
   documentType: DOCUMENT_TYPES.md,
   documentName: PREVIEW_FILE.path,
   isImageArtifact: false,
-  downloadError: '',
   docBytes: null,
   docLoading: false,
   docError: '',
