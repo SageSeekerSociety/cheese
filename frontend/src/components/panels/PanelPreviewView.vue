@@ -527,6 +527,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :slide-context="slideContext"
       :revs="revs"
       :file-history="fileHistory"
+      :versions="props.versions"
       :show-history="showHistory"
       :anchors="threadAnchors"
       :page-anchors="pageAnchors"
