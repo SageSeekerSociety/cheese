@@ -58,7 +58,7 @@ beforeEach(() => {
   listFeedback.mockResolvedValue({
     data: [CARD],
     total: 1,
-    counts: { all: 1, hot: 0, active: 0, resolved: 0, unread: 0 },
+    counts: { all: 1, hot: 0, resolved: 0, unread: 0 },
   })
 })
 
@@ -123,7 +123,7 @@ describe('反馈中心的筛选', () => {
     listFeedback.mockResolvedValue({
       data: [],
       total: 0,
-      counts: { all: 1, hot: 0, active: 0, resolved: 0, unread: 0 },
+      counts: { all: 1, hot: 0, resolved: 0, unread: 0 },
     })
     useFeedbackStore().setFilter({ kind: 'other' })
 
@@ -136,7 +136,7 @@ describe('反馈中心的筛选', () => {
     listFeedback.mockResolvedValue({
       data: [],
       total: 0,
-      counts: { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 },
+      counts: { all: 0, hot: 0, resolved: 0, unread: 0 },
     })
     const { baseElement } = await mount()
 
@@ -144,5 +144,54 @@ describe('反馈中心的筛选', () => {
     // 两个语言里这一对都得是**两句不同的话**，而这条与上一条合起来钉的正是「选对了
     // 哪一句」。
     await waitFor(() => expect(baseElement.querySelector('.bes__title')?.textContent).toBe('No feedback yet'))
+  })
+})
+
+describe('状态药丸跟着栏位走', () => {
+  it('已完成栏里不再给出「已收录」「处理中」这两颗', async () => {
+    const { findByText, findByRole, queryByRole } = await mount()
+    await findByText('导出报表偶发 502')
+
+    await fireEvent.click(await findByRole('tab', { name: /Completed/ }))
+
+    // 这一栏只装三种结局；前两颗选中必然空，收起来。
+    await waitFor(() => expect(queryByRole('radio', { name: 'Received' })).toBeNull())
+    expect(queryByRole('radio', { name: 'In progress' })).toBeNull()
+    // 三种结局还在 —— 收起来的是「不可能出现」，不是「这一排不要了」。
+    expect(queryByRole('radio', { name: 'Resolved' })).not.toBeNull()
+    expect(queryByRole('radio', { name: 'Deployed' })).not.toBeNull()
+    expect(queryByRole('radio', { name: "Won't fix" })).not.toBeNull()
+  })
+
+  it('从「全部」带着「处理中」切到「已完成」，筛选自动回到不限', async () => {
+    const { findByText, findByRole } = await mount()
+    await findByText('导出报表偶发 502')
+
+    await fireEvent.click(await findByRole('radio', { name: 'In progress' }))
+    await waitFor(() => expect(useFeedbackStore().filterStatus).toBe('in_progress'))
+
+    await fireEvent.click(await findByRole('tab', { name: /Completed/ }))
+
+    // 不清的话会先拉回一个必然空的页，而那颗药丸已经不在选项里 —— 屏幕上是
+    // 一个空列表，没有任何东西解释为什么。
+    await waitFor(() => expect(useFeedbackStore().filterStatus).toBeNull())
+  })
+
+  it('点进一个空栏位时说「这一栏还没有反馈」，不说「没有符合条件」', async () => {
+    const { baseElement, findByText, findByRole } = await mount()
+    await findByText('导出报表偶发 502')
+
+    // 切到「已完成」时服务端回空：这一栏自己没有东西，而人一个筛选都没加。
+    listFeedback.mockResolvedValue({
+      data: [],
+      total: 0,
+      counts: { all: 1, hot: 0, resolved: 0, unread: 0 },
+    })
+    await fireEvent.click(await findByRole('tab', { name: /Completed/ }))
+
+    // 一个筛选都没加，所以不能说「没有符合条件的反馈」—— 那是替人编了一句他没做过
+    // 的筛选。按钮说的是「看全部」，也确实带回全部。
+    await waitFor(() => expect(baseElement.querySelector('.bes__title')?.textContent).toBe('Nothing in this tab yet'))
+    await waitFor(() => expect(baseElement.querySelector('.bes__btn')?.textContent?.trim()).toBe('See all'))
   })
 })

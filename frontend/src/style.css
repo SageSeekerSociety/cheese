@@ -210,6 +210,17 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  /* ---- Presentation ground ----
+     A deck shown full-screen takes the whole screen: unlike the picture viewer,
+     nothing behind it should read through. Same dark in both themes for the same
+     reason (a slide is judged against a neutral surround), but opaque. The dark
+     block repeats these values deliberately. */
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -218,6 +229,19 @@
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* ---- Video picture ground ----
+     The box a recording is drawn in (the conversation card, the preview panel)
+     is dark in both themes, for the reason the picture viewer is: a picture is
+     judged against a dark surround, and a pale box would compete with it. On a
+     portrait phone recording the letterbox bars are most of the box, so this is
+     not a detail — it is what the reader sees when nothing else is loaded yet.
+     The dark block repeats these values deliberately. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  /* 画面上的播放键：垫在它后面的一层半透明深底。画面可能整片是浅色的（白底录屏），
+     白图标直接放上去就看不见了。和 --lightbox-* 同一个理由，深色主题重复同一个值。 */
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
@@ -541,10 +565,21 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* Same as light, deliberately: a recording is drawn on the same dark box in both themes. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;
