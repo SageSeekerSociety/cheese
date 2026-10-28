@@ -1,0 +1,51 @@
+# 给一个 Lean 项目抄的 CI 作业。放到那个项目的 .github/workflows/lean.yml。
+#
+# 作业名 `name: lean` 就是 GitHub 上的 check run 名，平台的 required_checks
+# 按这个名字找它——改这里就要同步改那边的 name。
+# 仓库根目录同时放一个 lean-toolchain（内容如 leanprover/lean4:v4.35.0）。
+#
+# 两处 paths 故意写全、不合并成一个：这是给别的项目抄的模板，读的人要能
+# 一眼看到哪几个路径算「动了 Lean」，别让 YAML 锚点把这一层藏起来。
+name: Lean
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.lean"
+      - "*.lean"
+      - "lakefile.toml"
+      - "lakefile.lean"
+      - "lean-toolchain"
+      - "lake-manifest.json"
+      - ".github/workflows/lean.yml"
+  pull_request:
+    paths:
+      - "**/*.lean"
+      - "*.lean"
+      - "lakefile.toml"
+      - "lakefile.lean"
+      - "lean-toolchain"
+      - "lake-manifest.json"
+      - ".github/workflows/lean.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lean:
+    name: lean
+    runs-on: ubuntu-latest
+    # mathlib 首次构建慢；有缓存后第二次快。给差的项目留足余量。
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # 固定到提交，别写 @v1：标签可变，能被人指到别的提交。
+      # 这个 40 位是提交（v1 轻量标签在 2026-10-28 指向的 commit），不是文件的
+      # blob 哈希——`uses:` 只认提交，写错会解析失败。
+      - uses: leanprover/lean-action@fe408643ea7367d8c0404a8be3975bb145f5fb64 # v1
+        with:
+          use-github-cache: true
+          # 证明里留了 sorry 就红。默认的 build 只在编译不过时红，而带 sorry
+          # 的文件是能编译过的——那正是最该拦下的一种。
+          axiom-audit: true

@@ -33,7 +33,7 @@ vi.mock('@/api', async (original) => ({
   // 这一页挂的是真 App 外壳（要的就是它挂载出来的那个对话框），而外壳自己会拉
   // 通知计数、词表和额度提示：`setup-network.ts` 让任何没被 mock 的请求判失败，
   // 所以这些跟「你要做什么」无关的请求也得在这里给出答案。
-  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, resolved: 0, unread: 0 })),
   getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
   getResourceLimits: vi.fn(async () => ({ max_concurrent_turns: 0 })),
 }))

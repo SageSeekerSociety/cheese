@@ -22,7 +22,7 @@ setLocale('zh-CN')
 // 顶栏里的帮助入口会去问未读数和自己的管理员身份；这两个回答跟这一组用例无关。
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
-  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, resolved: 0, unread: 0 })),
   getFeedbackMeta: vi.fn(async () => ({ is_admin: false, is_platform_admin: false, tabs: [], kinds: [] })),
 }))
 

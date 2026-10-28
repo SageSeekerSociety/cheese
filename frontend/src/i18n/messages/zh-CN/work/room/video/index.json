@@ -1,12 +1,21 @@
 {
   "atTime": "视频 {time} 画面",
+  "backSecond": "倒退一秒",
+  "forwardSecond": "前进一秒",
   "label": "视频：{name}",
   "loadFailed": "无法读取视频，可以重新加载或下载",
   "loading": "视频加载中",
   "locateNeedsPlayer": "先打开视频，再批注它的某一刻",
-  "locateTime": "批注当前时间点",
+  "locateTime": "批注此刻",
+  "mute": "静音",
+  "offline": "现在没有网络，连上后再试",
   "open": "打开视频",
+  "pause": "暂停",
+  "play": "播放",
   "playFailed": "浏览器无法播放这个视频，可以下载后观看",
+  "rate": "播放速度 {rate}×",
   "retry": "重新加载",
-  "timePoint": "时间点 {time}"
+  "seek": "播放进度",
+  "timePoint": "时间点 {time}",
+  "unmute": "取消静音"
 }
