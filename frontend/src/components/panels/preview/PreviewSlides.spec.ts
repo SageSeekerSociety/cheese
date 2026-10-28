@@ -157,8 +157,9 @@ describe('slide reader contract (PDF.js substituted)', () => {
     const reader = ui.getByRole('dialog', { name: '放映中' })
     expect(document.activeElement).toBe(reader)
     expect(ui.queryByRole('navigation', { name: '缩略图' })).toBeNull()
-    // 放映是整屏的幻灯片：工具栏和页码框都收掉，只留画面和底下一行提示。
-    expect(ui.queryByRole('spinbutton', { name: '页码' })).toBeNull()
+    // 放映是整屏的幻灯片：上面那条工具栏收掉，底部换成一条细的，翻页和跳页还在手边。
+    expect(ui.queryByRole('button', { name: '缩略图' })).toBeNull()
+    expect(ui.getByRole('spinbutton', { name: '页码' }).closest('.slides__bar--present')).not.toBeNull()
     // 放映时挪到 body 下，不受面板外层绘制层级的限制（否则左边被侧栏盖住）。
     expect(reader.parentElement).toBe(document.body)
     await fireEvent.keyDown(reader, { key: 'ArrowRight' })
@@ -176,10 +177,16 @@ describe('slide reader contract (PDF.js substituted)', () => {
     trigger.focus()
     await fireEvent.click(trigger)
     const reader = ui.getByRole('dialog', { name: '放映中' })
-    await fireEvent.keyDown(reader, { key: 'Tab' })
+    const field = ui.getByRole('spinbutton', { name: '页码' })
+    const next = ui.getByRole('button', { name: '下一页' })
     const exit = ui.getByRole('button', { name: '退出放映' })
+    // 第 1 页时「上一页」是禁用的，不进焦点圈：这一层 → 页码框 → 下一页 → 退出键 → 回到这一层。
+    await fireEvent.keyDown(reader, { key: 'Tab' })
+    expect(document.activeElement).toBe(field)
+    await fireEvent.keyDown(field, { key: 'Tab' })
+    expect(document.activeElement).toBe(next)
+    await fireEvent.keyDown(next, { key: 'Tab' })
     expect(document.activeElement).toBe(exit)
-    // 再按一次绕回这一层自己，不会跑到后面的页面上。
     await fireEvent.keyDown(exit, { key: 'Tab' })
     expect(document.activeElement).toBe(reader)
     // 反向绕一圈也一样：Shift+Tab 从这一层回到退出键。

@@ -109,6 +109,18 @@ async function presentation() {
     root.value?.focus()
   }
 }
+/** 放映这一层里能落焦点的地方：这一层本身、底部那条上的按钮和页码框、右上角退出键。
+ *  Tab 只在这里面绕，不钻回后面的页面。 */
+function presentStops(): HTMLElement[] {
+  const stops: HTMLElement[] = []
+  if (root.value) stops.push(root.value)
+  const bar = root.value?.querySelector('.slides__bar--present')
+  if (bar) {
+    for (const el of bar.querySelectorAll<HTMLElement>('button, input')) if (!el.disabled) stops.push(el)
+  }
+  if (exitButton.value) stops.push(exitButton.value)
+  return stops
+}
 /** 放映时点一下画面翻到下一页；到最后一页就停住（和原型一样，不绕回第一页）。 */
 function pointAdvance() {
   if (!presenting.value || !ready.value) return
@@ -120,7 +132,7 @@ function keyboard(event: KeyboardEvent) {
   // 放映是整屏的一层：焦点留在这一层里，Tab 不能再钻回后面的页面。
   // 能落焦点的只有这一层自己和右上角那颗退出键。Shift+Tab 也算 Tab（反向绕一圈）。
   if (presenting.value && event.key === 'Tab') {
-    const stops = [root.value, exitButton.value].filter((el): el is HTMLElement => !!el)
+    const stops = presentStops()
     if (!stops.length) return
     event.preventDefault()
     const at = stops.indexOf(active as HTMLElement)
@@ -392,8 +404,9 @@ onBeforeUnmount(() => {
           @select="go"
         />
         <div class="slides__main">
-          <!-- 一页上方那一条：‹ 4 / 6 › … 放映。页码本身是个能跳的输入框，看起来还是「4 / 6」。 -->
-          <div v-if="!presenting" class="slides__bar">
+          <!-- 一页上方那一条：‹ 4 / 6 › … 放映。页码本身是个能跳的输入框，看起来还是「4 / 6」。
+               放映时同一条挪到屏幕底部：翻页和跳页都还在手边，只是一片半透明的小胶囊。 -->
+          <div class="slides__bar" :class="{ 'slides__bar--present': presenting }">
             <button
               type="button"
               class="slides__chev"
@@ -427,8 +440,16 @@ onBeforeUnmount(() => {
             >
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4L13.2 12z" /></svg>
             </button>
-            <span class="slides__spacer" />
-            <button ref="presentButton" type="button" class="slides__present" :disabled="!ready" @click="presentation">
+            <span v-if="!presenting" class="slides__spacer" />
+            <span v-if="presenting" class="slides__bar-hint">{{ t('slides.presentHint') }}</span>
+            <button
+              v-if="!presenting"
+              ref="presentButton"
+              type="button"
+              class="slides__present"
+              :disabled="!ready"
+              @click="presentation"
+            >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M3 4h18v12H3zM3 18h18v2H3z" opacity=".45" />
                 <path d="M10 8v6l5-3z" />
@@ -449,9 +470,6 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-      <p v-if="presenting && ready" class="slides__hint" aria-hidden="true">
-        {{ t('slides.presentHint') }} · {{ current }} / {{ count }}
-      </p>
       <!-- 放映没有工具栏；留一颗看得见的出口，触屏上没有 Esc 也退得出来（原型只有那句提示）。-->
       <button
         v-if="presenting"
@@ -708,16 +726,50 @@ onBeforeUnmount(() => {
   outline: 2px solid var(--present-ink);
   outline-offset: 2px;
 }
-.slides--presenting .slides__hint {
+/* 放映时这一条落在屏幕底部，压在一小片半透明上：翻页和跳页都还在手边。 */
+.slides__bar--present {
   position: fixed;
-  right: 0;
   bottom: 16px;
-  left: 0;
-  margin: 0;
+  left: 50%;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--present-fill);
+  color: var(--present-ink);
+  transform: translateX(-50%);
+  cursor: default;
+}
+.slides__bar--present .slides__chev {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__chev:hover:not(:disabled) {
+  background: var(--present-fill-2);
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__chev:disabled {
+  color: var(--present-muted);
+  opacity: 0.45;
+}
+.slides__bar--present .slides__jump {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__jump input {
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__jump input:hover:not(:disabled) {
+  border-color: var(--present-fill-2);
+}
+.slides__bar--present .slides__jump input:focus {
+  border-color: var(--present-ink);
+  background: var(--present-fill);
+}
+.slides__bar-hint {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--present-fill-2);
   color: var(--present-muted);
   font-size: 12px;
-  text-align: center;
-  pointer-events: none;
+  white-space: nowrap;
 }
 .slides__state {
   display: flex;
