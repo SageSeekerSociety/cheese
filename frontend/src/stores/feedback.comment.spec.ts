@@ -72,7 +72,7 @@ beforeEach(() => {
   likeFeedbackComment.mockReset()
   unlikeFeedbackComment.mockReset()
   deleteFeedbackComment.mockReset()
-  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: 0 })
 })
 
 describe('评论点赞', () => {

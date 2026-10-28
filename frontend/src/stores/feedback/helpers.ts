@@ -24,7 +24,7 @@ export const DRAFT_SAVE_DEBOUNCE_MS = 400
  *  窗口 —— `setStatsDays` 跳过重拉它们，页头也不给它们画窗口切换器。 */
 export const WINDOWED_KINDS: StatsKind[] = ['pipeline', 'product', 'feedback', 'usage', 'platform']
 
-export const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, deployed: 0, unread: 0 }
+export const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, resolved: 0, deployed: 0, unread: 0 }
 
 /** 哪几类反馈要问「怎么重现」/「你以为会发生什么」。**按类型分栏的口径写在
  *  这一个地方**：表单问什么、请求体带什么、以及以后按类型筛列表，三处问的都是

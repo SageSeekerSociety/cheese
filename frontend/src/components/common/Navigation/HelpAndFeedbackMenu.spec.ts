@@ -61,7 +61,7 @@ async function mount(
     kinds: ['bug'],
     hot_supports: 5,
   })
-  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: opts.unread ?? 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: opts.unread ?? 0 })
 
   const router = createRouter({
     history: createWebHashHistory(),
@@ -291,7 +291,7 @@ describe('帮助与反馈，在桌面 app 里', () => {
     await waitFor(() => expect(store.isAdmin).toBe(true))
     expect(store.counts.unread).toBe(4)
 
-    getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+    getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: 0 })
     getFeedbackMeta.mockResolvedValue({
       is_admin: false,
       is_platform_admin: false,
