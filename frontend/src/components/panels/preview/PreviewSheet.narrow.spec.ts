@@ -132,3 +132,20 @@ it('挂了评论的空格子留在卡片上：没有字也点得到那一条评�
   await fireEvent.click(dot)
   expect(ui.emitted('mark')).toEqual([['th1']])
 })
+
+it('几千行的表在窄处也一屏一屏读，到底了接下一段', async () => {
+  // 一行一张卡片时，每张都带自己的若干字段；几千行一次铺进 DOM 不比表格省。
+  const lines = ['姓名,学号']
+  for (let i = 1; i <= 150; i += 1) lines.push(`人${i},${2026000 + i}`)
+  const many = new TextEncoder().encode(lines.join('\n') + '\n').buffer as ArrayBuffer
+  const ui = render(PreviewSheet, {
+    props: { data: many, kind: 'csv' as const, marks: [] },
+    global: { plugins: [vuetify] },
+  })
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  // 先铺一段：不是 150 张全在。
+  expect(ui.container.querySelectorAll('.ps-card').length).toBeLessThan(150)
+  const more = await ui.findByTestId('sheet-more')
+  await fireEvent.click(more)
+  expect(ui.container.querySelectorAll('.ps-card').length).toBeGreaterThan(60)
+})

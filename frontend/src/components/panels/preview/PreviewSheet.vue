@@ -226,6 +226,13 @@ const visibleRows = computed(() =>
 const padTop = computed(() => windowStart.value * rowHeight.value)
 const padBottom = computed(() => Math.max(0, (totalRows.value - windowEnd.value) * rowHeight.value))
 
+/** 卡片那一档先铺多少行。一行一张卡片、每张都带自己的若干字段，几千行一次铺进 DOM
+ *  不比表格省；和表格那一档同一个做法——先铺一段，到底了再往后接。 */
+const CARD_CHUNK = 60
+const cardRows = ref(CARD_CHUNK)
+const cardRowsShown = computed(() => active.value?.rows.slice(0, cardRows.value) ?? [])
+const moreCards = computed(() => (active.value?.rows.length ?? 0) > cardRows.value)
+
 /** 行高、表头高在第一次画出来之后量一次；换了字号、缩放了页面时要再量。 */
 function measure() {
   const grid = scroller.value
@@ -452,6 +459,7 @@ async function open(data: ArrayBuffer) {
   sheets.value = []
   selected.value = ''
   focus.value = null
+  cardRows.value = CARD_CHUNK
   // 换了一份文件，上一份上圈的那一片不该跟着过来：坐标在另一张表里另有意义。
   dragging.value = false
   dragStart.value = null
@@ -561,6 +569,7 @@ function choose(rowIndex: number, colIndex: number) {
  *  是另外几格。 */
 function switchSheet(index: number) {
   activeIndex.value = index
+  cardRows.value = CARD_CHUNK
   selected.value = ''
   focus.value = null
   dragging.value = false
@@ -724,24 +733,35 @@ watch(showSource, async () => {
       </div>
 
       <pre v-if="showSource" class="ps__source">{{ sourceText }}</pre>
-      <PreviewSheetCards
-        v-else-if="showCards"
-        :rows="active.rows"
-        :width="active.width"
-        :address-at="addressAt"
-        :cell-text="cellText"
-        :column-name="columnName"
-        :selected="selected"
-        :marks="marksByAddress"
-        :pins="pinsByAddress"
-        :active-mark="activeMark"
-        :sheet-name="active.name"
-        :changed="changed"
-        :changed-by="changedBy"
-        :show-before="showBefore"
-        @choose="choose"
-        @mark="emit('mark', $event)"
-      />
+      <template v-else-if="showCards">
+        <PreviewSheetCards
+          :rows="cardRowsShown"
+          :width="active.width"
+          :address-at="addressAt"
+          :cell-text="cellText"
+          :column-name="columnName"
+          :selected="selected"
+          :marks="marksByAddress"
+          :pins="pinsByAddress"
+          :active-mark="activeMark"
+          :sheet-name="active.name"
+          :changed="changed"
+          :changed-by="changedBy"
+          :show-before="showBefore"
+          @choose="choose"
+          @mark="emit('mark', $event)"
+        />
+        <!-- 到底了就往后接一段：几千行的表在窄处一屏一屏读，不该一次全铺进 DOM。 -->
+        <button
+          v-if="moreCards"
+          type="button"
+          class="ps__more"
+          data-testid="sheet-more"
+          @click="cardRows += CARD_CHUNK"
+        >
+          {{ t('work.room.preview.sheetMore', { shown: cardRowsShown.length, total: active.rows.length }) }}
+        </button>
+      </template>
       <div v-else-if="showCharts" class="ps__charts">
         <PreviewSheetChart v-for="(chart, i) in activeCharts" :key="i" :chart="chart" :narrow="narrow" />
       </div>

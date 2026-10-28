@@ -383,6 +383,25 @@
   text-overflow: ellipsis;
   max-width: 40%;
 }
+/* 卡片到底时那一颗「再看 N 行」：它排在卡片列表下面，和卡片同一套留白。 */
+.ps__more {
+  flex: none;
+  margin: 0 8px 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--muted);
+}
+.ps__more:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+.ps__more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .ps__charts {
   flex: 1;
   min-height: 0;

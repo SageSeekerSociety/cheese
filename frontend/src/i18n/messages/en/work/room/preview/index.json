@@ -87,6 +87,7 @@
   "sheetRows": "{rows} rows",
   "sheetLegacyUnsupported": "Legacy Excel spreadsheets (.xls) can't be previewed yet. Download the original file",
   "sheetReadFailed": "Couldn't read this spreadsheet",
+  "sheetMore": "Show more ({shown} of {total})",
   "sheetRegion": "Sheet",
   "sheetRow": "Row {row}",
   "showSource": "View source",
