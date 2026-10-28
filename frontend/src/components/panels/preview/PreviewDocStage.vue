@@ -48,7 +48,7 @@ import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { SLIDE_SUFFIXES } from '@/lib/fileKind'
+import { readerText, SLIDE_SUFFIXES } from '@/lib/fileKind'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 
@@ -100,6 +100,8 @@ const props = defineProps<{
   pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
   /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
   sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
+  /** 攒在待发篮里、落在表格上的那几处：格子上挂一颗带序号的 pin（`n` 是篮里的编号）。 */
+  sheetPins?: readonly { id: string; n: number; sheet: string; address: string }[]
   /** 这一份 markdown 的协同编辑会话（`composables/panelPreview/liveEdit.ts` 那一包）。
    *  开着的时候正文换成编辑器。 */
   liveEdit?: PanelPreviewLiveEdit
@@ -227,30 +229,53 @@ const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
-// 代码那一档要的正文：读不成文本（二进制、太大）时是 null，就地说明一句，不往下落。
-const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.content ?? null : null))
+// 代码那一档要的正文：读它、看它，所以拿的是 `head`——一份超出编辑器上限的大文件，
+// `content` 是 null 而 `head` 是它的开头（见 `textfile.text_payload`）。取法统一走
+// `readerText`：只带 `content` 的调用方（整份装得下时）也不至于渲染成空白。
+// 只有连开头都读不成文本（二进制、或 committed 大文件根本没读）时才是 null，
+// 那就地说明一句，不往下落。
+const codeSource = computed(() => (props.documentType?.view === 'code' ? readerText(props.previewFile) : null))
+// 摆的是开头、底下的没读：尾上说明一句，读者才知道这不是整份。判 `too_large` 而不是
+// 「读到的比文件短」——只有超上限那一条会截，正常的文件整份都在。
+const codeTruncated = computed(() => !!props.previewFile?.too_large && codeSource.value !== null)
+
+// markdown 这一档读到的正文。和代码那一档同一条规矩：读者看的是 `head`，
+// 整份装得下时它和 `content` 是同一段（`readerText` 收的口）。
+const mdSource = computed(() => (props.documentType?.view === 'markdown' ? readerText(props.previewFile) : null))
 
 // markdown 这一档「没东西可读」的三种，各自说一句，别留一个空白面板。
 //
 // 一种是文件本身是空的（或有几个空行）：`MarkdownView` 画出来就是零个块，屏幕上除了
 // 文件条什么都没有，读者分不出是这份文件空着、还是预览坏了。
 //
-// 另一种是文件大到后端不把正文交出来（`too_large`，`domain/textfile.py` 的
-// `MAX_TEXT_BYTES`，1 MB）：`content` 也是 null，但那份文件写得回去、也读得回来，
-// 和「不是文本」（`binary`）不是一回事——这里说的是「这份文件的正文这次没取」。
+// 另一种是文件大到连开头都没给（`too_large`，`domain/textfile.py` 的 `MAX_TEXT_BYTES`，
+// 1 MB）。一般的超大文本仍会带着开头（`head`）过来、照常画出来；只有取不到字节的那一支
+// ——任务仓库里已提交的大文件，见 `repository/forge_files.py` 的 `text`——才是这一档，
+// 它和「不是文本」（`binary`）不是一回事：这里说的是「这份文件的正文这次没取」。
 //
 // 第三种是 `binary`（非 UTF-8 编码的 .md：`decode_text` 解不出来就归这一档），
-// `content` 同样是 null。上面那句「不是文本」在这一档正好适用，只是它摆得比 markdown
+// 正文同样是 null。上面那句「不是文本」在这一档正好适用，只是它摆得比 markdown
 // 那一支更靠后，落不到——不在这里接住，屏幕上就是一片空白。
-const mdEmpty = computed(() => {
-  const content = props.previewFile?.content
-  return props.documentType?.view === 'markdown' && typeof content === 'string' && !content.trim()
-})
+const mdEmpty = computed(
+  () => props.documentType?.view === 'markdown' && typeof mdSource.value === 'string' && !mdSource.value.trim()
+)
 const mdTooLarge = computed(
-  () => props.documentType?.view === 'markdown' && props.previewFile?.content === null && !!props.previewFile?.too_large
+  () =>
+    props.documentType?.view === 'markdown' &&
+    !!props.previewFile &&
+    mdSource.value === null &&
+    !!props.previewFile.too_large
 )
 const mdUnreadable = computed(
-  () => props.documentType?.view === 'markdown' && props.previewFile?.content === null && !props.previewFile?.too_large
+  () =>
+    props.documentType?.view === 'markdown' &&
+    !!props.previewFile &&
+    mdSource.value === null &&
+    !props.previewFile.too_large
+)
+// 摆的是开头、底下的没读：和代码那一档同一条提示，别让读者以为这份 markdown 就这么长。
+const mdTruncated = computed(
+  () => props.documentType?.view === 'markdown' && mdSource.value !== null && !!props.previewFile?.too_large
 )
 // ---- 目录 ----
 // 一份几百节的 md 没有目录就只剩滚轮。标题从渲染出来的正文里抽（`PreviewMarkdown`
@@ -375,7 +400,7 @@ const actions = computed<DocAction[]>(() => {
   if (
     props.documentType?.view === 'markdown' &&
     !props.liveEdit?.editingPath.value &&
-    props.previewFile?.content !== null
+    readerText(props.previewFile) !== null
   ) {
     list.push({
       key: 'md-source',
@@ -387,7 +412,7 @@ const actions = computed<DocAction[]>(() => {
       },
     })
   }
-  if (props.documentType?.view === 'code' && props.previewFile?.content !== null) {
+  if (props.documentType?.view === 'code' && readerText(props.previewFile) !== null) {
     list.push({
       key: 'code-wrap',
       icon: codeWrap.value ? 'mdi-arrow-expand-horizontal' : 'mdi-wrap',
@@ -578,7 +603,7 @@ defineExpose({ snapshot, clearMark })
     <PreviewCode
       v-else-if="documentType.view === 'markdown' && showSource"
       data-testid="markdown-source"
-      :source="previewFile?.content ?? ''"
+      :source="readerText(previewFile) ?? ''"
       language="markdown"
       wrap
     />
@@ -598,18 +623,27 @@ defineExpose({ snapshot, clearMark })
       <v-icon size="28" class="text-disabled mb-2">mdi-file-document-outline</v-icon>
       <div>{{ t('work.room.preview.fileEmpty') }}</div>
     </div>
-    <PreviewMarkdown
-      v-else-if="documentType.view === 'markdown'"
-      ref="mdRef"
-      :source="previewFile?.content ?? null"
-      :anchors="anchors"
-      :pins="pins"
-      :active-id="activeAnchor"
-      copy-code
-      @quote="emit('markdown-quote', $event)"
-      @anchor="emit('anchor', $event)"
-      @outline="mdOutline = $event"
-    />
+    <template v-else-if="documentType.view === 'markdown'">
+      <PreviewMarkdown
+        ref="mdRef"
+        :source="mdSource"
+        :anchors="anchors"
+        :pins="pins"
+        :active-id="activeAnchor"
+        copy-code
+        @quote="emit('markdown-quote', $event)"
+        @anchor="emit('anchor', $event)"
+        @outline="mdOutline = $event"
+      />
+      <!-- 摆的是开头、底下的没读：和代码那一档同一条话，别让读者以为这份就到这里。 -->
+      <div v-if="mdTruncated" class="doc__truncated" role="status">
+        <v-icon size="16">mdi-dots-horizontal</v-icon>
+        <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+          t('work.room.preview.download')
+        }}</BaseButton>
+      </div>
+    </template>
     <template v-else-if="documentType.view === 'code'">
       <PreviewCode
         v-if="codeSource !== null"
@@ -618,7 +652,15 @@ defineExpose({ snapshot, clearMark })
         :wrap="codeWrap"
         @lines="emit('code-lines', $event)"
       />
-      <div v-else class="doc__state doc__state--text">
+      <!-- 摆了开头、底下没读：说清这一点，再给一条去整份的路（下载）。 -->
+      <div v-if="codeTruncated" class="doc__truncated" role="status">
+        <v-icon size="16">mdi-dots-horizontal</v-icon>
+        <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+          t('work.room.preview.download')
+        }}</BaseButton>
+      </div>
+      <div v-else-if="codeSource === null" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
         <div>{{ t('work.room.preview.notText') }}</div>
       </div>
@@ -671,6 +713,7 @@ defineExpose({ snapshot, clearMark })
         :data="docBytes"
         :kind="documentType.sheet ?? 'workbook'"
         :marks="sheetAnchors"
+        :pins="sheetPins"
         :active-mark="activeAnchor"
         :changed="sheetChanged"
         :changed-by="versions?.changedBy.value"
@@ -775,6 +818,26 @@ defineExpose({ snapshot, clearMark })
   max-width: min(320px, calc(100vw - 32px));
 }
 .md-outline :deep(.v-list-item-title) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 摆了开头、底下没读那一行：钉在这一格底部，正文照常滚（它不占正文的地方）。 */
+.doc__truncated {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+}
+.doc__truncated > span {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

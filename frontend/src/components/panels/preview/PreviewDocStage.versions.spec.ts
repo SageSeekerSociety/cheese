@@ -94,7 +94,7 @@ function mount(versions: PreviewVersionsBundle) {
       documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
       documentName: '招募方案.md',
       documentSuffix: 'md',
-      previewFile: { path: '样例/招募方案.md', content: '# 新的', version: 'v2' },
+      previewFile: { path: '样例/招募方案.md', content: '# 新的', head: '# 新的', version: 'v2' },
       docBytes: null,
       docLoading: false,
       docError: '',

@@ -102,6 +102,7 @@ function staticFileMount() {
       previewFile: {
         path: 'index.html',
         content: '<h1>Hello</h1>',
+        head: '<h1>Hello</h1>',
         version: 'v1',
         bytes: 14,
         binary: false,
@@ -265,6 +266,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
       previewFile: {
         path: 'diagram.svg',
         content: '<svg viewBox="0 0 10 10"><circle r="4" /></svg>',
+        head: '<svg viewBox="0 0 10 10"><circle r="4" /></svg>',
         version: 'v1',
         bytes: 47,
         binary: false,
@@ -301,6 +303,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
     previewFile: {
       path: 'other.svg',
       content: '<svg viewBox="0 0 20 20"><rect width="10" height="10" /></svg>',
+      head: '<svg viewBox="0 0 20 20"><rect width="10" height="10" /></svg>',
       version: 'v2',
       bytes: 62,
       binary: false,
@@ -322,6 +325,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
       previewFile: {
         path: 'index.html',
         content: '<h1>Hello</h1>',
+        head: '<h1>Hello</h1>',
         version: 'v1',
         bytes: 14,
         binary: false,
@@ -362,6 +366,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
     previewFile: {
       path: 'other.html',
       content: '<h1>Other</h1>',
+      head: '<h1>Other</h1>',
       version: 'v2',
       bytes: 14,
       binary: false,

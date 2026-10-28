@@ -18,9 +18,11 @@ import { t } from '@/i18n'
 import {
   codeLanguageOf,
   DOCUMENT_TYPES,
+  headOf,
   IMAGE_SUFFIXES,
   imageMimeOf,
   NEEDS_CONVERSION,
+  PREVIEW_TEXT_BYTES,
   sheetKindOf,
   SLIDE_SUFFIXES,
   suffixOf,
@@ -43,6 +45,8 @@ const props = withDefaults(
 const data = ref<ArrayBuffer | null>(null)
 const imageUrl = ref('')
 const text = ref<string | null>(null)
+/** 摆的只是开头、底下的没摆（超过 `PREVIEW_TEXT_BYTES` 的文本）。 */
+const cut = ref(false)
 const loading = ref(false)
 /** 失败的原因，服务器给了就照原样；`null` = 没失败、也没在失败。空串是
  *  「失败了但没有原因」，那也要摆出重试按钮，所以用 null 而不是 '' 当哨兵。 */
@@ -55,6 +59,7 @@ let generation = 0
 function clear() {
   data.value = null
   text.value = null
+  cut.value = false
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
   imageUrl.value = ''
 }
@@ -74,15 +79,26 @@ async function load() {
     data.value = bytes
     if (IMAGE_SUFFIXES.has(suffix.value)) {
       imageUrl.value = URL.createObjectURL(new Blob([bytes], { type: imageMimeOf(suffix.value) }))
-    } else if (view.value !== 'pages' && view.value !== 'sheet' && bytes.byteLength <= 1024 * 1024) {
+    } else if (view.value !== 'pages' && view.value !== 'sheet') {
       const raw = new Uint8Array(bytes)
-      if (!raw.slice(0, 8192).includes(0)) {
+      // 文本按 `head` 的同一把尺子取（`textfile.PREVIEW_TEXT_BYTES`）：这个数以内
+      // 整份摆，超过就摆开头。以前超过 1 MB 就一个字都不摆、只给下载，理由和预览
+      // 面板那一支一样——读者要的是开头，不是「什么都没有」。
+      const window = raw.slice(0, PREVIEW_TEXT_BYTES)
+      const bytesCut = raw.byteLength > PREVIEW_TEXT_BYTES
+      if (!window.slice(0, 8192).includes(0)) {
         try {
-          text.value = new TextDecoder('utf-8', { fatal: true }).decode(raw)
+          // 截断时末尾会切在多字节字中间，解码器那时不严；退回最后一个换行保证
+          // 一行一行是齐的（同后端 `head_text`）。
+          const whole = new TextDecoder('utf-8', { fatal: !bytesCut }).decode(window)
+          const kept = headOf(whole, bytesCut)
+          text.value = kept.head
+          cut.value = kept.cut
         } catch {
           /* 不是文本：只能下载。 */
         }
       }
+      if (text.value === null) cut.value = false
     }
   } catch (e) {
     if (current === generation) error.value = e instanceof Error ? e.message : ''
@@ -117,9 +133,15 @@ onBeforeUnmount(() => {
       <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" copy-code />
       <PreviewCode v-else-if="view === 'code' && text !== null" :source="text" :language="codeLanguageOf(suffix)" />
       <DesignImage v-else-if="imageUrl" :src="imageUrl" :alt="filename" :identity="source" />
-      <pre v-else-if="text !== null" class="file-preview__text t-body">{{ text }}</pre>
+      <pre v-else-if="text !== null" class="file-preview__text t-body" :class="{ 'file-preview__text--cut': cut }">{{
+        text
+      }}</pre>
       <p v-else class="file-preview__note t-body c-muted">{{ t('work.library.downloadOnly') }}</p>
     </template>
+    <!-- 摆了开头、底下没摆：说清这一点（下载看整份），别让读者以为文件就这么长。 -->
+    <p v-if="cut" class="file-preview__cut t-meta c-muted" role="status">
+      {{ t('work.library.headOnly', { path: filename }) }}
+    </p>
   </div>
 </template>
 
@@ -145,5 +167,15 @@ onBeforeUnmount(() => {
   padding: 16px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* 只摆了开头：末尾压一条渐隐，读得出底下还有。 */
+.file-preview__text--cut {
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 24px), transparent);
+}
+.file-preview__cut {
+  margin: 0;
+  padding: 6px 16px 16px;
+  border-top: 1px solid var(--line);
+  text-align: center;
 }
 </style>
