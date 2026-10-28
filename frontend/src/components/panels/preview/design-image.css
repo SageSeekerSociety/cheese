@@ -22,6 +22,11 @@
   width: 100%;
   height: 100%;
 }
+/* 可能带透明的格式：底下铺棋盘格。图不透明的地方把它盖住，真有透明的地方才露出来——
+   白底上看不出「这里其实是空的」。格子的颜色两种主题各一套。 */
+.design-image__frame.is-transparent > img {
+  background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 16px 16px;
+}
 /* 亮度和饱和度：收在「调色」后面，摊开时浮在右上。 */
 .design-image__tone {
   position: absolute;

@@ -50,6 +50,8 @@ export function useDesignViewport(options: DesignViewportOptions) {
   const geometry = ref<RegionNoteGeometry | null>(null)
   const spaceHeld = ref(false)
   const panning = ref(false)
+  /** 这一格滚到哪儿了、内容有多长——超长图右边那条定位用它。 */
+  const scroll = ref({ top: 0, height: 0, content: 0 })
   /** 窄处（手机）四周只留 8px，图铺满宽度。和样式里 `.is-narrow` 的内边距是同一个数。 */
   const { narrow } = usePreviewNarrow(pane)
   const gutter = computed(() => (narrow.value ? 8 : 16))
@@ -87,6 +89,9 @@ export function useDesignViewport(options: DesignViewportOptions) {
   )
 
   let observer: ResizeObserver | null = null
+  let scrollCleanup: (() => void) | null = null
+  /** 滚到哪儿、内容多长。缩放和图尺寸变了不会触发 scroll 事件，所以要主动重读一次。 */
+  let readScrollNow: (() => void) | null = null
   let frame = 0
   function clippingAncestors(element: HTMLElement) {
     const clips: { element: HTMLElement; horizontal: boolean; vertical: boolean }[] = []
@@ -100,6 +105,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
   }
   function measure() {
     frame = 0
+    readScrollNow?.()
     const host = viewport.value
     const element = pane.value
     const selected = selectedBox.value
@@ -159,6 +165,13 @@ export function useDesignViewport(options: DesignViewportOptions) {
   }
   function fit() {
     zoomMode.value = 'fitv'
+  }
+  /** 滚到整张的某一比例（0–1），定位条拖到哪儿就用它。 */
+  function scrollToRatio(ratio: number) {
+    const element = pane.value
+    if (!element) return
+    const travel = Math.max(0, element.scrollHeight - element.clientHeight)
+    element.scrollTop = Math.max(0, Math.min(travel, ratio * element.scrollHeight - element.clientHeight / 2))
   }
   /** 换一档：`fitv` 装得下整张、`fitw` 铺满宽度、`actual` 一比一、`custom` 用当前比例。 */
   function setZoomMode(mode: 'fitv' | 'fitw' | 'actual' | 'custom') {
@@ -297,12 +310,22 @@ export function useDesignViewport(options: DesignViewportOptions) {
     pane,
     (element) => {
       observer?.disconnect()
+      scrollCleanup?.()
+      scrollCleanup = null
       if (!element) return
+      const readScroll = () => {
+        scroll.value = { top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight }
+      }
       observer = new ResizeObserver(() => {
         available.value = element.clientWidth
         availableHeight.value = element.clientHeight
+        readScroll()
         scheduleMeasure()
       })
+      element.addEventListener('scroll', readScroll, { passive: true })
+      scrollCleanup = () => element.removeEventListener('scroll', readScroll)
+      readScrollNow = readScroll
+      readScroll()
       observer.observe(element)
       for (const clip of clippingAncestors(element)) observer.observe(clip.element)
       available.value = element.clientWidth
@@ -320,6 +343,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
   })
   onBeforeUnmount(() => {
     observer?.disconnect()
+    scrollCleanup?.()
     if (frame) cancelAnimationFrame(frame)
     document.removeEventListener('scroll', scheduleMeasure, true)
     window.removeEventListener('resize', scheduleMeasure)
@@ -343,6 +367,8 @@ export function useDesignViewport(options: DesignViewportOptions) {
     pinching,
     setZoom,
     setZoomMode,
+    scrollToRatio,
+    scroll,
     zoomMode,
     availableHeight,
     fit,

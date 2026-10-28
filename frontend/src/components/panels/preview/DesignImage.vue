@@ -5,6 +5,7 @@ import type { SketchTool } from './designSketch'
 import { computed, ref, watch } from 'vue'
 
 import DesignCropBox from './DesignCropBox.vue'
+import DesignMinimap from './DesignMinimap.vue'
 import DesignRasterRegion from './DesignRasterRegion.vue'
 import { SKETCH_COLORS } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
@@ -49,6 +50,8 @@ const props = withDefaults(
     marks?: readonly ImageRegionMark[]
     /** 此刻打开着的那一串，画得实一点。 */
     activeMark?: string | null
+    /** 这种格式可能带透明：图底下铺棋盘格，透明的地方才看得出是透明。 */
+    transparent?: boolean
   }>(),
   {
     selectionEnabled: true,
@@ -57,6 +60,7 @@ const props = withDefaults(
     zoomOnWheel: false,
     marks: () => [],
     activeMark: null,
+    transparent: false,
   }
 )
 const emit = defineEmits<{
@@ -108,6 +112,8 @@ const {
   setZoom,
   setZoomMode,
   zoomMode,
+  scrollToRatio,
+  scroll,
   fit,
   wheel,
   touchDown,
@@ -131,6 +137,14 @@ const {
 /** 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。 */
 const adjust = useDesignAdjust(() => props.identity)
 /** 转 90°/270° 时屏幕上那张图的宽高和原图对调。 */
+/** 明显比视口长的时候才摆定位条：铺得下的图摆一条只会碍事。 */
+const showMinimap = computed(
+  () => natural.value.width > 0 && scroll.value.height > 0 && scroll.value.content > scroll.value.height * 1.6
+)
+/** 图上的批注在整张里的比例位置（顶上那一行导航用）。 */
+const markRatios = computed(() =>
+  (props.marks ?? []).map((mark) => (natural.value.height ? mark.region.y / natural.value.height : 0))
+)
 const shownSize = computed(() =>
   adjust.turned.value
     ? { width: natural.value.height, height: natural.value.width }
@@ -418,7 +432,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
         >
           <!-- 转动、调色、裁剪都作用在这一层上，里面的东西（画好的笔画、选中的那块、评论点、
                正在画的画布）跟着一起转——它们在数据里都是原图像素，谁也不需要各自再转一次。 -->
-          <div class="design-image__frame" :style="frameStyle">
+          <div class="design-image__frame" :class="{ 'is-transparent': props.transparent }" :style="frameStyle">
             <img
               :key="`${identity}:${src}`"
               ref="image"
@@ -513,6 +527,14 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
           />
         </div>
       </div>
+      <DesignMinimap
+        v-if="showMinimap && !adjust.cropping.value"
+        :pane="pane"
+        :viewport-height="scroll.height"
+        :content-height="scroll.content"
+        :marks="markRatios"
+        @jump="scrollToRatio"
+      />
       <div class="design-image__overlay">
         <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
       </div>

@@ -12,13 +12,19 @@
 import type { ImageRegionMark, RasterSelection } from './designRegion'
 import type { ImageRegionHandle } from './usePreviewImageRegion'
 
+import { computed } from 'vue'
+
 import DesignImage from './DesignImage.vue'
 import DesignRegionNote from './DesignRegionNote.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { imageMayHaveAlpha } from '@/lib/fileKind'
 
-defineProps<{
+const props = defineProps<{
   documentName: string
+  /** 这一份的后缀：PNG / WebP / GIF 底下铺棋盘格，看出哪儿是透明。 */
+  documentSuffix?: string
   active?: boolean
   /** 全屏里才把滚轮让给缩放：面板里这张图嵌在一段要滚的正文里。 */
   previewFull: boolean
@@ -40,6 +46,9 @@ defineProps<{
   commentError?: string
 }>()
 
+/** 这种格式可能带透明：底下铺棋盘格，透明的地方看得出是透明。 */
+const transparent = computed(() => imageMayHaveAlpha(props.documentSuffix ?? ''))
+
 const emit = defineEmits<{
   region: [selection: RasterSelection]
   annotate: [
@@ -51,6 +60,10 @@ const emit = defineEmits<{
   cancel: []
   /** 点了一处评论标记：把那一串打开。 */
   mark: [id: string]
+  /** 读不成的图上「重试」：请宿主重新读一遍这一份。 */
+  retry: []
+  /** 读不成时「下载原文件」。 */
+  download: []
 }>()
 </script>
 
@@ -67,6 +80,7 @@ const emit = defineEmits<{
       :zoom-on-wheel="previewFull"
       :marks="marks"
       :active-mark="activeMark"
+      :transparent="transparent"
       @region="emit('region', $event)"
       @annotate="emit('annotate', $event)"
       @mark="emit('mark', $event)"
@@ -95,9 +109,26 @@ const emit = defineEmits<{
         }}</a></template
       >
     </DesignImage>
-    <div v-else class="doc__state" role="status">
-      <span v-if="docError">{{ docError }}</span>
-      <v-progress-circular v-else indeterminate color="primary" size="24" />
+    <!-- 字节还没到、或者没读成。读不成时别只留一行字：给三个出口，读者才知道下一步
+         能干什么（重试 / 拿原文件 / 另开一页看）。 -->
+    <div v-else class="doc__state doc__state--text" role="status">
+      <template v-if="docError">
+        <v-icon size="32" class="mb-2">mdi-image-broken-variant</v-icon>
+        <div class="text-medium-emphasis">{{ t('work.room.preview.imageFailed') }}</div>
+        <div class="text-caption mb-3">{{ docError }}</div>
+        <div class="file-image__actions">
+          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-refresh" @click="emit('retry')">
+            {{ t('work.room.preview.retry') }}
+          </BaseButton>
+          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-download" @click="emit('download')">
+            {{ t('work.room.preview.download') }}
+          </BaseButton>
+        </div>
+      </template>
+      <template v-else>
+        <v-progress-circular indeterminate color="primary" size="24" />
+        <div class="text-caption mt-2">{{ t('work.room.preview.imageReading') }}</div>
+      </template>
     </div>
     <p v-if="annotateError" class="file-image__error" role="alert">{{ annotateError }}</p>
   </div>
@@ -112,6 +143,12 @@ const emit = defineEmits<{
   flex-direction: column;
   min-width: 0;
   min-height: var(--preview-min);
+}
+.file-image__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
 }
 .file-image__error {
   padding: 6px 8px;

@@ -136,15 +136,15 @@ function onUp(event: PointerEvent) {
 /* 框外压暗：一圈很宽的阴影，被外层裁在图的范围里。 */
 .crop__box {
   position: absolute;
-  border: 1px solid #fff;
-  box-shadow: 0 0 0 9999px #191a1c8c;
+  border: 1px solid var(--crop-ink);
+  box-shadow: 0 0 0 9999px var(--crop-dim);
   cursor: move;
 }
 .crop__handle {
   position: absolute;
   width: 14px;
   height: 14px;
-  background: #fff;
+  background: var(--crop-ink);
   border-radius: var(--radius-pill);
 }
 .crop__handle--nw {

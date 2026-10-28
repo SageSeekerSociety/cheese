@@ -113,5 +113,8 @@
   "pendingSummaryPlaceholder": "可选：补充总体修改说明，或直接发送",
   "sendWithNotes": "发送（含 {count} 条批注）",
   "pendingKeepGoing": "可继续在画布中选择多处，合并为一条消息提交修改",
-  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次"
+  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次",
+  "imageFailed": "这张图没能打开",
+  "imageReading": "正在读取这张图",
+  "retry": "重试"
 }
