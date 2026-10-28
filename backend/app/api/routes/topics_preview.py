@@ -42,15 +42,13 @@ import uuid
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.preview_app_state import app_state
 from app.api.preview_host import preview_origin
 from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import BlockRepository, _actor_in_place
-from app.core.config import settings
 from app.core.errors import NotFoundError
-from app.domain.agent.preview_hub import preview_hub
-from app.domain.agent.preview_owner import inspect_owner
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
@@ -97,33 +95,18 @@ async def get_preview(
             }
         )
     if art.mime_type == ARTIFACT_MIME["app"]:
-        # Knocked on LIVE, through the tunnel, every time the panel asks. A
-        # declared preview is not a running one: the agent's dev server exits,
-        # the machine goes offline, the helper's token ages out — and each of
-        # those renders as a white iframe unless the two states are reported
-        # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
-        if settings.preview_connection_mode == "owner":
-            inspection = await inspect_owner(topic_id, art.author, probe=True)
-            tunnel_up, alive, instance = (
-                inspection.tunnel_up,
-                inspection.alive,
-                inspection.instance,
-            )
-        else:
-            tunnel_up = preview_hub.is_online(topic_id, art.author)
-            alive = tunnel_up and await preview_hub.probe(topic_id, art.author)
-            instance = (
-                await preview_hub.instance(topic_id, art.author) if alive else None
-            )
+        # Knocked live through the tunnel every time the panel asks; see
+        # `app_state` for why the tunnel and the app are reported apart.
+        state = await app_state(topic_id, art.author)
         return ok(
             {
                 "kind": "app",
                 "path": art.content,
                 "mime": art.mime_type,
                 # Every executable preview stays outside the platform origin.
-                "url": (preview_origin(topic_id) + "/" if alive else None),
-                "tunnel_up": tunnel_up,
-                "instance": instance,
+                "url": (preview_origin(topic_id) + "/" if state.alive else None),
+                "tunnel_up": state.tunnel_up,
+                "instance": state.instance,
                 "artifact_id": str(art.id),
             }
         )

@@ -10,6 +10,7 @@ All three are what a reader waits for.
 import asyncio
 import gzip
 import json
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -122,15 +123,38 @@ def _site(
     limit: int = 120,
     before: str | None = None,
     after: str | None = None,
+    resident: bool = False,
 ) -> dict:
     params = {
         "limit": limit,
         **({"before": before} if before else {}),
         **({"after": after} if after else {}),
+        **({"resident": "true"} if resident else {}),
     }
     response = client.get(f"/topics/{topic}/transcript", params=params)
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+class _SlowBucket(_CountingBucket):
+    """A bucket whose reads take their time — what the panel must not wait on."""
+
+    #: Seconds each body read sleeps before answering.
+    delay_s = 0.0
+
+    async def download(self, key: str) -> bytes | None:
+        if self.delay_s:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            try:
+                await asyncio.sleep(self.delay_s)
+                body = self.objects.get(key)
+                if body is not None:
+                    self.bodies.append(body)
+                return body
+            finally:
+                self.in_flight -= 1
+        return await super().download(key)
 
 
 def _sealed(
@@ -349,3 +373,39 @@ def test_a_page_the_newest_object_fills_fetches_no_more(client, tmp_path, monkey
         ]["message"]["content"][0]["text"]
         == "step 0512"
     )
+
+
+def test_opening_the_site_does_not_wait_on_the_bucket(client, tmp_path, monkeypatch):
+    """The page the reader stares at is answered without the bucket.
+
+    The bucket leg is the slow one — throttled by the object store and retried
+    by the SDK — so the newest page is read from the rows the database already
+    holds, under a short budget, and says `deferred` so the panel re-reads for
+    the rest. Here the rows are taken away: every record is reachable only
+    through the bucket, which answers in 5 seconds. An open that waits on it
+    reddens this; one that answers from the rows does not.
+    """
+    bucket = _SlowBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_long_turn(str(uuid.uuid4()), 400))
+    session.drain(pages=2)
+    _seal(client, bucket)
+    topic = session.ref.topic_id
+    _drop_rows(client, topic)
+    bucket.delay_s = 5.0
+
+    started = time.monotonic()
+    page = _site(client, topic, resident=True)
+    waited = time.monotonic() - started
+
+    assert waited < 2.0, "打开现场不该等对象存储那一趟"
+    assert page["deferred"] is True, "这一页跳过了归档，读的人得知道要重读"
+    assert page["has_more"] is True, "跳过的记录在最新那一头，页面对不上就得说"
+
+    # 放开桶，重读一次（不带 resident）：跳过的记录这时到齐。
+    bucket.delay_s = 0.0
+    full = _site(client, topic)
+    assert full.get("deferred") in (False, None)
+    assert len(full["data"]) == 120

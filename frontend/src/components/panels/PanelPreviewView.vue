@@ -66,6 +66,8 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   active: true,
   path: null,
   autoReloaded: false,
+  // 链上「应用」那一段：没给就按「还没答」算，和刚打开面板时一样。
+  previewAppUp: false,
   frames: undefined,
   displayedFrame: null,
   navigation: 'idle',
@@ -84,6 +86,12 @@ const emit = defineEmits<{
   refresh: []
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
   download: []
+  /** 小浏览器：后退、前进、重载帧里那一页（帧里的桥执行）。 */
+  history: [action: 'back' | 'forward' | 'reload']
+  /** 地址栏里敲了一个地址。 */
+  navigate: [path: string]
+  /** 按了「唤醒并重启应用」。 */
+  wake: []
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   'document-changed': []
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
@@ -133,6 +141,13 @@ async function fullscreen() {
     fullscreenError.value = t('work.room.preview.fullscreenFailed')
   }
 }
+
+// 网页/应用那一档在不在屏幕上。两个地方要它，而它们必须给出同一个答案：决定挂不挂
+// `PreviewFrameStage`（它自带一条地址栏、一颗刷新钮），和告诉顶栏「这一格已经在自己
+// 刷新了，别再出一颗」。各写一份的话，改一边漏一边就会同时出现两颗刷新钮。
+const browsing = computed(() =>
+  props.frames ? props.frames.length > 0 || !!props.previewAppNote : !!props.previewUrl || !!props.previewAppNote
+)
 
 // 文档那一档的实例：钉在页上的一处要它当时那张图，换文件时又要它把那个钉撤掉。
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
@@ -446,6 +461,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
+      :browsing="browsing"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />
@@ -457,7 +473,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
     <PreviewFrameStage
-      v-else-if="frames ? frames.length > 0 : previewUrl"
+      v-else-if="browsing"
       :topic-id="topicId"
       :path="path"
       :frame-name="frameName"
@@ -470,6 +486,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-url="previewUrl"
       :preview-app-note="previewAppNote"
       :preview-tunnel-up="previewTunnelUp"
+      :preview-app-up="previewAppUp"
+      :app-snapshot="appSnapshot"
+      :wake-steps="wakeSteps"
+      :wake-error="wakeError"
       :preview-error="previewError"
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
@@ -481,6 +501,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @toggle-pick="pick.toggle"
       @pick-region="pick.fromRegion"
       @download="emit('download')"
+      @history="emit('history', $event)"
+      @navigate="emit('navigate', $event)"
+      @wake="emit('wake')"
     />
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>

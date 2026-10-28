@@ -8,6 +8,17 @@ itself; injection leaves it alone when it already does.
 
 import re
 
+#: 快照那一层不出网的判据，由平台这一侧写死并附上。写快照的接口按字节存内容，谁都能
+#: 写，所以「这一份 HTML 正好带着一条 `default-src 'none'`」不能当承诺用——只有我们自
+#: 己插进去的那条才算数（浏览器对多条 CSP 取交集，页面自带更松的也压不过它）。
+#:
+#: 只在这里写一次：页面里生成快照时由下面的脚本把它插进 head（脚本里的
+#: ``__SNAPSHOT_CSP__`` 占位符在模块导入时被替掉），收到平台上时由
+#: :func:`seal_snapshot` 再插一遍，两处不可能写成两条不一样的。
+SNAPSHOT_CSP = (
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:"
+)
+
 RUNTIME_SCRIPT = r"""(() => {
   'use strict';
   let hello = null;
@@ -332,7 +343,196 @@ RUNTIME_SCRIPT = r"""(() => {
       swallowClick = false;
     }
   }
+  // ---- 小浏览器 ----
+  // 宿主的地址栏、后退前进、离线快照都靠这一段：页面此刻在哪一页由帧自己报（应用里
+  // 点链接、SPA 改路由，宿主隔着源都看不见）；后退前进、刷新、跳到一个地址由宿主发
+  // 命令、帧自己执行——跨源的宿主碰不到帧的 history。
+  function post(payload) {
+    if (!hello) return;
+    window.parent.postMessage({
+      channel: 'cheese-preview-runtime', version: 1,
+      sessionId: hello.sessionId, ...payload,
+    }, hello.origin);
+  }
+  function currentHref() {
+    try { return window.location ? String(window.location.href) : ''; }
+    catch (e) { return ''; }
+  }
+  // 能不能后退前进：Navigation API 说得出就照它说，说不出就不报，由宿主自己数。
+  function historyFlags() {
+    try {
+      const nav = window.navigation;
+      if (nav && typeof nav.canGoBack === 'boolean') {
+        return { canBack: nav.canGoBack, canForward: nav.canGoForward === true };
+      }
+    } catch (e) { /* no Navigation API */ }
+    return {};
+  }
+  let lastHref = '';
+  function publishLocation(force) {
+    if (!hello) return;
+    const href = currentHref();
+    if (!href || (!force && href === lastHref)) return;
+    lastHref = href;
+    const doc = frameDocument();
+    let title = '';
+    try { title = String((doc && doc.title) || '').slice(0, 200); } catch (e) { title = ''; }
+    post({ type: 'location', href: href.slice(0, 2048), title: title, ...historyFlags() });
+  }
+  function locationChanged() { setTimeout(() => publishLocation(false), 0); }
+  try {
+    const history = window.history;
+    if (history) {
+      ['pushState', 'replaceState'].forEach((name) => {
+        const original = history[name];
+        if (typeof original !== 'function') return;
+        history[name] = function () {
+          const result = original.apply(this, arguments);
+          locationChanged();
+          return result;
+        };
+      });
+    }
+  } catch (e) { /* a locked-down history keeps the entry address only */ }
+  function runHistory(action) {
+    try {
+      if (action === 'back') window.history.back();
+      else if (action === 'forward') window.history.forward();
+      else if (action === 'reload') window.location.reload();
+    } catch (e) { /* nothing to traverse */ }
+  }
+  // 地址栏里敲的地址只在这个源里跳：别的站点不归预览管，也不该从这里被打开。
+  function navigateTo(path) {
+    if (typeof path !== 'string' || path.length > 2048) return;
+    try {
+      const target = new URL(path, currentHref());
+      if (target.origin !== new URL(currentHref()).origin) return;
+      window.location.assign(target.href);
+    } catch (e) { /* not an address */ }
+  }
+  // ---- 静态快照 ----
+  // 应用睡着时宿主拿这一份顶上：此刻渲染出来的 DOM，样式内联进去，脚本拿掉，读得到的
+  // 图片换成 data:。它在宿主那边放进不跑脚本、不出网的框里，所以只求「看上去一样」。
+  // 上限按**编码后的字节**数算，不是字符数：平台上那一侧（`SNAPSHOT_MAX_BYTES`）也按
+  // utf-8 字节判，两边得是同一把尺子。中文页面按字符算能过、按字节算过不去，差三倍。
+  const SNAPSHOT_MAX = 2000000;
+  const IMAGE_MAX = 400000;
+  function encodedLength(text) {
+    try { return new TextEncoder().encode(text).length; } catch (e) { return text.length; }
+  }
+  function inlineImage(img) {
+    try {
+      if (!img.complete || !img.naturalWidth) return '';
+      const doc = frameDocument();
+      const canvas = doc.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      const data = canvas.toDataURL('image/png');
+      return data.length <= IMAGE_MAX ? data : '';
+    } catch (e) { return ''; }
+  }
+  function snapshotHtml() {
+    const doc = frameDocument();
+    if (!doc || !doc.documentElement || typeof doc.querySelectorAll !== 'function') return '';
+    const sheets = [];
+    const inlined = new Set();
+    try {
+      const list = doc.styleSheets || [];
+      for (let i = 0; i < list.length; i++) {
+        try {
+          const rules = list[i].cssRules;
+          let text = '';
+          for (let j = 0; j < rules.length; j++) text += rules[j].cssText + '\n';
+          sheets.push(text);
+          if (list[i].ownerNode) inlined.add(list[i].ownerNode);
+        } catch (e) { /* a cross-origin sheet keeps its <link> */ }
+      }
+    } catch (e) { /* no CSSOM */ }
+    const owners = Array.from(doc.querySelectorAll('style, link[rel~="stylesheet"]'));
+    const fields = Array.from(doc.querySelectorAll('input, textarea, select'));
+    const images = Array.from(doc.querySelectorAll('img'));
+    const canvases = Array.from(doc.querySelectorAll('canvas'));
+    const clone = doc.documentElement.cloneNode(true);
+    const cloneOwners = Array.from(clone.querySelectorAll('style, link[rel~="stylesheet"]'));
+    const cloneFields = Array.from(clone.querySelectorAll('input, textarea, select'));
+    const cloneImages = Array.from(clone.querySelectorAll('img'));
+    const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
+    owners.forEach((node, i) => { if (inlined.has(node) && cloneOwners[i]) cloneOwners[i].remove(); });
+    fields.forEach((node, i) => {
+      const copy = cloneFields[i];
+      if (!copy) return;
+      if (node.tagName === 'TEXTAREA') copy.textContent = node.value;
+      else if (node.tagName === 'SELECT') {
+        Array.from(copy.options || []).forEach((option, k) => {
+          if (node.options[k] && node.options[k].selected) option.setAttribute('selected', '');
+          else option.removeAttribute('selected');
+        });
+      } else if (node.type === 'checkbox' || node.type === 'radio') {
+        if (node.checked) copy.setAttribute('checked', ''); else copy.removeAttribute('checked');
+      } else if (node.type !== 'password' && node.type !== 'file') {
+        copy.setAttribute('value', node.value);
+      }
+    });
+    images.forEach((node, i) => {
+      const copy = cloneImages[i];
+      if (!copy) return;
+      const data = inlineImage(node);
+      copy.removeAttribute('srcset');
+      copy.removeAttribute('loading');
+      if (data) copy.setAttribute('src', data);
+    });
+    canvases.forEach((node, i) => {
+      const copy = cloneCanvases[i];
+      if (!copy) return;
+      let data = '';
+      try { data = node.toDataURL('image/png'); } catch (e) { data = ''; }
+      const img = doc.createElement('img');
+      if (data && data.length <= IMAGE_MAX) img.setAttribute('src', data);
+      img.setAttribute('style', copy.getAttribute('style') || '');
+      img.setAttribute('width', String(node.width));
+      img.setAttribute('height', String(node.height));
+      copy.replaceWith(img);
+    });
+    Array.from(clone.querySelectorAll('script, noscript, iframe, object, embed, [data-cheese-pick], base, meta[http-equiv]'))
+      .forEach((node) => node.remove());
+    Array.from(clone.querySelectorAll('*')).forEach((node) => {
+      Array.from(node.attributes).forEach((attr) => {
+        if (/^on/i.test(attr.name)) node.removeAttribute(attr.name);
+      });
+    });
+    let head = clone.querySelector('head');
+    if (!head) {
+      head = doc.createElement('head');
+      clone.insertBefore(head, clone.firstChild);
+    }
+    const style = doc.createElement('style');
+    style.textContent = sheets.join('\n');
+    head.appendChild(style);
+    // 快照不出网：外链样式、字体、没换成 data: 的图都不去取，换来的是零请求和不泄露。
+    const csp = doc.createElement('meta');
+    csp.setAttribute('http-equiv', 'Content-Security-Policy');
+    csp.setAttribute('content', "__SNAPSHOT_CSP__");
+    head.insertBefore(csp, head.firstChild);
+    const html = '<!DOCTYPE html>' + clone.outerHTML;
+    return encodedLength(html) <= SNAPSHOT_MAX ? html : '';
+  }
+  function postSnapshot() {
+    let html = '';
+    try { html = snapshotHtml(); } catch (e) { html = ''; }
+    const doc = frameDocument();
+    let title = '';
+    try { title = String((doc && doc.title) || '').slice(0, 200); } catch (e) { title = ''; }
+    post({ type: 'snapshot', html: html, href: currentHref().slice(0, 2048), title: title, viewport: viewportOf() });
+  }
+  try {
+    if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+      window.navigation.addEventListener('navigatesuccess', locationChanged);
+    }
+  } catch (e) { /* no Navigation API */ }
   window.addEventListener('keydown', onKeydown, true);
+  window.addEventListener('popstate', locationChanged);
+  window.addEventListener('hashchange', locationChanged);
   window.addEventListener('message', (event) => {
     const data = event.data;
     if (event.source !== window.parent || event.origin !== __PLATFORM_ORIGIN__ ||
@@ -344,11 +544,15 @@ RUNTIME_SCRIPT = r"""(() => {
       // 键表随握手过来，最多 16 条；不认识的条目丢掉，不认识的键就不报。
       keys = Array.isArray(data.keys) ? data.keys.filter(usableKey).slice(0, 16) : [];
       publish();
+      publishLocation(true);
       return;
     }
     // 圈选开关只认当前会话：换了一帧、上一个会话的迟到消息，都不算。
     if (!hello || data.sessionId !== hello.sessionId) return;
     if (data.type === 'pick-mode') setPick(data.on === true);
+    else if (data.type === 'history') runHistory(data.action);
+    else if (data.type === 'navigate') navigateTo(data.path);
+    else if (data.type === 'snapshot') postSnapshot();
   });
   window.CheesePreviewRuntime = Object.freeze({
     ready() { state = { type: 'ready' }; publish(); },
@@ -364,6 +568,13 @@ RUNTIME_SCRIPT = r"""(() => {
   }, __PLATFORM_ORIGIN__);
 })();
 """
+
+#: 脚本里那条 CSP 在这里填进去，不用各处的发脚本那一层再替换一次（`__PLATFORM_ORIGIN__`
+#: 是逐个请求才知道的，这条 CSP 不是）。填完以后发出去的脚本里不再有占位符。
+RUNTIME_SCRIPT = RUNTIME_SCRIPT.replace("__SNAPSHOT_CSP__", SNAPSHOT_CSP)
+
+#: 装运行时的那几种文档：房间文件和应用的网页都按它判（`preview_host`、`preview_relay`）。
+HTML_MEDIA = frozenset({"text/html", "application/xhtml+xml"})
 
 # 插进 <head> 之后的那一行。纯 ASCII：只要页面本身的编码是 ASCII 兼容的（UTF-8、
 # latin-1、GBK……），按字节插进去就不会错位——ASCII 字节在那里就是它自己。
@@ -475,3 +686,24 @@ def inject_runtime_script(data: bytes) -> bytes:
     if at is None:
         return data
     return data[:at] + RUNTIME_TAG + data[at:]
+
+
+_SNAPSHOT_CSP_META = (
+    f'<meta http-equiv="Content-Security-Policy" content="{SNAPSHOT_CSP}">'.encode()
+)
+
+
+def seal_snapshot(data: bytes) -> bytes | None:
+    """把一份快照 HTML 封成「不出网」的样子：自己那条 CSP 插在文档最前面。
+
+    和装运行时用的是同一处插入点（doctype、注释、`<html>`、`<head>` 之后），所以这条
+    meta 一定排在任何内容之前——CSP 只管它后面的东西，放晚了等于没放。答 None 表示这
+    一份封不了（编码不是 ASCII 兼容的，按字节插会把整份弄错位），调用方该拒收而不是
+    存下一份挡不住出网的快照。
+    """
+    if _declares_non_ascii_compatible(data):
+        return None
+    at = _insertion_point(data)
+    if at is None:
+        return None
+    return data[:at] + _SNAPSHOT_CSP_META + data[at:]

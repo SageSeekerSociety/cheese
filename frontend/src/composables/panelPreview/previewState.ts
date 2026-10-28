@@ -21,6 +21,10 @@ export function createPreviewState() {
   const previewUrl = ref<string | null>(null)
   const previewAppNote = ref('')
   const previewTunnelUp = ref(false)
+  // 应用的端口有应答（后端给了地址）：连通链「应用」那一段。
+  const previewAppUp = ref(false)
+  // 摆着的是哪一件产物：快照记在它名下。
+  const previewArtifactId = ref<string | null>(null)
   const previewNamedPath = ref('')
   const previewError = ref<string | null>(null)
   const previewReadError = ref<string | null>(null)
@@ -58,6 +62,8 @@ export function createPreviewState() {
     previewUrl,
     previewAppNote,
     previewTunnelUp,
+    previewAppUp,
+    previewArtifactId,
     previewNamedPath,
     previewError,
     previewReadError,
