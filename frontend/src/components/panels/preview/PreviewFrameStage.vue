@@ -14,6 +14,7 @@ import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
 import { computed, ref, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
 
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
@@ -27,6 +28,12 @@ import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
+import {
+  defaultViewport,
+  fitScale,
+  type PreviewViewport,
+  VIEWPORT_WIDTH,
+} from '@/lib/previewViewport'
 import { previewStage } from '@/lib/previewStage'
 
 const props = defineProps<{
@@ -116,7 +123,34 @@ const step = computed(() => {
 })
 
 const showSource = ref(false)
-const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
+const viewport = ref<PreviewViewport>('desktop')
+
+/** 这一块画面的实际大小：三档里放不下的那两档按它等比缩小。
+ *
+ *  量的是画面这一块，不是整个面板：上面的小浏览器一行占了多高，画面就少多高。 */
+const framesRef = ref<HTMLElement | null>(null)
+const { width: paneWidth, height: paneHeight } = useElementSize(
+  framesRef,
+  { width: 0, height: 0 },
+  { box: 'border-box' }
+)
+/** 这一档的内容视口宽度：`null` 是「铺满面板」。 */
+const tierWidth = computed(() => VIEWPORT_WIDTH[viewport.value])
+const scale = computed(() => fitScale(paneWidth.value, viewport.value))
+/** 画面那一层自己的尺寸：固定档按档宽排，放不下就缩；纵向按面板补足缩小后的高度。 */
+const surfaceStyle = computed(() => {
+  const target = tierWidth.value
+  if (!target) return {}
+  const s = scale.value
+  return {
+    width: `${target}px`,
+    // 缩小后要填满可见高度：布局高度得按比例放大，否则页面底下空出一截。
+    height: s < 1 && paneHeight.value > 0 ? `${paneHeight.value / s}px` : '100%',
+    transform: s < 1 ? `scale(${s})` : undefined,
+    transformOrigin: 'top left',
+    marginInline: s < 1 ? '0' : 'auto',
+  }
+})
 
 // 「窄」按这一格自己的宽度算，不看窗口：预览在右栏里可以是 466px，或者手机上整页的
 // 一格里——那两种都得把这一条收成一行。还没量到宽度（挂载前、测试里没有布局）按宽处
@@ -205,8 +239,6 @@ type BarAction = {
   /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
   testid?: string
   disabled?: boolean
-  /** 菜单里那一行是不是当前选中的那一档（视口三档）；不是单选的那几行不给。 */
-  active?: boolean
   run: () => void
 }
 const VIEWPORTS = [
@@ -243,20 +275,6 @@ const actions = computed<BarAction[]>(() => {
       },
     })
   }
-  // 窄时条上放不下视口三键，它们进菜单，照样能切。
-  if (compact.value && !showSource.value) {
-    for (const mode of VIEWPORTS) {
-      list.push({
-        key: `viewport-${mode.key}`,
-        icon: mode.icon,
-        label: t(mode.label),
-        active: viewport.value === mode.key,
-        run: () => {
-          viewport.value = mode.key
-        },
-      })
-    }
-  }
   return list
 })
 
@@ -264,8 +282,21 @@ watch(
   () => props.previewFile?.path,
   () => {
     showSource.value = false
-    viewport.value = 'desktop'
+    // 换了一份文件就回到那一份的默认档：窄面板按手机、其余按桌面（`defaultViewport`）。
+    viewport.value = defaultViewport(paneWidth.value)
   }
+)
+
+// 宽度第一次量到（挂载后）时把默认档摆正：挂载那一刻还没有布局，只能先按桌面画。
+let settledDefault = false
+watch(
+  paneWidth,
+  (width) => {
+    if (settledDefault || width <= 0) return
+    settledDefault = true
+    viewport.value = defaultViewport(width)
+  },
+  { immediate: true }
 )
 </script>
 
@@ -304,10 +335,8 @@ watch(
             <v-list-item
               v-for="action in actions"
               :key="action.key"
-              :role="action.active === undefined ? 'menuitem' : 'menuitemradio'"
-              :aria-checked="action.active"
+              role="menuitem"
               :prepend-icon="action.icon"
-              :active="action.active"
               :disabled="action.disabled"
               @click="action.run()"
             >
@@ -331,23 +360,25 @@ watch(
         >
           <template v-if="!action.iconOnly">{{ action.label }}</template>
         </BaseButton>
-        <div v-if="!showSource" class="preview-viewport ms-2">
-          <button
-            v-for="mode in VIEWPORTS"
-            :key="mode.key"
-            type="button"
-            class="preview-viewport__btn"
-            :class="{ 'preview-viewport__btn--active': viewport === mode.key }"
-            :data-testid="`viewport-${mode.key}`"
-            :aria-pressed="viewport === mode.key"
-            :title="t(mode.label)"
-            :aria-label="t(mode.label)"
-            @click="viewport = mode.key"
-          >
-            <v-icon size="15">{{ mode.icon }}</v-icon>
-          </button>
-        </div>
       </template>
+      <!-- 视口三键两档都平铺：窄的时候也一样。它说的是「现在按哪种宽度排版」，读者随时
+           要看得见、按得到——收进「…」里等于手机上没法换一种宽度看。 -->
+      <div v-if="!showSource" class="preview-viewport" :class="compact ? 'ms-1' : 'ms-2'">
+        <button
+          v-for="mode in VIEWPORTS"
+          :key="mode.key"
+          type="button"
+          class="preview-viewport__btn"
+          :class="{ 'preview-viewport__btn--active': viewport === mode.key }"
+          :data-testid="`viewport-${mode.key}`"
+          :aria-pressed="viewport === mode.key"
+          :title="t(mode.label)"
+          :aria-label="t(mode.label)"
+          @click="viewport = mode.key"
+        >
+          <v-icon size="15">{{ mode.icon }}</v-icon>
+        </button>
+      </div>
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
     <div v-if="step" role="status" class="px-3 py-2 text-caption">
@@ -383,11 +414,13 @@ watch(
       language="xml"
       wrap
     />
-    <div
-      v-show="!(showSource && canShowSource)"
-      :data-viewport="viewport"
-      :class="['preview-frames', `preview-frames--${viewport}`, framesClass]"
-    >
+    <div ref="framesRef" v-show="!(showSource && canShowSource)" class="preview-slot">
+      <div
+        :data-viewport="viewport"
+        :data-scale="scale"
+        :style="surfaceStyle"
+        :class="['preview-frames', `preview-frames--${viewport}`, framesClass, { 'preview-frames--fixed': !!tierWidth }]"
+      >
       <template v-if="frames">
         <iframe
           v-for="frame in frames"
@@ -424,6 +457,7 @@ watch(
         @wake="emit('wake')"
       />
       <PreviewRegionPick v-if="pickTarget === 'region' && pickOn" @pick="emit('pick-region', $event)" />
+      </div>
     </div>
   </div>
 </template>
@@ -504,19 +538,26 @@ button.preview-viewport__btn.preview-viewport__btn--active {
 .preview-frames--covered .preview-frame {
   visibility: hidden;
 }
-.preview-frames {
-  position: relative;
+/* 画面那一槽：宽度永远等于面板，量的是它。里面那一块（`.preview-frames`）才按视口档
+   变宽窄、变缩放——分开两级是为了**别量自己改过的东西**：量自己的话，缩到 0.78 之后
+   量出来的宽度又变了，比例会一直往下追。 */
+.preview-slot {
   flex: 1 1 auto;
   width: 100%;
   min-height: var(--preview-min);
 }
-.preview-frames--tablet {
-  width: min(100%, 768px);
-  margin-inline: auto;
+.preview-slot:has(.preview-frames--fixed) {
+  overflow: hidden;
 }
-.preview-frames--mobile {
-  width: min(100%, 375px);
-  margin-inline: auto;
+.preview-frames {
+  position: relative;
+  width: 100%;
+  min-height: var(--preview-min);
+}
+/* 固定档（平板 768、手机 375）的宽度和缩放由行内样式给（见 `surfaceStyle`）：
+   放得下就是那一档的原宽，放不下整块等比缩小，中心对齐。 */
+.preview-frames--fixed {
+  flex: none;
 }
 .preview-frames .preview-frame {
   position: absolute;
