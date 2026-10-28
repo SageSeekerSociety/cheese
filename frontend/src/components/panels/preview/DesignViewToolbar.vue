@@ -65,7 +65,7 @@ const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
       >
         ＋
       </button>
-      <span class="dt-pct" aria-live="polite">{{ Math.round(scale * 100) }}%</span>
+      <output class="dt-pct" :aria-label="t('design.scale')">{{ Math.round(scale * 100) }}%</output>
       <span class="dt-sep" />
       <button type="button" class="dt-btn dt-btn--text" :title="t('design.rotateHint')" @click="emit('rotate')">
         <i class="mdi mdi-rotate-right" aria-hidden="true" />{{ t('design.rotate') }}

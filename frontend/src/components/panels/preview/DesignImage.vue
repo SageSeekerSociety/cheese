@@ -134,6 +134,7 @@ const {
   selectedRegion,
   beforePanStart: () => rememberFocus(),
   adjust: () => adjust.adjust.value,
+  crop: () => adjust.adjust.value.crop,
 })
 
 /** 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。 */
@@ -161,13 +162,23 @@ const adjustValues = computed(() => ({ rotate: adjust.adjust.value.rotate, flip:
  * 这一层按**原图的比例**摆（不是 sheet 那个转后的框）：图没被拉过，转过来才是对的形状。
  * 它钉在 sheet 正中，转轴也在正中——90° 之后占的正好是 sheet 那个宽高对调的框。
  */
-const frameStyle = computed(() => ({
-  width: `${natural.value.width * scale.value}px`,
-  height: `${natural.value.height * scale.value}px`,
-  transform: `translate(-50%, -50%) rotate(${adjust.adjust.value.rotate}deg) scaleX(${adjust.adjust.value.flip ? -1 : 1})`,
-  filter: adjust.filter.value,
-  clipPath: adjust.clip.value,
-}))
+const frameStyle = computed(() => {
+  const crop = adjust.adjust.value.crop
+  const shownWidth = shownSize.value.width * scale.value
+  const shownHeight = shownSize.value.height * scale.value
+  // 版面已经缩成裁完的那一块，这一层的中心就要跟着挪：原来的中心落在 (crop.x + w/2) 那一点。
+  const left = crop ? shownWidth * (0.5 - crop.x) : shownWidth / 2
+  const top = crop ? shownHeight * (0.5 - crop.y) : shownHeight / 2
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${natural.value.width * scale.value}px`,
+    height: `${natural.value.height * scale.value}px`,
+    transform: `translate(-50%, -50%) rotate(${adjust.adjust.value.rotate}deg) scaleX(${adjust.adjust.value.flip ? -1 : 1})`,
+    filter: adjust.filter.value,
+    clipPath: adjust.clip.value,
+  }
+})
 
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
 /** 原图像素 → 屏幕像素的比例：叠在图上那些（选中框、评论点）都按它换算。转过 90° 时

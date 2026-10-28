@@ -28,6 +28,8 @@ export interface DesignViewportOptions {
   beforePanStart: () => void
   /** 屏幕上的图转过、翻过没有：转了 90° 时「适合视口」要按转完的宽度算。 */
   adjust?: () => Pick<ImageAdjust, 'rotate' | 'flip'>
+  /** 裁掉了哪一块（按转好之后那张图的宽高比例）。版面只留裁完的那一块。 */
+  crop?: () => CropBox | null
 }
 
 export function useDesignViewport(options: DesignViewportOptions) {
@@ -79,14 +81,17 @@ export function useDesignViewport(options: DesignViewportOptions) {
     return fitWidth
   })
 
-  const dimensions = computed(() =>
-    natural.value.width
-      ? {
-          width: `${shown.value.width * scale.value}px`,
-          height: `${shown.value.height * scale.value}px`,
-        }
-      : {}
-  )
+  /** 裁掉的那一块：版面只留这一块，剩下的不占地方。 */
+  const cropBox = computed(() => options.crop?.() ?? null)
+
+  const dimensions = computed(() => {
+    if (!natural.value.width) return {}
+    const crop = cropBox.value
+    return {
+      width: `${shown.value.width * scale.value * (crop?.w ?? 1)}px`,
+      height: `${shown.value.height * scale.value * (crop?.h ?? 1)}px`,
+    }
+  })
 
   let observer: ResizeObserver | null = null
   let scrollCleanup: (() => void) | null = null
@@ -360,6 +365,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
     zoom,
     fitted,
     dimensions,
+    cropBox,
     geometry,
     spaceHeld,
     panning,

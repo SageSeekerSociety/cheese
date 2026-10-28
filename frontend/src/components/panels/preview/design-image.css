@@ -12,8 +12,7 @@
    转轴在正中：90° 之后图占的那个框正好是宽高对调的那个。 */
 .design-image__frame {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  /* 位置由组件按裁剪框算（见 DesignImage 的 frameStyle），这里不给默认的 50%。 */
   transform-origin: center center;
 }
 /* 折叠（filter）会连带子元素一起变；裁剪用 `clip-path` 挂在同一层上，图和标注一起被裁。 */
