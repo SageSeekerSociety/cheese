@@ -169,6 +169,59 @@ it.each([
     expect(ui.emitted().locate).toBeUndefined()
   }
 )
+// ---- 框选之后弹的是哪张卡 ----
+// 图片这一档曾经自造一张 `DesignRegionNote`，和别的文件类型共用的 `PreviewLocator`
+// 是两套。现在统一到共用那张：框选之后弹的一定是 `.locator`，图自己的卡不再存在。
+it('图片框选之后弹的是共用的那张卡，不是图自己那张', async () => {
+  const ui = mount()
+  await paint(ui)
+  await select(ui)
+  const card = ui.container.querySelector('.locator')
+  expect(card).toBeTruthy()
+  expect(ui.container.querySelector('.design-region-note')).toBeNull()
+  // 卡上写着指的是哪儿（标签 = 「选择图片区域」，原文 = 这块区域的坐标）。
+  expect(card!.querySelector('.locator__label')?.textContent).toContain('选择图片区域')
+  expect(card!.querySelector('.locator__quote')?.textContent).toContain('x=100')
+})
+
+// 位置：卡片按那块选区的实际矩形弹在旁边。happy-dom 没有布局，所以把选区元素的矩形和
+// 面板的宽高按真实浏览器里会给的值补上，再让面板重算一次位置（等同滚动/改尺寸那一帧）。
+it('卡片按选区的实际矩形弹在它旁边', async () => {
+  const ui = mount()
+  await paint(ui)
+  await select(ui)
+  const selection = ui.container.querySelector('.design-image__selection') as HTMLElement
+  expect(selection).toBeTruthy()
+  selection.getBoundingClientRect = () =>
+    ({ top: 150, left: 100, bottom: 250, right: 300, width: 200, height: 100, x: 100, y: 150, toJSON() {} }) as DOMRect
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const height = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(600)
+  window.dispatchEvent(new Event('resize'))
+  const card = await waitFor(() => {
+    const el = ui.container.querySelector('.locator') as HTMLElement
+    expect(el.classList.contains('locator--floating')).toBe(true)
+    return el
+  })
+  // 选区在面板内容坐标里是 (left 100, bottom 250)：卡片左沿对齐 100，落在它下面 8px 处。
+  expect(card.style.left).toBe('100px')
+  expect(card.style.top).toBe('258px')
+  width.mockRestore()
+  height.mockRestore()
+})
+
+// 框出来的那一块要走结构化引用那条路（连同坐标发出去），发不出才退回拼一句话——
+// 两条都只发当前这一处，凑不进待发篮那批「合并发送」。所以这一档不给「加入待发」，
+// 主按钮也不被篮里那几条改成「全部发送（N+1）」（那是它做不到的事）。
+it('图片框选那一处不摆「加入待发」，主按钮也不带批注计数', async () => {
+  const ui = mount()
+  await paint(ui)
+  await select(ui)
+  const labels = () => [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
+  expect(labels()).not.toContain('加入待发')
+  expect(labels().some((label) => label.startsWith('全部发送'))).toBe(false)
+  expect(labels()).toContain('发送')
+})
+
 it('cancels the region note without posting a message', async () => {
   const ui = mount()
   await paint(ui)

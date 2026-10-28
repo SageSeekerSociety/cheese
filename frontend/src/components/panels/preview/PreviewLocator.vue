@@ -176,6 +176,7 @@ watch(
   }
 )
 const armed = computed(() => !!props.target && !expanded.value)
+
 const field = ref<HTMLTextAreaElement | null>(null)
 async function expand() {
   expanded.value = true
@@ -188,6 +189,36 @@ async function expand() {
 // 弹在指的那一处旁边：先放在它下面，下面放不下就翻到上面；左右夹在面板里。高度要等
 // 框画出来才量得到，量到之前先按一个常见的高度放，免得第一帧跳一下。
 const card = ref<HTMLElement | null>(null)
+
+/** 卡关掉时把焦点还给打开它的那一处。
+ *
+ *  卡自己不抢焦点（见 `send` 上面那段：一抢，页面上的选区就没了），所以「打开它的那一处」
+ *  是读者按下去那一刻拿着焦点的元素——图上那颗「选择图片区域」、表格里那一格、正文里那一段。
+ *  不还的话焦点掉到 body，键盘读者要按很多下 Tab 才能回到刚才的位置。
+ *
+ *  只在这一刻焦点**还在卡里**时才还：读者点去别处把卡关掉的那一下，焦点该留在他点的地方，
+ *  把他拽回来比不还更烦人。这一条是从图片那一档原来的自造卡里搬过来的，判据就是它原来的。
+ *
+ *  放在共用卡里而不是各档自己接：这段行为本来就该一样，而图片那档以前是自己接的（并进来
+ *  时差点丢掉；焦点看不见，掉了没人报错）。 */
+const returnFocus = ref<HTMLElement | null>(null)
+watch(
+  () => props.target,
+  (target, before) => {
+    if (target && !before) {
+      const active = document.activeElement
+      returnFocus.value = active instanceof HTMLElement && active !== document.body ? active : null
+      return
+    }
+    if (!target && before) {
+      const el = returnFocus.value
+      returnFocus.value = null
+      const active = document.activeElement
+      if (!el?.isConnected || !active || !card.value?.contains(active)) return
+      void nextTick(() => el.focus?.())
+    }
+  }
+)
 const height = ref(190)
 const GAP = 8
 const EDGE = 12

@@ -249,8 +249,6 @@ export function imageStageProps(over: Record<string, unknown> = {}): Record<stri
     documentName: '设计稿.png',
     previewFull: false,
     imageRegion: imageRegionWith(),
-    locatorNote: '',
-    locator: null,
     docError: '',
     annotateError: '',
     ...over,

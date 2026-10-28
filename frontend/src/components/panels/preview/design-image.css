@@ -70,12 +70,6 @@
 .design-image__pane.is-narrow {
   padding: 8px;
 }
-.design-image__overlay {
-  position: absolute;
-  inset: 0;
-  overflow: clip;
-  pointer-events: none;
-}
 .design-image__sheet {
   position: relative;
 }

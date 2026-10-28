@@ -354,3 +354,41 @@ it('去处菜单每一项都说清会发生什么', async () => {
   expect(text).toContain('仅留评论')
   expect(text).toContain('不触发芝士修改')
 })
+
+it('卡关掉时焦点回到打开它的那一处', async () => {
+  // 卡自己不抢焦点，所以打开它的那一处就是按下去那一刻拿着焦点的东西：图上那颗
+  // 「选择图片区域」、表格里那一格。不还的话焦点掉到 body。
+  const opener = document.createElement('button')
+  document.body.append(opener)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  // 和真产品一样：这一格一直在，指了一处之后 target 才从 null 变成那一处。
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  const input = await waitFor(() => {
+    const box = ui.container.querySelector('.locator__input') as HTMLTextAreaElement | null
+    expect(box).toBeTruthy()
+    return box as HTMLTextAreaElement
+  })
+  // 读者点了输入框（焦点进了卡里），然后关掉这一处。
+  input.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(document.activeElement).toBe(opener))
+  opener.remove()
+})
+
+it('读者点去别处把卡关掉时，焦点不被他拽回来', async () => {
+  // 反面：焦点已经不在卡里了，说明读者自己去了别处。这时还硬拉回按钮，比不还更烦人。
+  const opener = document.createElement('button')
+  const elsewhere = document.createElement('button')
+  document.body.append(opener, elsewhere)
+  opener.focus()
+  const ui = render(PreviewLocator, { props: { target: null, note: '' }, global: { stubs } })
+  await ui.rerender({ target: { label: '第 1 页', quote: '一段原文' } })
+  await waitFor(() => expect(ui.container.querySelector('.locator__input')).toBeTruthy())
+  elsewhere.focus()
+  await ui.rerender({ target: null })
+  await waitFor(() => expect(ui.container.querySelector('.locator')).toBeNull())
+  expect(document.activeElement).toBe(elsewhere)
+  opener.remove()
+  elsewhere.remove()
+})
