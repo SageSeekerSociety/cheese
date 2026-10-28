@@ -31,7 +31,7 @@ import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
-import { videoMimeOf } from '../../lib/fileKind'
+import { readerText, videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
@@ -629,10 +629,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <!-- 认不出类型、但读得出文字的那些：`head` 有就摆出来（超上限的大文件这一支
          也有，见 `textfile.text_payload`）。认得出类型的那几档在前面就接走了。 -->
     <pre
-      v-else-if="previewFile && previewFile.head"
+      v-else-if="previewFile && readerText(previewFile)"
       class="preview-plain"
       :class="{ 'preview-plain--cut': previewFile.too_large }"
-      >{{ previewFile.head }}</pre
+      >{{ readerText(previewFile) }}</pre
     >
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
@@ -768,7 +768,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
   overflow-wrap: anywhere;
 }
 .preview-plain--cut {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 24px), transparent);
 }
 
 /* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */

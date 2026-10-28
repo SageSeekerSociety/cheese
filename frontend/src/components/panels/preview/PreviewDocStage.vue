@@ -45,7 +45,7 @@ import RevisionList from './RevisionList.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { SLIDE_SUFFIXES } from '@/lib/fileKind'
+import { readerText, SLIDE_SUFFIXES } from '@/lib/fileKind'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 
@@ -215,9 +215,11 @@ const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
 // 代码那一档要的正文：读它、看它，所以拿的是 `head`——一份超出编辑器上限的大文件，
-// `content` 是 null 而 `head` 是它的开头（见 `textfile.text_payload`）。只有连开头都
-// 读不成文本（二进制）时才是 null，那就地说明一句，不往下落。
-const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.head ?? null : null))
+// `content` 是 null 而 `head` 是它的开头（见 `textfile.text_payload`）。取法统一走
+// `readerText`：只带 `content` 的调用方（整份装得下时）也不至于渲染成空白。
+// 只有连开头都读不成文本（二进制、或 committed 大文件根本没读）时才是 null，
+// 那就地说明一句，不往下落。
+const codeSource = computed(() => (props.documentType?.view === 'code' ? readerText(props.previewFile) : null))
 // 摆的是开头、底下的没读：尾上说明一句，读者才知道这不是整份。判 `too_large` 而不是
 // 「读到的比文件短」——只有超上限那一条会截，正常的文件整份都在。
 const codeTruncated = computed(() => !!props.previewFile?.too_large && codeSource.value !== null)
@@ -310,7 +312,7 @@ const actions = computed<DocAction[]>(() => {
   if (
     props.documentType?.view === 'markdown' &&
     !props.liveEdit?.editingPath.value &&
-    props.previewFile?.head !== null
+    readerText(props.previewFile) !== null
   ) {
     list.push({
       key: 'md-source',
@@ -322,7 +324,7 @@ const actions = computed<DocAction[]>(() => {
       },
     })
   }
-  if (props.documentType?.view === 'code' && props.previewFile?.head !== null) {
+  if (props.documentType?.view === 'code' && readerText(props.previewFile) !== null) {
     list.push({
       key: 'code-wrap',
       icon: codeWrap.value ? 'mdi-arrow-expand-horizontal' : 'mdi-wrap',
@@ -490,13 +492,13 @@ defineExpose({ snapshot, clearMark })
     <PreviewCode
       v-else-if="documentType.view === 'markdown' && showSource"
       data-testid="markdown-source"
-      :source="previewFile?.head ?? ''"
+      :source="readerText(previewFile) ?? ''"
       language="markdown"
       wrap
     />
     <PreviewMarkdown
       v-else-if="documentType.view === 'markdown'"
-      :source="previewFile?.head ?? null"
+      :source="readerText(previewFile)"
       :anchors="anchors"
       :pins="pins"
       :active-id="activeAnchor"
@@ -515,7 +517,9 @@ defineExpose({ snapshot, clearMark })
       <div v-if="codeTruncated" class="doc__truncated" role="status">
         <v-icon size="16">mdi-ellipsis-horizontal</v-icon>
         <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
-        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{ t('work.room.preview.download') }}</BaseButton>
+        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+          t('work.room.preview.download')
+        }}</BaseButton>
       </div>
       <div v-else-if="codeSource === null" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>

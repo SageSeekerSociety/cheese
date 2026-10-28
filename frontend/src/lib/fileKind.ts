@@ -297,3 +297,13 @@ export function headOf(window: string, more: boolean): { head: string; cut: bool
   if (end === 0) return { head: window, cut: more }
   return { head: window.slice(0, end), cut: more || end < window.length }
 }
+
+/** 读者该看到的那段文字：后端给了 `head` 就用它（超出编辑器上限时那是开头），
+ *  没给就退回 `content`（整份能装下的时候两者本来就一样）。
+ *
+ *  只认 `head` 会让所有只带 `content` 的调用方和夹具渲染成空白；所以这里统一
+ *  收口，别在组件里各自 `?.head ?? null`。 */
+export function readerText(file: { head?: string | null; content: string | null } | null | undefined): string | null {
+  if (!file) return null
+  return file.head ?? file.content
+}

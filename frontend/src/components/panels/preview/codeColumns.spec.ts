@@ -13,16 +13,20 @@ it('制表符按它实际占的格子数算列，不是一个字符一列', () =
 })
 
 it('一行装得下时，露出来的就是整行', () => {
-  expect(
-    visibleColumns({ scrollLeft: 0, viewWidth: 600, gutterWidth: 50, charWidth: 8, total: 20 })
-  ).toEqual({ start: 1, end: 20, total: 20 })
+  expect(visibleColumns({ scrollLeft: 0, viewWidth: 600, gutterWidth: 50, charWidth: 8, total: 20 })).toEqual({
+    start: 1,
+    end: 20,
+    total: 20,
+  })
 })
 
 it('滚到中间时报出此刻那一段，而不是从头数', () => {
   // 可用的宽度 550 px、一个字符 8 px：露得出 68 列；滚了 800 px = 100 列。
-  expect(
-    visibleColumns({ scrollLeft: 800, viewWidth: 600, gutterWidth: 50, charWidth: 8, total: 500 })
-  ).toEqual({ start: 101, end: 168, total: 500 })
+  expect(visibleColumns({ scrollLeft: 800, viewWidth: 600, gutterWidth: 50, charWidth: 8, total: 500 })).toEqual({
+    start: 101,
+    end: 168,
+    total: 500,
+  })
 })
 
 it('钉住的行号列不算进可读的那段宽度里', () => {
@@ -38,7 +42,9 @@ it('滚到最右边也不会报出超过整行的列号', () => {
 })
 
 it('量不出字宽时退回整行，不给出一个假的坐标', () => {
-  expect(
-    visibleColumns({ scrollLeft: 100, viewWidth: 600, gutterWidth: 50, charWidth: 0, total: 42 })
-  ).toEqual({ start: 1, end: 42, total: 42 })
+  expect(visibleColumns({ scrollLeft: 100, viewWidth: 600, gutterWidth: 50, charWidth: 0, total: 42 })).toEqual({
+    start: 1,
+    end: 42,
+    total: 42,
+  })
 })

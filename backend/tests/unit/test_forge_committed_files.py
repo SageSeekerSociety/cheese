@@ -1,6 +1,7 @@
 """Committed file lists must survive the forge's comparison response limits."""
 
 import asyncio
+import base64
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -9,6 +10,7 @@ import pytest
 
 from app.core.errors import GatewayUnavailableError
 from app.domain.repository import forge_files, task_rows
+from app.domain.textfile import MAX_TEXT_BYTES
 
 
 @pytest.mark.anyio
@@ -143,3 +145,57 @@ async def test_a_forge_that_never_answers_fails_the_listing_in_bounded_time(
     async with asyncio.timeout(5):
         with pytest.raises(GatewayUnavailableError):
             await files.committed_entries("head")
+
+
+@pytest.mark.anyio
+async def test_a_large_committed_file_has_no_head_and_a_large_live_one_has_an_opening(
+    monkeypatch,
+):
+    """A file past `MAX_TEXT_BYTES` gets an opening a reader can show — but only
+    where the bytes were actually read.
+
+    The live branch asks the machine for the first `MAX_TEXT_BYTES`, so it holds
+    the opening. The committed branch refuses to fetch the blob at all when the
+    file is that big (the point of the ceiling), and that has to come back as
+    `head: None` rather than an empty string: `""` reads as 「是文本，但一个字都
+    没有」 and the preview would draw a blank body instead of saying it is cut.
+    """
+    big = MAX_TEXT_BYTES + 1
+    files = forge_files.ProjectFiles(None, uuid.uuid4(), None)
+
+    async def source(_name):
+        return "committed"
+
+    entry = {"sha": "abc", "size": big}
+    monkeypatch.setattr(files, "source", source)
+    monkeypatch.setattr(files, "_entry", AsyncMock(return_value=entry))
+    monkeypatch.setattr(files, "revision", AsyncMock(return_value="head"))
+    monkeypatch.setattr(files, "_blob", AsyncMock(side_effect=AssertionError("must not read the whole blob")))
+
+    committed = await files.text("big.log", "committed")
+    assert committed["too_large"] is True
+    assert committed["content"] is None
+    assert committed["head"] is None
+
+    live = forge_files.ProjectFiles(None, uuid.uuid4(), None)
+
+    async def live_source(_name):
+        return "live"
+
+    opening = b"first line of the log\n" + b"x" * 64
+    monkeypatch.setattr(live, "source", live_source)
+    monkeypatch.setattr(
+        live,
+        "live",
+        AsyncMock(
+            return_value={
+                "bytes": big,
+                "version": "v1",
+                "data": base64.b64encode(opening).decode(),
+            }
+        ),
+    )
+
+    read = await live.text("big.log", "live")
+    assert read["too_large"] is True
+    assert read["head"] is not None and read["head"].startswith("first line of the log")

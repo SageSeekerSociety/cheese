@@ -633,7 +633,10 @@ export interface FileContent {
   // PREVIEW_TEXT_BYTES otherwise, null only when the bytes are not text. Viewers
   // take this, not `content` — an editor keeps taking `content`, which stays whole
   // or absent so a save can never write a prefix back over the file.
-  head: string | null
+  // Optional only because callers that already hold the whole text (and the
+  // fixtures that stand in for them) need not repeat it; read it through
+  // `fileKind.readerText`, which falls back to `content`.
+  head?: string | null
   // Content id to echo back on save; a mismatch means someone wrote in between.
   // Present even for `too_large`; null means the file is gone.
   version: string | null

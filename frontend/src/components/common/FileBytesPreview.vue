@@ -18,10 +18,10 @@ import { t } from '@/i18n'
 import {
   codeLanguageOf,
   DOCUMENT_TYPES,
+  headOf,
   IMAGE_SUFFIXES,
   imageMimeOf,
   NEEDS_CONVERSION,
-  headOf,
   PREVIEW_TEXT_BYTES,
   sheetKindOf,
   SLIDE_SUFFIXES,
@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
 }
 /* 只摆了开头：末尾压一条渐隐，读得出底下还有。 */
 .file-preview__text--cut {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 24px), transparent);
 }
 .file-preview__cut {
   margin: 0;

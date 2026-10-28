@@ -29,9 +29,11 @@ from app.domain.repository import merge3, task_rows
 from app.domain.repository.ports import CompareStatus, ExecutorCall
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
+    PREVIEW_TEXT_BYTES,
     compare_bytes,
     content_version,
     decode_text,
+    head_text,
 )
 from app.domain.topic.models import Topic
 
@@ -670,13 +672,22 @@ class ProjectFiles:
             version = content_version(data) if size <= MAX_TEXT_BYTES else None
         large = size > MAX_TEXT_BYTES
         text = None if large else decode_text(data)
+        if not large:
+            head = text
+        elif data:
+            # live 那一支读的是前 `MAX_TEXT_BYTES`，手里有开头，给得出来。
+            head = head_text(data[:PREVIEW_TEXT_BYTES])
+        else:
+            # committed 那一支超上限时一个字节都没读（不为了开头把整份拉回来），
+            # 那就没有开头可给：空串会被读者当成「是文本、但一个字都没有」。
+            head = None
         return {
             "path": path,
             "bytes": size,
             "content": text,
             # 读者看的那一份：整份，或者开头（见 `textfile.text_payload`）。这一格
             # 用的是编辑器，读的是 `content`；`head` 只为同一份契约在别处一致。
-            "head": text if not large else head_text(data[:PREVIEW_TEXT_BYTES]),
+            "head": head,
             "binary": not large and text is None,
             "too_large": large,
             "version": version,
