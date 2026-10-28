@@ -201,7 +201,6 @@ function keyboard(event: KeyboardEvent) {
 useSelectionHighlight({
   sheets: () => (sheet.value ? [sheet.value] : []),
   layerClass: 'slide-text-layer',
-  paintClass: 'slide-hl',
 })
 
 function quote() {
@@ -953,19 +952,12 @@ onBeforeUnmount(() => {
   background: transparent;
   color: transparent;
 }
-/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。`--selection-bg`——和
-   `PreviewPages` 里那一段同一套写法，改一处时两处一起改：同一个动作在两档里该是同一个
-   颜色，这两处一度一个用 `--selection-bg`、一个用 `--accent-wash`。 */
-.slides__sheet :deep(.slide-hl) {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.slides__sheet :deep(.slide-hl path) {
-  fill: var(--selection-bg);
-}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和分页文档共用一份，两档的
+   选中底色才不可能变成两个颜色。 */
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;
   color: var(--danger-ink);
 }
 </style>
+
+<style src="./preview-selection-paint.css"></style>

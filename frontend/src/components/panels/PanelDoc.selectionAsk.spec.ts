@@ -27,20 +27,20 @@ import { docBundle, docPeopleBundle, docThreadsBundle } from '@/views/demo/catal
 
 const Passthrough = defineComponent({
   name: 'PanelDocView',
-  setup: (_props, { attrs }) => () => h('div', { ...attrs, 'data-testid': 'doc-view' }),
+  setup:
+    (_props, { attrs }) =>
+    () =>
+      h('div', { ...attrs, 'data-testid': 'doc-view' }),
 })
 
 /** 渲染这一格，读它给正文那一层标的 `data-agent-select`。 */
 function agentSelect(props: Record<string, unknown>): string | null {
-  const view = render(
-    defineComponent({ setup: () => () => h(PanelDoc as never, props) }),
-    {
-      global: {
-        plugins: [createVuetify({ components, directives }), i18n],
-        stubs: { PanelDocView: Passthrough },
-      },
-    }
-  )
+  const view = render(defineComponent({ setup: () => () => h(PanelDoc as never, props) }), {
+    global: {
+      plugins: [createVuetify({ components, directives }), i18n],
+      stubs: { PanelDocView: Passthrough },
+    },
+  })
   const found = view.container.querySelector<HTMLElement>('[data-testid="doc-view"]')
   if (!found) throw new Error('PanelDocView 没渲染出来')
   return found.getAttribute('data-agent-select')
