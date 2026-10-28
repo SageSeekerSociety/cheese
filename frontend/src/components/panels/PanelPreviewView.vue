@@ -181,6 +181,9 @@ provide(PREVIEW_MODE, previewMode)
 // 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
 // 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
 useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (event: KeyboardEvent) => {
+  // 工作区里没被翻开的那几页是 `v-show` 藏着的，组件还挂着；不加这一句，看着预览却按
+  // 一下 2，藏起来的另一格里也悄悄换成了批注，切回去时模式已经不是走开时那一段。
+  if (!props.active) return
   if (event.metaKey || event.ctrlKey || event.altKey) return
   const mode = MODE_KEYS[event.key]
   if (!mode) return

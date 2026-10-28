@@ -81,9 +81,9 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges()
 })
 
-function mount(pending?: ReturnType<typeof usePendingNotes>) {
+function mount(pending?: ReturnType<typeof usePendingNotes>, over: Record<string, unknown> = {}) {
   return render(PanelPreviewView, {
-    props: props(),
+    props: { ...props(), ...over },
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: { VBtn: { template: '<button><slot /></button>' }, VIcon: true, VSpacer: true, VAlert: true },
@@ -325,6 +325,15 @@ it('这一份改不了时「改」是灰的，点了不切过去', async () => {
   const edit = ui.getByTestId('preview-mode-edit') as HTMLButtonElement
   expect(edit.disabled).toBe(true)
   await fireEvent.click(edit)
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('没翻开的那一格不吃快捷键：藏着的预览不该跟着换模式', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  // 工作区里没翻开的页是 `v-show` 藏着的，组件还挂着。看着别的页按时，这一格不该变。
+  const ui = mount(undefined, { active: false })
+  await fireEvent.keyDown(window, { key: '2' })
   expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
   width.mockRestore()
 })
