@@ -459,14 +459,16 @@ def test_a_report_filed_outside_any_room_opens_no_second_door(client):
 # --- 栏位口径 ---------------------------------------------------------------
 
 
-def test_a_resolved_bug_sinks_but_a_resolved_suggestion_stays(client, as_admin):
-    """§8.23 as implemented: only finished **bugs** leave the working tabs.
+def test_a_finished_report_stays_in_all_and_lands_in_resolved(client, as_admin):
+    """「全部」 really holds everything (2026-10-28).
 
-    Both finished rungs, in one test on purpose: `resolved` and `deployed` have to
-    behave alike here or 「部署」 becomes a status a bug can sit in visibly forever
-    — the exact thing the sink rule exists to prevent. Same for the `resolved`
-    tab below: to the person who filed it, 解决 and 部署 are two halves of one
-    answer, so a deployed row that vanished from that tab reads as missing.
+    It used to sink finished **bugs** out of `all`/`hot` (§8.23 read narrowly),
+    which left 「全部」 counting 16 while 「已完成」 counted 68 with nothing on screen
+    saying where the rest had gone. Now `all` narrows nothing — every public
+    report is reachable there — and `resolved` is the only tab with a rule.
+
+    Both finished rungs in one test on purpose: `resolved` and `deployed` have to
+    behave alike here or 「部署」 becomes a status a bug can sit in visibly forever.
     """
     rows = {
         "已修复的 bug": ("bug", "resolved"),
@@ -483,19 +485,27 @@ def test_a_resolved_bug_sinks_but_a_resolved_suggestion_stays(client, as_admin):
         )
         assert r.status_code == 200, r.text
 
+    # All four are in `all` — bugs included, whichever rung they finished on.
     titles = {c["title"] for c in _cards(client, tab="all")}
-    assert {"已修复的建议", "已上线的建议"} <= titles
-    assert not {"已修复的 bug", "已上线的 bug"} & titles
+    assert set(rows) <= titles
 
-    # All four are in `resolved` — the tabs are filters, not a partition, and
+    # And all four are in `resolved` — the tabs are filters, not a partition, and
     # `resolved` is the closed set rather than the status of the same name.
     resolved = {c["title"] for c in _cards(client, tab="resolved")}
     assert set(rows) <= resolved
 
+    # The tab numbers say the same thing as the lists: `all` is the whole board,
+    # so it can never be smaller than the closed set.
+    counts = client.get("/feedback/counts").json()["data"]
+    assert counts["all"] >= counts["resolved"]
+
 
 def test_an_unknown_tab_is_refused_rather_than_silently_shown_as_all(client):
-    r = client.get("/feedback", params={"tab": "hots"})
-    assert r.status_code == 400
+    # `active` was a tab until 2026-10-28; a client still asking for it is behind,
+    # and answering with `all` would draw a plausible page under the wrong heading.
+    for tab in ("hots", "active"):
+        r = client.get("/feedback", params={"tab": tab})
+        assert r.status_code == 400, tab
 
 
 # --- 管理端 -----------------------------------------------------------------
@@ -2093,8 +2103,9 @@ def test_unassigned_is_the_admin_queues_number_and_appears_nowhere_else(
 def test_the_hot_tab_counts_the_rows_it_shows(client, as_admin):
     """The number on a tab and the rows behind it are one query's answer.
 
-    `hot` means 「热度 ≥ 2 分」, and it does not sink resolved *suggestions* — only
-    resolved bugs sink (§8.23). The count used a bare `status != resolved`, so a
+    `hot` means 「热度 ≥ 2 分」 and narrows nothing by status (2026-10-28: the sink
+    rule is gone, so a finished suggestion — which never sank — and a finished bug
+    are both in it). The count once used a bare `status != resolved`, so a
     resolved suggestion was in the list and not in the number, and the tab read
     「4」 over five cards. One predicate, or the two drift.
     """
@@ -3638,7 +3649,8 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
 # 不修复 (`declined`): a report that was read and will not be acted on. It is a
 # way for a report to end, not a fifth rung: the reporter's ladder does not grow
 # a step after 已上线, and the report behaves as finished everywhere a finished
-# one does — no more supports, a declined bug sinks, it is in 「已完成」.
+# one does — no more supports, and it is in 「已完成」 (it stays in 「全部」 too,
+# like every other report since 2026-10-28).
 
 
 def _declined_report(client, title: str = "按钮点了没反应", kind: str = "bug") -> dict:
@@ -3689,15 +3701,14 @@ def test_a_declined_report_cannot_be_supported(client, as_admin):
     assert r.status_code == 412, r.text
 
 
-def test_a_declined_bug_sinks_and_is_listed_as_finished(client, as_admin):
+def test_a_declined_bug_stays_in_all_and_is_listed_as_finished(client, as_admin):
     bug = _declined_report(client, "不修的 bug", "bug")
     suggestion = _declined_report(client, "不做的建议", "suggestion")
     _decline(client, bug, as_admin)
     _decline(client, suggestion, as_admin)
 
     working = _declined_titles(client, tab="all")
-    assert "不修的 bug" not in working
-    assert "不做的建议" in working
+    assert {"不修的 bug", "不做的建议"} <= working
     assert {"不修的 bug", "不做的建议"} <= _declined_titles(client, tab="resolved")
     assert {"不修的 bug", "不做的建议"} <= _declined_titles(
         client, tab="resolved", status="declined"
