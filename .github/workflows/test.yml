@@ -548,11 +548,12 @@ jobs:
         run: |
           # The value is read from a file the pull request controls, so it is
           # checked against what a version may look like before it goes
-          # anywhere: an empty value would install `jsdom@` (npm reads that as
-          # `*`) under a cache key ending in `-`, and anything else in it would
-          # be shell. `${{ }}` would interpolate it into this script; it leaves
-          # through $GITHUB_OUTPUT and comes back to the install step as
-          # `$JSDOM_VERSION` instead.
+          # anywhere: an empty value would install a floating `jsdom` (npm
+          # reads a bare `@` as `*`) under a cache key ending in `-`, and
+          # anything else in it would be shell. The reader below prints the
+          # version alone and this step writes it to $GITHUB_OUTPUT; the
+          # install step takes it from the environment, so no expression
+          # interpolation of it ever reaches a script.
           version="$(awk '
             /^importers:$/ {in_imp=1; next}
             in_imp && /^  \.:$/ {in_root=1; next}
