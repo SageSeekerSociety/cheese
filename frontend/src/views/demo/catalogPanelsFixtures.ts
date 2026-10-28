@@ -390,6 +390,7 @@ export function previewBundle(
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),
     slideContext: computed(() => undefined),
+    slideNotes: computed(() => []),
     docLoading: computed(() => v.docLoading),
     docError: computed(() => v.docError),
     docRendererMissing: computed(() => v.docRendererMissing),
