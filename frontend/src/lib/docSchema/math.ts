@@ -1,12 +1,60 @@
 // Formulas: $…$ and $$…$$
 //
-// A `$` followed by a digit is money, not a formula: `$5 到 $10` stays text.
+// A `$` followed by a digit is money when prose follows (`$5 到 $10`,
+// `花费 $100，其中$x$是单价`), and a formula when math follows (`$1$`,
+// `$0 \le k \le n-1$`, `$1 - \sum_{k=0}^{n-1} p^k$`).
 // The source is the node's text; the editor renders it with KaTeX.
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
-const INLINE_MATH_RE = /^\$(?![\s\d$])((?:\\\$|[^$\n])+?)(?<!\s)\$(?!\d)/
-const BLOCK_MATH_RE = /^ {0,3}\$\$[ \t]*\n?([\s\S]+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/
+const INLINE_DOUBLE_MATH_RE = /^\$\$(?!\$)[ \t]*((?:\\.|(?!\$\$)[^\\\n`])+?)[ \t]*\$\$(?!\$)/
+const INLINE_SINGLE_MATH_RE = /^\$(?![\s$])((?:\\.|[^$\\\n`])+?)(?<!\s)\$(?!\d)/
+const BLOCK_MATH_RE = /^ {0,3}\$\$[ \t]*\n?((?:\\.|(?!\$\$)[\s\S])+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/
+const BLOCK_MATH_START_RE = /(?:^|\n) {0,3}\$\$[ \t]*\n?(?:\\.|(?!\$\$)[\s\S])+?\n?[ \t]*\$\$[ \t]*(?:\n|$)/
+
+const PROSE_PUNCT_RE = /[，。；！？（）【】《》“”‘’、]/
+const CJK_RE = /[⺀-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/
+
+function stripBraced(s: string): string {
+  let prev = ''
+  let cur = s
+  while (prev !== cur) {
+    prev = cur
+    cur = cur.replace(/\{[^{}]*\}/g, '')
+  }
+  return cur
+}
+
+function hasUnclosedOpeners(s: string): boolean {
+  let paren = 0
+  let bracket = 0
+  let brace = 0
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\') {
+      i++
+      continue
+    }
+    if (s[i] === '(') paren++
+    else if (s[i] === ')' && paren > 0) paren--
+    else if (s[i] === '[') bracket++
+    else if (s[i] === ']' && bracket > 0) bracket--
+    else if (s[i] === '{') brace++
+    else if (s[i] === '}' && brace > 0) brace--
+  }
+  return paren > 0 || bracket > 0 || brace > 0
+}
+
+export function isInlineMath(latex: string): boolean {
+  if (/(?<!\\)[([{（【《“‘—]$/.test(latex)) return false
+  const bare = stripBraced(latex)
+  if (PROSE_PUNCT_RE.test(bare)) return false
+  if (/^\d/.test(latex)) {
+    if (hasUnclosedOpeners(latex)) return false
+    if (CJK_RE.test(bare)) return false
+    if (/^\d[\d,.]*\s+[a-zA-Z]{2,}\b/.test(bare)) return false
+  }
+  return true
+}
 
 export const MathInline = Node.create({
   name: 'mathInline',
@@ -27,10 +75,15 @@ export const MathInline = Node.create({
   markdownTokenizer: {
     name: 'mathInline',
     level: 'inline',
-    start: (src) => src.search(/\$(?![\s\d$])/),
+    start: (src) => src.search(/(?<!\\)\$(?!\s)/),
     tokenize(src) {
-      const match = INLINE_MATH_RE.exec(src)
-      if (!match) return undefined
+      const doubleMatch = INLINE_DOUBLE_MATH_RE.exec(src)
+      if (doubleMatch) {
+        const latex = doubleMatch[1].trim()
+        if (latex) return { type: 'mathInline', raw: doubleMatch[0], latex }
+      }
+      const match = INLINE_SINGLE_MATH_RE.exec(src)
+      if (!match || !isInlineMath(match[1])) return undefined
       return { type: 'mathInline', raw: match[0], latex: match[1] }
     },
   },
@@ -55,7 +108,11 @@ export const MathBlock = Node.create({
   markdownTokenizer: {
     name: 'mathBlock',
     level: 'block',
-    start: (src) => src.search(/^ {0,3}\$\$/m),
+    start: (src) => {
+      const match = BLOCK_MATH_START_RE.exec(src)
+      if (!match) return -1
+      return match[0].startsWith('\n') ? match.index + 1 : match.index
+    },
     tokenize(src) {
       const match = BLOCK_MATH_RE.exec(src)
       if (!match) return undefined

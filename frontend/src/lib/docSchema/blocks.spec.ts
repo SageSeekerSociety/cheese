@@ -86,9 +86,51 @@ describe('reading what people actually write', () => {
   })
 
   it('takes a dollar before a number as money, not a formula', () => {
-    const md = '九月花费 $1,274，比预算高 $74。'
-    expect(types(md)).not.toContain('mathInline')
+    for (const md of ['九月花费 $1,274，比预算高 $74。', '价格从 $5 到 $10，或者 $5~$10。']) {
+      expect(types(md)).not.toContain('mathInline')
+      expect(roundTrip(md)).toBe(md)
+    }
+  })
+
+  it('reads an inline formula that starts with a digit', () => {
+    for (const md of [
+      '第一行变成 $1 - \\sum_{k=m}^{n+m-1} \\binom{n+m-1}{k} q^k p^{n+m-1-k}$。',
+      '满足 $0 \\le k \\le n-1$ 且总和为 $1$，乘上 $1 = (p + q)^{n-1-k}$。',
+      '复杂度是 $2^n$，耗时 $1 \\text{ 秒}$。',
+    ]) {
+      expect(types(md)).toContain('mathInline')
+      expect(roundTrip(md)).toBe(md)
+    }
+  })
+
+  it('keeps money as text when a real formula or code span follows on the same line', () => {
+    for (const md of [
+      '花费 $100，其中 $x$ 是单价。',
+      '花费 $100，其中$x$是单价。',
+      '立减 $50（即$x$折），或者 $50（$x$折）。',
+      'It costs $100 ($x$ per unit) or $100 for ($x$ items).',
+    ]) {
+      expect(types(md).filter((t) => t === 'mathInline')).toEqual(
+        md.includes('或者') || md.includes(' or ') ? ['mathInline', 'mathInline'] : ['mathInline']
+      )
+      expect(roundTrip(md)).toBe(md)
+    }
+    const withCode = '花费 $100，配置在 `$HOME` 目录下。'
+    expect(types(withCode)).not.toContain('mathInline')
+    expect(roundTrip(withCode)).toBe(withCode)
+  })
+
+  it('keeps an escaped dollar inside an inline formula', () => {
+    const md = '记价格函数为 $f(a) = \\$a + \\$5$。'
+    expect(types(md).filter((t) => t === 'mathInline')).toEqual(['mathInline'])
     expect(roundTrip(md)).toBe(md)
+  })
+
+  it('reads inline double-dollar formulas and does not merge across $$', () => {
+    expect(roundTrip('由 $$a + b = c$$ 和 $$ x = 1 $$ 可知。')).toBe('由 $a + b = c$ 和 $x = 1$ 可知。')
+    expect(roundTrip('$$a = 1$$ 和 $$b = 2$$')).toBe('$a = 1$ 和 $b = 2$')
+    const mixed = '$$a = 1$$ 是恒等式：\n\n$$\nb = 2\n$$'
+    expect(types(mixed).filter((t) => t.startsWith('math'))).toEqual(['mathInline', 'mathBlock'])
   })
 
   it('reads every status kind and leaves the words as text', () => {
