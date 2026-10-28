@@ -251,6 +251,10 @@ function annotateErrors() {
   emit('annotate-errors', [t('work.room.preview.errorsIntro'), ...lines].join('\n'))
 }
 
+/** 「跟不过新实例」那一句：它不算链上断了（应用还在、新的一帧没就绪，是「等」），
+ *  但屏幕上确实什么都换不了，得把「重试」这条路还给读者（定时器认输那一步设的）。 */
+const handoff = computed(() => props.navigationError || null)
+
 /** 链上第一段**断**了的：红条和链读的是同一句，不再各写一套。
  *
  *  「等」不算断：重连中、跟着重启后的新实例走都还会自己好，不该弹一条红的。 */
@@ -479,11 +483,14 @@ watch(
     </div>
     <!-- 链上断了的那一段：红条说的就是它，和点开链看到的是同一句。以前这里是第二个出处
          ——先一行原始错误、再一行「应用没起来」，链上那一段还有一套自己的说法，三种断法
-         各说各的。现在四种断法都只在链上写一句，红条照它说，动作只有「重试」一个。 -->
-    <div v-if="!sleepKind && (broken || previewReadError)" role="alert" class="px-3 py-2 text-error">
-      {{ broken ? t(broken.reason, broken.params ?? {}) : previewReadError }}
+         各说各的。现在四种断法都只在链上写一句，红条照它说。
+         另有两条链上没有、但同样挡住了读者的：这一份读不出来（`previewReadError`），
+         以及跟不过新实例之后那句「刷新以打开当前实例」——后者链上是「等」（应用还在、
+         新的一帧没就绪），没有哪一段算「断」。这两条也各有「重试」这一条出路。 -->
+    <div v-if="!sleepKind && (broken || previewReadError || handoff)" role="alert" class="px-3 py-2 text-error">
+      {{ broken ? t(broken.reason, broken.params ?? {}) : previewReadError ?? handoff }}
       <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-      <BaseButton v-if="broken" kind="secondary" size="sm" @click="emit('refresh')">{{
+      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
