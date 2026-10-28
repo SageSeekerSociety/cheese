@@ -54,7 +54,6 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { PENDING_NOTES } from '@/lib/pendingNotes'
-import { fileName } from '@/lib/viewingContext'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
