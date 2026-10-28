@@ -54,7 +54,8 @@ function toRow(item: Item): LibraryRow {
 export function useLibraryPages(
   shelf: () => LibraryShelf,
   view: () => LibraryView,
-  scroller: Readonly<Ref<HTMLElement | null>>
+  scroller: Readonly<Ref<HTMLElement | null>>,
+  active: () => boolean = () => true
 ) {
   const rows = ref<LibraryRow[]>([])
   const loading = ref(false)
@@ -162,7 +163,7 @@ export function useLibraryPages(
     loading.value = false
     loadFailed.value = false
     loadReason.value = ''
-    void more()
+    if (active()) void more()
   }
 
   /** 摆完了：每一串都取完了，手里也都空了。 */
@@ -173,8 +174,11 @@ export function useLibraryPages(
 
   watch(
     // 团队的书架每次是一个新对象：按它是哪一个来比，不按是不是同一个对象。
-    () => [JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
-    () => reset(),
+    () => [active(), JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
+    ([isActive]) => {
+      if (isActive) reset()
+      else generation++
+    },
     { immediate: true }
   )
 

@@ -219,4 +219,22 @@ describe('资料库里的文档', () => {
     await waitFor(() => expect(vi.mocked(deleteDocument)).toHaveBeenCalledWith('d1'))
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/library'))
   })
+
+  it('直接打开单篇文档时不拉取隐藏的资料库列表，且不等 about 返回即挂载文档面板', async () => {
+    let resolveAbout!: (value: ProjectDocument) => void
+    vi.mocked(getDocumentAbout).mockReturnValueOnce(
+      new Promise<ProjectDocument>((resolve) => {
+        resolveAbout = resolve
+      })
+    )
+    const { container, router } = await mount('/projects/p1/docs/d1')
+
+    expect(container.querySelector('[data-open-document="d1"]')).not.toBeNull()
+    expect(vi.mocked(listProjectLibrary)).not.toHaveBeenCalled()
+    expect(vi.mocked(listProjectDocuments)).not.toHaveBeenCalled()
+
+    resolveAbout(doc('d1', '竞品定价对比', '2026-09-21T10:00:00Z'))
+    await router.push('/projects/p1/library')
+    await waitFor(() => expect(rowNames(container)).toEqual(['竞品定价对比', '预算表.xlsx', '旧方案']))
+  })
 })

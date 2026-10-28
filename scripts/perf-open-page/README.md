@@ -70,3 +70,12 @@
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode walk
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode warm
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode cold
+
+6. **Run controlled fault calibration & interleaved A/B verification**
+
+       uv run --no-project --with playwright python scripts/perf-open-page/verify_calibration.py \
+           --base-url http://127.0.0.1:3000
+       uv run --no-project --with playwright python scripts/perf-open-page/verify_phase2.py \
+           --base-url http://127.0.0.1:3000 --rounds 3
+       backend/.venv/bin/pytest scripts/perf-open-page/test_calibration.py
+

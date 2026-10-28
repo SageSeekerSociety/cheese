@@ -7,7 +7,7 @@ import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
-import { computed, reactive, type Ref } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, reactive, type Ref, ref } from 'vue'
 import { queryOptions, useQuery } from '@tanstack/vue-query'
 
 import {
@@ -184,6 +184,31 @@ export function roomRowQuery(roomId: string) {
   })
 }
 
+function cachedProjectTopic(projectId: string | null | undefined, roomId: string): Topic | null {
+  if (!projectId || !roomId) return null
+  return (
+    queryClient
+      .getQueryData<ListPayload<Topic>>(keys.projectTopics(projectId))
+      ?.data.find((topic) => topic.id === roomId) ?? null
+  )
+}
+
+/**
+ * 读这个项目里的一个房间：清单已在缓存里（或正在路上）且里面有它时直接用清单那一行，
+ * 不再单独发一次 `GET /topics/:id`；清单里没有它时才单独取。
+ */
+export async function readProjectTopic(projectId: string, roomId: string): Promise<Topic> {
+  const cached = cachedProjectTopic(projectId, roomId)
+  if (cached) return cached
+  const inFlight = queryClient.getQueryCache().find({ queryKey: keys.projectTopics(projectId), exact: true })
+  if (inFlight && inFlight.state.fetchStatus === 'fetching') {
+    await settled(inFlight)
+    const after = cachedProjectTopic(projectId, roomId)
+    if (after) return after
+  }
+  return queryClient.fetchQuery(roomRowQuery(roomId))
+}
+
 /** 清单里的这几行换成 `change` 给的样子。 */
 export function patchTopics(projectId: string, change: (rows: Topic[]) => Topic[]): Promise<void> {
   return patchQuery<ListPayload<Topic>>(keys.projectTopics(projectId), (payload) => ({
@@ -241,10 +266,39 @@ export async function refreshTopicRow(projectId: string, roomId: string): Promis
  * 问完」，和「问完了，没有这个房间」分开 —— 分不开，深链接进来的第一帧会闪一下「这个
  * 话题不存在」。
  */
-export function usePlace(projectId: Ref<string | null>, roomId: Ref<string>, listed: Ref<Topic[]>) {
-  const inList = computed(() => listed.value.find((topic) => topic.id === roomId.value) ?? null)
+export function usePlace(
+  projectId: Ref<string | null>,
+  roomId: Ref<string>,
+  listed: Ref<Topic[]>,
+  loadingList?: Ref<boolean>
+) {
+  const cacheTick = ref(0)
+  const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+    const pid = projectId.value
+    const key = event.query.queryKey
+    if (pid && key[0] === 'project' && key[1] === pid && key[2] === 'topics') {
+      cacheTick.value++
+    }
+  })
+  if (getCurrentScope()) onScopeDispose(unsubscribe)
+
+  const inList = computed(() => {
+    void cacheTick.value
+    return listed.value.find((topic) => topic.id === roomId.value) ?? cachedProjectTopic(projectId.value, roomId.value)
+  })
+  const listPending = computed(() => {
+    void cacheTick.value
+    if (loadingList?.value) return true
+    const pid = projectId.value
+    if (!pid) return false
+    const inFlight = queryClient.getQueryCache().find({ queryKey: keys.projectTopics(pid), exact: true })
+    return inFlight?.state.fetchStatus === 'fetching'
+  })
   const row = useQuery(
-    computed(() => ({ ...roomRowQuery(roomId.value), enabled: !!roomId.value && !inList.value })),
+    computed(() => ({
+      ...roomRowQuery(roomId.value),
+      enabled: !!roomId.value && !inList.value && !listPending.value,
+    })),
     queryClient
   )
   const place = computed<Topic | null>(() => {
@@ -252,6 +306,6 @@ export function usePlace(projectId: Ref<string | null>, roomId: Ref<string>, lis
     const fetched = row.data.value
     return fetched && fetched.id === roomId.value && fetched.project_id === projectId.value ? fetched : null
   })
-  const resolving = computed(() => !inList.value && row.isFetching.value)
+  const resolving = computed(() => !inList.value && (listPending.value || row.isFetching.value))
   return { place, resolving }
 }

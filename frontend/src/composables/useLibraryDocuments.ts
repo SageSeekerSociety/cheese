@@ -13,6 +13,8 @@ import {
   searchProjectDocuments,
 } from '../api/projectDocuments'
 
+import { queryClient } from '@/query/client'
+
 /** 停手这么久才去搜：一个字一个字地打，不必每个字问一次。 */
 const SEARCH_PAUSE_MS = 250
 
@@ -67,9 +69,13 @@ export function useLibraryDocuments(projectId: () => string, query: () => string
     await deleteDocument(id)
   }
 
-  /** 地址上点名的那一份。 */
+  /** 地址上点名的那一份。同一刻被几处一起问时跟着在途的那一次走（staleTime 0）。 */
   function about(id: string): Promise<ProjectDocument> {
-    return getDocumentAbout(id)
+    return queryClient.fetchQuery({
+      queryKey: ['document', id, 'about'],
+      queryFn: () => getDocumentAbout(id),
+      staleTime: 0,
+    })
   }
 
   return { found, searching, making, make, remove, about }

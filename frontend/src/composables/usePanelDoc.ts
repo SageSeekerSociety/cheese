@@ -436,7 +436,13 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     /** 资料库文档现在叫什么（别人改了名之后重读）。 */
     currentTitle: async () => {
       const did = documentId.value
-      return did ? (await getDocumentAbout(did)).title ?? '' : null
+      if (!did) return null
+      const about = await queryClient.fetchQuery({
+        queryKey: ['document', did, 'about'],
+        queryFn: () => getDocumentAbout(did),
+        staleTime: 0,
+      })
+      return about.title ?? ''
     },
     toggleEditable,
     setSuggesting,
