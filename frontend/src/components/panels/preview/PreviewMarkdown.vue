@@ -66,16 +66,24 @@ function onSelect() {
 type OutlineEntry = { text: string; level: number; id: number }
 const outline = ref<OutlineEntry[]>([])
 
+/** 正文里那些**有字**的标题，按文档顺序。
+ *
+ *  抽目录和跳转两处共用这一条：空标题（`<h2></h2>`，原文里是光秃秃一行 `##`）不进
+ *  目录，跳转也得按同一批数——不然中间有一个空标题，目录里第 3 条跳过去落到第 4 个
+ *  标题上，越往后错得越多。 */
+function headingsOf(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return []
+  return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')).filter(
+    (heading) => (heading.textContent ?? '').trim() !== ''
+  )
+}
+
 function collectOutline() {
-  const root = view.value?.el ?? null
-  const next: OutlineEntry[] = []
-  if (root) {
-    for (const heading of Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))) {
-      const text = (heading.textContent ?? '').trim()
-      if (!text) continue
-      next.push({ text, level: Number(heading.tagName.slice(1)), id: next.length })
-    }
-  }
+  const next: OutlineEntry[] = headingsOf(view.value?.el ?? null).map((heading, id) => ({
+    text: (heading.textContent ?? '').trim(),
+    level: Number(heading.tagName.slice(1)),
+    id,
+  }))
   // 抽的这一趟由正文的每次 DOM 变化触发（标标记也改 DOM），所以先比一比再往外发：
   // 内容没变就不发，否则每画一次标记都要让上面那一层重排一次目录。
   if (sameOutline(outline.value, next)) return
@@ -101,7 +109,7 @@ function sameOutline(a: readonly OutlineEntry[], b: readonly OutlineEntry[]): bo
  */
 function goToHeading(index: number) {
   const root = view.value?.el ?? null
-  const heading = root?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')[index]
+  const heading = headingsOf(root)[index]
   if (!root || !heading) return
   const GAP = 8
   const distance = () => heading.getBoundingClientRect().top - root.getBoundingClientRect().top

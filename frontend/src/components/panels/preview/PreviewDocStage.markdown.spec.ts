@@ -108,6 +108,37 @@ it('两个标题的文档不摆目录：那是占位，不是导航', async () =
   expect(ui.queryByTestId('md-outline')).toBeNull()
 })
 
+it('光秃秃一行的空标题不进目录，也不占跳转的位子', async () => {
+  // 原文里一行 `##` 渲染成一个没有字的 h2。抽目录和跳转两处都要跳过它：只有一处跳过
+  // 的话，目录里第 3 条会落到第 4 个标题上，越往后错得越多。
+  const source = '# 一\n\n正文。\n\n##\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n'
+  const ui = mount({ content: source })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelectorAll('h2').length).toBe(3), { timeout: 5000 })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  const items = ui.getAllByRole('menuitem').map((el) => el.textContent ?? '')
+  expect(items).toEqual(['一', '二', '三'])
+
+  // 点第二条「二」要落到「二」上，不是落到那个空标题上。跳转读的是位置，happy-dom
+  // 量出来全是 0，所以给每个标题和正文根各造一个 top——按真实浏览器的样子减掉已经
+  // 滚过去的那一段（不减的话收敛不了，量到多少都补同一段）。
+  // 三个 h2 依次是「空标题 / 二 / 三」（「一」是 h1，不在这一批里）。
+  const headings = Array.from(md.querySelectorAll<HTMLElement>('h2'))
+  const tops = [0, 100, 300]
+  Object.defineProperty(md, 'getBoundingClientRect', { value: () => ({ top: 0, left: 0 }) })
+  headings.forEach((h, i) =>
+    Object.defineProperty(h, 'getBoundingClientRect', {
+      value: () => ({ top: tops[i] - md.scrollTop, left: 0 }),
+    })
+  )
+
+  await ui.getAllByRole('menuitem')[1].click()
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  // 目录第二条是「二」（空标题没进目录），落到它的 100 减掉 8px 留白。要是跳转没跳过
+  // 那个空标题，这里会落在 top 0 上、滚成 0——两种结果分得开。
+  expect(md.scrollTop).toBe(92)
+})
+
 it('换一份文件，上一份的目录不跟过来', async () => {
   const ui = mount({ content: '# 甲\n\n正文。\n\n## 乙\n\n正文。\n\n## 丙\n\n正文。\n' })
   await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
