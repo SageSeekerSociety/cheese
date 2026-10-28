@@ -126,7 +126,7 @@ const {
   saveOverrideHandles,
 } = useBranchProtection(() => props.projectId)
 
-const { exporting, exportError, exportProject } = useProjectExport(
+const { exporting, exportProject } = useProjectExport(
   () => props.projectId,
   () => projectName.value
 )
@@ -502,12 +502,7 @@ function close() {
 
         <!-- Exporting is for everyone who can read the project; the archive follows the
              caller's current room permissions (docs/project-export.md). -->
-        <ProjectExportSection
-          v-else-if="section === 'export'"
-          :busy="exporting"
-          :error="exportError"
-          @export="exportProject"
-        />
+        <ProjectExportSection v-else-if="section === 'export'" :busy="exporting" @export="exportProject" />
 
         <!-- 归档只给所有者：归档是他一个人的决定（后端也只认他）。 -->
         <ArchiveProjectSection
