@@ -22,6 +22,9 @@ const props = withDefaults(
     busy?: boolean
     /** 这一份文件能不能挂评论：资料库原件和消息附件不能。不能时只给「发送」一条出口。 */
     canComment?: boolean
+    /** 能不能私下问个人芝士：那条是全站一条对话，登录了才有。没有时这一项不列出来
+     *  （摆着一条按下去没反应的项比不摆更糟）。 */
+    canAskPersonal?: boolean
     /** 挂评论没成功的那一句。发不出去时不说的话，读者点了「评论」看起来像什么都没发生。 */
     commentError?: string
     /** 指的那一处在面板里的位置（面板内容坐标）。有就把框弹在它旁边；没有（键盘选中、
@@ -38,6 +41,7 @@ const props = withDefaults(
     canQueue: true,
     busy: false,
     canComment: false,
+    canAskPersonal: false,
     commentError: undefined,
     anchor: null,
     armFirst: false,
@@ -54,16 +58,26 @@ const emit = defineEmits<{
   clearQueued: []
   /** 把这句话连同这一处挂成一条评论，而不是发进对话。 */
   comment: []
+  /** 私下问个人芝士：这句话和这一处只进自己和芝士那一条对话，不进这间房。 */
+  personal: []
   cancel: []
 }>()
 
 // ---- 去处 ----
-type Recipient = 'agent' | 'comment'
+type Recipient = 'agent' | 'personal' | 'comment'
 const recipient = ref<Recipient>('agent')
+// 这一项用不了时把它切回「发给芝士」：这一份换成了挂不了评论的文件、或者这一格换到了
+// 没有项目的那几处，停在一个做不了的去处上会让发送键按下去悄没声。
 watch(
   () => props.canComment,
   (allowed) => {
-    if (!allowed) recipient.value = 'agent'
+    if (!allowed && recipient.value === 'comment') recipient.value = 'agent'
+  }
+)
+watch(
+  () => props.canAskPersonal,
+  (allowed) => {
+    if (!allowed && recipient.value === 'personal') recipient.value = 'agent'
   }
 )
 const RECIPIENTS: readonly { value: Recipient; icon: string; label: string; hint: string }[] = [
@@ -74,12 +88,25 @@ const RECIPIENTS: readonly { value: Recipient; icon: string; label: string; hint
     hint: 'work.room.preview.recipientAgentHint',
   },
   {
+    value: 'personal',
+    icon: 'mdi-chat-processing-outline',
+    label: 'work.room.preview.recipientPersonal',
+    hint: 'work.room.preview.recipientPersonalHint',
+  },
+  {
     value: 'comment',
     icon: 'mdi-comment-outline',
     label: 'work.room.preview.recipientComment',
     hint: 'work.room.preview.recipientCommentHint',
   },
 ]
+/** 这一份能选的那几项：挂不了评论、或问不了个人芝士时，那两项不列出来（原型里三项
+ *  齐全，是因为原型那一份两种情况都成立）。 */
+const offered = computed(() =>
+  RECIPIENTS.filter(
+    (item) => (item.value !== 'comment' || props.canComment) && (item.value !== 'personal' || props.canAskPersonal)
+  )
+)
 const current = computed(() => RECIPIENTS.find((r) => r.value === recipient.value) ?? RECIPIENTS[0])
 const menuOpen = ref(false)
 const picker = ref<HTMLElement | null>(null)
@@ -93,7 +120,7 @@ async function openMenu() {
   if (props.busy) return
   menuOpen.value = true
   await nextTick()
-  const at = RECIPIENTS.findIndex((r) => r.value === recipient.value)
+  const at = offered.value.findIndex((r) => r.value === recipient.value)
   options.value[Math.max(at, 0)]?.focus()
 }
 function closeMenu() {
@@ -224,6 +251,10 @@ function send(event: KeyboardEvent | MouseEvent) {
     emit('comment')
     return
   }
+  if (props.canAskPersonal && recipient.value === 'personal') {
+    emit('personal')
+    return
+  }
   emit('send')
 }
 </script>
@@ -303,9 +334,10 @@ function send(event: KeyboardEvent | MouseEvent) {
           @keydown.esc.prevent="emit('cancel')"
         />
         <div class="locator__foot">
-          <!-- 去处：发给芝士让它改，还是只挂成这一处的评论给人看。每一项带一句说清会发生
-               什么。挂不了评论的文件（资料库原件、消息附件）没有这个选择，按钮不出现。 -->
-          <div v-show="canComment" ref="picker" class="locator__picker">
+          <!-- 去处：发给芝士让它改、私下问个人芝士、还是只挂成这一处的评论给人看。每一项带
+               一句说清会发生什么。这一份挂不了评论、或者没登录问不了个人芝士时，那一项
+               不列出来；做得成的事只剩一件时整个下拉都不出现。 -->
+          <div v-show="offered.length > 1" ref="picker" class="locator__picker">
             <button
               ref="trigger"
               type="button"
@@ -334,7 +366,7 @@ function send(event: KeyboardEvent | MouseEvent) {
               @keydown.up="moveFocus($event, -1)"
             >
               <li
-                v-for="item in RECIPIENTS"
+                v-for="item in offered"
                 :key="item.value"
                 ref="options"
                 role="option"
@@ -389,7 +421,9 @@ function send(event: KeyboardEvent | MouseEvent) {
           {{
             canQueue && recipient === 'agent'
               ? t('work.room.preview.locatorHintQueue')
-              : t('work.room.preview.locatorHintSend')
+              : recipient === 'personal'
+                ? t('work.room.preview.locatorHintPersonal')
+                : t('work.room.preview.locatorHintSend')
           }}
         </p>
       </template>

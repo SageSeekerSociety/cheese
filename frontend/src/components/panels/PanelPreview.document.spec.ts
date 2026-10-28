@@ -200,15 +200,18 @@ it('切回「看」把协同编辑那一栏收掉：正文不再是编辑态', a
   await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
 })
 
-it('手机上不摆这个按钮：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+it('手机上「改」那一段是灰的：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
   editableMarkdown()
   const width = window.innerWidth
   window.innerWidth = 400
   try {
-    mount()
-    // 正文画出来了，说明这一档确实上了屏；只是没有「编辑」。
+    const ui = mount()
+    // 正文画出来了，说明这一档确实上了屏；只是进不去「改」。
     await screen.findByTestId('markdown')
-    expect(screen.queryByTestId('edit-file')).toBeNull()
+    const edit = screen.getByTestId('preview-mode-edit') as HTMLButtonElement
+    expect(edit.disabled).toBe(true)
+    await fireEvent.click(edit)
+    expect(ui.queryByTestId('markdown-live')).toBeNull()
   } finally {
     window.innerWidth = width
   }
@@ -474,12 +477,14 @@ it('关掉编辑器之后这一页按新版本重取，期间把这份文件交�
   expect(await screen.findByTestId('pages')).toBeTruthy()
   expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
-  await fireEvent.click(screen.getByTestId('edit-file'))
+  await fireEvent.click(screen.getByTestId('preview-mode-edit'))
   // 编辑器里改的是房间里那一份，所以这一格之外也得有一份它的页签。
   expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
 
   await fireEvent.click(await screen.findByTestId('editor-close'))
   await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
+  // 对话框关了就回到只读：模式跟着关回「看」，否则接下来拖选什么都不弹。
+  await waitFor(() => expect(screen.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
 })
 
 it('恢复了一版之后这一页按新版本重取', async () => {

@@ -34,6 +34,8 @@ import { fileName } from '@/lib/viewingContext'
 interface LocatorDeps {
   /** 指了一处，交给房间的对话。 */
   onLocate: (payload: PreviewLocate) => void
+  /** 指了一处，私下问个人芝士：这句话只进自己和芝士那一条对话，不进这间房。 */
+  onAskPersonal: (message: string) => void
   /** 圈选开关变了：有桥的网页要把它递进帧。 */
   onPickMode: (on: boolean) => void
   /** 把文档某一页此刻的样子截下来（`PreviewPages` 的实例方法），钉一处时随行带上。 */
@@ -386,6 +388,19 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     clearLocator()
   }
 
+  /** 去处选的是「问个人芝士」：同一句话和同一处位置，交给私聊，不进房间的对话。
+   *
+   *  不走 `quoted`（那条路把引用挂到房间的对话上），也不管待发篮——篮里攒的是「交给
+   *  这间房的芝士」，私下问的几句合进去会发到错的地方。页上钉着的那一处照样按位置拼
+   *  一句话发过去：个人芝士读不到房里的截图，要看的是页码和原文。 */
+  function sendPersonalLocator() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    if (!target || !note) return
+    deps.onAskPersonal(formatLocateMessage(target, note))
+    clearLocator()
+  }
+
   /** 图上画完、按了「加入对话」：把那张合成图交出去传进房间，再发那一句连同附件。
    *
    * 上传是外面递进来的能力（`uploadAnnotation`），消息要等它回来才拼得出来。发之前再
@@ -437,6 +452,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     clearQueued,
     sendQueued,
     sendLocator,
+    sendPersonalLocator,
     onImageRegion,
     onPageContext,
     onQuote,

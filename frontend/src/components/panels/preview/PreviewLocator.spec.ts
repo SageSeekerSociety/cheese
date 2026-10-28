@@ -45,6 +45,62 @@ it('指出一处以后去处由一个下拉定：默认发进对话，切到「�
   expect(ui.emitted().send).toHaveLength(1)
 })
 
+it('去处里有「问个人芝士」：选中它以后发送走私聊那一路，不进这间房', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const personal = ui.getByTestId('locator-recipient-personal')
+  expect(personal.textContent).toContain('问个人芝士（私聊）')
+  await fireEvent.click(personal)
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().personal).toHaveLength(1)
+  // 私聊的那一句不能同时发进房间、也不能被当成评论。
+  expect(ui.emitted().send).toBeUndefined()
+  expect(ui.emitted().comment).toBeUndefined()
+})
+
+it('问不了个人芝士时那一项不列出来：留着一条按下去没反应的项比不摆更糟', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
+})
+
+it('停在个人芝士上、这一项又没了（换了人）：切回发给芝士，不能让发送键按下去悄没声', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  await ui.rerender({
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: false,
+  })
+  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给芝士')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.emitted().personal).toBeUndefined()
+})
+
 it('给了位置就弹在那一处下面；下面放不下就翻到上面；左右夹在面板里', async () => {
   const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 700, viewTop: 0, viewBottom: 800 }
   const ui = render(PreviewLocator, {

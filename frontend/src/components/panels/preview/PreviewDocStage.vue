@@ -142,29 +142,28 @@ const emit = defineEmits<{
 }>()
 
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。markdown 走另一条
-// 路（预览格里和几个人一起改正文，`liveEdit`），两种都收在「编辑」这一个按钮上。
+// 路（预览格里和几个人一起改正文，`liveEdit`）。
+//
+// 入口只有文档条上「改」那一段（原型里也是那一段，没有另摆一颗「编辑」键）：
+// 能不改由 `PREVIEW_MODE` 那一份判，它同时管着那一段灰不灰。
 //
 // **手机上两种都不开**（负责人 2026-10-28 定）：手机上没有值得用的编辑体验。markdown
 // 那条是软键盘配 Monaco，编辑器在那边本来就是只读；Office 那条更糟——OnlyOffice 把
 // 桌面版那一套塞进 390px 的宽度里，还会卡在「正在载入」里。让入口露着、点开一个改不动
 // 或根本打不开的编辑器，比不露更糟：读者花时间点进去，得到的是一次白等。和「改动」那一
 // 格同一条（那里手机上把「编辑」换成「全文」）。
-const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
 const { mdAndUp } = useDisplay()
-const officeEditable = computed(() => mdAndUp.value && EDITABLE_SUFFIXES.has(props.documentSuffix))
 const liveEditable = computed(
   () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value
 )
-const canEdit = computed(() => officeEditable.value || liveEditable.value)
 
 function startEdit() {
   if (liveEditable.value) void props.liveEdit?.begin()
   else if (props.previewFile) emit('open-editor', props.previewFile.path)
 }
 
-// 「改」那一段就是编辑入口（原型里没有另摆一颗「编辑」键，那一段本身就切换 `contenteditable`）。
-// 切到「改」就开这一份的编辑会话——markdown 走协同、Office 走全屏对话框，和原来那颗
-// 「编辑」键同一个出口；离开「改」就把协同那一栏收掉，免得停在「看」而正文还在改。
+// 切到「改」就开这一份的编辑会话——markdown 走协同、Office 走全屏对话框；离开「改」
+// 就把协同那一栏收掉，免得停在「看」而正文还在改。
 const modes = inject(PREVIEW_MODE, null)
 const editingNow = computed(() => modes?.editing.value ?? false)
 watch(editingNow, (editing) => {
@@ -385,16 +384,6 @@ defineExpose({ snapshot, clearMark })
         @history="emit('toggle-history')"
       />
       <v-spacer />
-      <BaseButton
-        v-if="canEdit"
-        kind="secondary"
-        size="sm"
-        prepend-icon="mdi-pencil-outline"
-        data-testid="edit-file"
-        @click="startEdit"
-      >
-        {{ t('work.room.preview.edit') }}
-      </BaseButton>
       <v-menu v-if="compact" location="bottom end">
         <template #activator="{ props: menuProps }">
           <BaseButton

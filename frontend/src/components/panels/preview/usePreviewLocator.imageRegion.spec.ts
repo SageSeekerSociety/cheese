@@ -65,7 +65,7 @@ function mount(submitQuestion?: (request: unknown) => boolean) {
       docRendererMissing: false,
       isImageArtifact: true,
     } as never,
-    { onLocate, onPickMode: vi.fn(), snapshot: async () => null, clearMark: vi.fn() }
+    { onLocate, onAskPersonal: vi.fn(), onPickMode: vi.fn(), snapshot: async () => null, clearMark: vi.fn() }
   )
   return { locator, onLocate }
 }

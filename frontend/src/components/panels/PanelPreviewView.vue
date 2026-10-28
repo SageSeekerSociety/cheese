@@ -56,6 +56,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { PENDING_NOTES } from '@/lib/pendingNotes'
+import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -190,6 +191,17 @@ useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (even
   previewMode.set(mode)
 })
 
+// Office 那几种的「改」开的是一个全屏对话框，读者一关它，正文又回到只读。模式还停在
+// 「改」的话，接下来拖选一段什么都不弹（`usePreviewLocator` 按「此刻真在编辑」拦），
+// 而屏幕上没有任何东西说明为什么——跟着关回「看」，让模式说的是眼前这件事。
+// markdown 那条是就地的协同编辑，没有可以关的对话框，`editing` 一直是 null，碰不着这里。
+watch(
+  () => props.editing,
+  (now, before) => {
+    if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
+  }
+)
+
 const {
   locator,
   locatorNote,
@@ -205,6 +217,7 @@ const {
   clearQueued,
   sendQueued,
   sendLocator,
+  sendPersonalLocator,
   onImageRegion,
   onPageContext,
   onQuote,
@@ -216,6 +229,12 @@ const {
   onAnnotate,
 } = usePreviewLocator(props, {
   onLocate: (payload) => emit('locate', payload),
+  // 个人芝士是全站那一条对话（不在项目里），登录了就有；带着这一处的原文和位置问过去，
+  // 面板自己会打开。答不上来的话由面板说，这里不发第二句。
+  onAskPersonal: (message) => {
+    openAgent()
+    void askAgent(message)
+  },
   onPickMode: (on) => emit('pick-mode', on),
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
@@ -726,10 +745,12 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
+      :can-ask-personal="agentAvailable"
       :comment-error="commentError"
       :anchor="locatorAnchor"
       :arm-first="locatorFromSelection"
       @send="sendLocator"
+      @personal="sendPersonalLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"
       @clear-queued="clearQueued"
