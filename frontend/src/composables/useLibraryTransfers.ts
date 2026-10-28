@@ -134,12 +134,9 @@ export function useLibraryTransfers(page: {
   }
 
   async function download(file: LibraryFile) {
-    page.error.value = ''
-    try {
-      await downloadFile(libraryFileRawUrl(page.shelf(), file.path), file.path.split('/').pop() || file.path)
-    } catch (e) {
-      page.error.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
-    }
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）；资料库那一页
+    // 不再为下载留一行红字。
+    await downloadFile(libraryFileRawUrl(page.shelf(), file.path), file.path.split('/').pop() || file.path)
   }
 
   /** 确认框点「删除」：这时 `confirming` 一定是有值的，取出来交给 `remove`。 */

@@ -119,7 +119,6 @@ export function acceptHeadProps(over: Record<string, unknown> = {}): Record<stri
     agentName: AGENT_NAME,
     agentHandle: 'cheese',
     deliverableBusy: false,
-    deliverableError: '',
     // 四个 `defineModel` 是 required（它们的初值属于调用方的状态，重新读卡要能收起来）。
     // 预览站给的是「两个确认框都关着」。
     showVoidInput: false,

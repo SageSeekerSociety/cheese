@@ -1,7 +1,6 @@
 {
   "cancel": "Cancel",
   "current": "Current",
-  "downloadFailed": "Couldn't download",
   "downloadVersion": "Download this version",
   "empty": "No saves yet. From the next save on, every version is kept here.",
   "hint": "Every save keeps a version, and any version can be brought back",

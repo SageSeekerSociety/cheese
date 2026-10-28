@@ -1,5 +1,4 @@
 {
-  "downloadFailed": "Couldn't download",
   "eventLabel": "{time}: {text}",
   "liveNew": "{name}: {text}",
   "loadingOlder": "Loading older messages…",

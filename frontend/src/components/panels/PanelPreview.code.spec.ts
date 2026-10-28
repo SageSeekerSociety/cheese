@@ -42,7 +42,6 @@ function props(path = 'scripts/tool.py', content: string | null = SOURCE) {
     documentType: DOCUMENT_TYPES[suffix] ?? null,
     documentName: path.split('/').pop()!,
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docLoading: false,
     docError: '',

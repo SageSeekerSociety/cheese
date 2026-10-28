@@ -380,6 +380,41 @@ def test_format_status_renders_near_ceiling_state():
     assert "接近硬顶" in out
 
 
+def test_format_status_says_which_layer_and_when_it_comes_back():
+    """芝士要的是「这一层用完我会不会被拒绝、几时恢复」，所以剩余之外还要带上限、
+    恢复时间，以及不会自动恢复的那一层项目预算。"""
+    cli = _load()
+    payload = _status_payload({"status": "running", "near_ceiling": False})
+    payload["platform"]["credits"] = {
+        "unlimited": False,
+        "remaining": 380,
+        "total": 500,
+        "resets_at": "11月1日 00:00",
+        "project_remaining": 90,
+        "layer": "plan",
+    }
+    out = cli._format_status(payload)
+    assert "剩 380 / 上限 500 / 11月1日 00:00 恢复" in out
+    assert "本项目预算还剩 90（不会自动恢复）" in out
+
+
+def test_format_status_says_the_project_budget_does_not_come_back():
+    """先停的是项目预算时，上面那组数就是它，而且没人「等一等」就能恢复。"""
+    cli = _load()
+    payload = _status_payload({"status": "running", "near_ceiling": False})
+    payload["platform"]["credits"] = {
+        "unlimited": False,
+        "remaining": 90,
+        "total": 100,
+        "resets_at": None,
+        "project_remaining": 90,
+        "layer": "project_budget",
+    }
+    out = cli._format_status(payload)
+    assert "剩 90 / 上限 100；这个上限不会自动恢复，要管理员调" in out
+    assert "本项目预算还剩" not in out
+
+
 # --- the self-describing layer -------------------------------------------
 #
 # AGENTS.md's rule is "prose documents only what --help cannot tell you". That
