@@ -178,9 +178,9 @@ const sharedPending = inject(PENDING_NOTES, null)
  *  在几份文件上各指几处再一起发），而按字找位置只在这一份正文里找——拿着别的文件上的
  *  一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧相同的那句话上。 */
 const pendingPins = computed(() => {
-  const here = fileName(props.previewFile?.path ?? '')
+  const here = props.previewFile?.path ?? ''
   return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
-    note.anchor?.kind === 'text-range' && note.file === here
+    note.anchor?.kind === 'text-range' && note.path === here
       ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
       : []
   )

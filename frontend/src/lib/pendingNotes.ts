@@ -32,8 +32,11 @@ export type PendingAnchor =
 
 export interface PendingNote {
   id: string
-  /** 哪一份文件，如 `招募方案.docx`。 */
+  /** 哪一份文件，如 `招募方案.docx`（只写文件名，托盘那一行照原型这么显示）。 */
   file: string
+  /** 那一份文件的完整路径，如 `samples/招募方案.docx`。序号 pin 按它比对是哪一份——
+   *  只比文件名的话，两个目录下同名的那两份会撞在一起。 */
+  path: string
   /** 第几版，如 `第 3 版`；拿不到就是空。 */
   version: string
   /** 文件里哪一处，如 `第 1 页 · 二、时间安排`。 */
@@ -56,6 +59,10 @@ export interface PendingNotesApi {
   clear: () => void
   /** 把攒着的这一批加上可选的总体说明，合成一条消息发出去。 */
   send: (summary: string) => boolean
+  /** 上一次 `send` 没成功（对话栏没收下）。发送的入口不止一个（托盘的「全部发送」、
+   *  输入框的发送键、卡片上的「全部发送（N）」），失败的样子要一处说，所以失败这件事
+   *  记在篮上、由托盘读；下一次成功就清掉。 */
+  failed: Ref<boolean>
 }
 
 export const PENDING_NOTES: InjectionKey<PendingNotesApi> = Symbol('pending-notes')
@@ -71,6 +78,14 @@ export function pendingNoteId(): string {
 /** 这一处显示成原型里那种一行 `文件 · 版本 · 位置`。缺哪段就少哪段，不留空分隔符。 */
 export function pendingWhere(note: Pick<PendingNote, 'file' | 'version' | 'where'>): string {
   return [note.file, note.version, note.where].filter((part) => part && part.trim()).join(' · ')
+}
+
+/** 这一批里真会随对话发出去的有几条（交给芝士的那些）。
+ *
+ *  「全部发送（N）」几颗按钮、发送键上的「含 N 条批注」，说的都该是这一批真带得走的
+ *  条数；今天篮里只有交给芝士的这一种，两个数相同，但去处菜单加一项之后就不是了。 */
+export function sendableCount(notes: readonly PendingNote[]): number {
+  return notes.filter((note) => note.audience === 'cheese').length
 }
 
 /** 攒着的这一批加上可选的总体说明，拼成一条要发出去的消息。
@@ -96,6 +111,7 @@ export function composePending(notes: readonly PendingNote[], summary: string): 
  *  这一批要留着，不能悄悄丢掉。 */
 export function usePendingNotes(sendMessage: (content: string) => boolean): PendingNotesApi {
   const notes = ref<PendingNote[]>([])
+  const failed = ref(false)
   function add(note: Omit<PendingNote, 'id'>) {
     notes.value = [...notes.value, { ...note, id: pendingNoteId() }]
   }
@@ -104,11 +120,16 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
   }
   function clear() {
     notes.value = []
+    failed.value = false
   }
   function send(summary: string) {
     const message = composePending(notes.value, summary)
     if (!message.trim()) return false
-    if (!sendMessage(message)) return false
+    if (!sendMessage(message)) {
+      failed.value = true
+      return false
+    }
+    failed.value = false
     // 发出去的只是 `composePending` 收进去的那几条（交给芝士的）。今天篮里只有这一
     // 种，整批清掉等于清掉发出去的那几条；真攒进只挂评论的（去处菜单加「问个人芝士」
     // 之后）时，那几条**不能**跟着清——它们没经对话发出去，清掉就是无声地丢。所以
@@ -117,5 +138,5 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
     notes.value = notes.value.filter((note) => !sent.has(note.id))
     return true
   }
-  return { notes, add, remove, clear, send }
+  return { notes, add, remove, clear, send, failed }
 }

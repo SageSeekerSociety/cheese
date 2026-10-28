@@ -8,6 +8,7 @@ import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
+import { pageRatio } from './slidesContext'
 import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -121,12 +122,6 @@ useSelectionHighlight({
   paintClass: 'slide-hl',
 })
 
-/** 页宽页高的比例，夹在 0..1（和 `PreviewPages.ratio` 同一条：拖动、缩放下落点可能
- *  差出边界一点点，比例越界会让标记画到页外）。 */
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value))
-}
-
 function quote() {
   const selection = window.getSelection()
   if (!selection?.rangeCount || !sheet.value) return
@@ -149,7 +144,7 @@ function quote() {
     const rect = range.getBoundingClientRect()
     const spot =
       box.width > 0 && box.height > 0
-        ? { x: clamp01((rect.left - box.left) / box.width), y: clamp01((rect.top - box.top) / box.height) }
+        ? { x: pageRatio((rect.left - box.left) / box.width), y: pageRatio((rect.top - box.top) / box.height) }
         : {}
     emit('pageContext', {
       text,

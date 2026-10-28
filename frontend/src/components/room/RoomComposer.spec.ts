@@ -949,6 +949,7 @@ describe('攒着待发批注时的发送键', () => {
   function noteMsg(message: string) {
     return {
       file: 'a.md',
+      path: 'output/a.md',
       version: '',
       where: '开头',
       quote: 'q',
@@ -979,14 +980,28 @@ describe('攒着待发批注时的发送键', () => {
     expect(onClearQuote).toHaveBeenCalled()
   })
 
-  it('对话栏没收下时走老路：正文照发，这一批留着', async () => {
+  it('对话栏没收下时整下退回：这一批留着，正文也留着，不单独把正文发出去', async () => {
+    // 那颗键写的是「发送（含 N 条批注）」，只把正文发出去、把这一批留在原地，读者会
+    // 以为整批都发走了。失败那句话说在托盘上（`pending.failed`）。
     const pending = usePendingNotes(() => false)
     pending.add(noteMsg('甲'))
     const { box, onSend, draft } = mount({ draft: '说明', pending })
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith({ content: '说明', summon: false })
+    expect(onSend).not.toHaveBeenCalled()
     expect(pending.notes.value).toHaveLength(1)
     expect(draft.value).toBe('说明')
+    expect(pending.failed.value).toBe(true)
+  })
+
+  it('一个字都没写、也没附件时按发送键：这一批照样留着，不假装发走了', async () => {
+    const pending = usePendingNotes(() => false)
+    pending.add(noteMsg('甲'))
+    const { box, onSend } = mount({ pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(pending.notes.value).toHaveLength(1)
+    expect(pending.failed.value).toBe(true)
   })
 })

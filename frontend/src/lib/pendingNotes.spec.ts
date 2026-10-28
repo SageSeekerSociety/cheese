@@ -12,6 +12,7 @@ function note(over: Partial<PendingNote> = {}): PendingNote {
   return {
     id: 'x',
     file: 'a.md',
+    path: 'output/a.md',
     version: '',
     where: '开头',
     quote: 'q',

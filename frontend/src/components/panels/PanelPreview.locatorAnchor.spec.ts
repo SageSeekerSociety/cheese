@@ -216,6 +216,7 @@ it('篮里已经有几条时，卡片主按钮那一下发的是整批，不是�
   const pending = usePendingNotes(send)
   pending.add({
     file: '说明.md',
+    path: 'output/说明.md',
     version: '',
     where: '开头',
     quote: '甲',
@@ -257,6 +258,7 @@ it('篮里别的文件上的那几处不在这份正文里找序号', async () =
   // 同一句原文，但说的是另一份文件。
   pending.add({
     file: '别的.md',
+    path: 'other/别的.md',
     version: '',
     where: '开头',
     quote: '失败以后重试 3 次。',
@@ -275,6 +277,7 @@ it('篮里别的文件上的那几处不在这份正文里找序号', async () =
   // 而这一份文件自己那一条是挂得上去的：换一个文件名就画。
   pending.add({
     file: '说明.md',
+    path: 'output/说明.md',
     version: '',
     where: '开头',
     quote: '失败以后重试 3 次。',

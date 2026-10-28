@@ -1444,6 +1444,10 @@ button:not(.v-btn) {
    圆点，不是底色。 */
 .pending-pin {
   display: inline-flex;
+  /* 不参与选字：浏览器把 `user-select: none` 的东西排除在 `Selection.toString()` 之外，
+     所以读者选一句正好跨过这颗序号时，取出来的原文和前（后）文里不会多一个数字。
+     查那一边由 `markdownAnchors` 的 `ANCHOR_IGNORE_ATTR` 挡（`collectText` 认它）。 */
+  user-select: none;
   align-items: center;
   justify-content: center;
   min-width: 16px;

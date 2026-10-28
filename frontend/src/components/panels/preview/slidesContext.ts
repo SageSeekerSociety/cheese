@@ -37,3 +37,12 @@ export type PagePin = {
   y: number
   context: SlideSource
 }
+
+/** 页宽页高的比例，夹在 0..1。
+ *
+ *  分页文档和幻灯片两档量同一个东西（页上文字层的一块，相对这一页的比例），落点在拖动、
+ *  缩放下可能差出边界一点点：比例越界会让标记画到页外。两档共用这一处，一个边界改了
+ *  另一个跟着改。 */
+export function pageRatio(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}

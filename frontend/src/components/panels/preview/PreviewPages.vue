@@ -24,6 +24,7 @@ import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
+import { pageRatio } from './slidesContext'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -472,8 +473,8 @@ function onSelect() {
   const spot =
     canvasBox && canvasBox.width > 0 && canvasBox.height > 0
       ? {
-          x: ratio((rect.left - canvasBox.left) / canvasBox.width),
-          y: ratio((rect.top - canvasBox.top) / canvasBox.height),
+          x: pageRatio((rect.left - canvasBox.left) / canvasBox.width),
+          y: pageRatio((rect.top - canvasBox.top) / canvasBox.height),
         }
       : {}
   // 有身份就走幻灯片那条结构化出口：同一个锚点、同一份版本，两侧文字帮受话人分辨同
@@ -506,10 +507,6 @@ function togglePointing() {
   if (!pointing.value) marked.value = null
 }
 
-function ratio(value: number): number {
-  return Math.min(1, Math.max(0, value))
-}
-
 /** 点了一下：算出它在那一页的哪个比例位置。
  *
  *  没画出来的页不接受——页框先摆在那儿，可它的尺寸还是零，点上去算出来的比例没有
@@ -528,8 +525,8 @@ function onPoint(event: MouseEvent) {
   // 百分比定位在内边距框里，也就是画布那一块，两边量的得是同一个框。
   const box = canvas.getBoundingClientRect()
   if (!box.width || !box.height) return
-  const x = ratio((event.clientX - box.left) / box.width)
-  const y = ratio((event.clientY - box.top) / box.height)
+  const x = pageRatio((event.clientX - box.left) / box.width)
+  const y = pageRatio((event.clientY - box.top) / box.height)
   marked.value = { page: slot.number, x, y }
   emit('pin', { page: slot.number, x, y, context: props.context })
 }

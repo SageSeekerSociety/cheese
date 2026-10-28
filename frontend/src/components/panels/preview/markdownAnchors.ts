@@ -172,9 +172,11 @@ export const PIN_ATTR = 'data-pending-pin'
 
 /** 正文里不参与「按字找位置」和「取原文/前后文」的东西挂这个属性。
  *
- *  正文是 `MarkdownView` 渲染出来的，而标记和序号是我们从外面插进去的：`collectText`
- *  跳过挂了这个属性的元素，`quoteFromSelection`/`contextAround` 取出的原文也不含它们。
- *  没有它的话，读者选一句正好跨过一颗序号时，交给芝士的原文里会多一个数字。 */
+ *  正文是 `MarkdownView` 渲染出来的，而标记和序号是我们从外面插进去的。挂了这个属性的
+ *  元素，`collectText` 按字找位置时跳过（查那一边）。取那一边（`quoteFromSelection`
+ *  的 `Selection.toString()`、`contextAround` 的 `Range.toString()`）挡不了 DOM：
+ *  那是浏览器给的字符串，所以序号另用 `user-select: none`（见 `style.css` 的
+ *  `.pending-pin`）排除。两边各管一头，缺哪一头都会让读者选中的原文里多一个数字。 */
 export const ANCHOR_IGNORE_ATTR = 'data-anchor-ignore'
 
 /** 把上一轮挂上去的序号拆掉。和 `clearMarks` 分开：两种标记谁先画谁后画都要拆干净，

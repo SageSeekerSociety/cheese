@@ -38,7 +38,7 @@ import {
 } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
-import { PENDING_NOTES } from '../../lib/pendingNotes'
+import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -117,11 +117,12 @@ const draft = defineModel<string>({ required: true })
 // 攒着的那几处批注（话题页注入的，见 `lib/pendingNotes`）。有它时输入框上方逐条列出来，
 // 发送键写清这一下带几条；没有这个（私聊、别处的输入框）就照旧。
 const pending = inject(PENDING_NOTES, null)
+/** 篮里攒着几条（含只留评论的那种，托盘上要列）。 */
 const pendingCount = computed(() => pending?.notes.value.length ?? 0)
-/** 这一下按发送键真的会带走几条批注：带着附件时走的是另一条路（附件 + 正文），那一下
- *  不包含这一批，所以发送键不能写「含 N 条批注」——写了就是承诺它做不到的事。带附件
- *  时那批仍旧攒着，由托盘上的「全部发送」发。 */
-const sendableCount = computed(() => (props.atts.length ? 0 : pendingCount.value))
+/** 这一下按发送键真的会带走几条批注：要满足两条——去处是交给芝士的（只留评论的不经
+ *  对话发），且没带附件（带附件时走的是附件 + 正文那条路，不含这一批）。不满足时发送
+ *  键就不写「含 N 条批注」，写了就是承诺它做不到的事。 */
+const sendableCount = computed(() => (props.atts.length ? 0 : countSendable(pending?.notes.value ?? [])))
 /** 光标在正文里的位置（第几个字符前面）。 */
 const caret = ref(draft.value.length)
 
@@ -508,7 +509,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (props.attsUploading) return
   // 攒着待发批注时，这一下发的就是那一批：输入框里的字当作「总体说明」并进同一条消息，
   // 而不是先发一条空话再发那批（原型里发送键写的就是「发送（含 N 条批注）」）。
-  if (pendingCount.value > 0 && !props.atts.length) {
+  if (sendableCount.value > 0 && !props.atts.length) {
     const summary = expandMentions(draft.value)
     if (pending?.send(summary)) {
       draft.value = ''
@@ -518,8 +519,11 @@ function sendDraft(opts?: { summon?: boolean }) {
       emit('clear-quote')
       return
     }
-    // 没发出去（对话栏那一刻收不下）就往下走老路：正文里的字照发，这一批留着。
-    // 不让人以为按了没反应。
+    // 没发出去（对话栏那一刻收不下）：这一批留着，输入框里的字也留着，按原样退回去。
+    // 不往下走老路——那颗键写的是「发送（含 N 条批注）」，只把正文发出去、把这一批留在
+    // 原地，读者会以为整批都发走了。失败那句话说在托盘上（`pending.failed`，三个发送入口
+    // 共用一条），所以这里不必再报一次。
+    return
   }
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)

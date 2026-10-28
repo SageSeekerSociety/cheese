@@ -24,6 +24,7 @@ const stubs = {
 function note(overrides: Record<string, unknown> = {}) {
   return {
     file: '招募方案.docx',
+    path: 'samples/招募方案.docx',
     version: '',
     where: '第 1 页 · 二、时间安排',
     quote: '报名截止 11 月 8 日',

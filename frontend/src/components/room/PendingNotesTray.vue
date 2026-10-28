@@ -10,7 +10,7 @@ import { computed, inject, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { PENDING_NOTES, pendingWhere } from '@/lib/pendingNotes'
+import { PENDING_NOTES, pendingWhere, sendableCount } from '@/lib/pendingNotes'
 
 const pending = inject(PENDING_NOTES, null)
 
@@ -20,7 +20,7 @@ const open = ref(true)
 const notes = computed<readonly PendingNote[]>(() => pending?.notes.value ?? [])
 const count = computed(() => notes.value.length)
 /** 只留评论的那几条不进「全部发送」那一条消息：评论不经对话发。 */
-const sendable = computed(() => notes.value.filter((note) => note.audience === 'cheese').length)
+const sendable = computed(() => sendableCount(notes.value))
 
 function audienceLabel(note: PendingNote): string {
   return note.audience === 'comment' ? t('work.room.preview.recipientComment') : t('work.room.preview.pendingToCheese')
@@ -28,12 +28,13 @@ function audienceLabel(note: PendingNote): string {
 
 /** 上一次发送没成的那一句：对话栏那一刻还没准备好（`say` 收不下）时，这一批留着，
  *  得让人看得出「按了没反应」是没发出去，不是发出去没显示。下一回重试成功就抹掉。 */
-const sendError = ref('')
+// 发送失败记在篮上（三个入口共用一条），这里只读它：下一次成功、或者这一批被清空时
+// 它自己会清掉。
+const sendError = computed(() => (pending?.failed.value ? t('work.room.preview.sendQueuedFailed') : ''))
 
 function sendAll() {
   if (!sendable.value) return
-  if (pending?.send('')) sendError.value = ''
-  else sendError.value = t('work.room.preview.sendQueuedFailed')
+  pending?.send('')
 }
 </script>
 
