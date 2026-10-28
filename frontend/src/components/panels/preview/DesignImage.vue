@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ImageRegionMark, RasterRegion, RasterSelection } from './designRegion'
+import type { ImageRegionMark, Point, RasterRegion, RasterSelection } from './designRegion'
 import type { SketchTool } from './designSketch'
 
 import { computed, ref, watch } from 'vue'
@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import DesignCropBox from './DesignCropBox.vue'
 import DesignMinimap from './DesignMinimap.vue'
 import DesignRasterRegion from './DesignRasterRegion.vue'
+import { imagePoint } from './designRegion'
 import { SKETCH_COLORS } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
@@ -15,6 +16,7 @@ import DesignViewToolbar from './DesignViewToolbar.vue'
 import { useDesignAdjust } from './useDesignAdjust'
 import { useDesignAnnotations } from './useDesignAnnotations'
 import { useDesignDiscardGuard } from './useDesignDiscardGuard'
+import { useDesignInspect } from './useDesignInspect'
 import { useDesignShortcuts } from './useDesignShortcuts'
 import { useDesignViewport } from './useDesignViewport'
 
@@ -136,6 +138,8 @@ const {
 
 /** 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。 */
 const adjust = useDesignAdjust(() => props.identity)
+/** 读这张图那两件：取色、量距离。 */
+const inspect = useDesignInspect(() => image.value)
 /** 转 90°/270° 时屏幕上那张图的宽高和原图对调。 */
 /** 明显比视口长的时候才摆定位条：铺得下的图摆一条只会碍事。 */
 const showMinimap = computed(
@@ -248,6 +252,51 @@ const {
   adjust: () => adjust.adjust.value,
   emitAnnotate: (payload) => emit('annotate', payload),
 })
+
+/** 取色/量距离的手指落点换算：屏幕上这一点落在原图的哪个像素。 */
+function inspectPoint(event: PointerEvent): Point | null {
+  const element = image.value
+  if (!element?.naturalWidth || !natural.value.width) return null
+  const rect = element.getBoundingClientRect()
+  if (!rect.width || !rect.height) return null
+  return imagePoint(
+    { x: event.clientX, y: event.clientY },
+    {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      naturalWidth: element.naturalWidth,
+      naturalHeight: element.naturalHeight,
+      scale: scale.value,
+      adjust: adjustValues.value,
+    }
+  )
+}
+let inspecting = false
+function inspectDown(event: PointerEvent) {
+  if (!inspect.active.value || event.button !== 0) return sheetDown(event)
+  const at = inspectPoint(event)
+  if (!at) return
+  inspecting = true
+  ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+  if (inspect.mode.value === 'pick') inspect.pick(at)
+  else inspect.startMeasure(at)
+  event.preventDefault()
+  event.stopPropagation()
+}
+function inspectMove(event: PointerEvent) {
+  if (!inspecting) return sheetMove(event)
+  if (inspect.mode.value !== 'measure') return
+  const at = inspectPoint(event)
+  if (at) inspect.dragMeasure(at)
+  event.stopPropagation()
+}
+function inspectUp(event: PointerEvent) {
+  if (!inspecting) return sheetUp(event)
+  inspecting = false
+  event.stopPropagation()
+}
 
 useDesignShortcuts({
   active: () => props.active,
@@ -423,9 +472,9 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
         <div
           class="design-image__sheet"
           :style="dimensions"
-          @pointerdown.capture="sheetDown"
-          @pointermove.capture="sheetMove"
-          @pointerup.capture="sheetUp"
+          @pointerdown.capture="inspectDown"
+          @pointermove.capture="inspectMove"
+          @pointerup.capture="inspectUp"
           @pointercancel.capture="sheetCancel"
           @lostpointercapture.capture="sheetCancel"
           @dblclick.capture="sheetDoubleClick"
@@ -527,6 +576,28 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
           />
         </div>
       </div>
+      <div class="design-image__inspect" role="group" :aria-label="t('design.inspect')">
+        <button
+          type="button"
+          class="design-image__inspect-btn"
+          :class="{ 'is-on': inspect.mode.value === 'pick' }"
+          :aria-pressed="inspect.mode.value === 'pick'"
+          :title="t('design.pickHint')"
+          @click="inspect.setMode('pick')"
+        >
+          <i class="mdi mdi-eyedropper-variant" aria-hidden="true" />{{ t('design.pick') }}
+        </button>
+        <button
+          type="button"
+          class="design-image__inspect-btn"
+          :class="{ 'is-on': inspect.mode.value === 'measure' }"
+          :aria-pressed="inspect.mode.value === 'measure'"
+          :title="t('design.measureHint')"
+          @click="inspect.setMode('measure')"
+        >
+          <i class="mdi mdi-ruler" aria-hidden="true" />{{ t('design.measure') }}
+        </button>
+      </div>
       <DesignMinimap
         v-if="showMinimap && !adjust.cropping.value"
         :pane="pane"
@@ -535,6 +606,41 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
         :marks="markRatios"
         @jump="scrollToRatio"
       />
+      <!-- 取色/量距离读出来的那个数：浮在左下，别挡住图。 -->
+      <div v-if="inspect.color.value || inspect.measure.value" class="design-image__reading" role="status">
+        <template v-if="inspect.color.value">
+          <span class="design-image__reading-swatch" :style="{ background: inspect.color.value.hex }" />
+          <code>{{ inspect.color.value.hex }}</code>
+          <span class="design-image__reading-where"
+            >x {{ inspect.color.value.at.x }}、y {{ inspect.color.value.at.y }}</span
+          >
+        </template>
+        <template v-else-if="inspect.measure.value">
+          <code>{{ t('design.measured', { length: Math.round(inspect.measure.value.length) }) }}</code>
+          <span class="design-image__reading-where">
+            x {{ Math.round(inspect.measure.value.from.x) }}、y {{ Math.round(inspect.measure.value.from.y) }} → x
+            {{ Math.round(inspect.measure.value.to.x) }}、y {{ Math.round(inspect.measure.value.to.y) }}
+          </span>
+        </template>
+      </div>
+      <!-- 量出来的那条线画在图上：两端都在原图坐标里，跟着图一起转。 -->
+      <svg
+        v-if="inspect.measure.value && natural.width"
+        class="design-image__measure"
+        viewBox="`0 0 ${natural.width} ${natural.height}`"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+      >
+        <line
+          :x1="inspect.measure.value.from.x"
+          :y1="inspect.measure.value.from.y"
+          :x2="inspect.measure.value.to.x"
+          :y2="inspect.measure.value.to.y"
+          stroke="var(--accent)"
+          stroke-width="2"
+          stroke-dasharray="6 4"
+        />
+      </svg>
       <div class="design-image__overlay">
         <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
       </div>

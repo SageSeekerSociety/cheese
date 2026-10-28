@@ -273,3 +273,85 @@
 .design-image__discard-actions button:focus-visible {
   outline: 2px solid var(--accent);
 }
+
+/* 取色、量距离：这两颗只为「读」，不改图也不发东西，摆在图的左上角单独一小条。 */
+.design-image__inspect {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.design-image__inspect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.design-image__inspect-btn:hover {
+  background: var(--fill-2);
+}
+.design-image__inspect-btn.is-on {
+  color: var(--accent);
+  background: var(--fill-2);
+}
+.design-image__inspect-btn .mdi {
+  font-size: 15px;
+  line-height: 1;
+}
+.design-image__reading {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  background: var(--raised);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.design-image__reading code {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.design-image__reading-swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 2px;
+}
+.design-image__reading-where {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+/* 量出来的那条线：铺在图上，坐标是原图像素。 */
+.design-image__measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

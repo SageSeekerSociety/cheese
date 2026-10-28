@@ -78,5 +78,12 @@
   "cropHintPanel": "Drag to frame the part to keep",
   "cropApply": "Crop",
   "cancel": "Cancel",
-  "edited": "Adjusted · the file is untouched"
+  "edited": "Adjusted · the file is untouched",
+  "inspect": "Inspect the picture",
+  "pick": "Pick colour",
+  "pickHint": "Click a pixel to read its colour",
+  "measure": "Measure",
+  "measureHint": "Drag to measure the distance in source pixels",
+  "measured": "{length} px",
+  "copyHint": "Click again to copy the colour"
 }

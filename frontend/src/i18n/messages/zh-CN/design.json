@@ -78,5 +78,12 @@
   "cropHintPanel": "拖动框选要留下的部分",
   "cropApply": "裁剪",
   "cancel": "取消",
-  "edited": "已调整 · 原图没动"
+  "edited": "已调整 · 原图没动",
+  "inspect": "读这张图",
+  "pick": "取色",
+  "pickHint": "点一下读出这一点的颜色",
+  "measure": "量距离",
+  "measureHint": "拖一条线读出两端之间多少原图像素",
+  "measured": "{length} 像素",
+  "copyHint": "再点一下复制色值"
 }
