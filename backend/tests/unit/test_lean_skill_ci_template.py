@@ -47,7 +47,12 @@ def test_the_template_is_valid_yaml_and_the_job_is_named_lean():
 
 
 def test_the_action_is_pinned_to_a_commit():
-    """标签可变：@v1 能被指到别的提交，review 过的东西第二天就不是那份了。"""
+    """标签可变：@v1 能被指到别的提交，review 过的东西第二天就不是那份了。
+
+    这条只查得出「四十位十六进制」这个形状。文件的 blob 哈希也是四十位，所以
+    blob 冒充提交它拦不住——本模板里真出过一次：写的是 action.yml 的 blob 哈希，
+    `uses:` 根本解析不了。那个错靠人对着 action 的提交核对，不靠这条测试。
+    """
     uses = [s["uses"] for s in _workflow()["jobs"]["lean"]["steps"] if "uses" in s]
     pinned = [
         u

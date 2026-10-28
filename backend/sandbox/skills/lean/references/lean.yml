@@ -41,8 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # 固定到提交，别写 @v1：标签可变，能被人指到别的提交。
-      # 这个 sha 是 lean-action v1 在 2026-10-28 指向的提交。
-      - uses: leanprover/lean-action@ebf11cf59ebe4465bf9af8a1531772385b66632c # v1
+      # 这个 40 位是提交（v1 轻量标签在 2026-10-28 指向的 commit），不是文件的
+      # blob 哈希——`uses:` 只认提交，写错会解析失败。
+      - uses: leanprover/lean-action@fe408643ea7367d8c0404a8be3975bb145f5fb64 # v1
         with:
           use-github-cache: true
           # 证明里留了 sorry 就红。默认的 build 只在编译不过时红，而带 sorry
