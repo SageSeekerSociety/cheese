@@ -1,4 +1,5 @@
 // PanelPreviewView 的 props 契约：这一格要什么，全写在这里。摆在视图外面，取数那一层和这一格看的是同一份说明，视图文件也留在一千行以内。
+import type { AppWakeStep } from '../../../composables/panelPreview/appWake'
 import type { PreviewCommentsBundle } from '../../../composables/panelPreview/comments'
 import type { PanelPreviewLiveEdit } from '../../../composables/panelPreview/liveEdit'
 import type { PreviewVersionsBundle } from '../../../composables/panelPreview/versions'
@@ -41,6 +42,13 @@ export interface PreviewViewProps {
   previewUrl: string | null
   previewAppNote: string
   previewTunnelUp: boolean
+  /** 应用的端口有应答：连通链「应用」那一段。 */
+  previewAppUp?: boolean
+  /** 应用睡着时顶上的静态快照，和它是多久以前留的。 */
+  appSnapshot?: { html: string; age: string } | null
+  /** 唤醒的分步进度（没在唤醒是 null），和没成时那一句。 */
+  wakeSteps?: AppWakeStep[] | null
+  wakeError?: string
   previewNamedPath: string
   /** 刚跟着重启后的应用自动重载过：一句话解释那一闪，免得像是面板自己坏了。 */
   autoReloaded?: boolean

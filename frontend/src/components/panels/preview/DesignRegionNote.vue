@@ -239,9 +239,17 @@ onBeforeUnmount(() => observer?.disconnect())
 .design-region-note button:disabled {
   color: var(--faint);
 }
-.design-region-note__expand {
+/* 入口按钮的文字就是输入框的 placeholder，很长。`.design-region-note button` 那条
+   `flex: none` 比这里更具体，会把这条的 `flex` 顶掉：按钮按内容宽撑开，窄面板里把
+   「发送」「取消」顶出卡片（卡片 overflow: hidden，顶出去的部分点不到）。提高一级特异性
+   让它真的能伸缩，并把自己省略。 */
+.design-region-note .design-region-note__expand {
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .design-region-note--compact {
   gap: 0;
