@@ -137,10 +137,11 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  outline: none;
 }
-.ps__grid:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+/* 键盘落点在那张表上：一圈内描边说明「方向键现在走的是这块」。 */
+.ps__table:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .ps__table {

@@ -745,18 +745,21 @@ watch(showSource, async () => {
       <div v-else-if="showCharts" class="ps__charts">
         <PreviewSheetChart v-for="(chart, i) in activeCharts" :key="i" :chart="chart" :narrow="narrow" />
       </div>
-      <div
-        v-else
-        ref="scroller"
-        class="ps__grid"
-        role="grid"
-        :aria-rowcount="active.rows.length"
-        :aria-colcount="active.width"
-        tabindex="0"
-        @scroll="onScroll"
-        @keydown="onKeydown"
-      >
-        <table class="ps__table">
+      <!-- `.ps__grid` 只是滚动的那一层；「可以走动的表格」是里面那张表：`role="grid"`、
+           键盘落点和方向键都挂在它上面（和 `AdminFeedbackTable` 同一种写法）。方向键在格
+           子里走，读屏听到的是「某某表第几行第几列」。
+           `aria-rowcount` 说的是整张表有多少行——DOM 里只铺看得见的那一屏，不写的话读屏
+           会以为表就这么长。 -->
+      <div v-else ref="scroller" class="ps__grid" @scroll="onScroll">
+        <table
+          class="ps__table"
+          role="grid"
+          :aria-rowcount="active.rows.length"
+          :aria-colcount="active.width"
+          :aria-label="t('work.room.preview.sheetRegion')"
+          tabindex="0"
+          @keydown="onKeydown"
+        >
           <thead>
             <tr>
               <th class="ps__corner" />
@@ -765,7 +768,7 @@ watch(showSource, async () => {
           </thead>
           <tbody>
             <!-- 窗口上面那一截：不画，但占着高度，滚动条的长度和整张表对得上。 -->
-            <tr v-if="padTop" class="ps__spacer" aria-hidden="true">
+            <tr v-if="padTop" class="ps__spacer" aria-hidden="true" role="presentation">
               <td :colspan="active.width + 1" :style="{ height: `${padTop}px` }" />
             </tr>
             <tr v-for="{ cells, row: r } in visibleRows" :key="r" class="ps__row-line">
@@ -825,7 +828,7 @@ watch(showSource, async () => {
               </td>
             </tr>
             <!-- 窗口下面那一截。 -->
-            <tr v-if="padBottom" class="ps__spacer" aria-hidden="true">
+            <tr v-if="padBottom" class="ps__spacer" aria-hidden="true" role="presentation">
               <td :colspan="active.width + 1" :style="{ height: `${padBottom}px` }" />
             </tr>
           </tbody>

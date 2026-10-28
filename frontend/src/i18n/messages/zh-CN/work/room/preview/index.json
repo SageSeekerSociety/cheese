@@ -87,6 +87,7 @@
   "sheetRows": "共 {rows} 行",
   "sheetLegacyUnsupported": "老版 Excel 表格（.xls）暂时打不开预览，请下载原文件",
   "sheetReadFailed": "无法读取这个表格",
+  "sheetRegion": "表格",
   "sheetRow": "第 {row} 行",
   "showSource": "看原文",
   "showTable": "看表格",

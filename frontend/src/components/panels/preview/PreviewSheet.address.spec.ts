@@ -67,7 +67,7 @@ it('拖过一片：地址栏说的是两个角，不是松手的那一格', asyn
 it('方向键走格子，回车把这一格交出去', async () => {
   const { container, emitted } = mount()
   await waitFor(() => expect(cell(container, 1, 0)).not.toBeNull())
-  const grid = container.querySelector('[role=grid]') as HTMLElement
+  const grid = container.querySelector('table[role=grid]') as HTMLElement
   await fireEvent.click(cell(container, 1, 0))
   expect(address(container)).toBe('A2')
 
@@ -82,7 +82,7 @@ it('方向键走格子，回车把这一格交出去', async () => {
 it('Shift+方向键扩出一片', async () => {
   const { container } = mount()
   await waitFor(() => expect(cell(container, 1, 0)).not.toBeNull())
-  const grid = container.querySelector('[role=grid]') as HTMLElement
+  const grid = container.querySelector('table[role=grid]') as HTMLElement
   await fireEvent.click(cell(container, 1, 0))
   await fireEvent.keyDown(grid, { key: 'ArrowDown', shiftKey: true })
   await fireEvent.keyDown(grid, { key: 'ArrowRight', shiftKey: true })
