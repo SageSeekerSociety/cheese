@@ -8,9 +8,10 @@ import type { ArtifactVersion } from '../api'
 
 import { useArtifactVersionPreview } from '../composables/useArtifactVersionPreview'
 import { t } from '../i18n'
-import { sheetKindOf, SLIDE_SUFFIXES } from '../lib/fileKind'
+import { codeLanguageOf, sheetKindOf, SLIDE_SUFFIXES } from '../lib/fileKind'
 
 import DesignImage from './panels/preview/DesignImage.vue'
+import PreviewCode from './panels/preview/PreviewCode.vue'
 import PreviewMarkdown from './panels/preview/PreviewMarkdown.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
@@ -55,6 +56,7 @@ const { data, imageUrl, text, loading, error, suffix, view } = useArtifactVersio
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
       <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" />
+      <PreviewCode v-else-if="view === 'code' && text !== null" :source="text" :language="codeLanguageOf(suffix)" />
       <DesignImage
         v-else-if="imageUrl"
         :src="imageUrl"

@@ -8,7 +8,8 @@
 // sentence. A spreadsheet keeps its cell addresses, and `B7` is an address 芝士
 // can open directly — paginating it would destroy exactly that. A markdown file
 // has neither pages nor cells, and nothing here converts it: it is shown as the
-// text it already is, parsed by the same renderer the chat uses.
+// text it already is, parsed by the same renderer the chat uses. Source code
+// keeps its line numbers, and `第 12–18 行` is the address a reader points at.
 //
 // 图片读不成文本（`content` 是 null），但那不是「没法显示」——内容域就是拿
 // 对应的 image/* 把这些字节发出来的。`IMAGE_SUFFIXES` 和上面那张类型表
@@ -29,6 +30,7 @@ import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
+import PreviewCode from './PreviewCode.vue'
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewMarkdownLive from './PreviewMarkdownLive.vue'
 import PreviewPage from './PreviewPage.vue'
@@ -111,6 +113,8 @@ const emit = defineEmits<{
   /** 读者在表格里拖过一片：两个角的地址，加上这片格子里摊平的内容。 */
   'sheet-range': [payload: { sheet: string; start: string; end: string; text: string }]
   'markdown-quote': [payload: MarkdownQuote]
+  /** 读者在代码里指了几行（`PreviewCode`）。 */
+  'code-lines': [payload: { start: number; end: number; text: string }]
   /** 读者点了正文上某一颗评论标记：把那一串评论打开。 */
   anchor: [id: string]
   /** 协同编辑收起来了：这一份的编辑会话由外面关掉。 */
@@ -164,9 +168,10 @@ const stage = computed(() =>
 
 // 模板里那几处分岔的道理，写在这里，因为模板里不留中文注释（docs/i18n.md §5）：
 //
-//   Markdown 排在最前面 —— 它不走 `docBytes` 那条路（`loadDocument` 直接跳过），
-//   所以下面「缺转换服务」「转不了」两句对它都不成立；先落到它那里，一篇好端端的
-//   .md 才不会显示成「文档预览未启用」。
+//   Markdown 和代码排在最前面 —— 它们不走 `docBytes` 那条路（`loadDocument` 直接
+//   跳过），所以下面「缺转换服务」「转不了」两句对它们都不成立；先落到它们那里，一篇
+//   好端端的 .md 才不会显示成「文档预览未启用」。代码读不成文本（二进制、太大）时就地
+//   说一句，不往下落：下面最后那一支是表格。
 //   转圈 —— 只在还没有东西可看时转。面板每 20 秒重读一次，芝士一存文件版本就变，
 //   这时候把查看器卸掉重挂，读者的滚动位置和选中都没了，而新的字节本来可以直接
 //   换进去。
@@ -196,6 +201,11 @@ const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
+// 代码那一档要的正文：读不成文本（二进制、太大）时是 null，就地说明一句，不往下落。
+const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.content ?? null : null))
+// 代码长行默认横向滚：代码的缩进和对齐是意思的一部分，折行会把它打乱。窄面板上读者
+// 可能宁可折行也不想左右拖，所以留一颗开关。
+const codeWrap = ref(false)
 watch(
   () => props.previewFile?.path,
   () => {
@@ -248,6 +258,17 @@ const actions = computed<DocAction[]>(() => {
       testid: 'toggle-md-source',
       run: () => {
         showSource.value = !showSource.value
+      },
+    })
+  }
+  if (props.documentType?.view === 'code' && props.previewFile?.content !== null) {
+    list.push({
+      key: 'code-wrap',
+      icon: codeWrap.value ? 'mdi-arrow-expand-horizontal' : 'mdi-wrap',
+      label: t(codeWrap.value ? 'work.room.preview.codeNoWrap' : 'work.room.preview.codeWrap'),
+      testid: 'toggle-code-wrap',
+      run: () => {
+        codeWrap.value = !codeWrap.value
       },
     })
   }
@@ -362,9 +383,13 @@ defineExpose({ snapshot, clearMark })
       :live="liveEdit"
       @close="emit('close-live-edit')"
     />
-    <pre v-else-if="documentType.view === 'markdown' && showSource" class="doc__source" data-testid="markdown-source">{{
-      previewFile?.content ?? ''
-    }}</pre>
+    <PreviewCode
+      v-else-if="documentType.view === 'markdown' && showSource"
+      data-testid="markdown-source"
+      :source="previewFile?.content ?? ''"
+      language="markdown"
+      wrap
+    />
     <PreviewMarkdown
       v-else-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
@@ -373,6 +398,19 @@ defineExpose({ snapshot, clearMark })
       @quote="emit('markdown-quote', $event)"
       @anchor="emit('anchor', $event)"
     />
+    <template v-else-if="documentType.view === 'code'">
+      <PreviewCode
+        v-if="codeSource !== null"
+        :source="codeSource"
+        :language="documentType.language ?? null"
+        :wrap="codeWrap"
+        @lines="emit('code-lines', $event)"
+      />
+      <div v-else class="doc__state doc__state--text">
+        <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+        <div>{{ t('work.room.preview.notText') }}</div>
+      </div>
+    </template>
 
     <div v-else-if="stage.stage === 'waiting' && stage.step === 'navigate'" class="doc__state">
       <v-progress-circular indeterminate color="primary" size="24" />
@@ -504,18 +542,5 @@ defineExpose({ snapshot, clearMark })
   min-height: 0;
   overflow: auto;
   padding: 12px 16px 24px;
-}
-.doc__source {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin: 0;
-  padding: 12px 16px 24px;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 </style>
