@@ -86,12 +86,14 @@ test('a video selected from the album uploads, persists and plays only on reques
   const player = card.locator('video');
   await expect(player).toBeVisible();
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.readyState)).toBeGreaterThanOrEqual(1);
-  // 触屏：控制权在系统播放器手上（全屏、画中画、手势都得靠它），所以这里要的是
-  // 原生控件，而不是自绘那一条。自绘那一条是精确指针的设备才摆的。
+  // 哪一套控件由指针类型决定：触屏（粗指针）交还给系统播放器——全屏、画中画、手势
+  // 都得靠它；精确指针才摆自绘那一条。浏览器模拟的这个值不一定和真实手机一致，所以
+  // 断言的是「实现跟着这个媒体查询走」，不是在模拟器里假装它一定是粗指针。
+  const coarse = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
   expect(await player.evaluate((video: HTMLVideoElement) => ({
     paused: video.paused, autoplay: video.autoplay, controls: video.controls, inline: video.playsInline,
-  }))).toEqual({ paused: true, autoplay: false, controls: true, inline: true });
-  await expect(card.getByTestId('video-bar')).toHaveCount(0);
+  }))).toEqual({ paused: true, autoplay: false, controls: coarse, inline: true });
+  await expect(card.getByTestId('video-bar')).toHaveCount(coarse ? 0 : 1);
   const bounds = await player.boundingBox();
   expect(bounds).not.toBeNull();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
