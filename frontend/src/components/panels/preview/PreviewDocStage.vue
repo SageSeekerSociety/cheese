@@ -100,6 +100,8 @@ const props = defineProps<{
   pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
   /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
   sheetAnchors?: readonly { id: string; sheet: string; address: string }[]
+  /** 攒在待发篮里、落在表格上的那几处：格子上挂一颗带序号的 pin（`n` 是篮里的编号）。 */
+  sheetPins?: readonly { id: string; n: number; sheet: string; address: string }[]
   /** 这一份 markdown 的协同编辑会话（`composables/panelPreview/liveEdit.ts` 那一包）。
    *  开着的时候正文换成编辑器。 */
   liveEdit?: PanelPreviewLiveEdit
@@ -711,6 +713,7 @@ defineExpose({ snapshot, clearMark })
         :data="docBytes"
         :kind="documentType.sheet ?? 'workbook'"
         :marks="sheetAnchors"
+        :pins="sheetPins"
         :active-mark="activeAnchor"
         :changed="sheetChanged"
         :changed-by="versions?.changedBy.value"

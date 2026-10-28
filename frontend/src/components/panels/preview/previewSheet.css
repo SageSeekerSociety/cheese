@@ -1,0 +1,435 @@
+.ps {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.ps__state {
+  padding: 32px 16px;
+  color: var(--muted);
+}
+.ps__state--text {
+  text-align: center;
+}
+
+/* 读表时的骨架：几行灰条，下面一颗转圈。不是为了好看——慢网下先有个形状，
+   读者知道是在读表，不是在等一个坏掉的页面。 */
+.ps__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.ps__skeleton-row {
+  height: 14px;
+  border-radius: 4px;
+  background: var(--fill);
+}
+.ps__skeleton-row:nth-child(2n) {
+  width: 82%;
+}
+.ps__skeleton-row:nth-child(3n) {
+  width: 91%;
+}
+
+/* 地址栏 + 定位 + 两个切换。它是一直在的一条，窄处也不收起：指哪一格是这张视图的根。 */
+.ps__bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.ps__addr {
+  flex: none;
+  min-width: 56px;
+  max-width: 180px;
+  padding: 2px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 格子里写的是什么：等宽，公式里的括号和运算符对得齐；它也自己截断，别把地址栏挤没。 */
+.ps__value {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps__locate {
+  flex: 0 1 132px;
+  min-width: 72px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--fill);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.ps__locate::placeholder {
+  color: var(--faint);
+}
+.ps__locate:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.ps__locate--miss {
+  border-color: var(--danger-ink);
+}
+
+.ps__toggle {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--muted);
+}
+.ps__toggle:hover {
+  background: var(--fill);
+  color: var(--ink);
+}
+.ps__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 原文就是原文：等宽、不折行、原样保留空白和换行 —— 读者切过来就是为了看清分隔符和
+   编码到底长什么样，这里再排版一次反而把要找的东西抹掉了。 */
+.ps__source {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 8;
+}
+
+.ps__note {
+  flex: none;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ps__grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+/* 键盘落点在那张表上：一圈内描边说明「方向键现在走的是这块」。 */
+.ps__table:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ps__table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  color: var(--text);
+  /* 一列数字上下对齐：不加这条，`1,204` 和 `421,800` 的小数点各在各位上，读起来要一格一
+     格对。 */
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行号列和列名行在滚动时留在原地——一张宽表滚到第 40 列还认得出是哪一行。 */
+.ps__col,
+.ps__row,
+.ps__corner {
+  position: sticky;
+  background: var(--fill);
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+  text-align: center;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+.ps__col {
+  top: 0;
+  z-index: var(--z-raised);
+}
+.ps__row {
+  left: 0;
+  z-index: var(--z-raised);
+  min-width: 44px;
+}
+.ps__corner {
+  top: 0;
+  left: 0;
+  z-index: var(--z-raised-2);
+}
+
+/* 窗口上下那两截空行：只是高度，看不见。 */
+.ps__spacer td {
+  padding: 0;
+  border: 0;
+}
+
+/* 窄处把 A 列也钉住，贴在行号列右边：行号列定宽，A 列的 left 才有一个确定的数。A 列
+   限宽，免得一列长名字占掉大半屏。 */
+.ps--narrow .ps__row,
+.ps--narrow .ps__corner {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  box-sizing: border-box;
+}
+.ps--narrow .ps__col:nth-child(2),
+.ps--narrow .ps__cell:nth-child(2) {
+  position: sticky;
+  left: 44px;
+  max-width: 128px;
+}
+.ps--narrow .ps__cell:nth-child(2) {
+  z-index: var(--z-raised);
+}
+/* 钉住的格子要有底色，否则横滑时后面的格子从它底下透出来；悬停、拖选和「这一版改过」
+   的底色照旧（这一条比 `.ps__cell--chg` 权限高，不排除它，钉住那一列改过的格子就没琥珀底了）。 */
+.ps--narrow .ps__cell:nth-child(2):not(:hover, .ps__cell--in, .ps__cell--chg, .ps__cell--focus) {
+  background: var(--surface);
+}
+.ps--narrow .ps__col:nth-child(2) {
+  z-index: var(--z-raised-2);
+}
+
+.ps__cell {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px;
+  min-width: 96px;
+  max-width: 320px;
+  white-space: nowrap;
+  cursor: cell;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+  position: relative;
+}
+.ps__cell:hover {
+  background: var(--fill);
+}
+/* 文件自己加粗的那几格（表头、合计行）：字重照它，不加边框、不改底色——那是文件的样式，
+   不是我们给的强调。 */
+.ps__cell--bold .ps__text {
+  font-weight: 650;
+}
+.ps__cell--right .ps__text {
+  text-align: right;
+}
+.ps__cell--center .ps__text {
+  text-align: center;
+}
+/* 文字自己截断，不靠格子的 overflow：格子改成相对定位之后，标记要能露在格子边上。 */
+.ps__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 选中的格子用一圈中性描边，不用琥珀：琥珀留给真正有评论的那几格。
+   这也正好是电子表格本来的样子——一个粗边框，不是一块底色。 */
+.ps__cell--on {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+/* 走格子时停在的那一格：还没被说出去，所以是虚一点的一道内框，不是选中那种粗边。 */
+.ps__cell--focus {
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+/* 拖过的那一片：底色铺满，四边各描一道，让读者看见自己选了哪儿。 */
+.ps__cell--in {
+  background: var(--selection-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* 这一版改过的格子：琥珀浅底加一圈细边，和原型「芝士改过这一格」同一种标法。选中、
+   拖过的样式排在它前面声明的会被它盖住，所以它只管底色和细边，不碰粗描边。 */
+.ps__cell--chg {
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+.ps__cell--chg:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+.ps__cell--chg.ps__cell--on {
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+.ps__cell--chg.ps__cell--in {
+  background: var(--selection-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ps__was {
+  margin-right: 6px;
+  color: var(--danger-ink);
+  text-decoration: line-through;
+}
+.ps__tab-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+/* 待发批注的序号：压在格子右上角外面一点，和原型那一颗同一种摆法——它在格子角上，
+   不占格里的字。格子自己不再裁外溢（裁的是 `.ps__text` 那一层），它才露得出来。 */
+.ps__pin {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: var(--z-raised);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+/* 有人在那一格上评过：右上角一颗琥珀的小点，点得到（评论栏靠它打开）。和页上那几颗
+   同一种形状，只是挂在格子的角上——表格里一格的坐标本来就是一个地址，没有「页内比例」
+   那回事。 */
+.ps__cmt {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.ps__cmt:hover,
+.ps__cmt.is-active {
+  background: var(--accent);
+}
+
+/* 底部一行：左边工作表页签（圆形描边的小按钮，和原型同一种），右边这张表多大。 */
+.ps__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.ps__tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  min-width: 0;
+}
+.ps__tab {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+  color: var(--muted);
+  transition:
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+.ps__tab:hover {
+  color: var(--ink);
+}
+.ps__tab--on {
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+.ps__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* 只有一张表时左边写它的名字：读者还是要知道自己在看哪一张。 */
+.ps__tab-single {
+  flex: none;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40%;
+}
+/* 卡片到底时那一颗「再看 N 行」：它排在卡片列表下面，和卡片同一套留白。 */
+.ps__more {
+  flex: none;
+  margin: 0 8px 8px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--muted);
+}
+.ps__more:hover {
+  color: var(--ink);
+  background: var(--fill);
+}
+.ps__more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ps__charts {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+.ps__chart-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+.ps__skipped {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps__summary {
+  margin-left: auto;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ps__summary--miss {
+  color: var(--danger-ink);
+}
