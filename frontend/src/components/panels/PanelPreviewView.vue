@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -53,6 +53,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { PENDING_NOTES } from '@/lib/pendingNotes'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -167,6 +168,18 @@ const {
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+/** 攒在待发篮里、还没发出去的那几处：正文里在那一句话末尾挂一颗序号，和篮里那一行
+ *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
+ *  顺序数，和 tray 上的编号同一个来源。 */
+const sharedPending = inject(PENDING_NOTES, null)
+const pendingPins = computed(() =>
+  (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'text-range'
+      ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
+      : []
+  )
+)
 
 // ---- 定位框弹在哪 ----
 // 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：
@@ -533,6 +546,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :anchors="threadAnchors"
       :page-anchors="pageAnchors"
       :sheet-anchors="sheetAnchors"
+      :pins="pendingPins"
       :live-edit="props.liveEdit"
       :active-anchor="focusedThread"
       :named-tab="!!path"

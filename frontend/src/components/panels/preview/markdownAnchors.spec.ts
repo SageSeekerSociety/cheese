@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { clearMarks, locateQuote, MARK_ATTR, wrapRange } from './markdownAnchors'
+import { clearMarks, clearPins, locateQuote, MARK_ATTR, PIN_ATTR, wrapRange } from './markdownAnchors'
 
 /** 一段渲染出来的正文。中间那个换行是 HTML 里的排版空白，原文里没有。 */
 function doc(html: string): HTMLElement {
@@ -132,5 +132,33 @@ describe('把标记画到正文上', () => {
     const range = locateQuote(root, { text: '目标', heading: null, prefix: '', suffix: '' })!
     const [mark] = wrapRange(range, 't1', true)!
     expect(mark.className).toContain('is-active')
+  })
+})
+
+describe('攒着的几处挂在正文上的序号', () => {
+  it('拆掉序号之后正文一个字不多不少，评论标记也还在', () => {
+    const root = doc('<p>前 目标 后</p>')
+    const before = root.textContent
+    const quote = { text: '目标', heading: null, prefix: '', suffix: '' }
+    // 评论标记和序号是两种元素：拆其中一种不能把另一种带下去。
+    wrapRange(locateQuote(root, quote)!, 't1', false)
+    const range = locateQuote(root, quote)!
+    const badge = document.createElement('span')
+    badge.className = 'pending-pin'
+    badge.setAttribute(PIN_ATTR, 'p1')
+    badge.textContent = '2'
+    const end = document.createRange()
+    end.setStart(range.endContainer, range.endOffset)
+    end.collapse(true)
+    end.insertNode(badge)
+    expect(root.querySelector(`[${PIN_ATTR}]`)?.textContent).toBe('2')
+
+    clearPins(root)
+    expect(root.querySelector(`[${PIN_ATTR}]`)).toBeNull()
+    expect(root.textContent).toBe(before)
+    // 评论标记没被动过，拆序号之后仍然找得到一个 mark。
+    expect(root.querySelectorAll('mark')).toHaveLength(1)
+    // 拆完还能再按字找一次：序号插在正文里，不许把它切成跨不过去的几段。
+    expect(locateQuote(root, quote)).not.toBeNull()
   })
 })

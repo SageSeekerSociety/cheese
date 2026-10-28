@@ -16,6 +16,17 @@ import { ref } from 'vue'
 /** 攒着的这一条要去哪：交给芝士改，还是只挂成评论。 */
 export type PendingAudience = 'cheese' | 'comment'
 
+/** 这一条指着文件里的哪儿——正文里那颗序号 pin 靠它找回来。
+ *
+ *  和评论的锚点同一套判据（`markdownQuote.ts`）：存「原文 + 前后文」而不是 DOM 位置，
+ *  正文重排之后还能按字找；页上那一处存页码和比例，和 `page-pin` 同形。找不到就
+ *  不画那颗 pin，tray 里那一条照样在。 */
+export type PendingAnchor =
+  | { kind: 'text-range'; text: string; heading: string | null; prefix: string; suffix: string }
+  | { kind: 'page-text'; page: number; text: string; prefix?: string; suffix?: string }
+  | { kind: 'page-pin'; page: number; x: number; y: number }
+  | { kind: 'sheet-cell'; sheet: string; address: string }
+
 export interface PendingNote {
   id: string
   /** 哪一份文件，如 `招募方案.docx`。 */
@@ -31,6 +42,8 @@ export interface PendingNote {
   audience: PendingAudience
   /** 已经拼好的那条消息（位置 + 原文 + 那句话），发出去就用它。 */
   message: string
+  /** 文件里的位置：正文里按它画序号 pin。拿不到就是 undefined，那一处不画 pin。 */
+  anchor?: PendingAnchor
   /** 图上圈过东西时随行带的那张合成图。 */
   attachments?: ChatAttachment[]
 }

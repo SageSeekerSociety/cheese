@@ -136,12 +136,25 @@ function quote() {
   if (canQuote.value && props.context) {
     // 两侧的文字帮受话人分辨同一句话在这一页的哪一处出现（整页提问没有这个说法）。
     // 量的是这一页的文字层：`sheet` 里那块画布和文字层是同一个坐标系下的两层。
+    //
+    // 左上角那一点也量下去：攒着一起发的那几处要靠它在页上画序号。量一页画布的
+    // 内框，量不到就不带（和 `PreviewPages.onSelect` 同一条）。
+    const box = sheet.value.getBoundingClientRect()
+    const rect = range.getBoundingClientRect()
+    const spot =
+      box.width > 0 && box.height > 0
+        ? {
+            x: Math.min(1, Math.max(0, (rect.left - box.left) / box.width)),
+            y: Math.min(1, Math.max(0, (rect.top - box.top) / box.height)),
+          }
+        : {}
     emit('pageContext', {
       text,
       page: current.value,
       scope: 'selection',
       context: { ...props.context },
       ...contextAround(sheet.value, range),
+      ...spot,
     })
     return
   }

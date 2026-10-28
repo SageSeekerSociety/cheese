@@ -23,6 +23,11 @@ export type SlidePageContext = {
    *  个说法，那一支是 undefined。 */
   prefix?: string
   suffix?: string
+  /** 选中那一段在页上的位置，页宽页高的比例（0..1），和 `PagePin` 同一个坐标系。
+   *  只给「攒着的几处在页上画序号」用，不随引用发出去：`usePreviewQuote` 发的时候
+   *  只挑它列出来的那几项，多出来的字段进不了请求。量不出来就不带。 */
+  x?: number
+  y?: number
 }
 /** 页面上的一点。`x`/`y` 是这一页宽高的比例（0..1），不是像素：页面按面板宽度
  *  重画过好几轮，像素坐标只对当时那一版成立，比例对哪一版都成立。 */

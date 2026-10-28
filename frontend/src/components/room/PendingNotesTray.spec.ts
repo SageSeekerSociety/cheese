@@ -68,6 +68,13 @@ it('攒了几处就逐条列出来：位置、原文、要改什么、去处，�
   expect(text[1]).toContain('这个数不对')
 })
 
+it('行上写「第 N 版」：攒着的那几处说的都是屏幕上这一版', async () => {
+  const { ui, api } = mount()
+  api.add(note({ version: '第 3 版' }))
+  await ui.rerender({})
+  expect(ui.getByTestId('pending-note').textContent).toContain('第 3 版')
+})
+
 it('标题那一行写清攒了几条', async () => {
   const { ui, api } = mount()
   api.add(note())

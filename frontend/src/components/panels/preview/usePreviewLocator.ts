@@ -26,7 +26,7 @@ import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
 import { firstCodePoints } from '@/lib/codePoints'
-import { PENDING_NOTES } from '@/lib/pendingNotes'
+import { PENDING_NOTES, type PendingAnchor } from '@/lib/pendingNotes'
 import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
@@ -209,6 +209,49 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     return context ? `${message}\n${context}` : message
   }
 
+  /** 攒着的这一批批注说的都是屏幕上这一版，行上写「第 N 版」。版本核不出来（清单里没有
+   *  这一份、或这一版是清单之外改的）就不写——说错哪一版比不说更坏（同 `versions.ts`）。 */
+  const pendingVersion = computed(() => {
+    const seq = props.versions?.current.value?.seq
+    if (!seq) return ''
+    return t('work.room.versions.label', { seq })
+  })
+
+  /** 这一处指着文件里的哪儿——正文里那颗序号 pin 靠它找回来（见 `lib/pendingNotes`）。
+   *
+   *  能不能找回来各档不一样：markdown 存「原文 + 前后文」按字找；页上那一处存页码和
+   *  比例；表里存单元格地址。哪一样都拿不到时（网页圈选、图上框选、代码行）就不画
+   *  pin——那些地方本来也没有能长期成立的坐标，宁可不画。 */
+  function pendingAnchor(): PendingAnchor | undefined {
+    const page = quoted.page.value
+    if (page) {
+      if (page.scope !== 'selection') return undefined
+      // 有比例位置就按点画（缩放、重排都跟着页走），没有才退回按字找。
+      if (typeof page.x === 'number' && typeof page.y === 'number') {
+        return { kind: 'page-pin', page: page.page, x: page.x, y: page.y }
+      }
+      return { kind: 'page-text', page: page.page, text: page.text, prefix: page.prefix, suffix: page.suffix }
+    }
+    const pickPayload = quoted.pick.value
+    if (!pickPayload) return undefined
+    if (pickPayload.kind === 'text-range') {
+      return {
+        kind: 'text-range',
+        text: pickPayload.text,
+        heading: pickPayload.heading,
+        prefix: pickPayload.prefix,
+        suffix: pickPayload.suffix,
+      }
+    }
+    if (pickPayload.kind === 'sheet-cell') {
+      return { kind: 'sheet-cell', sheet: pickPayload.sheet, address: pickPayload.address }
+    }
+    if (pickPayload.kind === 'sheet-range') {
+      return { kind: 'sheet-cell', sheet: pickPayload.sheet, address: pickPayload.start }
+    }
+    return undefined
+  }
+
   function queueLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
@@ -219,12 +262,13 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       //（卡上的「加入待发」也只在去处是芝士时出现）。
       sharedPending.add({
         file: fileName(props.previewFile?.path ?? ''),
-        version: '',
+        version: pendingVersion.value,
         where: target.label,
         quote: target.quote,
         text: note,
         audience: 'cheese',
         message,
+        anchor: pendingAnchor(),
       })
       clearLocator()
       return
@@ -246,12 +290,13 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       if (target && note && !pageLocator.pin.value) {
         sharedPending.add({
           file: fileName(props.previewFile?.path ?? ''),
-          version: '',
+          version: pendingVersion.value,
           where: target.label,
           quote: target.quote,
           text: note,
           audience: 'cheese',
           message: formatLocateMessage(target, note),
+          anchor: pendingAnchor(),
         })
         clearLocator()
       }

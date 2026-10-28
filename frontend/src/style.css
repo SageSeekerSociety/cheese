@@ -1439,6 +1439,26 @@ button:not(.v-btn) {
   border-bottom-color: var(--accent);
 }
 
+/* 攒在待发篮里、还没发出去的那几处：那句话末尾一颗序号，和篮里那一行的编号对得上
+   （原型里的 ②③）。和评论标记的区别要看得出来——那几处还没交给谁，所以是实心琥珀
+   圆点，不是底色。 */
+.pending-pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin: 0 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-on);
+  vertical-align: text-top;
+  background: var(--accent);
+  border-radius: 8px;
+}
+
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。
    定义放在这里而不是产出它的那一个组件里：这份 markup 由 lib/refChip 一处
    产出，用它的地方却早就不止一处——对话栏、现场、动作卡、文档。以前它写在组件自己的

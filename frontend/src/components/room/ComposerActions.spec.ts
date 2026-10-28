@@ -104,4 +104,18 @@ describe('输入框下面那一行', () => {
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.composer.more') }))
     expect(await screen.findByText(t('global.shortcuts.open'))).toBeTruthy()
   })
+
+  it('攒着待发批注时，发送键上写着会带走几条', async () => {
+    pointer('mouse')
+    mount(1440, { pendingCount: 2 })
+    // 只写进 title 的话，读者在按下之前看不见这一下会带走什么。
+    expect(screen.getByText(t('work.room.preview.sendWithNotes', { count: 2 }))).toBeTruthy()
+  })
+
+  it('没攒批注时发送键不带字', async () => {
+    pointer('mouse')
+    mount(1440)
+    expect(screen.queryByText(t('work.room.preview.sendWithNotes', { count: 0 }))).toBeNull()
+    expect(screen.queryByText(t('work.room.preview.sendWithNotes', { count: 2 }))).toBeNull()
+  })
 })

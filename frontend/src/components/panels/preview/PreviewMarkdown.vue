@@ -17,7 +17,7 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import MarkdownView from '../../common/MarkdownView.vue'
 
-import { type AnchorQuote, clearMarks, locateQuote, wrapRange } from './markdownAnchors'
+import { type AnchorQuote, clearMarks, clearPins, locateQuote, PIN_ATTR, wrapRange } from './markdownAnchors'
 import { type MarkdownQuote, quoteFromSelection } from './markdownQuote'
 
 const props = defineProps<{
@@ -26,6 +26,9 @@ const props = defineProps<{
   /** 这一份文件上已有的评论指着的那几处（`text`/`heading`/前后文，形状见
    *  `markdownQuote`）。这一版正文里已经找不到的那一处就不画。 */
   anchors?: readonly { id: string; quote: AnchorQuote }[]
+  /** 攒在待发篮里、还没发出去的几处：正文里在那一句话后面挂一颗序号（原型里的
+   *  ②③）。找不到那句话就不挂，篮里那一条照样在。 */
+  pins?: readonly { id: string; n: number; quote: AnchorQuote }[]
   /** 现在点开的是哪一条：那一条的标记画得显眼些。 */
   activeId?: string | null
 }>()
@@ -57,6 +60,7 @@ function paint() {
   observer?.disconnect()
   try {
     clearMarks(root)
+    clearPins(root)
     for (const anchor of props.anchors ?? []) {
       const range = locateQuote(root, anchor.quote)
       if (!range) continue
@@ -80,13 +84,28 @@ function paint() {
         })
       }
     }
+    // 攒着的几处：在那句话末尾挂一颗序号，和篮里那一行对得上（原型里的 ②③）。
+    // 挂在这批评论的标记之后，免得 `clearMarks` 之外的顺序影响找字——它是 `mark`
+    // 之外的另一种元素，`clearPins` 单独拆。
+    for (const pin of props.pins ?? []) {
+      const range = locateQuote(root, pin.quote)
+      if (!range) continue
+      const badge = document.createElement('span')
+      badge.className = 'pending-pin'
+      badge.setAttribute(PIN_ATTR, pin.id)
+      badge.textContent = String(pin.n)
+      const end = document.createRange()
+      end.setStart(range.endContainer, range.endOffset)
+      end.collapse(true)
+      end.insertNode(badge)
+    }
   } finally {
     observer?.observe(root, { childList: true, subtree: true })
   }
 }
 
 const repaint = () => void nextTick(paint)
-watch([() => props.source, () => props.anchors, () => props.activeId], repaint, {
+watch([() => props.source, () => props.anchors, () => props.pins, () => props.activeId], repaint, {
   immediate: true,
   deep: true,
 })
@@ -99,7 +118,7 @@ watch(
     observer = null
     if (!root) return
     observer = new MutationObserver(() => {
-      if (props.anchors?.length) repaint()
+      if (props.anchors?.length || props.pins?.length) repaint()
     })
     observer.observe(root, { childList: true, subtree: true })
     repaint()
@@ -110,6 +129,7 @@ onBeforeUnmount(() => {
   observer?.disconnect()
   observer = null
   clearMarks(view.value?.el ?? null)
+  clearPins(view.value?.el ?? null)
 })
 </script>
 
