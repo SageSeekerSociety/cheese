@@ -62,7 +62,6 @@ function props(path = 'output/说明.md', content = SOURCE) {
     documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' as const },
     documentName: '说明.md',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docLoading: false,
     docError: '',

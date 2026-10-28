@@ -4,6 +4,7 @@ import type { CreditBudgetUpdate, ProjectCreditBudget } from '@/types/creditBudg
 import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import CreditWarning from '@/components/usage/CreditWarning.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -56,6 +57,22 @@ function fmt(value: number): string {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
 }
 
+// 这个项目的预算用到八成时，在预算这一块顶上提醒一句。和 `usage.alerts` 同一档、
+// 同一句话的两个来源：这里读的是同一个接口给的数。
+const warnings = computed(() => {
+  const budget = props.budget
+  if (!budget) return []
+  const out: { title: string; body: string }[] = []
+  const limit = budget.credits_limit
+  if (limit !== null && limit > 0 && budget.credits_used >= limit * 0.8 && budget.credits_used < limit) {
+    out.push({
+      title: t('usage.warning.projectTitle'),
+      body: t('usage.warning.projectBody', { n: fmt(limit - budget.credits_used) }),
+    })
+  }
+  return out
+})
+
 function save() {
   if (props.editable && valid.value && dirty.value && !props.saving) emit('save', update.value)
 }
@@ -76,6 +93,7 @@ function save() {
       </v-alert>
       <p v-if="loading" class="t-body c-muted">{{ t('work.projectSettings.credits.loading') }}</p>
       <form v-else-if="budget" @submit.prevent="save">
+        <CreditWarning v-for="w in warnings" :key="w.title" :title="w.title" :body="w.body" class="mb-4" />
         <p class="t-meta c-muted mb-4">{{ t('work.projectSettings.credits.budgetHint') }}</p>
         <div class="credit-budget__total">
           <v-text-field
