@@ -142,6 +142,27 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '无法读取文件',
       },
       {
+        name: '第一次连上，还在等',
+        note: '冷启动最开始那一段：还不知道摆的是不是应用（`authorizing`），内容区摆的是页面大概的样子——一根标题、几根正文条、一块——不是一片白。顶上那行写着已经等了几秒、慢在哪。它只在**真没有内容可看**时摆：换一页时上一帧还在屏幕上，那时不摆；已经认出是应用但睡着了，那是休眠卡的事。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: null,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          // 通道和应用都在（不然这一档会走休眠卡），只是第一帧还在拿授权。
+          previewTunnelUp: true,
+          previewAppUp: true,
+          navigation: 'authorizing',
+        }),
+        expect: '正在获取预览授权',
+        // 那几根占位条是这一格的重点，光钉那句字面钉不住它。
+        expectSelector: '[data-testid=preview-skeleton]',
+      },
+      {
         name: '跑着的应用断了',
         note: '机器休眠和应用自己没了是两张不同的卡：这里是第一张，还没留过快照时卡下面垫浅底。',
         props: previewPanelProps({
