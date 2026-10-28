@@ -499,7 +499,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           canComment: true,
           canAskPersonal: true,
         },
-        expect: '发给芝士',
+        expect: '发给任务芝士',
       },
       {
         get name() {
