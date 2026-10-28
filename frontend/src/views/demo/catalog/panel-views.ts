@@ -125,7 +125,7 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '跑着的应用断了',
-        note: '机器上没在跑，还是跑了但应用自己没了 —— 两句不同的话。这里给的是第一句。',
+        note: '机器休眠和应用自己没了是两张不同的卡：这里是第一张，还没留过快照时卡下面垫浅底。',
         props: previewPanelProps({
           previewFile: null,
           documentType: null,
@@ -136,7 +136,7 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
           previewNamedPath: 'app',
           previewTunnelUp: false,
         }),
-        expect: '应用预览暂不可用',
+        expect: '运行环境已休眠',
       },
       {
         name: '取预览失败',

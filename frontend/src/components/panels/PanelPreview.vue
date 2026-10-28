@@ -72,6 +72,7 @@ const {
   previewUrl,
   previewAppNote,
   previewTunnelUp,
+  previewAppUp,
   previewNamedPath,
   autoReloaded,
   previewError,
@@ -110,6 +111,12 @@ const {
   toggleDocPage,
   setDocNarrow,
   setPickMode,
+  stepHistory,
+  goTo,
+  appSnapshot,
+  wakeSteps,
+  wakeError,
+  wakeApp,
 } = props.preview
 
 // 帧里的 ESC 要在展示组件里处理（标注条和全屏都是它那一格的状态），所以这里留一个
@@ -126,6 +133,11 @@ defineExpose({
 // 「还是不是同一件」。
 function refresh() {
   void load({ silent: true, reload: true })
+}
+
+// 小浏览器的后退、前进、重载交给帧里的桥；没有桥（或桥没接住）时重载退回整帧重来。
+function history(action: 'back' | 'forward' | 'reload') {
+  if (!stepHistory(action) && action === 'reload') refresh()
 }
 </script>
 
@@ -154,6 +166,10 @@ function refresh() {
     :preview-url="previewUrl"
     :preview-app-note="previewAppNote"
     :preview-tunnel-up="previewTunnelUp"
+    :preview-app-up="previewAppUp"
+    :app-snapshot="appSnapshot"
+    :wake-steps="wakeSteps"
+    :wake-error="wakeError"
     :preview-named-path="previewNamedPath"
     :auto-reloaded="autoReloaded"
     :preview-error="previewError"
@@ -186,6 +202,9 @@ function refresh() {
     @pick-mode="setPickMode"
     @refresh="refresh"
     @download="downloadArtifact"
+    @history="history"
+    @navigate="goTo"
+    @wake="wakeApp"
     @document-changed="refreshDocument"
     @locate="emit('locate', $event)"
     @open-file="emit('open-file', $event)"
