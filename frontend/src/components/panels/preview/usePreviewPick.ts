@@ -25,9 +25,12 @@ interface PickOptions {
     web: (pick: FramePick) => void
     region: (payload: { url: string; rect: WebRect; viewport: WebViewport }) => void
   }
+  /** 这一段指不指得动（「看 / 批注 / 改」三段）。「改」那一段里圈选开不起来：开关要把
+   *  帧切进圈选态、遮罩要收键盘，只拦 `open` 的话这两样已经动过了。 */
+  allowed: () => boolean
 }
 
-export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote }: PickOptions) {
+export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allowed }: PickOptions) {
   const on = ref(false)
   const target = computed<'runtime' | 'region' | null>(() => {
     const current = frame()
@@ -40,12 +43,17 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote }: Pi
   })
 
   function set(value: boolean) {
+    if (value && !allowed()) return
     on.value = value
     if (target.value === 'runtime') onRuntime(value)
   }
   function toggle() {
     if (target.value) set(!on.value)
   }
+  // 切到「改」那一段时把圈选收掉：开着圈选去改正文，鼠标按下去是在圈一块，不是在选字。
+  watch(allowed, (ok) => {
+    if (!ok && on.value) set(false)
+  })
 
   // 圈选期间 ESC 退出：应用那一档遮罩在宿主这边收键盘；有桥的那一档由帧把 ESC 交回来
   // （见 usePreviewEscape），这里再兜一道，两边都按得下。

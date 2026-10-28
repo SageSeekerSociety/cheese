@@ -112,7 +112,9 @@ onBeforeUnmount(() => {
       <PreviewSlides v-if="SLIDE_SUFFIXES.has(suffix)" :data="data" :title="filename" />
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
-      <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" />
+      <!-- copy-code：同一份 md 在对话、任务预览、资料库三处渲染，代码块右上角那两颗
+           （自动换行 / 复制）要一处不缺——少一处，读者就得记住「这个面板没有」。 -->
+      <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" copy-code />
       <PreviewCode v-else-if="view === 'code' && text !== null" :source="text" :language="codeLanguageOf(suffix)" />
       <DesignImage v-else-if="imageUrl" :src="imageUrl" :alt="filename" :identity="source" />
       <pre v-else-if="text !== null" class="file-preview__text t-body">{{ text }}</pre>
