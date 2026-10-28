@@ -85,5 +85,11 @@
   "measure": "Measure",
   "measureHint": "Drag to measure the distance in source pixels",
   "measured": "{length} px",
-  "copyHint": "Click again to copy the colour"
+  "copyHint": "Click again to copy the colour",
+  "gifFrames": "Animation frames",
+  "gifPlay": "Play",
+  "gifPause": "Pause",
+  "gifPrev": "Previous frame",
+  "gifNext": "Next frame",
+  "gifAt": "Frame {n} of {total}"
 }

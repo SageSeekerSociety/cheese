@@ -85,5 +85,11 @@
   "measure": "量距离",
   "measureHint": "拖一条线读出两端之间多少原图像素",
   "measured": "{length} 像素",
-  "copyHint": "再点一下复制色值"
+  "copyHint": "再点一下复制色值",
+  "gifFrames": "动图逐帧",
+  "gifPlay": "播放",
+  "gifPause": "暂停",
+  "gifPrev": "上一帧",
+  "gifNext": "下一帧",
+  "gifAt": "第 {n} / {total} 帧"
 }

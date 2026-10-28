@@ -16,6 +16,7 @@ import DesignViewToolbar from './DesignViewToolbar.vue'
 import { useDesignAdjust } from './useDesignAdjust'
 import { useDesignAnnotations } from './useDesignAnnotations'
 import { useDesignDiscardGuard } from './useDesignDiscardGuard'
+import { useDesignGif } from './useDesignGif'
 import { useDesignInspect } from './useDesignInspect'
 import { useDesignShortcuts } from './useDesignShortcuts'
 import { useDesignViewport } from './useDesignViewport'
@@ -54,6 +55,8 @@ const props = withDefaults(
     activeMark?: string | null
     /** 这种格式可能带透明：图底下铺棋盘格，透明的地方才看得出是透明。 */
     transparent?: boolean
+    /** 这一张的原始字节：是动图时用它逐帧解，交给浏览器自己放就只能看不能翻。 */
+    gifBytes?: ArrayBuffer | null
   }>(),
   {
     selectionEnabled: true,
@@ -63,6 +66,7 @@ const props = withDefaults(
     marks: () => [],
     activeMark: null,
     transparent: false,
+    gifBytes: null,
   }
 )
 const emit = defineEmits<{
@@ -141,6 +145,12 @@ const {
 const adjust = useDesignAdjust(() => props.identity)
 /** 读这张图那两件：取色、量距离。 */
 const inspect = useDesignInspect(() => image.value)
+/** 动图：能翻帧就摆一层画布盖住浏览器自己放的动画。 */
+const gif = useDesignGif(
+  () => props.identity,
+  () => props.gifBytes ?? null
+)
+const gifCanvas = gif.gifCanvas
 /** 转 90°/270° 时屏幕上那张图的宽高和原图对调。 */
 /** 明显比视口长的时候才摆定位条：铺得下的图摆一条只会碍事。 */
 const showMinimap = computed(
@@ -502,6 +512,12 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
               draggable="false"
               @load="loaded"
             />
+            <!-- 动图暂停时：这一帧画在画布上盖住浏览器自己放的动画，翻帧就是换画布内容。 -->
+            <canvas
+              v-show="gif.gif.value.available && gif.gif.value.paused"
+              ref="gifCanvas"
+              class="design-image__gif"
+            />
             <DesignSketchOverlay
               v-if="strokes.length"
               :strokes="strokes"
@@ -617,6 +633,17 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
         :marks="markRatios"
         @jump="scrollToRatio"
       />
+      <!-- 动图：暂停/播放、前后翻帧。只有能逐帧解出来时才摆。 -->
+      <div v-if="gif.gif.value.available" class="design-image__gifbar" role="group" :aria-label="t('design.gifFrames')">
+        <button type="button" @click="gif.gif.value.paused ? gif.play() : gif.pause()">
+          {{ gif.gif.value.paused ? t('design.gifPlay') : t('design.gifPause') }}
+        </button>
+        <button type="button" @click="gif.step(-1)">{{ t('design.gifPrev') }}</button>
+        <span class="design-image__gifbar-count">
+          {{ t('design.gifAt', { n: gif.gif.value.index + 1, total: gif.gif.value.count }) }}
+        </span>
+        <button type="button" @click="gif.step(1)">{{ t('design.gifNext') }}</button>
+      </div>
       <!-- 取色/量距离读出来的那个数：浮在左下，别挡住图。 -->
       <div v-if="inspect.color.value || inspect.measure.value" class="design-image__reading" role="status">
         <template v-if="inspect.color.value">

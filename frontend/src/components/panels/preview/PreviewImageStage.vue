@@ -81,6 +81,7 @@ const emit = defineEmits<{
       :marks="marks"
       :active-mark="activeMark"
       :transparent="transparent"
+      :gif-bytes="imageRegion.snapshot.value?.bytes ?? null"
       @region="emit('region', $event)"
       @annotate="emit('annotate', $event)"
       @mark="emit('mark', $event)"
