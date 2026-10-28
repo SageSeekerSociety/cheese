@@ -12,13 +12,13 @@
   >
     <!-- 右边缘拖动改宽度。宽度是四处侧栏共用的一个数（useSidebarWidth）。 -->
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the sidebar keeps its width -->
-    <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @mousedown="startResize" />
+    <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @pointerdown="startResize" />
     <slot></slot>
   </v-navigation-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onScopeDispose, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
@@ -71,21 +71,57 @@ const { width, setWidth } = useSidebarWidth()
 
 // 拖右边缘：宽度 = 指针到抽屉左边缘的距离。抽屉左边还有一级导航那一条，所以不能
 // 直接拿指针的 x 当宽度。
-function startResize(e: MouseEvent) {
+//
+// 拖的这段时间里要关掉过渡（`html.sidebar-resizing`，规则在 styles/common.scss）。
+// 抽屉的宽度和内容区的左内边距各带 Vuetify 的 0.2 秒过渡：改宽度是每收到一次指针
+// 移动就改一次，每次都重新起一段过渡，于是这一栏永远缓在半路上、追不上指针，松手
+// 后还要再滑完剩下那段。Vuetify 自己用手指拖抽屉时也是这么关的。
+//
+// 用指针事件并抓住指针：松手时指针可能已经在窗口外面（拖到屏幕边上、拖出浏览器），
+// 那时 mouseup 不会来，过渡就一直关着——整个应用从此没有动画。抓住指针之后，
+// up / cancel 一定回到这个元素上。窗口失焦那一下也补一条。
+//
+// 拖动中途不写本地存储，只改这一个数：每动一下写一次是同步的磁盘写入，跟着指针
+// 一起卡。松手才把落定的宽度记一次。
+let stopDrag: (() => void) | null = null
+
+function startResize(e: PointerEvent) {
+  if (e.button !== 0) return
+  const element = e.currentTarget as HTMLElement
+  const left = element.parentElement?.getBoundingClientRect().left ?? 0
   e.preventDefault()
-  const left = (e.currentTarget as HTMLElement).parentElement?.getBoundingClientRect().left ?? 0
-  const move = (ev: MouseEvent) => setWidth(ev.clientX - left)
+  stopDrag?.()
+  try {
+    element.setPointerCapture(e.pointerId)
+  } catch {
+    return
+  }
+  document.documentElement.classList.add('sidebar-resizing')
+  const move = (ev: PointerEvent) => setWidth(ev.clientX - left, false)
   const stop = () => {
-    window.removeEventListener('mousemove', move)
-    window.removeEventListener('mouseup', stop)
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', stop)
+    window.removeEventListener('pointercancel', stop)
+    window.removeEventListener('blur', stop)
+    if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
+    document.documentElement.classList.remove('sidebar-resizing')
+    // 松手把最后落在的那个宽度记一次；这一下没拖动过就是原来那个，等于没写。
+    setWidth(width.value)
+    stopDrag = null
   }
-  window.addEventListener('mousemove', move)
-  window.addEventListener('mouseup', stop)
+  stopDrag = stop
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', stop)
+  window.addEventListener('pointercancel', stop)
+  window.addEventListener('blur', stop)
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
 }
+
+// 拖到一半这一栏被换掉（换路由、切到手机布局）：别把监听和 html 上那个类留下。
+onScopeDispose(() => stopDrag?.())
 
 // 计算是否使用 permanent 模式：只有宽档的桌面侧栏才常驻。
 const permanent = computed(() => isDesktop.value && !compactSidebar.value)
@@ -165,6 +201,8 @@ watch(
   z-index: var(--z-raised-4);
   width: 11px;
   cursor: col-resize;
+  /* 手指按在这条上拖，别让浏览器把它当成滚页面。 */
+  touch-action: none;
 }
 .sidebar-resizer::after {
   content: '';
