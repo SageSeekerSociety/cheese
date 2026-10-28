@@ -1,10 +1,10 @@
 {
   "backToThread": "Back to thread",
   "close": "Close",
-  "createFailed": "The thread was not created — try again in a moment",
+  "createFailed": "Couldn't create the thread. Try again later",
   "empty": "No threads",
   "emptyHint": "A thread is a short side conversation off one message; it does not lengthen the main one.",
-  "failed": "Reply failed",
+  "failed": "No reply this time. Open to see why",
   "failedCredits": "Out of credits",
   "lastReply": "{name}: {text}",
   "listCaption": "Latest replies first",
@@ -16,7 +16,7 @@
   "openPage": "Open as a page",
   "people": "{replies} · {names}",
   "placeholder": "Reply in thread",
-  "process": "Steps of this turn",
+  "process": "Steps of this run",
   "replies": "no replies | 1 reply | {count} replies",
   "replying": "{name} is replying",
   "replyingStatus": "{name}: {status}",
@@ -26,5 +26,10 @@
   "titleLabel": "Thread title",
   "titlePlaceholder": "What is this thread about",
   "toTask": "Convert to task",
-  "unread": "New replies"
+  "unread": "New replies",
+  "recycled": "Recycled",
+  "recycledCaption": "Threads nobody came back to after three days of holding an error",
+  "recycledAt": "Recycled {time}",
+  "restore": "Restore",
+  "restoreFailed": "Could not restore it. Try again later"
 }

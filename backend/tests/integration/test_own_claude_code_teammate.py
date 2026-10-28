@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness.claude_code import owner_login
+from app.domain.agent_instance.models import OwnAgent
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -68,6 +69,12 @@ def _add(client, project_id, handle: str, connection: str):
             await place_in_project_team(
                 sql_device_service(db), row.device_id, uuid.UUID(project_id)
             )
+            # 这份连接跟着机器归队：`logins(team_id)` 认的是**登录行**的 team_id，
+            # 只把机器挪过去，连接还在原来那个团队名下，加队友时就看不着它。
+            from app.domain.project.models import Project
+
+            team = await db.get(Project, uuid.UUID(project_id))
+            row.team_id = team.team_id
             await db.commit()
             return "sonnet", row.device_id
 
@@ -169,11 +176,13 @@ def test_its_task_cites_a_message_from_its_owner(client, author):
             **({"source_message_id": message["id"]} if message else {}),
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project,
-                topic_id=room,
-                agent_handle=seat,
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project,
+                    topic_id=room,
+                    agent_handle=seat,
+                )
+            }"
         },
     )
     assert response.status_code == 200, response.text
@@ -190,9 +199,9 @@ def _open_task_as(client, project, room, seat, message_id):
             "source_message_id": message_id,
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project, topic_id=room, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=project, topic_id=room, agent_handle=seat)
+            }"
         },
     )
 
@@ -334,11 +343,13 @@ def test_asking_its_owner_keeps_the_question_out_of_the_room_live_feed(
             ],
         },
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project,
-                topic_id=room,
-                agent_handle=seat,
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project,
+                    topic_id=room,
+                    agent_handle=seat,
+                )
+            }"
         },
     )
     assert response.status_code == 200, response.text
@@ -592,6 +603,38 @@ def test_it_carries_its_owners_current_name(client):
     assert own["name"] == "小艾的 Claude Code（Pro）"
 
 
+def test_its_owner_arms_its_skills_without_a_manager(client):
+    """What runs on your own machine under your own login is yours to arm: its
+    owner picks the skills it carries and needs no manager to approve that,
+    while another member's agent stays a manager's call."""
+    project_id, _room = _project_with_bob(client)
+    # 机器上的那次登录只是一个**连接**；要成为项目里的一位队友，得由它主人加进来
+    # （#3611：一位队友 = 一个连接，加和删都只由主人做）。
+    _bring_in(client, project_id, "bob")
+    assert _own_row(_members(client, project_id, "bob"), "bob") is not None
+
+    async def instance_id():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User).where(User.username == "bob"))
+            # 席位 handle 带上了一个随机后缀（`own_handle`），认不出是谁的，
+            # 所以从 `own_agents` 那一行按主人用户认这一位队友。
+            return await db.scalar(
+                select(OwnAgent.instance_id).where(
+                    OwnAgent.owner_user_id == user.id,
+                )
+            )
+
+    agent_id = asyncio.run(instance_id())
+    bob = session_auth_headers("bob")
+    armed = client.put(
+        f"/projects/{project_id}/agents/{agent_id}",
+        json={"configuration": {"bob's": "kept", "skills": ["wolfram"]}},
+        headers=bob,
+    )
+    assert armed.status_code == 200, armed.text
+    assert armed.json()["data"]["configuration"]["skills"] == ["wolfram"]
+
+
 def _name_connection(client, device_id, name, as_whom="alice"):
     return client.patch(
         f"/connector/teams/{client.own_team_id}/claude-logins/{device_id}",
@@ -659,10 +702,15 @@ def test_a_connection_whose_name_is_taken_away_is_named_after_its_plan_again(cli
 
 
 def test_a_removed_connection_takes_its_name_with_it(client):
-    _project_with_bob(client)
+    project_id, _room = _project_with_bob(client)
     laptop = _log_in_claude_code(
         client, "alice", auth_method="claude.ai", subscription_type="max"
     )
+    # The login belongs to alice's personal team when it is created; naming in
+    # the project's team is the same connection brought in first, as in the
+    # tests around this one. (The project used to sit in her personal team, so
+    # the two were the same team and this step was not needed.)
+    assert _add(client, project_id, "alice", laptop).status_code == 200
     assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
 
     removed = client.delete(

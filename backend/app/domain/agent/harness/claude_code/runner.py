@@ -34,6 +34,7 @@ Standard library only: this module travels in the runner archive.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -48,6 +49,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
+from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.driven import lifecycle, runner
 
@@ -93,6 +95,10 @@ TAIL_POLL_S = 0.5
 # How long the runner keeps what it recorded, and how often it looks.
 RETENTION_S = 7 * 24 * 3600
 RETENTION_EVERY_S = 3600
+# How many works' endings the ping carries (``Runner.endings``): enough that a
+# drain polling every few seconds sees the work it waits for even when the
+# runner opened and ended a few more of its own in between.
+ENDED_KEPT = 16
 # A tool result read from a transcript file is not capped the way stdout is.
 # The room reads the tail of a failure and a subagent's conclusion; neither is
 # worth more than stdout would have carried.
@@ -317,6 +323,51 @@ def transcript(config_dir: Path, session_id: str) -> Path | None:
     return None
 
 
+#: How many bytes one read of a transcript hands back. The executor's own view
+#: of this file pulls it in pieces of this size (`forwarded_transcript`), and a
+#: piece has to fit the JSON line it travels in.
+TRANSCRIPT_CHUNK_BYTES = 384 * 1024
+
+
+def transcript_chunk(config_dir: Path, session_id: str, offset: int, size: int) -> dict:
+    """One piece of this session's transcript, or that it is not there.
+
+    This is what an executor asks its session for through the platform
+    (`topic_transcript_chunks` route → here), so a file this session holds can
+    be read on the machine its tools run on. The path is not the caller's to
+    name: the piece is looked up by this session's own id under the config dir
+    the runner was launched with, so nothing outside this session's transcript
+    can be reached through it. A transcript that is not there yet is
+    ``{"missing": True}`` rather than an error — a session asked for its
+    transcript before Claude Code has written one is a real state, not a
+    failure.
+
+    ``size`` may be 0, which is how the executor asks where this file is
+    without pulling any of it: the answer then carries ``path``, this host's
+    own spelling of it, which is the name the build puts in front of the model
+    after a compaction and the name the executor mounts its view at.
+    """
+    path = transcript(config_dir, session_id)
+    if path is None:
+        return {"missing": True}
+    if size == 0:
+        return {
+            "size": path.stat().st_size,
+            "offset": offset,
+            "data": "",
+            "path": str(path),
+        }
+    with path.open("rb") as source:
+        source.seek(offset)
+        data = source.read(size)
+    return {
+        "size": path.stat().st_size,
+        "offset": offset,
+        "data": base64.b64encode(data).decode(),
+        "eof": offset + len(data) >= path.stat().st_size,
+    }
+
+
 #: 上一次对账写下去的那一版（路径 → 指纹），**和那棵树放在同一个目录里**。
 #:
 #: 它是三方合并的中间那一方：没有它，「两边都动了」就没有第三个答案可以问。它跟
@@ -510,6 +561,16 @@ class Runner(runner.Runner[Journal]):
         self.work: str | None = None
         self.unsolicited = False
         self.last_work: str | None = None
+        # The run this session is in, or was last in: the (epoch, seq) of the
+        # ``running`` status event that began it, the identity the platform
+        # applies that event under. A platform tool call carries it
+        # (``dispatch`` ``run``), so a report says which run it was made in.
+        self.run: tuple[int, int] | None = None
+        # How the last few works ended: each one's work id, typed failure
+        # (None when it ended cleanly) and the platform's inputs it read,
+        # oldest first. Kept for the ping, which a release that cannot read
+        # this protocol drains this runner by (``lifecycle``).
+        self.endings: list[dict] = []
         self.interrupting = False
         # What the session reports, as ordered events (``lifecycle``).
         self.outbox = lifecycle.Outbox(self.journal.connection)
@@ -619,6 +680,7 @@ class Runner(runner.Runner[Journal]):
             json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent_handle}),
         )
         self.last_work = self.journal.recall("last_work")
+        self.endings = json.loads(self.journal.recall("endings") or "[]")
         self.errors = (self.state / "claude.log").open("ab")
         # Earlier starts appended here too; this start's words begin here.
         self.errors_from = self.errors.tell()
@@ -802,10 +864,11 @@ class Runner(runner.Runner[Journal]):
 
     # --- what the session reports --------------------------------------------
 
-    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> None:
+    def _emit(self, kind: str, *, epoch: int | None = None, **body) -> int:
         """Report one fact, after every record journaled so far; ``epoch``
-        for a fact about an earlier process (``Outbox.emit``)."""
-        self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
+        for a fact about an earlier process (``Outbox.emit``). Returns its
+        seq."""
+        return self.outbox.emit(kind, records=self.journal.last(), epoch=epoch, **body)
 
     def _unread(self) -> list[str]:
         return json.loads(self.journal.recall(UNREAD_INPUTS) or "[]")
@@ -882,20 +945,8 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.stuck = fired
-            print(
-                f"work {self.work} stuck ({fired}); interrupting it",
-                file=sys.stderr,
-                flush=True,
-            )
-            self.helpers.append(asyncio.ensure_future(self._interrupt_stuck()))
+            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
         self._watching()
-
-    async def _interrupt_stuck(self) -> None:
-        # A control the session did not answer changes nothing it was doing;
-        # the clock looks again, and the work ends when the session does.
-        with contextlib.suppress(Exception):
-            await self.control({"subtype": "interrupt"})
 
     # --- stdout --------------------------------------------------------------
 
@@ -1031,6 +1082,11 @@ class Runner(runner.Runner[Journal]):
             delta, block = event.get("delta") or {}, self.live_blocks[-1]
             if delta.get("type") == "text_delta" and block["type"] == "text":
                 block["text"] += str(delta.get("text") or "")
+                # Writing is working, however long one message takes: the
+                # finished block below would be the only other stamp, and a
+                # single answer that streams for half an hour would leave the
+                # silence clock with nothing to go on.
+                self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
                 block["arguments"] += str(delta.get("partial_json") or "")
@@ -1243,16 +1299,27 @@ class Runner(runner.Runner[Journal]):
         self.run_inputs = []
         self.watchdog.started(time.monotonic())
         self._watching()
-        self._emit(
+        seq = self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.RUNNING,
             session_id=self.session_id,
             work_id=self.work,
             unsolicited=self.unsolicited,
         )
+        # Written before any registration, the event takes the first epoch
+        # this runner is registered under (``Outbox.register``); so does this.
+        self.run = (self.outbox.epoch, seq)
 
     def _finish(self, *, failure: dict | None, text: str, usage: dict | None) -> None:
         """The session went idle: report how the work ended, then forget it."""
+        if self.work is not None:
+            ending = {
+                "work": self.work,
+                "failure": failure,
+                "inputs": list(self.run_inputs),
+            }
+            self.endings = [*self.endings, ending][-ENDED_KEPT:]
+            self.journal.remember("endings", json.dumps(self.endings))
         self._emit(
             lifecycle.STATUS,
             worker_status=lifecycle.IDLE,
@@ -1751,6 +1818,8 @@ class Runner(runner.Runner[Journal]):
             # The platform names this runner's epoch, and the clocks it ends
             # stuck work by (``lifecycle``).
             self.outbox.register(int(params["epoch"]))
+            if self.run is not None and self.run[0] == 0:
+                self.run = (self.outbox.epoch, self.run[1])
             if self.journal.recall(LIVE_LAUNCH) == self.launch:
                 # The live process is this registration's from now on: its
                 # ending, if the next runner reports it, carries this epoch.
@@ -1759,11 +1828,22 @@ class Runner(runner.Runner[Journal]):
             self.watchdog.configure(
                 no_progress_s=float(clocks.get("no_progress_s") or 0),
                 unread_s=float(clocks.get("unread_s") or 0),
+                silent_s=float(clocks.get("silent_s") or 0),
             )
             self._watching()
             self.announce()
             return {"worker_epoch": self.outbox.epoch, "state": self.standing()}
         if method == "ping":
+            # The handshake every release reads, whichever protocol it speaks
+            # (``lifecycle``): ``alive``, ``lifecycle``, ``launch``,
+            # ``session_id``, ``working`` (the busy flag), ``work_id``,
+            # ``worker_epoch`` and ``endings`` keep their names and meanings
+            # (``endings``' entries their ``work``, ``failure`` and ``inputs``).
+            # A later protocol
+            # may add fields here, never drop or change these, so the release
+            # after it can still tell whether this runner is at work, drain it
+            # before replacing it, and know how the work it drained ended and
+            # what it read.
             return {
                 "pid": os.getpid(),
                 "lifecycle": lifecycle.PROTOCOL,
@@ -1772,6 +1852,7 @@ class Runner(runner.Runner[Journal]):
                 "session_id": self.session_id,
                 "working": self.working,
                 "work_id": self.work if self.working else None,
+                "endings": list(self.endings),
                 "tasks": dict(self.tasks),
                 "alive": self.alive(),
                 "starting": self.starting(),
@@ -1794,12 +1875,40 @@ class Runner(runner.Runner[Journal]):
                 return {}
             reason = self.insist()
             return {"reason": reason} if reason else {}
+        if method == "run":
+            # The session's own helper making a platform tool call
+            # (`executor_transport.PlatformHost`), asking which run the call
+            # is made in. A call while the session is idle (a background
+            # task's) is the last run's. Before any registration the run has
+            # no identity the platform could have applied, so none is given.
+            if self.run is None or not self.run[0]:
+                return {}
+            epoch, seq = self.run
+            return {"run": f"{CLAUDE_CODE}/{epoch}/{seq}"}
         if method == "checkpoint_turn":
             # The session's Stop checkpoint (`client.py checkpoint`), asking
             # which turn it is about to sync. `work` while the turn is ending,
             # `last_work` once it has ended.
             work = self.work or self.last_work
             return {"work_id": work} if work else {}
+        if method == "transcript_chunk":
+            # The session's own file, asked for by the machine its tools run on
+            # (`topic_transcript_chunks`). Read-only, and only this session's own
+            # transcript: the caller names an offset and a size, never a path.
+            # A size of 0 asks only where the file is, which is the answer the
+            # executor mounts its view by. Before the epoch check below, because
+            # it is the executor asking through the platform, not the platform's
+            # registration. A session asked before its agent has started has no
+            # config dir yet, which is the same answer as a transcript not yet
+            # written.
+            if self.config_dir is None or self.session_id is None:
+                return {"missing": True}
+            return transcript_chunk(
+                self.config_dir,
+                self.session_id,
+                int(params["offset"]),
+                int(params["size"]) if "size" in params else TRANSCRIPT_CHUNK_BYTES,
+            )
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.
         self.outbox.check(params.get("epoch"))

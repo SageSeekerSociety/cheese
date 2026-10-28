@@ -269,7 +269,9 @@ class AssistantRoutine(UuidPk, Timestamps, Base):
     run's gate reads as theirs. ``title`` and ``note`` are 芝士's own, and
     say nothing for the person. ``trigger`` is ``schedule`` (``spec`` is a
     ``routine.schedule`` spec, or ``{"freq": "once", "at": ISO}``) or one of
-    ``routines.EVENTS`` (``spec`` may name a ``project`` it is limited to).
+    ``personal.EVENTS`` (``spec`` says what it is limited to, and ``once``
+    when it fires only on the first). A rule that fires once runs in the
+    conversation it was made in.
     ``paused`` says why a paused rule stopped: ``person``, ``credits`` (out of
     credits) or ``away`` (not signed in for long). ``state`` is ``active``,
     ``paused``, or ``done``: a one-off that has run, cleared with its runs
@@ -306,10 +308,6 @@ class AssistantRoutine(UuidPk, Timestamps, Base):
         String(16), nullable=False, default="", server_default=""
     )
     next_run_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    #: Notifications written before this moment are never this rule's.
-    event_cursor: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     #: The conversation it was made in.
@@ -360,6 +358,9 @@ class AssistantRun(UuidPk, Base):
     occurrence: Mapped[str] = mapped_column(String(200), nullable=False)
     #: What started it, as the run is told it.
     detail: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: What started it, as the conversation shows it (``{"task", "event"}``
+    #: for a task's review), when that is more than the rule's name.
+    shown: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "assistant_conversations.id",
@@ -374,7 +375,7 @@ class AssistantRun(UuidPk, Base):
     cost_usd: Mapped[float] = mapped_column(nullable=False, default=0.0)
     #: How many actions it left for the person to confirm.
     asked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    #: 芝士 sent the person a notification itself (``cheese_notify_me``), so
+    #: 芝士 sent the person a notification itself (``cheese_notify``), so
     #: its end is not announced again.
     told: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()

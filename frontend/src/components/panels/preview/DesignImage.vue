@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RasterRegion, RasterSelection } from './designRegion'
+import type { ImageRegionMark, RasterRegion, RasterSelection } from './designRegion'
 import type { SketchTool } from './designSketch'
 
 import { computed, ref, watch } from 'vue'
@@ -15,6 +15,7 @@ import { useDesignShortcuts } from './useDesignShortcuts'
 import { useDesignViewport } from './useDesignViewport'
 
 import { t } from '@/i18n'
+import { takeImageTool } from '@/lib/chatImages'
 
 const props = withDefaults(
   defineProps<{
@@ -38,12 +39,21 @@ const props = withDefaults(
      * 屏幕（全屏）时，把滚轮让给缩放才不抢东西。
      */
     zoomOnWheel?: boolean
+    /** 图上框出来的那几处评论：一块一个点，点开就是那一串。
+     *
+     *  位置是**原图像素**（和框选发出去的那份引用同一套坐标），显示时按屏幕上的缩放
+     *  换算——读者缩放、换窗口大小都不改变它指的原图上是哪一块。 */
+    marks?: readonly ImageRegionMark[]
+    /** 此刻打开着的那一串，画得实一点。 */
+    activeMark?: string | null
   }>(),
   {
     selectionEnabled: true,
     active: true,
     activeRegion: undefined,
     zoomOnWheel: false,
+    marks: () => [],
+    activeMark: null,
   }
 )
 const emit = defineEmits<{
@@ -59,6 +69,8 @@ const emit = defineEmits<{
       note: string
     },
   ]
+  /** 点了一处评论标记：把那一串打开（宿主决定开哪一栏）。 */
+  mark: [id: string]
 }>()
 
 const image = ref<HTMLImageElement | null>(null)
@@ -88,9 +100,13 @@ const {
   geometry,
   spaceHeld,
   panning,
+  narrow,
   setZoom,
   fit,
   wheel,
+  touchDown,
+  touchMove,
+  touchEnd,
   panStart,
   panMove,
   panEnd,
@@ -117,6 +133,18 @@ const selectedStyle = computed(() => {
       }
     : {}
 })
+
+// 图上那几处评论的标记点：一块一个点，落在那一块的左上角。位置是原图像素，按屏幕上的
+// 缩放换算（和选中框同一条）；读者缩放、换窗口大小都不改变它指的那一块。
+const markDots = computed(() =>
+  (props.marks ?? []).map((mark) => ({
+    id: mark.id,
+    style: {
+      left: `${mark.region.x * scale.value}px`,
+      top: `${mark.region.y * scale.value}px`,
+    },
+  }))
+)
 
 const {
   strokes,
@@ -260,6 +288,15 @@ watch(
   },
   { flush: 'sync' }
 )
+// 从对话的看图浮层点「写字」「打码」「框选批注」交过来的：打开就是那件工具。
+watch(
+  () => props.identity,
+  (identity) => {
+    const handed = takeImageTool(identity)
+    if (handed) tool.value = handed
+  },
+  { immediate: true }
+)
 // 收起来的那一刻把手里的东西放下：按着的空格、（真在拖的话）正在进行的平移。
 watch(
   () => props.active,
@@ -319,7 +356,16 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       @pointerup.capture="panEnd"
       @pointercancel.capture="panEnd"
     >
-      <div ref="pane" class="design-image__pane" @wheel="wheel">
+      <div
+        ref="pane"
+        class="design-image__pane"
+        :class="{ 'is-narrow': narrow }"
+        @wheel="wheel"
+        @pointerdown.capture="touchDown"
+        @pointermove.capture="touchMove"
+        @pointerup.capture="touchEnd"
+        @pointercancel.capture="touchEnd"
+      >
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- double-clicking a text mark reopens it for editing, part of drawing with the pointer; the image has no keyboard drawing mode -->
         <div
           class="design-image__sheet"
@@ -362,6 +408,24 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
             :profile="profile"
             @select="selected"
             @cancel="cancelSelection"
+          />
+          <!-- 图上框出来的那几处评论：一块一个点，点开就是那一串。和选中框一样按原图像素
+               定位，所以缩放和改窗口大小之后仍然落在那一块上。
+               必须排在框选层**之后**：几层都是 `position: absolute` 的兄弟，靠后的画在上面
+               也先接到指针。排在前面时，框选层那一整张（`inset: 0`）压在点上、还带着自己的
+               按下处理，真鼠标就点在框选层上，点事件到不了这颗按钮——单测把点击直接打在
+               元素上，正好绕过这一点。改文字那个输入框仍在更后面，编辑时它在上层。 -->
+          <button
+            v-for="dot in markDots"
+            :key="dot.id"
+            type="button"
+            class="design-image__mark"
+            :class="{ 'is-active': dot.id === activeMark }"
+            :style="dot.style"
+            :data-comment-mark="dot.id"
+            :aria-label="t('work.room.comments.commentHere')"
+            :title="t('work.room.comments.commentHere')"
+            @click.stop="emit('mark', dot.id)"
           />
           <!-- 对象级编辑的命中判定在 sheet 的 capture 这一层做（见 sheetDown）：
                点中笔画就进入编辑，点在空白处就把指针让给下面的区域选择器。 -->

@@ -2,8 +2,8 @@
 
 拆开的起因只是长度：`ActorResolver` 连它的授权方法搬去了
 :mod:`app.api.auth.resolver`。接线留在这一层 —— 路由 `Depends` 的
-``ActorResolverDep`` / ``MediaActorResolverDep``、``DELEGATED_ROUTES``、
-media cookie 和 ``require_seated_agent``。
+``ActorResolverDep`` / ``MediaActorResolverDep``、media cookie 和
+``require_seated_agent``。
 
 被测试直接替换的名字必须留在这里，而且只在这里：``UserRepository`` 与
 ``TopicMemberService`` 是 ``tests/unit/test_actor_numeric_handle.py``、
@@ -18,18 +18,21 @@ import uuid
 from typing import Annotated
 
 from fastapi import Depends, Request, Response
+from fastapi.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth.resolver import ActorResolver as ActorResolver
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.config import GATEWAY_MOUNT, settings
+from app.core.credentials import Kind
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.core.sentences import say
 from app.domain.conversation import services as conversations
 from app.domain.identity.actor import TokenIdentity
@@ -37,100 +40,6 @@ from app.domain.topic_membership.services import (
     TopicMemberService as TopicMemberService,
 )
 from app.domain.user.repositories import UserRepository as UserRepository
-
-#: The routes a delegated credential opens (`sandbox_auth.DelegatedClaims`), by
-#: endpoint, and whether each changes something. Every other route refuses it:
-#: a 芝士 answering for someone acts through these and nothing else, so a new
-#: tool for it is a new line here, read by whoever reviews it.
-DELEGATED_ROUTES: dict[str, bool] = {
-    "app.api.routes.living_docs.get_document": False,
-    "app.api.routes.living_docs.edit_doc_passages": True,
-    # Only a blank document: the route refuses a delegated write over content.
-    "app.api.routes.living_docs.replace_document": True,
-    "app.api.routes.doc_apps.get_app": False,
-    "app.api.routes.doc_apps.get_app_version": False,
-    "app.api.routes.doc_apps.create_app": True,
-    "app.api.routes.doc_apps.add_app_version": True,
-    "app.api.routes.project_context.search_project_context": False,
-    "app.api.routes.topics_preview.preview_file": False,
-    "app.api.routes.library.library_file_text": False,
-    "app.api.routes.memory_files.list_memory_files": False,
-    "app.api.routes.docs_site.agent_search_docs": False,
-    "app.api.routes.docs_site.agent_read_docs": False,
-    "app.api.routes.tasks.participation.list_joined_tasks": False,
-    "app.api.routes.tasks.drafts.agent_search": False,
-    "app.api.routes.tasks.drafts.agent_read": False,
-    "app.api.routes.tasks.drafts.agent_write": True,
-    "app.api.routes.tasks.drafts.agent_publish": True,
-    "app.api.routes.tasks.drafts.agent_file": False,
-    "app.api.routes.tasks.drafts.agent_materials": False,
-    # A person's own 芝士 in a project: it reads the channels the person may,
-    # and drafts what they would say there; the person sends it.
-    "app.api.routes.topics.read_chat_history": False,
-    "app.api.routes.topics.read_chat_message": False,
-    # A person's own 芝士, wherever the person may: what waits on them, a
-    # thing by its ref, a web page.
-    "app.api.routes.assistant_agent.agent_inbox": False,
-    "app.api.routes.assistant_agent.agent_read": False,
-    "app.api.routes.project_context.agent_search": False,
-    # Searching the web without its gate, unlike reading a page: the query goes
-    # only to DeepSeek, which as the model's provider already holds the whole
-    # conversation, so a search reaches no one new. A page's address reaches
-    # whatever host it names (`read_url` in GATED_ROUTES).
-    "app.api.routes.fetch.web_search": False,
-    # What it does that others see goes through its gate first, which hands
-    # back a pass for the routes in `GATED_ROUTES`.
-    "app.api.routes.assistant_agent.agent_act": True,
-    "app.api.routes.assistant_agent.agent_wait": False,
-    # What is the person's own — their notification settings, how much of a
-    # channel reaches them — it changes directly, as a change they can undo.
-    "app.api.routes.assistant_agent.agent_notify": True,
-    "app.api.routes.notification_preferences.agent_read_preferences": False,
-    "app.api.routes.notification_preferences.agent_set_preference": True,
-    # What it does for the person on its own later — routines —, telling them
-    # something, and what it remembers of them: theirs alone, done directly.
-    "app.api.routes.assistant_agent.agent_routine": True,
-    "app.api.routes.assistant_agent.agent_notify_me": True,
-    "app.api.routes.assistant_agent.agent_memory": True,
-}
-
-
-#: The routes a person's own 芝士 reaches only with a pass its gate issued for
-#: that call (`assistant.gate`, `assistant.passes`): what others see — a
-#: message, a task, a decision, a member, a channel — and reading a web page,
-#: whose address can carry what it read out to the host it names (a page on a
-#: documentation site Claude Code reads freely gets its pass with no look,
-#: ``fetch.preapproved``). The pass is
-#: the gate's verdict; without one the route refuses the credential.
-GATED_ROUTES: frozenset[str] = frozenset(
-    {
-        "app.api.routes.topics_messages.send_chat_message",
-        "app.api.routes.topics_tasks.create_task",
-        "app.api.routes.accept.accept_card",
-        "app.api.routes.accept.reject_card",
-        "app.api.routes.alerts.resolve_notification",
-        "app.api.routes.members.respond_to_invitation",
-        "app.api.routes.members.respond_to_transfer",
-        "app.api.routes.members.invite_member",
-        "app.api.routes.members.remove_member",
-        "app.api.routes.members.set_member_role",
-        "app.api.routes.topic_members.add_topic_member",
-        "app.api.routes.topic_members.remove_topic_member",
-        "app.api.routes.topics.create_topic",
-        "app.api.routes.local_mcp.decide",
-        "app.api.routes.fetch.read_url",
-    }
-)
-
-
-def _bearer(header: str | None) -> str | None:
-    """Extract the token from an ``Authorization: Bearer <token>`` header."""
-    if not header:
-        return None
-    parts = header.split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip()
-    return None
 
 
 def _token_verifier(token: str) -> TokenIdentity | None:
@@ -142,24 +51,49 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
-def _resolver_for(
-    request: Request, db: AsyncSession, bearer: str | None
-) -> ActorResolver:
+#: The kinds of credential an agent acts with, rather than a person's own.
+_AGENT_KINDS = frozenset(
+    {
+        Kind.AGENT,
+        Kind.PROJECT_AGENT,
+        Kind.PERSONAL,
+        Kind.PERSONAL_EXECUTION,
+        Kind.DELEGATED,
+    }
+)
+
+
+def resolver_for(request: Request, db: AsyncSession, token: str) -> ActorResolver:
+    """The resolver for a request presenting ``token``: one of the credentials
+    the platform hands its agents, by the kind it says it is
+    (`app.core.credentials`), or else a person's sign-in — one that does not
+    verify included, which is told to sign in again."""
+    person = not (
+        credentials.kind_of(token) in _AGENT_KINDS
+        or credentials.is_platform_secret(token)
+    )
     return ActorResolver(
         session=db,
-        bearer=bearer,
-        cheese_token=request.headers.get("x-cheese-token") or "",
-        screen_token=request.headers.get("x-cheese-screen") or "",
+        bearer=token if person else None,
+        cheese_token="" if person else token,
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
-        endpoint=_endpoint_name(request),
-        gate_pass=request.headers.get("x-cheese-pass") or "",
     )
+
+
+def presented_credential(connection: HTTPConnection) -> str:
+    """The credential this request carries (`credentials.presented`), for a
+    route that reads a credential itself rather than resolving a caller."""
+    return credentials.presented(connection.headers)
+
+
+#: The credential a request carries, as a route parameter.
+PresentedCredential = Annotated[str, Depends(presented_credential)]
 
 
 def get_actor_resolver(
     request: Request, db: Annotated[AsyncSession, Depends(get_db)]
 ) -> ActorResolver:
-    return _resolver_for(request, db, _bearer(request.headers.get("authorization")))
+    return resolver_for(request, db, credentials.presented(request.headers))
 
 
 #: The cookie a ``<video>`` element's own requests prove the viewer with. The
@@ -176,11 +110,11 @@ def remember_for_media(response: Response, request: Request) -> None:
     """Leave :data:`MEDIA_COOKIE` behind for the ``<video>`` element's own
     requests to this same path, carrying the token this request was made with.
 
-    Only a token sent as ``Authorization`` is mirrored: a cookie is never
-    turned into a fresh cookie, so it cannot outlive the page's own token.
+    Only a person's token sent as ``Authorization`` is mirrored: a cookie is
+    never turned into a fresh cookie, so it cannot outlive the page's own token.
     """
-    token = _bearer(request.headers.get("authorization"))
-    if token:
+    token = credentials.presented(request.headers)
+    if credentials.kind_of(token) is Kind.ACCESS:
         response.set_cookie(
             MEDIA_COOKIE,
             token,
@@ -197,15 +131,8 @@ def get_media_actor_resolver(
 ) -> ActorResolver:
     """``get_actor_resolver`` that also takes the :data:`MEDIA_COOKIE` when the
     request carries no ``Authorization`` header."""
-    bearer = _bearer(request.headers.get("authorization"))
-    return _resolver_for(request, db, bearer or request.cookies.get(MEDIA_COOKIE))
-
-
-def _endpoint_name(request: Request) -> str | None:
-    endpoint = request.scope.get("endpoint")
-    if endpoint is None:
-        return None
-    return f"{endpoint.__module__}.{endpoint.__qualname__}"
+    token = credentials.presented(request.headers)
+    return resolver_for(request, db, token or request.cookies.get(MEDIA_COOKIE, ""))
 
 
 # Browsers cannot set an Authorization header on a WebSocket, so the chat route
@@ -222,7 +149,7 @@ async def session_in(
     in — a room, or one of its tasks — and its credential's claims. Only that
     conversation's credential, of that project, with its agent still seated."""
     claims = scoped_token_claims(token)
-    if not claims or claims.get("t") != str(topic_id):
+    if not claims or held_by_a_machine(claims) or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
     project_id = await conversations.project_of(session, topic_id)
     if project_id is None:
@@ -239,6 +166,7 @@ async def require_seated_agent(
     *,
     project_id: uuid.UUID,
     topic_id: uuid.UUID | None,
+    allow_machine: bool = False,
 ) -> None:
     """Refuse a scoped credential whose agent no longer sits where it acts.
 
@@ -254,7 +182,7 @@ async def require_seated_agent(
     check, so it passes unchanged.
     """
     claims = scoped_token_claims(token)
-    if claims is None:
+    if claims is None or (not allow_machine and held_by_a_machine(claims)):
         raise AuthenticationRequiredError("Agent credential is invalid or expired")
     if not claims.get("a") and not claims.get("t"):
         return
@@ -264,7 +192,9 @@ async def require_seated_agent(
     room = topic_id
     if room is None and claims.get("t"):
         room = uuid.UUID(claims["t"])
-    resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
+    resolver = ActorResolver(
+        session=session, bearer=None, cheese_token=token, allow_machine=allow_machine
+    )
     actor = await resolver.resolve(topic_id=room, project_id=project_id, read_only=True)
     if room is not None:
         await resolver.authorize_topic(

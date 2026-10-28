@@ -67,7 +67,13 @@ def model_pool(monkeypatch):
     )
 
     async def project_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "sk-project"
 
@@ -112,7 +118,7 @@ def _model_call(client, token) -> int:
 
 def _channels(client, pid, room, token) -> dict[str, int]:
     """Every other route a session reaches with its credential, by status."""
-    headers = {"X-Cheese-Token": token}
+    headers = {"Authorization": f"Bearer {token}"}
     return {
         "executor": client.post(
             f"/topics/{room}/execution/{room}",

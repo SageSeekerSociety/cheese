@@ -89,7 +89,8 @@ function topic(id: string): Topic {
 function mountPanel(working = false) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working },
+    // 项目给队友改过名：预览连不上时那句话请的是它现在的名字，不是默认的「芝士」。
+    props: { topic: topic('topic-A'), taskId: 'task-1', activityTick: 0, working, agentName: '小 C' },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -166,11 +167,12 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await openPreview(container)
 
     expect(container.textContent).toContain('预览连接尚未建立或已断开')
-    expect(container.textContent).toContain('不代表芝士已停止工作')
+    expect(container.textContent).toContain('不代表小 C已停止工作')
+    expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })
 
-  it('通道在、应用没有响应 → 请芝士检查应用', async () => {
+  it('通道在、应用没有响应 → 请这间房的队友检查应用', async () => {
     getPreview.mockResolvedValue({
       kind: 'app',
       path: 'Vue dev server',
@@ -184,7 +186,8 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await openPreview(container)
 
     expect(container.textContent).toContain('应用预览暂不可用')
-    expect(container.textContent).toContain('预览连接正常，但应用没有响应')
+    expect(container.textContent).toContain('预览连接正常，但应用没有响应。请让小 C检查应用是否正常运行。')
+    expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })
 

@@ -25,6 +25,7 @@ const ROW: Record<string, string> = {
   roster: '.skel__roster',
   entry: '.skel__entry',
   site: '.skel__site',
+  siteRaw: '.skel__site',
   doc: '.skel__dsec',
   detail: '.skel__dt-sec',
   text: '.skel__text',
@@ -53,6 +54,7 @@ describe('画几行', () => {
     expect(rows(draw({ variant: 'roster' }), 'roster').length).toBe(3)
     expect(rows(draw({ variant: 'entry' }), 'entry').length).toBe(3)
     expect(rows(draw({ variant: 'site' }), 'site').length).toBe(5)
+    expect(rows(draw({ variant: 'siteRaw' }), 'siteRaw').length).toBe(5)
     expect(rows(draw({ variant: 'doc' }), 'doc').length).toBe(3)
     expect(rows(draw({ variant: 'text' })).length).toBe(3)
   })
@@ -100,13 +102,26 @@ describe('每一行长得像它替代的那一行', () => {
     expect(container.querySelector('.skel__ehead')).not.toBeNull()
   })
 
-  it('现场的一条动作：一行里是小圆点 + 动词 + 参数', () => {
-    const row = rows(draw({ variant: 'site', rows: 1 }), 'site')[0]
-    expect(row.querySelector('.skel__bone--sdot')).not.toBeNull()
-    expect(row.querySelector('.skel__bone--verb')).not.toBeNull()
-    expect(row.querySelector('.skel__bone--arg'), '不画参数那一截，动作行就只剩一个动词').not.toBeNull()
-    // 时间悬停才出现，静止时那一格是空的 —— 骨架画上它，记录到达时反而少一块。
-    expect(row.querySelector('.skel__bone--when')).toBeNull()
+  it('现场的一页：轮组头 + 用时条，底下是几种形状的记录行', () => {
+    const container = draw({ variant: 'site', rows: 5 })
+    // 现场按轮分组：少了组头和用时条，行到齐时整段会被它们顶下去。
+    expect(container.querySelector('.skel__site-turn')).not.toBeNull()
+    expect(container.querySelector('.skel__turnhead')).not.toBeNull()
+    expect(container.querySelector('.skel__phases')).not.toBeNull()
+    // 记录不是等高的一列：工具调用是「动作 + 预览」，叙述是一两行字，子项缩进。
+    const tool = container.querySelector('.skel__site--tool')
+    expect(tool?.querySelector('.skel__bone--verb'), '工具行没有动作').not.toBeNull()
+    expect(tool?.querySelector('.skel__bone--arg'), '工具行没有预览').not.toBeNull()
+    expect(container.querySelector('.skel__site--prose .skel__bone--line')).not.toBeNull()
+    expect(container.querySelector('.skel__site--child .skel__site-child')).not.toBeNull()
+  })
+
+  it('现场原始记录：每条记录的上面多一行类型 / 来源 / 时刻', () => {
+    const container = draw({ variant: 'siteRaw', rows: 2 })
+    expect(container.querySelectorAll('.skel__rowmeta').length).toBe(2)
+    expect(container.querySelector('.skel__bone--kind')).not.toBeNull()
+    expect(container.querySelector('.skel__bone--source')).not.toBeNull()
+    expect(container.querySelector('.skel__bone--stamp')).not.toBeNull()
   })
 
   it('文档：一条小标题带着几段字', () => {

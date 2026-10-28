@@ -73,7 +73,9 @@ jobs:
       # suite waits on this job, so anything slow on it is serial time for the
       # whole workflow.
       - name: Test scope and result handling
-        run: python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_required_ci.py'
+          python3 -m unittest discover -s .github/scripts -p 'test_download_artifacts.py'
       - name: Select suites for the complete merge diff
         id: scope
         env:
@@ -112,25 +114,35 @@ jobs:
       integration-floor: ${{ fromJSON(needs.scope.outputs.integration_floor) }}
       coverage-job: false
 
-  # Whether a backend change moved the API surface the frontend compiles
-  # against: the OpenAPI document printed at the diff's base and at this commit,
-  # compared. The frontend's types are generated from that document
-  # (frontend/scripts/gen-api-types.mjs), so a backend change that moves it runs
-  # the frontend suite below. The path map cannot answer this — the document is
-  # a function of the app, and no file says when it moved. Until 2026-10-17 one
-  # did: the committed digest backend/openapi.sha256, which every API change
-  # rewrote and any two of them collided on, in the merge queue above all (all
-  # three ejections that day, one PR three times over). This asks the question
-  # the digest stood for, with no file to collide on.
+  # Two questions about the backend's OpenAPI document, asked of every backend
+  # change: the document printed at the diff's base and at this commit,
+  # compared (required-ci.py: api_selected; the judge holds the job to it).
   #
-  # Only for a backend change the paths have not already sent to the frontend
-  # suite (required-ci.py: api_selected); the judge holds it to that, and holds
-  # the frontend suite to its answer. Each `uv run --frozen` syncs the one
-  # environment to its own tree's lock, so a change that moves a dependency
-  # prints each document with its own dependencies.
+  # Did it move? The frontend's types are generated from that document
+  # (frontend/scripts/gen-api-types.mjs), so a backend change that moves it
+  # runs the frontend suite below. The path map cannot answer this — the
+  # document is a function of the app, and no file says when it moved. Until
+  # 2026-10-17 one did: the committed digest backend/openapi.sha256, which every
+  # API change rewrote and any two of them collided on, in the merge queue
+  # above all. This asks the question the digest stood for, with no file to
+  # collide on.
+  #
+  # Does it break a page built against the base? A page left open across the
+  # deploy keeps its frontend, and the backend refuses it only when it was
+  # built for a lower API generation (backend/app/core/api_generation.py). So a
+  # breaking change (.github/scripts/api_compat.py) fails here unless it raised
+  # backend/api-generation. Asked of changes that edit the frontend too: those
+  # are the ones that change both halves at once. Two pull requests that each
+  # raise the number by one merge cleanly to the same value; when the first was
+  # deployed before the second, the push run on main (whose base is the last
+  # green commit) fails here, and the fix is one more raise.
+  #
+  # Each `uv run --frozen` syncs the one environment to its own tree's lock, so
+  # a change that moves a dependency prints each document with its own
+  # dependencies.
   api:
     needs: scope
-    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.frontend != 'true'
+    if: needs.scope.outputs.tier != 'draft' && needs.scope.outputs.backend == 'true' && needs.scope.outputs.base != ''
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     outputs:
@@ -168,6 +180,13 @@ jobs:
             diff -u "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json" | head -n 200 || true
             echo "moved=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: A breaking API change raises the API generation
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_api_compat.py'
+          # A base from before the generation existed counts as generation 0.
+          base_generation=$(cat "$RUNNER_TEMP/base/backend/api-generation" 2>/dev/null || echo 0)
+          python3 .github/scripts/api_compat.py "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json" \
+            "$base_generation" "$(cat backend/api-generation)"
 
   # Selected by the paths, or by the `api` job seeing the API surface move.
   # `!cancelled()` is what lets it start when `api` was skipped: a skipped need
@@ -242,7 +261,9 @@ jobs:
     name: CI required
     if: ${{ !cancelled() && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     # pull-requests: read is for the title step, which reads the PR's title.
+    # actions: read is for listing and downloading this run's backend shard artifacts.
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     needs: [scope, api, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote]
@@ -264,24 +285,14 @@ jobs:
       # fewer on the critical path. `needs.backend.result == 'success'` already
       # says no shard failed, and an integration layer skipped when it was due
       # leaves its cases missing from the shards, which this step fails on.
+      # One request at a time, each retried: the cheese-ci pool's link to GitHub
+      # resets a connection now and then, and download-artifact fails its whole
+      # call on one reset (download_artifacts.py says more).
       - name: Download backend shard artifacts
-        id: download_backend_artifacts
         if: needs.backend.result == 'success'
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: backend-*
-          path: ${{ runner.temp }}/backend-artifacts
-      - name: Clear partial backend artifacts before retry
-        id: clear_backend_artifacts
-        if: steps.download_backend_artifacts.outcome == 'failure'
-        run: rm -rf "$RUNNER_TEMP/backend-artifacts"
-      - name: Retry backend shard artifact download
-        if: steps.download_backend_artifacts.outcome == 'failure' && steps.clear_backend_artifacts.outcome == 'success'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: backend-*
-          path: ${{ runner.temp }}/backend-artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/download_artifacts.py 'backend-*' "$RUNNER_TEMP/backend-artifacts"
       - name: Backend coverage complete
         if: needs.backend.result == 'success'
         working-directory: backend

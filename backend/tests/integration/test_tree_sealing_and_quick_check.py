@@ -130,7 +130,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
             card = await service.create_card(
                 topic_id=room,
                 task_id=first.id,
-                reviewer_handle="alice",
+                reviewer_handles=["alice"],
                 focus="ready",
                 change_subject="feat: add first result",
                 # 这道门（「审阅人在不在房间里」）有它自己的用例：

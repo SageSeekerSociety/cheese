@@ -261,6 +261,7 @@ def open_ws(
     insecure: bool = False,
     timeout: float = _HANDSHAKE_TIMEOUT_S,
     idle_timeout: float | None = None,
+    unix_socket: str | None = None,
     publish=None,
     validate=lambda: None,
 ) -> tuple[socket.socket, dict[str, str]]:
@@ -281,7 +282,15 @@ def open_ws(
     if parsed.query:
         path = f"{path}?{parsed.query}"
 
-    if publish is not None:
+    if unix_socket is not None:
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.settimeout(timeout)
+        try:
+            raw.connect(unix_socket)
+        except BaseException:
+            _shutdown(raw)
+            raise
+    elif publish is not None:
         # Owned streams only dial the declared IPv4 loopback port.
         raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         raw.settimeout(timeout)
@@ -294,7 +303,7 @@ def open_ws(
             raise
     else:
         raw = socket.create_connection((host, port), timeout=timeout)
-    if secure:
+    if secure and unix_socket is None:
         if insecure:
             context = ssl._create_unverified_context()  # opt-in only
         else:
@@ -947,11 +956,12 @@ _RECONNECT_CAP_S = 15.0
 
 def run(
     url: str,
-    tokens: TokenSource,
+    tokens: TokenSource | None,
     ports: PortSource,
     *,
     ca_path: str | None = None,
     insecure: bool = False,
+    preview_socket: str | None = None,
 ) -> int:
     """Hold the tunnel open, reconnecting while the backend is merely absent.
 
@@ -968,12 +978,16 @@ def run(
     delay = _RECONNECT_START_S
     while True:
         try:
+            headers = {CAPS_HEADER: ",".join(sorted(CAPABILITIES))}
+            if tokens is not None:
+                headers["Authorization"] = f"Bearer {tokens.get()}"
             sock, answered = open_ws(
-                f"{url}{'&' if '?' in url else '?'}token={tokens.get()}",
+                url,
                 ca_path=ca_path,
                 insecure=insecure,
                 idle_timeout=_IDLE_TIMEOUT_S,
-                headers={CAPS_HEADER: ",".join(sorted(CAPABILITIES))},
+                unix_socket=preview_socket,
+                headers=headers,
             )
         except (OSError, PreviewError) as exc:
             retryable = isinstance(exc, OSError) or (
@@ -1021,19 +1035,36 @@ def main(argv: list[str] | None = None) -> int:
         help="file holding the loopback port `cheese serve` declared, re-read "
         "per stream. It is the ONLY address this process ever dials",
     )
+    parser.add_argument(
+        "--platform-socket",
+        default=os.environ.get("CHEESE_PLATFORM_SOCKET") or None,
+        required=False,
+        help="the sandbox's platform socket directory: dials preview.sock beside it "
+        "without reading any token inside the sandbox",
+    )
     parser.add_argument("--ca", default=os.environ.get("CHEESE_PREVIEW_CA") or None)
     parser.add_argument("--insecure", action="store_true")
     args = parser.parse_args(argv)
-    if not args.token_file or not args.port_file:
-        print("--token-file and --port-file are both required", file=sys.stderr)
+    socket_path = args.platform_socket
+    preview_socket = None
+    if socket_path:
+        candidate = os.path.join(os.path.dirname(socket_path), "preview.sock")
+        if os.path.exists(candidate) or os.path.exists(socket_path):
+            preview_socket = candidate
+    if not (preview_socket or args.token_file) or not args.port_file:
+        print(
+            "--port-file and one of --platform-socket or --token-file are required",
+            file=sys.stderr,
+        )
         return 2
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     return run(
         args.url,
-        TokenSource(args.token_file),
+        None if preview_socket else TokenSource(args.token_file),
         PortSource(args.port_file),
         ca_path=args.ca,
         insecure=args.insecure,
+        preview_socket=preview_socket,
     )
 
 

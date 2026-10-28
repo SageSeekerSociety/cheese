@@ -83,7 +83,11 @@ def launch(ref: SessionRef, spec: SessionSpec, access: Access, api: str) -> Host
     if spec.idle_exit_s is not None:
         config["idle_exit_s"] = spec.idle_exit_s
     if spec.tools is not None:
-        config["tools"] = {"names": list(spec.tools)}
+        config["tools"] = {
+            "names": list(spec.tools),
+            "works": spec.works,
+            "branches": spec.branches,
+        }
     return on_host(
         state=ref.state,
         config=config,

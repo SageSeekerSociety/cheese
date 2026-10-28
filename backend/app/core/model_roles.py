@@ -51,7 +51,13 @@ ROLES: dict[str, Role] = {
     "subagent_model": Role(None, offered=True),
     "assistant_model": Role("assistant_model", keys=("assistant-gate",)),
     "docs_assistant_model": Role("docs_assistant_model", keys=("docs-assistant",)),
-    "topic_naming_model": Role("topic_naming_model", keys=("topic-naming",)),
+    # Both gates that name things off a message: a task's title, and a
+    # bookmark's (``app.domain.chapter.naming``). They are two keys so neither
+    # spends the other's rate limit, but one role, so moving the role moves
+    # both — a key left behind would keep calling the old model.
+    "topic_naming_model": Role(
+        "topic_naming_model", keys=("topic-naming", "bookmark-naming")
+    ),
     "environment_diagnosis_model": Role(
         "environment_diagnosis_model", keys=("environment-diagnosis",)
     ),

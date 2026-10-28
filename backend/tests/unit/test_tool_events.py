@@ -46,8 +46,8 @@ def test_a_platform_command_called_as_a_tool_is_platform():
     outside the machine — the one distinction the dot exists to draw, drawn
     backwards, in the rooms where it mattered.
     """
-    assert _is_platform_tool("cheese_doc_set", {"content": "# 实况"})
-    assert _is_platform_tool("cheese_accept_request", {"subject": "fix: x"})
+    assert _is_platform_tool("cheese_doc", {"action": "set", "content": "# 实况"})
+    assert _is_platform_tool("cheese_card", {"action": "request", "subject": "fix: x"})
     # The alias the room's own system prompt names on every turn.
     assert _is_platform_tool("chat_send", {"content": "第一版好了"})
 
@@ -78,3 +78,11 @@ def test_a_platform_action_is_one_wherever_the_cheese_cli_runs():
     # pi 房间的 shell 工具叫 bash —— 认不出它，机器上的 cheese 命令就没有琥珀点。
     assert _is_platform_tool("bash", {"command": "cheese show output/x.docx"})
     assert not _is_platform_tool("bash", {"command": "echo cheese"})
+
+
+def test_a_call_recorded_under_a_retired_name_is_still_a_platform_action():
+    """`chat_edit` carries no `cheese_` prefix; it is `cheese_chat(action=edit)`
+    now, and a record made under the old name was a platform action then too."""
+    assert _is_platform_tool("chat_edit", {"message_id": "m1", "content": "改过"})
+    assert _is_platform_tool("mcp__native__chat_edit", {"message_id": "m1"})
+    assert not _is_platform_tool("Edit", {"file_path": "a.md"})

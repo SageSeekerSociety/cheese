@@ -56,7 +56,7 @@ def test_hung_process_is_terminated_then_killed_and_confirmed_dead(tmp_path):
         f"pathlib.Path({str(marker_done)!r}).write_text('1')\n"
     )
 
-    with pytest.raises(ws.GitTimeoutError, match="已确认终止"):
+    with pytest.raises(ws.GitTimeoutError, match="超时"):
         ws._run_subprocess([sys.executable, str(script)], tmp_path, timeout=0.2)
 
     assert marker_term.exists(), "SIGTERM was never tried before escalating"

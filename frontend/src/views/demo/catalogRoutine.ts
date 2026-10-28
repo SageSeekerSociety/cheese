@@ -11,6 +11,7 @@
  */
 import type { CatalogEntry } from './catalog'
 
+import { AGENT_NAME } from './catalogFixtures/common'
 import { ROUTINE_RECORDS_RUNS, ROUTINE_WEEKLY } from './catalogPanelsFixtures'
 import { DEMO_TOPIC } from './demoPanels'
 
@@ -35,6 +36,7 @@ export const ROUTINE_ENTRIES: CatalogEntry[] = [
     file: 'src/components/routine/RoutineCompose.vue',
     component: RoutineCompose,
     needs: [...UI_T],
+    args: { agentName: AGENT_NAME },
     states: [
       {
         name: '新建一条',

@@ -5,8 +5,8 @@
   "memoryAdded": "{count} added",
   "memoryConflicted": "{count} changed by someone else first",
   "memoryMigrationApplied": "Old memory migration: done, wrote {files} files",
-  "memoryMigrationReported": "Old memory migration: report ready for review — {sources} old memories → {files} files",
-  "memoryMigrationReportedOverGoal": "Old memory migration: report ready for review — {sources} old memories → {files} files; **team index over target**",
+  "memoryMigrationReported": "Old memory migration: report ready for review. {sources} old memories → {files} files",
+  "memoryMigrationReportedOverGoal": "Old memory migration: report ready for review. {sources} old memories → {files} files; **team index over target**",
   "memoryRemoved": "{count} removed",
   "memoryUpdated": "{count} updated"
 }

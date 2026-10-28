@@ -1,0 +1,20 @@
+{
+  "type": "exec",
+  "origin": "server",
+  "why": "An exec that asks to hear the command's stderr while it runs (`stream`): the executor install, whose download progress the room is shown. A connector that reads the field under any other name never streams, and the room goes back to seeing nothing.",
+  "frame": {
+    "t": "exec",
+    "id": "e7",
+    "command": ["python3", "-"],
+    "timeout": 120,
+    "stdin": "print('install')",
+    "stream": true
+  },
+  "meaning": {
+    "exec_id": "e7",
+    "command": ["python3", "-"],
+    "timeout_seconds": 120,
+    "stdin": "print('install')",
+    "stream": true
+  }
+}

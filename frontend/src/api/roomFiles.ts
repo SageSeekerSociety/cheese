@@ -6,7 +6,7 @@ import { refusalWords } from '../lib/noticeText'
 import { createPreviewPdfReader } from '../lib/previewPdf'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, request } from './http'
+import { authHeaders, BASE, ensureFreshToken, request } from './http'
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
@@ -111,6 +111,20 @@ export async function hearVoice(topicId: string, wav: Blob): Promise<{ text: str
   return body.data
 }
 
+/** 对自己的芝士说的一段：不在哪个频道里，听写的方式和额度都和频道里的一样。 */
+export async function hearAssistantVoice(wav: Blob): Promise<{ text: string; raw: string }> {
+  const form = new FormData()
+  form.append('file', wav, 'voice.wav')
+  const { status, body } = await postFormWithProgress<ApiEnvelope<{ text: string; raw: string }>>(
+    `${BASE}/assistant/voice`,
+    form,
+    authHeaders()
+  )
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
+}
+
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 //
 // 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，
@@ -134,8 +148,17 @@ export function attachmentRawUrl(
  * 这个端点不接受匿名请求，而 `<img src="/api/…/attachments/raw?path=…">` 恰恰
  * 是匿名的。调用方负责在不再需要时 URL.revokeObjectURL（见 AttachmentImage）。
  */
-export async function attachmentImageUrl(topicId: string, path: string): Promise<string> {
-  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+export function attachmentImageUrl(topicId: string, path: string): Promise<string> {
+  return rawImageUrl(attachmentRawUrl(topicId, path))
+}
+
+/** 任何一个只认 Authorization 的 raw 端点（房间附件、项目文件），取成 <img> 能用的
+ *  object URL。理由同上：`<img src>` 是匿名的，项目的 `/file/raw` 对它答 404。 */
+export async function rawImageUrl(rawUrl: string): Promise<string> {
+  // `request()` refreshes a token about to expire before it sends; a bare fetch has
+  // to do the same, or an image opened after the tab sat idle gets 404.
+  await ensureFreshToken()
+  const res = await fetch(rawUrl, { headers: authHeaders() })
   if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
   return URL.createObjectURL(await res.blob())
 }
@@ -242,54 +265,7 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// ---- 房间文件：草稿历史与在线编辑 ----
-
-/** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
-export interface RoomFileRevision {
-  id: string
-  path: string
-  seq: number
-  version: string
-  size: number
-  author: string
-  author_kind: 'human' | 'agent' | 'unknown'
-  source: 'baseline' | 'upload' | 'template' | 'ai' | 'editor' | 'restore' | 'scheduled'
-  note: string | null
-  /** 存下这一版的那次编辑会话；和自己打开时的那个相同，就是自己刚存的。 */
-  editor_key: string | null
-  created_at: string
-}
-
-export function roomFileRevisions(
-  topicId: string,
-  path: string
-): Promise<{ data: RoomFileRevision[]; total: number; path: string; version: string | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions?path=${encodeURIComponent(path)}`)
-}
-
-export function restoreRoomFileRevision(topicId: string, revisionId: string): Promise<RoomFileRevision> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/restore`, {
-    method: 'POST',
-  })
-}
-
-export async function downloadRoomFileRevision(topicId: string, revision: RoomFileRevision): Promise<void> {
-  const res = await fetch(
-    `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
-    { headers: authHeaders() }
-  )
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const blob = await res.blob()
-  const leaf = revision.path.split('/').pop() ?? 'file'
-  const dot = leaf.lastIndexOf('.')
-  const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
+// ---- 房间文件：在线编辑（草稿历史在 ./roomFileRevisions） ----
 
 export function copyIntoRoom(
   topicId: string,
@@ -356,5 +332,21 @@ export function newFromTemplate(
   return request(`/topics/${encodeURIComponent(topicId)}/files/new`, {
     method: 'POST',
     body: JSON.stringify({ template, path }),
+  })
+}
+
+/** 把一份文本房间文件的新内容存回去。
+ *
+ *  `version` 是读它时那份内容给的版本；这份文件在那之后被别人改过，后端答 409（带上
+ *  现在那一版），而不是把这版直接盖上去——别人的改动不能无声地没了。 */
+export function writeRoomTextFile(
+  topicId: string,
+  path: string,
+  content: string,
+  version: string | null
+): Promise<{ path: string; version: string; seq: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files/text`, {
+    method: 'POST',
+    body: JSON.stringify({ path, content, version }),
   })
 }

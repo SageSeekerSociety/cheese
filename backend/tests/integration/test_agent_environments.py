@@ -37,7 +37,7 @@ from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
-from tests.integration.conftest import registered
+from tests.integration.conftest import registered, shared_team_of
 from tests.integration.test_switch_pushes_first import (
     _environment,
     _machines,
@@ -93,7 +93,7 @@ async def _second_agent(client, room, handle="linus", *, environment=None):
         return SimpleNamespace(
             session_id=row.id,
             handle=handle,
-            agent={"X-Cheese-Token": token},
+            agent={"Authorization": f"Bearer {token}"},
             path=f"/topics/{room.conversation_id}/sessions/{row.id}/environment",
         )
 
@@ -108,7 +108,12 @@ async def _member(client, room, handle="bob") -> dict:
     """A person on the project's team who owns nothing there."""
     async with client.test_factory() as db:
         user_id = await registered(db, handle)
-        team_id = (await db.get(Project, room.project_id)).team_id
+        team_id = await shared_team_of(db, room.project_id, joiner_user_id=user_id)
+        # The room's two machines were enrolled on the team the project sat in;
+        # the project has just moved, so they move with it.
+        devices = sql_device_service(db)
+        for device_id in (room.old_device, room.new_device):
+            await place_in_project_team(devices, device_id, room.project_id)
         now = datetime.now(UTC)
         db.add(
             TeamUserRelation(

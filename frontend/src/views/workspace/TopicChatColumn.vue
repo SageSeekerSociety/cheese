@@ -52,7 +52,7 @@ const props = defineProps<{
   /** 打开时停在这一条（地址里的 `?block=`）。 */
   focusBlock?: string | null
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
-   *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
+   *  提议卡（技能、反馈）也按这个任务取——队友在哪儿提的，卡就落在哪儿。 */
   taskId?: string | null
   /** 这一栏是一条还没转成任务的支线。 */
   threadId?: string | null
@@ -203,7 +203,7 @@ const madeHere = computed(() => {
         made.id !== conversationId.value &&
         (!made.source_block_id || made.source_block_id === id)
     )
-    .map((made) => taskLine(made, viewer.value, nameOf))
+    .map((made) => taskLine(made, viewer.value, nameOf, madeAgentName(made)))
 })
 // The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
 const refs = computed(() => ({
@@ -211,6 +211,12 @@ const refs = computed(() => ({
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
+/** 做这件任务的队友叫什么：它单独指定的那位，否则这间房名册上的队友，再否则项目的默认队友。 */
+function madeAgentName(made: RoomTask): string {
+  const seat = made.agent_handle || props.topic.agent_handle || props.taskAgentHandle
+  return (seat && props.memberNames?.[seat]) || store.agentName
+}
+
 function nameOf(handle: string): string {
   return props.memberNames?.[handle] || handle
 }
@@ -313,7 +319,11 @@ defineExpose({
       </template>
       <!-- 它挂着的那条消息交给对话的滚动区：跟着回复一起滚，而不是钉在顶上。钉着的话，
            长消息一展开就把回复挤没、把正文末尾那颗「收起」顶到看不见的地方。 -->
-      <template v-if="beside || root" #timeline-start>
+      <!-- No v-if on this <template>: a conditional slot makes ChatPanel's slots
+           dynamic, and ChatPanel forwards them to ChatTimeline, which then redraws
+           every row on each ChatPanel render — that is, on every keystroke in the
+           composer. The branches inside already render nothing when neither holds. -->
+      <template #timeline-start>
         <template v-if="beside">
           <ThreadRoot
             v-if="root"

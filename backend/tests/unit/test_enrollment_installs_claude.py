@@ -22,8 +22,9 @@ def script() -> str:
 def test_claude_is_installed_at_the_pinned_version():
     s = script()
     pin = device_launch.CLAUDE_PINNED_VERSION
-    assert f"/connector/claude/{pin}/" in s
-    # Laid out exactly where the launcher's pin looks for it.
+    # Placed by the connector, which asks the server for its pin and installs
+    # it (`claudecode.Ensure`), exactly where the launcher's pin looks for it.
+    assert '"$HOME/.local/bin/cheesehost" claude install' in s
     assert f'claude_pin="$HOME/.cheese/claude/versions/{pin}"' in s
 
 
@@ -39,7 +40,7 @@ def test_the_machine_owners_claude_is_left_alone():
     never consults ~/.local/bin for the pin.
     """
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
+    claude_block = s[s.index("claude_pin=") : s.index("CHEESE_STARTUP:connect")]
     assert "ln -s" not in claude_block, "must not repoint the owner's claude"
     assert "$HOME/.local/bin/claude" not in claude_block
 
@@ -49,9 +50,9 @@ def test_the_pin_is_installed_even_when_a_newer_claude_exists():
     their next upgrade becomes our behaviour change. Pinning has to mean the
     version we put there, not the version we found."""
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
-    # The only condition guarding the download is the pin's own absence.
-    assert 'if [ ! -x "$claude_pin" ]; then' in claude_block
+    claude_block = s[s.index("claude_pin=") : s.index("CHEESE_STARTUP:connect")]
+    # Nothing about the owner's claude decides whether the pin is installed.
+    assert "claude install" in claude_block
     assert "command -v claude" not in claude_block
 
 
@@ -64,7 +65,8 @@ def test_the_binary_comes_from_the_platform_not_the_vendor():
     enrollment depend on three things we cannot see.
     """
     s = script()
-    assert f"{ORIGIN}/connector/claude/" in s
+    # The connector installs it from the server its config names: this one.
+    assert f'"base": "{ORIGIN}/connector"' in s
     for vendor in ["claude.ai/install.sh", "downloads.claude.ai"]:
         assert vendor not in s, f"enrollment must not depend on {vendor}"
 
@@ -89,19 +91,9 @@ def test_versions_track_the_launcher_rather_than_being_restated():
     assert device_launch.CLAUDE_MIN_VERSION in s
 
 
-def test_musl_machines_get_a_musl_build():
-    """Our own `<os>-<arch>` target names cannot express musl, and an Alpine-ish
-    machine handed a glibc build fails at exec with nothing useful to read. Only
-    the machine can tell, so the check runs there."""
-    s = script()
-    assert "linux-$carch-musl" in s
-    assert "ldd /bin/ls" in s
-    assert "darwin-$carch" in s
-
-
 def test_claude_is_fatal_at_enrollment_like_tmux_and_git():
     """Same reasoning as the tools above it: a failure discovered later is a
     failure nobody attributes to enrollment."""
     s = script()
-    claude_block = s[s.index("claude_pin=") : s.index("config.json")]
+    claude_block = s[s.index("claude_pin=") : s.index("CHEESE_STARTUP:connect")]
     assert ">&2" in claude_block and "exit 1" in claude_block

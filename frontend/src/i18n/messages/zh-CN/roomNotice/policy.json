@@ -1,6 +1,6 @@
 {
   "labelProposalDetail": "提议详情",
-  "policyProposal": "{actor} 要用{what}「{label}」，超出本项目允许的档位（{tier}）；这一步等 {approver} 点头。",
+  "policyProposal": "{actor} 要用{what}「{label}」，超出本项目允许的档位（{tier}）；这一步待 {approver} 批准。",
   "policyProposalDetail": "资源：{label}（{subject}）\n档位：{tier}\n发起：{asked_by}",
   "policyResourceModel": "模型"
 }

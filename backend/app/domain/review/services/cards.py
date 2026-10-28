@@ -143,7 +143,7 @@ async def create_card(
     *,
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
-    reviewer_handle: str | None = None,
+    reviewer_handles: list[str] | None = None,
     focus: str = "",
     change_subject: str | None = None,
     change_body: str | None = None,
@@ -210,12 +210,13 @@ async def create_card(
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
-    reviewer_handle = await self._reviewer_or_project_default(
+    reviewers = await self._reviewers_or_project_default(
         await self._projects.get(topic.project_id),
-        reviewer_handle,
+        reviewer_handles,
         from_work=[task],
     )
-    await self._require_reviewer_in_room(topic, reviewer_handle, admits_reviewer)
+    for reviewer in reviewers:
+        await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
     # 这一版交出去的那一份，在它还存在的时候读下来 (#1085 结论五)。构建产物只
     # 活在这一轮的工作目录里，采纳时那个目录可能已经不在了 —— 建卡是唯一抓得
     # 住它的时刻。读在声明之前：路径写错这张卡递不上去，而一张递不上去的卡不该
@@ -259,7 +260,7 @@ async def create_card(
     card = await self._repo.add(
         topic_id=topic_id,
         task_id=task.id,
-        reviewer_handle=reviewer_handle,
+        reviewer_handles=reviewers,
         focus=focus,
         status=AcceptStatus.pending,
         change_subject=subject,
@@ -672,6 +673,12 @@ async def _render(
     summaries: dict[tuple[uuid.UUID, uuid.UUID], Any],
 ) -> dict:
     data = AcceptCardOut.model_validate(card).model_dump(mode="json")
+    # 评审人在 `accept_card_reviewer` 表里，不在卡那一行上 —— 折成一句话补进来。
+    # 一卡多人：`reviewer_handles` 是完整集合，`reviewer_handle` 是它的「、」拼接
+    # （旧读者还在读那一个字段）。
+    handles = await self._repo.reviewer_handles(card.id)
+    data["reviewer_handles"] = handles
+    data["reviewer_handle"] = "、".join(handles)
     # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），
     # 随卡下发。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了后来加
     # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。

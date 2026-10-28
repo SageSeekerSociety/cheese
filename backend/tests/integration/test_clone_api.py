@@ -60,7 +60,7 @@ def test_clone_source_without_session_is_422(client):
     _, src, dst = _project_and_topics(client)
     r = client.post(f"/topics/{dst}/clone-from", json={"source_topic_id": src})
     assert r.status_code == 422
-    assert "还没跑过" in r.json()["message"]
+    assert "还没工作过" in r.json()["message"]
 
 
 def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):

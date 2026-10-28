@@ -2,30 +2,18 @@
 
 A room's platform tools reach pi as extension tools, built out of one file: the
 platform's CLI (`sandbox/cheese`, shipped in the runner archive as `cheese.py`)
-carries both the platform's tool table (`PLATFORM_TOOLS`, run here against the
-backend) and the CLI's argparse tree for what must run on the room's machine as
-a process (`cli_worker` turns that tree into tool schemas and a call back into
-argv). This module reads that file and asks it, rather than restating either
-half.
-
-**argparse stays the authority.** ``argv`` re-parses the argv it built, so a
-missing required field or an out-of-range choice fails here, with argparse's own
-message, instead of reaching the CLI as a malformed command line.
+carries the platform's tool table (`PLATFORM_TOOLS`, run here against the
+backend). What must run on the room's machine as a process is the CLI's own
+commands, which a pi room runs with its `bash` as the other harnesses do
+(`cheese --help`), so the CLI's argparse tree is no tool here.
 """
 
-import contextlib
+import argparse
 import importlib.resources
-import io
 import types
 from functools import cache
 from pathlib import Path
 from typing import Any
-
-from app.domain.agent import cli_worker
-
-#: The CLI's own name on the machine's PATH: the executor puts the platform's
-#: directory first on every command's PATH.
-CLI = "cheese"
 
 
 @cache
@@ -45,59 +33,120 @@ def _module() -> Any:
 
 
 def tools() -> list[dict]:
-    """The platform's tool table, then every leaf command of the CLI.
+    """The platform's tool table: the same constant the other harnesses serve
+    (结论 63)."""
+    return _module().offered_tools()
 
-    The table is the same constant the other harnesses serve (结论 63); the
-    leaves are what is left for the machine to run as a process."""
-    return [
-        *_module().offered_tools(),
-        *cli_worker._tools(_module().build_parser()),
-    ]
+
+@cache
+def cli_commands() -> dict[str, str]:
+    """What each of the CLI's commands is called when a model remembers it as a
+    tool (`cheese_push_fix`), and the command it is (`cheese push-fix`).
+
+    pi rooms once had them as tools; they are commands run in bash now, and a
+    session that calls one as a tool is told so (`not_a_tool`)."""
+    parser = _module().build_parser()
+    commands: dict[str, str] = {}
+
+    def walk(node, words: tuple[str, ...]) -> None:
+        subparsers = next(
+            (a for a in node._actions if isinstance(a, argparse._SubParsersAction)),
+            None,
+        )
+        if subparsers is None:
+            name = "cheese_" + "_".join(w.replace("-", "_") for w in words)
+            commands[name] = " ".join(("cheese", *words))
+            return
+        seen: set[int] = set()
+        for word, child in subparsers.choices.items():
+            if id(child) not in seen:  # an alias is the same parser again
+                seen.add(id(child))
+                walk(child, (*words, word))
+
+    walk(parser, ())
+    return commands
+
+
+def not_a_tool(tool: str) -> str:
+    """What a session that calls the CLI command ``tool`` as a tool is told."""
+    command = cli_commands()[tool]
+    return (
+        f"{tool} 不是工具：CLI 的命令在 bash 里跑，`{command} …`"
+        f"（`{command} --help` 看它的写法，`cheese --help` 列出全部命令）。"
+    )
 
 
 def schemas_of(names: list[str]) -> list[dict]:
     """The table entries ``names`` name, from the room's table or the one for a
-    芝士 answering someone (`DELEGATED_TOOLS`), in the order given."""
+    芝士 answering someone (`DELEGATED_TOOLS`), in the order given. An object
+    both tables have (`cheese_task`) is the delegated one: these sessions act
+    under the question's credential, and `run_platform_tool` runs it so.
+
+    A name may be one verb of an object (`cheese_doc.get`): the session is then
+    handed that object with the verbs it was named with and no others.
+
+    Each call handed must say what it does (`ToolTable.effect`), which is what
+    the session's harness weighs before running one: a call that does not —
+    `platform_request`, which reaches any route — is refused here, so the
+    session does not start rather than hold it."""
     module = _module()
-    known = {
-        tool["name"]: tool
-        for tool in (
-            *module.PLATFORM_TOOLS.schemas(),
-            *module.DELEGATED_TOOLS.schemas(),
-        )
-    }
-    return [known[name] for name in names if name in known]
+    tables = (module.DELEGATED_TOOLS, module.PLATFORM_TOOLS)
+    verbs: dict[str, list[str] | None] = {}
+    for name in names:
+        tool, _, verb = name.partition(".")
+        named = verbs.get(tool, [])
+        if not verb:
+            verbs[tool] = None
+        elif named is not None:
+            verbs[tool] = [*named, verb]
+    schemas = []
+    for tool, only in verbs.items():
+        table = next((t for t in tables if tool in t), None)
+        if table is None:
+            continue
+        keys = [
+            f"{tool}.{verb}" if verb else tool
+            for verb in (only or list(table.actions(tool) or [None]))
+        ]
+        unsaid = [key for key in keys if table.effect(key) is None]
+        if unsaid:
+            # i18n-exempt: a session started wrong, for a developer; no screen shows it
+            raise ValueError(f"{', '.join(unsaid)} do not say what they do")
+        if only is None:
+            schemas.append(next(s for s in table.schemas() if s["name"] == tool))
+        else:
+            schemas.append(table.narrowed(tool, only))
+    return schemas
+
+
+def ask_for_action(tool: str, verbs: list[str]) -> str:
+    """What a call to an object the session holds only some verbs of is told
+    when it asks for another: the ones it holds."""
+    return _module().ask_for_action(tool, verbs)
+
+
+def effect_of(tool: str, arguments: dict) -> str | None:
+    """What one call of a person's 芝士 does (`ToolTable.effect`): reads,
+    changes, or reaches others; None for a call that does not say."""
+    module = _module()
+    table = next(
+        (t for t in (module.DELEGATED_TOOLS, module.PLATFORM_TOOLS) if tool in t),
+        None,
+    )
+    if table is None:
+        return None
+    action = arguments.get("action") if isinstance(arguments, dict) else None
+    return table.effect(f"{tool}.{action}" if table.actions(tool) and action else tool)
 
 
 def is_platform_tool(tool: str) -> bool:
     return tool in _module().PLATFORM_TOOLS
 
 
-def run_platform_tool(tool: str, arguments: dict, host: Any) -> str:
+def run_platform_tool(
+    tool: str, arguments: dict, host: Any, *, delegated: bool = False
+) -> str:
     """One table tool, run here against the backend; ``host`` reaches the
-    room's machine for what a tool needs from it."""
-    return _module().run_platform_tool(tool, arguments, host)
-
-
-def argv(tool: str, arguments: dict) -> list[str]:
-    """The argv `tool` means, validated by the parser that will run it.
-
-    A call the parser rejects comes back as a ``ValueError`` carrying what
-    argparse would have printed. That conversion is the whole of this function:
-    argparse answers a bad command line by writing to stderr and calling
-    ``sys.exit``, and ``SystemExit`` is not an ``Exception`` — left alone it
-    walks out through the socket handler that was meant to report it and takes
-    the runner's event loop with it. A model that guessed a field wrong would
-    end the room's session.
-
-    Nothing is awaited inside the redirect, so the swapped stream cannot be
-    observed by another turn.
-    """
-    parser = _module().build_parser()
-    printed = io.StringIO()
-    try:
-        with contextlib.redirect_stderr(printed):
-            return cli_worker._command(parser, tool, arguments)
-    except SystemExit as exit:
-        message = printed.getvalue().strip() or f"{tool}: invalid arguments"
-        raise ValueError(message) from exit
+    room's machine for what a tool needs from it. ``delegated``: the call is
+    made under a question's credential (`schemas_of`)."""
+    return _module().run_platform_tool(tool, arguments, host, delegated=delegated)

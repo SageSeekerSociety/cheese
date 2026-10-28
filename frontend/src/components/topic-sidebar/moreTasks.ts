@@ -34,6 +34,13 @@ export type RailTask = Pick<
   // 不是和我有关的、被借来把这一块凑够三条的那几条（后端 `rail_tasks`）：行上画淡
   // 一档，悬浮说明写清它为什么在这儿。缺省 = 和我有关的。
   | 'filling_in'
+  // 行首的状态记号和标题下面那一行（`lib/taskState.ts`）：队友报的那句、什么时候报的，
+  // 卡在谁那里审阅、第几版，做它的是哪位队友。两份列表都带（`task_row_json`）。
+  | 'progress_note'
+  | 'progress_set_at'
+  | 'reviewer_handle'
+  | 'card'
+  | 'agent_handle'
 >
 
 /** 一个展开了的频道，其余任务读到哪一步。 */

@@ -1,7 +1,7 @@
 // 个人主页取数：一次读三份（主页、项目成员名册里那一行、最近参与的话题），三份一起
 // 回来才算这一页读完。回到看过的主页先照着上一次的画，背后再取（query/client）；
 // 保活着离开时停下、回来时过期了的再读（usePageActive）。
-import type { MemberSummary, ProfileTopic, UserProfile } from '@/cx_types'
+import type { MemberSummary, ProfileTopic, ProjectAgent, UserProfile } from '@/cx_types'
 
 import { computed, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
@@ -13,7 +13,7 @@ import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { getMemberSummary, getUserProfile, getUserTopics, setUserRemark } from '@/api'
+import { getMemberSummary, getUserProfile, getUserTopics, listProjectAgents, setUserRemark } from '@/api'
 import i18n, { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 
@@ -25,6 +25,8 @@ export interface ProfilePage {
   member: MemberSummary | null
   /** 最近参与的话题；这一段单独失败时是 null，页面其余部分照常。 */
   recent: ProfileTopic[] | null
+  /** 这个项目里他名下的 AI 队友；「带的技能」从这儿取。取不到就是空的。 */
+  agents: ProjectAgent[]
 }
 
 /**
@@ -43,14 +45,19 @@ export function useProfilePage(handle: () => string, projectId: () => string | u
       enabled: pageActive.value,
       queryKey: pageKey.value,
       queryFn: async (): Promise<ProfilePage> => {
-        const [profile, member, recent] = await Promise.all([
+        const [profile, member, recent, agents] = await Promise.all([
           getUserProfile(handle()),
           projectId() ? getMemberSummary(projectId()!, handle()).catch(() => null) : Promise.resolve(null),
           getUserTopics(handle(), { limit: RECENT_TOPICS })
             .then((r) => r.topics)
             .catch(() => null),
+          projectId()
+            ? listProjectAgents(projectId()!)
+                .then((r) => r.data)
+                .catch(() => [])
+            : Promise.resolve([]),
         ])
-        return { profile, member, recent }
+        return { profile, member, recent, agents }
       },
     })),
     queryClient

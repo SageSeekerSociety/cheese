@@ -23,6 +23,18 @@ class Writing:
     #: Who is writing it, when that is not the session's own name: a room's
     #: seat may act under the handle of the teammate it was addressed as.
     author: str | None = None
+    #: The calls of the work under way that have come back so far. It only
+    #: grows while the work goes on, so a reader that missed a moment still
+    #: learns every call that returned.
+    returned: tuple[str, ...] = ()
+    #: A person's 芝士's branches the work under way started or moved, as
+    #: they stand: each one's id, the call that started it, what it does, how
+    #: it is going and its latest steps.
+    branches: tuple[dict, ...] = ()
+    #: The calls of the work under way as they were made: each one's
+    #: ``call``, its whole ``args`` once it is made, and what it read
+    #: (``shown``) once it came back, when a harness says so.
+    made: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -189,10 +201,20 @@ class Report:
 @dataclass(frozen=True)
 class Replaced:
     """The process holding native session ``conversation`` was replaced by one
-    of this release's (a runner the previous release started): what it was
-    written and never read, it never will read."""
+    of this release's (a runner another release started). The platform's
+    inputs its runner reported its works read (``read``: each work's id and the
+    input ids it read) were read, into that work; whatever else it was written
+    and has no record of reading, it never will read."""
 
     conversation: str
+    read: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+@dataclass(frozen=True)
+class Compacted:
+    """The session compacted its context, and the compaction took: the history
+    it was told the session opening in is a summary now. Said with the seat's
+    own session, which the event itself does not name."""
 
 
 @dataclass(frozen=True)
@@ -228,6 +250,7 @@ class Read:
         | Followed
         | ResultLanded
         | Replaced
+        | Compacted
         | Reachable
         | Moved
         | CaughtUp

@@ -6,8 +6,8 @@
     "title": "每天新增 / 解决 / 上线"
   },
   "column": {
-    "agent": "Agent 发现",
-    "note": "四栏是筛选不是划分：「Agent 发现」是来源，会和公开/私密重叠，所以四个数加起来不等于总数。",
+    "agent": "AI 队友发现",
+    "note": "四栏是筛选不是划分：「AI 队友发现」是来源，会和公开/私密重叠，所以四个数加起来不等于总数。",
     "private": "私密反馈",
     "public": "公开反馈",
     "security": "安全问题",
@@ -23,7 +23,7 @@
     "eta": "预计用尽",
     "exhausted": "已耗尽",
     "low": "快烧完",
-    "note": "「已耗尽 / 快烧完 / 不限量」是三个互斥集合 —— unlimited 是**没有 grant**，不是额度用完了。燃烧速率从 resource_usage 推（compute_grants 没有扣减账本），不是余额差分。预计用尽是线性外推，unlimited 与零燃烧都画破折号。",
+    "note": "「已耗尽 / 快烧完 / 不限量」是三个互斥集合：不限量是没有发放过额度，不是额度用完了。燃烧速率按用量记录推算（额度发放记录里没有扣减明细），不是余额差分。预计用尽是线性外推，不限量与零燃烧都画破折号。",
     "title": "额度燃尽",
     "unlimited": "不限量"
   },
@@ -41,11 +41,11 @@
   },
   "extras": {
     "disk": {
-      "note": "只覆盖后端这台机器的 workspace_root。远端设备和云主机各有各的盘，这里看不见。",
+      "note": "只覆盖后端这台机器的工作目录。远端设备和云主机各有各的盘，这里看不见。",
       "title": "磁盘（这台后端）"
     },
     "hostSlots": {
-      "note": "已被会话占用的沙箱槽位 / 宿主机池里的全部槽位。",
+      "note": "已被 AI 队友占用的沙箱槽位 / 宿主机池里的全部槽位。",
       "title": "沙箱槽位"
     },
     "hostStates": "云端宿主机按状态",
@@ -94,19 +94,19 @@
     "oauth": {
       "expired": "已过期",
       "expiring": "7 日内到期",
-      "noRefresh": "没有 refresh_token",
-      "note": "「没有 refresh_token」和「过期」不是一件事：过期的还能刷，没有 refresh 的到期那天就永远接不上了。token_expires 是写死的过期时刻，不是「刚刚用失败了」。",
-      "title": "OAuth 凭据",
+      "noRefresh": "没有刷新令牌",
+      "note": "「没有刷新令牌」和「过期」不是一件事：过期的还能刷新，没有刷新令牌的到期那天就再也接不上了。到期时间是授权时定下的，不代表最近用失败了。",
+      "title": "OAuth 授权",
       "total": "连接总数"
     },
     "passkey": {
-      "note": "分母是全部未删账号，不是活跃账号（user 没有 last_login）。TOTP 的开关住在 Redis，不在库里 —— 所以这里报的是 passkey，不是「2FA 覆盖率」。",
+      "note": "分母是全部未删账号，不是活跃账号（账号没有记录最近登录时间）。两步验证的开关存在 Redis，不在数据库里，所以这里报的是 passkey，不是「2FA 覆盖率」。",
       "title": "Passkey 覆盖"
     },
     "unavailable": {
-      "githubAppMintFailureRate": "GitHub App 铸币失败率：现在只写日志，没有计数。",
-      "githubAppPermissionGaps": "GitHub App 权限缺口：granted_permissions() 的结果只活在进程内存 10 分钟，没有落库。",
-      "loginLockoutStockAndRate": "登录锁定历史：login_security 的限流器是 Redis 键，没有历史。",
+      "githubAppMintFailureRate": "GitHub App 签发失败率：现在只写日志，没有计数。",
+      "githubAppPermissionGaps": "GitHub App 权限缺口：查到的授权范围只在进程内存里留 10 分钟，没有存下来。",
+      "loginLockoutStockAndRate": "登录锁定历史：登录限流只存在 Redis 里，没有历史。",
       "meteringPostFreeze": "计量落账冻结：admission 传输失败是放行的，日志之外无痕迹。",
       "note": "这些要先加埋点。放一个 0 上去等于说「查过了、确实没有」。",
       "title": "今天查不到"
@@ -138,7 +138,7 @@
   },
   "people": {
     "admins": "平台管理员",
-    "agents": "Agent",
+    "agents": "AI 队友",
     "chart": "每天新增账号",
     "humans": "真人",
     "newInWindow": "{d} 日新增",
@@ -193,13 +193,13 @@
       "prompt_undelivered": "消息没送到",
       "runtime_image_missing": "镜像缺失",
       "storage_exhausted": "磁盘满",
-      "subscription_credential_expired": "订阅凭据过期",
-      "turn_timeout": "轮次超时",
+      "subscription_credential_expired": "订阅登录过期",
+      "turn_timeout": "运行超时",
       "workspace_vcs_perms": "工作区权限"
     },
     "failures": {
-      "note": "结构化来源是 blocks.meta 的 code，不是 agent_turns —— 那张表没有失败列。额度拒答另算：credits_refused_at 是唯一可靠来源。",
-      "title": "轮次失败"
+      "note": "按每次失败时写进频道的平台提示上的原因统计，不按运行记录：运行记录里没有失败这一项。额度不足的拒答另算，以记下的拒答时间为准。",
+      "title": "AI 队友运行失败"
     },
     "host": {
       "empty": "没有连败的机器",
@@ -216,7 +216,7 @@
     "needs": {
       "breakdown": "验收人 {r} · 报告人 {p} · 被点名 {a}",
       "empty": "没有等你的事",
-      "note": "三个理由是 delivery/addressing.py 的封闭集合（验收人 / 报告人 / 被点名），不发明第四个。",
+      "note": "三个理由是一个封闭集合（验收人 / 报告人 / 被点名），不发明第四个。",
       "room": "房间",
       "task": "任务",
       "title": "等你处理"
@@ -229,7 +229,7 @@
     },
     "stuck": {
       "empty": "没有卡住的事",
-      "note": "「卡住」的判据是 note_code 属于停住集合，不是 note 文案 —— 新加的码默认是 info，漏进集合就永远安静。",
+      "note": "「卡住」按提示的状态码是否属于停住集合判断，不看提示文案。新加的码默认算普通提示，不加进集合就永远不会报卡住。",
       "title": "卡住的卡"
     }
   },
@@ -243,7 +243,7 @@
     "earliest": "最早 {time} 恢复",
     "failures": "连续失败 {n} 次",
     "needsReset": "已停用的要人工重置",
-    "note": "读的是计量代理写在用量账本旁边的一份快照（accounts.json），不是数据库 —— 订阅通路身后的账号只活在跑代理的那台机器上。状态是代理自己的判定：冷却中是等得到解冻时刻的限流，已停用等不来、要人工重置。快照会旧，所以旧了会注明它写于何时。",
+    "note": "读的是计量代理写在用量账本旁边的一份快照，不是数据库：订阅通路身后的账号只存在跑代理的那台机器上。状态是代理自己的判定：冷却中是等得到解冻时刻的限流，已停用等不来、要人工重置。快照会旧，所以旧了会注明它写于何时。",
     "reason": {
       "malformed": "账号池快照的内容不是能读的形状",
       "missing": "计量代理还没写下账号池快照（可能没在跑）",
@@ -265,7 +265,7 @@
   },
   "product": {
     "northStar": "{d} 日验收通过的成果",
-    "northStarNote": "按 decided_at 计入。decided_at 是最后一次决议的时刻，revoke 会覆写它 —— 先采纳后撤销的卡会丢掉采纳那一刻。",
+    "northStarNote": "按最后一次决议的时间计入。撤销会覆盖这个时间，先采纳后撤销的卡会丢掉采纳那一刻。",
     "rejection": {
       "conflict": "合并冲突",
       "gate": "闸门红/没跑成",
@@ -277,9 +277,9 @@
       "voided": "人工作废"
     },
     "unavailable": {
-      "churn": "额度耗尽后的流失：compute_grants 没有 exhausted_at，user 没有 last_login。",
+      "churn": "额度耗尽后的流失：额度发放记录没有用尽时间，账号没有最近登录时间。",
       "note": "这两条没有数据源。放一个数字上去就只能是编的。",
-      "summon": "{'@'}芝士后的验收通过率：agent_turns 没有 summon 标记，accept_cards 也没有来源轮次，两者之间没有外键。",
+      "summon": "{'@'}芝士后的验收通过率：AI 队友的运行记录没有标出是不是被点名叫起来的，验收卡也没有记来自哪次运行，两者连不起来。",
       "title": "今天算不出来"
     }
   },
@@ -290,7 +290,7 @@
   "retry": "重试",
   "spine": {
     "dwellDetail": "p90 {p90} · 最长 {max}",
-    "note": "四站是不同卡在不同时刻的通过量，不是同一批样本的漏斗。合并那一站只算骑 PR 的卡 —— 无 PR 的卡 pr_merged_at 永远是空。机器闸门已退役，不在链条上（#296）。",
+    "note": "四站是不同卡在不同时刻的通过量，不是同一批样本的漏斗。合并那一站只算带 PR 的卡：没有 PR 的卡永远没有合并时间。机器闸门已退役，不在链条上（#296）。",
     "title": "交付主链"
   },
   "status": {
@@ -312,7 +312,7 @@
     "byRoute": "按供给通路拆",
     "byRouteNote": "「算不出价」那一列是没有单价的 token，按通路拆开能看到它们来自哪条路，KPI 里那个数的来源就在这里。",
     "byUser": "谁触发的用量",
-    "byUserNote": "项目里的调用算在发起那一轮的人头上，项目外的调用算在调用的人头上。这是谁触发了多少用量，不是谁的贡献。平台自己发起的轮次不算在任何人头上：这个窗口有 {tokens} token，{cost}。",
+    "byUserNote": "项目里的调用算在叫起 AI 队友的那个人头上，项目外的调用算在调用的人头上。这是谁触发了多少用量，不是谁的贡献。平台自己叫起的运行不算在任何人头上：这个窗口有 {tokens} token，{cost}。",
     "cacheCell": "缓存 {pct}",
     "cacheKpi": "缓存命中",
     "cacheNote": "缓存读 token ÷ 输入 token（输入含缓存读写）。只算记了缓存的调用：同一通路、同一类调用从窗口里第一次记下缓存读起算；网关路开始记录缓存之前写下的调用缓存一律是 0，那只是没记，不算进来。这个窗口有 {tokens} 输入 token 没算进来。",
@@ -335,10 +335,10 @@
     "hourly": "每小时 token（北京时间）",
     "projectModels": "各项目用了哪些模型",
     "recent": "最近的用量记录",
-    "recentNote": "窗口里最近的 {n} 行用量记录，时间是北京时间。一行不一定是一次请求：订阅通路的一行是一次请求；网关的一行（标着「汇总」）是网关给一个模型合计的一段用量，可能包含很多次请求；自带凭据和成员自己的 Claude Code 的一行是一轮里一个模型的合计。账本不记一行含几次请求。缓存一栏为 — 的行没有记缓存。",
+    "recentNote": "窗口里最近的 {n} 行用量记录，时间是北京时间。一行不一定是一次请求：订阅通路的一行是一次请求；网关的一行（标着「汇总」）是网关给一个模型合计的一段用量，可能包含很多次请求；自带 API 密钥和成员自己的 Claude Code 的一行是一次运行里一个模型的合计。账本不记一行含几次请求。缓存一栏为 — 的行没有记缓存。",
     "route": {
       "gateway": "网关",
-      "native": "自带凭据",
+      "native": "自带 API 密钥",
       "own": "成员自己的 Claude Code",
       "subscription": "订阅",
       "unknown": "（旧数据，未标注）"

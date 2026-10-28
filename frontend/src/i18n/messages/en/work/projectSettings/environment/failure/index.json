@@ -5,7 +5,7 @@
   "diagnoseFailed": "Couldn't work out the cause; try again later",
   "dismiss": "Dismiss",
   "exitCode": "exit code {code}",
-  "readOnly": "Read only the log and the scripts; nothing was tried on the work computer. Adopting it retries to check",
+  "readOnly": "Read only the log and the scripts; nothing was tried in the environment. Adopting it retries to check",
   "reason": "Cause: ",
   "retry": "Retry",
   "title": "Preparation failed · {when}",

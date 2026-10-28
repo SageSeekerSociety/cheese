@@ -133,7 +133,7 @@ parts:
   - kind: row
     title: 组会报名说明
     sub: "# 综合 · 5 分钟前"
-    status: 待你审阅
+    status: 待审阅
     at: 3
 ```
 :::

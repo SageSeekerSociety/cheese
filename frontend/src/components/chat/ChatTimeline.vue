@@ -30,6 +30,7 @@ import { inReadingOrder } from '../../lib/chapters'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
+import { rowKeys } from '../../lib/platformNotice'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import AskGroupCard from '../ask/AskGroupCard.vue'
@@ -93,6 +94,8 @@ const props = defineProps<{
   }
   barBlock: Block | null
   barEditable: boolean
+  /** 上一下是键盘在走这一列（useChatRowActions 的 kbdNav）：焦点框由我们自己画。 */
+  kbdNav?: boolean
   reactionPickerFor: string | null
   loadingHistory: boolean
   hasMore: boolean
@@ -192,6 +195,16 @@ const emit = defineEmits<{
   (e: 'outbox-leave', el: Element, done: () => void): void
 }>()
 
+// 每一行的 key 沿用它上一次的（lib/platformNotice rowKeys）：合成的那一行两头又并进
+// 来一条时，人点开的那一串不被换成一行新的、收起来的。上一次的名字只在这里读写，
+// 不是要画的东西，所以不放进响应式状态。
+let keyedBefore: ReadonlyMap<string, string> = new Map()
+const rowKeyList = computed(() => {
+  const { keys, byBlock } = rowKeys(props.rows, keyedBefore)
+  keyedBefore = byBlock
+  return keys
+})
+
 // 正在推进的清单：房间在跑时，每位队友最新的那一条。更早的清单即使还有一步停在
 // 「正在做」，也是上一轮没走完的，不该跟着转。
 const liveChecklists = computed(() => {
@@ -237,11 +250,12 @@ const createdCont = computed(() =>
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
 )
+const NO_TASKS: TaskLine[] = []
 function ownerName(task: TaskLine): string | null {
   return task.owner ? (props.nameOf ?? String)(task.owner) : null
 }
 function under(blockId: string): TaskLine[] {
-  return props.tasksUnder?.(blockId) ?? []
+  return props.tasksUnder?.(blockId) ?? NO_TASKS
 }
 /** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
 function became(m: Block): TaskLine | undefined {
@@ -249,8 +263,21 @@ function became(m: Block): TaskLine | undefined {
 }
 /** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
 function madeFrom(m: Block): TaskLine[] {
+  const tasks = under(m.id)
+  if (!tasks.length) return NO_TASKS
   const own = props.threadable ? became(m) : undefined
-  return under(m.id).filter((task) => task !== own)
+  return own ? tasks.filter((task) => task !== own) : tasks
+}
+
+/**
+ * 这道题上我有一条答复还压在发件箱里、没落库：卡片把选项先按住。
+ *
+ * 卡片收起要等那条消息落库、题块再带着答案回来，这一来一回里手快就会多点出几条消息，
+ * 房间里真会多出几条。被服务端拒掉的那条不算：那一下没答上题，选项得还给人家重选
+ * （他点那条消息上的「重试」，它回到在路上，卡片跟着再锁上）。
+ */
+function answeringQuestion(id: string): boolean {
+  return props.outbox.some((item) => item.replyTo === id && item.state !== 'failed')
 }
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
@@ -297,7 +324,7 @@ const faceRows = computed(() => {
 // 悬停在动的头像上：现场顶上那一行，连同已经用了多久。秒数只在有队友在跑时走。
 const now = ref(Date.now())
 let ticker: ReturnType<typeof setInterval> | undefined
-const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status))
+const ticking = computed(() => [...faceRows.value.values()].some((f) => f.status && f.status.startedAt !== null))
 watch(
   ticking,
   (on) => {
@@ -322,6 +349,23 @@ function faceLabel(face: AgentFace | undefined): string | null {
 function faceStatus(face: AgentFace | undefined): string | null {
   return face?.status ? siteStatusLabel(face.status) : null
 }
+
+const faceLabels = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const label = faceLabel(face)
+    if (label) out.set(id, label)
+  }
+  return out
+})
+const faceStatuses = computed(() => {
+  const out = new Map<string, string>()
+  for (const [id, face] of faceRows.value) {
+    const status = faceStatus(face)
+    if (status) out.set(id, status)
+  }
+  return out
+})
 
 // Child rows emit the same events the panel listens for; the extra hop is what
 // keeps this component free of the room's own bookkeeping. Thin wrappers so the
@@ -501,12 +545,13 @@ const rowLabels = computed(() =>
            没有自己的盒子样式，排版和直接排在 .tl-content 里一样。 -->
       <div
         class="tl-feed"
+        :class="{ 'tl-feed--kbd': kbdNav }"
         data-chat-feed
         role="feed"
         :aria-label="t('work.room.chat.timelineLabel')"
         :aria-busy="loadingHistory || loadingOlder"
       >
-        <template v-for="({ block: m, notice, run }, i) in rows" :key="m.id">
+        <template v-for="({ block: m, notice, run }, i) in rows" :key="rowKeyList[i]">
           <!-- Leading rows wait for the first-paint batch (useRowBatch); every row ends up in the DOM. -->
           <template v-if="i >= (hiddenRows ?? 0)">
             <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
@@ -549,8 +594,8 @@ const rowLabels = computed(() =>
               :time-of="fmtTime"
               :cont="noticeCont[i]"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :time="fmtTime(m.created_at)"
               :agent-name="agentName"
               :refs="refs"
@@ -616,11 +661,12 @@ const rowLabels = computed(() =>
               :name-of-handle="nameOf"
               :viewer="viewer"
               :ask-closed="askClosed"
+              :ask-answering="answeringQuestion(m.id)"
               :active="bar.shown && bar.id === m.id"
               :live="liveChecklists.has(m.id)"
               :face="faceRows.get(m.id)?.state ?? null"
-              :face-label="faceLabel(faceRows.get(m.id))"
-              :face-status="faceStatus(faceRows.get(m.id))"
+              :face-label="faceLabels.get(m.id) ?? null"
+              :face-status="faceStatuses.get(m.id) ?? null"
               :editing="editingId === m.id"
               :saving="editSaving"
               :mention-pool="mentionPool"
@@ -663,7 +709,7 @@ const rowLabels = computed(() =>
             <div
               v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
-              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
+              :class="{ 'msg-work--mine': became(m)?.mine }"
               :data-feed-of="m.id"
             >
               <div v-if="threadable && m.thread" class="msg-work__talk">
@@ -730,7 +776,11 @@ const rowLabels = computed(() =>
             :refs="refs"
             :viewer="viewer"
             :ask-busy="false"
-            :outgoing="{ error: item.error, failed: item.state === 'failed' }"
+            :outgoing="{
+              error: item.error,
+              failed: item.state === 'failed',
+              slow: !!item.slow || !!outgoingState(item),
+            }"
             @animationend="emit('settle-sent', $event, item.clientId)"
             @retry="emit('retry-send', item.clientId)"
             @edit="emit('edit-send', item)"
@@ -928,9 +978,16 @@ const rowLabels = computed(() =>
   }
 }
 
-/* 键盘停在一条上：焦点环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——行是
-   整宽的，滚动区会把画在外面的环左右切掉。 */
+/* 焦点框不交给浏览器的 :focus-visible 判据：它见到任何一次按键都算「人在用键盘」，
+   有的系统还会把音量/媒体键也递进网页——点过一条消息再按一下音量键（只想调音量），
+   整行就亮起一圈。这里只认这一列自己用的那几个键（useTimelineKeys 的 isTimelineKey），
+   由 kbdNav 决定画不画。环画在行内（offset 取负），和 RoomMessage 的 .im-row 一样——
+   行是整宽的，滚动区会把画在外面的环左右切掉。 */
 .tl-feed > [data-feed-item]:focus-visible {
+  outline: none;
+}
+.tl-feed.tl-feed--kbd > [data-feed-item]:focus {
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 </style>

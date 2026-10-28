@@ -35,12 +35,14 @@ export function usePanelPaging(deps: {
   scrollToBottom: () => void
   rememberScroll: (topicId: string | undefined) => void
   forgetScroll: (topicId: string) => void
+  /** 这一下滚动是我们自己发的（跳到某一条）：别当成读者翻走了，也别当成浏览器夹的。 */
+  beginOwnScroll: () => void
   loadingHistory: Ref<boolean>
   /** 往上翻着的时候来了几条：底部那颗提示读它。 */
   unseen: Ref<string[]>
   errorMsg: Ref<string | null>
   /** 落库的那条读回来了：发件箱据此收尾。 */
-  settleOutbox: (block: Block) => boolean
+  settleOutbox: (block: Block) => unknown
   /** 连线那边（usePanelSocket）：对账要把连接摆回正轨。 */
   connectSocket: (topicId: string) => void
   closeSocket: () => void
@@ -54,6 +56,9 @@ export function usePanelPaging(deps: {
     if (deps.rowBatch.deferUntilRevealed(() => scrollToMessage(id, behavior))) return
     const el = deps.scrollRef.value?.querySelector(`[data-mid="${id}"]`)
     if (!el) return
+    // 连着 `flash` 那一行：这一下是读的人点名要去的，随后的滚动事件不能反过来把他
+    // 钉回底部（见 useChatScroll 的 beginOwnScroll）。
+    deps.beginOwnScroll()
     el.scrollIntoView({ behavior, block: 'center' })
     deps.flash(id)
   }

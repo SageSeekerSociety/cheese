@@ -42,7 +42,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_instance.adapters import project_team
 from app.domain.living_doc import collab
 from app.domain.living_doc.comment_schemas import CommentIn, ReplyIn, ThreadMutation
-from app.domain.living_doc.comments import CommentThreads, comment_out
+from app.domain.living_doc.comments import CommentThreads, OnDocument, comment_out
 from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
@@ -83,7 +83,7 @@ async def add_comment(
     if not content:
         raise ValidationError(say("commentEmpty"))
     comment = await CommentThreads(db).open(
-        reached.doc,
+        OnDocument(reached.doc.id),
         author=reached.actor.handle,
         content=await _as_stored(db, reached, content),
         quote=(body.quote or "").strip() or None,
@@ -128,10 +128,11 @@ async def _announce(db, reached: Reached, comment) -> CommentMentions:
     place = reached.place
     return await announce_comment_mentions(
         db,
-        reached.doc,
+        reached.doc.project_id,
         place.room if place is not None else None,
         comment,
         title=reached.doc.title or (place.title if place is not None else ""),
+        document_id=reached.doc.id,
         task_id=reached.task.id if reached.task is not None else None,
     )
 
@@ -168,7 +169,7 @@ async def list_threads(
     service = CommentThreads(db)
     items = [
         await _with_notified(db, await service.describe(c))
-        for c in await service.roots(reached.doc.id)
+        for c in await service.roots(OnDocument(reached.doc.id))
     ]
     await db.commit()
     states = (
@@ -195,7 +196,10 @@ async def read_thread(
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
     result = await _with_notified(
-        db, await service.describe(await service.root(reached.doc.id, comment_id))
+        db,
+        await service.describe(
+            await service.root(OnDocument(reached.doc.id), comment_id)
+        ),
     )
     await db.commit()
     return ok(result)
@@ -223,7 +227,7 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     reply = action == "reply"
     assert not reply or isinstance(body, ReplyIn)
     result = await CommentThreads(db).mutate(
-        reached.doc,
+        OnDocument(reached.doc.id),
         comment_id=comment_id,
         author=reached.actor.handle,
         expected_revision=body.expected_revision,
@@ -324,7 +328,7 @@ async def stop_agent(
     written. Its reply keeps what was written, marked as stopped."""
     reached, _ = await _member(db, resolver, document_id)
     # The thread named is this document's own, as for every other thread route.
-    await CommentThreads(db).root(reached.doc.id, comment_id)
+    await CommentThreads(db).root(OnDocument(reached.doc.id), comment_id)
     await db.commit()
     redis = get_redis_client()
     if redis is None:

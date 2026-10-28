@@ -1890,7 +1890,7 @@ def _post_backend_errors(project: str, topic: str, errors: list[dict]) -> None:
             data=body,
             headers={
                 "Content-Type": "application/json",
-                "X-Cheese-Token": SCOPED_SECRET,
+                "Authorization": f"Bearer {SCOPED_SECRET}",
             },
         )
         with urlopen(req, timeout=3) as response:
@@ -2071,6 +2071,44 @@ def _report_gateway_failure(flow: http.HTTPFlow) -> None:
     _report_cut_turn(
         flow, "cheese_gateway_stream", "GatewayStreamError", "model gateway"
     )
+
+
+#: The response header the gateway names, "; "-separated, the rows whose
+#: provider account refused a request for lack of credit
+#: (`deploy/gateway/provider_credit.py`). It is set on the answer to the
+#: request that met the refusal, whether a later row answered it or not.
+_OUT_OF_CREDIT_ROWS = "x-cheese-upstream-out-of-credit"
+
+
+def _report_out_of_credit_rows(flow: http.HTTPFlow) -> None:
+    """Tell the administrators which gateway rows ran out of credit.
+
+    Only the platform can top up a provider account, and the gateway names a
+    row once per cooldown (about ten minutes) while it stays empty, so each
+    name goes to the error intake as its own record: the backend alerts once
+    per row (`backend_log`), not once per failed turn.
+    """
+    resp = flow.response
+    named = resp.headers.get(_OUT_OF_CREDIT_ROWS) if resp is not None else None
+    if not named or not _is_message_call(flow.request.path):
+        return
+    records = [
+        {
+            "message": f"The provider account behind gateway row {row.strip()} is out of credit",
+            "exc_type": "GatewayUpstreamOutOfCredit",
+            "where": f"model gateway: {row.strip()}"[:300],
+            "request_id": _answer_request_id(flow),
+            "upstream_failure": "provider_credit",
+            "ended_by": "upstream",
+        }
+        for row in named.split(";")
+        if row.strip()
+    ][:10]
+    if not records:
+        return
+    logger.warning("gateway rows out of credit: %s (flow=%s)", named, flow.id)
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    _post_backend_errors(project, topic, records)
 
 
 def _report_subscription_refusal(flow: http.HTTPFlow) -> None:
@@ -2293,6 +2331,7 @@ def response(flow: http.HTTPFlow) -> None:
         return
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+        _report_out_of_credit_rows(flow)
         if _answer_a_reached_gateway_cap(flow):
             return
         _report_gateway_failure(flow)

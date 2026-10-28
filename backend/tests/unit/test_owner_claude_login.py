@@ -30,6 +30,7 @@ from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.support.devices import enrollment_team
 
 pytestmark = pytest.mark.skipif(
@@ -258,7 +259,7 @@ async def _device(factory, supply: Supply) -> str:
                 team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id=device_id,
                 name="laptop",
-                token=f"tok-{device_id}",
+                token_digest=digest_token(f"tok-{device_id}"),
                 owner_user_id=owner.id,
                 created_at=datetime.now(UTC),
                 supply=supply,

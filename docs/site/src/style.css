@@ -5783,8 +5783,7 @@ html:not(.js) .sm-nojs {
     transform: translateY(100%);
   }
 
-  .dock-resize,
-  .hide-sm {
+  .dock-resize {
     display: none;
   }
 
@@ -5945,6 +5944,37 @@ html:not(.js) .sm-nojs {
 
   .hdr-actions {
     gap: 2px;
+  }
+
+  .hdr {
+    padding-right: 8px;
+  }
+
+  /* The header is full here: without this the menu button is what gives way,
+     down to a sliver, instead of the header fitting. */
+  .hdr .icon-btn {
+    flex: none;
+  }
+
+  /* On a phone this is the header's only way back to the product, so it
+     stays, a size smaller, and fits beside the icons down to 320px. */
+  .hdr-enter {
+    height: 32px;
+    margin-left: 4px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+}
+
+/* Below 320px the controls alone nearly fill the header, so the logo keeps
+   only its mark, which is still the link to the docs home. */
+@media (width < 320px) {
+  .hdr {
+    gap: 4px;
+  }
+
+  .hdr .brand-lockup-word {
+    display: none;
   }
 }
 

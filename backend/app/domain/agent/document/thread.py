@@ -28,6 +28,7 @@ answered or not: it was spent either way.
 """
 
 import logging
+import re
 import uuid
 from dataclasses import asdict
 
@@ -44,12 +45,12 @@ from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.document.session import ref, session_for
 from app.domain.agent.session_host.answer import (
     Answer,
-    Thinking,
+    Said,
     Tool,
     ToolArgs,
+    ToolDone,
     ToolFailed,
     Waiting,
-    Words,
 )
 from app.domain.agent.session_host.consumptions import Consumption, Consumptions
 from app.domain.agent.session_host.contract import (
@@ -62,7 +63,7 @@ from app.domain.delivery.mention import mentioned_handles
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab
-from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.comments import CommentThreads, OnDocument, Subject
 from app.domain.living_doc.services import Documents
 
 logger = logging.getLogger(__name__)
@@ -75,14 +76,19 @@ STOPPED = "已停止"
 
 
 async def _tell(
-    document_id: uuid.UUID, thread_id: uuid.UUID, state: str, tool: str | None = None
+    subject: Subject, thread_id: uuid.UUID, state: str, tool: str | None = None
 ) -> None:
-    """How far the thread's question has got, for whoever has the document
-    open."""
+    """How far the thread's question has got, for whoever has the document open.
+
+    A file's thread has no collaboration connection to tell: its readers read
+    the progress off the thread list instead (``question.answering``), the way
+    a page that opens meanwhile already does for a document's."""
+    if not isinstance(subject, OnDocument):
+        return
     frame = {"type": "comment_activity", "thread": str(thread_id), "state": state}
     if tool:
         frame["tool"] = tool
-    await collab.tell(document_id, frame)
+    await collab.tell(subject.document_id, frame)
 
 
 # --- who is asked --------------------------------------------------------------
@@ -127,13 +133,13 @@ async def thread_question(
     db: AsyncSession,
     around: Surroundings,
     *,
-    document_id: uuid.UUID,
+    subject: Subject,
     thread_id: uuid.UUID,
 ) -> str:
-    """A thread's question: the thread so far, what it points at, the document
-    and, for a task's document, the task's latest messages."""
+    """A thread's question: the thread so far, what it points at, the asked
+    document or file, and, for a task's document, the task's latest messages."""
     threads = CommentThreads(db)
-    thread = await threads.describe(await threads.root(document_id, thread_id))
+    thread = await threads.describe(await threads.root(subject, thread_id))
     comments = [thread["comment"], *(r["comment"] for r in thread["replies"])]
     said = "\n".join(f"<@{c['author']}>：{c['content']}" for c in comments)
     quote = thread["comment"].get("anchor_quote") or ""
@@ -176,7 +182,7 @@ async def answer(
         redis,
         asked.project_id,
         thread_id,
-        on_wait=lambda: _tell(asked.document_id, thread_id, "queued"),
+        on_wait=lambda: _tell(asked.subject, thread_id, "queued"),
         stopped=stopped,
     )
     if slot is None:
@@ -185,7 +191,7 @@ async def answer(
         await question.unstop(redis, thread_id)
         await reply(factory, asked, thread_id, bound, said)
         return
-    await _tell(asked.document_id, thread_id, "working")
+    await _tell(asked.subject, thread_id, "working")
     try:
         async with factory() as db:
             await question.admit(db, asked.project_id, bound)
@@ -193,7 +199,7 @@ async def answer(
                 db, asked, seat=bound.agent_handle, asker=None
             )
             prompt = await thread_question(
-                db, around, document_id=asked.document_id, thread_id=thread_id
+                db, around, subject=asked.subject, thread_id=thread_id
             )
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is the answer.
@@ -238,6 +244,9 @@ async def answer(
     )
 
 
+#: A call's `action`, once the model has written it whole.
+_ACTION = re.compile(r'"action"\s*:\s*"(\w+)"')
+
 #: A comment thread's question, to the questions the platform reads to the end
 #: (``session_host.consumptions``); its key is the thread.
 KIND = "doc-thread"
@@ -251,20 +260,39 @@ class Replies:
     def __init__(self, chat: ChatService, factory: async_sessionmaker[AsyncSession]):
         self._chat = chat
         self._factory = factory
+        #: The calls whose verb is not written yet, by call: their tool and
+        #: what of their arguments has come.
+        self._writing: dict[str, tuple[str, str]] = {}
 
     stopped = staticmethod(question.is_stopped)
 
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
-        document_id = Asked.of(consumption.data).document_id
+        asked = Asked.of(consumption.data)
         thread_id = uuid.UUID(consumption.key)
         if isinstance(item, Waiting):
-            await _tell(document_id, thread_id, "queued")
+            await _tell(asked.subject, thread_id, "queued")
         elif isinstance(item, Tool):
-            await _tell(document_id, thread_id, "working", item.name)
+            await _tell(asked.subject, thread_id, "working", item.name)
+            if item.call:
+                self._writing[item.call] = (item.name, "")
+        elif isinstance(item, ToolArgs) and item.call in self._writing:
+            # One of an object's verbs (`cheese_doc`, reading or editing) is
+            # told again once its `action` is written: the reader sees which.
+            name, written = self._writing[item.call]
+            written += item.text
+            action = _ACTION.search(written)
+            if action is None:
+                self._writing[item.call] = (name, written)
+            else:
+                del self._writing[item.call]
+                key = f"{name}.{action.group(1)}"
+                await _tell(asked.subject, thread_id, "working", key)
+        elif isinstance(item, ToolDone | ToolFailed):
+            self._writing.pop(item.call, None)
 
     async def ended(
         self,
@@ -333,15 +361,17 @@ async def reply(
             with attempt:
                 async with factory() as db:
                     threads = CommentThreads(db)
+                    subject = asked.subject
                     try:
-                        doc = await Documents(db).get(asked.document_id)
-                        if doc is None:
-                            raise NotFoundError("document gone")
+                        if isinstance(subject, OnDocument):
+                            doc = await Documents(db).get(subject.document_id)
+                            if doc is None:
+                                raise NotFoundError("document gone")
                         current = await threads.describe(
-                            await threads.root(doc.id, thread_id)
+                            await threads.root(subject, thread_id)
                         )
                         await threads.mutate(
-                            doc,
+                            subject,
                             comment_id=thread_id,
                             author=bound.agent_handle,
                             expected_revision=current["revision"],
@@ -349,9 +379,11 @@ async def reply(
                             content=text,
                         )
                         await db.commit()
-                        await collab.tell(
-                            asked.document_id, {"type": "state", "resource": "comments"}
-                        )
+                        if isinstance(subject, OnDocument):
+                            await collab.tell(
+                                subject.document_id,
+                                {"type": "state", "resource": "comments"},
+                            )
                     except NotFoundError:
                         logger.info(
                             "doc agent reply dropped thread=%s: gone", thread_id

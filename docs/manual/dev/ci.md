@@ -26,9 +26,9 @@ covers:
 
 | 套件 | 工作流 | 查什么 |
 |---|---|---|
-| backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器 |
+| backend | `test.yml` | 后端 pytest，带 Postgres 和 Valkey 服务容器；`backend/tests/forgejo` 要真的 Forgejo，不在这里跑 |
 | frontend | `frontend.yml` | 类型检查、eslint、vitest |
-| e2e | `e2e.yml` | Playwright 端到端测试（只在合并后跑） |
+| e2e | `e2e.yml` | Playwright 端到端测试；`forgejo live` job 起一个固定版本的 Forgejo 容器（`backend/tests/forgejo/start.sh`），对着它跑 `backend/tests/forgejo` 的后端测试（都只在合并后跑） |
 | cli | `cli.yml` | Go 连接器的测试 |
 | guards | `repo-guards.yml` | 仓库规矩的机器检查和文档站构建（链接与锚点、每页的类型/摘要/涉及代码、参考页生成器），每次都跑 |
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
@@ -39,7 +39,9 @@ covers:
 
 最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）；后端套件选中时，它还核对每个分片跑过的用例加起来正好是独立收集出来的那份（`assert_shards_complete`）。改到这套检查本身时，所有套件都会跑。`required` 要等最慢的套件跑完才能开始，所以一个套件早早红了，`CI required` 也要到最后才显示红。聚合 job 有两个：`required`（`name: CI required`）给正式 PR 和主干 push，`required-draft`（`name: CI required (draft quick)`）给草稿，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
 
-前端套件还有一个不看路径的入口：前端的类型是从后端的 OpenAPI 文档生成的，后端改动可能改了这份文档，而没有哪个文件能说明它变没变。所以路径选中了后端、没选中前端时，`api` job 在这次 diff 的基点和这次提交上各打印一次文档（`export_openapi --stdout`）逐字节比较，不同就跑前端套件。`required` 按它的回答要求前端套件成功或跳过；`api` 自己没给出回答（失败、取消、输出缺失）也判失败。这件事原来靠仓库里提交的一行文档摘要 `backend/openapi.sha256`：每个改 API 的 PR 都要改这一行，任意两个这样的 PR 都会在这一行上冲突。
+前端套件还有一个不看路径的入口：前端的类型是从后端的 OpenAPI 文档生成的，后端改动可能改了这份文档，而没有哪个文件能说明它变没变。所以路径选中了后端，`api` job 就在这次 diff 的基点和这次提交上各打印一次文档（`export_openapi --stdout`）逐字节比较，不同就跑前端套件。`required` 按它的回答要求前端套件成功或跳过；`api` 自己没给出回答（失败、取消、输出缺失）也判失败。这件事原来靠仓库里提交的一行文档摘要 `backend/openapi.sha256`：每个改 API 的 PR 都要改这一行，任意两个这样的 PR 都会在这一行上冲突。
+
+同一个 job 还拿这两份文档问另一件事：这次改动会不会让照基点那版接口造的、还开着的页面说不通（`.github/scripts/api_compat.py`：接口删了；请求字段删了、改名、能收的类型变少或新增为必填；响应字段删了、改名、可能缺席或多出没见过的类型；枚举值删了）。会的话，`backend/api-generation` 里的数必须在同一个 diff 里调高，否则 job 失败。调高之后，后端拒掉带着更低代数的请求（409 `ClientOutdated`，房间连接以 4409 关闭），开着的旧页面就弹出提示请人刷新（`frontend/src/lib/apiGeneration.ts`）。前后端一起改的 PR 也问这一句，所以这个 job 现在只看后端有没有被选中。两个 PR 各把数从 N 调到 N+1，合并时不冲突、落成同一个数；前一个先部署了的话，main 上的 push 运行（基点是上一次全绿的提交）会在这里变红，再调高一次即可。
 
 **主干是提交后门禁**：PR squash 进 main 之后，每次落码触发一次 `push` run，它判的是**一批**而不是这一条提交。`scope` 的基点不是 `github.event.before`（那只是上一个 tip，被顶掉的排队 run 里的提交会落在所有后续 diff 之外），而是 `refs/heads/main-green`：上一次这道理检查通过的提交。`mark-green` job 只在 main push 的 `required` 绿之后把锚点推到这个提交，红了不动，下一批自然把这段一起盖上。push 的并发组固定为 `required-ci-push-main`、`cancel-in-progress` 为 `false`：GitHub 同时只让一个 run 在跑、最多一个排队，新的排队顶掉旧的排队，所以攒批不丢提交。第一次落地时还没有 `main-green`，`scope` 把所有已跟踪路径都算作改动、选全部套件——宁宽不窄。部署门禁认 main 上这次 `push` run。
 

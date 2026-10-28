@@ -31,6 +31,7 @@ from app.domain.agent.device_hub import (
 from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.session_host.contract import (
     Access,
+    Ending,
     SessionError,
     SessionRef,
     SessionSpec,
@@ -160,6 +161,7 @@ async def register(
                 "watchdog": {
                     "no_progress_s": settings.agent_no_progress_s,
                     "unread_s": settings.agent_unread_grace_s,
+                    "silent_s": settings.agent_stuck_silence_s,
                 },
             },
         )
@@ -232,24 +234,28 @@ async def attach(
     if alive is not True:
         return found if alive is False else None
     if isinstance(driver, Reports) and not driver.speaks(status):
-        # A runner the previous release started: it does not report in the
-        # protocol this one reads, and this release keeps nothing that reads
-        # the old one. It is not taken up. Work it is doing is taken away the
-        # way that runner understands; the next start replaces it with one of
-        # this release's on the same conversation (``ClaudeCodeDriver.launch``).
-        if found.working:
-            method, _ = driver.stop
-            try:
-                await svc._look(host, ref, method, {})
-            except (DeviceOffline, DeviceCallError, TimeoutError):
-                logger.warning(
-                    "%s session %s on %s could not be interrupted for the upgrade",
-                    driver.label,
-                    ref.home,
-                    host,
-                    exc_info=True,
+        # A runner another release started: it does not report in the protocol
+        # this one reads, and this release keeps nothing that reads another.
+        # It is not taken up, and nothing it is doing is touched here: the room
+        # lets work it is doing finish and replaces it once its ping says it is
+        # idle (``room.sessions.lifecycle``), with one of this release's on the
+        # same conversation (``ClaudeCodeDriver.launch``). What this reads of
+        # it is the ping's handshake, which every protocol keeps
+        # (``harness/driven/lifecycle.py``).
+        return replace(
+            found,
+            outdated=True,
+            epoch=int(status.get("worker_epoch") or 0),
+            launch=status.get("launch"),
+            endings=tuple(
+                Ending(
+                    str(ending["work"]),
+                    ending.get("failure") is not None,
+                    tuple(ending.get("inputs") or ()),
                 )
-        return replace(found, outdated=True)
+                for ending in status.get("endings") or ()
+            ),
+        )
     launched = Launched(
         found.conversation,
         frozenset(status.get("capabilities") or ()),

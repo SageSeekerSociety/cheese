@@ -12,9 +12,20 @@ from tests.integration.conftest import (
 from tests.support.living_doc import overview_of
 
 
+def _admit(api_client: TestClient, space_id: int, admin, *users) -> None:
+    """Put ``users`` in the space; only a space's members see and claim its problems."""
+    for user in users:
+        resp = api_client.post(
+            f"/spaces/{space_id}/members",
+            json={"userId": user.user_id},
+            headers={"Authorization": f"Bearer {admin.token}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+
 class TestTaskIntegration:
     @pytest.mark.parametrize("as_team", [False, True])
-    def test_registration_opens_shared_workspace(
+    def test_approval_opens_the_shared_workspace(
         self,
         api_client: TestClient,
         task_setup: dict,
@@ -57,6 +68,7 @@ class TestTaskIntegration:
                 "description": "记录观察结果并注明资料来源",
                 "space": task_setup["space_id"],
                 "categoryId": task_setup["category_id"],
+                "startMode": "APPLY",
                 "submitterType": "TEAM" if as_team else "USER",
                 "resubmittable": True,
                 "editable": True,
@@ -83,15 +95,25 @@ class TestTaskIntegration:
         payload = {"teamId": team_id} if as_team else {}
         response = api_client.post(endpoint, json=payload, headers=student_headers)
         assert response.status_code == 200, response.text
-        project = response.json()["data"]["project"]
+        # An application waits for the publisher with no workspace yet.
+        assert response.json()["data"]["project"] is None
         membership_id = response.json()["data"]["participant"]["id"]
+        # Approval makes no workspace yet; approving twice and then starting
+        # releases the pack once.
+        for _ in range(2):
+            response = api_client.patch(
+                f"/tasks/{task_id}/participants/{membership_id}",
+                headers=admin,
+                json={"approved": "APPROVED"},
+            )
+            assert response.status_code == 200, response.text
+        response = api_client.post(endpoint, json=payload, headers=student_headers)
+        assert response.status_code == 200, response.text
+        project = response.json()["data"]["project"]
         credits_url = f"/projects/{project['id']}/credits"
-        assert (
-            api_client.get(credits_url, headers=student_headers).json()["data"][
-                "grants"
-            ]
-            == []
-        )
+        credits = api_client.get(credits_url, headers=student_headers).json()["data"]
+        earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
+        assert [g["credits_total"] for g in earmarks] == [100]
         assert project["team_id"] is not None
         if as_team:
             assert project["team_id"] == team_id
@@ -123,22 +145,12 @@ class TestTaskIntegration:
             assert response.status_code == 200, response.text
             response = api_client.get(f"/documents/{document}", headers=student_headers)
             assert response.json()["data"]["content"] == "我们补充了实地观察"
-        # Approval releases the pack once; repeated approval cannot mint it again.
-        for _ in range(2):
-            response = api_client.patch(
-                f"/tasks/{task_id}/participants/{membership_id}",
-                headers=admin,
-                json={"approved": "APPROVED"},
-            )
-            assert response.status_code == 200, response.text
-            credits = api_client.get(credits_url, headers=student_headers).json()[
-                "data"
-            ]
-            earmarks = [g for g in credits["grants"] if g["source"] == "task_earmark"]
-            assert [g["credits_total"] for g in earmarks] == [100]
-        # Repeating the application must not create a second workspace.
+        # Repeating the application answers with the claim held and its
+        # workspace; it never creates a second one.
         response = api_client.post(endpoint, json=payload, headers=student_headers)
-        assert response.status_code == 400, response.text
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["participant"]["id"] == membership_id
+        assert response.json()["data"]["project"]["id"] == project["id"]
         response = api_client.get(
             f"/projects?team_id={project['team_id']}", headers=student_headers
         )
@@ -184,6 +196,7 @@ class TestTaskIntegration:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant, participant2, participant3)
         category_id = space_data.get("defaultCategoryId")
 
         deadline_ms = int((datetime.now(UTC).timestamp() + 7 * 24 * 3600) * 1000)
@@ -946,6 +959,7 @@ class TestTaskEnumeration:
             assert resp.status_code == 200, resp.text
 
         def join(user: CreatedUser, task_id: int) -> None:
+            _admit(api_client, space_id, creator, user)
             resp = api_client.post(
                 f"/tasks/{task_id}/participants",
                 json={},
@@ -1008,6 +1022,62 @@ class TestTaskEnumeration:
         assert [t["id"] for t in page_data["tasks"]] == [task_ids[0]]
         assert len(members_of(task_ids[0])) == 1
         assert page_data["distinctParticipants"] == 1
+
+    def test_places_are_taken_only_by_approved_applications(
+        self,
+        api_client: TestClient,
+        user_client: UserCreator,
+        multi_task_setup: dict,
+    ) -> None:
+        """名额和「参与人数」只算申请通过的：等批的、被拒的都不占。申请随时可以交，
+        名额满了之后再通过一份就被拒，并说明是名额满了。"""
+        creator = multi_task_setup["creator"]
+        headers = {"Authorization": f"Bearer {creator.token}"}
+        task_id = multi_task_setup["task_ids"][0]
+        resp = api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED", "participantLimit": 1, "startMode": "APPLY"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        for _ in range(3):
+            user = user_client.create_user()
+            user.token = user_client.login(api_client, user.username, user.password)
+            _admit(api_client, multi_task_setup["space_id"], creator, user)
+            resp = api_client.post(
+                f"/tasks/{task_id}/participants",
+                json={},
+                headers={"Authorization": f"Bearer {user.token}"},
+            )
+            assert resp.status_code == 200, resp.text
+        resp = api_client.get(f"/tasks/{task_id}/participants", headers=headers)
+        assert resp.status_code == 200, resp.text
+        claims = [row["id"] for row in resp.json()["data"]["participants"]]
+
+        def counts() -> tuple[int, int]:
+            resp = api_client.get(f"/tasks/{task_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            participants = resp.json()["data"]["task"]["participants"]
+            return participants["total"], participants["approved"]
+
+        def decide(claim: int, approved: str):
+            return api_client.patch(
+                f"/tasks/{task_id}/participants/{claim}",
+                json={"approved": approved},
+                headers=headers,
+            )
+
+        assert counts() == (3, 0)
+        assert decide(claims[0], "DISAPPROVED").status_code == 200
+        assert counts() == (3, 0)
+        assert decide(claims[1], "APPROVED").status_code == 200
+        assert counts() == (3, 1)
+
+        refused = decide(claims[2], "APPROVED")
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["i18n"]["key"] == "taskPlacesFull"
+        assert counts() == (3, 1)
 
     def test_enumerate_tasks_without_the_flag_carries_no_participant_count(
         self, api_client: TestClient, multi_task_setup: dict
@@ -1243,12 +1313,14 @@ class TestParticipantManagement:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant1, participant2, participant3)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
             "/tasks",
             json={
                 "name": f"Participant Test Task ({suffix})",
+                "startMode": "APPLY",
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
@@ -1498,7 +1570,7 @@ class TestParticipantManagement:
         participants = update_resp.json()["data"]["participants"]
         assert len(participants) >= 1
 
-    def test_duplicate_participant_fails(
+    def test_joining_again_answers_with_the_claim_held(
         self, api_client: TestClient, participant_setup: dict
     ) -> None:
         participant1 = participant_setup["participant1"]
@@ -1516,8 +1588,10 @@ class TestParticipantManagement:
             json={},
             headers={"Authorization": f"Bearer {participant1.token}"},
         )
-        assert join_resp2.status_code == 400, (
-            f"Expected 400 for duplicate join, got {join_resp2.status_code}"
+        assert join_resp2.status_code == 200, join_resp2.text
+        assert (
+            join_resp2.json()["data"]["participant"]["id"]
+            == join_resp1.json()["data"]["participant"]["id"]
         )
 
 
@@ -1551,6 +1625,7 @@ class TestTaskSubmission:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -1660,6 +1735,7 @@ class TestTaskReview:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -2089,8 +2165,8 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert delete_resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {delete_resp.status_code}"
+        assert delete_resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {delete_resp.status_code}"
         )
 
     def test_delete_task_success_for_owner(
@@ -2149,8 +2225,8 @@ class TestTaskPermissions:
             json={"name": "Should Fail"},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert update_resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {update_resp.status_code}"
+        assert update_resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {update_resp.status_code}"
         )
 
     def test_join_unapproved_task_fails(
@@ -2181,8 +2257,8 @@ class TestTaskPermissions:
             json={},
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert join_resp.status_code == 400, (
-            f"Expected 400, got {join_resp.status_code}"
+        assert join_resp.status_code == 404, (
+            f"Expected 404, got {join_resp.status_code}"
         )
 
     def test_enumerate_unapproved_tasks_as_space_admin(
@@ -2318,8 +2394,8 @@ class TestTaskPermissions:
             f"/tasks/{task_id}",
             headers={"Authorization": f"Bearer {other_user.token}"},
         )
-        assert get_resp.status_code == 403, (
-            f"Expected 403, got {get_resp.status_code}: {get_resp.text}"
+        assert get_resp.status_code == 404, (
+            f"Expected 404, got {get_resp.status_code}: {get_resp.text}"
         )
 
 
@@ -2351,6 +2427,7 @@ class TestTaskJoinedFilter:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         task_ids = []
@@ -2459,6 +2536,7 @@ class TestParticipantEdgeCases:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
@@ -2704,7 +2782,7 @@ class TestParticipantPermissions:
             json={"deadline": deadline_ms, "email": "test@example.com"},
             headers={"Authorization": f"Bearer {user1.token}"},
         )
-        assert add_resp.status_code == 403, f"Expected 403, got {add_resp.status_code}"
+        assert add_resp.status_code == 404, f"Expected 404, got {add_resp.status_code}"
 
 
 class TestTeamParticipant:
@@ -2792,14 +2870,14 @@ class TestTeamParticipant:
             f"Add team participant failed: {add_resp.text}"
         )
 
-    def test_add_team_again_fails(
+    def test_adding_the_team_again_answers_with_its_claim(
         self, api_client: TestClient, team_participant_setup: dict
     ) -> None:
         creator = team_participant_setup["creator"]
         team_id = team_participant_setup["team_id"]
         task_id = team_participant_setup["task_id"]
 
-        api_client.post(
+        first = api_client.post(
             f"/tasks/{task_id}/participants",
             params={"member": team_id},
             json={},
@@ -2812,8 +2890,10 @@ class TestTeamParticipant:
             json={},
             headers={"Authorization": f"Bearer {creator.token}"},
         )
-        assert add_again_resp.status_code == 400, (
-            f"Expected 400 for duplicate add, got {add_again_resp.status_code}"
+        assert add_again_resp.status_code == 200, add_again_resp.text
+        assert (
+            add_again_resp.json()["data"]["participant"]["id"]
+            == first.json()["data"]["participant"]["id"]
         )
 
     def test_list_team_participants(
@@ -2897,12 +2977,14 @@ class TestParticipantWorkflow:
         )
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, *users)
         category_id = space_data.get("defaultCategoryId")
 
         create_resp = api_client.post(
             "/tasks",
             json={
                 "name": f"Workflow Task ({suffix})",
+                "startMode": "APPLY",
                 "intro": "Test intro",
                 "description": '{"type":"doc","content":[]}',
                 "space": space_id,
@@ -3285,8 +3367,8 @@ class TestArchivedCategoryAndRejectReason:
             json={"rejectReason": "Some reason"},
             headers={"Authorization": f"Bearer {non_admin.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"Expected 404, got {resp.status_code}: {resp.text}"
         )
 
     def test_patch_reject_reason_success_for_admin(
@@ -3356,6 +3438,7 @@ class TestRegistrationStartTime:
         assert space_resp.status_code == 201
         space_data = space_resp.json()["data"]["space"]
         space_id = space_data["id"]
+        _admit(api_client, space_id, creator, participant)
         default_category_id = space_data.get("defaultCategoryId")
 
         registration_start_at = int(

@@ -94,9 +94,10 @@ const loggedIn = computed(() => props.loggedIn)
    above the rail (desktop/src-tauri/src/main.rs places them); the bar's own
    content starts a little past the rail's width. Starting exactly at 64px put
    the back arrow against the green button, where it read as a fourth window
-   button. */
+   button. The width lives in style.css (`--window-buttons-inset`), 0 off that
+   platform; every other surface that clears the buttons reads the same number. */
 .app-system-bar.app-system-bar--window-buttons {
-  padding-inline-start: 72px;
+  padding-inline-start: var(--window-buttons-inset);
 }
 
 /* 右上这一簇是同一种形状：高 28、无边、悬停出底色。语言开关自己的样式是给页头

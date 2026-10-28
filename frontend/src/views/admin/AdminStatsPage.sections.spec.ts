@@ -201,7 +201,7 @@ describe('统计页 · 平台那一屏', () => {
   it('五张 KPI、机器四行、健康四格、配额与缺口那几块', async () => {
     const { container } = await openTab('平台')
 
-    expect(kpiLabels(container).slice(0, 3)).toEqual(['账号总数', '真人', 'Agent'])
+    expect(kpiLabels(container).slice(0, 3)).toEqual(['账号总数', '真人', 'AI 队友'])
     expect(kpiValues(container).slice(0, 3)).toEqual(['1,199', '1,187', '12'])
     // 平台管理员：根名单 2 + 页面上加的 1。
     expect(kpiValues(container)[4]).toBe('3')
@@ -237,7 +237,7 @@ describe('统计页 · 反馈那一屏', () => {
     expect(cells.map((c) => c.querySelector('.ad__split-label')?.textContent?.trim())).toEqual([
       '公开反馈',
       '私密反馈',
-      'Agent 发现',
+      'AI 队友发现',
       '安全问题',
     ])
     // 每一格都**有数**（不是空串）：四栏计数的口径一直都在回。

@@ -18,8 +18,10 @@ from app.core import alerting
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
+from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
+    is_provider_out_of_credit,
 )
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.room_events import post_system_event
@@ -48,11 +50,7 @@ from app.domain.agent.turn.intake.notes import (
     _running_compactions,
 )
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
-from app.domain.agent.turn.state.notices import (
-    _TOOL_ACTION,
-    _turn_failure_notice,
-    is_out_of_credit,
-)
+from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
@@ -331,10 +329,13 @@ class HookEvents:
                     meta = CREDITS_EXHAUSTED_META
                 else:
                     line, meta = _turn_failure_notice(
-                        event.text, event.failure_code, log=event.log
+                        event.text,
+                        event.failure_code,
+                        log=event.log,
+                        own=state is not None and state.route == OWN_ROUTE,
                     )
                     resumable = True
-                    if is_out_of_credit(event.text):
+                    if is_provider_out_of_credit(event.text):
                         # 上游服务的余额用完了：项目里的人补团队额度也没有用，只有
                         # 平台管理员能处理。房间里那句已经说了，这里再叫一次管平台
                         # 的人（`alerting` 自带重复窗口，同一个上游不会每小时刷）。

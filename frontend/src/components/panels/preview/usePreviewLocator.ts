@@ -25,6 +25,7 @@ import { usePreviewPick } from './usePreviewPick'
 import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
+import { firstCodePoints } from '@/lib/codePoints'
 
 interface LocatorDeps {
   /** 指了一处，交给房间的对话。 */
@@ -40,6 +41,7 @@ interface LocatorDeps {
 export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
+  const queued = ref<string[]>([])
   /** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
   const annotateError = ref('')
 
@@ -82,12 +84,20 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     if (!captured) return
     openLocator(t('design.region'), t('design.selectedRegion', selection.region), '')
     imageRegion.target.value = captured
+    // 框选的位置同时作为一处结构化引用发出去：合成图说得出「图上哪一块」，这句话说得出
+    // 「要改成什么」；只有书面那句话的受话人回到的是「图片这一份」，回不到那一块。坐标
+    // 用的是原图像素（选区就是这么量的），发的时候才配上这一版的身份。
+    quoted.imageRegion({
+      ...selection.region,
+      naturalWidth: selection.naturalWidth,
+      naturalHeight: selection.naturalHeight,
+    })
   }
 
   function onPageContext(payload: SlidePageContext) {
     if (!pageLocator.canUse(payload.context)) return
     const page = t('work.room.preview.page', { page: payload.page })
-    openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : payload.text.slice(0, 200), page)
+    openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : firstCodePoints(payload.text, 200), page)
     quoted.page.value = { ...payload, context: { ...payload.context } }
   }
 
@@ -109,7 +119,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       () => props.slideContext?.topicId,
       () => props.slideContext?.taskId,
     ],
-    clearLocator,
+    () => {
+      clearLocator()
+      queued.value = []
+    },
     { flush: 'sync' }
   )
 
@@ -118,7 +131,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const quote = payload.text.replace(/\s+/g, ' ').trim()
     if (quote.length < 2) return
     const page = t('work.room.preview.page', { page: payload.page })
-    openLocator(page, quote.slice(0, 200), page)
+    openLocator(page, firstCodePoints(quote, 200), page)
   }
 
   function onCell(payload: { address: string; value: string; sheet: string }) {
@@ -128,13 +141,40 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     quoted.cell(payload)
   }
 
+  /** 表格里拖过的一片：位置写成表格软件自己印的那个 `A1:C3`。 */
+  function onSheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
+    const area = `${payload.start}:${payload.end}`
+    const where = payload.sheet ? `${payload.sheet}!${area}` : area
+    // 一片全是空格子时摊平的结果是几个制表符和换行，看着不是空的却什么也没有：按空白判，
+    // 和 `MessageQuote` 那条同一条。判的是整片的内容，不是截出来那 200 字——开头一片空格、
+    // 右下角有内容的表不能被说成空的。截预览按码点，和表格那边怎么截同一条。
+    const preview = firstCodePoints(payload.text, 200)
+    openLocator(where, payload.text.trim() ? preview : t('work.room.preview.emptyCell'), where)
+    quoted.sheetRange(payload)
+  }
+
   function onMarkdownQuote(payload: MarkdownQuote) {
     // 位置说的是「哪一节」而不是行号：改一句话要重新渲染，行号下一版就不成立了；它之前没有标题就是文件开头。
     const where = payload.heading
       ? t('work.room.preview.mdHeading', { heading: payload.heading })
       : t('work.room.preview.mdTop')
-    openLocator(where, payload.text.slice(0, 200), where, { prefix: payload.prefix, suffix: payload.suffix })
+    openLocator(where, firstCodePoints(payload.text, 200), where, {
+      prefix: payload.prefix,
+      suffix: payload.suffix,
+    })
     quoted.range(payload)
+  }
+
+  /** 代码里指的几行：位置就写行号。源码不重排，行号就是芝士改它时找的那个地址——和
+   *  markdown 按「哪一节」说位置正好相反（见上面那一支）。 */
+  function onCodeLines(payload: { start: number; end: number; text: string }) {
+    const where = codeLinesLabel(payload.start, payload.end)
+    openLocator(where, firstCodePoints(payload.text, 200), where)
+  }
+
+  function onVideoLocate(payload: { seconds: number; timestamp: string }) {
+    const where = t('work.room.video.timePoint', { time: payload.timestamp })
+    openLocator(where, t('work.room.video.atTime', { time: payload.timestamp }), where)
   }
 
   function contextLine({ prefix, suffix }: QuoteContext): string {
@@ -142,6 +182,46 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     // 空的那一侧不写——写出来只是一对空引号。
     if (prefix) return t('work.room.preview.locateContextBefore', { prefix })
     return t('work.room.preview.locateContextAfter', { suffix })
+  }
+
+  function formatLocateMessage(
+    target: { label: string; quote: string; address: string; context?: QuoteContext },
+    note: string
+  ): string {
+    const message = t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address || target.label,
+      quote: target.quote,
+      note,
+    })
+    const ctx = target.context
+    const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
+    return context ? `${message}\n${context}` : message
+  }
+
+  function queueLocator() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    if (!target || !note || pageLocator.pin.value) return
+    queued.value = [...queued.value, formatLocateMessage(target, note)]
+    clearLocator()
+  }
+
+  function clearQueued() {
+    queued.value = []
+  }
+
+  function sendQueued() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    const pending = [...queued.value]
+    if (target && note && !pageLocator.pin.value) {
+      pending.push(formatLocateMessage(target, note))
+    }
+    if (!pending.length) return
+    deps.onLocate({ message: pending.join('\n\n') })
+    queued.value = []
+    if (!pageLocator.pin.value) clearLocator()
   }
 
   function sendLocator() {
@@ -152,7 +232,18 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       void pageLocator.send(note)
       return
     }
+    if (queued.value.length > 0) {
+      sendQueued()
+      return
+    }
     if (imageRegion.target.value) {
+      // 框出来的那一块走结构化引用；发不出去（这份部署没有提问出口、或拿不到身份）才
+      // 退回拼一句话——那句话指得回「图片这一份」，指不回那一块，不能白丢。
+      const sent = quoted.send(note)
+      if (sent !== null) {
+        if (sent) clearLocator()
+        return
+      }
       const message = imageRegion.message(note)
       if (!message) return
       deps.onLocate({ message })
@@ -165,16 +256,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       if (sent) clearLocator()
       return
     }
-    const message = t('work.room.preview.locateMessage', {
-      path: props.previewFile?.path ?? '',
-      address: target.address,
-      quote: target.quote,
-      note,
-    })
-    // 选中那段文字的两侧（markdown 才有）。两侧都是空的时候没什么可分辨的，别写进去。
-    const ctx = target.context
-    const context = ctx && (ctx.prefix || ctx.suffix) ? contextLine(ctx) : ''
-    deps.onLocate({ message: context ? `${message}\n${context}` : message })
+    deps.onLocate({ message: formatLocateMessage(target, note) })
     clearLocator()
   }
 
@@ -213,6 +295,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   return {
     locator,
     locatorNote,
+    queued,
     annotateError,
     imageRegion,
     pageLocator,
@@ -220,12 +303,25 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     pick,
     openLocator,
     clearLocator,
+    queueLocator,
+    clearQueued,
+    sendQueued,
     sendLocator,
     onImageRegion,
     onPageContext,
     onQuote,
     onCell,
+    onSheetRange,
     onMarkdownQuote,
+    onCodeLines,
+    onVideoLocate,
     onAnnotate,
   }
+}
+
+/** 「第 12 行」「第 12–18 行」：定位框上和发出去的那句话里都是它。 */
+export function codeLinesLabel(start: number, end: number): string {
+  return start === end
+    ? t('work.room.preview.codeLine', { line: start })
+    : t('work.room.preview.codeLines', { start, end })
 }

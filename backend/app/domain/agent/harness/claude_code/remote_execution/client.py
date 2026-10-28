@@ -159,7 +159,7 @@ NATIVE_TOOLS = (
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese_doc_set and publish artifacts "
+    "Save finished documents through cheese_doc(action=set) and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
@@ -751,7 +751,7 @@ def transport(config, target_path):
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
     # 平台工具从会话直接打后端，不经过这台机器；只有要机器的那一样
-    # （`cheese_accept_request` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
+    # （`cheese_card(action=request)` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
     # 而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
@@ -822,8 +822,29 @@ def transport(config, target_path):
             raise RuntimeError(str(answer["error"]))
         return "already" if (answer.get("result") or {}).get("already") else "requested"
 
+    def current_run() -> str | None:
+        """Which run of this session a platform call is made in, as its
+        runner names it (`runner.Runner.dispatch` ``run``), at the same door
+        `compact_session` uses."""
+        path = os.environ.get(SESSION_SOCKET)
+        if not path:
+            # A session built without its socket: an invariant of the launch.
+            raise RuntimeError(  # i18n-exempt: launch invariant, never shown
+                "This session has no runner to ask which run it is in"
+            )
+        with dial_runner(path, RUNNER_REQUEST_S) as connection:
+            connection.sendall(
+                json.dumps({"method": "run", "params": {}}).encode() + b"\n"
+            )
+            answer = json.loads(connection.makefile("rb").readline())
+        if "error" in answer:
+            raise RuntimeError(str(answer["error"]))
+        return (answer.get("result") or {}).get("run")
+
     def platform_tool(tool, args, call_id, invoke):
-        host = PlatformHost(client, invoke, call_id, doc_versions, compact_session)
+        host = PlatformHost(
+            client, invoke, call_id, doc_versions, current_run, compact_session
+        )
         try:
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # the agent reads the reason

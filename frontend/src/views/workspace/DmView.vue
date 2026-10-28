@@ -239,7 +239,7 @@ function onTurnDone() {
     @toggle-focus="toggleFocus"
     @close-panel="closePanel"
     @start-drag="startPaneDrag"
-    @reset-split="store.setChatPct(50)"
+    @reset-split="store.resetChatPct()"
     @freeze-chat="freezeChatWidth"
   >
     <template v-if="topic" #chat>

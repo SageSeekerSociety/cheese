@@ -298,7 +298,7 @@ def _restarted_mid_turn(client, first: str) -> tuple[str, StubChannel, ChatServi
 def test_a_turn_that_outlives_its_backend_does_not_replay_its_batch(client):
     """dev 一合并就重新部署：一轮跑到一半，后端进程被换掉，机器上的会话照常把活
     干完，Stop 落到新进程上。那一轮送进去的消息芝士已经读过、答过了 —— 下一次
-    @ 它，prompt 里不该再出现它们，更不该一次次累加成「第 3 次送进轮次」。"""
+    @ 它，prompt 里不该再出现它们，更不该一次次累加成「第 3 次送去处理」。"""
     topic_id, after, service = _restarted_mid_turn(client, "第一句")
     room = uuid.UUID(topic_id)
 

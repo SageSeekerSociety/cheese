@@ -51,6 +51,12 @@ export interface Project {
    * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
    */
   shell?: Shell
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有（只在单个项目那一行里有）；
+   *  没有起始代码是 null。`error` 是没放成的原因（`{ key, params }`）。 */
+  starter?: { revision: number; state: 'pending' | 'done' | 'failed'; error: unknown } | null
+  /** 项目来自的那道题：在哪个空间、叫什么、现在第几版（只在单个项目那一行里有）。
+   *  看的人看不到这道题的 `题目/` 时是 null。 */
+  task?: { id: number; space_id: number; name: string; version: number | null } | null
 }
 
 export interface ProjectSite {
@@ -100,6 +106,9 @@ export interface Topic {
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
   // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
+  // 这间房的 AI 队友坐在名册上哪一席：没人点名的话交给它，行上那句状态说到队友时叫的也是
+  // 它（backend `TopicOut.agent_handle`）。一位都没坐是 null。只有 list/get 话题时才带。
+  agent_handle?: string | null
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
@@ -108,8 +117,8 @@ export interface Topic {
   // 有人回复了我、我还没处理：这间房（含名下的支线）里有别人答我或 @ 我的消息，而我没再
   // 打开过它；名下的活不在里面。和 `awaits_me` 同画一盏黄灯（`lib/roomLight.ts`），打开就算处理。
   replied_to_me?: boolean
-  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）；多久算太久由侧栏按当下的钟
-  // 判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
+  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
+  // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
   waits?: MemberWait[]
   // 这间房里**还没恢复**的轮次失败从什么时候开始（后端 `block/waits.py` 的
   // `unresolved_failures`）：这间房自己那条线、它的支线，或者它名下一件还没关的活里
@@ -125,6 +134,7 @@ export interface Topic {
   // 是两档绿。只有 list/get 话题时才带。
   moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
+  //
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
@@ -172,6 +182,8 @@ export interface BlockMeta extends AskBlockMeta {
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
   quoted_context?: import('./lib/quotedContext').QuotedContext
+  // 作者自己的芝士替他写的（后端 `meta.by_assistant`）：署的是他的名，名字旁边标「芝士代发」。
+  by_assistant?: boolean
 }
 
 export interface ChecklistMeta {
@@ -276,7 +288,9 @@ export interface RoomTask {
   owner_handle?: string | null
   contributor_handles?: string[] // 协作者：负责人拉进来的人，说的话和负责人一样是给 AI 队友的指令
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
+  reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
+  created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
   document_id?: string | null // 实况文档；第一次打开任务时才建
@@ -307,7 +321,8 @@ export interface RoomTask {
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
-  awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  awaits_me?: boolean // 有事需要本人关注，包括提需求人等结果；侧栏提醒读它
+  needs_my_action?: boolean // 当前显示的下一步是否需要本人执行；“待你回答/审阅”等称谓读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
@@ -322,6 +337,10 @@ export interface RoomTask {
   // 这条活此刻在不在往前走（侧栏的呼吸绿）：它自己的会话在跑，或者卡走在交付链路
   // 上。和 `unseen_delivery` 是两档绿。侧栏行和项目级列表都带。
   moving?: boolean
+  // 做它的 AI 队友此刻有没有一次会话在跑（频道的任务列表、房间快照、单个任务才带；
+  // 后端 `room_task_rows.with_session_running`）。「在做」那颗记号只在它为真时动
+  // （`lib/taskState.ts`）；项目级列表和侧栏行不带，那边用 `moving`。
+  session_running?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
@@ -363,6 +382,14 @@ export interface ThreadCard {
   status: string
   pr_number?: number | null
   pr_url?: string | null
+  /** 这张卡什么时候递上来的（ISO）。 */
+  since?: string | null
+  /** 这件任务递过的第几张卡，从 1 数。 */
+  version?: number | null
+  /** 被审阅的是什么：改动的标题，或文件名。 */
+  subject?: string | null
+  /** 这张卡递给谁审阅（可能已经改由别人审阅，和任务建时定的那位不同）。 */
+  reviewer?: string | null
 }
 
 export interface TopicProgress {
@@ -491,6 +518,8 @@ export interface ProjectInvitation {
   project_id: string
   invitee_handle: string
   inviter_handle: string
+  /** 邀请人自己的芝士替他发的。 */
+  invited_by_assistant?: boolean
   status: 'pending' | 'accepted' | 'declined' | 'revoked'
   created_at: string
   responded_at?: string | null
@@ -569,6 +598,7 @@ export interface SpaceDashboard {
 }
 
 // ---- 成员页 / portfolio、个人主页 (spec §1, §7.2, §8.4) ----
+//
 // 这几件搬去了 `./types/profile`：这个文件顶在行数上限上，只能变短。这里只把它们
 // 转出去，`@/cx_types` 对外的名字一个都没变。
 export type {
@@ -652,8 +682,6 @@ export interface Notification {
   read_at: string | null
   created_at: string
 }
-
-// ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 export interface EnvironmentConfig {
   setup_script: string
@@ -763,5 +791,11 @@ export interface ProjectAgent {
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
+  // Bumped on every configuration write; a save sends it back so a stale one is
+  // refused (409) instead of overwriting whoever wrote first.
+  version: number
+  // The handle editing this teammate right now, or null/undefined. A courtesy
+  // read — the refusal that matters comes from `version`.
+  editing?: string | null
   created_at?: string | null
 }

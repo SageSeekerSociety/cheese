@@ -1,6 +1,7 @@
 """Conversations: the register of every place a conversation happens.
 
-A room, a task and a 支线 are each a conversation, and the things that belong to one —
+A room, a task and a 支线 are each a conversation, and so is a person's own
+芝士 conversation, which is in no project; and the things that belong to one —
 what is said in it, an agent's session, its turns and spend, its progress —
 point here (``conversation_id``) rather than at whichever table the
 conversation lives in. A row holds who the conversation is: its id
@@ -8,7 +9,7 @@ conversation lives in. A row holds who the conversation is: its id
 each says about itself stays in ``topics``, ``tasks`` or ``threads``.
 
 The database keeps the register, not the application: inserting a room, a
-task or a 支线 registers it and deleting one removes it (migration ``f7985445d2bf``), so
+task, a 支线 or a person's 芝士 conversation registers it and deleting one removes it (migration ``f7985445d2bf``), so
 no code path creates or deletes these rows.
 """
 
@@ -26,6 +27,9 @@ class ConversationKind(enum.StrEnum):
     room = "room"
     task = "task"
     thread = "thread"
+    #: A person's own 芝士 conversation (``assistant_conversations``), in no
+    #: project.
+    personal = "personal"
 
 
 class Conversation(Base):
@@ -36,8 +40,9 @@ class Conversation(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    # None for a personal conversation, and only for one.
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
     )
     kind: Mapped[ConversationKind] = mapped_column(
         Enum(ConversationKind, native_enum=False, length=16)

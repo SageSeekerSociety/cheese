@@ -80,6 +80,26 @@ async def reuse_s3_connections():
         _s3_connections = previous
 
 
+#: The most one CopyObject copies; a larger object is copied in parts.
+COPY_OBJECT_MAX_BYTES = 5 * 1024**3
+#: The size of each part when an object is copied in parts: 1 GiB keeps a copy
+#: of the largest object a bucket holds (5 TiB) under the 10,000-part limit.
+COPY_PART_BYTES = 1024**3
+
+
+def error_code(exc: Exception) -> str | None:
+    """The bucket's error code for a failed call (``NoSuchUpload``,
+    ``InvalidPart``), or None for a failure that is not an answer from it.
+    Duck-typed on botocore's ``ClientError``, as :func:`_object_is_absent` is."""
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    error = response.get("Error")
+    if not isinstance(error, dict):
+        return None
+    return str(error.get("Code", "")) or None
+
+
 def _object_is_absent(exc: Exception) -> bool:
     """True when the bucket answered "no such key", rather than not answering.
 
@@ -359,22 +379,80 @@ class S3StorageBackend(StorageBackend):
             finally:
                 body.close()
 
-    async def move(self, source: str, key: str) -> bool:
-        """Copy ``source`` to ``key`` inside the bucket and delete ``source``;
-        False when there is no ``source``."""
+    async def copy(self, source: str, key: str) -> bool:
+        """Copy ``source`` to ``key`` inside the bucket, whatever its size;
+        False when there is no ``source``.
+
+        One CopyObject copies at most 5 GiB, so a larger object is copied part
+        by part (UploadPartCopy) by the SDK's managed copy, still without its
+        bytes leaving the bucket."""
+        # deferred-import: start-up cost; boto3's transfer config, for a bucket call
+        from boto3.s3.transfer import TransferConfig
+
+        config = TransferConfig(
+            multipart_threshold=COPY_OBJECT_MAX_BYTES,
+            multipart_chunksize=COPY_PART_BYTES,
+        )
         async with self._get_client() as client:
             try:
-                await client.copy_object(
-                    Bucket=self._bucket,
-                    Key=key,
-                    CopySource={"Bucket": self._bucket, "Key": source},
+                await client.copy(
+                    {"Bucket": self._bucket, "Key": source},
+                    self._bucket,
+                    key,
+                    Config=config,
                 )
             except Exception as exc:
                 if _object_is_absent(exc):
                     return False
                 raise
-            await client.delete_object(Bucket=self._bucket, Key=source)
         return True
+
+    async def start_parts(self, key: str) -> str:
+        """Begin an object put together from parts; the upload's id. Nothing
+        is at ``key`` until :meth:`join_parts`."""
+        async with self._get_client() as client:
+            answer = await client.create_multipart_upload(Bucket=self._bucket, Key=key)
+        return str(answer["UploadId"])
+
+    async def parts(self, key: str, upload_id: str) -> list[dict] | None:
+        """The parts that have arrived (``PartNumber``, ``Size``, ``ETag``), or
+        None for an upload the bucket does not know (joined, aborted, expired)."""
+        found: list[dict] = []
+        async with self._get_client() as client:
+            paginator = client.get_paginator("list_parts")
+            try:
+                async for page in paginator.paginate(
+                    Bucket=self._bucket, Key=key, UploadId=upload_id
+                ):
+                    found.extend(page.get("Parts", []))
+            except Exception as exc:
+                if error_code(exc) == "NoSuchUpload":
+                    return None
+                raise
+        return found
+
+    async def join_parts(self, key: str, upload_id: str, parts: list[dict]) -> None:
+        """Make the object at ``key`` from these parts (``PartNumber``,
+        ``ETag``), in that order."""
+        async with self._get_client() as client:
+            await client.complete_multipart_upload(
+                Bucket=self._bucket,
+                Key=key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+
+    async def abort_parts(self, key: str, upload_id: str) -> None:
+        """Drop an upload and every part it has; one already gone is not an
+        error."""
+        async with self._get_client() as client:
+            try:
+                await client.abort_multipart_upload(
+                    Bucket=self._bucket, Key=key, UploadId=upload_id
+                )
+            except Exception as exc:
+                if error_code(exc) != "NoSuchUpload":
+                    raise
 
     async def stat(self, key: str) -> tuple[int, str] | None:
         """The object's size and ETag, or None for an object that is not there.

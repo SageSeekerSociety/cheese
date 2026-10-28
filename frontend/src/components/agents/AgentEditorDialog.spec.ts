@@ -280,6 +280,7 @@ describe('修改时', () => {
     seat_handle: 'cheese-a2',
     is_default: false,
     is_active: true,
+    version: 1,
   }
 
   it('只改名字时不去动那个可能被别处共用的类型', async () => {
@@ -290,6 +291,7 @@ describe('修改时', () => {
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
         display_name: '严格评审',
         configuration: CONFIG,
+        expected_version: 1,
       })
     })
     expect(updateAgentType).not.toHaveBeenCalled()
@@ -302,6 +304,7 @@ describe('修改时', () => {
     await waitFor(() =>
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
         configuration: { ...CONFIG, body: 'Check security' },
+        expected_version: 1,
       })
     )
     expect(updateAgentType).not.toHaveBeenCalled()
@@ -316,6 +319,7 @@ describe('修改时', () => {
     await waitFor(() =>
       expect(updateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2', {
         configuration: { ...CONFIG, body: 'Check security' },
+        expected_version: 1,
       })
     )
   })

@@ -1,7 +1,7 @@
 {
-  "creditsExhausted": "The credits are used up, so this turn did not run",
+  "creditsExhausted": "The credits are used up, so nothing ran",
   "creditsExhaustedDetail": "Ask the team admin, or whoever grants the allowance, to top it up.",
-  "creditsRefused": "{reason} This turn did not run.",
+  "creditsRefused": "{reason} Nothing ran this time.",
   "creditWarningTeam": "{remaining} left of this month's plan, resetting on {month}/{day}.",
   "creditWarningTeamHours": "{remaining} left of the {hours}-hour plan, reopening on {month}/{day} {time}.",
   "creditWarningTeamWeek": "{remaining} left of this week's plan, reopening on {month}/{day} {time}.",

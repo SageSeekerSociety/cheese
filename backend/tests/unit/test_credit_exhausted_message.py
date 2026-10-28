@@ -1,9 +1,10 @@
-"""What a turn says when the AI relay has no money left.
+"""What a turn says when a model account has no money left.
 
-An exhausted balance arrives as HTTP 429 — the same status as a rate limit — so
-it fell into the generic branch and told the reader to try again later. Retrying
-cannot refill a balance, so that advice sends someone into a loop that can never
-succeed, and hides the one thing that has to happen.
+The platform's own account with a model provider can run dry. Each provider
+says so in its own words and status — a 429 like a rate limit, a 400 like a bad
+request, or the gateway's 402 once no row of the model has credit — and only the
+platform's administrators can top it up. The room is told they have it in hand,
+never sent to pay, and never told it is an overload that waiting fixes.
 
 The other way a turn's money runs out (#715): the PROJECT's compute credits are
 spent, the metering proxy 429s every `/v1/messages` call, and Claude Code reads
@@ -21,7 +22,6 @@ import pytest
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.agent.turn.state.notices import _is_out_of_credit
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
@@ -34,36 +34,84 @@ from tests.conftest import (
 )
 from tests.turn_log import a_topic
 
+# What a turn ended on when a provider account behind the platform's model
+# gateway had no money left, in Claude Code's wording around the gateway's.
+PLATFORM_OUT_OF_CREDIT = [
+    # Verbatim from the failure this came from.
+    "API Error: Request rejected (429) · [1113][余额不足或无用资源包，请充值。]"
+    "[20260731025202bd72819043d8441f]",
+    # The gateway's own answer once no row of the model has credit left
+    # (deploy/gateway/provider_credit.py).
+    'API Error: 402 {"type":"error","error":{"type":"api_error","message":'
+    "\"cheese_upstream_credit_exhausted: the platform's own account with every "
+    'provider serving deepseek-flash is out of credit."}}',
+    # Moonshot and Volcengine word it as a rate limit, which Claude Code
+    # wraps in "temporarily limiting requests" (2026-10-22, dev gateway).
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    ' · litellm.RateLimitError: AnthropicException - {"error":{"message":"Your '
+    "account org-1 <ak-1> is suspended due to insufficient balance, please "
+    'recharge your account","type":"exceeded_current_quota_error"}}',
+    "API Error: Server is temporarily limiting requests (not your usage limit)"
+    ' · litellm.RateLimitError: {"error":{"code":"SetLimitExceeded","message":'
+    '"Your account [2100] has reached the set usage limit for this model, and '
+    'the model service has been paused."}}',
+    'API Error: 400 litellm.BadRequestError: DeepseekException - {"error":'
+    '{"message":"Insufficient Balance","code":"invalid_request_error"}}',
+    "insufficient balance",
+    "Your account has insufficient_quota",
+    "quota exceeded for this key",
+    # OpenAI's other two refusals about a billing state. Both mean a state no
+    # wait changes, and neither is matched by any of the alternatives above —
+    # dropping the bare word "billing" from the rule lost them with the
+    # false positive it was removed for (2026-10-27 review of #4932).
+    "Billing hard limit has been reached",
+    "Your account is not active, please check your billing details",
+]
+
+
+@pytest.mark.parametrize("detail", PLATFORM_OUT_OF_CREDIT)
+def test_a_platform_account_out_of_credit_is_the_platforms_to_fix(detail):
+    """Only the platform's administrators can top up its account with a
+    provider, so the room's card says the platform has it in hand — the same
+    card whichever provider ran dry and however Claude Code wrapped it — never
+    one that sends the reader to pay or reads as a passing overload. A retry
+    is offered: it succeeds once the account is topped up."""
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    line, meta = _turn_failure_notice(detail, None)
+    reference, _ = _turn_failure_notice(PLATFORM_OUT_OF_CREDIT[0], None)
+    assert line == reference
+    assert meta["who"] == "platform"
+    assert meta["retryable"] is True
+    assert detail in meta["detail"]
+
 
 @pytest.mark.parametrize(
     "detail",
     [
-        # Verbatim from the failure this came from.
-        "API Error: Request rejected (429) · [1113][余额不足或无用资源包，请充值。]"
-        "[20260731025202bd72819043d8441f]",
-        "insufficient balance",
-        "Your account has insufficient_quota",
-        "quota exceeded for this key",
-    ],
-)
-def test_a_spent_balance_is_recognised(detail):
-    assert _is_out_of_credit(detail)
-
-
-@pytest.mark.parametrize(
-    "detail",
-    [
-        None,
-        "",
         "upstream timed out",
-        "429 Too Many Requests",  # a real rate limit: waiting DOES help
+        "API Error: 429 Too Many Requests",  # a real rate limit: waiting DOES help
         "connection reset by peer",
+        # The metering proxy's own 503 when its admission check cannot answer
+        # (`deploy/metering-proxy/cheese_billing_core.py`), verbatim from the
+        # failures of 2026-10-27 11:00. It says "billing", and the bare-billing
+        # alternative in the out-of-credit rule read it as the platform's
+        # account running dry: the room was told to wait for a top-up that was
+        # not owed, and the turn was never resumed.
+        "API Error: 503 cheese: task billing attribution is temporarily "
+        "unavailable; retry shortly. This is a server-side issue, usually "
+        "temporary — try again in a moment. If it persists, check "
+        "https://status.claude.com.（server_error）",
     ],
 )
 def test_a_transient_failure_is_not_mistaken_for_it(detail):
-    """Wrongly calling a blip 'out of credit' would send someone to top up an
-    account that is fine — the error in the other direction."""
-    assert not _is_out_of_credit(detail)
+    """Wrongly calling a blip 'out of credit' would tell the room an account
+    is empty when it is fine — the error in the other direction."""
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    line, _ = _turn_failure_notice(detail, None)
+    reference, _ = _turn_failure_notice(PLATFORM_OUT_OF_CREDIT[0], None)
+    assert line != reference
 
 
 # --- #715: a turn admission refused for spent PROJECT credits -----------------
@@ -215,7 +263,7 @@ async def test_a_turn_the_budget_brake_stopped_says_the_credits_ran_out(
     # credits are spent and when they come back, as admission says it.
     resets = month_end(month_of(datetime.now(UTC)))
     assert [b.content for b in notices] == [
-        f"本月额度已用完，{resets.month}月{resets.day}日重置。这一轮没有执行。"
+        f"本月额度已用完，{resets.month}月{resets.day}日重置。这次没有运行。"
     ]
     assert not any((b.meta or {}).get("retryable") for b in notices)
 

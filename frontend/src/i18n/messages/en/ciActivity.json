@@ -11,7 +11,7 @@
     "seconds": "{n} s"
   },
   "state": {
-    "loadFailed": "Could not read the CI data",
+    "loadFailed": "Could not load the CI data",
     "retry": "Retry",
     "loading": "Loading…"
   },

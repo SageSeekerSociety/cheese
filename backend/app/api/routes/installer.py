@@ -129,7 +129,18 @@ fi
 binary="$ORIGIN/connector/latest/$target/cheesehost"
 # -D keeps the response's headers: the response that carries the bytes also
 # names their sha256, and that number is what the check below compares to.
-until curl -fSL "$progress" -C - -D "$headers" -o "$partial" "$binary"; do
+# The packed copy is a third of the size, and is asked for only where gzip can
+# unpack it: a machine without gzip would otherwise receive a stream it cannot
+# use. The header carries an empty value there, which sends no header at all.
+# Naming it by hand instead of using curl's --compressed is what keeps a
+# resumed range meaningful: --compressed decodes as it goes, while these bytes
+# stay a gzip stream on disk until the unpack below, which is also where the
+# checksum gets the bytes the machine runs.
+accept="Accept-Encoding:"
+if command -v gzip >/dev/null 2>&1; then
+  accept="Accept-Encoding: gzip"
+fi
+until curl -fSL "$progress" -C - -D "$headers" -H "$accept" -o "$partial" "$binary"; do
   if [ "$attempt" -ge 5 ]; then
     rm -f "$partial" "$headers"
     echo "download failed after $attempt attempts"
@@ -139,6 +150,19 @@ until curl -fSL "$progress" -C - -D "$headers" -o "$partial" "$binary"; do
   echo "download interrupted; resuming (attempt $attempt)…"
   sleep 2
 done
+# Whether the packed copy arrived is decided by the file itself, not by a
+# header: a resumed transfer's own response may not repeat Content-Encoding,
+# and what is measured here is the file assembled across attempts. `gzip -t`
+# says so without another tool to find — it fails on anything that is not a
+# whole gzip stream, which is exactly when unpacking must not be attempted.
+if gzip -t "$partial" >/dev/null 2>&1; then
+  if ! gzip -dc "$partial" > "$partial.plain"; then
+    rm -f "$partial" "$partial.plain" "$headers"
+    echo "cannot unpack cheesehost ($target); not installing it" >&2
+    exit 1
+  fi
+  mv "$partial.plain" "$partial"
+fi
 # The server hashes the very bytes it serves, so this comparison says whether
 # what we hold is what it published. A transfer a relay truncated, or anything
 # that substituted one, must not reach PATH as an executable. A missing header
@@ -232,10 +256,14 @@ $partial = "$exe.part"
 $headers = "$exe.headers"
 Remove-Item -Force -ErrorAction SilentlyContinue $partial
 $url = "$origin/connector/latest/windows-$arch/cheesehost.exe"
-# Resume a download cut mid-transfer, as install.sh does.
+# Resume a download cut mid-transfer, as install.sh does. Accept-Encoding names
+# the packed copy by hand instead of curl's --compressed, which decodes as it
+# goes: the file on disk stays a gzip stream, so a resumed range still lands on
+# the same file, and the unpack below hands the checksum the bytes the machine
+# runs.
 for ($attempt = 1; ; $attempt++) {
   Remove-Item -Force -ErrorAction SilentlyContinue $headers
-  & curl.exe -fsSL -C - -D $headers -o $partial $url
+  & curl.exe -fsSL -C - -D $headers -H "Accept-Encoding: gzip" -o $partial $url
   if ($LASTEXITCODE -eq 0) { break }
   if ($attempt -ge 5) {
     Remove-Item -Force -ErrorAction SilentlyContinue $partial
@@ -243,6 +271,30 @@ for ($attempt = 1; ; $attempt++) {
   }
   Write-Host "download interrupted; resuming (attempt $($attempt + 1))..."
   Start-Sleep -Seconds 2
+}
+# The gzip magic says which copy arrived, not a header: a resumed transfer's own
+# response may not repeat Content-Encoding, and the file assembled across
+# attempts is what gets unpacked.
+$magic = New-Object byte[] 2
+$head = [System.IO.File]::OpenRead($partial)
+try { $read = $head.Read($magic, 0, 2) } finally { $head.Dispose() }
+if ($read -eq 2 -and $magic[0] -eq 0x1f -and $magic[1] -eq 0x8b) {
+  try { Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop } catch {}
+  $plain = "$partial.plain"
+  try {
+    $source = [System.IO.File]::OpenRead($partial)
+    try {
+      $target = [System.IO.File]::Create($plain)
+      try {
+        $packed = [System.IO.Compression.GZipStream]::new($source, [System.IO.Compression.CompressionMode]::Decompress)
+        try { $packed.CopyTo($target) } finally { $packed.Dispose() }
+      } finally { $target.Dispose() }
+    } finally { $source.Dispose() }
+  } catch {
+    Remove-Item -Force -ErrorAction SilentlyContinue $partial, $plain
+    throw "cannot unpack cheesehost (windows-$arch): $($_.Exception.Message)"
+  }
+  Move-Item -Force $plain $partial
 }
 # The same response that carried the bytes named their sha256; check the file
 # against it before it replaces anything, as install.sh does.
@@ -321,7 +373,13 @@ async def claude_pin() -> dict[str, str]:
 
 
 @router.get("/claude/{version}/{platform}/{name}")
-async def download_claude(version: str, platform: str, name: str) -> Response:
+async def download_claude(
+    version: str, platform: str, name: str, request: Request
+) -> Response:
+    """The pinned Claude Code build. ``X-Checksum-SHA256`` names the binary a
+    machine ends up running; a client that accepts gzip gets the packed copy
+    and unpacks it itself. Either copy answers a Range request, so a machine
+    whose download was cut off asks only for the rest of it."""
     if not claude_dist.VERSION_RE.match(version):
         return PlainTextResponse("bad version", status_code=400)
     if not claude_dist.PLATFORM_RE.match(platform):
@@ -336,7 +394,20 @@ async def download_claude(version: str, platform: str, name: str) -> Response:
         return PlainTextResponse(
             f"claude {version} unavailable: {exc}", status_code=503
         )
-    return FileResponse(binary, media_type="application/octet-stream", filename=name)
+    headers = {
+        "Vary": "Accept-Encoding",
+        "X-Checksum-SHA256": await asyncio.to_thread(claude_dist.served_digest, binary),
+    }
+    if _accepts_gzip(request):
+        return FileResponse(
+            await asyncio.to_thread(claude_dist.packed, binary),
+            media_type="application/octet-stream",
+            filename=name,
+            headers={**headers, "Content-Encoding": "gzip"},
+        )
+    return FileResponse(
+        binary, media_type="application/octet-stream", filename=name, headers=headers
+    )
 
 
 # pi, served for the same reason and in the same shape. The artifact is a

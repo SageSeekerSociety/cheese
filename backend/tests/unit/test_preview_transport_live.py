@@ -111,7 +111,8 @@ def test_independent_preview_role_keeps_helper_when_backend_client_is_replaced(
             agent_handle=seat,
         )
         tunnel, _ = wire.open_ws(
-            f"ws://127.0.0.1:{port}{tunnel_path}?token={token}",
+            f"ws://127.0.0.1:{port}{tunnel_path}",
+            headers={"Authorization": f"Bearer {token}"},
         )
         ports = tmp_path / "role.port"
         ports.write_text(str(native.server_port))
@@ -202,8 +203,11 @@ def _relay(port_file, monkeypatch):
         project_id=str(uuid.uuid4()), topic_id=str(topic), agent_handle=seat
     )
     tunnel, answered = wire.open_ws(
-        f"ws://127.0.0.1:{port}/preview/tunnel?token={token}",
-        headers={wire.CAPS_HEADER: ",".join(sorted(wire.CAPABILITIES))},
+        f"ws://127.0.0.1:{port}/preview/tunnel",
+        headers={
+            "Authorization": f"Bearer {token}",
+            wire.CAPS_HEADER: ",".join(sorted(wire.CAPABILITIES)),
+        },
     )
     capabilities = frozenset(answered[wire.CAPS_HEADER].split(","))
     assert capabilities == wire.CAPABILITIES

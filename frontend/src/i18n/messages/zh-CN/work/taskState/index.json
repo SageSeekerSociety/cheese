@@ -1,0 +1,21 @@
+{
+  "blockedFallback": "打开看看{name}需要什么",
+  "bouncedLine": "等{name}改",
+  "label": {
+    "running": "在做",
+    "waiting": "在等",
+    "blocked": "卡住",
+    "asking": "待回答",
+    "review": "待审阅",
+    "bounced": "退回",
+    "accepted": "已采纳",
+    "open": "开启",
+    "closed": "已关闭"
+  },
+  "submitted": "{time}提交",
+  "version": "第 {n} 版",
+  "waitedFor": "已等 {time}",
+  "waitsOn": "等 {name}",
+  "waitsOnYou": "等你",
+  "workedFor": "已做 {time}"
+}

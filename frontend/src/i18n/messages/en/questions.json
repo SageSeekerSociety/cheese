@@ -63,7 +63,7 @@
     },
     "errors": {
       "inviteFailed": "Couldn't invite: {reason}",
-      "loadFailed": "Could not load who you can invite."
+      "loadFailed": "Could not load who you can invite"
     }
   },
   "answer": {

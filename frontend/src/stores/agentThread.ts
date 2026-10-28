@@ -5,7 +5,7 @@
 //
 // 回答是流式的（server-sent events）：`queued` 在等会话机空出来，`delta` 是文字，
 // `tool` 是芝士开始调一个工具，`tool_args` 是那次调用边写边流过来的参数（页面拿它
-// 先把表单填上），`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
+// 先把表单填上），`tool_done` 是那次调用回来了，`tool_failed` 是那次调用报错了，`change` 是芝士写进了草稿、改了哪几格
 // （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，
 // `proposal` 是它替人起草了一条要发到项目里的消息、或一个要开的任务（人确认后才发出），`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
@@ -15,7 +15,7 @@ import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
-import { refusalText, renderNoticeMessage } from '@/lib/noticeText'
+import { type NoticeMessage, refusalText, renderNoticeMessage } from '@/lib/noticeText'
 
 export interface AssistantConversation {
   id: string
@@ -37,23 +37,96 @@ export interface AssistantStep {
   ms?: number
   /** 开始的时刻（本页的钟），算推理用了多久。 */
   startedAt?: number
+  /** 它之前回答写到了第几个字：面板把它排在这些字后面。 */
+  at?: number
+  /** 它读到的东西叫什么（「频道「综合」」）：回来时才知道，显示在编号的位置。 */
+  shown?: string
+  /** 它做的是哪一类事：查阅、改了东西、影响到别人。回来时才知道。 */
+  effect?: StepEffect
+}
+
+/** 一步做的是哪一类事，照工具表上写的（`backend/sandbox/cheese` 的 `READS` 等）。 */
+export type StepEffect = 'reads' | 'changes' | 'reaches others'
+
+const STEP_EFFECTS = new Set<string>(['reads', 'changes', 'reaches others'])
+
+function effectOf(value: unknown): { effect?: StepEffect } {
+  return typeof value === 'string' && STEP_EFFECTS.has(value) ? { effect: value as StepEffect } : {}
+}
+
+/** 芝士派出的一个分身：派它的那次调用（`call`）、它做什么、做到哪了、最近做的几步。 */
+export interface AssistantSubagent {
+  id: string
+  call: string
+  description: string
+  status: 'running' | 'done' | 'failed' | 'stopped'
+  steps: { name: string; args: string; shown?: string }[]
 }
 
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
-  steps?: { call: string; name: string; args: string; failed?: string; ms?: number }[]
+  steps?: {
+    call: string
+    name: string
+    args: string
+    failed?: string
+    ms?: number
+    at?: number
+    shown?: string
+    effect?: string
+  }[]
+  /** 做了事，却一个字没写。 */
+  silent?: boolean
+  /** 这一轮派出的分身，最后是什么样。 */
+  subagents?: AssistantSubagent[]
   edits?: Record<string, unknown>[]
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
   /** 问题带的文件名。 */
   files?: string[]
-  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条例行事务。 */
+  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条自动化、发生了什么。 */
   shown?: AssistantShown
+  /** 芝士交给人的文件。 */
+  handed?: AssistantHanded[]
+  rules?: AssistantRule[]
+  /** 问题是在哪一页问的（那一页的名字）。 */
+  page?: string
+  /** 问题带着的、人在页面上选中的那段字。 */
+  selection?: string
+  /** 问题里 `<#id>` 引用的东西。 */
+  cited?: AssistantCited[]
 }
 
-/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行。 */
+/** 问题里引用的一样东西：`<#id>` 里的 id、种类和名字。 */
+export interface AssistantCited {
+  id: string
+  kind: 'channel' | 'task' | 'thread' | 'doc' | 'file' | 'problem'
+  title: string
+}
+
+/** 芝士交给人的一份文件（`cheese_library(action=give)`）：存在他自己的资料库里——他名下那个团队
+ *  （`team`）的，叫 `path`。 */
+export interface AssistantHanded {
+  team: number
+  path: string
+  bytes: number
+}
+
+/** 芝士建或改的一条自动化（`cheese_routine`），回答里的那张卡片：什么时候、做什么。
+ *  它现在怎样（等待中、已开始……）按 `id` 另读。 */
+export interface AssistantRule {
+  id: string
+  when: string
+  note: string
+}
+
+/** 平台说的那一句在面板上怎么写：哪条自动化开始运行，或这段对话里等的事到了——任务的
+ *  审阅（`task`、`event`）时说是哪件事。 */
 export interface AssistantShown {
   routine?: string
+  wait?: string
+  task?: string
+  event?: string
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -72,9 +145,14 @@ export interface AssistantEdit {
   created: boolean
   version: number
   name: string
+  /** 写完这一次，草稿上的题怎么开始：卡上队伍锁定、日期两格按它说。 */
+  startMode?: 'DIRECT' | 'APPLY'
   changed: Record<string, { before: unknown; after: unknown }>
   kept: string[]
   notes: { field: string; text: string }[]
+  /** 照这次写入之后草稿的样子，存下它的阶段会让几个人被判未通过、几个人回到进行中（或
+   *  保存会被拒的那句），按句子的键和参数给，读的人用自己的语言读。空 = 没人受影响。 */
+  stageEffect: NoticeMessage[]
   undone: string[]
 }
 
@@ -115,6 +193,8 @@ export interface AssistantPublished {
 export interface AssistantMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
+  /** 在话题里的顺序号：往上翻时从最早读到的那一条往前读。这一页刚说的没有。 */
+  seq?: number
   /** 回答被人停下了；`text` 是停下时已经写出的部分。 */
   stopped?: boolean
   at: string
@@ -126,12 +206,37 @@ export interface AssistantMessage {
   edits?: AssistantEdit[]
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
+  handed?: AssistantHanded[]
+  rules?: AssistantRule[]
+  /** 做了事，却一个字没写：面板说一句，不留一段空白。 */
+  silent?: boolean
+  /** 这一轮派出的分身。 */
+  subagents?: AssistantSubagent[]
+  /** 人问的：在哪一页问的、带着选中的哪段字、引用了什么。 */
+  askedOn?: string
+  selection?: string
+  cited?: AssistantCited[]
+}
+
+/** 问一句时除了问题本身还交什么：请求里多带的几样，和这一句在面板上怎么写。 */
+export interface AssistantAsking {
+  body: Record<string, unknown>
+  shown: Pick<AssistantMessage, 'askedOn' | 'selection' | 'cited'>
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
  *  任务、支线（topic）、文档（doc）和项目本身（project）按 UUID。 */
+/** 交给芝士的一个文件：消息附件，或个人资料库里的一份。 */
+export type HandedFile = { id: number; name: string } | { path: string; name: string }
+
+/** 芝士答着时插进去的一句话，那一轮结束前芝士没听到（服务端原样交回）。 */
+export interface Unheard {
+  text?: string
+  files?: HandedFile[]
+}
+
 export interface AssistantPage {
-  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project'
+  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project' | 'library'
   id: number | string
 }
 
@@ -151,33 +256,56 @@ export interface AssistantTopic {
   title: string
   lastActiveAt: string
   messages: AssistantMessage[]
+  /** 这个话题还有更早的消息没读回来。 */
+  earlier?: boolean
+}
+
+/** 一问是从哪一页问的，按按下问的那一刻定下来：之后换了页、页面状态变了，都不改它。 */
+export interface AskTarget {
+  /** 人没把「当前页面」关掉：这一问带页面。 */
+  on: boolean
+  /** 那一页（那一刻的值）；还没有可挂的东西时是 null（发布页、改题页还没建草稿）。 */
+  page: AssistantPage | null
+  /** 那一页问之前要做的：先存好草稿。交回这一问要挂的那一份（它刚建、刚存的草稿）。 */
+  prepare?: () => Promise<AssistantPage | null | void>
 }
 
 export interface AssistantOptions {
-  page?: () => AssistantPage | null
-  /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
-  prepare?: () => Promise<void>
+  /** 按下问的那一刻读一次：问的是哪一页、那一页问之前要做什么（见 `AskTarget`）。不给就
+   *  不说页面的事。 */
+  target?: () => AskTarget
   on?: AssistantHooks
+  /** 这一句还带什么（不带页面、选中的字、引用），每问一句读一次。 */
+  asking?: (question: string) => AssistantAsking
 }
 
 export function createAssistant(opts: AssistantOptions = {}) {
   const on = opts.on ?? {}
 
-  /** 这个人的话题，最近的在前。 */
+  /** 这个人的话题，最近的在前：读回来的那几页。 */
   const conversations = ref<AssistantConversation[]>([])
+  /** 下一页话题从哪里读起；null 是没有更早的了。 */
+  const nextPage = ref<string | null>(null)
+  /** 当前话题还有更早的消息没读回来。 */
+  const currentEarlier = ref(false)
   /** 当前话题上面摆着的之前几个话题，按时间从早到晚。 */
   const earlier = ref<AssistantTopic[]>([])
   const current = ref<string | null>(null)
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
   const streaming = ref<string | null>(null)
-  /** 芝士此刻在用的工具名（`cheese_docs_search` 之类），面板把它说成人话。 */
+  /** 芝士此刻在用的工具名（`cheese_help` 之类），面板把它说成人话。 */
   const tool = ref<string | null>(null)
   /** 这一轮正在做的几步。 */
   const steps = ref<AssistantStep[]>([])
   const edits = ref<AssistantEdit[]>([])
   const published = ref<AssistantPublished[]>([])
   const proposals = ref<AssistantProposal[]>([])
+  /** 这一轮交出来的文件。 */
+  const handed = ref<AssistantHanded[]>([])
+  const rules = ref<AssistantRule[]>([])
+  /** 这一轮派出的分身，做到哪了。 */
+  const subagents = ref<AssistantSubagent[]>([])
   /** 在等会话机空出来，还没开始答。 */
   const queued = ref(false)
   /** 没答上来、额度用完之类要告诉人的那一句。 */
@@ -192,30 +320,49 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 还有没摆出来的更早的话题：往上翻能读。 */
   const hasOlder = computed(() => {
     const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-    return conversations.value.some((c) => !shown.has(c.id))
+    return nextPage.value !== null || conversations.value.some((c) => !shown.has(c.id))
   })
 
+  type ConversationPage = { conversations: AssistantConversation[]; next?: string | null }
+
+  /** 读最近的一页话题，替换掉之前读的。 */
   async function listConversations() {
-    const data = await request<{ conversations: AssistantConversation[] }>('/assistant/conversations')
+    const data = await request<ConversationPage>('/assistant/conversations')
     conversations.value = data.conversations ?? []
+    nextPage.value = data.next ?? null
   }
 
+  /** 接着读下一页更早的话题。 */
+  async function morePage() {
+    if (nextPage.value === null) return
+    const data = await request<ConversationPage>(
+      `/assistant/conversations?before=${encodeURIComponent(nextPage.value)}`
+    )
+    const known = new Set(conversations.value.map((c) => c.id))
+    conversations.value = [...conversations.value, ...(data.conversations ?? []).filter((c) => !known.has(c.id))]
+    nextPage.value = data.next ?? null
+  }
+
+  type ReadMessage = AssistantMessage & { parts?: StoredParts }
   type ReadConversation = AssistantConversation & {
-    messages: (AssistantMessage & { parts?: StoredParts })[]
+    messages: ReadMessage[]
     answering?: string | null
+    /** 还有更早的消息。 */
+    earlier?: boolean
   }
 
   async function read(id: string): Promise<ReadConversation> {
     return request<ReadConversation>(`/assistant/conversations/${id}`)
   }
 
-  const shownMessages = (data: ReadConversation) =>
+  const shownMessages = (data: { messages: ReadMessage[] }) =>
     data.messages.map(({ parts, ...message }) => (parts ? { ...message, ...kept(parts) } : message))
 
   async function open(id: string) {
     const data = await read(id)
     current.value = id
     messages.value = shownMessages(data)
+    currentEarlier.value = data.earlier === true
     notice.value = null
     // 打开时还在答（刷新了页面、换了一台设备）：接上，看它接着写。
     const answering = data.answering
@@ -225,7 +372,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         (onEvent) => getEventStream(`/assistant/conversations/${id}/answers/${answering}`, onEvent),
         t('tasks.assistant.failed'),
         answering
-      )
+      ).then((unheard) => askUnheard(unheard, t('tasks.assistant.failed')))
   }
 
   /** 打开面板：接着最近的那个话题；一个都没有，就从第一句话开始一个新的。只读一次，
@@ -242,9 +389,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
   function reset() {
     loaded.value = false
     conversations.value = []
+    nextPage.value = null
     earlier.value = []
     current.value = null
     messages.value = []
+    currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
   }
@@ -261,11 +410,13 @@ export function createAssistant(opts: AssistantOptions = {}) {
           title: at?.title ?? '',
           lastActiveAt: at?.lastActiveAt ?? new Date().toISOString(),
           messages: messages.value,
+          earlier: currentEarlier.value,
         },
       ]
     }
     current.value = null
     messages.value = []
+    currentEarlier.value = false
     notice.value = null
   }
 
@@ -280,14 +431,51 @@ export function createAssistant(opts: AssistantOptions = {}) {
     await listConversations().catch(() => undefined)
   }
 
-  /** 往上翻：把还没摆出来的、最近的那个更早的话题读回来，摆在最上面。 */
+  /** 一个话题（`null` 是当前这个）更早的那一页消息：读回来接在它最上面。 */
+  async function earlierMessages(id: string | null) {
+    const topic = id === null ? null : earlier.value.find((t) => t.id === id)
+    const conversation = id ?? current.value
+    const shown = topic ? topic.messages : messages.value
+    const first = shown.find((m) => typeof m.seq === 'number')?.seq
+    if (!conversation || first === undefined) return
+    const data = await request<{ messages: ReadMessage[]; earlier?: boolean }>(
+      `/assistant/conversations/${conversation}/messages?before=${first}`
+    )
+    const more = shownMessages(data)
+    if (topic)
+      earlier.value = earlier.value.map((t) =>
+        t.id === id ? { ...t, messages: [...more, ...t.messages], earlier: data.earlier === true } : t
+      )
+    else {
+      messages.value = [...more, ...messages.value]
+      currentEarlier.value = data.earlier === true
+    }
+  }
+
+  /** 往上翻：最上面那个话题还有更早的消息，先读它的；读完了，再把还没摆出来的、最近的那个
+   *  更早的话题读回来，摆在最上面。读过的那几页里没有了，就接着读下一页话题。 */
   async function older() {
-    const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
-    const next = conversations.value.find((c) => !shown.has(c.id))
+    const top = earlier.value[0]
+    if (top ? top.earlier : currentEarlier.value) return earlierMessages(top ? top.id : null)
+    const unshown = () => {
+      const shown = new Set([current.value, ...earlier.value.map((topic) => topic.id)])
+      return conversations.value.find((c) => !shown.has(c.id))
+    }
+    let next = unshown()
+    while (!next && nextPage.value !== null) {
+      await morePage()
+      next = unshown()
+    }
     if (!next) return
     const data = await read(next.id)
     earlier.value = [
-      { id: next.id, title: data.title, lastActiveAt: data.lastActiveAt, messages: shownMessages(data) },
+      {
+        id: next.id,
+        title: data.title,
+        lastActiveAt: data.lastActiveAt,
+        messages: shownMessages(data),
+        earlier: data.earlier === true,
+      },
       ...earlier.value,
     ]
   }
@@ -300,29 +488,41 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return data.id
   }
 
-  async function ask(question: string, fallback: string, files: { id: number; name: string }[] = []) {
+  /** `kept`：这句话已经在对话里了（芝士答着时插的话，没等它听到那一轮就结束了），
+   *  只问，不再记一遍。 */
+  async function ask(question: string, fallback: string, files: HandedFile[] = [], kept = false) {
     const text = question.trim()
     if ((!text && !files.length) || busy.value) return
     notice.value = null
     creditRefused.value = false
     streaming.value = ''
     const at = new Date().toISOString()
-    messages.value = [
-      ...messages.value,
-      { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
-    ]
+    const asking = opts.asking?.(text)
+    const target = opts.target?.() ?? null
+    if (!kept)
+      messages.value = [
+        ...messages.value,
+        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
+      ]
     // 面板只留服务端存下的东西：被拒的问题不留那一句。
     let asked = false
+    let unheard: Unheard[] = []
     try {
-      await opts.prepare?.()
+      const prepared = await target?.prepare?.()
       const id = await ensureConversation()
-      const page = opts.page?.() ?? null
-      await follow(
+      const page = target?.on ? prepared || target.page : null
+      unheard = await follow(
         id,
         (onEvent) =>
           postEventStream(
             `/assistant/conversations/${id}/ask`,
-            { question: text, ...(page ? { page } : {}), ...(files.length ? { files } : {}) },
+            {
+              question: text,
+              ...(page ? { page } : target ? { no_page: true } : {}),
+              ...(files.length ? { files } : {}),
+              ...asking?.body,
+              ...(kept ? { kept: true } : {}),
+            },
             onEvent,
             { onOpen: () => (asked = true) }
           ),
@@ -334,30 +534,71 @@ export function createAssistant(opts: AssistantOptions = {}) {
         creditRefused.value = isCreditRefusal(error.body)
       } else notice.value = fallback
     } finally {
-      if (!asked) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      if (!asked && !kept) messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
       streaming.value = null
       await listConversations().catch(() => undefined)
     }
+    await askUnheard(unheard, fallback)
+  }
+
+  /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */
+  async function askUnheard(unheard: Unheard[], fallback: string) {
+    if (!unheard.length) return
+    const text = unheard
+      .map((u) => u.text ?? '')
+      .filter(Boolean)
+      .join('\n\n')
+    await ask(
+      text,
+      fallback,
+      unheard.flatMap((u) => u.files ?? []),
+      true
+    )
   }
 
   /** 存下的那一轮，读回成面板上的步骤、改动和结果。 */
   function kept(
     parts: StoredParts
-  ): Pick<AssistantMessage, 'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown'> {
+  ): Pick<
+    AssistantMessage,
+    | 'steps'
+    | 'edits'
+    | 'published'
+    | 'proposals'
+    | 'files'
+    | 'shown'
+    | 'handed'
+    | 'rules'
+    | 'silent'
+    | 'subagents'
+    | 'askedOn'
+    | 'selection'
+    | 'cited'
+  > {
     return {
+      ...(parts.page ? { askedOn: parts.page } : {}),
+      ...(parts.selection ? { selection: parts.selection } : {}),
+      ...(parts.cited?.length ? { cited: parts.cited } : {}),
+      ...(parts.subagents?.length ? { subagents: parts.subagents } : {}),
       ...(parts.files?.length ? { files: parts.files } : {}),
+      ...(parts.silent ? { silent: true } : {}),
       ...(parts.shown ? { shown: parts.shown } : {}),
       steps: (parts.steps ?? []).map((step) => ({
         call: step.call,
         name: step.name,
         args: step.args,
         ms: step.ms,
+        ...(typeof step.at === 'number' ? { at: step.at } : {}),
+        ...(step.shown ? { shown: step.shown } : {}),
+        ...effectOf(step.effect),
         state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
         error: step.failed,
       })),
       edits: (parts.edits ?? []).map(toEdit),
       published: parts.published ?? [],
       proposals: parts.proposals ?? [],
+      handed: parts.handed ?? [],
+      rules: parts.rules ?? [],
     }
   }
 
@@ -373,20 +614,23 @@ export function createAssistant(opts: AssistantOptions = {}) {
       created: payload.created === true,
       version: Number(payload.version) || 0,
       name: typeof payload.name === 'string' ? payload.name : '',
+      startMode: payload.startMode === 'APPLY' || payload.startMode === 'DIRECT' ? payload.startMode : undefined,
       changed: (payload.changed as AssistantEdit['changed']) ?? {},
       kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
       notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
+      stageEffect: Array.isArray(payload.stageEffect) ? (payload.stageEffect as NoticeMessage[]) : [],
       undone: Array.isArray(payload.undone) ? (payload.undone as string[]) : [],
     }
   }
 
-  /** 还在跑的那几步算做完了：芝士开始说话、调下一个工具、或答完了。推理的那一段记下
-   *  它用了多久。 */
-  function settleSteps() {
+  /** 还在跑的那几步算做完了：芝士开始说话、开始推理、或答完了。推理的那一段记下它用了
+   *  多久。`thinkingOnly`：只结束推理——芝士接着调下一个工具时，同时调的那几个还在跑，
+   *  它们各自回来时（`tool_done`）才算完。 */
+  function settleSteps(thinkingOnly = false) {
     let changed = false
     const now = Date.now()
     const next = steps.value.map((step) => {
-      if (step.state !== 'run') return step
+      if (step.state !== 'run' || (thinkingOnly && step.name !== 'thinking')) return step
       changed = true
       if (step.name === 'thinking') return { ...step, state: 'done' as const, ms: now - (step.startedAt ?? now) }
       on.toolEnded?.(step.call, step.name, false)
@@ -396,21 +640,37 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   function onStep(event: string, payload: Record<string, unknown>) {
+    const at = typeof payload.at === 'number' ? { at: payload.at } : {}
     if (event === 'thinking') {
       settleSteps()
       steps.value = [
         ...steps.value,
-        { call: `thinking-${steps.value.length}`, name: 'thinking', args: '', state: 'run', startedAt: Date.now() },
+        {
+          call: `thinking-${steps.value.length}`,
+          name: 'thinking',
+          args: '',
+          state: 'run',
+          startedAt: Date.now(),
+          ...at,
+        },
       ]
       queued.value = false
     } else if (event === 'tool') {
-      settleSteps()
+      settleSteps(true)
       const call = typeof payload.call === 'string' ? payload.call : `step-${steps.value.length}`
       const name = typeof payload.name === 'string' ? payload.name : ''
       if (!steps.value.some((s) => s.call === call))
-        steps.value = [...steps.value, { call, name, args: '', state: 'run' }]
+        steps.value = [...steps.value, { call, name, args: '', state: 'run', ...at }]
       tool.value = name || null
       queued.value = false
+    } else if (event === 'tool_done' && typeof payload.call === 'string') {
+      steps.value = steps.value.map((step) => {
+        if (step.call !== payload.call || step.state !== 'run') return step
+        on.toolEnded?.(step.call, step.name, false)
+        const shown = typeof payload.shown === 'string' && payload.shown ? { shown: payload.shown } : {}
+        return { ...step, ...shown, ...effectOf(payload.effect), state: 'done' }
+      })
+      if (!steps.value.some((step) => step.state === 'run')) tool.value = null
     } else if (event === 'tool_args' && typeof payload.call === 'string' && typeof payload.text === 'string') {
       const at = typeof payload.at === 'number' ? payload.at : 0
       steps.value = steps.value.map((step) => {
@@ -429,6 +689,13 @@ export function createAssistant(opts: AssistantOptions = {}) {
       const edit = toEdit(payload)
       edits.value = [...edits.value, edit]
       on.edit?.(edit)
+    } else if (event === 'subagents' && Array.isArray(payload.branches)) {
+      subagents.value = payload.branches as AssistantSubagent[]
+    } else if (event === 'handed') {
+      handed.value = [...handed.value, payload as unknown as AssistantHanded]
+    } else if (event === 'rule') {
+      const rule = payload as unknown as AssistantRule
+      rules.value = [...rules.value.filter((r) => r.id !== rule.id), rule]
     } else if (event === 'proposal') {
       proposals.value = [...proposals.value, payload as unknown as AssistantProposal]
     } else if (event === 'published') {
@@ -439,13 +706,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 读一个问题的回答，直到它答完：连接断了（关了页面、后端重启）就从断的地方接着读，
-   *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。 */
+   *  服务端那边一直在答。答完的回答进对话；没答完的不留半截。交回答着时插进去、芝士
+   *  却没听到的话（人按了停止的不算：那是不要它接着做了）。 */
   async function follow(
     conversation: string,
     start: (onEvent: OnEvent) => Promise<void>,
     fallback: string,
     question?: string
-  ) {
+  ): Promise<Unheard[]> {
     streaming.value = ''
     tool.value = null
     queued.value = false
@@ -453,10 +721,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
     edits.value = []
     published.value = []
     proposals.value = []
+    handed.value = []
+    rules.value = []
+    subagents.value = []
     let answer = ''
     let failed = false
     let stopped = false
     let done = false
+    let unheard: Unheard[] = []
     const onEvent: OnEvent = (event, payload) => {
       if (event === 'queued') {
         queued.value = true
@@ -472,6 +744,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         settleSteps()
         done = true
         stopped = payload.stopped === true
+      } else if (event === 'unheard' && Array.isArray(payload.said)) {
+        unheard = payload.said as Unheard[]
       } else if (event === 'error') {
         failed = true
         notice.value = renderNoticeMessage(
@@ -495,7 +769,12 @@ export function createAssistant(opts: AssistantOptions = {}) {
     } finally {
       settleSteps()
       const did =
-        steps.value.length > 0 || edits.value.length > 0 || published.value.length > 0 || proposals.value.length > 0
+        steps.value.length > 0 ||
+        edits.value.length > 0 ||
+        published.value.length > 0 ||
+        proposals.value.length > 0 ||
+        handed.value.length > 0 ||
+        rules.value.length > 0
       if (current.value === conversation && ((answer && !failed && done) || stopped || did))
         messages.value = [
           ...messages.value,
@@ -508,6 +787,10 @@ export function createAssistant(opts: AssistantOptions = {}) {
             edits: edits.value,
             published: published.value,
             proposals: proposals.value,
+            handed: handed.value,
+            rules: rules.value,
+            ...(subagents.value.length ? { subagents: subagents.value } : {}),
+            ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
         ]
       if (current.value === conversation) {
@@ -518,8 +801,12 @@ export function createAssistant(opts: AssistantOptions = {}) {
         edits.value = []
         published.value = []
         proposals.value = []
+        handed.value = []
+        rules.value = []
+        subagents.value = []
       }
     }
+    return stopped || current.value !== conversation ? [] : unheard
   }
 
   /** 一件起草的事现在怎样了（人发出了，或说不用了）：面板照着改那张卡。 */
@@ -545,6 +832,67 @@ export function createAssistant(opts: AssistantOptions = {}) {
     return done
   }
 
+  /** 这段对话在别处说了新的话（别的标签页、别的设备、例行事务）：话题列表重读；正开着它、
+   *  这里又没在答，就把它最近的那一页重读一遍，往上翻读回来的更早的照旧留着。 */
+  async function heard(conversation: string) {
+    await listConversations().catch(() => undefined)
+    if (conversation !== current.value || busy.value) return
+    const data = await read(conversation)
+    if (conversation !== current.value || busy.value) return
+    const page = shownMessages(data)
+    const first = page.find((m) => typeof m.seq === 'number')?.seq
+    const before = first === undefined ? [] : messages.value.filter((m) => typeof m.seq === 'number' && m.seq < first)
+    messages.value = [...before, ...page]
+    if (!before.length) currentEarlier.value = data.earlier === true
+    if (data.answering)
+      void follow(
+        conversation,
+        (onEvent) => getEventStream(`/assistant/conversations/${conversation}/answers/${data.answering}`, onEvent),
+        t('tasks.assistant.failed'),
+        data.answering
+      ).then((unheard) => askUnheard(unheard, t('tasks.assistant.failed')))
+  }
+
+  /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
+   *  这时恰好答完了，就当作一个新问题问。 */
+  async function say(text: string, fallback: string, files: HandedFile[] = []) {
+    const words = text.trim()
+    const id = current.value
+    if (!words && !files.length) return
+    if (!id || !busy.value) return ask(words, fallback, files)
+    const at = new Date().toISOString()
+    const asking = opts.asking?.(words)
+    // 插进去的话没换页面：只写它带的字和引用，不写「在哪问的」。
+    const shown = {
+      ...(asking?.shown.selection ? { selection: asking.shown.selection } : {}),
+      ...(asking?.shown.cited ? { cited: asking.shown.cited } : {}),
+    }
+    messages.value = [
+      ...messages.value,
+      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
+    ]
+    try {
+      await request(`/assistant/conversations/${id}/say`, {
+        method: 'POST',
+        body: JSON.stringify({
+          text: words,
+          files,
+          ...(asking?.body.selection ? { selection: asking.body.selection } : {}),
+        }),
+      })
+    } catch {
+      messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
+      if (!busy.value) return ask(words, fallback, files)
+      notice.value = fallback
+    }
+  }
+
+  /** 面板正给人看着这段对话：这时答完的不再另发通知。看着的时候每隔一会儿说一次。 */
+  async function looking() {
+    const id = current.value
+    if (id) await request(`/assistant/conversations/${id}/looking`, { method: 'POST' })
+  }
+
   /** 停下正在答的这一个：等候中的直接不答了，写了一半的留下这一半。 */
   async function stop() {
     const id = current.value
@@ -557,6 +905,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     current,
     earlier,
     hasOlder,
+    currentEarlier,
     messages,
     streaming,
     tool,
@@ -564,6 +913,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
     edits,
     published,
     proposals,
+    handed,
+    rules,
+    subagents,
     queued,
     notice,
     creditRefused,
@@ -573,6 +925,10 @@ export function createAssistant(opts: AssistantOptions = {}) {
     startNew,
     show,
     older,
+    earlierMessages,
+    heard,
+    looking,
+    say,
     ask,
     stop,
     undo,

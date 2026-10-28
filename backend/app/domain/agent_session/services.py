@@ -88,14 +88,34 @@ class AgentSessionService:
         )
 
     async def remember_told(
-        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        told: dict,
+        was: dict | None,
     ) -> None:
-        """Record the project state this agent's conversation now knows."""
+        """Record the project state this agent's conversation now knows, unless
+        the record is no longer ``was``, the one this turn chose what to tell
+        by (see the repository)."""
         await self._repo.save_told(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
             told=told,
+            was=was,
+        )
+
+    async def forget_told(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """This agent's conversation was compacted: what it was told is now a
+        summary at best, so the next input tells it the whole state again."""
+        await self._repo.forget_told(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
         )
 
     async def place(
@@ -281,6 +301,30 @@ class AgentSessionService:
             agent_handle=agent_handle,
             harness=harness,
             placed_before=placed_before,
+        )
+
+    async def drain(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
+    ) -> datetime:
+        """When the drain of this session's runner began; see the repository."""
+        return await self._repo.drain(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+            launch=launch,
+        )
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over; see the repository."""
+        await self._repo.drained(
+            conversation_id=conversation_id, agent_handle=agent_handle, harness=harness
         )
 
     async def has_run(self, room_id: uuid.UUID) -> bool:

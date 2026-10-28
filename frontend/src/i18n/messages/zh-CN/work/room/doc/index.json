@@ -21,6 +21,11 @@
   "emptyPlaceholder": "AI 队友会在这里维护文档，你也可以直接编辑",
   "emptyPlaceholderLibrary": "输入正文，或输入 / 插入标题、表格、图表",
   "exportMarkdown": "导出 Markdown",
+  "exportedMarkdown": "已导出 Markdown，在下载文件夹里",
+  "exportedPdf": "已导出 PDF，在下载文件夹里",
+  "exportPdf": "导出 PDF",
+  "exportPdfFailed": "导出 PDF 失败，稍后重试",
+  "exportPdfTooLarge": "这份文档太大，导不出 PDF：里面的图片太多了",
   "find": "在文档中查找",
   "findClose": "关闭查找",
   "findNext": "下一处",
@@ -100,6 +105,6 @@
     "read": "只读",
     "readHint": "只阅读，不修改正文",
     "suggestOnly": "你只能提修改建议，由能编辑这份文档的人接受或拒绝",
-    "blockRefused": "建议模式下不能整段增删，可以改段落里的文字"
+    "blockRefused": "建议模式下不能增删表格的行或列、分栏里的栏，或时间线、数据卡里的项"
   }
 }

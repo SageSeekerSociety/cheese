@@ -7,13 +7,14 @@
 // 一次只摆出两串都已经取到的那一段（`lib/rankMerge.ts`），所以往下滚动时取下一页，
 // 顺序和一次全排好一样。条件一变就从头取。
 import type { ListedDocument } from '../api/projectDocuments'
-import type { LibraryEntry, LibraryFile, LibraryFolder } from '../lib/libraryApi'
+import type { LibraryEntry, LibraryFile, LibraryFolder, LibraryShelf } from '../lib/libraryApi'
 import type { Kind } from '../lib/libraryKinds'
 
 import { computed, nextTick, type Ref, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { listProjectDocuments } from '../api/projectDocuments'
+import { listTeamDocuments } from '../api/teamDocuments'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { type MergeSource, starving, takeReady } from '../lib/rankMerge'
 
@@ -47,8 +48,14 @@ function toRow(item: Item): LibraryRow {
   return { key: `doc:${item.id}`, rank: item.rank, doc: item }
 }
 
-/** `scroller` 是这张表自己的滚动容器：滚到离底不远、或者一页没把它填满，就取下一页。 */
-export function useLibraryPages(projectId: () => string, view: () => LibraryView, scroller: Ref<HTMLElement | null>) {
+/** `scroller` 是这张表自己的滚动容器：滚到离底不远、或者一页没把它填满，就取下一页。
+ *  团队的资料库（`shelf` 不是项目编号）里是团队自己的文档：它们一次全给，没有按正文
+ *  找的接口，搜的时候按标题筛。 */
+export function useLibraryPages(
+  shelf: () => LibraryShelf,
+  view: () => LibraryView,
+  scroller: Readonly<Ref<HTMLElement | null>>
+) {
   const rows = ref<LibraryRow[]>([])
   const loading = ref(false)
   const loadFailed = ref(false)
@@ -56,7 +63,7 @@ export function useLibraryPages(projectId: () => string, view: () => LibraryView
   let sources: Source[] = []
   let generation = 0
 
-  function build(pid: string, { dir, q, kind }: LibraryView): Source[] {
+  function build(pid: LibraryShelf, { dir, q, kind }: LibraryView): Source[] {
     const query = q.trim()
     const flat = !!query || kind !== 'all'
     const library: Source = {
@@ -71,6 +78,23 @@ export function useLibraryPages(projectId: () => string, view: () => LibraryView
         })
         return { rows: page.data, next: page.next }
       },
+    }
+    if (typeof pid !== 'string') {
+      const team = pid.team
+      const withTeamDocs = (kind === 'doc' || kind === 'all') && (flat || !dir)
+      if (!withTeamDocs) return [library]
+      const needle = query.toLocaleLowerCase()
+      const teamDocs: Source = {
+        buffer: [],
+        done: false,
+        next: null,
+        fetch: async () => {
+          const page = await listTeamDocuments(team)
+          const rows = page.data.filter((doc) => !needle || (doc.title ?? '').toLocaleLowerCase().includes(needle))
+          return { rows: rows.map((doc) => ({ ...doc, type: 'doc' as const })), next: null }
+        },
+      }
+      return [library, teamDocs]
     }
     const withDocs = !query && (kind === 'doc' || (kind === 'all' && !dir))
     if (!withDocs) return [library]
@@ -133,7 +157,7 @@ export function useLibraryPages(projectId: () => string, view: () => LibraryView
   /** 从头取：换了一层、换了搜索或筛选、或者清单变了（放进来、挪走、删掉之后）。 */
   function reset() {
     generation++
-    sources = build(projectId(), view())
+    sources = build(shelf(), view())
     rows.value = []
     loading.value = false
     loadFailed.value = false
@@ -148,7 +172,8 @@ export function useLibraryPages(projectId: () => string, view: () => LibraryView
   })
 
   watch(
-    () => [projectId(), view().dir, view().q.trim(), view().kind] as const,
+    // 团队的书架每次是一个新对象：按它是哪一个来比，不按是不是同一个对象。
+    () => [JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
     () => reset(),
     { immediate: true }
   )

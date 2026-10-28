@@ -86,7 +86,7 @@ covers:
 | 一直没交回 | 读到之后超过 `REPORT_TIMEOUT`（`agent_turn_hard_ceiling_s` + 5 分钟） | 失败，「AI 队友一直没有交回结果」 |
 | 两小时没开始 | `created_at` 超过 `START_TIMEOUT` | 失败（设备离线或排队过久） |
 
-为什么这不看「这一轮什么时候结束」：轮次的起止说明不了队友有没有照着做。判成功的只有它交回（`cheese_routine_report`）；平台这一路只看核得了的事：投递、会话读没读到、runner 报没报读进去的工作失败了，再加一口「最长能做多久」的钟。迟到的失败如果后来交回了成功，`report` 会把 `notified` 复位、把错误清掉，**重新通知一次** —— 那次通知说的是它实际怎么样了。
+为什么这不看「这一轮什么时候结束」：轮次的起止说明不了队友有没有照着做。判成功的只有它交回（`cheese_routine(action=report)`）；平台这一路只看核得了的事：投递、会话读没读到、runner 报没报读进去的工作失败了，再加一口「最长能做多久」的钟。迟到的失败如果后来交回了成功，`report` 会把 `notified` 复位、把错误清掉，**重新通知一次** —— 那次通知说的是它实际怎么样了。
 
 `_announce_finished` 只扫 `notified = false` 且已经终结的执行：成功的把交回的结果写进那条消息，没成功的消息正文留空（不以 AI 队友的名义替平台说话，原因由 `runs_under` 带出、画在消息下面那一行）；两种都把消息的时间改成结账的这一刻，挪到主线最下面，再给 `owner_handle` 发 `CHANGE_ALERT` 通知，一次都不重复。改过的消息在提交后整行推给开着频道的人（`publish_run_messages`，前端只有时间变了的那一行才重新落位）。`skipped` 的执行没有消息，只通知主人。
 
@@ -116,3 +116,4 @@ covers:
 - **暂停不补、恢复不补。** `resume` 从下一个未来时刻接着算（`_activate` 里 `next_after(…, now)`），中间空过的时段不会被回填。
 - **改了就按新的跑。** `update` 改一条 `active` 的规则会重新算 `next_run_at`，没有人再确认一次；`revision` 加一，已经派出去的执行行留的还是当时那个版本。
 - **契约测试看着 `cheese_*` 工具面。** `backend/sandbox/cheese` 里的工具表和后端是两份，双方不一致由 `backend/tests/contract/` 拦下（同一形状的约束见 `MACHINE_PROFILES`）。
+- **花费不写规则表，每次问账本。** 一条规则的花费是它的轮次们扣掉的额度之和（`service/spend.py`）：账本按轮次记（`resource_usage.turn_id` 就是 `RoutineRun.turn_id`），对它们求和即可。规则表上加一列累计就有第二个数要在每次结算时记得更新。求 credits 时**不能**套 `MODEL_CALLS` —— 那个过滤说的是「算不算一次模型调用」，而网页搜索那几行没有 token 也照样扣点数，团队额度页算的也是这个口径。窗口（`month_start` / `month_end`）由调用方传进来，这一域不自己算一个「月」。

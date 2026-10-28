@@ -51,14 +51,14 @@ uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
 
 ## 二、查资料：什么时候搜、搜到的算什么
 
-有 WebSearch、WebFetch、`cheese_web_search`（平台代搜网页，没有 WebSearch 或它报错时用）和 `cheese_fetch`（平台代读网页，读不到时会说在哪一步失败）。
+有 WebSearch、WebFetch、`cheese_web(action=search)`（平台代搜网页，没有 WebSearch 或它报错时用）和 `cheese_web(action=fetch)`（平台代读网页，读不到时会说在哪一步失败）。
 
 - **用户限定了材料（「只用我给的这几份」「不要上网查」），就一次都不搜。** 材料不够时说
   缺什么，不要自己补。
 - 没有限定、而任务确实需要外部信息（政策、市场数据、别家的做法）时才搜。先想清楚要核实的
   是哪几件事，每件事找**直接来源**：官方网站、原始公告、论文原文、统计局数据，而不是转述它
   的新闻或博客。
-- **搜索结果的摘要不是事实**。要引用，就打开那一页（WebFetch/`cheese_fetch`）读到那句话；
+- **搜索结果的摘要不是事实**。要引用，就打开那一页（WebFetch/`cheese_web(action=fetch)`）读到那句话；
   打不开的页只能写「据搜索摘要，未能打开原文核实」。
 - 读不到（付费墙、要登录、反爬）就如实说读不到，不要换一个说法把没读到的内容写进去。
 
@@ -100,7 +100,7 @@ platform_request(method="GET",
 `q` 里可以用空格隔开几个词，每个词都出现才算命中；词的一部分也能搜到。每一组命中按相关程度
 排列，最相关的在前，不按时间。资料库只比对文件名，`q` 要原样出现在文件名里。
 
-- 按任务需要搜几个关键词，读命中的那几处（`cheese_chat_get`、`cheese_library_ls` +
+- 按任务需要搜几个关键词，读命中的那几处（`cheese_chat(action=get)`、`cheese_library(action=list)` +
   `cheese library get`），**不要把整个项目的记录都拉下来**。
 - 同一件事有新旧两个说法时，以时间更晚、或者被记成决策的为准，并说明你取了哪一个、为什么。
 - 返回里 `skipped_rooms` 是你没有权限看的房间数：不要试图绕过去，需要的话请用户把内容

@@ -29,12 +29,14 @@ const props = withDefaults(
     projectId: string | null
     /** 这个房间叫什么：新建那一页的「频道」那一行上写出来。 */
     roomTitle?: string
+    /** 这间房的队友叫什么，见 PanelRoutines。 */
+    agentName?: string
     // 一轮结束由工作面板加一：芝士可能刚在房间里起草了一条规则，名单要跟上。
     refreshTick?: number
     /** 一句提到这条规则的话里，那名字的链接（`?routine=`）指着的那一条。 */
     routineId?: string | null
   }>(),
-  { roomTitle: '', refreshTick: 0, routineId: null }
+  { roomTitle: '', refreshTick: 0, routineId: null, agentName: undefined }
 )
 
 const emit = defineEmits<{
@@ -149,6 +151,7 @@ watch(
     :saving="saving"
     :default-room="topicId ?? ''"
     :room-name="roomTitle ?? ''"
+    :agent-name="agentName"
     :templates="templates"
     @reload="reload"
     @start-new="startNew"

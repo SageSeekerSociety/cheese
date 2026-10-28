@@ -6,10 +6,11 @@
 // 「改动」里读整块 diff 找出改了哪些文件，再切到「文件」里一个个翻出来看——两边
 // 都不是一个能验收的面。
 //
-// 合成之后只有一棵树，标着每个文件改了多少。默认那一面把所有改动连着往下排（顶部是
-// 宿主塞进来的这次交付的情况，`head` 插槽），点树上的文件就滚到它那一段；要看全文或
-// 微调就点段头的「打开」，那一份单独开在这一格里（保存冲突的两条出路原样保留）。
-// 不在改动里的文件从「打开其他文件」挑。
+// 合成之后只有一棵树，标着每个文件改了多少。默认那一面把这次改到的文件连着往下排
+// （顶部是宿主塞进来的这次交付的情况，`head` 插槽），每段的差异默认收着，点段头铺开
+// 一段；点树上的文件就滚到它那一段并把它铺开。要看全文或微调就点段头的「打开」，那一
+// 份单独开在这一格里（保存冲突的两条出路原样保留）。不在改动里的文件从「打开其他
+// 文件」挑。
 //
 // **只认 props**：改过的文件、diff、当前打开哪一份、它读回来的正文，都是从外面
 // 递进来的；点一份文件、按保存、切版本发事件出去。取数在
@@ -89,7 +90,9 @@ const props = defineProps<{
   openDocumentType: FileKind | null
   /** 修订只长在 .docx 上，别的时候这里给的是 null。 */
   revisionPath: string | null
-  openRawUrl: string
+  openImageSrc: string
+  /** 图片取不到时的原因；空串就是没出错。 */
+  openImageError: string
   collapsedDirs: Set<string>
   revealTick: number
   draftCount: number
@@ -188,6 +191,15 @@ const allView = ref<InstanceType<typeof ChangesAllView> | null>(null)
 // 「另 N 个文件」展不展开，由这一面点、状态放在这里：打开一份文件时全部改动那一面被卸掉
 // （`v-else`），状态跟着它走的话，返回时展开的那份清单又收回去了。
 const summaryAll = ref(false)
+// 哪几段的差异铺开着（路径），同样归这一面，理由同上：读完一份文件返回时，刚才铺开的
+// 那几段还该是铺开的。默认一段都不铺（空集合）——先给一眼清单，要看哪一段点哪一段。
+const expandedSections = ref(new Set<string>())
+function toggleSection(path: string) {
+  const next = new Set(expandedSections.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  expandedSections.value = next
+}
 async function pickFile(path: string) {
   if (!props.diffByPath.has(path)) {
     emit('select-file', path)
@@ -343,7 +355,8 @@ const fileRows = computed(() =>
             :effective-view="props.effectiveView"
             :open-diff-lines="props.openDiffLines"
             :open-is-image="props.openIsImage"
-            :open-raw-url="props.openRawUrl"
+            :open-image-src="props.openImageSrc"
+            :open-image-error="props.openImageError"
             :file-binary="props.fileBinary"
             :file-too-large="props.fileTooLarge"
             :file-bytes="props.fileBytes"
@@ -355,7 +368,7 @@ const fileRows = computed(() =>
             @toggle-compare="emit('toggle-compare')"
           />
           <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
-               每个改到的文件一段，连着往下排，一起滚。 -->
+               每个改到的文件一段，连着往下排，一起滚；每段的差异默认收着，点段头铺开。 -->
           <ChangesAllView
             v-else
             ref="allView"
@@ -370,11 +383,13 @@ const fileRows = computed(() =>
             :refreshing="props.refreshing"
             :summary-all="summaryAll"
             :review="props.review"
+            :expanded="expandedSections"
             @select-file="emit('select-file', $event)"
             @open-other="pickerOpen = true"
             @select-version="emit('select-version', $event)"
             @refresh="emit('refresh')"
             @update:summary-all="summaryAll = $event"
+            @toggle-section="toggleSection"
           >
             <template #head><slot name="head" /></template>
           </ChangesAllView>

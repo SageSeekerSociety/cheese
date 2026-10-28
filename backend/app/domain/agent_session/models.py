@@ -156,8 +156,21 @@ class AgentSession(UuidPk, Timestamps, Base):
     )
     # 这条对话最近一次被告知的项目现状，每一段一个摘要
     # （`harness.prompt.SessionOpening.digests`）。下一轮只把和它不一样的那几段再
-    # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过：那一轮整份都说。
+    # 说一次，好让系统提示词在会话里保持不变。NULL 是还没告诉过，或者告诉过的已经
+    # 被一次上下文压缩换成了摘要（`forget_told`）：那一轮整份都说。
     told: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # When the drain of this session's runner began: a runner another release
+    # started, at work when this release took it over, is left to finish for
+    # at most ``settings.runner_drain_s`` from here (``room.sessions.lifecycle``).
+    # Kept with the seat so a backend that takes over mid-drain counts from the
+    # same moment. NULL while no drain is under way.
+    drain_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The runner that drain is of (its ping's ``launch``): a start left by a
+    # drain that never settled (its runner went away during a takeover) does
+    # not count for another runner.
+    drain_launch: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     def place(self) -> SessionPlace | None:
         """这条会话在哪——它自己那一半地点的唯一入口。

@@ -11,6 +11,7 @@ A file that cannot be a skill file (not text, or too large) is listed in
 
 from __future__ import annotations
 
+import base64
 import io
 import re
 import zipfile
@@ -21,7 +22,8 @@ from urllib.parse import quote, urlparse
 import httpx
 import yaml
 
-from app.core.errors import ValidationError
+from app.core.config import settings
+from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.project_skill.service import (
     MAX_FILE_BYTES,
@@ -49,6 +51,15 @@ class ReadSkill:
     body: str
     files: dict[str, str] = field(default_factory=dict)
     skipped: list[str] = field(default_factory=list)
+    #: What the reader wants the person to know about the reading itself — a
+    #: repository tree cut short, say. Not ``skipped``: these are not files that
+    #: were left out, they are the reasons the reading is incomplete.
+    notes: list[str] = field(default_factory=list)
+    #: The SKILL.md exactly as it was read. Kept for a caller that *lands* the
+    #: skill (the machine's web direct-connect writes it back out), and kept out
+    #: of :meth:`to_json` on purpose: the project import preview does not carry
+    #: the raw text.
+    raw: str = ""
 
     @property
     def scripts(self) -> int:
@@ -62,6 +73,7 @@ class ReadSkill:
             "body": self.body,
             "files": self.files,
             "skipped": self.skipped,
+            "notes": self.notes,
             "scripts": self.scripts,
         }
 
@@ -71,9 +83,16 @@ def _slug(text: str) -> str:
     return slug if NAME.match(slug) else ""
 
 
-def parse_skill_md(text: str, *, folder: str = "") -> ReadSkill:
+def parse_skill_md(
+    text: str, *, folder: str = "", keep_name: bool = False
+) -> ReadSkill:
     """The fields a SKILL.md carries. Its frontmatter gives the name and the
-    use; the body's leading heading, when it has one, is the title."""
+    use; the body's leading heading, when it has one, is the title.
+
+    ``keep_name`` skips the slugging: a skill being *landed* somewhere else
+    keeps the name it advertises (the agentskills.io rules allow uppercase),
+    where the default folds it into the project skill's lowercase shape.
+    """
     meta: dict = {}
     body = text.lstrip("﻿")
     match = _FRONTMATTER.match(body)
@@ -81,7 +100,7 @@ def parse_skill_md(text: str, *, folder: str = "") -> ReadSkill:
         try:
             loaded = yaml.safe_load(match.group(1))
         except yaml.YAMLError as exc:
-            raise ValidationError(say("skillImportFrontmatter")) from exc
+            raise UnprocessableEntityError(say("skillImportFrontmatter")) from exc
         meta = loaded if isinstance(loaded, dict) else {}
         body = body[match.end() :]
     body = body.strip()
@@ -92,12 +111,13 @@ def parse_skill_md(text: str, *, folder: str = "") -> ReadSkill:
         title = heading.group(1).strip()
         body = body[heading.end() :].strip()
     if not body:
-        raise ValidationError(say("skillImportEmpty"))
+        raise UnprocessableEntityError(say("skillImportEmpty"))
     return ReadSkill(
-        name=_slug(raw_name),
+        name=raw_name if keep_name else _slug(raw_name),
         title=title[:200],
         description=str(meta.get("description") or "").strip(),
         body=body,
+        raw=text,
     )
 
 
@@ -128,7 +148,7 @@ def _root_of(paths: list[str]) -> str:
         key=lambda p: (len(PurePosixPath(p).parts), p),
     )
     if not found:
-        raise ValidationError(say("skillImportNoSkillMd"))
+        raise UnprocessableEntityError(say("skillImportNoSkillMd"))
     parent = PurePosixPath(found[0]).parent.as_posix()
     return "" if parent == "." else parent
 
@@ -144,11 +164,11 @@ def read_upload(filename: str, data: bytes) -> ReadSkill:
     if filename.lower().endswith(".zip"):
         return _read_zip(data)
     if len(data) > MAX_SKILL_MD_BYTES:
-        raise ValidationError(say("skillImportTooLarge"))
+        raise UnprocessableEntityError(say("skillImportTooLarge"))
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ValidationError(say("skillImportNotText")) from exc
+        raise UnprocessableEntityError(say("skillImportNotText")) from exc
     return parse_skill_md(text)
 
 
@@ -156,7 +176,7 @@ def _read_zip(data: bytes) -> ReadSkill:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as exc:
-        raise ValidationError(say("skillImportBadZip")) from exc
+        raise UnprocessableEntityError(say("skillImportBadZip")) from exc
     entries = [
         info
         for info in archive.infolist()
@@ -171,7 +191,7 @@ def _read_zip(data: bytes) -> ReadSkill:
         if (rel := _under(root, info.filename)) is not None
     ]
     if sum(info.file_size for _, info in inside) > MAX_TOTAL_BYTES:
-        raise ValidationError(say("skillImportTooLarge"))
+        raise UnprocessableEntityError(say("skillImportTooLarge"))
     skill_md = next(info for rel, info in inside if rel == "SKILL.md")
     read = parse_skill_md(
         archive.read(skill_md).decode("utf-8", errors="replace"),
@@ -203,10 +223,10 @@ def parse_github_url(url: str) -> GithubPlace:
         "github.com",
         "www.github.com",
     ):
-        raise ValidationError(say("skillImportGithubOnly"))
+        raise UnprocessableEntityError(say("skillImportGithubOnly"))
     match = _GITHUB.match(parsed.path)
     if not match:
-        raise ValidationError(say("skillImportGithubOnly"))
+        raise UnprocessableEntityError(say("skillImportGithubOnly"))
     owner, repo, kind, rest = match.groups()
     ref, _, path = (rest or "").partition("/")
     path = path.strip("/")
@@ -216,11 +236,159 @@ def parse_github_url(url: str) -> GithubPlace:
     return GithubPlace(owner, repo, ref or "HEAD", path)
 
 
-async def read_github(url: str, client: httpx.AsyncClient | None = None) -> ReadSkill:
-    """A skill folder in a public GitHub repository.
+#: Hosts a skill may be fetched from. An arbitrary host is refused: naming one
+#: would turn this route into a fetch-anything probe (SSRF).
+_SKILL_HOSTS = ("github.com", "www.github.com")
+_RAW_HOSTS = ("raw.githubusercontent.com",)
 
-    One tree listing through the API, then each file from the raw host, which
-    is not counted against the API's limit for callers without a token.
+
+def normalize_skill_url(url: str) -> str:
+    """A skill's address as a ``github.com`` folder link the reader understands.
+
+    A GitHub link is taken as it is. A ``raw.githubusercontent.com`` link to a
+    SKILL.md is read back into the folder it sits in — reading the folder, not
+    the one file, is what brings a skill's ``scripts/`` along with it.
+    """
+    parsed = urlparse(url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise UnprocessableEntityError(say("skillWebUrlInvalid"))
+    host = parsed.netloc.lower()
+    if host in _SKILL_HOSTS:
+        parse_github_url(url)  # says its own refusal for anything malformed
+        return url.strip()
+    if host not in _RAW_HOSTS:
+        raise UnprocessableEntityError(say("skillWebUrlInvalid"))
+    parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if len(parts) < 4 or PurePosixPath(parts[-1]).name != "SKILL.md":
+        raise UnprocessableEntityError(say("skillWebUrlInvalid"))
+    owner, repo, ref = parts[0], parts[1], parts[2]
+    folder = PurePosixPath("/".join(parts[3:])).parent.as_posix()
+    where = "" if folder == "." else f"/{folder}"
+    normalized = f"https://github.com/{owner}/{repo}/tree/{ref}{where}"
+    parse_github_url(normalized)  # the same shape check, said the same way
+    return normalized
+
+
+def github_headers() -> dict[str, str]:
+    """The headers every ``api.github.com`` read goes out with.
+
+    Unauthenticated, GitHub answers 60 requests an hour per address, and the
+    skills market spends a good part of that before anyone clicks install. A
+    read-only token (``settings.github_token``) lifts it to 5000; unset, the
+    same reads still work and still cost the 60.
+    """
+    headers = {"Accept": "application/vnd.github+json"}
+    token = settings.github_token.strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+async def fetch_file(
+    client: httpx.AsyncClient, owner: str, repo: str, ref: str, path: str
+) -> bytes | None:
+    """One file's bytes out of a repository, over the API host.
+
+    ``raw.githubusercontent.com`` is not reachable on every network — measured
+    2026-10-11: ten of twelve files of one public skill timed out while
+    ``api.github.com`` answered in half a second — so a file is read through the
+    contents endpoint and its base64 payload decoded here. ``None`` when it is
+    not there: an absent README is a fact a caller may act on, not an error.
+
+    ``ponytail:`` this spends one of the unauthenticated API's 60 requests an
+    hour per file, where the raw host spent none. Upgrade path: send a token, or
+    probe the raw host once and prefer it when it answers.
+    """
+    got = await client.get(
+        f"https://api.github.com/repos/{owner}/{repo}/contents/{quote(path)}",
+        params={"ref": ref},
+        headers=github_headers(),
+    )
+    if got.status_code != 200:
+        return None
+    payload = got.json()
+    if not isinstance(payload, dict):
+        return None  # a directory comes back as a listing, not one file
+    if payload.get("encoding") != "base64":
+        return b""  # an empty file comes back with neither content nor encoding
+    return base64.b64decode(payload.get("content") or "")
+
+
+def _skill_roots(blobs: dict[str, int], prefix: str) -> list[str]:
+    """The folders under ``prefix`` to read as skills, each ending in a slash.
+
+    The folder itself when it holds a ``SKILL.md``; otherwise the folders one
+    level down that do (``skills/<name>/SKILL.md``) — how a plugin bundles its
+    skills, and what lets a plugin be installed here like a skill.
+    """
+    if f"{prefix}SKILL.md" in blobs:
+        return [prefix]
+    marker = f"{prefix}skills/"
+    return sorted(
+        {
+            path[: -len("SKILL.md")]
+            for path in blobs
+            if path.startswith(marker)
+            and path.endswith("/SKILL.md")
+            # One level only: the name between ``skills/`` and the file. The
+            # slice has to drop the file's own leading slash too, or every name
+            # ends in ``/`` and the whole set falls out.
+            and "/" not in path[len(marker) : -len("/SKILL.md")]
+        }
+    )
+
+
+async def _one_skill(
+    client: httpx.AsyncClient,
+    place: GithubPlace,
+    blobs: dict[str, int],
+    root: str,
+    *,
+    keep_name: bool,
+) -> ReadSkill:
+    """One skill at ``root`` (which ends in a slash), its files read whole."""
+    inside = {path[len(root) :]: blobs[path] for path in blobs if path.startswith(root)}
+    if sum(inside.values()) > MAX_TOTAL_BYTES:
+        raise UnprocessableEntityError(say("skillImportTooLarge"))
+
+    async def raw(rel: str) -> bytes:
+        data = await fetch_file(
+            client, place.owner, place.repo, place.ref, f"{root}{rel}"
+        )
+        if data is None:
+            raise UnprocessableEntityError(say("skillImportGithubFailed"))
+        return data
+
+    read = parse_skill_md(
+        (await raw("SKILL.md")).decode("utf-8", errors="replace"),
+        folder=PurePosixPath(root.rstrip("/")).name or place.repo,
+        keep_name=keep_name,
+    )
+    for rel in sorted(inside):
+        if rel == "SKILL.md":
+            continue
+        fits = (
+            PurePosixPath(rel).suffix in SKILL_FILE_SUFFIXES
+            and inside[rel] <= MAX_FILE_BYTES
+            and len(read.files) < MAX_FILES
+        )
+        if not fits:
+            read.skipped.append(rel)
+            continue
+        _take(read, rel, await raw(rel))
+    return read
+
+
+async def read_github_many(
+    url: str, client: httpx.AsyncClient | None = None, *, keep_name: bool = False
+) -> list[ReadSkill]:
+    """Every skill the folder at ``url`` holds, in a public GitHub repository.
+
+    One tree listing through the API, then each file through the API too
+    (:func:`fetch_file`) — the raw host is unreachable on some networks. A
+    folder holding a ``SKILL.md`` is one skill; one holding none but carrying
+    ``skills/<name>/SKILL.md`` underneath is a plugin, and each of those is read
+    as its own skill.
     """
     place = parse_github_url(url)
     owns = client is None
@@ -230,55 +398,38 @@ async def read_github(url: str, client: httpx.AsyncClient | None = None) -> Read
             f"https://api.github.com/repos/{place.owner}/{place.repo}"
             f"/git/trees/{quote(place.ref, safe='')}",
             params={"recursive": "1"},
-            headers={"Accept": "application/vnd.github+json"},
+            headers=github_headers(),
         )
         if tree.status_code == 404:
-            raise ValidationError(say("skillImportGithubMissing"))
+            raise UnprocessableEntityError(say("skillImportGithubMissing"))
         if tree.status_code != 200:
-            raise ValidationError(say("skillImportGithubFailed"))
+            raise UnprocessableEntityError(say("skillImportGithubFailed"))
         blobs = {
             item["path"]: int(item.get("size") or 0)
             for item in tree.json().get("tree", [])
             if item.get("type") == "blob" and _safe(item.get("path", ""))
         }
         prefix = f"{place.path}/" if place.path else ""
-        under = [p for p in blobs if p.startswith(prefix)]
-        root = place.path
-        if f"{prefix}SKILL.md" not in blobs:
-            raise ValidationError(say("skillImportNoSkillMd"))
-        inside = {p[len(prefix) :]: blobs[p] for p in under}
-        if sum(inside.values()) > MAX_TOTAL_BYTES:
-            raise ValidationError(say("skillImportTooLarge"))
-
-        async def raw(rel: str) -> bytes:
-            full = f"{prefix}{rel}"
-            got = await client.get(
-                f"https://raw.githubusercontent.com/{place.owner}/{place.repo}"
-                f"/{quote(place.ref, safe='')}/{quote(full)}"
-            )
-            if got.status_code != 200:
-                raise ValidationError(say("skillImportGithubFailed"))
-            return got.content
-
-        read = parse_skill_md(
-            (await raw("SKILL.md")).decode("utf-8", errors="replace"),
-            folder=PurePosixPath(root).name or place.repo,
-        )
-        for rel in sorted(inside):
-            if rel == "SKILL.md":
-                continue
-            fits = (
-                PurePosixPath(rel).suffix in SKILL_FILE_SUFFIXES
-                and inside[rel] <= MAX_FILE_BYTES
-                and len(read.files) < MAX_FILES
-            )
-            if not fits:
-                read.skipped.append(rel)
-                continue
-            _take(read, rel, await raw(rel))
-        return read
+        roots = _skill_roots(blobs, prefix)
+        if not roots:
+            raise UnprocessableEntityError(say("skillImportNoSkillMd"))
+        return [
+            await _one_skill(client, place, blobs, root, keep_name=keep_name)
+            for root in roots
+        ]
     except httpx.HTTPError as exc:
-        raise ValidationError(say("skillImportGithubFailed")) from exc
+        raise UnprocessableEntityError(say("skillImportGithubFailed")) from exc
     finally:
         if owns:
             await client.aclose()
+
+
+async def read_github(
+    url: str, client: httpx.AsyncClient | None = None, *, keep_name: bool = False
+) -> ReadSkill:
+    """The first skill the folder at ``url`` holds — the one-skill reading.
+
+    Callers that mean 「one skill at this address」 keep their old meaning, error
+    keys included; a folder with none still says ``skillImportNoSkillMd``.
+    """
+    return (await read_github_many(url, client, keep_name=keep_name))[0]

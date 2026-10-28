@@ -1,7 +1,9 @@
 """HTTP boundary between rolling backends and the stable device connection owner."""
 
 import asyncio
+import contextlib
 import dataclasses
+import json
 import logging
 import time
 import traceback
@@ -28,6 +30,13 @@ logger = logging.getLogger(__name__)
 # (``device_connection_app.DRAINING_HEADER``); the owner process is not
 # imported here.
 OWNER_DRAINING_HEADER = "X-Device-Connection-Draining"
+# Asked for in `Accept` by an exec that hears its stderr while it runs, and the
+# type the owner answers it with: one JSON object per line, ``{"stderr": ...}``
+# for each line the command writes, ending in ``{"result": ...}`` or in the
+# ``{"error": ...}`` the owner would otherwise have answered with a status of
+# its own (``device_connection_app._streamed_exec``). An owner released before
+# it streamed ignores the header and answers at once, as it always did.
+STREAMED_EXEC = "application/x-ndjson"
 
 
 #: One gone runner's caller is named once in this long. A runner that let its
@@ -172,6 +181,47 @@ def _device_call_failure(response: httpx.Response) -> DeviceCallError | None:
     return None
 
 
+def _answered(response: httpx.Response) -> httpx.Response:
+    """``response`` if the owner answered the call, else what it answered
+    raised as the exception the in-process hub raises for the same thing."""
+    if response.status_code == 409:
+        # Only the owner's 「device offline」 names the device, and reading
+        # that name out of a 409 that did not carry it raised KeyError from
+        # inside the transport — which then surfaced wherever the caller
+        # happened to catch things, as `pi entry read failed` on a poller
+        # and as a 500 on /topics/{id}/agent/control (2026-09-16, five
+        # times). The KeyError described none of that, and hid whatever the
+        # 409 actually said.
+        #
+        # So a 409 without the header falls through to raise_for_status,
+        # whose HTTPStatusError carries the status and the body — the next
+        # one of these says what sent it instead of being read as a device
+        # going offline.
+        offline = response.headers.get("X-Device-Id")
+        if offline is not None:
+            if response.headers.get("X-Device-Link") == "interrupted":
+                raise LinkInterrupted(offline)
+            raise DeviceOffline(offline)
+    if response.status_code == 502:
+        # The owner relaying the machine's own failure (errors.py,
+        # `_handle_device_call_error`): the same exception the in-process
+        # hub raises, so a caller reads one type on either side of the
+        # owner, and the machine's words arrive instead of `Server error
+        # '500' for url …/call/call_executor`. A 502 that is not that —
+        # nothing between here and the owner sends one today — falls
+        # through with its status and body intact.
+        failure = _device_call_failure(response)
+        if failure is not None:
+            raise failure
+    if response.status_code == 503 and response.headers.get(OWNER_DRAINING_HEADER):
+        raise OwnerDraining(response.text)
+    if response.status_code == 504:
+        # Preserve the in-process hub's timeout type across the owner boundary.
+        raise TimeoutError(f"Device connection owner timed out: {response.text}")
+    response.raise_for_status()
+    return response
+
+
 class RemoteDeviceHub:
     """DeviceHub-compatible client with a startup-populated read cache."""
 
@@ -278,45 +328,52 @@ class RemoteDeviceHub:
         if self._client is None:
             await self.start()
         assert self._client is not None
-        response = await self._client.request(method, path, **kwargs)
-        if response.status_code == 409:
-            # Only the owner's 「device offline」 names the device, and reading
-            # that name out of a 409 that did not carry it raised KeyError from
-            # inside the transport — which then surfaced wherever the caller
-            # happened to catch things, as `pi entry read failed` on a poller
-            # and as a 500 on /topics/{id}/agent/control (2026-09-16, five
-            # times). The KeyError described none of that, and hid whatever the
-            # 409 actually said.
-            #
-            # So a 409 without the header falls through to raise_for_status,
-            # whose HTTPStatusError carries the status and the body — the next
-            # one of these says what sent it instead of being read as a device
-            # going offline.
-            offline = response.headers.get("X-Device-Id")
-            if offline is not None:
-                if response.headers.get("X-Device-Link") == "interrupted":
-                    raise LinkInterrupted(offline)
-                raise DeviceOffline(offline)
-        if response.status_code == 502:
-            # The owner relaying the machine's own failure (errors.py,
-            # `_handle_device_call_error`): the same exception the in-process
-            # hub raises, so a caller reads one type on either side of the
-            # owner, and the machine's words arrive instead of `Server error
-            # '500' for url …/call/call_executor`. A 502 that is not that —
-            # nothing between here and the owner sends one today — falls
-            # through with its status and body intact.
-            failure = _device_call_failure(response)
-            if failure is not None:
-                raise failure
-        if response.status_code == 503 and response.headers.get(OWNER_DRAINING_HEADER):
-            raise OwnerDraining(response.text)
-        if response.status_code == 504:
-            # Preserve the in-process hub's timeout type across the owner boundary.
-            raise TimeoutError(f"Device connection owner timed out: {response.text}")
-        response.raise_for_status()
-        return response
+        return _answered(await self._client.request(method, path, **kwargs))
 
-    async def _call_owner(self, name: str, payload: dict[str, Any]) -> httpx.Response:
+    async def _streamed(
+        self, path: str, *, on_stderr: Callable[[str], None], **kwargs: Any
+    ) -> httpx.Response:
+        """``path`` asked to answer while it runs (`STREAMED_EXEC`): each
+        stderr line goes to ``on_stderr`` as it arrives, and what comes back is
+        the response the owner would have answered with at once."""
+        if self._client is None:
+            await self.start()
+        assert self._client is not None
+        async with self._client.stream(
+            "POST", path, headers={"Accept": STREAMED_EXEC}, **kwargs
+        ) as response:
+            if response.headers.get("content-type", "").split(";")[0] != STREAMED_EXEC:
+                await response.aread()
+                return _answered(response)
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                frame = json.loads(line)
+                if "stderr" in frame:
+                    on_stderr(frame["stderr"])
+                    continue
+                if "error" in frame:
+                    failure = frame["error"]
+                    return _answered(
+                        httpx.Response(
+                            failure["status"],
+                            headers=failure.get("headers") or {},
+                            json={"detail": failure["detail"]},
+                            request=response.request,
+                        )
+                    )
+                return httpx.Response(
+                    200, json={"result": frame["result"]}, request=response.request
+                )
+        # i18n-exempt: a broken answer between two of the platform's processes
+        raise httpx.RemoteProtocolError("the owner ended a streamed exec unanswered")
+
+    async def _call_owner(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        on_stderr: Callable[[str], None] | None = None,
+    ) -> httpx.Response:
         """The owner call itself, waiting out an owner that is being recreated.
 
         Retries a refused connect and nothing else: a failure any later — a
@@ -363,11 +420,13 @@ class RemoteDeviceHub:
                     remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
                     connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
                 )
+            path = f"/internal/device-connection/call/{name}"
+            if on_stderr is not None:
+                return await self._streamed(
+                    path, on_stderr=on_stderr, json=payload, timeout=answer_timeout
+                )
             return await self._request(
-                "POST",
-                f"/internal/device-connection/call/{name}",
-                json=payload,
-                timeout=answer_timeout,
+                "POST", path, json=payload, timeout=answer_timeout
             )
 
         return await AsyncRetrying(
@@ -379,11 +438,22 @@ class RemoteDeviceHub:
             reraise=True,
         )(once)
 
-    async def _call(self, name: str, payload: dict[str, Any]) -> Any:
-        response = await self._call_owner(name, payload)
+    async def _call(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        on_stderr: Callable[[str], None] | None = None,
+    ) -> Any:
+        response = await self._call_owner(name, payload, on_stderr)
         result = response.json().get("result")
         if name in {"open_screen", "reassert_screen", "adopt_screen", "close_screen"}:
-            await self.refresh()
+            # The owner has already done it. Reading the new snapshot here is
+            # for our own view of the world, and a hiccup in that read must not
+            # turn a completed screen operation into a failure the caller sees
+            # (it is not retried either — the call may have executed already).
+            # The 1s refresh loop restores the view a moment later.
+            with contextlib.suppress(httpx.HTTPError, OSError, ValueError):
+                await self.refresh()
         return result
 
     def is_online(self, device_id: str) -> bool:
@@ -406,11 +476,6 @@ class RemoteDeviceHub:
 
     def last_seen_age(self, device_id: str) -> float | None:
         return self._devices.get(device_id, {}).get("last_seen_age")
-
-    def screen_by_token(self, token: str) -> HubScreen | None:
-        return next(
-            (screen for screen in self._screens.values() if screen.token == token), None
-        )
 
     def screen(self, sid: str) -> HubScreen | None:
         return self._screens.get(sid)
@@ -477,6 +542,7 @@ class RemoteDeviceHub:
         argv: list[str],
         *,
         timeout: float = 60,
+        on_stderr: Callable[[str], None] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         # Spelled out rather than left to the owner's own default: this side now
@@ -490,6 +556,7 @@ class RemoteDeviceHub:
                 "timeout": timeout,
                 **_jsonable(kwargs),
             },
+            on_stderr,
         )
 
     async def call_executor(

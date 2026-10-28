@@ -254,9 +254,9 @@ def _host(client, project: str, task: str):
     class Host:
         environ = {"CHEESE_TOPIC": task, "CHEESE_PROJECT": project}
         headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, task, room_agent_seat(client, task)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, task, room_agent_seat(client, task))
+            }"
         }
         doc_versions: dict = {}
 
@@ -279,8 +279,9 @@ def test_what_cheese_changes_on_a_canvas_its_readers_see(client):
     host = _host(client, pid, task)
 
     said = cheese.run_platform_tool(
-        "cheese_canvas_edit",
+        "cheese_canvas",
         {
+            "action": "edit",
             "canvas": canvas,
             "changes": [
                 {"op": "add", "ref": "goal", "content": "十月上线新版搜索"},
@@ -317,7 +318,7 @@ def test_the_canvas_reads_as_its_cards_and_the_lines_between_them(client):
         ],
     )
     text = cheese.run_platform_tool(
-        "cheese_canvas_get", {"canvas": canvas}, _host(client, pid, task)
+        "cheese_canvas", {"action": "get", "canvas": canvas}, _host(client, pid, task)
     )
 
     assert "《项目地图》" in text
@@ -357,12 +358,49 @@ def test_a_card_names_its_task_to_those_who_may_see_the_task(client):
     assert "公开的事" in text and "私密的事" not in text
 
 
+def _teammate_of(client, pid: str, room: str) -> dict:
+    """The saved teammate seated in this channel, as the project lists it."""
+    seat = room_agent_seat(client, room)
+    agents = client.get(f"/projects/{pid}/agents", headers=ALICE).json()["data"]
+    return next(a for a in agents["data"] if a["seat_handle"] == seat)
+
+
+def test_a_card_names_the_teammate_working_its_task_by_its_given_name(client):
+    """A card's phrase can name the teammate (「{agent}在做」). A project that
+    renamed it reads that name; one that never did reads 「default」, which a
+    screen says in its reader's language rather than as a stored 芝士."""
+    pid, _, _, canvas = _task_canvas(client)
+    room = _channel(client, pid)
+    shown = open_task(client, room, "公开的事")
+    assert (
+        _change(
+            client, canvas, [{"op": "add", "content": "x", "task": shown["id"]}]
+        ).status_code
+        == 200
+    )
+
+    [card] = _board(client, canvas).json()["data"]["cards"]
+    assert card["task"]["agent_name_source"] == "default"
+
+    agent = _teammate_of(client, pid, room)
+    renamed = client.put(
+        f"/projects/{pid}/agents/{agent['id']}",
+        json={"display_name": "Nova"},
+        headers=session_auth_headers("dave"),
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    [card] = _board(client, canvas).json()["data"]["cards"]
+    assert card["task"]["agent_name"] == "Nova"
+    assert card["task"]["agent_name_source"] == "human"
+
+
 def test_reading_the_document_brings_its_canvas_as_text(client):
     pid, task, _, canvas = _task_canvas(client)
     _change(client, canvas, [{"op": "add", "content": "十月上线新版搜索"}])
     host = _host(client, pid, task)
 
-    read = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    read = cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     body, _, canvases = read.partition("--- 文档里的画布")
     assert f":::canvas {canvas} 项目地图" in body
     assert "十月上线新版搜索" not in body
@@ -383,11 +421,14 @@ def test_reading_the_document_brings_its_canvas_as_text(client):
 def test_cheese_writing_a_new_canvas_block_is_told_which_canvas_it_got(client):
     pid, task, doc, _ = _task_canvas(client)
     host = _host(client, pid, task)
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
 
     said = cheese.run_platform_tool(
-        "cheese_doc_set",
-        {"content": f"{_content(client, doc)}\n\n:::canvas new 依赖\n:::"},
+        "cheese_doc",
+        {
+            "action": "set",
+            "content": f"{_content(client, doc)}\n\n:::canvas new 依赖\n:::",
+        },
         host,
     )
 

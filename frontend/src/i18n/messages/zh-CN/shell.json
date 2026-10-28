@@ -47,10 +47,10 @@
     "actionFailed": "操作失败",
     "teamLockedBy": "团队已锁定：参与了任务 {tasks}",
     "teamLocked": "团队已锁定，无法修改成员",
-    "noPermission": "你没有权限执行此操作",
+    "noPermission": "无权执行这个操作",
     "sessionExpired": "身份过期，请重新登录",
-    "network": "网络请求失败",
-    "server": "服务器错误"
+    "network": "网络连接失败，检查网络后重试",
+    "server": "服务暂时无法处理这个请求，稍后重试"
   },
   "agentDefaultName": "芝士",
   "restore": {

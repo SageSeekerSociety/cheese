@@ -57,6 +57,103 @@ def hide_platform_reminders(items: list[dict]) -> list[dict]:
     return items
 
 
+def _read_cursor(raw: str | None) -> service.Key | None:
+    """A page cursor off the query string. Anything malformed gets the same
+    refusal a stale event id does."""
+    if raw is None:
+        return None
+    try:
+        return service.decode_cursor(raw)
+    except ValueError:
+        raise NotFoundError(say("cursorEventNotFound")) from None
+
+
+def _order(item: dict) -> service.Key:
+    return service.decode_cursor(item["meta"]["cursor"])
+
+
+async def _newer_page(
+    db,
+    place,
+    authors: dict[str, str],
+    native_author: str | None,
+    author: str | None,
+    forward: service.Key,
+    limit: int,
+) -> JSONResponse:
+    """The rows written after `forward`, oldest first.
+
+    `has_newer` says another page follows: a reader catching up on a busy turn
+    keeps asking until it is false, instead of being handed a page it already
+    has. `has_more` stays false and `oldest_id` stays null — this direction
+    says nothing about what is above the window, and the reader's own upward
+    cursor must not move because of it.
+    """
+    raw = await service.read(
+        db,
+        place.conversation_id,
+        after=forward,
+        author=native_author,
+        limit=limit + 1,
+    )
+    items = [as_block(item, place.conversation_id) for item in raw.items]
+    for item in items:
+        item["author"] = authors.get(item["author"], item["author"])
+    old, _, boundary = await earlier_turns(
+        db,
+        place.conversation_id,
+        before=None,
+        after=forward,
+        author=author,
+        limit=limit + 1,
+    )
+    records = await for_site(
+        db,
+        place.conversation_id,
+        since=max(boundary, forward[0]),
+        until=None,
+        author=author,
+        limit=limit + 1,
+        after=forward,
+    )
+    for record in records:
+        key = (
+            datetime.fromisoformat(record["created_at"]),
+            "platform",
+            record["author"],
+            uuid.UUID(record["id"]).int,
+        )
+        record["meta"]["cursor"] = service.encode_cursor(key)
+    candidates = sorted([*items, *old, *records], key=_order)
+    taken = candidates[:limit]
+    # 游标取**交出去的那几条**里的最后一条，不是藏掉平台提醒之后剩下的最后一条：
+    # 否则一页全是提醒时读者手上的游标不动，下一次又把同一段读回来。
+    #
+    # 一条都没有（读者已经追上了）时把进来的那个游标原样还回去：不还的话读者手上
+    # 的游标就被清空了，下一次只能整页重读——正是这一路要消掉的那件事。
+    newest = taken[-1]["meta"]["cursor"] if taken else service.encode_cursor(forward)
+    shown = hide_platform_reminders(taken)
+    starts = await turn_starts(
+        db,
+        place.conversation_id,
+        (uuid.UUID(i["turn_id"]) for i in shown if i["turn_id"]),
+    )
+    return JSONResponse(
+        ok(
+            {
+                **page(shown, len(shown)),
+                "has_more": False,
+                "oldest_id": None,
+                "has_newer": len(candidates) > limit,
+                "newest_id": newest,
+                "turn_starts": {
+                    str(turn): at.isoformat() for turn, at in starts.items()
+                },
+            }
+        )
+    )
+
+
 @router.get("/{topic_id}/transcript")
 async def topic_transcript(
     topic_id: uuid.UUID,
@@ -64,8 +161,17 @@ async def topic_transcript(
     resolver: ActorResolverDep,
     limit: int = Query(120, ge=1, le=200),
     before: str | None = Query(None, max_length=512),
+    after: str | None = Query(None, max_length=512),
     author: str | None = Query(None, min_length=1, max_length=120),
 ) -> JSONResponse:
+    """One page of a conversation's 现场.
+
+    With neither cursor, the newest page. `before` walks up through the
+    history. `after` walks forward from a page the reader already holds: that
+    is the refresh a reader with this panel open runs, and asking for it by
+    cursor is what makes it transfer the lines written since rather than the
+    page they already have.
+    """
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
@@ -79,12 +185,12 @@ async def topic_transcript(
         if author is not None
         else None
     )
-    cursor = None
-    if before is not None:
-        try:
-            cursor = service.decode_cursor(before)
-        except ValueError:
-            raise NotFoundError(say("cursorEventNotFound")) from None
+    cursor = _read_cursor(before)
+    forward = _read_cursor(after)
+    if forward is not None:
+        return await _newer_page(
+            db, place, authors, native_author, author, forward, limit
+        )
     raw = await service.read(
         db,
         place.conversation_id,
@@ -116,17 +222,20 @@ async def topic_transcript(
             uuid.UUID(record["id"]).int,
         )
         record["meta"]["cursor"] = service.encode_cursor(key)
-    candidates = [*items, *old, *records]
-
-    def order(item):
-        return service.decode_cursor(item["meta"]["cursor"])
-
     candidates = sorted(
-        (item for item in candidates if cursor is None or order(item) < cursor),
-        key=order,
+        (
+            item
+            for item in [*items, *old, *records]
+            if cursor is None or _order(item) < cursor
+        ),
+        key=_order,
     )
     has_more = raw.next is not None or more_old or len(candidates) > limit
-    items = hide_platform_reminders(candidates[-limit:])
+    taken = candidates[-limit:]
+    # 交出去的那几条里最后一条的游标：读者接着问「从这儿往后有什么」用的就是它。
+    # 藏在平台提醒后面取，理由同 `_newer_page`：一页全是提醒时游标就不动了。
+    newest = taken[-1]["meta"]["cursor"] if taken else None
+    items = hide_platform_reminders(taken)
     starts = await turn_starts(
         db,
         place.conversation_id,
@@ -138,6 +247,7 @@ async def topic_transcript(
                 **page(items, len(items)),
                 "has_more": has_more,
                 "oldest_id": items[0]["meta"]["cursor"] if items and has_more else None,
+                "newest_id": newest,
                 "turn_starts": {
                     str(turn): at.isoformat() for turn, at in starts.items()
                 },

@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 import source from './topics.palette'
 
 import { buildResults } from '@/commands/palette/results'
-import { t } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { seedProject, seedProjects } from '@/test/seedQueries'
 
@@ -33,10 +33,10 @@ function topic(id: string, title: string, extra: Partial<Topic> = {}): Topic {
 // 本地数据源只从 store 里读当前项目那张表；路由这里用不到（只取条目，不点它）。
 const ctx: SourceContext = { projectId: 'p1', router: {} as unknown as Router }
 
-async function mountStore(topics: Topic[]) {
+async function mountStore(topics: Topic[], members: unknown[] = []) {
   setActivePinia(createPinia())
   seedProjects([])
-  seedProject('p1', { topics, members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
+  seedProject('p1', { topics, members: members as never, unread: {}, privateUnread: {}, notifyLevels: {} })
   const store = useWorkspaceStore()
   store.openProject('p1')
   await vi.waitFor(() => expect(store.topics).toHaveLength(topics.length))
@@ -74,5 +74,29 @@ describe('命令面板：等你处理的话题', () => {
 
     const rows = buildResults('平台', [source], ctx, []).flatMap((group) => group.rows)
     expect(rows.find((row) => row.id === 'topic:t2')).toBeTruthy()
+  })
+})
+
+describe('命令面板：话题行尾那句说到的队友', () => {
+  it('叫这间房自己那位队友在项目里的名字，不是项目默认那位，也不是「芝士」', async () => {
+    setLocale('zh-CN')
+    await mountStore(
+      [
+        topic('t1', '登录页改成深色', {
+          agent_handle: 'cheese-room',
+          presentation: { column: 'building', phrase: 'running' },
+        }),
+      ],
+      [
+        { user_handle: 'cheese-default', name: '芝士', name_source: 'default', agent: true, project_default: true },
+        { user_handle: 'cheese-room', name: 'Nova', name_source: 'human', agent: true, project_default: false },
+      ]
+    )
+    const store = useWorkspaceStore()
+    await vi.waitFor(() => expect(store.members).toHaveLength(2))
+
+    const badge = source.items!(ctx)[0].badge?.text
+    expect(badge).toContain('Nova')
+    expect(badge).not.toContain('芝士')
   })
 })

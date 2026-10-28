@@ -18,6 +18,8 @@ import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
 import LibraryFileDetail from '@/views/library/LibraryFileDetail.vue'
 import LibraryNameDialog from '@/views/library/LibraryNameDialog.vue'
 import LibraryRows from '@/views/library/LibraryRows.vue'
+import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
+import TeamLibraryView from '@/views/teams/detail/LibraryView.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
@@ -156,7 +158,7 @@ export const LIBRARY_ENTRIES: CatalogEntry[] = [
       {
         name: '桌面右栏',
         note: '标题是完整路径（文件夹也在里面），下面一行是来源，再下面是引用和替换的次数；下载、替换、关闭都只往上报。',
-        props: { projectId: 'p1', file: FILE, wide: true, revision: 0, busy: false, read: readMarkdown },
+        props: { shelf: 'p1', file: FILE, wide: true, revision: 0, busy: false, read: readMarkdown },
         expect: '合同/2026/报价说明.md',
       },
     ],
@@ -202,6 +204,104 @@ export const LIBRARY_ENTRIES: CatalogEntry[] = [
           error: '资料库里已经有《归档/报价说明.md》了',
         },
         expect: '资料库里已经有《归档/报价说明.md》了',
+      },
+    ],
+  },
+  {
+    id: 'library-versions-dialog',
+    title: 'LibraryVersionsDialog',
+    about: '一份资料的每一版：下载哪一版、把旧版恢复成当前都只往上报，请求在页面里（`useLibraryVersions`）。',
+    file: 'src/views/library/LibraryVersionsDialog.vue',
+    component: LibraryVersionsDialog,
+    needs: UI,
+    teleport: true,
+    states: [
+      {
+        name: '两版',
+        note: '新的在上，当前那一版没有「恢复」。',
+        props: {
+          path: '预算.xlsx',
+          versions: [
+            { id: 'r2', version: 2, bytes: 4096, added_by: 'bob', added_at: '2026-09-21T10:00:00Z', current: true },
+            { id: 'r1', version: 1, bytes: 3072, added_by: 'alice', added_at: '2026-09-20T10:00:00Z', current: false },
+          ],
+          loading: false,
+          failed: null,
+          actionError: '',
+          restoring: null,
+          canRestore: true,
+          fmtBytes: (n: number) => `${Math.round(n / 1024)} KB`,
+        },
+        expect: '第 2 版',
+      },
+    ],
+  },
+  {
+    id: 'team-library-view',
+    title: 'teams/detail/LibraryView',
+    about:
+      '团队的资料库，一个人名下的就是自己的：团队自己的文档和文件在一张表里，带用量；取数和写操作都在 `Library.vue`。',
+    file: 'src/views/teams/detail/LibraryView.vue',
+    component: TeamLibraryView,
+    needs: UI,
+    states: [
+      {
+        name: '自己的资料库',
+        note: '开头那句说这里放什么；下面一条是用量。文档和文件按改动时间混排。',
+        props: {
+          team: 1,
+          personal: true,
+          room: { used: 186 * 1024 * 1024, total: 1024 * 1024 * 1024 },
+          rows: [
+            {
+              key: 'doc:d2',
+              rank: '1',
+              doc: listedDocument({
+                id: 'd2',
+                team_id: 1,
+                project_id: null,
+                kind: 'doc',
+                title: '读书笔记',
+                doc_version: 2,
+                author: 'alice',
+                created_by: 'alice',
+                created_at: '2026-10-20T09:00:00Z',
+                updated_at: '2026-10-22T10:00:00Z',
+              }),
+            },
+            { key: 'file:成绩分布.png', rank: '2', file: { ...FILE, path: '成绩分布.png', room: null } },
+          ],
+          members: ROSTER,
+          confirmingDoc: null,
+          loading: false,
+          loadFailed: false,
+          loadReason: '',
+          actionError: '',
+          dir: '',
+          browsing: true,
+          anything: true,
+          selected: null,
+          selectedPath: '',
+          busy: '',
+          wide: true,
+          revision: 0,
+          read: readMarkdown,
+          versionsOf: null,
+          versions: [],
+          versionsLoading: false,
+          versionsFailed: null,
+          versionsError: '',
+          restoring: null,
+          replacing: null,
+          confirming: null,
+          naming: false,
+          namingDialog: { title: '新建文件夹', primaryLabel: '新建' },
+          namingBusy: false,
+          namingError: '',
+          query: '',
+          kind: 'all',
+        },
+        expect: '成绩分布.png',
       },
     ],
   },

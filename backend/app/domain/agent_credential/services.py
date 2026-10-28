@@ -25,13 +25,10 @@ from app.core.sandbox_auth import (
     project_agent_claims,
 )
 from app.core.sentences import say
-from app.core.work_context import parse_work_id
-from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.project.reads import project_or_404
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.repositories import TopicRepository
 
 _DAY_S = 86400
 
@@ -58,7 +55,6 @@ class ProjectAgentCredentialService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._projects = ProjectRepository(session)
-        self._topics = TopicRepository(session)
 
     async def _get_or_404(self, project_id: uuid.UUID) -> Project:
         return await project_or_404(self._projects, project_id)
@@ -158,26 +154,3 @@ class ProjectAgentCredentialService:
         if project is None:
             return False
         return claims.epoch == credential_epoch_of(project)
-
-    async def project_of_request(
-        self, *, project_id: str | None, topic_id: str | None
-    ) -> uuid.UUID | None:
-        """Which project a cheese-gated URL acts on, from its path ids alone.
-
-        The gate matches ``/api/projects/{id}/…`` and ``/api/topics/{id}/…``; the
-        second names its project only through the topic, so this is the one place
-        that read lives. ``None`` means the request has no project context, which
-        must fail closed — a credential is scoped to a project, so a request that
-        names none is a request it cannot speak for.
-        """
-        if project_id is not None:
-            return parse_work_id(project_id)
-        if topic_id is None:
-            return None
-        parsed = parse_work_id(topic_id)
-        if parsed is None:
-            return None
-        # A task or a 支线 is a conversation inside a room: its project is
-        # its room's.
-        topic = await self._topics.get(await room_of(self._session, parsed))
-        return topic.project_id if topic is not None else None

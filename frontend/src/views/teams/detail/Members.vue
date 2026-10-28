@@ -1,15 +1,15 @@
 <script setup lang="ts">
-// 小队成员页（`/teams/:handle/members`）。这一页原来 865 行，装了三件事：取数与那一堆写操作、
-// 「谁在管这个团队」的判断、以及三格列表的画法。现在画法全在同目录的 `MembersView.vue`，
+// 团队设置的「成员」（`/teams/:handle/members`）。这一页原来 865 行，装了三件事：取数与那一堆
+// 写操作、「谁在管这个团队」的判断、以及列表的画法。现在画法全在同目录的 `MembersView.vue`，
 // 这一层只剩**接线** —— 哪一件点哪一下、递什么上去，看下面那个模板就够了：
 //
-//   1. **读**。进来取一次成员，能带人进来的顺手取一次加入申请（页签上的红色数字靠它）；
-//      收件箱来新通知或窗口回到前台时在后台重读；切到「已发送邀请」时取邀请。
+//   1. **读**。进来取一次成员，能带人进来的顺手取加入申请和已发送的邀请（有才画那两张卡）；
+//      收件箱来新通知或窗口回到前台时在后台重读。
 //   2. **写**。升管理员 / 降成员 / 移出、批准 / 拒绝、撤回邀请、邀请某人，都在这层。
-//   3. **地址**。`?tab=` / `?applicationId=` / `?invite=1` 读出要显示哪一格。自己名下只有
+//   3. **地址**。`?tab=` / `?applicationId=` 读出要滚到哪一张卡，`?invite=1` 打开邀请框。自己名下只有
 //      自己，没有这一页（侧栏里也不列），直接输地址进来的送回它的项目。
-//   4. **加入链接那张卡**（`TeamJoinLinkCard`）管的几样：小队链接、加入要不要审批、这个
-//      团队在搜索里露不露面、团队地址。取数也在这层，卡只吃数据、往上报动作，从下面那个
+//   4. **加入方式那张卡**（`TeamJoinLinkCard`）管的几样：团队链接、加入要不要审批、这个
+//      团队在搜索里露不露面（团队地址在「基本信息」）。取数也在这层，卡只吃数据、往上报动作，从下面那个
 //      具名插槽递进画面 —— 画面那一半因此一行取数都没有。
 defineOptions({ name: 'Members' })
 
@@ -243,9 +243,7 @@ const refreshLive = () => {
   const teamId = teamData.value?.id
   if (teamId === undefined || !canBringPeopleIn.value) return
   void fetchJoinRequests(teamId, true)
-  if (activeTab.value === 'invitations') {
-    void fetchTeamInvitations(teamId, true)
-  }
+  void fetchTeamInvitations(teamId, true)
 }
 onScopeDispose(onInboxChange(refreshLive))
 useEventListener(window, 'focus', refreshLive)
@@ -412,7 +410,6 @@ const onTeamUpdated = (team: Team) => {
 const joinLink = ref<TeamsApi.TeamJoinLink | null>(null)
 const joinBusy = ref(false)
 const joinError = ref('')
-const joinHandleError = ref('')
 const joinCopied = ref(false)
 
 // 这几手共用一个「在做」和一个「上一次没做成」：卡上的按钮和开关是一组，同一时刻只该有一件在做。
@@ -438,7 +435,6 @@ watch(
     joinLink.value = null
     joinCopied.value = false
     joinError.value = ''
-    joinHandleError.value = ''
     requestsRead += 1
     requestsLoaded = false
     joinRequests.value = []
@@ -454,12 +450,9 @@ watch(
     if (teamId === undefined || !allowed) {
       return
     }
-    // 「加入申请」页签上的红色数字就在顶上露着，不等切过去才问；普通成员没这页签，
-    // 也不发那个必回 403 的请求。
+    // 申请和邀请有才画卡，所以进来就问；普通成员没这两张卡，也不发那个必回 403 的请求。
     void fetchJoinRequests(teamId)
-    if (activeTab.value === 'invitations') {
-      void fetchTeamInvitations(teamId)
-    }
+    void fetchTeamInvitations(teamId)
     void runJoinLink(async () => {
       const data = await TeamsApi.getJoinLink(teamId)
       // 换队之前的回包不算数：它属于上一个团队。
@@ -510,34 +503,6 @@ const copyJoinLink = async (url: string) => {
     joinError.value = t('work.teamLink.copyFailed')
   }
 }
-
-// 换了地址就是换了个地方：保存完把浏览器也带到新地址上，老地址不再通。
-const saveTeamHandle = async (handle: string) => {
-  if (!teamData.value) {
-    return
-  }
-
-  joinHandleError.value = ''
-  joinBusy.value = true
-  try {
-    const { team } = await TeamsApi.update(teamData.value.id, { handle })
-    onTeamUpdated(team)
-    await router.replace({
-      name: route.name ?? 'TeamsDetailDefault',
-      params: { handle: team.handle },
-      query: route.query,
-    })
-  } catch (error) {
-    joinHandleError.value =
-      error instanceof ApiError && error.status === 409
-        ? t('work.teamLink.handleTaken')
-        : error instanceof ApiError && error.status === 400
-          ? t('work.teamLink.handleInvalid')
-          : t('work.teamLink.failed')
-  } finally {
-    joinBusy.value = false
-  }
-}
 </script>
 
 <template>
@@ -583,9 +548,7 @@ const saveTeamHandle = async (handle: string) => {
         :link="joinLink"
         :busy="joinBusy"
         :error="joinError"
-        :handle-error="joinHandleError"
         :copied="joinCopied"
-        @save-handle="saveTeamHandle"
         @reset="resetJoinLink"
         @set-approval="setJoinApproval"
         @set-visibility="setJoinVisibility"

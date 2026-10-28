@@ -270,7 +270,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamDetailView.s4.note')
         },
         props: { teamData: undefined, failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
-        expect: '团队信息没读出来',
+        expect: '团队信息加载失败',
       },
       {
         get name() {
@@ -639,7 +639,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       link: { token: 'kJ3f9a21Xw', approval: true },
       busy: false,
       error: '',
-      handleError: '',
       copied: false,
     },
     states: [
@@ -682,16 +681,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
         },
         props: { link: null, error: '操作失败，请重试' },
         expect: '操作失败，请重试',
-      },
-      {
-        get name() {
-          return t('catalog.teamJoinLinkCard.s5.name')
-        },
-        get note() {
-          return t('catalog.teamJoinLinkCard.s5.note')
-        },
-        props: { handleError: '这个地址已被占用' },
-        expect: '这个地址已被占用',
       },
     ],
   },

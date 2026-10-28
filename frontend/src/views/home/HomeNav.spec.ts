@@ -4,7 +4,7 @@
 // 名单是怎么读来的、点下去之后真发生了什么（退出、解散、转让、加入）在
 // `composables/useTeamNav.spec.ts` 里，那里挂的是真接线。
 import type { Component } from 'vue'
-import type { Team, TeamMember } from '@/types'
+import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -43,8 +43,7 @@ function props(overrides: Record<string, unknown> = {}) {
   return {
     inbox: true,
     teams: [] as Team[],
-    spaces: [] as { id: number; name: string }[],
-    editing: null,
+    spaces: [] as SpaceLink[],
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
@@ -58,16 +57,22 @@ async function mount(overrides: Record<string, unknown> = {}) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
+      // 的行会当场抛，整个侧栏就渲染不出来。
+      { path: '/market', name: 'market', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+      { path: '/users/settings/compute', name: 'UserSettingsCompute', component: blank },
       {
         path: '/teams/:handle',
         component: { template: '<router-view />' },
         children: [
           { path: '', name: 'TeamsDetailDefault', component: blank },
           { path: 'members', name: 'TeamsDetailMembers', component: blank },
-          { path: 'docs', name: 'TeamsDetailDocs', component: blank },
+          { path: 'settings', name: 'TeamsDetailSettings', component: blank },
+          { path: 'profile', name: 'TeamsDetailProfile', component: blank },
+          { path: 'library', name: 'TeamsDetailLibrary', component: blank },
           { path: 'compute', name: 'TeamsDetailCompute', component: blank },
           { path: 'models', name: 'TeamsDetailModels', component: blank },
           { path: 'credits', name: 'TeamsDetailCredits', component: blank },
@@ -119,31 +124,47 @@ function menuLabels() {
 }
 
 describe('首页目录的画面', () => {
-  it('正在看的那个团队展开着，四样东西都点得到；别的团队收着', async () => {
+  it('正在看的那个团队展开着，项目和资料库都点得到；别的团队收着', async () => {
     await mount({
       teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')],
       currentHandle: 'crew',
     })
-    await waitFor(() =>
-      expect(hrefs()).toEqual(
-        expect.arrayContaining(['/teams/crew', '/teams/crew/members', '/teams/crew/docs', '/teams/crew/compute'])
-      )
-    )
+    await waitFor(() => expect(hrefs()).toEqual(expect.arrayContaining(['/teams/crew', '/teams/crew/library'])))
+    expect(hrefs()).not.toContain('/teams/crew/docs')
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
+  })
+
+  // 市场（技能、插件、MCP、Agent 模板）全站一份，入口只在首页这份目录里，挨着空间：
+  // 桌面侧栏和手机「首页」整页都画这一份，两端从同一行进。
+  it('「市场」那一行挨着空间，排在空间那一段之后、团队之外', async () => {
+    const space = { id: 7, name: '数据课', avatarId: null } as unknown as SpaceLink
+    await mount({ teams: [team('crew', '知是开发组')], spaces: [space] })
+    await screen.findByText('知是开发组')
+    expect(screen.getByText('市场')).toBeTruthy()
+    const order = hrefs()
+    const market = order.indexOf('/market')
+    expect(market).toBeGreaterThan(-1)
+    // 空间那一段（标题、空间、加入 / 创建）之后才是市场；团队那一段在它们前面。
+    expect(market).toBeGreaterThan(order.indexOf('/spaces/7/tasks'))
+    expect(market).toBeGreaterThan(order.indexOf('/teams/explore'))
+    const labels = Array.from(document.querySelectorAll('.v-list-subheader, .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
+    expect(labels.indexOf('市场')).toBeGreaterThan(labels.indexOf('新建空间'))
   })
 
   it('点一个团队在原地展开，再点收起', async () => {
     await mount({ teams: [team('lab', '数据课第三组')] })
     await fireEvent.click(await screen.findByLabelText('展开 数据课第三组'))
-    await waitFor(() => expect(hrefs()).toContain('/teams/lab/members'))
+    await waitFor(() => expect(hrefs()).toContain('/teams/lab/library'))
     await fireEvent.click(screen.getByLabelText('收起 数据课第三组'))
-    await waitFor(() => expect(hrefs()).not.toContain('/teams/lab/members'))
+    await waitFor(() => expect(hrefs()).not.toContain('/teams/lab/library'))
   })
 
   it.each([
-    ['ADMIN', ['邀请成员', '编辑团队资料', '退出团队']],
-    ['MEMBER', ['退出团队']],
-    ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
+    ['ADMIN', ['设置', '邀请成员', '编辑团队资料', '退出团队']],
+    ['MEMBER', ['设置', '退出团队']],
+    ['OWNER', ['设置', '邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
     await mount({ teams: [team('crew', '知是开发组', role)] })
     await fireEvent.click(await screen.findByLabelText('团队操作'))
@@ -152,7 +173,6 @@ describe('首页目录的画面', () => {
   })
 
   it.each([
-    ['OWNER', '编辑团队资料', 'edit'],
     ['OWNER', '解散团队', 'openDisband'],
     ['OWNER', '转让团队', 'openTransfer'],
     ['MEMBER', '退出团队', 'leave'],
@@ -171,31 +191,52 @@ describe('首页目录的画面', () => {
   })
 
   // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
-  // 展开后没有「成员」，也没有团队的 ⋯ 操作。
-  it('自己名下在「团队」之上单独一行，没有成员页，也没有团队操作', async () => {
+  // 它的 ⋯ 里只有「设置」，打开的是个人设置：自己名下的设备、模型、额度在那里。
+  it('自己名下在「团队」之上单独一行，⋯ 里只有「设置」', async () => {
     const own = team('andy', '林夏', 'OWNER', { personal: true })
-    await mount({ teams: [own, team('crew', '知是开发组', 'OWNER')], currentHandle: 'andy' })
-    await waitFor(() =>
-      expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/docs', '/teams/andy/compute']))
-    )
-    expect(hrefs()).not.toContain('/teams/andy/members')
-    expect(hrefs()).toContain('/teams/andy/credits')
-
+    await mount({ teams: [own], currentHandle: 'andy' })
+    await waitFor(() => expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/library'])))
     const text = document.body.textContent ?? ''
     expect(text.indexOf('林夏')).toBeLessThan(text.indexOf('团队'))
-    expect(text.indexOf('团队')).toBeLessThan(text.indexOf('知是开发组'))
-    expect(screen.getAllByLabelText('团队操作')).toHaveLength(1)
+
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await screen.findByText('设置')
+    expect(menuLabels()).toEqual(['设置'])
+    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/users/settings/compute')
   })
 
-  it('团队展开后有「额度」一页', async () => {
+  it('成员、设备、模型、额度不在侧栏上，从 ⋯ 的「设置」进去', async () => {
     await mount({ teams: [team('crew', '知是开发组')], currentHandle: 'crew' })
-    await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
+    await waitFor(() => expect(hrefs()).toContain('/teams/crew/library'))
+    for (const page of ['members', 'compute', 'models', 'credits']) expect(hrefs()).not.toContain(`/teams/crew/${page}`)
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    await screen.findByText('设置')
+    expect(screen.getByText('设置').closest('a')?.getAttribute('href')).toBe('/teams/crew/settings')
+  })
+
+  it('「编辑团队资料」打开团队设置的「基本信息」', async () => {
+    await mount({ teams: [team('crew', '知是开发组', 'OWNER')] })
+    await fireEvent.click(await screen.findByLabelText('团队操作'))
+    expect((await screen.findByText('编辑团队资料')).closest('a')?.getAttribute('href')).toBe('/teams/crew/profile')
   })
 
   it('空间点了就进那个空间', async () => {
     await mount({ spaces: [{ id: 3, name: '数据分析课' }] })
     await screen.findByText('数据分析课')
     expect(hrefs()).toContain('/spaces/3/tasks')
+  })
+
+  it('空间挑过头像就画那一张，没挑过画彩色首字母', async () => {
+    await mount({
+      spaces: [
+        { id: 3, name: '数据分析课', avatarId: 7 },
+        { id: 4, name: '城市数据实验室', avatarId: null },
+      ],
+    })
+    const picked = (await screen.findByText('数据分析课')).closest('.v-list-item')
+    expect(picked?.querySelector('.home-nav__mark img')?.getAttribute('src')).toContain('/avatars/7')
+    const plain = screen.getByText('城市数据实验室').closest('.v-list-item')
+    expect(plain?.querySelector('.home-nav__mark img')).toBeNull()
   })
 
   it('待我处理的件数画在「待办」那一行上，一百以上收成 99+', async () => {
@@ -215,23 +256,6 @@ describe('首页目录的画面', () => {
 
 describe('目录带的四个弹窗', () => {
   let view: ReturnType<typeof render>
-
-  it('在改哪个团队：弹窗开着他的名字，保存报上去的是填的三样', async () => {
-    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
-    const name = await screen.findByLabelText('团队名称')
-    await waitFor(() => expect((name as HTMLInputElement).value).toBe('知是开发组'))
-    await fireEvent.update(name, '知是开发组二部')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() =>
-      expect(view.emitted('saveProfile')).toEqual([[{ name: '知是开发组二部', intro: '', avatarFile: undefined }]])
-    )
-  })
-
-  it('关掉改资料的弹窗就是把「在改哪个团队」交回空', async () => {
-    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
-    await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
-    await waitFor(() => expect(view.emitted('update:editing')).toEqual([[null]]))
-  })
 
   it('解散：要把团队名打一遍才报得上去', async () => {
     const crew = team('crew', '知是开发组', 'OWNER')

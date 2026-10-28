@@ -6,7 +6,9 @@
 // 题目边写边存成草稿（`@/types/taskDrafts`）。顶栏的「草稿」列出我在这个空间的草稿，
 // 点哪份打开哪份；旁边写着存到哪了。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { SaveState } from '@/composables/useTaskDraft'
+import type { AgentType } from '@/cx_types'
 import type { NavTarget } from '@/lib/navTarget'
 import type {
   DomainGroup,
@@ -29,11 +31,13 @@ import TaskDraftStrip from './TaskDraftStrip.vue'
 
 import AgentEntryButton from '@/components/assistant/AgentEntryButton.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskStarterPicker from '@/components/tasks/TaskStarterPicker.vue'
 import { isTeachingBlank } from '@/lib/teaching'
 
 const props = withDefaults(
@@ -48,13 +52,21 @@ const props = withDefaults(
     selectedCategoryId?: number
     domainGroups: DomainGroup[]
     templates: { index: number; name: string; description: string }[]
-    attachments: PickedAttachment[]
+    attachments: PickedAttachment<number>[]
     uploading: boolean
+    /** 正在传的那一份材料传到了百分之几；`null` = 没在传。 */
+    uploadPercent?: number | null
     maxFileBytes: number | null
+    /** 起始代码：选好的那一份 .zip，它是否正在上传、传到了百分之几。 */
+    starter?: { name: string; size: number } | null
+    starterUploading?: boolean
+    starterPercent?: number | null
     materials: SpaceMaterial[]
     materialsState: SpaceMaterialsState
     libraryTo: string
     publishing: boolean
+    /** 上一次发布没成的原因（服务端的原话）；没有就是空串。 */
+    publishError?: string
     /** 能当导师的人和默认的那一位（出题人自己，#3830）。 */
     mentorOptions?: { title: string; value: string }[]
     defaultMentor?: string
@@ -77,21 +89,41 @@ const props = withDefaults(
     /** 空间的 AI 队友辅导：和本题的同时生效，摆在本题设置底下。 */
     spaceTeaching?: SpaceTeaching | null
     agentName: string
+    /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
+    agentTypes?: AgentType[]
+    agentTypesFailed?: boolean
+    /** 「技能」那一格的候选，同样由容器取好传进来。 */
+    skillCatalog?: SkillChoice[]
+    skillCatalogFailed?: boolean
+    /** 选中的项目集设的默认队友（`null` = 没设；不给 = 还没选项目集）。 */
+    inheritedRole?: string | null
   }>(),
   {
     selectedCategoryId: undefined,
+    uploadPercent: null,
+    starter: null,
+    starterUploading: false,
+    starterPercent: null,
+    inheritedRole: undefined,
     mentorOptions: () => [],
     defaultMentor: undefined,
     publishedHere: false,
+    publishError: '',
     strip: null,
     agentWriting: null,
     spaceTeaching: null,
+    agentTypes: () => [],
+    agentTypesFailed: false,
+    skillCatalog: () => [],
+    skillCatalogFailed: false,
   }
 )
 
 const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 /** 这道题单独写了 AI 指导；没有就沿用空间的默认。 */
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
+/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。发题页没有原始值。 */
+const defaultRole = defineModel<string>('defaultRole', { required: true })
 
 /** 题目和空间的辅导设置同时生效：这道题写了什么，就算「本题有自己的」。 */
 function setTeaching(value: SpaceTeaching) {
@@ -108,6 +140,8 @@ const emit = defineEmits<{
   'import-files': [files: File[]]
   'add-attachments': [files: File[]]
   'remove-attachment': [id: number]
+  'pick-starter': [file: File]
+  'remove-starter': []
   submit: [data: TaskFormSubmitData]
   change: [fields: TaskDraftFields]
   'form-ready': [fields: TaskDraftFields]
@@ -203,6 +237,9 @@ defineExpose({
           <span v-if="blocking" class="pub__blocking" data-testid="publish-blocking">{{
             t('spaces.detail.publishTask.blocking', { n: blocking })
           }}</span>
+          <span v-else-if="publishError" class="pub__blocking" role="alert" data-testid="publish-failed">{{
+            publishError
+          }}</span>
           <span v-else class="pub__note">{{ t('spaces.detail.publishTask.needsReview') }}</span>
           <AgentEntryButton
             v-if="mdAndUp && !agentOpen"
@@ -245,7 +282,6 @@ defineExpose({
             :categories="categories"
             :selected-category-id="selectedCategoryId"
             :domain-groups="domainGroups"
-            :teaching-custom="teachingOwn"
             :mentor-options="mentorOptions"
             :default-mentor="defaultMentor"
             :agent-writing="agentWriting"
@@ -290,27 +326,43 @@ defineExpose({
             </template>
 
             <template #attachments>
-              <TaskAttachmentPicker
-                :files="attachments"
-                :uploading="uploading"
-                :max-file-bytes="maxFileBytes"
-                @add="emit('add-attachments', $event)"
-                @remove="emit('remove-attachment', $event)"
-              />
+              <div class="pub__files">
+                <TaskAttachmentPicker
+                  :files="attachments"
+                  :uploading="uploading"
+                  :percent="uploadPercent"
+                  :max-file-bytes="maxFileBytes"
+                  @add="emit('add-attachments', $event)"
+                  @remove="emit('remove-attachment', Number($event))"
+                />
+                <TaskStarterPicker
+                  :file="starter"
+                  :uploading="starterUploading"
+                  :percent="starterPercent"
+                  :max-bytes="maxFileBytes"
+                  @pick="emit('pick-starter', $event)"
+                  @remove="emit('remove-starter')"
+                />
+              </div>
             </template>
 
             <template #teaching>
               <div class="pub__teaching" data-testid="publish-teaching" data-agent-field="ai_guidance">
-                <p class="pub__teaching-label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-                <p class="pub__teaching-hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
+                <DefaultTeammatePicker
+                  v-model="defaultRole"
+                  :types="agentTypes"
+                  :types-failed="agentTypesFailed"
+                  :inherited="inheritedRole"
+                />
                 <TeachingFields
                   :model-value="teaching"
-                  class="pub__teaching-fields"
                   inherit
                   :space-teaching="spaceTeaching"
                   :materials="materials"
                   :materials-state="materialsState"
                   :library-to="libraryTo"
+                  :skill-catalog="skillCatalog"
+                  :skill-catalog-failed="skillCatalogFailed"
                   @update:model-value="setTeaching"
                 />
               </div>
@@ -329,6 +381,12 @@ defineExpose({
 }
 
 /* 左边这一栏多宽，取决于两侧的侧栏和芝士：顶栏按自己的宽窄收，不按窗口。 */
+.pub__files {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .pub__head {
   container-type: inline-size;
 }
@@ -414,19 +472,9 @@ defineExpose({
   padding: 8px 16px 96px;
 }
 
-.pub__teaching-label {
-  margin: 0;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: var(--lh-13);
-}
-
-.pub__teaching-hint {
-  margin: 4px 0 8px;
-}
-
-.pub__teaching-fields {
-  margin-top: 4px;
+.pub__teaching {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 </style>

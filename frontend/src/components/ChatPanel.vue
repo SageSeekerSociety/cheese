@@ -11,7 +11,7 @@ import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -26,6 +26,7 @@ import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import BookmarkRail from './chat/BookmarkRail.vue'
@@ -169,9 +170,14 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
+// 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
+const chatRoot = ref<HTMLElement | null>(null)
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
+  column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
@@ -184,11 +190,14 @@ const panel = useChatPanel({
   emit: panelEmit,
 })
 
+// 一件任务交给的那位 AI 队友叫什么；没单独指定的，是这间房的那位。
+const taskAgentName = (handle: string | null | undefined) =>
+  (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value
 const threadLines = useThreadLines({
   mainLine: () => mainLine.value,
   roomId: () => props.topic?.id ?? null,
   timeline: panel.timeline,
-  agentNameOf: (handle) => (handle && panel.refMaps.mentionNames[handle]) || panel.agentName.value,
+  agentNameOf: taskAgentName,
 })
 // 置顶：只在频道主线上、我能在这里说话（加入了这个频道）、频道没归档时能做。
 const pinnable = computed(() => threadable.value && props.topic?.joined !== false)
@@ -205,15 +214,22 @@ const keepAudience = useKeepAudience(
   () => props.topic?.id ?? null,
   () => keeping.value !== null
 )
+// 存在哪段对话里按的，就在哪段对话里说「已存进资料库」：支线里按的报给支线，不报到
+// 主线上去（后端按这个 id 找房间，也按它决定那句话落在哪）。
+function keepIn(): string | null {
+  return props.conversationId ?? props.topic?.id ?? null
+}
 function keepFile(block: Block) {
   if (!props.topic) return
+  const at = keepIn()
   if (props.privateChat || props.topic.members_only) keeping.value = block
-  else pins.keep(props.topic.id, block)
+  else if (at) pins.keep(at, block)
 }
 function confirmKeep() {
   const block = keeping.value
   keeping.value = null
-  if (block && props.topic) pins.keep(props.topic.id, block)
+  const at = keepIn()
+  if (block && at) pins.keep(at, block)
 }
 function nameOf(handle: string): string {
   return panel.nameOfHandle(handle)
@@ -222,14 +238,29 @@ function nameOf(handle: string): string {
 // 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
-  () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
+  () =>
+    new Map(
+      knownTasks.value.map((task) => [
+        task.id,
+        taskLine(task, panel.viewer.value, nameOf, taskAgentName(task.agent_handle)),
+      ])
+    )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
+const NO_TASKS: TaskLine[] = []
+const tasksByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  for (const [blockId, tasks] of taskOrigins.value) {
+    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
 function tasksUnder(blockId: string): TaskLine[] {
-  return (taskOrigins.value.get(blockId) ?? []).flatMap((task) => taskLines.value.get(task.id) ?? [])
+  return tasksByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -284,6 +315,7 @@ const {
   togglePicker,
   bar,
   barBlock,
+  kbdNav,
   reactionPickerFor,
   timeShownId,
   arrived,
@@ -398,8 +430,19 @@ const submitQuestion = createQuestionSubmit({
 })
 defineExpose({ send, linkDown, submitQuestion })
 
+// 看图浮层要的三样（lib/chatImages）：这段对话里有哪些图、右侧面板、输入框，都在这一层。
+provide(CHAT_IMAGE_ACTIONS, {
+  gallery: () => imagePaths(rows.value),
+  openInPanel: (path, tool) => {
+    handOffImageTool(path, tool)
+    emit('open-file', path)
+  },
+  attach: (file) => void addFiles([file]),
+  // 输入框此刻在不在、收不收：和上面那条「回到输入框」的判据同一个。
+  canAttach: () => !!props.topic && !!props.showComposer && !props.composerClosed && !!composerRef.value,
+})
+
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
-const chatRoot = ref<HTMLElement | null>(null)
 useComposerShortcut({
   root: chatRoot,
   open: () => !!props.topic && props.showComposer && !props.composerClosed && !!composerRef.value,
@@ -476,6 +519,7 @@ useComposerShortcut({
             :bar="bar"
             :bar-block="barBlock"
             :bar-editable="barEditable"
+            :kbd-nav="kbdNav"
             :reaction-picker-for="reactionPickerFor"
             :loading-history="loadingHistory"
             :has-more="hasMore"
@@ -553,7 +597,7 @@ useComposerShortcut({
             <template #timeline-end><slot name="timeline-end" /></template>
           </ChatTimeline>
         </ErrorBoundary>
-        <!-- 书签条浮在对话左上角，不占对话宽度；没有书签时它自己不画。 -->
+        <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
         <BookmarkRail
           :chapters="chapters"
           :can-chapter="chapterable"
@@ -573,12 +617,20 @@ useComposerShortcut({
         :no-upgrade="noUpgrade"
         :threadable="threadable"
         :processable="inThread"
+        :pinnable="pinnable"
+        :pinned-ids="pins.pinnedIds.value"
+        :chapterable="chapterable"
+        :chaptered-ids="chapterIds"
         @react="onReact"
         @reply="setReply"
         @thread="emit('open-thread', $event)"
         @process="emit('open-process', $event)"
         @upgrade="emit('upgrade-message', $event)"
         @edit="startEdit"
+        @pin="pins.pin"
+        @unpin="pins.unpin"
+        @chapter="emit('chapter', $event)"
+        @unchapter="emit('unchapter', $event)"
       />
       <ChatNewMessagesPill :count="unseen.length" :has-newer="hasNewer" :at-bottom="atBottom" @jump="jumpToUnseen" />
 

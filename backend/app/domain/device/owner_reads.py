@@ -34,7 +34,7 @@ used to read is dropped a release later still.
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import Boolean, Uuid, column, select, table, union_all
+from sqlalchemy import Boolean, Integer, Uuid, column, select, table, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
@@ -42,6 +42,7 @@ from app.domain.device.models import DeviceRow, HostedDeviceRow, ModelCredential
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.project.models import Project, ProjectMember
 from app.domain.topic.models import TopicMembership
+from app.domain.user.tokens import digest_token
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,9 +55,12 @@ class DeviceIdentity:
 async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity | None:
     if not token:
         return None
+    digest = digest_token(token)
     row = (
         await session.execute(
-            select(DeviceRow.device_id, DeviceRow.name).where(DeviceRow.token == token)
+            select(DeviceRow.device_id, DeviceRow.name).where(
+                DeviceRow.token_digest == digest
+            )
         )
     ).one_or_none()
     if row is not None:
@@ -64,7 +68,7 @@ async def device_for_token(session: AsyncSession, token: str) -> DeviceIdentity 
     host = (
         await session.execute(
             select(ModelCredentialHost.id, ModelCredentialHost.name).where(
-                ModelCredentialHost.token == token
+                ModelCredentialHost.token_digest == digest
             )
         )
     ).one_or_none()
@@ -118,6 +122,21 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
         select(_inside.c.room_id).where(_inside.c.id == conversation_id)
     )
     return room or conversation_id
+
+
+_personal = table(
+    "assistant_conversations", column("id", Uuid), column("user_id", Integer)
+)
+
+
+async def personal_owner(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> int | None:
+    """Whose own 芝士 conversation this is; None when it is no such
+    conversation."""
+    return await session.scalar(
+        select(_personal.c.user_id).where(_personal.c.id == conversation_id)
+    )
 
 
 _rooms = table("topics", column("id", Uuid), column("members_only", Boolean))

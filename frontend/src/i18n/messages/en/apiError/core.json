@@ -1,19 +1,20 @@
 {
   "accessDenied": "Access denied",
   "clientDisconnected": "The client disconnected",
+  "clientOutdated": "This page is out of date. Refresh it to continue",
   "consentRequired": "Please read and agree to the Terms of Service and the Privacy Policy",
   "consentStale": "The agreements have been updated. Refresh the page, then read and agree to them again",
   "deviceLinkInterrupted": "The connection to device {device} dropped mid-operation, so whether it went through is unknown",
   "deviceOffline": "Device {device} is offline",
-  "gatewayTimeout": "Upstream did not answer in time",
+  "gatewayTimeout": "A service this depends on didn't answer in time. Try again shortly",
   "invalidRequestParameters": "Invalid request parameters",
   "invalidToken": "Invalid token",
   "listCursorUnreadable": "The cursor is invalid; start again from the first page",
   "permissionDenied": "Permission denied",
   "quotaExceeded": "Quota exceeded",
   "resourceNotFound": "Resource not found",
-  "serverInternalError": "Something went wrong on the server",
+  "serverInternalError": "Something went wrong on the server. Try again shortly",
   "systemBusy": "The system is busy; try again later",
   "tokenExpired": "Token has expired",
-  "upstreamUnavailable": "Upstream unavailable"
+  "upstreamUnavailable": "A service this depends on is unavailable right now. Try again shortly"
 }

@@ -2,7 +2,7 @@
   "drafting": "{name} is working on this task",
   "draftingWhat": "The doc is written as the work goes",
   "failed": "{name} could not start on this task",
-  "failedWhy": "This turn did not finish",
+  "failedWhy": "It didn't finish this time",
   "retry": "Retry",
   "waiting": "Not started yet; continues once the environment is connected",
   "writeMyself": "Write it myself"

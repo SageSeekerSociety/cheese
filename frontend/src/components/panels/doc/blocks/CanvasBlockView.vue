@@ -280,6 +280,12 @@ const canChange = computed(() => editable.value && !!board.value?.writable)
   border-bottom: 1px solid var(--line);
 }
 
+/* 只有全屏（`--full`，整层铺满窗口）那一档才要：这时头部左边就是标题输入框，桌面版
+   macOS 里要让开三颗窗口按钮（style.css 的 --window-buttons-inset，别处恒为 0）。 */
+.doc-canvas__frame--full .doc-canvas__head {
+  padding-left: max(12px, var(--window-buttons-inset));
+}
+
 .doc-canvas__words {
   display: flex;
   flex: 1 1 auto;

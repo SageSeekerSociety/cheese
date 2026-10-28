@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -18,7 +19,11 @@ from app.core.errors import (
     GatewayTimeoutError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import (
+    held_by_a_machine,
+    personal_execution_claims,
+    scoped_token_claims,
+)
 from app.core.sentences import say
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
@@ -127,27 +132,41 @@ async def execute(
         payload.method,
         payload.params.get("id", ""),
     )
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
+    token = credentials.presented(request.headers)
+    claims = scoped_token_claims(token)
+    if claims and held_by_a_machine(claims):
+        claims = None
+    # A person's own 芝士 works its sandbox with a credential of its own kind
+    # (``machine.holder.Personal``): the conversation is theirs, in no project
+    # and no room.
+    personal = claims is None and (claims := personal_execution_claims(token))
     if not claims or claims.get("t") != str(topic_id):
         raise AuthenticationRequiredError("A credential for this room is required")
-    # `topic_id` is the conversation the credential works — a room or a task;
-    # the machine, roster and dispatch log are its room's.
-    room_id = await owner_reads.room_of(db, topic_id)
-    # The room facts are read through its own domain, which names the columns it
-    # answers with: the connection owner survives app releases, and a full Topic
-    # row would make an unrelated column removal break every tool call on it.
-    room = await execution_room(db, room_id)
-    if room is None:
-        raise NotFoundError(say("topicNotFound"))
-    if claims.get("p") != str(room.project_id):
-        raise ForbiddenError("Execution belongs to another project")
-    # The credential outlives the agent's seat: an agent taken off the room
-    # keeps a signature that still verifies. An agent's only standing in a room
-    # is its row on the roster, asked through `owner_reads` because this route
-    # is served by the connection owner (see there).
-    seat = claims.get("a")
-    if seat and not await owner_reads.topic_member(db, room_id, seat):
-        raise ForbiddenError(say("topicMemberOnly"))
+    if personal:
+        if await owner_reads.personal_owner(db, topic_id) != claims["u"]:
+            raise NotFoundError.for_resource("conversation", str(topic_id))
+        room_id, place_resource, project_id = topic_id, topic_id, None
+    else:
+        # `topic_id` is the conversation the credential works — a room or a
+        # task; the machine, roster and dispatch log are its room's.
+        room_id = await owner_reads.room_of(db, topic_id)
+        # The room facts are read through its own domain, which names the
+        # columns it answers with: the connection owner survives app releases,
+        # and a full Topic row would make an unrelated column removal break
+        # every tool call on it.
+        room = await execution_room(db, room_id)
+        if room is None:
+            raise NotFoundError(say("topicNotFound"))
+        if claims.get("p") != str(room.project_id):
+            raise ForbiddenError("Execution belongs to another project")
+        # The credential outlives the agent's seat: an agent taken off the room
+        # keeps a signature that still verifies. An agent's only standing in a
+        # room is its row on the roster, asked through `owner_reads` because
+        # this route is served by the connection owner (see there).
+        seat = claims.get("a")
+        if seat and not await owner_reads.topic_member(db, room_id, seat):
+            raise ForbiddenError(say("topicMemberOnly"))
+        place_resource, project_id = room.resource_id or room.id, room.project_id
     lease_generation = None
     if "session" in claims:
         try:
@@ -177,7 +196,7 @@ async def execute(
         or not owned.runtime_location
         or owned.runtime_location.get("resource_id") != str(resource_id)
         or claims.get("r") != str(resource_id)
-        or (room.resource_id or room.id) != resource_id
+        or place_resource != resource_id
     ):
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
@@ -230,10 +249,15 @@ async def execute(
         # and backed up by the checkpoint of the turn that last used it. The
         # host may be gone too, so asking it would only fail.
         return {}
+    # A person's 芝士 works only on the platform's own machines: a person's
+    # computer serves a project, and it is in none.
     if not (
         await machine_owner_reads.active_cloud_host(db, target["device_id"])
-        or await owner_reads.execution_device_authorized(
-            db, target["device_id"], room.project_id
+        or (
+            project_id is not None
+            and await owner_reads.execution_device_authorized(
+                db, target["device_id"], project_id
+            )
         )
     ):
         raise ForbiddenError("Device no longer serves this project")
@@ -263,7 +287,9 @@ async def execute(
             session_id=session_id,
             lease_generation=lease_generation,
         )
-        if key
+        # The log is a room's: what it says a call may have done is told to
+        # the people there. A person's 芝士 tells its person itself.
+        if key and not personal
         else None
     )
     await db.commit()

@@ -28,10 +28,20 @@ def month_of(moment: datetime) -> date:
     return date(local.year, local.month, 1)
 
 
+def month_start(month: date) -> datetime:
+    """The first moment of ``month``: where 「本月」 starts being counted.
+
+    One definition, because a month is read in more than one place — the plan's
+    pack lapses at `month_end`, and a per-rule figure counts from here — and two
+    copies of 「这个月从哪一刻起」 is how those two come to disagree.
+    """
+    return datetime(month.year, month.month, 1, tzinfo=_TZ)
+
+
 def month_end(month: date) -> datetime:
     """When the month's plan pack lapses and the next month's becomes available."""
     following = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return datetime(following.year, following.month, 1, tzinfo=_TZ)
+    return month_start(following)
 
 
 def week_of(moment: datetime) -> datetime:

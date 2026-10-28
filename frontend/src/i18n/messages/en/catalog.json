@@ -357,6 +357,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
@@ -392,10 +396,14 @@
     }
   },
   "previewPanelLocator": {
-    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+    },
+    "s2": {
+      "name": "This file takes no comments",
+      "note": "A library original or a message attachment takes no comments, so only 'send' is offered."
     }
   },
   "previewPanelPickToggle": {
@@ -519,6 +527,14 @@
     "s5": {
       "name": "Cheese closed",
       "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
+    },
+    "s6": {
+      "name": "Publish refused",
+      "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
+    },
+    "s7": {
+      "name": "Publish all with one refused",
+      "note": "After \"Publish all\", the server refused the second task: the note says how many went out, and the refused one carries the server's own words."
     }
   },
   "basicInfoView": {
@@ -573,7 +589,7 @@
     "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
     "s1": {
       "name": "Claimed and submitted",
-      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+      "note": "Default cell: four KPIs (participants / submitted / pass rate / idle since starting), a participation trend, how far they got, squad makeup."
     },
     "s2": {
       "name": "Read failure, not drawn as 0",
@@ -589,18 +605,18 @@
     }
   },
   "rosterView": {
-    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "about": "Task detail 'Participants' tab: handling applications, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
     "s1": {
       "name": "Roster loaded",
       "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
     },
     "s2": {
       "name": "Roster still loading",
-      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No participants' first."
     },
     "s3": {
       "name": "Not for you",
-      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see participants."
     },
     "s4": {
       "name": "Failed this time",
@@ -608,7 +624,7 @@
     },
     "s5": {
       "name": "No one has claimed",
-      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No participants'."
     }
   },
   "views404": {
@@ -1323,7 +1339,7 @@
     }
   },
   "alertsView": {
-    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, applications to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
     "s1": {
       "name": "Counts with alerts",
       "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
@@ -1457,8 +1473,8 @@
       "note": "The default: one host in use, one offline, one broken by the provider and given up; opening the one in use shows a working sandbox and one waiting for its host."
     },
     "s2": {
-      "name": "Refusing new sessions",
-      "note": "The provider broke three hosts within the hour: the page says new sessions are being refused, instead of leaving a number to interpret."
+      "name": "Not starting new AI teammates",
+      "note": "The provider broke three hosts within the hour: the page says no new AI teammates are being started, instead of leaving a number to interpret."
     },
     "s3": {
       "name": "A failed read is not an empty pool",
@@ -1516,26 +1532,26 @@
     }
   },
   "teamMembersView": {
-    "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
+    "about": "The Members section of team settings: an Invite button beside the title, then four cards (how people join, join requests, members, sent invitations; requests and invitations only when there are some) and an invite dialog. Reads and writes live in the container `teams/detail/Members.vue`.",
     "s1": {
-      "name": "The members tab",
-      "note": "Default state: four people, one per row, owner and admins each carrying a role chip (the last admin's long nickname truncates while the chip stays whole), and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+      "name": "Members",
+      "note": "One row per person, each with a role chip and a line on what the role can do. Promote, demote and remove sit in the row menu; a member the server will not let you remove has no menu."
     },
     "s2": {
-      "name": "The join requests tab",
-      "note": "The one waiting for a decision: who asked, their one-line reason, when they asked, with approve and reject on the right; both go dead while an answer is in flight."
+      "name": "Join requests",
+      "note": "A pending request: who, their message, when; reject and approve on the right; the card title counts what is still waiting."
     },
     "s3": {
-      "name": "The sent invitations tab",
-      "note": "Sent, no answer yet: who was invited and when, with only a withdraw button on the right."
+      "name": "Sent invitations",
+      "note": "An invitation still waiting: who, when, and a Withdraw button."
     },
     "s4": {
       "name": "The members tab could not load",
       "note": "The list did not come back: this tab turns into the failure state, states the reason and offers a retry, rather than drawing \"No members\"."
     },
     "s5": {
-      "name": "The requests are still loading",
-      "note": "The requests are not back yet: one centred spinner. It cannot say \"No join requests\" here - that sentence is only sayable after a read."
+      "name": "Requests still loading",
+      "note": "A spinner in the card; it does not say there are none."
     },
     "s6": {
       "name": "The invite dialog found someone",
@@ -1547,10 +1563,10 @@
     }
   },
   "teamJoinLinkCard": {
-    "about": "The team address and joining card: the address (`/teams/` plus the handle), a long-lived team link (copy it, reset it), whether joining needs approval, and whether the team shows up in search. Fetching, writing, and where the browser goes after an address change all live in the container `teams/detail/Members.vue`; this card only takes data and reports actions, and only the address field keeps its own draft - a half-typed address must not follow the next team.",
+    "about": "How people join, in the Members section: the long-lived team link (copy, reset), whether joining needs approval, and who can find the team. The team address lives in Profile. Reads and writes are in the container `teams/detail/Members.vue`.",
     "s1": {
       "name": "The link is back",
-      "note": "Default state: the address field carries the host prefix, the link field is read-only, copy and reset sit beside it, and below are the approval switch and the two \"who can find this team\" options."
+      "note": "The default: a read-only link with copy and reset beside it; below, the approval switch and the two visibility choices, each with a line under it."
     },
     "s2": {
       "name": "Just copied",
@@ -1563,10 +1579,6 @@
     "s4": {
       "name": "It did not go through",
       "note": "A read or write failed: a red bar states the reason, the rest of the card stays as it was, and the person can try again."
-    },
-    "s5": {
-      "name": "The address is taken",
-      "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
     }
   },
   "adminCiActivityPageView": {
@@ -1590,8 +1602,8 @@
   },
   "thisDeviceView": {
     "sleepOff": {
-      "name": "No sessions, sleep prevention off",
-      "note": "The session list is empty and the switch is off. The computer can sleep when idle."
+      "name": "No AI teammates working, sleep prevention off",
+      "note": "The list of working AI teammates is empty and the switch is off. The computer can sleep when idle."
     }
   },
   "teamAgentPicker": {
@@ -1632,6 +1644,34 @@
     "s8": {
       "name": "A memory saved",
       "note": "Cheese notes something about you; a Memory card appears in the panel and can be undone"
+    },
+    "s9": {
+      "name": "A long piece of work under way",
+      "note": "The checklist sits on top, ticked as it goes; words and steps appear in the order they happened; of two subagents one is working and one is done, and opening one lists its steps."
+    },
+    "s10": {
+      "name": "A long piece of work done",
+      "note": "The checklist folds to one line, both subagents are done, and words and steps keep the order they happened in."
+    },
+    "s11": {
+      "name": "Saying more while Cheese works",
+      "note": "While Cheese answers, + and the microphone stay; typing or picking a file turns the button into send, and it goes into the answer under way."
+    },
+    "s12": {
+      "name": "Work done, nothing written",
+      "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
+    },
+    "s13": {
+      "name": "With the page, a selection and citations",
+      "note": "The row in the box: the page Cheese reads and the text selected this time, the same chips as attachments. The last question's cited document and task are chips, with one line each under it: the selection, and the page it was asked on."
+    },
+    "s14": {
+      "name": "Page left out",
+      "note": "The page's × clicked: the name is struck through and × becomes +, which brings it back; the next page is included again."
+    },
+    "s15": {
+      "name": "Citing with {'@'}",
+      "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
     }
   },
   "myDraftsView": {
@@ -1677,7 +1717,7 @@
     }
   },
   "settingsAssistantView": {
-    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), automations (one list: when, what, its state; repeating ones can be viewed, paused, resumed and deleted, a waiting one-off cancelled, and a one-off leaves the list once it has run), and recent actions (done or asked, with the reason when asked).",
     "s1": {
       "name": "With routines",
       "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
@@ -1685,6 +1725,51 @@
     "s2": {
       "name": "Nothing set yet",
       "note": "No entries of your own, so “No confirmation needed” says None; no routines."
+    }
+  },
+  "citeMenu": {
+    "about": "The menu {'@'} opens in Cheese's box: pick a task, channel, document, library file or problem to cite as a chip. Each row says on the right which project and channel it is in.",
+    "s1": {
+      "name": "Just typed {'@'}",
+      "note": "Recent places first, then the four kinds in this project; click one to list that kind."
+    },
+    "s2": {
+      "name": "Typed a few letters",
+      "note": "Grouped by kind, at most 4 each, the project in view first; the matched letters in bold."
+    },
+    "s3": {
+      "name": "Five already cited",
+      "note": "A question cites at most 5 things; typing {'@'} again only says so."
+    }
+  },
+  "versionsView": {
+    "about": "Task detail 'Version history' tab: each version's number, time, author, what changed, and the files it held. Whether they download is the server's to say.",
+    "s1": {
+      "name": "Three versions, newest on top",
+      "note": "Default cell: version 3 is marked current; a draft deleted later keeps only its name in version 2; version 1's files were not recorded."
+    },
+    "s2": {
+      "name": "Opened from a project",
+      "note": "The address carries ?version=2: version 2 is marked and scrolled to."
+    },
+    "s3": {
+      "name": "Someone who has not started the task",
+      "note": "Sees every version and file name, with no download button and a note that files download once they start."
+    }
+  },
+  "agentRules": {
+    "about": "When Cheese makes or changes an automation, the answer carries a card: when, in bold; what it does; and a line with its state and the one thing to do (cancel a wait, pause one that is on, resume a paused one). When a one-off fires, the platform says what happened in the same conversation and Cheese carries on.",
+    "s1": {
+      "name": "Just made",
+      "note": "Waiting once for a task to go to review: the card says Waiting, with Cancel. Nothing over the input."
+    },
+    "s2": {
+      "name": "After it happened",
+      "note": "The card says Started; the platform line says the task went to review, and Cheese answers below."
+    },
+    "s3": {
+      "name": "Card states",
+      "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
     }
   }
 }

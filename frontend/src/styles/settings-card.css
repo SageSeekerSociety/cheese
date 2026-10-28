@@ -11,6 +11,22 @@
   padding: 24px 0 48px;
 }
 
+.settings-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* The page's actions sit on the title's line, its one main action last. */
+.settings-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .settings-page__lede {
   margin-top: 4px;
   font-size: 14px;
@@ -149,6 +165,11 @@
 @media (max-width: 767.98px) {
   .settings-page {
     padding: 16px 0 32px;
+  }
+
+  /* 手机上这一栏的名字已经写在浮层的顶栏上，标题只出现一次。 */
+  .settings-page__head .t-page-title {
+    display: none;
   }
 
   .srow {

@@ -25,16 +25,19 @@ from app.domain.task import teaching as teaching_context
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
-    post_project,
     unique_int,
 )
 
-#: A 空间 that says nothing, as the API reports it.
+#: A 空间 that says nothing, as the API reports it. Read with the board OWNER's
+#: token, so the 私有指导 (`privatePrompt`) key is present and null.
 EMPTY_TEACHING = {
     "mode": None,
     "systemPrompt": None,
+    "privatePrompt": None,
+    "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
+    "skills": [],
 }
 
 
@@ -154,8 +157,12 @@ def _publish_task(api_client: TestClient, board: dict, *, name: str) -> int:
     return resp.json()["data"]["task"]["id"]
 
 
-def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> None:
-    """``user`` 领了这道题：题目过审、人进了这门课，再领题。用题目建项目要先领题。"""
+def _project_under(
+    api_client: TestClient, user_client: UserCreator, board: dict, *, task_id: int
+) -> str:
+    """一个学生用这道题建的项目：题目过审、人进了这门课，再开始做这道题。"""
+    student = user_client.create_user()
+    student_token = _login(user_client, api_client, student)
     approved = api_client.patch(
         f"/tasks/{task_id}",
         json={"approved": "APPROVED"},
@@ -164,33 +171,16 @@ def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) 
     assert approved.status_code == 200, approved.text
     joined = api_client.post(
         f"/spaces/{board['space_id']}/members",
-        json={"userId": user.user_id},
+        json={"userId": student.user_id},
         headers=_auth(board["token"]),
     )
     assert joined.status_code in (201, 409), joined.text
-    claimed = api_client.post(
-        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+    # 开始做这道题 (a task starts directly by default): the claim opens its project.
+    started = api_client.post(
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(student_token)
     )
-    assert claimed.status_code in (200, 201), claimed.text
-
-
-def _project_under(
-    api_client: TestClient, user_client: UserCreator, board: dict, *, task_id: int
-) -> str:
-    student = user_client.create_user()
-    student_token = _login(user_client, api_client, student)
-    _claim(api_client, board, task_id, student, student_token)
-    resp = post_project(
-        api_client,
-        json={
-            "name": "学生的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-        owner=student.username,
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["id"]
+    assert started.status_code in (200, 201), started.text
+    return started.json()["data"]["project"]["id"]
 
 
 def _for_project(portal, session, project_id: str):
@@ -362,7 +352,13 @@ def test_the_other_teaching_fields_are_untouched(
     )
     assert resp.status_code == 200, resp.text
 
-    assert _teaching_of(api_client, board, board["token"]) == teaching
+    # 回复带上空的几格：`learningGoals`、`skills` 与（板主看得见的）`privatePrompt`。
+    assert _teaching_of(api_client, board, board["token"]) == {
+        **teaching,
+        "learningGoals": [],
+        "skills": [],
+        "privatePrompt": None,
+    }
 
     task_id = _publish_task(api_client, board, name="这门课的题（其它字段）")
     project_id = _project_under(api_client, user_client, board, task_id=task_id)

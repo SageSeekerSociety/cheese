@@ -316,7 +316,7 @@ describe('成员管理', () => {
     // agent 徽章：`is_agent` 的根行，who 列（第一格）里挂 chip-neutral，带 title
     // 解释「为什么这行权限用不上」。全表就这一枚 —— 画到正常行身上也是错。
     const chip = cellsOf('cheese-bot')?.[0].querySelector('.chip-neutral')
-    expect(chip?.textContent?.trim()).toBe('agent')
+    expect(chip?.textContent?.trim()).toBe('AI 队友')
     expect(chip?.getAttribute('title')).toBeTruthy()
     expect(container.querySelectorAll('tr.am__row .chip-neutral')).toHaveLength(1)
 

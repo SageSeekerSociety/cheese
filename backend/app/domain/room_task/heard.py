@@ -130,7 +130,7 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
 #: Where a returned or voided card leaves the task: back in its teammate's
 #: hands (`progress.back_to_work`), able to report again.
 BACK_TO_WORK = (
-    "看板上这件任务回到了「在做」，cheese_task_state 又能报了"
+    "看板上这件任务回到了「在做」，cheese_task(action=state) 又能报了"
     "（你递卡之前报的那一条在递卡时已经清掉）。"
 )
 
@@ -200,8 +200,8 @@ def task_reopened(*, by: str, task_id, new_branch: bool) -> str:
         else ""
     )
     return (
-        f"@{by} 重新打开了这件任务。看板上它回到「开启」，你之前报的状态已经清掉；"
-        f"开工时再用 cheese_task_state 报。{moved}"
+        f"@{by} 重新打开了这件任务，你之前报的状态已经清掉；"
+        f"开工时再用 cheese_task(action=state) 报。{moved}"
     )
 
 

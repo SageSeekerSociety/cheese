@@ -27,18 +27,20 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.topics_deps import ProjectRepository
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import Environment, dump, parse, stored
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine import holder as holders
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.environments import (
     check_allowed,
@@ -246,7 +248,7 @@ async def set_session_environment(
     one best-effort checkpoint where it was. An agent may change its own,
     never another's, and never to a machine without isolation."""
     place, topic, task, project, actor = await _place_for_change(db, resolver, topic_id)
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", "")) or {}
+    claims = scoped_token_claims(credentials.presented(request.headers)) or {}
     scoped_session = claims.get("session") if actor.via == "cheese" else None
     if actor.via == "cheese" and (
         scoped_session != str(session_id)
@@ -271,7 +273,7 @@ async def set_session_environment(
             "environment": dump(environment),
             # A session whose work is not kept (a 支线, a task not started yet)
             # keeps nothing wherever it moves; the agent is told so with the
-            # answer to its own move (`cheese_environment`).
+            # answer to its own move (`cheese_session(action=environment)`).
             "keeps_nothing": scoped_session is not None
             and not await session_keeps_work(db, scoped_session),
         }
@@ -297,14 +299,21 @@ async def acquire_session_work_lease(
     db: DbSession,
 ) -> dict:
 
-    token = request.headers.get("x-cheese-token", "")
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
+    if claims is not None and not held_by_a_machine(claims):
+        place = await place_or_404(db, topic_id)
+        await require_seated_agent(
+            db, token, project_id=place.project_id, topic_id=topic_id
+        )
+        holder_id = place.room_id
+    else:
+        # A person's own 芝士 asks with its own credential, for a sandbox of
+        # the conversation's own (``machine.holder.Personal``).
+        claims = await holders.personal_claims(db, token, topic_id, session_id)
+        holder_id = topic_id
     if claims is None:
         raise AuthenticationRequiredError("A session execution credential is required")
-    place = await place_or_404(db, topic_id)
-    await require_seated_agent(
-        db, token, project_id=place.project_id, topic_id=topic_id
-    )
     try:
         # body.timeout caps how long the caller waits for a machine being
         # prepared (wait_s), and the whole call is held to it. A session that
@@ -316,7 +325,7 @@ async def acquire_session_work_lease(
             return ok(
                 await work_lease.ensure(
                     db,
-                    topic_id=place.room_id,
+                    topic_id=holder_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,

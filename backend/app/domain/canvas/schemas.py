@@ -117,6 +117,11 @@ class CanvasTaskOut(BaseModel):
     #: The column and phrase the task list shows (`room_task.presentation`).
     column: str
     phrase: str
+    #: The teammate working it, whom the phrase may name (「{agent}在做」):
+    #: its name, and ``default`` while that is still the 芝士 it was born
+    #: with, which a screen says in its reader's language.
+    agent_name: str
+    agent_name_source: str
 
 
 class CanvasCardOut(BaseModel):

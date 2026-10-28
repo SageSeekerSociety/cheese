@@ -1,6 +1,7 @@
 // 建议模式：人打的字记成自己名下的修订，删掉的字划掉而不是消失；文档的正文（拒绝
-// 所有修订之后读到的）不变。撤销把刚才那条修订撤掉，而不是又记一条。整段的增删记不成
-// 修订，不改文档并说一声。关掉之后照常改。
+// 所有修订之后读到的）不变。撤销把刚才那条修订撤掉，而不是又记一条。整段的增删、改
+// 段落类型也记成修订；表格、时间线、数据卡里增删行或项记不成修订，不改文档并说一声。
+// 关掉之后照常改。
 import { Editor } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -73,11 +74,35 @@ describe('建议模式', () => {
     expect(liveSuggestions(doc).map((item) => item.author)).toEqual(['mentor'])
   })
 
-  it('整段贴进来记不成修订：不动文档，并说一声', () => {
+  it('整段贴进来也记成自己名下的修订，正文不变', () => {
     let refused = 0
     const { doc, editor, text } = open('第一周领工位。\n', 'mentor', () => refused++)
     setSuggesting(editor, true)
-    editor.chain().setTextSelection(endOfFirstLine(editor)).insertContent('<p>新的一段</p><p>又一段</p>').run()
+    editor.commands.insertContentAt(editor.state.doc.content.size, '<p>新的一段</p><p>又一段</p>')
+
+    expect(refused).toBe(0)
+    expect(exportMarkdown(doc)).toBe(text)
+    expect(liveSuggestions(doc)).toEqual([expect.objectContaining({ author: 'mentor', new: '新的一段\n\n又一段' })])
+  })
+
+  it('把段落改成标题也记成修订，正文不变', () => {
+    const { doc, editor, text } = open('第一周领工位。\n')
+    setSuggesting(editor, true)
+    editor.chain().setTextSelection(2).setNode('heading', { level: 2 }).run()
+
+    expect(exportMarkdown(doc)).toBe(text)
+    expect(liveSuggestions(doc)).toEqual([expect.objectContaining({ author: 'mentor', new: '## 第一周领工位。' })])
+  })
+
+  it('表格里加一行记不成修订：不动文档，并说一声', () => {
+    let refused = 0
+    const { doc, editor, text } = open('| 周 | 事项 |\n| --- | --- |\n| 一 | 领工位 |\n', 'mentor', () => refused++)
+    setSuggesting(editor, true)
+    let cell = 0
+    editor.state.doc.descendants((node, pos) => {
+      if (!cell && node.isText && node.text === '领工位') cell = pos
+    })
+    editor.chain().setTextSelection(cell).addRowAfter().run()
 
     expect(refused).toBe(1)
     expect(exportMarkdown(doc)).toBe(text)

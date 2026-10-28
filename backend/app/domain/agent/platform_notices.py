@@ -179,7 +179,7 @@ def memory_rejected_notice(
     if unindexed:
         names = "、".join(f"`{prompt_path(path)}`" for path in sorted(unindexed))
         text += (
-            f"这一轮在 `MEMORY.md` 里为 {names} 新加的那一行也没有留下，"
+            f"你这次在 `MEMORY.md` 里为 {names} 新加的那一行也没有留下，"
             "重新写入之后再把它加回去。"
         )
     return text

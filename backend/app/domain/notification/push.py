@@ -154,6 +154,13 @@ def push_text(
         doc = str(payload.get("documentTitle") or "").strip()
         title = in_language(say("pushMentionedInDoc", who=who, doc=doc), locale)
         return (title, str(payload.get("content") or "").strip())
+    if type_ is NotificationType.MENTION and payload.get("roomPath"):
+        # Mentioned in a comment on a room file (`api.routes.file_comments`):
+        # the file is where, whichever channel it belongs to.
+        who = str(payload.get("authorName") or payload.get("author") or "").strip()
+        file = str(payload.get("documentTitle") or "").strip()
+        title = in_language(say("pushMentionedInFile", who=who, doc=file), locale)
+        return (title, str(payload.get("content") or "").strip())
     if type_ in _SAID_IN_ROOM and room:
         who = str(payload.get("authorName") or payload.get("author") or "").strip()
         title = in_language(say(_SAID_IN_ROOM[type_], who=who, room=room), locale)

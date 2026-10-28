@@ -97,7 +97,7 @@ class NotificationType(str, Enum):
 
     #: 个人芝士自己做事时告诉这个人的（`routine.personal`）：一条例行事务运行完了、
     #: 有操作待他确认、例行事务因额度或久未登录暂停了，或者芝士用
-    #: `cheese_notify_me` 发给他的一句话。说的话是 `payload.content`（平台的句子
+    #: `cheese_notify` 发给他的一句话。说的话是 `payload.content`（平台的句子
     #: 带键），哪一种看 `payload.event`；`payload.assistantConversation` 是点开要打开
     #: 的那段对话。
     ASSISTANT_NOTICE = "ASSISTANT_NOTICE"

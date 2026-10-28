@@ -83,7 +83,7 @@
     "kind": {
       "backend": "Backend error",
       "frontend": "Frontend error",
-      "turn": "Failed turn",
+      "turn": "AI teammate run failed",
       "recovered": "Platform"
     },
     "detail": "Details",
@@ -115,8 +115,8 @@
     },
     "alert": {
       "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
-      "refusing": "Refusing new sessions now: the provider broke {n} hosts recently (last at {at}), and the platform waits for a probe to succeed",
-      "atCap": "The pool is at its cap of {max} hosts: with no free slot, new sessions are refused"
+      "refusing": "Not starting new AI teammates now: the provider broke {n} hosts recently (last at {at}), and the platform waits for a probe to succeed",
+      "atCap": "The pool is at its cap of {max} hosts: with no free slot, AI teammates that try to start are refused"
     },
     "hosts": "Hosts",
     "noHosts": "No hosts right now",
@@ -160,9 +160,10 @@
       "stopping": "Being destroyed for {for}",
       "active": "Last tool call {ago} ago",
       "reclaim": "reclaimed in {in} at the earliest",
-      "overdue": "past its idle time and not reclaimed yet (a later end to the room's latest turn, or a background command still running, pushes it back)"
+      "overdue": "past its idle time and not reclaimed yet (the room's AI teammate stopping later, or a background command still running, pushes it back)"
     },
     "placed": "Placed {at}",
+    "personal": "Personal conversation",
     "taskRoom": "task",
     "spec": "{cores} cores · {memory} GB · {disk} GB",
     "dur": {
@@ -181,7 +182,7 @@
       "replaced": "Moved off a broken host",
       "released": "Reclaimed (idle / out of credits)",
       "releasedValue": "{idle} / {unpaid}",
-      "refused": "Sessions refused (pool full / provider failing)",
+      "refused": "AI teammate starts refused (pool full / provider failing)",
       "refusedValue": "{sessions} ({full} / {failing})",
       "hostsLost": "Hosts given up (provider error · offline · never enrolled)",
       "hostsLostValue": "{n} ({error} · {away} · {never})",

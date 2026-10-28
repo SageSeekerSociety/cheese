@@ -21,6 +21,11 @@
   "emptyPlaceholder": "The AI teammate keeps this document up to date. You can edit it too",
   "emptyPlaceholderLibrary": "Start writing, or type / to insert a heading, table or chart",
   "exportMarkdown": "Export Markdown",
+  "exportedMarkdown": "Markdown exported — it's in your downloads",
+  "exportedPdf": "PDF exported — it's in your downloads",
+  "exportPdf": "Export PDF",
+  "exportPdfFailed": "Couldn't export the PDF. Try again",
+  "exportPdfTooLarge": "This document is too large to export as a PDF — it has too many pictures",
   "find": "Find in document",
   "findClose": "Close find",
   "findNext": "Next match",
@@ -100,6 +105,6 @@
     "read": "Read-only",
     "readHint": "Read without changing the text",
     "suggestOnly": "You can only suggest changes; someone who can edit this document accepts or rejects them",
-    "blockRefused": "Whole paragraphs can't be added or removed as suggestions; change the text inside a paragraph"
+    "blockRefused": "In suggest mode, rows or columns of a table, columns of a column layout and items of a timeline or stat cards can't be added or removed"
   }
 }

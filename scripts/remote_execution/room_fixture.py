@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -14,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER  # noqa: E402
 from app.domain.agent import execution, place  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution import runtime  # noqa: E402
 from app.domain.agent.harness.claude_code.remote_execution.launch import script  # noqa: E402
@@ -136,8 +138,22 @@ class RoomExecutor:
             "state": info["state"],
         }
         self.wire = None
+        self.socket = None
+        self.socket_thread = None
         try:
-            self.wire = WireOwner(claude)
+            from model_fixture import Handler, Server
+
+            # The room's platform socket is the released connector's; what
+            # arrives on it the owner relays here, as it relays to the business
+            # backend in a deployment.
+            self.socket = Server(("0.0.0.0", 0), self.handler(Handler))
+            self.socket.state = {"dir": Path(folder)}
+            self.socket_thread = threading.Thread(target=self.socket.serve_forever)
+            self.socket_thread.start()
+            self.wire = WireOwner(
+                claude,
+                origin=f"http://host.docker.internal:{self.socket.server_port}",
+            )
             deadline = time.monotonic() + 30
             while True:
                 try:
@@ -155,6 +171,7 @@ class RoomExecutor:
 
     def set_api(self, url):
         config = json.loads((self.state / "config.json").read_text())
+        assert config["env"]["CHEESE_TOKEN"] == ""
         asyncio.run(
             execution.call(
                 self.target,
@@ -168,13 +185,32 @@ class RoomExecutor:
         executor = self
 
         class Handler(base):
+            def parse_request(self):
+                # What came up a room's platform socket arrives relayed by the
+                # owner under ``/machine``, which is taken off the path.
+                if not super().parse_request():
+                    return False
+                self.relayed = self.path.startswith("/machine/")
+                if self.relayed:
+                    from owner_fixture import SECRET
+
+                    assert self.headers.get(SECRET_HEADER) == SECRET
+                    assert self.headers.get(DEVICE_HEADER) == executor.target["device_id"]
+                    self.path = self.path.removeprefix("/machine")
+                return True
+
             def do_PUT(self):
+                on_socket = self.relayed
                 prefix = (
+                    f"{'/api' if on_socket else ''}"
                     f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
                 )
                 if not self.path.startswith(prefix):
                     return super().do_PUT()
-                assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                if on_socket:
+                    assert "Authorization" not in self.headers
+                else:
+                    assert self.headers.get("Authorization") == "Bearer room-handed-token"
                 assert self.headers.get("Content-Type") == "application/x-git-bundle"
                 content = self.rfile.read(int(self.headers["Content-Length"]))
                 digest = hashlib.sha256(content).hexdigest()
@@ -210,60 +246,69 @@ class RoomExecutor:
                 )
 
             def do_GET(self):
-                if (
-                    self.path
-                    == f"/projects/{executor.project}/git/tasks/{executor.task}"
-                ):
-                    assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
-                    return self.reply(
-                        {
-                            "data": {
-                                "task_id": executor.task,
-                                "room_id": executor.target["resource_id"],
-                                "branch": f"task/{executor.task}",
-                                "base": "main",
-                                "closed": False,
-                                "remote": executor.remote,
-                                "coauthors": [],
+                if self.relayed:
+                    assert "Authorization" not in self.headers
+                    if (
+                        self.path
+                        == f"/api/projects/{executor.project}/git/tasks/{executor.task}"
+                    ):
+                        return self.reply(
+                            {
+                                "data": {
+                                    "task_id": executor.task,
+                                    "room_id": executor.target["resource_id"],
+                                    "branch": f"task/{executor.task}",
+                                    "base": "main",
+                                    "closed": False,
+                                    "remote": executor.remote,
+                                    "coauthors": [],
+                                }
                             }
-                        }
+                        )
+                    latest = (
+                        f"/api/projects/{executor.project}/git/tasks/{executor.task}"
+                        "/snapshots/latest"
                     )
-                latest = (
-                    f"/projects/{executor.project}/git/tasks/{executor.task}"
-                    "/snapshots/latest"
-                )
-                if self.path == latest:
-                    assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
-                    if not executor.snapshots:
-                        # The platform's answer for a task never backed up.
-                        body = b'{"error": {"message": "no backup"}}'
-                        self.send_response(404)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Content-Length", str(len(body)))
-                        self.end_headers()
-                        self.wfile.write(body)
-                        return None
-                    row = list(executor.snapshots.values())[-1]
-                    return self.reply(
-                        {
-                            "data": {
-                                key: row[key]
-                                for key in ("id", "snapshot_sha", "head_sha", "digest")
+                    if self.path == latest:
+                        if not executor.snapshots:
+                            # The platform's answer for a task never backed up.
+                            body = b'{"error": {"message": "no backup"}}'
+                            self.send_response(404)
+                            self.send_header("Content-Type", "application/json")
+                            self.send_header("Content-Length", str(len(body)))
+                            self.end_headers()
+                            self.wfile.write(body)
+                            return None
+                        row = list(executor.snapshots.values())[-1]
+                        return self.reply(
+                            {
+                                "data": {
+                                    key: row[key]
+                                    for key in (
+                                        "id",
+                                        "snapshot_sha",
+                                        "head_sha",
+                                        "digest",
+                                    )
+                                }
                             }
-                        }
-                    )
+                        )
+                    raise AssertionError(f"unexpected socket GET {self.path}")
                 return super().do_GET()
 
             def do_POST(self):
-                if (
-                    self.path
-                    == f"/projects/{executor.project}/git/tasks/{executor.task}"
-                ):
-                    self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                    return self.do_GET()
+                if self.relayed:
+                    assert "Authorization" not in self.headers
+                    if (
+                        self.path
+                        == f"/api/projects/{executor.project}/git/tasks/{executor.task}"
+                    ):
+                        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                        return self.do_GET()
+                    raise AssertionError(f"unexpected socket POST {self.path}")
                 if self.path != "/execution":
                     return super().do_POST()
-                assert self.headers.get("X-Cheese-Token") == "room-fixture-token"
+                assert self.headers.get("Authorization") == "Bearer room-fixture-token"
                 payload = json.loads(
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )
@@ -289,5 +334,11 @@ class RoomExecutor:
                 timeout=30,
             )
         finally:
-            if self.wire is not None:
-                self.wire.close()
+            try:
+                if self.wire is not None:
+                    self.wire.close()
+            finally:
+                if self.socket is not None:
+                    self.socket.shutdown()
+                    self.socket.server_close()
+                    self.socket_thread.join()

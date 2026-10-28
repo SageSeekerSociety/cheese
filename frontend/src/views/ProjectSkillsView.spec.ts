@@ -295,6 +295,7 @@ describe('技能', () => {
       body: '先取文本',
       files: { 'scripts/merge.py': 'print(1)\n' },
       skipped: [],
+      notes: [],
       scripts: 1,
     })
     vi.mocked(addProjectSkill).mockResolvedValue({

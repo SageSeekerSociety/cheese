@@ -5,7 +5,8 @@ unit of work — the work is the task, which outlives any number of these — an
 is not a container the platform schedules against. It is an interval with three
 moments and nothing else: ``started_at`` when the platform decided to speak,
 ``delivered_at`` when the transport accepted the write, ``stopped_at`` when the
-session came back. Running is exactly ``stopped_at IS NULL``.
+session came back, and ``stop_reason`` — which closer did it, since the moment
+alone cannot say. Running is exactly ``stopped_at IS NULL``.
 
 This used to be a JSON file at ``{workspace_root}/.turns-inflight.json``, whose
 whole job was to survive the process. It did that, and paid for it: it was a
@@ -49,6 +50,20 @@ from app.domain.common import Timestamps, UuidPk
 # The registry `conversation_id` points at: mapped wherever this is, so the
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
+
+#: Who ended a turn's interval, as that closer names itself in
+#: ``AgentTurn.stop_reason``. One word each: after an incident the question is
+#: 「是谁让它停的」, and before this column the only answer was 「它停了」.
+STOP_FINISHED = "finished"
+STOP_STOPPED = "stopped"
+STOP_SWEEP = "sweep"
+STOP_TASK_CLOSED = "task_closed"
+STOP_TAKEN_OVER = "taken_over"
+STOP_UNDELIVERED = "undelivered"
+#: The platform destroyed the machine this turn was running on: its executor went
+#: with it, and no report about that turn can ever arrive
+#: (``turn_inputs.close_turns_of_a_destroyed_machine``).
+STOP_MACHINE_DESTROYED = "machine_destroyed"
 
 
 class AgentTurn(Base):
@@ -103,6 +118,11 @@ class AgentTurn(Base):
     stopped_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # 这一轮是怎么结束的，由关掉它的那一段代码写下（`STOP_REASONS`）。
+    # 没有这一列的时候，只有「停了多久」没有「谁让它停的」：2026-10-22 的一轮
+    # 开了 13 小时，事后只能查到它停了，查不到是会话自己收的、还是清扫收的、
+    # 还是别的什么收的。NULL = 这一列加上之前就结束的那些行，不是「不知道」。
+    stop_reason: Mapped[str | None] = mapped_column(String(32), default=None)
     # Admission refused a `/v1/messages` call for this turn's place because the
     # project's compute credits are spent (#715). First-writer-wins, like
     # `delivered_at`: the proxy caches a verdict for 30s and Claude Code retries
@@ -256,9 +276,12 @@ class SessionState(Base):
     runner last; a runner, or a platform process, holding an older one can no
     longer change anything here (``session_state.take``). ``worker_status`` is
     what the runner said the session is doing, ``idle`` or ``running``, and
-    ``changed_at`` when it last said something different. Whether the session
-    is reachable is not here: that is a lease the reading process holds, and
-    unreachable is not a status the session has.
+    ``changed_at`` when it last said something different. ``run_epoch`` /
+    ``run_seq`` name the run the current process last began: the
+    ``(epoch, seq)`` of its ``running`` event, which the runner names the run
+    by and a task's report carries (`session_state.run_started`). Whether the
+    session is reachable is not here: that is a lease the reading process
+    holds, and unreachable is not a status the session has.
     """
 
     __tablename__ = "session_states"
@@ -280,6 +303,8 @@ class SessionState(Base):
     worker_epoch: Mapped[int] = mapped_column(BigInteger)
     worker_status: Mapped[str] = mapped_column(String(16))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     #: When the runner last reported the session's process gone.
     exited_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

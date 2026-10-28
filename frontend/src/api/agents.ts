@@ -58,12 +58,25 @@ export function createProjectAgent(
 export function updateProjectAgent(
   projectId: string,
   agentId: string,
-  payload: { display_name?: string; configuration?: AgentConfiguration }
+  payload: { display_name?: string; configuration?: AgentConfiguration; expected_version?: number }
 ): Promise<ProjectAgent> {
   return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   })
+}
+
+// 「我正在改这个队友」的占用：打开技能面板时占一把，关掉就放掉。礼貌性提示，不是锁
+// —— 真正拦住丢更新的是保存时带上去的 `expected_version`（409）。
+export function setAgentEditing(
+  projectId: string,
+  agentId: string,
+  held: boolean
+): Promise<{ editing: { handle: string; seconds: number } | null }> {
+  return request<{ editing: { handle: string; seconds: number } | null }>(
+    `/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}/editing`,
+    { method: 'PUT', body: JSON.stringify({ held }) }
+  )
 }
 
 // 停用 — not a physical delete. Topics already using it keep working and its

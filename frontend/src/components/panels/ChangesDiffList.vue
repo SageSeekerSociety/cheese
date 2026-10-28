@@ -1,9 +1,13 @@
 <script setup lang="ts">
-// 「改动」页的默认那一面：这次改到的每一个文件，差异一个接一个往下排。
+// 「改动」页的默认那一面：这次改到的每一个文件一段，段头是路径和增删数。
 //
-// 审阅是从头读到尾的事，一次只能看一个文件、读完一个再去树上点下一个，读的人就得
-// 自己记着读到哪了。这里每个文件一段，段头是路径和增删数，可以单独收起；要编辑或看
-// 全文就点段头的「打开」，那一份单独开在这一格里。
+// 段头下面是那一段的差异，默认收着：一件活改几十个文件是常态，全都铺开等于把「改了
+// 哪些东西」这一眼要看的清单埋在几千行差异里。点段头铺开一处，要看全文或微调就点段
+// 头的「打开」，那一份单独开在这一格里。
+//
+// 「哪几段开着」不归这一只：打开一份文件时这一面整个被卸掉（`PanelChangesView` 的
+// `v-else`），状态留在这里的话，读完一份返回时刚铺开的那几段又都收回去。所以由
+// `PanelChangesView` 记着（`expanded`），这里只报「点了哪一段」出去。
 //
 // 它不自己滚：外面那一列（顶部还有这次交付的情况）一起滚，所以段头里的位置由外面问
 // （`scrollTo`）。
@@ -23,7 +27,15 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { whenIdle } from '@/lib/idle'
 
-const props = withDefaults(defineProps<{ diffs: FileDiff[]; review?: DiffReview | null }>(), { review: null })
+const props = withDefaults(
+  defineProps<{
+    diffs: FileDiff[]
+    review?: DiffReview | null
+    /** 哪几段铺开着（路径）。默认一段都不铺：「改了哪些文件」是这一面第一眼要看的东西。 */
+    expanded?: Set<string>
+  }>(),
+  { review: null, expanded: () => new Set<string>() }
+)
 
 // 每个文件的行只在 diff 换了时重算：模板里现算的话，每画一次都是一份新数组，下面那
 // 一段会当它换了文件，把点开的「显示剩余」收回去。
@@ -34,6 +46,8 @@ const emit = defineEmits<{
   (e: 'comment', draft: ReviewCommentDraft): void
   (e: 'edit-comment', id: string, body: string, suggestion: string | null): void
   (e: 'remove-comment', id: string): void
+  /** 点了段头：这一段铺开或收起。状态在 `PanelChangesView`（见文件头）。 */
+  (e: 'toggle-section', path: string): void
 }>()
 
 // ---- 批注：挂在它说的那几行下面。 ----
@@ -102,13 +116,7 @@ function reply(parentId: string, body: string) {
   })
 }
 
-const collapsed = ref(new Set<string>())
-function toggle(path: string) {
-  const next = new Set(collapsed.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  collapsed.value = next
-}
+const opened = (path: string) => props.expanded.has(path)
 
 // ---- 分批挂段 ----
 //
@@ -185,7 +193,9 @@ async function scrollTo(path: string) {
   }
   const el = root.value?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`)
   if (!el) return
-  if (collapsed.value.has(path)) toggle(path)
+  // 滚过去的两种来路都是「我要看这一份」：点了树上的文件，点了顶部清单里的文件。
+  // 那一段还收着就先铺开，不然滚到跟前只有一行段头。
+  if (!opened(path)) emit('toggle-section', path)
   el.scrollIntoView({ block: 'start' })
 }
 
@@ -208,13 +218,11 @@ defineExpose({ scrollTo })
         <button
           type="button"
           class="diff-file__toggle"
-          :aria-expanded="!collapsed.has(d.path)"
+          :aria-expanded="opened(d.path)"
           :title="d.path"
-          @click="toggle(d.path)"
+          @click="emit('toggle-section', d.path)"
         >
-          <v-icon size="16" class="c-faint">{{
-            collapsed.has(d.path) ? 'mdi-chevron-right' : 'mdi-chevron-down'
-          }}</v-icon>
+          <v-icon size="16" class="c-faint">{{ opened(d.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
           <span class="diff-file__path"
             ><span class="diff-file__dir">{{ dirOf(d.path) }}</span
             >{{ nameOf(d.path) }}</span
@@ -232,7 +240,7 @@ defineExpose({ scrollTo })
           {{ t('work.room.changes.openFile') }}
         </BaseButton>
       </div>
-      <template v-if="!collapsed.has(d.path)">
+      <template v-if="opened(d.path)">
         <ReviewCommentCard
           v-for="c in atHead(d.path)"
           :key="c.id"

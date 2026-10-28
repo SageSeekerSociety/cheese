@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
-from app.domain.room_task.live import turns_moved
+from app.domain.room_task.live import sessions_moved
 from app.domain.room_task.services import TaskService
 from app.domain.usage.budgets import CreditBudgets
 
@@ -101,7 +101,7 @@ class AgentTurnRepository:
             if conversations:
                 await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
             if delivered_at is not None:
-                await turns_moved(self._session, conversations)
+                await sessions_moved(self._session, conversations)
             return
         self._session.add(
             AgentTurn(
@@ -120,7 +120,7 @@ class AgentTurnRepository:
         )
         await self._snapshot_credit_owner(turn_id, conversation_id, started_at)
         if delivered_at is not None:
-            await turns_moved(self._session, [conversation_id])
+            await sessions_moved(self._session, [conversation_id])
 
     async def _snapshot_credit_owner(
         self,
@@ -151,7 +151,7 @@ class AgentTurnRepository:
             .values(delivered_at=at)
             .returning(AgentTurn.conversation_id)
         )
-        await turns_moved(self._session, stamped.scalars())
+        await sessions_moved(self._session, stamped.scalars())
 
     async def delivered(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these turns had their prompt accepted by the transport."""
@@ -302,22 +302,27 @@ class AgentTurnRepository:
         return set((await self._session.execute(stmt)).scalars())
 
     async def close(
-        self, turn_ids: Iterable[uuid.UUID], at: datetime
+        self,
+        turn_ids: Iterable[uuid.UUID],
+        at: datetime,
+        *,
+        reason: str | None = None,
     ) -> set[uuid.UUID]:
         """End these intervals. Closing is not deleting — the ids stay readable
-        next to the blocks that carry them."""
+        next to the blocks that carry them. ``reason`` is the closer naming
+        itself (``models.STOP_*``): the time says when, and only this says who."""
         ids = list(turn_ids)
         if not ids:
             return set()
         closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
-            .values(stopped_at=at)
+            .values(stopped_at=at, stop_reason=reason)
             .returning(AgentTurn.id, AgentTurn.conversation_id)
         )
         rows = closed.all()
         conversations = [row.conversation_id for row in rows]
-        await turns_moved(self._session, conversations)
+        await sessions_moved(self._session, conversations)
         return {row.id for row in rows}
 
     async def still_open(
@@ -365,7 +370,12 @@ class AgentTurnRepository:
         return set(rows)
 
     async def close_one(
-        self, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
+        self,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        at: datetime,
+        *,
+        reason: str | None = None,
     ) -> int:
         """End exactly one DELIVERED open interval, the one the Stop names (FB-56).
 
@@ -398,11 +408,11 @@ class AgentTurnRepository:
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
-            .values(stopped_at=at)
+            .values(stopped_at=at, stop_reason=reason)
             .returning(AgentTurn.conversation_id)
         )
         conversations = list(closed.scalars())
-        await turns_moved(self._session, conversations)
+        await sessions_moved(self._session, conversations)
         return len(conversations)
 
     async def started_at_of(

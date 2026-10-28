@@ -1,7 +1,7 @@
 """A task that ends without its change landing closes its PR.
 
 The platform opens a task's PR at the task's first commit (`pr_publish`), so a
-task its owner or its own session puts down would otherwise leave an open PR
+task someone working it or its own session puts down would otherwise leave an open PR
 that nobody is going to merge. Only the PR is closed: the branch stays, so
 what was done on it is kept and a reopened task goes on from it
 (`TaskService.reopen`).

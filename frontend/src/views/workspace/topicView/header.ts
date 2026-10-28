@@ -16,6 +16,7 @@ import { computed, onUnmounted, watch } from 'vue'
 import { usePageTitle } from '@/composables/usePageTitle'
 
 import { t } from '@/i18n'
+import { mayIn } from '@/lib/projectPermissions'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -65,6 +66,10 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       memberNames: opts.memberNames.value,
       agentName: store.agentName,
       agents: opts.roomAgents.value,
+      worksTasks: mayIn(
+        store.projects.find((project) => project.id === room.project_id),
+        'tasks'
+      ),
       connected: opts.roomConnected.value,
       panelOpen: opts.panelOpen.value,
       'onOpen-room': opts.backToRoom,

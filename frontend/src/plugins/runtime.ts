@@ -54,8 +54,9 @@ function keepDocumentTitle(router: Router): void {
 function stayInTouchWhileSignedIn(): void {
   const signedInAs = () => AccountService.loggedIn && AccountService.user?.id
 
-  // In the desktop app, signing in asks once whether to connect this computer as a
-  // device; one connected before comes back on its own (lib/desktop.ts).
+  // In the desktop app, signing in connects this computer as a device on its own —
+  // a new one to the person's own team, one connected before back to its team
+  // (lib/desktop.ts).
   watch(
     signedInAs,
     (userId) => {

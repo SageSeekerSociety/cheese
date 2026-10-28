@@ -39,7 +39,7 @@ parts:
   - kind: task
     title: 组会报名说明
     owner: 你 负责
-    status: 进行中
+    status: 在做
     replies: 1 条回复
     last: 芝士：好，我先整理报名时间、地点和要带的材料。
     at: 3
@@ -74,7 +74,7 @@ parts:
 :::walk
 1. 点消息下方的任务卡「组会报名说明」，右侧打开这段对话；点右上角的「整页打开」进入任务页。芝士已经在做。
 2. 阅读「概览」里的任务文档，芝士边做边写。有不对的地方在对话中指出，芝士执行期间补充的要求，它在执行中读到。
-3. 芝士按文档工作，「概览」列出它要做的几步，完成一步勾选一步；做完提交审阅，页头状态变为「待你审阅」。
+3. 芝士按文档工作，「概览」列出它要做的几步，完成一步勾选一步；做完提交审阅，页头状态变为「待审阅」。
 
 ```demo-panel
 title: 打开任务
@@ -87,7 +87,7 @@ parts:
   - kind: head
     room: 综合
     title: 组会报名说明
-    status: 进行中
+    status: 在做
     owner: 你 负责
     at: 1
   - kind: tabs
@@ -105,7 +105,7 @@ parts:
   - kind: task
     title: 组会报名说明
     owner: 你 负责
-    status: 进行中
+    status: 在做
     replies: 1 条回复
     until: 1
   - kind: line

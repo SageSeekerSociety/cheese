@@ -63,6 +63,8 @@ export interface FeedbackDraft {
     evidence: string
     sessionId?: string
     environment?: string
+    /** 提这张卡的那位 AI 队友（卡的 `author_handle`）：表单上「来自 X 的排查」叫它。 */
+    agentHandle?: string
   }
   /** 这一份是从哪张提案卡打开的。有值走「发送」那条路（`accept`），
    *  没有就是人自己新提一条。 */

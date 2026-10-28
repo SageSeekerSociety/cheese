@@ -30,6 +30,13 @@ describe('the step an agent is on, read from its live frame', () => {
     expect(liveStep([block])!.arg).toBe('pnpm ru')
   })
 
+  it('reads the verb and the argument of the action an object tool is called with', () => {
+    expect(liveStep([tool('cheese_task', { action: 'close', conclusion: '改用新口径' })])).toEqual({
+      verb: '关闭任务',
+      arg: '改用新口径',
+    })
+  })
+
   it('strips the MCP server prefix so the verb is not left raw', () => {
     expect(liveStep([tool('mcp__native__cheese_task', { title: '修回退' })])).toEqual({
       verb: '创建任务',

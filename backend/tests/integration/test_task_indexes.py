@@ -34,9 +34,6 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.auth.core import Role
-from app.auth.domains.task import get_task_roles
-from app.auth.domains.team import get_team_roles
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import (
     TaskMembership,
@@ -45,11 +42,13 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.repositories import (
+    TaskMembershipRepository,
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
 )
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
+from app.domain.team.permissions import Seat, seat_of
 from tests.integration.conftest import a_team
 
 #: What each model declares, and what `d3f6a2c85b71` builds.
@@ -282,14 +281,26 @@ def statements(session) -> Iterator[list[tuple[str, object]]]:
         event.remove(engine, "before_cursor_execute", record)
 
 
-async def _assert_read_by_index(session, seen, needle: str, index: str) -> None:
-    """The one statement matching `needle` is read by `index`, in the generic plan."""
+async def _assert_read_by_index(
+    session, seen, needle: str, index: str | tuple[str, ...]
+) -> None:
+    """The one statement matching `needle` is read by `index`, in the generic plan.
+
+    A tuple is for a lookup two indexes can serve: a 提交's reviews are read by
+    `submission_id`, and both the foreign-key index and the partial unique index
+    this branch added (`(submission_id, reviewer_id) WHERE deleted_at IS NULL`)
+    open with that column — which one the planner takes is a cost call, so what
+    is asserted is that it took one that reads it.
+    """
+    names = (index,) if isinstance(index, str) else index
     found = [(sql, params) for sql, params in seen if needle in sql]
     assert len(found) == 1, f"expected one {needle!r} statement, got {len(found)}"
     sql, params = found[0]
     conn = await session.connection()
-    plan = await _generic_plan(conn, f"probe_{index}", sql, params)
-    assert index in plan, f"{index} is not used:\n{sql}\n{plan}"
+    plan = await _generic_plan(conn, f"probe_{names[0]}", sql, params)
+    assert any(name in plan for name in names), (
+        f"none of {names} is used:\n{sql}\n{plan}"
+    )
 
 
 @pytest.mark.anyio
@@ -308,11 +319,14 @@ async def test_the_deadline_sweep_reads_only_the_rows_it_can_fail(db_factory):
             failed = await check_and_fail_expired_deadlines(session)
         assert failed == seeded["sweepable"]
 
+        # The pass over claims past their own deadline; the other pass looks
+        # for claims on a task with a stage already due.
         sweeps = [
             (sql, params)
             for sql, params in seen
             if sql.lstrip().upper().startswith("SELECT")
             and "FROM task_membership" in sql
+            and "task_membership.deadline <" in sql
         ]
         # One page per round, so several rounds of the same statement.
         assert sweeps, "the sweep ran no query"
@@ -339,12 +353,13 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
         await session.execute(text("SET LOCAL enable_seqscan = off"))
 
         with statements(session) as seen:
-            assert await get_task_roles(session, MEMBER, "task", task_id) == {
-                Role.PARTICIPANT
-            }
-            assert await get_team_roles(session, MEMBER, "team", team_id) == {
-                Role.MEMBER
-            }
+            assert (
+                await TaskMembershipRepository(session).get_user_membership(
+                    task_id=task_id, user_id=MEMBER
+                )
+                is not None
+            )
+            assert await seat_of(session, team_id, MEMBER) is Seat.member
             assert (
                 await TaskSubmissionRepository(
                     session
@@ -388,6 +403,9 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
             session,
             seen,
             "FROM task_submission_review",
-            "ix_task_submission_review_submission_id",
+            (
+                "ix_task_submission_review_submission_id",
+                "uq_task_submission_review_submission_reviewer",
+            ),
         )
         await session.rollback()

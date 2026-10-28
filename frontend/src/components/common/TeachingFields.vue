@@ -1,9 +1,13 @@
 <script setup lang="ts">
-// 「AI 队友辅导」那几格：方式、补充要求、可读取的资料。空间设置和发题页、改题页共用这一份。
+// 「AI 队友辅导」那几格：方式、补充要求、可读取的资料、技能。空间设置和发题页、改题页共用这一份。
+//
+// 技能那一格只在调用方递了候选（`skillCatalog`）时出现：发题页、改题页递，空间设置不递
+// —— 那边看不到这一格，存的时候原样带着（`buildTeaching`）。
 //
 // 方式是四选一，每种下面一句说明它让 AI 队友怎么做。题目那一层（`inherit`）多一个
-// 「沿用空间设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
+// 「沿用上层设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
 // 写题目的要求时看得到它已经说了什么。
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { TeachingDraft } from '@/lib/teaching'
 import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching, TeachingMode } from '@/types'
 
@@ -25,6 +29,10 @@ const props = defineProps<{
   inherit?: boolean
   /** 空间那一份（`inherit` 时摆在底下）。 */
   spaceTeaching?: SpaceTeaching | null
+  /** 能选的技能（平台发货的那几个）。不给就不画技能那一格。 */
+  skillCatalog?: SkillChoice[]
+  /** 技能清单没读到：已选的照旧列着，只是没有别的可加。 */
+  skillCatalogFailed?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [SpaceTeaching] }>()
 
@@ -57,7 +65,7 @@ watch(
   { deep: true, flush: 'sync' }
 )
 
-/** 方式那一组：题目那一层前面多一个「沿用空间设置」（值是 null）。 */
+/** 方式那一组：题目那一层前面多一个「沿用上层设置」（值是 null）。 */
 const modes = computed<{ value: TeachingMode | null; label: string; hint: string }[]>(() => [
   ...(props.inherit
     ? [
@@ -76,6 +84,16 @@ const modes = computed<{ value: TeachingMode | null; label: string; hint: string
     hint: t(`spaces.teaching.mode.${mode}Hint`),
   })),
 ])
+
+/** 技能的候选：清单里的，加上已经选上却不在清单里的（名字照旧列着，好让人删掉它）。 */
+const skillItems = computed(() => {
+  const catalog = props.skillCatalog ?? []
+  const known = new Set(catalog.map((skill) => skill.name))
+  return [
+    ...catalog.map((skill) => ({ value: skill.name, title: skill.name, subtitle: skill.description })),
+    ...draft.skills.filter((name) => !known.has(name)).map((name) => ({ value: name, title: name, subtitle: '' })),
+  ]
+})
 
 const spacePrompt = computed(() => props.spaceTeaching?.systemPrompt?.trim() ?? '')
 
@@ -116,12 +134,67 @@ const labelId = `teaching-mode-${useId()}`
       :placeholder="t('spaces.teaching.fields.systemPromptPlaceholder')"
     />
 
+    <v-textarea
+      v-model="draft.privatePrompt"
+      rows="3"
+      auto-grow
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-private-prompt"
+      :label="t('spaces.teaching.fields.privatePrompt')"
+      :hint="t('spaces.teaching.fields.privatePromptHint')"
+      persistent-hint
+    />
+
+    <v-text-field
+      v-model="draft.learningGoals"
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-learning-goals"
+      :label="t('spaces.teaching.fields.learningGoals')"
+      :hint="t('spaces.teaching.fields.learningGoalsHint')"
+    />
+
     <TeachingMaterialPicker
       v-model="draft.materialIds"
       :materials="props.materials ?? []"
       :state="props.materialsState ?? 'ready'"
       :library-to="props.libraryTo"
     />
+
+    <v-autocomplete
+      v-if="skillCatalog"
+      v-model="draft.skills"
+      :items="skillItems"
+      item-title="title"
+      item-value="value"
+      multiple
+      chips
+      closable-chips
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-skills"
+      :label="t('spaces.teaching.fields.skills')"
+      :hint="skillCatalogFailed ? t('spaces.teaching.fields.skillsLoadFailed') : t('spaces.teaching.fields.skillsHint')"
+      persistent-hint
+    >
+      <template #item="{ item, props: itemProps }">
+        <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle || undefined" />
+      </template>
+      <!-- A chosen skill keeps its description beside the id: `docx` alone does not say what it does. -->
+      <template #chip="{ item, props: chipProps }">
+        <v-chip v-bind="chipProps" class="teaching-fields__skill" :title="item.raw.subtitle || undefined">
+          <span class="teaching-fields__skill-name">{{ item.raw.title }}</span>
+          <span v-if="item.raw.subtitle" class="teaching-fields__skill-hint">{{ item.raw.subtitle }}</span>
+        </v-chip>
+      </template>
+    </v-autocomplete>
 
     <details v-if="inherit && spacePrompt" class="teaching-fields__space" data-testid="teaching-space-prompt">
       <summary>{{ t('spaces.teaching.fields.spacePrompt') }}</summary>
@@ -189,6 +262,23 @@ const labelId = `teaching-mode-${useId()}`
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.teaching-fields__skill {
+  max-width: 100%;
+}
+
+.teaching-fields__skill-name {
+  flex: none;
+}
+
+.teaching-fields__skill-hint {
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .teaching-fields__space {

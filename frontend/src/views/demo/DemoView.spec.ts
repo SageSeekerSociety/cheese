@@ -153,8 +153,9 @@ describe('DemoView', () => {
     await waitFor(() => expect(selected()).toContain('改动'))
     // 页签上带着改动的规模（剧本里那一个文件）。
     expect(view.container.querySelector('.tabbar__count')?.textContent).toBe('1')
-    await waitFor(() => expect(view.container.textContent).toContain('+这个项目放本课程的课件和作业。'))
-    expect(view.container.textContent).toContain('README.md')
+    await waitFor(() => expect(view.container.textContent).toContain('README.md'))
+    // 每一段的差异默认收着：先给「改了哪些文件」这一眼清单。
+    expect(view.container.textContent).not.toContain('+这个项目放本课程的课件和作业。')
     // 现场那一格还挂着，只是藏起来了（和产品一样：切走不卸）。
     expect(view.container.querySelector<HTMLElement>('.panel-site')?.style.display).toBe('none')
     expect(view.container.querySelector<HTMLElement>('.panel-changes')?.style.display).not.toBe('none')

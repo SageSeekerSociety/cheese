@@ -35,8 +35,11 @@ const props = withDefaults(
     // Bumped by WorkPanel when a turn ends — the moment 芝士's commits and its
     // working tree actually changed. Silent re-fetch, never a spinner.
     refreshTick?: number
+    /** 这间房的队友叫什么，见 `PanelChangesProps`。 */
+    agentName?: string
+    memberNames?: Record<string, string>
   }>(),
-  { active: false, refreshTick: 0, readOnly: false }
+  { active: false, refreshTick: 0, readOnly: false, agentName: undefined, memberNames: () => ({}) }
 )
 
 // 整只 props 递进去，而不是抄一份值：取数那一层要跟着这几个 prop 变（换个房间、切

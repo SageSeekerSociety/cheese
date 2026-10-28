@@ -281,7 +281,6 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_B: CatalogEntry[] = [
           return t('catalog.modelConnectionsView.s5.note')
         },
         props: {},
-        expect: '保存在平台',
         expectSelector: '[data-connection="held-glm"]',
       },
       {

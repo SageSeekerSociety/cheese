@@ -3,7 +3,5 @@
   "acceptedTimes": "已采纳 {n} 次",
   "acceptedTimesPr": "已采纳 {n} 次 · PR #{pr}",
   "created": "新建了任务",
-  "owner": "{name} 负责",
-  "waitingAnswer": "待 {name} 回答",
-  "waitingReview": "待 {name} 审阅"
+  "owner": "{name} 负责"
 }

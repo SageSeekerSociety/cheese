@@ -1,7 +1,7 @@
 {
   "connect": "连接 GitHub 仓库",
   "connected": "已连接 {repo}",
-  "hint": "把这个项目接到一个 GitHub 仓库。连接后，AI 队友查看 CI/CD 所需的临时凭据会自动签发，无需手动配置",
+  "hint": "把这个项目接到一个 GitHub 仓库。连接后，AI 队友查看 CI/CD 所需的临时授权会自动签发，无需手动配置",
   "none": "暂无关联仓库",
   "reconnect": "重新连接",
   "title": "连接 GitHub 仓库"

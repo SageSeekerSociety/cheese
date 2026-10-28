@@ -4,6 +4,8 @@
 // 就是顶栏的内容（ThreadPane 用 useScreenHeader 交给顶栏），页里不再写第二遍。
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 
+import { computed } from 'vue'
+
 import { getAvatarUrl } from '@/utils/materials'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
@@ -11,7 +13,8 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
-import { taskPhraseLabel } from '@/lib/board'
+import { memberName } from '@/lib/agentNames'
+import { taskState } from '@/lib/taskState'
 
 defineOptions({ name: 'ThreadHead' })
 
@@ -43,6 +46,11 @@ const emit = defineEmits<{
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
 }
+// 做这件任务的队友叫什么：状态那一句会说到它（「小 C 在做」）。任务没单独指定时是项目默认那位。
+const taskAgentName = computed(() => {
+  const handle = props.task?.agent_handle
+  return (handle && props.memberNames[handle]) || memberName(props.members.find((m) => m.agent && m.project_default))
+})
 // 这个人的头像图：从成员名册查他挑过的素材 id。名册上没有他、或者他从没挑过
 // （avatar_id 是 null）都给空串，让 UserAvatar 画彩色首字母——别再退回全站默认脸。
 function avatarOf(handle: string): string {
@@ -60,7 +68,9 @@ function avatarOf(handle: string): string {
     <div class="thread-head__text">
       <h2 class="thread-head__title t-title" :title="heading">{{ heading }}</h2>
       <div v-if="task" class="thread-head__meta">
-        <span class="thread-head__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task, viewer) }}</span>
+        <span class="thread-head__state" data-testid="thread-task-phrase">{{
+          taskState(task, { viewer, agentName: taskAgentName }).label
+        }}</span>
         <span v-if="bar && task.owner_handle" class="thread-head__owner">
           <UserAvatar :size="14" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
           <span class="thread-head__owner-name">{{

@@ -60,7 +60,9 @@ def room(client, upstream):
     return (
         pid,
         tid,
-        {"x-cheese-token": mint_scoped_token(project_id=str(pid), topic_id=tid)},
+        {
+            "Authorization": f"Bearer {mint_scoped_token(project_id=str(pid), topic_id=tid)}"
+        },
     )
 
 

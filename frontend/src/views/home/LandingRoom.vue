@@ -9,6 +9,7 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TimelineMark from '@/components/TimelineMark.vue'
 import { t } from '@/i18n'
+import { taskState } from '@/lib/taskState'
 
 // The room on the public site: the room's own message rows fed a scripted
 // project, so the demo looks like the product because it is the product's rows.
@@ -84,8 +85,16 @@ function marker(line: Extract<Line, { kind: 'marker' }>): TaskLine {
     title: line.title,
     owner: null,
     creator: null,
-    status: done ? t('work.board.phrase.accepted') : t('work.board.phrase.running'),
-    tone: done ? 'done' : 'running',
+    // 演示里在做的那一件就是在跑的：记号照真的那样转。
+    state: taskState(
+      {
+        id: line.id,
+        presentation: done ? { column: 'done', phrase: 'accepted' } : { column: 'building', phrase: 'running' },
+        session_running: !done,
+      },
+      { viewer: '', agentName: t('publicSite.room.agent') }
+    ),
+    mine: false,
     accepted: null,
     at: '',
   }

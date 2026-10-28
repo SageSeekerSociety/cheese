@@ -42,8 +42,12 @@ export function projectQuery(projectId: string) {
       rememberProjects([project])
       return project
     },
+    // 起始代码还在放进仓库时隔一会儿再读一次：放好或没放成本来会推一帧过来
+    // （`projectFeed` 的 `project`），这一条是推送没到时的兜底。
+    refetchInterval: (query) => (query.state.data?.starter?.state === 'pending' ? STARTER_POLL_MS : false),
   })
 }
+const STARTER_POLL_MS = 20_000
 
 /** 项目的 AI 队友（含停用的）：私聊的地址和标题、成员页那一段、设置里那一节都读它。 */
 export function agentsQuery(projectId: string) {

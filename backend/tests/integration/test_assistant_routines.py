@@ -21,6 +21,8 @@ from sqlalchemy import select, update
 from app.api.deps import get_consumptions, get_session_host
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain import happenings
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent.session_host.answer import Answer
 from app.domain.assistant import gate
 from app.domain.assistant.models import (
@@ -30,17 +32,25 @@ from app.domain.assistant.models import (
     AssistantRoutine,
     AssistantRun,
 )
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.project.models import Project
 from app.domain.routine import personal
 from app.domain.topic.models import Topic
 from app.domain.user.models import UserSession
+from app.domain.user.services import usernames_by_ids
 from app.main import app
 from tests.conftest import seed_user
+from tests.delivery import delivery_task_id
 from tests.integration.conftest import add_external_member, new_project
 from tests.integration.test_assistant import _auth, _ledger_user
 from tests.integration.test_assistant import gateway as gateway  # the fixture
+from tests.integration.test_card_filed_notice import _decide as decide
+from tests.integration.test_card_filed_notice import _file_card as file_card
+from tests.integration.test_card_filed_notice import _room as filed_room
+from tests.integration.test_card_filed_notice import _set_reporter as set_reporter
 from tests.integration.test_message_edit import _room
 
 
@@ -153,6 +163,30 @@ def _make_routine(client, gw, me: dict, said: str, **args) -> AssistantRoutine:
     return routine
 
 
+def test_the_rule_cheese_makes_stays_in_its_answer_as_a_card(client, gateway):
+    """The rule shows where it was asked for, and still does on reading the
+    conversation again: what it waits for, what it will do, which rule."""
+    me = _auth(client, "asker")
+    routine = _make_routine(
+        client,
+        gateway,
+        me,
+        "每天早上八点把我的待办发给我",
+        title="每日待办",
+        note="列出待办",
+        trigger="schedule",
+        freq="daily",
+        time="08:00",
+    )
+
+    r = client.get(f"/assistant/conversations/{routine.conversation_id}", headers=me)
+    [answer] = [m for m in r.json()["data"]["messages"] if m["role"] == "assistant"]
+    [card] = answer["parts"]["rules"]
+    assert card["id"] == str(routine.id)
+    assert card["when"].startswith("每天 08:00")
+    assert card["note"] == "列出待办"
+
+
 class _Keeper:
     """The gate's model: stops everything, and keeps what it was shown."""
 
@@ -190,7 +224,10 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
     ]
 
     _due_now(client, routine.id)
-    gateway.script = [("tool", "cheese_inbox", {}), ("text", "今天没有待办。")]
+    gateway.script = [
+        ("tool", "cheese_inbox", {"action": "list"}),
+        ("text", "今天没有待办。"),
+    ]
     _tick(client, gateway)
     [run] = _ended(client, user_id)
 
@@ -204,11 +241,11 @@ def test_a_routine_runs_on_its_own_when_its_time_comes_and_tells_the_person(
         "data"
     ]["messages"]
     assert [m["role"] for m in said] == ["platform", "assistant"]
-    assert "例行事务「每日待办」现在运行" in said[0]["text"]
+    assert "自动化「每日待办」现在运行" in said[0]["text"]
     assert said[1]["text"] == "今天没有待办。"
     # The person is told, and the notice opens the run's conversation.
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "例行事务「每日待办」已完成"
+    assert notice["content"] == "自动化「每日待办」已完成"
     assert notice["assistantConversation"] == str(run.conversation_id)
     assert notice["quote"] == "今天没有待办。"
     # The next time is tomorrow's.
@@ -245,7 +282,7 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
 
     _due_now(client, routine.id)
     gateway.script = [
-        ("tool", "cheese_message_send", {"where": room, "text": "收到，我会处理"}),
+        ("tool", "chat_send", {"where": room, "content": "收到，我会处理"}),
         ("text", "我起草了一条回复，等你确认。"),
     ]
     started = time.monotonic()
@@ -256,12 +293,10 @@ def test_in_a_run_what_was_not_asked_for_is_left_as_a_card_without_waiting(
     assert time.monotonic() - started < 60
     assert (run.status, run.asked) == ("done", 1)
     shown = keeper.shown[0]
-    assert (
-        "[用户（建这条例行事务时说）] 每天早上看一下我的项目频道有什么新消息" in shown
-    )
-    assert "例行事务「看频道」现在运行" not in shown
+    assert "[用户（建这条自动化时说）] 每天早上看一下我的项目频道有什么新消息" in shown
+    assert "自动化「看频道」现在运行" not in shown
     [notice] = _notices(client, user_id)
-    assert notice["content"] == "例行事务「看频道」有 1 项操作待你确认"
+    assert notice["content"] == "自动化「看频道」有 1 项操作待你确认"
     [card] = _cards(client, user_id)
     assert card.state == "pending" and card.work == str(run.id)
 
@@ -339,7 +374,6 @@ def _routine(client, handle: str, **fields) -> AssistantRoutine:
             trigger=fields.pop("trigger", "mention"),
             spec=fields.pop("spec", {}),
             timezone="Asia/Shanghai",
-            event_cursor=datetime.now(UTC) - timedelta(minutes=10),
             conversation_id=conversation.id,
             **fields,
         )
@@ -356,37 +390,34 @@ def _notified(
     type_: NotificationType,
     *,
     project: uuid.UUID | None = None,
-    conversation: uuid.UUID | None = None,
     payload: dict | None = None,
-) -> int:
-    async def make(db):
-        now = datetime.now(UTC)
-        row = Notification(
-            receiver_id=user_id,
-            recipient_handle="x",
-            type=type_.value,
-            project_id=project,
-            conversation_id=conversation,
-            metadata_payload=payload or {"content": "周五前能交吗？", "author": "bob"},
-            read=False,
-            is_aggregatable=False,
-            finalized=True,
-            version=0,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(row)
-        await db.flush()
-        return row.id
+) -> None:
+    """The person is sent a notification, the way every one is sent."""
 
-    return _db(client, make)
+    async def send(db):
+        handle = (await usernames_by_ids(db, [user_id]))[user_id]
+        await deliver(
+            db,
+            DeliveryEvent(
+                id=uuid.uuid4(),
+                type=type_,
+                payload={
+                    **(payload or {"content": "周五前能交吗？", "author": "bob"}),
+                    **({"projectId": str(project)} if project else {}),
+                },
+                occurred_at=datetime.now(UTC),
+            ),
+            address(Event(audience=(handle,)), Hand.participant),
+        )
+
+    _db(client, send)
 
 
 def test_each_thing_that_happens_fires_the_routines_watching_for_it_once(client):
     routine = _routine(client, "dora")
     user_id = routine.user_id
     _notified(client, user_id, NotificationType.MENTION)
-    _notified(client, user_id, NotificationType.REACTION)  # not watched for
+    _notified(client, user_id, NotificationType.REACTION)  # not waited for
 
     _sweep(client)
     _sweep(client)
@@ -437,6 +468,150 @@ def test_a_scheduled_routine_still_running_skips_its_next_time(client):
     assert [r.status for r in _runs(client, routine.user_id)] == ["queued", "skipped"]
 
 
+def test_a_happening_that_cannot_be_read_does_not_hold_up_the_ones_behind(client):
+    routine = _routine(client, "dora", spec={"from": ["bob"], "fromNames": ["鲍勃"]})
+
+    async def garbled(db):
+        await happenings.happened(
+            db,
+            happenings.NOTIFIED,
+            user_id=routine.user_id,
+            payload={"type": NotificationType.MENTION.value, "payload": "garbled"},
+        )
+
+    _db(client, garbled)
+    _notified(client, routine.user_id, NotificationType.MENTION)
+
+    _sweep(client)
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert "周五前能交吗？" in run.detail
+
+
+def test_a_mention_rule_limited_to_some_people_hears_only_them(client):
+    routine = _routine(client, "dora", spec={"from": ["bob"], "fromNames": ["鲍勃"]})
+    _notified(client, routine.user_id, NotificationType.MENTION)
+    _notified(
+        client,
+        routine.user_id,
+        NotificationType.MENTION,
+        payload={"content": "看一下", "author": "carol"},
+    )
+
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert "周五前能交吗？" in run.detail
+
+
+def test_a_paused_rule_misses_what_happened_meanwhile(client):
+    routine = _routine(client, "dora", state="paused", paused="person")
+    _notified(client, routine.user_id, NotificationType.MENTION)
+    _sweep(client)
+    me = _auth(client, "dora")
+    client.post(f"/assistant/routines/{routine.id}/resume", headers=me)
+
+    _sweep(client)
+
+    assert _runs(client, routine.user_id) == []
+
+
+# --- what happens in a task ------------------------------------------------
+
+
+def _filing_room(client, reporter: str) -> str:
+    """A room whose task ``reporter`` asked for, reviewed by alice."""
+    seed_user(client, "alice")
+    room = filed_room(client)
+    set_reporter(client, room, reporter)
+    return room
+
+
+def _waiting(client, handle: str, trigger: str, **spec) -> AssistantRoutine:
+    return _routine(client, handle, title="等审阅", trigger=trigger, spec=spec)
+
+
+def test_a_rule_waiting_once_for_a_review_runs_in_its_own_conversation(client):
+    """「等这个任务提交审阅了帮我看看」: the first filing fires it, in the
+    conversation it was asked for in, and nothing after does."""
+    room = _filing_room(client, "dora")
+    task = delivery_task_id(client, room)
+    routine = _waiting(
+        client, "dora", "filed", task=str(task), taskTitle="接入搜索", once=True
+    )
+
+    card = file_card(client, room).json()["data"]["id"]
+    _sweep(client)
+    decide(client, card, "reject", note="再改改")
+    file_card(client, room)
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert run.conversation_id == routine.conversation_id
+    assert "提交审阅" in run.detail
+    [row] = _routines(client, routine.user_id)
+    assert row.state == "done"
+
+
+def test_a_rule_on_the_persons_tasks_fires_for_theirs_alone(client):
+    mine = _filing_room(client, "dora")
+    theirs = _filing_room(client, "erin")
+    routine = _waiting(client, "dora", "filed", mine=True)
+
+    file_card(client, theirs)
+    file_card(client, mine)
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert run.conversation_id != routine.conversation_id
+
+
+def test_a_rule_waiting_for_a_return_ignores_the_filing_and_the_acceptance(client):
+    room = _filing_room(client, "dora")
+    routine = _waiting(client, "dora", "decided", mine=True, outcome="rejected")
+
+    card = file_card(client, room).json()["data"]["id"]
+    _sweep(client)
+    assert _runs(client, routine.user_id) == []
+    assert decide(client, card, "reject", note="口径不对").status_code == 200
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert "退回" in run.detail
+
+
+def test_a_review_rule_fires_when_a_task_goes_to_review_with_the_person(client):
+    room = _filing_room(client, "dora")
+    routine = _waiting(client, "alice", "review")
+
+    file_card(client, room, reviewer="alice")
+    _sweep(client)
+
+    [run] = _runs(client, routine.user_id)
+    assert "提交审阅" in run.detail
+
+
+def test_a_rule_waiting_once_that_nothing_fires_is_given_up_and_said(client):
+    routine = _waiting(client, "dora", "filed", mine=True, once=True)
+
+    async def long_ago(db):
+        await db.execute(
+            update(AssistantRoutine)
+            .where(AssistantRoutine.id == routine.id)
+            .values(updated_at=datetime.now(UTC) - personal.WAITS_FOR)
+        )
+
+    _db(client, long_ago)
+    _sweep(client)
+
+    [row] = _routines(client, routine.user_id)
+    assert row.state == "done"
+    [notice] = _notices(client, routine.user_id)
+    assert notice["content"] == "已停止等待「等审阅」：14 天内没有发生"
+    assert notice["assistantConversation"] == str(routine.conversation_id)
+
+
 def test_out_of_credits_a_persons_routines_pause_and_they_are_told_once(client):
     routine = _routine(
         client,
@@ -468,7 +643,7 @@ def test_out_of_credits_a_persons_routines_pause_and_they_are_told_once(client):
         "第二条": ("paused", "credits"),
     }
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "额度已用完，例行事务已暂停"
+    assert notice["content"] == "额度已用完，自动化已暂停"
     assert other.id
 
 
@@ -494,7 +669,7 @@ def test_routines_of_someone_away_for_long_pause_until_they_resume_them(client):
     [row] = _routines(client, routine.user_id)
     assert (row.state, row.paused) == ("paused", "away")
     [notice] = _notices(client, routine.user_id)
-    assert notice["content"] == "你已 14 天未登录，例行事务已暂停"
+    assert notice["content"] == "你已 14 天未登录，自动化已暂停"
     resumed = client.post(f"/assistant/routines/{routine.id}/resume", headers=me)
     assert resumed.json()["data"]["routines"][0]["state"] == "active"
 
@@ -505,14 +680,16 @@ def test_routines_of_someone_away_for_long_pause_until_they_resume_them(client):
 def _acting(client, handle: str, conversation: str | None, work: str | None = None):
     seed_user(client, handle)
     return {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=_ledger_user(client, handle)[0],
-            handle=handle,
-            work=work or str(uuid.uuid4()),
-            ttl_s=300,
-            read_only=False,
-            conversation=conversation,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=_ledger_user(client, handle)[0],
+                handle=handle,
+                work=work or str(uuid.uuid4()),
+                ttl_s=300,
+                read_only=False,
+                conversation=conversation,
+            )
+        }"
     }
 
 
@@ -628,7 +805,7 @@ def test_the_persons_entries_are_read_by_the_gate_one_a_line(client, monkeypatch
     acting = _acting(client, "dora", _conversation(client, "dora", "帮我看看频道"))
 
     client.post(
-        "/assistant/agent/act",
+        "/assistant/agent/review",
         json={"kind": "message", "where": room, "text": "收到"},
         headers=acting,
     )
@@ -672,7 +849,7 @@ def test_a_one_off_routine_that_ran_is_done_frees_its_place_and_is_cleared_later
 
     [listed] = client.get("/assistant/routines", headers=me).json()["data"]["routines"]
     assert (listed["state"], listed["nextRunAt"]) == ("done", None)
-    assert "运行一次" in listed["when"]
+    assert listed["once"] is True
     paused = client.post(f"/assistant/routines/{routine.id}/pause", headers=me)
     assert paused.status_code in (400, 422), paused.text
 

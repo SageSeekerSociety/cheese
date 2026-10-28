@@ -66,7 +66,7 @@ def mention_prompt(*, author: str, message: str, block_id: uuid.UUID) -> str:
     return (
         f"{author} 在房间里点了你的名（消息 id `{block_id}`）：\n\n"
         f"---\n{message}\n---\n\n"
-        "按这条消息处理，回话用 chat_send。点名会叫起对方的一轮：只是回个话、"
+        "按这条消息处理，回话用 chat_send。点名会把对方叫起来干活：只是回个话、"
         "报个结果，不要点对方的名；要对方接着动手时才点。"
     )
 

@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -205,6 +205,8 @@ async def _unresolved_failures(
 
     `tasks_of_room` 只列**还没关**的活——关了的活自己的错误不再点亮任何一行；原地
     转成任务的支线已按任务算，不折回频道（否则旧错误点亮它、它的话清掉它的失败）。
+    拖过三天的失败也不再点亮（`waits.FAILURE_GIVES_UP_AFTER`），这条线自己那条线
+    也是 —— 否则没人接手的频道仍然永远红。
     """
     if not room_ids:
         return {}, {}
@@ -261,6 +263,7 @@ def _topic_out(
     answered: Collection[uuid.UUID] | None = None,
     incomplete: Mapping[uuid.UUID, datetime] | None = None,
     moving: Collection[uuid.UUID] | None = None,
+    seats: Mapping[uuid.UUID, str | None] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -288,6 +291,8 @@ def _topic_out(
     # incomplete_since`）：这间房自己那条线、它的支线，或者它名下一件**还没关**的活
     # （`_unresolved_failures` 那一份）。算不出来就是 `None`，不亮。
     out.incomplete_since = (incomplete or {}).get(topic.id)
+    # 这间房的 AI 队友坐在哪一席（`TopicOut.agent_handle`）：`seats` 一次算一整页。
+    out.agent_handle = (seats or {}).get(topic.id)
     # 有没有人回复了我、而我还没处理（侧栏黄灯的另一半，`TopicOut.replied_to_me`）：
     # 同一页一次算完，这里只查表；没有登录的人拿到空集，也就是不亮。
     out.replied_to_me = topic.id in (answered or ())
@@ -442,6 +447,8 @@ async def list_topics(
     incomplete, incomplete_tasks = await _unresolved_failures(
         db, [t.id for t in topics], tasks_of_room
     )
+    # 每间房的 AI 队友坐在哪一席：名册一次读完一整页，不逐间问。
+    seats = await TopicMemberService(db).addressable_agent_handles(project_id, room_ids)
     rails = await rail_tasks(
         db,
         actor,
@@ -469,6 +476,7 @@ async def list_topics(
                 answered=answered,
                 incomplete=incomplete,
                 moving=moving_ids,
+                seats=seats,
             ),
             "my_tasks": rails[t.id],
         }
@@ -599,6 +607,9 @@ async def get_topic(
     incomplete, incomplete_tasks = await _unresolved_failures(
         db, [topic.id], tasks_of_room
     )
+    seats = await TopicMemberService(db).addressable_agent_handles(
+        topic.project_id, [topic.id]
+    )
     rails = await rail_tasks(
         db,
         actor,
@@ -625,6 +636,7 @@ async def get_topic(
                 answered=answered,
                 incomplete=incomplete,
                 moving=moving_ids,
+                seats=seats,
             ),
             "my_tasks": rails[topic.id],
         }
@@ -973,11 +985,11 @@ async def topic_usage(
 _GATE_OUTPUT_TAIL = 2000
 
 
-def _card_snapshot(card: CardRow) -> dict:
+def _card_snapshot(card: CardRow, reviewers: list[str]) -> dict:
     return {
         "id": str(card.id),
         "status": str(card.status),
-        "reviewer": card.reviewer_handle,
+        "reviewer": "、".join(reviewers),
         "decided_by": card.decided_by,
         "decided_at": card.decided_at.isoformat() if card.decided_at else None,
         "note": card.note,
@@ -1039,6 +1051,9 @@ async def topic_status(
     cards = [
         card for card in filed if place.task is None or card.task_id == place.task.id
     ]
+    card_reviewers = await AcceptService(db).reviewer_handles_for_cards(
+        [card.id for card in cards]
+    )
     credits = await UsageService(db).project_credits(place.project_id)
     # 芝士读得懂的那一层：还剩多少之外，还要说清是哪一层、上限多少、几时恢复
     # （`usage.alerts` 的同一档）。项目预算这一层不会自动恢复，单独给个数。
@@ -1082,7 +1097,7 @@ async def topic_status(
             },
             "turn": turn,
             "stall": stall,
-            "cards": [_card_snapshot(c) for c in cards],
+            "cards": [_card_snapshot(c, card_reviewers.get(c.id, [])) for c in cards],
             "platform": {
                 "active_turns": runner.active_work_count(),
                 "queued_turns": await runner.project_queue_depth(place.project_id),
@@ -1288,12 +1303,11 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/summon")
 async def summon_agent(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
@@ -1308,14 +1322,7 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    await require_role(db, actor, place.project_id, Permission.ask_agent)
+    place, actor = at.place, at.actor
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
@@ -1362,9 +1369,10 @@ async def summon_agent(
     return ok({"started": True})
 
 
-@router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/webhook-token")
 async def mint_webhook_token(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.mint_webhook_token, at="topic_id")],
+    db: DbSession,
 ) -> dict:
     """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
@@ -1373,19 +1381,13 @@ async def mint_webhook_token(
 
     The token is a write credential for this room: whoever holds it can post
     into the room's timeline as any source, and rotating it locks out every
-    token minted before. So minting takes the same door as writing to the room
-    — project membership — rather than being handed to whoever knows the id."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        project_id=place.project_id, topic_id=place.conversation_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    token minted before. So only the room's own AI teammate mints it, which
+    no person's role grants."""
+    place = at.place
     # Scoped to the place, because the webhook wakes the place: a thread's
     # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(
-        db, topic_id=topic_id, project_id=place.project_id
+        db, topic_id=place.conversation_id, project_id=place.project_id
     )
     await db.commit()
     return ok({"token": token})

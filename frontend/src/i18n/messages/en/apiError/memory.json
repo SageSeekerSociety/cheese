@@ -37,7 +37,7 @@
   "migrationPlanInvalid": "This version of the migration plan doesn't hold up: {reason}",
   "migrationPlanNotFound": "There's no such migration plan",
   "migrationPlanNotReviewed": "This plan hasn't been reviewed yet (it's {status}). The reviewer is {reviewer}.",
-  "migrationReviewerOnly": "The old-table migration is reviewed by {reviewer}, not you. The report is on plan {plan}.",
+  "migrationReviewerOnly": "The old-memory migration is reviewed by {reviewer}, not you. The report is on plan {plan}.",
   "migrationScopeMissing": "{source} is to go to {scope}, but that scope doesn't exist yet",
   "migrationSuggestNoTarget": "{source} wants to make a suggestion but doesn't say where",
   "migrationTwoDestinations": "{source} has two destinations",

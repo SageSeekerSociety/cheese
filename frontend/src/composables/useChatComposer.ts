@@ -17,7 +17,7 @@ import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/compo
 import type { NoticeRow } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
 
-import { computed, ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { editMessage, hearVoice as hearVoiceIn, summonAgent } from '../api'
@@ -26,6 +26,7 @@ import { isAgentBlock, isAgentHandle } from '../lib/authorship'
 import { replySnippet } from '../lib/blockDisplay'
 import { loadComposerDraft, loadComposerMemory, saveComposerDraft, saveComposerMemory } from '../lib/composerDrafts'
 import { frozenQuote } from '../lib/quotedContext'
+import { useShareViewing, VIEWING_CONTEXT } from '../lib/viewingContext'
 
 import { t } from '@/i18n'
 
@@ -136,12 +137,14 @@ export function useChatComposer(deps: ChatComposerDeps) {
     if (
       draftQuote.value &&
       item.quotedContext &&
+      item.quotedContext.kind !== 'viewing' &&
       JSON.stringify(draftQuote.value) !== JSON.stringify(item.quotedContext)
     ) {
       errorMsg.value = t('slides.draftQuoteConflict')
       return
     }
-    if (item.quotedContext) draftQuote.value = frozenQuote(item.quotedContext)
+    // 自动带上的「在看」不放回成手动引用：放回去它就跟着这条草稿走，不再随右栏变。
+    if (item.quotedContext && item.quotedContext.kind !== 'viewing') draftQuote.value = frozenQuote(item.quotedContext)
     editing.add(item.clientId)
     dropSend(item.clientId)
     draft.value = draft.value.trim() ? `${item.content}\n${draft.value}` : item.content
@@ -261,6 +264,17 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   // 输入区只知道正文和「这条叫不叫它」。待发附件在这一层，因为它要跟着话题走。
   //
+  // 右侧开着的那一份（「芝士会看到你在看什么」，lib/viewingContext.ts）：读者没关掉那一
+  // 行、这条也没指别的一处时随消息带上。只有文字的消息才带——引用不能是一条消息的
+  // 全部（后端 quoteNeedsMessage），只发图时就不带。
+  const viewing = inject(VIEWING_CONTEXT, null)
+  const { share: shareViewing } = useShareViewing()
+  function lookingAt(content: string): QuotedContext | undefined {
+    if (!content.trim() || !shareViewing.value) return undefined
+    // 发出那一刻定格：发件箱重发时还是这一份，不随之后右栏换了什么变。
+    return viewing?.value ? frozenQuote(viewing.value) : undefined
+  }
+
   // 有一枚没传上去就整条挡住：`uploaded()` 会把它跳过，发出去的话那一段话自带一个
   // 说得出口的理由（「带了 3 个附件」）却只带上去 2 个，而人不会知道少了哪个。挡住
   // 并说清怎么办，比悄悄少发一个安全。
@@ -269,7 +283,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
       errorMsg.value = t('work.room.attachments.sendBlocked')
       return
     }
-    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value)) {
+    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value ?? lookingAt(content))) {
       draft.value = ''
       clearDraftQuote()
       clearPendingAtts()

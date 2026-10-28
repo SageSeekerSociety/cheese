@@ -17,8 +17,12 @@ vi.mock('@/api/teams', () => ({
     join: (...args: unknown[]) => join(...args),
   },
 }))
-const route = reactive({ params: { handle: 'crew' } as Record<string, string>, name: 'TeamsDetailDefault' })
-vi.mock('vue-router', () => ({ useRoute: () => route }))
+const route = reactive({
+  params: { handle: 'crew' } as Record<string, string>,
+  name: 'TeamsDetailDefault',
+  matched: [] as { meta: Record<string, unknown> }[],
+})
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: vi.fn(), push: vi.fn() }) }))
 
 import Detail from './Detail.vue'
 
@@ -57,6 +61,8 @@ function mount() {
 beforeEach(() => {
   setLocale('zh-CN')
   route.params = { handle: 'crew' }
+  route.name = 'TeamsDetailDefault'
+  route.matched = []
   detailByHandle.mockReset().mockResolvedValue({ team: team() })
   join.mockReset().mockResolvedValue({ team: team({ joinStatus: 'member' }) })
 })
@@ -110,6 +116,16 @@ describe('a team page', () => {
     await screen.findByText('成员工作区内容')
   })
 
+  // 成员、设备、模型、额度和个人、空间、项目的设置一样，是盖在整个窗口上的一层。
+  it('opens a member at a settings address in the team settings layer', async () => {
+    detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
+    route.name = 'TeamsDetailMembers'
+    route.matched = [{ meta: {} }, { meta: { settingsOverlay: true } }]
+    mount()
+    const layer = await screen.findByRole('dialog', { name: '团队设置' })
+    expect(layer.textContent).toContain('成员工作区内容')
+  })
+
   it('answers a hidden team the same way as a missing one', async () => {
     detailByHandle.mockRejectedValue(new ApiError(404, 'not found'))
     mount()
@@ -122,7 +138,7 @@ describe('a team page', () => {
     detailByHandle.mockRejectedValue({ status: 500, message: '服务端打盹了' })
     mount()
 
-    await screen.findByText('团队信息没读出来')
+    await screen.findByText('团队信息加载失败')
     expect(screen.getByText('服务端打盹了')).toBeTruthy()
     expect(screen.queryByText('找不到这个团队，它可能已解散或不对你公开')).toBeNull()
   })
@@ -138,11 +154,11 @@ describe('a team page', () => {
   it('retry asks the same handle again', async () => {
     detailByHandle.mockRejectedValueOnce({ status: 500 })
     mount()
-    await screen.findByText('团队信息没读出来')
+    await screen.findByText('团队信息加载失败')
 
     detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     await fireEvent.click(screen.getByText('重试'))
     await screen.findByText('成员工作区内容')
-    expect(screen.queryByText('团队信息没读出来')).toBeNull()
+    expect(screen.queryByText('团队信息加载失败')).toBeNull()
   })
 })

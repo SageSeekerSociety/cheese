@@ -113,6 +113,9 @@ from app.domain.agent.platform_failure_cli_notices import (
     _REQUEST_REFUSED as _REQUEST_REFUSED,
 )
 from app.domain.agent.platform_failure_cli_notices import (
+    CONTROL_PLANE_UNAVAILABLE_CODE as CONTROL_PLANE_UNAVAILABLE_CODE,
+)
+from app.domain.agent.platform_failure_cli_notices import (
     MODEL_LIMIT_REACHED_CODE as MODEL_LIMIT_REACHED_CODE,
 )
 from app.domain.agent.platform_failure_cli_notices import (
@@ -153,6 +156,9 @@ from app.domain.agent.platform_failure_rules import (
 )
 from app.domain.agent.platform_failure_rules import (
     _text_is_storage_exhausted as _text_is_storage_exhausted,
+)
+from app.domain.agent.platform_failure_rules import (
+    is_provider_out_of_credit as is_provider_out_of_credit,
 )
 from app.domain.agent.platform_failure_rules import (
     is_runtime_image_missing,
@@ -276,14 +282,20 @@ from app.domain.agent.platform_failure_types import (
 # 「AI 服务返回错误」, blaming the model provider for a turn the provider never
 # saw — which sends whoever is debugging in exactly the wrong direction.
 PROMPT_UNDELIVERED_MESSAGE = (
-    "消息未能送达会话，会话没有任何响应。改动都还在，重试会重新打开会话。"
+    "消息没送到 AI 队友，它没有任何响应。改动都还在，重试会让它重新启动。"
 )
 TURN_TIMEOUT_MESSAGE = say("turnTimeoutShort")
 #: A turn the platform's upgrade cut short: the runner the previous release
 #: started was replaced by one of this release's, on the same conversation.
-#: The turn is started again by itself (``resumable_failures``).
+#: The turn is started again by itself (``resumable_failures``), so its line
+#: says so and names the teammate whose work picks up again.
 RUNNER_REPLACED_CODE = "runner_replaced"
-RUNNER_REPLACED_MESSAGE = say("sessionReplacedForUpgrade")
+
+
+def runner_replaced_message(agent_handle: str) -> NoticeText:
+    """The line a turn the upgrade cut short ends with."""
+    return say("sessionReplacedForUpgrade", agent=f"<@{agent_handle}>")
+
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
 # answering". It sits next to the classification it belongs to, and the device
@@ -292,7 +304,7 @@ RUNNER_REPLACED_MESSAGE = say("sessionReplacedForUpgrade")
 # route to host") — that also fires on an unreachable *model gateway*, which is
 # not a property of the machine and must never quarantine it.
 DEVICE_OFFLINE_MESSAGE = (
-    "频道绑定的设备已离线，重新连接后再继续（不会换到其他设备，以免工作目录和会话错乱）"
+    "频道绑定的设备已离线，设备重新连上后接着做。不会换到别的设备，以免工作目录错乱"
 )
 
 

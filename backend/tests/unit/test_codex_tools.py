@@ -129,6 +129,9 @@ async def test_platform_tools_are_listed_and_answered_by_the_backend(monkeypatch
     assert result["success"] is True
     assert requests[0]["path"] == "/projects/project/alerts"
     assert executor_calls == []
+    # Codex's runner reports no session lifecycle, so it names no run: its
+    # task-state reports carry none and always stand.
+    assert "run" not in requests[0]
 
 
 def test_runner_archive_launches_without_the_backend_environment(tmp_path):

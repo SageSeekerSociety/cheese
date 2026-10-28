@@ -185,7 +185,7 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
     by_turn = {line.split("  ")[0]: line for line in listed.splitlines()}
     # Four turns in the window, three on the page: the two numbers are not the
     # same one written twice.
-    assert "一共 4 轮，这是最近的 3 轮" in listed
+    assert "一共 4 次运行，这是最近的 3 次" in listed
     assert "失败 turn_failed" in by_turn[str(failed)]
     # Not failed, and not claimed to have succeeded either.
     assert "没记过失败" in by_turn[str(notice)]

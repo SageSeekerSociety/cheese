@@ -450,6 +450,6 @@ describe('统计页', () => {
     await loaded('platform')
     const legend = document.querySelector('.alc__legend')!
     expect(legend.textContent).toContain('真人')
-    expect(legend.textContent).toContain('Agent')
+    expect(legend.textContent).toContain('AI 队友')
   })
 })

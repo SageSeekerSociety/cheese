@@ -7,7 +7,9 @@ how its work ended, whether the machine under it is reachable, and what it is
 in the middle of writing. Each is routed here to the room's books for it, in
 the order it was read: the event log and the room's timeline
 (``turn.intake.hooks``), the realtime 「谁在干活」 frames, the input ledger
-(``turn_inputs``), the waiting-for-the-machine notes, and the live frames.
+(``turn_inputs``), what a compacted session has to be told again
+(``agent_sessions.told``), the waiting-for-the-machine notes, and the live
+frames.
 """
 
 import uuid
@@ -18,6 +20,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
     Abandoned,
+    Compacted,
     Followed,
     Reachable,
     Read,
@@ -73,10 +76,18 @@ class RoomBooks(Protocol):
     async def result_landed(self, report: Report) -> None: ...
 
     async def inputs_replaced(
-        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        native: str,
+        *,
+        read: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None: ...
 
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
+
+    async def context_compacted(self, session: SessionRef) -> None: ...
 
     async def _set_hook_activity(
         self,
@@ -121,7 +132,10 @@ def reader(chat: RoomBooks) -> RoomReader:
                 session.agent_handle,
                 session.harness,
                 event.conversation,
+                read=event.read,
             )
+        elif isinstance(event, Compacted):
+            await chat.context_compacted(session)
         elif isinstance(event, Writing):
             await publish_live(
                 session.conversation_id,

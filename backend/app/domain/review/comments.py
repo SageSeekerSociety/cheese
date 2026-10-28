@@ -10,6 +10,7 @@ about it.
 
 import asyncio
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import or_, select
@@ -25,17 +26,25 @@ from app.domain.review.comment_models import (
     ReviewCommentState,
 )
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task
 
 #: Longest comment body or suggestion; a comment is a remark, not a file.
 MAX_TEXT = 20_000
 
 
-def writers(task: Task, card: AcceptCard | None) -> set[str]:
-    """Who may comment on this task's changes."""
-    people = {task.owner_handle, task.reviewer_handle, *task.contributor_handles}
-    if card is not None:
-        people.add(card.reviewer_handle)
+def writers(task: Task, reviewers: Iterable[str] = ()) -> set[str]:
+    """Who may comment on this task's changes.
+
+    审阅人从 ``accept_card_reviewer`` 那一张表来（一卡多人），不再是卡上的列
+    —— 卡上的 ``reviewer_handle`` 已随本刀退役。
+    """
+    people = {
+        task.owner_handle,
+        task.reviewer_handle,
+        *task.contributor_handles,
+        *reviewers,
+    }
     return {handle for handle in people if handle}
 
 
@@ -77,7 +86,8 @@ class ReviewCommentService:
         card = await self._pending_card(task.id)
         if card is None:
             raise UnprocessableEntityError(say("reviewCommentNotAwaitingReview"))
-        if author not in writers(task, card):
+        reviewers = await AcceptCardRepository(self._session).reviewer_handles(card.id)
+        if author not in writers(task, reviewers):
             raise ForbiddenError(say("reviewCommentNotAllowed"))
 
     async def comments(self, task_id: uuid.UUID, viewer: str) -> list[ReviewComment]:
@@ -396,7 +406,7 @@ async def instruction(session: AsyncSession, rows: list[ReviewComment]) -> str:
         head = f"- [{row.id}] {_where(row)}"
         if parent is not None:
             said = f"，你上次说：{parent.outcome_note}" if parent.outcome_note else ""
-            head += f"（回复上一轮的批注「{parent.body}」{said}）"
+            head += f"（回复上次审阅时的批注「{parent.body}」{said}）"
         if comment_place.kind_of(row.path) != "line" and row.line_text:
             quote = (
                 row.line_text

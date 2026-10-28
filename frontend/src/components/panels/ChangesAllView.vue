@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 改动面板没打开文件时的那一面：这次交付的情况在最上面（宿主塞进来的 `head` 插槽），
-// 下面每个改到的文件一段，连着往下排，一起滚。
+// 下面每个改到的文件一段，连着往下排，一起滚。每段的差异默认收着，点段头铺开。
 //
 // 从 `PanelChangesView` 里分出来的（那个文件到了行数上限）。滚出去以后那条细栏、文件
 // 清单、以及「读到第几个文件」都在这里；外面只管把它画出来、以及在有人点树上的文件
@@ -38,6 +38,8 @@ const props = defineProps<{
   summaryAll: boolean
   /** 这件任务的批注；宿主不给就不画（`composables/useReviewComments.ts`）。 */
   review?: ReviewBundle | null
+  /** 哪几段铺开着（路径）。归 `PanelChangesView`，理由同 `summaryAll`。 */
+  expanded: Set<string>
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +49,8 @@ const emit = defineEmits<{
   'select-version': [source: FileSource]
   refresh: []
   'update:summaryAll': [value: boolean]
+  /** 点了某一段的段头：铺开或收起它。 */
+  'toggle-section': [path: string]
 }>()
 
 // 这一面按树上的顺序排（文件夹在前、按名字），和左边那一列从上往下对得上；
@@ -212,7 +216,9 @@ async function pick(path: string) {
         ref="diffList"
         :diffs="listDiffs"
         :review="props.review"
+        :expanded="props.expanded"
         @open="emit('select-file', $event)"
+        @toggle-section="emit('toggle-section', $event)"
         @comment="(d) => void props.review?.add(d)"
         @edit-comment="(id, b, s) => void props.review?.edit(id, b, s)"
         @remove-comment="(id) => void props.review?.remove(id)"

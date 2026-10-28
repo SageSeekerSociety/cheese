@@ -23,6 +23,7 @@ from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_INFO,
     WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.room_task.place import PlaceResolver
@@ -37,6 +38,15 @@ class SeatResolver(Protocol):
         recipient_instance_id: uuid.UUID | None = None,
         recipient_handle: str | None = None,
     ) -> str: ...
+
+
+class Draining(Protocol):
+    """Which seats' runners are another release's, finishing their work
+    (``ComputePool.draining``)."""
+
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool: ...
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool: ...
 
 
 class AdmissionEventWriter(Protocol):
@@ -59,14 +69,18 @@ async def admitted_initial(
     topic_id: uuid.UUID,
     delivery_id: uuid.UUID | None,
     *,
+    draining: Draining,
     user_block_id: uuid.UUID | None = None,
     recipient_instance_id: uuid.UUID | None = None,
     recipient_handle: str | None = None,
 ) -> AsyncIterator[bool]:
     """Every initial turn rechecks durable ownership after project admission.
 
-    Yields True when the seat still holds an input whose outcome is not settled:
-    the turn does not start, and a person's message waits for it instead.
+    Yields True when the seat still holds an input whose outcome is not settled,
+    or its runner is another release's finishing its work (``draining``): the
+    turn does not start, and a person's message waits for it instead. The wait
+    for a drain is said in the room once per drain, so the person knows their
+    message is not lost.
 
     The seat itself was taken before project admission, while this turn was on
     its way in (``RunnerIntake._admit``), so that a turn which cannot run yet
@@ -98,8 +112,10 @@ async def admitted_initial(
                         "The addressed agent is no longer seated in this room"
                     )
             seated = await conversation_seat(session, topic_id, seat)
-            pending = seated is not None and await seat_has_unfinished_input(
-                session, topic_id, seated[1]
+            upgrading = draining.draining(topic_id, seat)
+            pending = upgrading or (
+                seated is not None
+                and await seat_has_unfinished_input(session, topic_id, seated[1])
             )
             # A device-held connection needs its credential device online.
             # While it is away, the message waits; the periodic scan starts
@@ -109,17 +125,27 @@ async def admitted_initial(
                 and instance_id is not None
                 and await owner_is_away(session, instance_id, device_hub)
             )
-            told_away = False
+            told_away = told_upgrading = False
             if (pending or away) and user_block_id is not None:
                 await defer_message(session, user_block_id)
                 if away:
                     told_away = await _tell_once(session, user_block_id)
+                if upgrading:
+                    told_upgrading = draining.tell_draining(topic_id, seat)
             await session.commit()
         if told_away:
             await post_event(
                 topic_id,
                 say("ownerMachineAway"),
                 meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
+            )
+        if told_upgrading:
+            await post_event(
+                topic_id,
+                say("upgradeMessageWaits", agent=f"<@{seat}>"),
+                meta=notice(
+                    EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                ),
             )
         yield pending or away
 

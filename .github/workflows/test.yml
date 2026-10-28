@@ -161,6 +161,13 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
+      # The same comparison for who may call a write route: no route added
+      # here leaves it to its handler (ROUTE_DECIDES).
+      - name: No new write route declares ROUTE_DECIDES
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files route-decides
+
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
@@ -217,6 +224,16 @@ jobs:
       - name: Run the pi extension's tests
         if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
+
+      # The merge check (app/domain/review/merge_check.py) shells out to git,
+      # and the git that decides is the one the backend image ships, not this
+      # runner's newer one: `git merge-tree --quiet` passed here and exits 129
+      # on the image's Git 2.47 (#4853). So its tests run once more on the
+      # image's own runtime stage.
+      - name: Merge check tests with the backend image's git
+        if: ${{ !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        run: bash backend/scripts/test_with_image_git.sh tests/unit/test_merge_check.py
 
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving

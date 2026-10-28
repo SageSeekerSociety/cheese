@@ -78,7 +78,9 @@ def device(tmp_path, monkeypatch):
                         json.dumps(
                             {
                                 "path": self.path,
-                                "token": self.headers["X-Cheese-Token"],
+                                "token": self.headers["Authorization"].removeprefix(
+                                    "Bearer "
+                                ),
                                 "turn": self.headers.get("X-Cheese-Turn"),
                                 "body": json.loads(payload),
                             }
@@ -229,7 +231,7 @@ def test_another_worktree_beside_a_task_commits_and_leaves_the_task_alone(
     branch = tasks[task]["branch"]
     delivered = git(remote, "rev-parse", branch)
     extra = tmp_path / "experiment"
-    git(work, "worktree", "add", "-b", "experiment", str(extra), "main")
+    git(work, "worktree", "add", "-b", "experiment", str(extra), "origin/main")
     (extra / "same.txt").write_text("experiment\n")
     git(extra, "add", "same.txt")
 
@@ -368,7 +370,7 @@ def test_a_sync_by_hand_still_restores_a_snapshot_waiting_for_its_checkout(devic
 def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
     device, tmp_path
 ):
-    """The hand-off (`cheese_accept_request`) syncs the task this way. A
+    """The hand-off (`cheese_card(action=request)`) syncs the task this way. A
     checkout whose every commit is on the branch of a step that has since
     landed still has work for the next one: the sync carries it over and
     delivers it there."""

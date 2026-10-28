@@ -1,9 +1,9 @@
 {
   "check": "检查没通过，{long}，没有{agent}在处理",
   "conflict": "和主线有冲突，{long}，没有{agent}在处理",
-  "device": "{agent}的环境连不上，{long}——多半要有人去把那台电脑开机或连上网",
-  "environment": "{agent}的运行环境还没恢复，{long}",
-  "gate": "质量闸门没过，{long}，没有{agent}去改",
+  "device": "{agent}的环境连不上，{long}。多半要有人去把那台电脑开机或连上网",
+  "environment": "{agent}的环境还没恢复，{long}",
+  "gate": "平台检查未通过，{long}，没有{agent}去改",
   "mention": "有人 {'@'} 了{agent}，{long}还没有回话",
   "provisioning": "{agent}的环境还没准备好，{long}",
   "rejected": "这一版被退回了，{long}，没有{agent}去改",

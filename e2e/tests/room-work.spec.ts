@@ -210,6 +210,13 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
         .locator('.diff-file[data-path="src/login.txt"]')
         .getByRole("button", { name: "打开", exact: true })
         .click();
+    // 全部改动里每一段的差异默认收着，点段头才铺开：那一段的字在差异正文里，
+    // 断言之前先铺开它，不然面板上只有段头那一行的路径和增删数。
+    const expandLogin = () =>
+      panel
+        .locator('.diff-file[data-path="src/login.txt"]')
+        .locator(".diff-file__toggle")
+        .click();
     await openLogin();
     await expect(panel.locator(".changes-bar__path")).toHaveText(
       "src/login.txt",
@@ -222,6 +229,9 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
       panel.getByRole("button", { name: "保存", exact: true }),
     ).toBeEnabled();
     await switchTo(second, secondTitle);
+    // 换过来的这一面同样是那一件任务改过的文件，每一段收着。这里要看的是它的
+    // 正文，所以先铺开这一段再断言。
+    await expandLogin();
     await expect(panel).toContainText("second task");
     await switchTo(first, firstTitle);
     // 回来时又是全部改动那一面；打开那份文件，没保存的草稿还在，直接是编辑那一面。

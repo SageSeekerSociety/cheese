@@ -1,12 +1,12 @@
 {
-  "askFailed": "没能读到",
+  "askFailed": "读取失败",
   "collapse": "收起详情",
-  "connected": "会话已连接",
+  "connected": "AI 队友已连上",
   "expand": "查看详情",
-  "label": "会话详情",
-  "loadFailed": "读取会话状态失败",
-  "none": "没有在运行的会话",
-  "several": "频道里有 {count} 个会话在运行，选一位队友查看",
+  "label": "AI 队友详情",
+  "loadFailed": "读取 AI 队友状态失败，稍后重试",
+  "none": "暂无正在工作的 AI 队友",
+  "several": "频道里有 {count} 位 AI 队友在工作，选一位查看",
   "teammate": "队友",
   "view": "查看",
   "what": "查看内容"

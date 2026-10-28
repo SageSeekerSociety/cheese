@@ -8,6 +8,7 @@ import { computed, ref, useId, watch } from 'vue'
 
 import { t } from '../i18n'
 import { sameEnvironment } from '../lib/environment'
+import { responseText } from '../lib/noticeText'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 
@@ -75,6 +76,7 @@ function submit() {
         />
         <span class="env-body">
           <span class="env-label">{{ s.label }}</span>
+          <span v-if="s.description" class="env-hint">{{ responseText(s, 'description') }}</span>
         </span>
       </label>
     </fieldset>

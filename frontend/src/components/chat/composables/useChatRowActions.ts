@@ -14,7 +14,7 @@ import { useEventListener, useResizeObserver } from '@vueuse/core'
 import { useLongPress } from '../../../composables/useLongPress'
 import { messageSelection } from '../../../lib/messageSelection'
 
-import { useTimelineKeys } from './useTimelineKeys'
+import { isTimelineKey, useTimelineKeys } from './useTimelineKeys'
 
 type Timeline = ReturnType<typeof useTimeline>
 
@@ -187,16 +187,47 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
   let dismissedFor: string | null = null
   /** 上一下是键盘还是指针。行可聚焦，点一条消息也会把它聚焦——那是悬停条的旧活儿
    *  （指针悬停本来就亮着），不该再算成「键盘走到这一条」，否则点完把鼠标移开，条
-   *  还留在原地。 */
+   *  还留在原地。
+   *  只认这一列自己用的键（`isTimelineKey`）：音量/媒体键不算一次「在用键盘」。有的
+   *  系统会把它们也递进网页，按一下就把点过的那一条算成键盘停在那儿了。 */
   let keyboardFocus = false
+  /** 焦点框画不画，判据是「这一次聚焦是不是指针带来的」，见下面的 pointerHeld。 */
+  const kbdNav = ref(false)
+  /** 指针正按着。指针按下到随之而来的那次聚焦之间为真，所以点进这一列的行不画框
+   *  （那是悬停条的旧活儿）；指针没参与的那些聚焦照画——键盘走过来的、读屏或脚本
+   *  `focus()` 的、浏览器把焦点还回页面的（地址栏 Tab 回来、F6 切面板）。
+   *  判据不能是「刚才按了哪个键」：有的系统把音量/媒体键也递进网页，按一下音量键
+   *  就会给点过的那一条补上框。也不能用浏览器的 :focus-visible，它对任何一次按键
+   *  都亮，而上面那几种没有按键的聚焦它又看心情。 */
+  let pointerHeld = false
+  /** 指针没抬起就把这次按下作废的兜底：拖到窗口外松手、pointercancel 被吞掉时，
+   *  不然后面所有聚焦都画不出框。聚焦本身发生在按下那一轮里，等不到这么久。 */
+  let pointerRelease: ReturnType<typeof setTimeout> | undefined
+  function releasePointer() {
+    clearTimeout(pointerRelease)
+    // 大多数浏览器在按下时就聚焦，Safari 那种按下不聚焦、抬起才聚焦的也要接住：
+    // 让这一轮的事件先走完再撤。
+    pointerRelease = setTimeout(() => (pointerHeld = false), 0)
+  }
   const modalityTarget = typeof window === 'undefined' ? undefined : window
-  useEventListener(modalityTarget, 'keydown', () => (keyboardFocus = true))
-  useEventListener(modalityTarget, 'pointerdown', () => (keyboardFocus = false))
+  useEventListener(modalityTarget, 'keydown', (e: KeyboardEvent) => {
+    if (isTimelineKey(e)) keyboardFocus = true
+  })
+  useEventListener(modalityTarget, 'pointerdown', () => {
+    keyboardFocus = false
+    pointerHeld = true
+    clearTimeout(pointerRelease)
+    pointerRelease = setTimeout(() => (pointerHeld = false), 1000)
+  })
+  useEventListener(modalityTarget, 'pointerup', releasePointer)
+  useEventListener(modalityTarget, 'pointercancel', releasePointer)
+  useEventListener(modalityTarget, 'blur', releasePointer)
 
   function onRowFocus(e: FocusEvent) {
-    if (touchOnly.value || !keyboardFocus) return
     const target = e.target as HTMLElement | null
     if (!target || target.closest('.hover-bar')) return
+    kbdNav.value = !pointerHeld && !touchOnly.value
+    if (touchOnly.value || !keyboardFocus) return
     const row = target.closest<HTMLElement>(ACTION_ROW)
     const id = row?.dataset.mid
     if (!row || !id) {
@@ -257,6 +288,7 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     toggleTime,
     bar,
     barBlock,
+    kbdNav,
     showBarAt,
     hideBar,
     onTimelinePointer,

@@ -1,3 +1,5 @@
 {
+  "managementNeedsOwnSignIn": "This authorization is only for running tasks and cannot be used for management; sign in with your own account to do this",
+  "managementNotForTeammates": "AI teammates cannot perform management actions",
   "policyOverTier": "{what} “{label}” is in tier {tier}, which this project doesn't allow. Use a resource within the allowed tiers, or ask a project manager to change the tier policy."
 }

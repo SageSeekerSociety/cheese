@@ -57,6 +57,21 @@ vi.mock('@/api/attachments', () => ({
   },
 }))
 
+// 发题页里「默认队友」那一格自己按需拉的预设清单（走 `useAgentTypes` → `@/api`）。
+// 这一页只量自己画的字，真去问就是一条没人接的请求（`setup-network` 会当场逮住）。
+const listAgentTypes = vi.fn()
+vi.mock('@/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/api')>()
+  return { ...actual, listAgentTypes: (...a: unknown[]) => listAgentTypes(...a) }
+})
+
+// 「技能」那一格的候选，同一个理由（`useSkillCatalog` → `@/api/projectSkills`）。
+const listPlatformSkills = vi.fn()
+vi.mock('@/api/projectSkills', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listPlatformSkills: (...a: unknown[]) => listPlatformSkills(...a),
+}))
+
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/components/tasks/TaskForm.vue', async () => {
@@ -120,6 +135,8 @@ afterAll(() => {
 })
 
 beforeEach(() => {
+  listAgentTypes.mockResolvedValue({ data: [], total: 0 })
+  listPlatformSkills.mockResolvedValue({ data: [], total: 0 })
   spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
   listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
   listDomainGroups.mockResolvedValue({ groups: [] })

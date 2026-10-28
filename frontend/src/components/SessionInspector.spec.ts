@@ -74,7 +74,7 @@ it("lists the session's tasks without offering to move or stop them", async () =
     },
   })
   const view = mount()
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await view.findByText('b7k2m9x4q · 运行中')
   expect(view.getByText('派分身去查 · 已完成')).toBeTruthy()
@@ -87,14 +87,14 @@ it("lists the session's tasks without offering to move or stop them", async () =
 
 it('offers only questions that read the session', async () => {
   const view = mount()
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await fireEvent.mouseDown(view.getByRole('combobox', { name: '查看内容' }))
   const menu = await view.findByRole('listbox')
   const offered = within(menu)
     .getAllByRole('option')
     .map((option) => option.textContent?.trim())
-  expect(offered).toEqual(['会话状态', '查找文件', '查看文件', '工作区变更', '上下文用量', '账号用量', '外部工具连接'])
+  expect(offered).toEqual(['运行状态', '查找文件', '查看文件', '工作区变更', '上下文用量', '账号用量', '外部工具连接'])
 })
 
 it('shows what the session answers', async () => {
@@ -104,7 +104,7 @@ it('shows what the session answers', async () => {
     result: { response: { subtype: 'success', response: { model: 'claude-x', mcpServers: [] } } },
   })
   const view = mount()
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await ask(view)
   await view.findByText(/"model": "claude-x"/)
@@ -118,7 +118,7 @@ it('reads a file by the path a person gives', async () => {
     result: { response: { subtype: 'success', response: { contents: '# 草稿' } } },
   })
   const view = mount()
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await fireEvent.mouseDown(view.getByRole('combobox', { name: '查看内容' }))
   await fireEvent.click(await view.findByRole('option', { name: '查看文件' }))
@@ -139,7 +139,7 @@ it('shows why the session could not answer', async () => {
     result: { response: { subtype: 'error', error: 'No session is running in this room' } },
   })
   const view = mount()
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await ask(view)
   await view.findByText('No session is running in this room')
@@ -185,12 +185,12 @@ it('names the teammates when several are working, and reads the one picked', asy
     result: { response: { subtype: 'success', response: { model: 'claude-b' } } },
   })
   const view = mount()
-  await view.findByText('频道里有 2 个会话在运行，选一位队友查看')
-  expect(view.queryByText('没有在运行的会话')).toBeNull()
+  await view.findByText('频道里有 2 位 AI 队友在工作，选一位查看')
+  expect(view.queryByText('暂无正在工作的 AI 队友')).toBeNull()
   // Details are folded, so the teammate picker is the only choice on screen.
   await fireEvent.mouseDown(view.getByRole('combobox', { name: '队友' }))
   await fireEvent.click(await view.findByRole('option', { name: 'cheese-b' }))
-  await view.findByText('会话已连接')
+  await view.findByText('AI 队友已连上')
   await fireEvent.click(view.getByText('查看详情'))
   await ask(view)
   await view.findByText(/"model": "claude-b"/)

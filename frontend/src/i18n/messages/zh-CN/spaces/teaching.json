@@ -1,11 +1,22 @@
 {
+  "defaultTeammate": {
+    "hint": "从这道题（或这个项目集）建出的项目，芝士会带着这位队友的预设技能出生。",
+    "inherit": "沿用上层设置",
+    "inheritHint": "用上层设置的那一位",
+    "loadFailed": "读不到预设清单，暂时只能沿用上层",
+    "title": "默认队友",
+    "willClear": "保存后将清除这一层单独指定的队友",
+    "inheritNone": "项目集未设置默认队友"
+  },
   "fields": {
+    "learningGoals": "本节学习目标",
+    "learningGoalsHint": "写上它这份指导就按教育性走：「对 AI 的要求」留空也会带上默认教学要求。逗号分隔",
     "materials": "可读取的资料",
     "materialsCollapse": "收起资料库清单",
     "materialsDangling": "编号 {ids} 已经不在资料库里（删掉了，或者改成了「仅管理员」）。保存前请把它们去掉。",
     "materialsDanglingDrop": "去掉 {id}",
     "materialsEmpty": "资料库里还没有文件，先去「资料库」传一份。",
-    "materialsError": "资料库读不出来，先别改这一项。",
+    "materialsError": "资料库读取失败，这一项先保持不变。",
     "materialsExpand": "展开资料库清单",
     "materialsHint": "从这个空间的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
     "materialsLibrary": "空间资料库",
@@ -14,10 +25,15 @@
     "materialsRemove": "去掉 {name}",
     "materialsUpload": "上传到资料库",
     "mode": "方式",
+    "privatePrompt": "出题人私有指导",
+    "privatePromptHint": "只有出题人和空间管理员看得到这段配置；AI 队友照它做，但不会原样转述给答题的人。参考答案、评分口径这类不该进公开资料的东西写在这里。",
     "spacePrompt": "同时生效的空间要求",
     "systemPrompt": "补充要求",
     "systemPromptPlaceholder": "例如：可协助解读评测输出，不提供完整代码",
-    "taskPrompt": "本题补充要求"
+    "taskPrompt": "本题补充要求",
+    "skills": "技能",
+    "skillsHint": "从本题建出的项目里，每个 AI 队友每一轮都带上这些技能",
+    "skillsLoadFailed": "无法读取技能清单，已选的技能不受影响"
   },
   "mode": {
     "example": "讲解与示例",
@@ -26,7 +42,7 @@
     "freeHint": "按成员的要求提供帮助",
     "guide": "引导为主",
     "guideHint": "以提问引导思考，不直接给出答案",
-    "inherit": "沿用空间设置",
+    "inherit": "沿用上层设置",
     "inheritNone": "空间未设置方式",
     "spec": "先明确需求再实现",
     "specHint": "要求先说明目标和验证方法，再开始编写"

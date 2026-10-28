@@ -67,7 +67,7 @@ from sqlalchemy import ColumnElement, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.agent import execution, resource_cleanup
+from app.domain.agent import execution, resource_cleanup, turn_inputs
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
@@ -644,6 +644,24 @@ class SandboxLifecycle:
                     **(row.execution_request or {}),
                     LOST_KEY: True,
                 }
+                # The platform has just taken this session's machine away, and
+                # it is the one authority that knows a runner will never report
+                # the end of the turn that was running on it. Recording that
+                # here — where the destruction happens — is what lets the room's
+                # orphan sweep collect the interval instead of leaving it open
+                # for good: without it, `death_evidence.unknown_row` reads the
+                # turn as "nobody has said it died" and holds it, correctly,
+                # open (FB-56 legacy③). This is not "unreachable is dead": a
+                # machine merely out of reach is still unknown, and is never
+                # touched by this.
+                await turn_inputs.close_turns_of_a_destroyed_machine(
+                    self._session,
+                    conversation_id=row.conversation_id,
+                    agent_handle=row.agent_handle,
+                    harness=row.harness,
+                    native_session_id=row.resume_token,
+                    at=now,
+                )
             line = (
                 await tell_unpaid(self._session, home)
                 if unpaid

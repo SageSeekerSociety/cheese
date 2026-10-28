@@ -40,8 +40,10 @@ const props = withDefaults(
     frameName: string
     /** 这一格的取数（`composables/usePanelPreview.ts` 那一包）。 */
     preview: PanelPreviewBundle
+    /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
+    agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined }
+  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -90,10 +92,13 @@ const {
   canPage,
   docPageHtml,
   revs,
+  comments,
+  liveEdit,
   editing,
   showHistory,
   editor,
   fileHistory,
+  versions,
   // 动作
   load,
   downloadArtifact,
@@ -103,6 +108,7 @@ const {
   closeEditor,
   toggleHistory,
   toggleDocPage,
+  setDocNarrow,
   setPickMode,
 } = props.preview
 
@@ -135,6 +141,7 @@ function refresh() {
     :project-id="props.projectId"
     :path="props.path"
     :frame-name="props.frameName"
+    :agent-name="props.agentName"
     :frames="frames"
     :displayed-frame="displayedFrame"
     :navigation="navigation"
@@ -166,11 +173,14 @@ function refresh() {
     :doc-page="docPage"
     :can-page="canPage"
     :doc-page-html="docPageHtml"
+    :comments="comments"
     :revs="revs"
+    :live-edit="liveEdit"
     :editing="editing"
     :show-history="showHistory"
     :editor="editor"
     :file-history="fileHistory"
+    :versions="versions"
     @frame-load="frameLoaded"
     @frame-error="frameFailed"
     @pick-mode="setPickMode"
@@ -183,6 +193,7 @@ function refresh() {
     @close-editor="closeEditor"
     @toggle-history="toggleHistory"
     @toggle-doc-page="toggleDocPage"
+    @doc-narrow="setDocNarrow"
     @mention-click="emit('mention-click', $event)"
   />
 </template>

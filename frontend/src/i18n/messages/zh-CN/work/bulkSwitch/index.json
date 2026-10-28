@@ -1,12 +1,12 @@
 {
   "done": "已更换",
-  "empty": "暂无 agent",
-  "hidden": "另有 {count} 个 agent 在你打不开的频道里",
+  "empty": "暂无 AI 队友",
+  "hidden": "另有 {count} 个 AI 队友在你打不开的频道里",
   "loadFailed": "加载失败",
   "meta": "{agent} · 最近活动 {time}",
   "open": "查看并更换…",
-  "pushFirst": "更换前先把每个 agent 的改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。正在运行任务的先不换",
+  "pushFirst": "更换前先把每个 AI 队友的改动推送到分支，推没推上去都会更换；每次停下时的改动都有快照保存。正在运行任务的先不换",
   "selectAll": "全选",
-  "title": "「{name}」上的 agent",
+  "title": "「{name}」上的 AI 队友",
   "working": "正在运行任务"
 }

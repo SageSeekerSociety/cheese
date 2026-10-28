@@ -57,9 +57,13 @@ def _mock_session(scalar_returns=None):
     return session
 
 
-def _visibility_svc(session=None, user_repo=None, admin_repo=None):
+def _visibility_svc(session=None, user_repo=None, admin_repo=None, member=True):
+    """``member``: whether the reader is in the task's space (most cases here
+    are about someone inside it; the space rule has its own tests)."""
     session = session or _mock_session()
     svc = TaskVisibilityService(session=session)
+    svc._space_repo = AsyncMock()
+    svc._space_repo.is_member.return_value = member
     if user_repo:
         svc._user_repo = user_repo
     if admin_repo:
@@ -263,13 +267,22 @@ class TestCanViewTaskRoleBypass:
         assert await svc.can_view_task(task=t, user_id=42) is False
 
     @pytest.mark.anyio
-    async def test_everyone_can_view_public_task(self):
-        """Access control disabled: any authenticated user can view."""
+    async def test_every_space_member_can_view_public_task(self):
+        """Access control disabled: any member of the task's space can view."""
         t = _task(creator_id=99, access_control_enabled=False)
         admin_repo = AsyncMock()
         admin_repo.get_relation.return_value = None
         svc = _visibility_svc(admin_repo=admin_repo)
         assert await svc.can_view_task(task=t, user_id=42) is True
+
+    @pytest.mark.anyio
+    async def test_someone_outside_the_space_cannot_view_public_task(self):
+        """Access control disabled still means the space's members only."""
+        t = _task(creator_id=99, access_control_enabled=False)
+        admin_repo = AsyncMock()
+        admin_repo.get_relation.return_value = None
+        svc = _visibility_svc(admin_repo=admin_repo, member=False)
+        assert await svc.can_view_task(task=t, user_id=42) is False
 
 
 # ---------------------------------------------------------------------------
@@ -279,10 +292,10 @@ class TestCanViewTaskRoleBypass:
 
 class TestCanViewTaskUnauthenticated:
     @pytest.mark.anyio
-    async def test_unauthenticated_sees_public_task(self):
+    async def test_unauthenticated_hidden_from_public_task(self):
         t = _task(access_control_enabled=False)
         svc = _visibility_svc()
-        assert await svc.can_view_task(task=t, user_id=0) is True
+        assert await svc.can_view_task(task=t, user_id=0) is False
 
     @pytest.mark.anyio
     async def test_unauthenticated_hidden_from_restricted_task(self):

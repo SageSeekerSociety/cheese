@@ -42,6 +42,10 @@
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
   --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
+  /* The rail's you-are-here bar sits flush against the screen edge, and on a
+     maximised window that edge is the monitor's black bezel. --text (1.8:1 on
+     black) merges into it; --faint holds 4.1:1 on the rail and 4.8:1 on black. */
+  --rail-mark: var(--faint);
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -192,6 +196,19 @@
      exception). The dark block repeats the value deliberately; do not "fix" it
      to --ink. */
   --avatar-ink: #fff;
+
+  /* ---- Picture viewer ----
+     The full-screen picture viewer (ImageLightbox) is dark in both themes: a
+     picture is judged against a dark surround, and a light scrim lets the page
+     behind compete with it. The ground does not change with the theme, so the
+     ink and fills on it do not either (same exception as --avatar-ink). The
+     dark block repeats these values deliberately. */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
 
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
@@ -375,6 +392,23 @@
   --z-banner: 3000;
 }
 
+/* ---- 窗口按钮让位 ----
+   macOS 桌面版把标题栏叠在页面上，红黄绿三颗由系统画在网页上层：离窗口左缘 12、
+   上 16，三颗一共到 64（desktop/src-tauri/src/main.rs 的 traffic_light_position）。
+   整屏铺开、左上角直接有控件的层（设置、全屏编辑器、放映、画布、文档里的应用、顶栏、
+   跳转链接）都要把这一段让出来，写法一律是
+   `max(这一层自己的内距, var(--window-buttons-inset))`——不在这个桌面版里它恒为 0，
+   max() 返回的就是各层原本的内距，浏览器、Windows/Linux 桌面版和手机上不会因此
+   移一个像素。72 = 三颗右缘 64 + 8。`lib/desktopApp.ts` 的 markTitleBarOverlay()
+   把类挂上 <html>，和顶栏自己用的 titleBarOverlay() 是同一个判据。 */
+:root {
+  --window-buttons-inset: 0px;
+}
+
+:root.title-bar-overlay {
+  --window-buttons-inset: 72px;
+}
+
 /* 手机外壳（窄于 960，和 Vuetify 的 mdAndUp 同一条线）里一页只有一栏，所以两档页宽
    收成同一个值。920 / 1100 在这里从来卡不住：平板竖屏 768–959 上表单和卡片列表铺满
    整屏，一行六十多个字。720 在 390 的手机上不起作用，只管平板和横过来的大手机。 */
@@ -418,6 +452,7 @@
   --text: #d3d6db;
   --muted: #aeb4bd;
   --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
+  --rail-mark: var(--text);
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
@@ -499,6 +534,12 @@
   --inverse-fill: rgba(255, 255, 255, 0.1);
 
   --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
 
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
@@ -1379,6 +1420,23 @@ button:not(.v-btn) {
   padding-left: 12px;
   border-left: 2px solid var(--line-2);
   color: var(--muted);
+}
+/* 有人在预览里评过的那几个字（`.md-content` 这块正文里，`markdownAnchors` 包出来的）。
+   和文档正文的同一种标记（`DocProse.vue` 的 `.doc-comment-mark`）：浅琥珀底加一道琥珀
+   下划线，正看着的那一串更重。两处不共用一条规则是因为它们挂在两套不同的正文容器上
+   （这里是 `v-html` 渲染的阅读视图，那里是编辑器），但那对颜色必须一致——同一个东西
+   在两处长得不一样，读者会以为是两种标记。 */
+.file-comment-mark {
+  background: color-mix(in srgb, var(--accent-wash) 70%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.file-comment-mark:hover,
+.file-comment-mark.is-active {
+  background: var(--accent-wash);
+  border-bottom-color: var(--accent);
 }
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。

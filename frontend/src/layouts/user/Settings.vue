@@ -18,14 +18,16 @@
         </div>
       </div>
     </template>
-    <router-view />
+    <router-view v-if="!needsOwnTeam || ownTeam" />
   </SettingsOverlay>
 </template>
 
 <script lang="ts" setup>
 // 个人设置：一层盖在整个窗口上的浮层（components/common/SettingsOverlay）。
 // 关掉回到打开之前的那一页；直接从链接打开、之前没有页面时回首页。
-import { computed, watch } from 'vue'
+import type { Team } from '@/types'
+
+import { computed, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
@@ -34,10 +36,13 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 
+import { TeamsApi } from '@/api/teams'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { teamDataInjectionKey } from '@/keys'
 import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
+import { myHandle } from '@/me'
 import AccountService from '@/services/account'
 import { settingsGroups } from '@/views/user/settings/sections'
 
@@ -57,6 +62,21 @@ const avatar = computed(() => {
 })
 
 const groups = computed(() => settingsGroups())
+
+// 设备、模型和额度三栏是这个人名下那个单人团队的：页面和团队设置里的是同一份，团队从这里
+// 递下去（团队设置里是 `teams/Detail.vue` 递）。读到之前那三栏不画。
+const OWN_TEAM_PAGES = new Set(['UserSettingsCompute', 'UserSettingsModels', 'UserSettingsCredits'])
+const needsOwnTeam = computed(() => OWN_TEAM_PAGES.has(String(route.name)))
+const ownTeam = ref<Team>()
+provide(teamDataInjectionKey, ownTeam)
+watch(
+  needsOwnTeam,
+  async (needed) => {
+    if (!needed || ownTeam.value) return
+    ownTeam.value = (await TeamsApi.detailByHandle(myHandle())).team
+  },
+  { immediate: true }
+)
 
 /** 停在「个人设置」这一条自己的地址上时没有当前项：手机上那就是目录。 */
 const active = computed(() => (route.name === 'UserSettings' ? null : String(route.name)))

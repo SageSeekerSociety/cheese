@@ -339,6 +339,47 @@ async def drop_unread_of_session(session, *, harness, native_session_id, reason)
     return dropped
 
 
+async def read_inputs_of_session(
+    session, *, harness, native_session_id, input_ids, work_id: uuid.UUID | None
+) -> int:
+    """These inputs of this native session, not yet recorded as read nor
+    dropped, recorded as read, into ``work_id`` when it names one: its runner
+    reported its works read them, in the one report this release can read of
+    a runner another release started (its ping's ``endings``,
+    ``room.sessions.lifecycle``). Read is delivered: nothing in them is
+    offered again."""
+    wanted = [uuid.UUID(str(input_id)) for input_id in input_ids]
+    unread = list(
+        await session.scalars(
+            select(NativeInput).where(
+                NativeInput.harness == harness,
+                NativeInput.native_session_id == native_session_id,
+                NativeInput.input_id.in_(wanted),
+                NativeInput.echoed_at.is_(None),
+                NativeInput.terminated_at.is_(None),
+            )
+        )
+    )
+    read = 0
+    for row in unread:
+        identity = InputIdentity(
+            *(getattr(row, field) for field in InputIdentity.__dataclass_fields__)
+        )
+        if (
+            await record_receipt(
+                session,
+                InputReceipt(
+                    identity,
+                    "native_echo",
+                    execution_work_id=row.execution_work_id or work_id,
+                ),
+            )
+            is not None
+        ):
+            read += 1
+    return read
+
+
 async def fail_read_inputs(
     session, *, harness, native_session_id, input_ids, failure
 ) -> int:
@@ -397,6 +438,39 @@ async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
                 NativeInput.work_id.in_(ids),
                 NativeInput.execution_work_id.in_(ids),
             ),
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+        .values(terminated_at=datetime.now(UTC), termination=reason)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
+async def terminate_unread_of_session(
+    session, *, harness, native_session_id, reason
+) -> int:
+    """Give up on every unread input written into this native session.
+
+    For a session whose machine the platform destroyed: the runner that would
+    have reported any of them read or dropped went with the machine, so no
+    later fact about them can arrive, and an unfinished input refuses its seat
+    every later message (``seat_has_unfinished_input``).
+
+    Keyed by the session rather than by its works, because the input that
+    leaks is exactly the one no open work accounts for: a mid-turn addition
+    whose own turn had already stopped when the machine went. Nothing in the
+    works' close reaches it — that only names the turns still open.
+
+    Only ``terminated_at`` / ``termination`` are written, as
+    :func:`terminate_inputs_of_dead_works` does: the machine's death says
+    nothing about whether they were read before it, so their holds stay held
+    and nothing inside them is sent again.
+    """
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
             NativeInput.echoed_at.is_(None),
             NativeInput.terminated_at.is_(None),
         )

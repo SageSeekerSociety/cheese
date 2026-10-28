@@ -110,9 +110,9 @@ def _call_as(client, tid: str, pid, seat: str, name: str, method: str, params=No
         f"/topics/{tid}/mcp/{name}",
         json={"method": method, "params": params or {}},
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=str(pid), topic_id=tid, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=str(pid), topic_id=tid, agent_handle=seat)
+            }"
         },
     )
     assert response.status_code == 200, response.text

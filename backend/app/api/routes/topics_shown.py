@@ -82,6 +82,7 @@ from app.domain.project.room_files import (
     clean_artifact_path,
 )
 from app.domain.project_permissions import Permission
+from app.domain.remote_mcp import apps
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -172,6 +173,15 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         raise UnprocessableEntityError(say("previewPortSilent"))
 
 
+def _shown_kind(mime: str | None) -> str:
+    """Which of the three render kinds a shown thing is, from its mime."""
+    if mime == ARTIFACT_MIME["app"]:
+        return "app"
+    if mime == ARTIFACT_MIME["mcp-app"]:
+        return "mcp-app"
+    return "file"
+
+
 @router.post("/{topic_id}/shown", dependencies=[ROUTE_DECIDES])
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -201,6 +211,16 @@ async def show_in_room(
         # content is a human note ("Vue dev server"), not a path.
         path = (body.get("path") or "app").strip()[:120]
         await _reject_unreachable_app(place.conversation_id, author)
+    elif declared == "mcp-app":
+        # An MCP App is not a file either: it names a third-party server's View
+        # by (server, `ui://` resource). The stored content is a pointer; the
+        # preview host fetches the HTML through that server's connection later,
+        # and refuses an undeclared server then.
+        server = str(body.get("server") or "").strip()
+        uri = str(body.get("path") or "").strip()
+        if not server or not apps.is_ui_uri(uri):
+            raise UnprocessableEntityError(say("mcpAppNeedsServerAndResource"))
+        path = apps.pointer(server, uri)
     else:
         path = clean_artifact_path(body.get("path") or "")
     as_ = declared or artifact_kind_for(path)
@@ -217,11 +237,12 @@ async def show_in_room(
     #: When this call last changed what the card shows: the page or any file it
     #: loads. None when nothing was sent, so there is nothing to compare.
     saved_at: datetime | None = None
+    # `app` and `mcp-app` carry no bytes of their own (a note and a pointer).
+    carries_bytes = as_ not in {"app", "mcp-app"}
     #: A person writing the room's files does it on the files' own terms,
-    #: whichever door they use: their role has to change files, and an original
-    #: sent in the conversation or kept in the library is not written over.
+    #: whichever door they use: their role has to change files.
     person = actor.authenticated and actor.via != "cheese"
-    if as_ != "app" and ("content" in body or "content_b64" in body):
+    if carries_bytes and ("content" in body or "content_b64" in body):
         if person:
             await require_role(db, actor, place.project_id, Permission.edit_content)
         # A remote machine's file is not in the backend worktree until published.
@@ -247,13 +268,13 @@ async def show_in_room(
                 say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
+    if carries_bytes and ("content" in body or "content_b64" in body):
         if person:
             for written in [path, *(asset_path for asset_path, _ in assets)]:
                 if library.library_name(written) is not None:
                     raise UnprocessableEntityError(say("libraryOriginalReadOnly"))
                 if library.is_message_attachment(written):
                     raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
-    if as_ != "app" and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite
         # of somebody's newer save into a 409.
@@ -335,7 +356,7 @@ async def list_shown(
         {
             "path": block.content,
             "mime": block.mime_type,
-            "kind": "app" if block.mime_type == ARTIFACT_MIME["app"] else "file",
+            "kind": _shown_kind(block.mime_type),
             "shown_at": block.created_at.isoformat(),
         }
         for block in shown
@@ -372,7 +393,7 @@ async def save_shown_to_library(
         said_in=place.inner_id,
         announce=announce,
         file_store=library,
-        library_files=library_records,
+        library_files=library_records.ProjectLibraries(),
     )
     await db.commit()
     return ok({"name": name})

@@ -7,6 +7,6 @@
   "notInPlan": "当前方案不含此模型",
   "requiresPlan": "需要 {plan} 方案",
   "subagent": "默认分身模型",
-  "subagentHint": "Claude Code 在一轮里派出分身时使用的模型",
+  "subagentHint": "Claude Code 派出分身时使用的模型",
   "unavailable": "已不可用"
 }

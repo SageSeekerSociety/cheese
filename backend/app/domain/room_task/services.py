@@ -472,7 +472,8 @@ class TaskService:
     def takes_part(task: Task, handle: str | None) -> bool:
         """Whether this person works the task: its owner, or a collaborator
         the owner brought in. What they say is what its AI teammate acts on,
-        and they write its document; only the owner closes or hands it over."""
+        and they write its document, and close it; only the owner hands it
+        over."""
         return handle is not None and (
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )

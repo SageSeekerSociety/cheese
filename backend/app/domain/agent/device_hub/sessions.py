@@ -57,7 +57,7 @@ async def open_screen(
     device.screens[sid] = screen
     hub._screens[sid] = screen
     hub._by_screen_token[screen.token] = screen
-    await device.send(
+    sent = await device.send(
         device_link.session_create(
             sid=sid,
             command=command,
@@ -67,6 +67,13 @@ async def open_screen(
             env={k: device.spelled(v) for k, v in env.items()} if env else env,
         )
     )
+    if not sent:
+        # No link: nothing reached the machine. Say so instead of returning a
+        # success the room would trust — its turn waited on a runner that was
+        # never started, until its own timeout. The screen stays on the books on
+        # purpose: the cleanup path finds it by topic, and a reassert when the
+        # machine comes back is what brings it up.
+        raise DeviceOffline(device_id)
     return screen
 
 
@@ -84,15 +91,15 @@ async def reassert_screen(
     device still runs a screen: the connector process may have restarted (its
     tmux sessions outlive it, but its in-memory session map does not, so it
     knows nothing about this sid until a create makes it re-adopt), or the
-    original create may not have been delivered at all (``open_screen``
-    registers before an unacknowledged send).
+    original create was written into a link whose peer had already vanished and
+    never arrived.
     An adopt-create is
     idempotent on the device: a live session keeps running untouched; a lost one
     is respawned under the SAME sid + screen token, so viewers and attribution
     stay intact."""
     screen.command = command
     device = hub._device(screen.device_id)
-    await device.send(
+    sent = await device.send(
         device_link.session_create(
             sid=screen.sid,
             command=command,
@@ -103,6 +110,10 @@ async def reassert_screen(
             adopt=True,
         )
     )
+    if not sent:
+        # Same as open_screen: no link, nothing adopted. The caller re-asserts
+        # again after the machine comes back.
+        raise DeviceOffline(screen.device_id)
 
 
 def adopt_screen(
@@ -221,10 +232,6 @@ async def session_request(
 async def list_screens(hub: pkg.DeviceHub, device_id: str) -> list[dict[str, Any]]:
     # Through the hub: see ``close_screen``.
     return await hub.session_request(device_id, {"t": "session.list"})
-
-
-def screen_by_token(hub: pkg.DeviceHub, token: str) -> HubScreen | None:
-    return hub._by_screen_token.get(token)
 
 
 def screen(hub: pkg.DeviceHub, sid: str) -> HubScreen | None:

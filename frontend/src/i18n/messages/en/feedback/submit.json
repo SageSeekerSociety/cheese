@@ -3,10 +3,10 @@
     "attach": "Include this context",
     "attachHint": "The context may contain your code snippets, file paths, or conversation text. With \"Private\", the people who can see it are you, platform admins, and the people who were in the channel where it was raised.",
     "evidence": "Evidence",
-    "note": "This feedback will be attributed to the AI teammate that found it, and you will be recorded as the submitter — both are kept, so \"how much of what Cheese raised actually got filed\" has an answer.",
+    "note": "This feedback will be attributed to the AI teammate that found it, and you will be recorded as the submitter — both are kept, so \"how much of what {agent} raised actually got filed\" has an answer.",
     "repro": "Repro steps",
-    "session": "Session and environment",
-    "title": "From Cheese's investigation",
+    "session": "Run and environment",
+    "title": "From {agent}'s investigation",
     "whatHappened": "What happened"
   },
   "attachments": {

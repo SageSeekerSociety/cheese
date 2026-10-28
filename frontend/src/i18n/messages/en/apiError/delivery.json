@@ -3,5 +3,5 @@
   "deliveryContentEmpty": "There's nothing to deliver",
   "deliveryNoteEmpty": "The note can't be empty",
   "deliveryTimeNeedsZone": "The delivery time needs a time zone",
-  "noteOwnHandleOnly": "A note can only go to another thread of the same handle. To talk to another participant, use the channel's chat, agent to agent included."
+  "noteOwnHandleOnly": "A note can only go to another thread of the same handle. To talk to another participant, use the channel's chat, between AI teammates too."
 }

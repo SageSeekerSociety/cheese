@@ -262,7 +262,10 @@ describe('频道下面那一整块任务，收得起来', () => {
 
     // 展开之后不再用任务替频道说话：任务的状态回到任务行上。
     expect(row.querySelectorAll('.row-light')).toHaveLength(room.awaits_me ? 1 : 0)
-    expect(screen.getByRole('button', { name: /任务一/ }).querySelectorAll('.row-light')).toHaveLength(1)
+    // 任务行自己只在有事等我时亮灯；在跑的那一条靠转动的「在做」图标，不再呼吸。
+    expect(screen.getByRole('button', { name: /任务一/ }).querySelectorAll('.row-light')).toHaveLength(
+      facts.awaits_me ? 1 : 0
+    )
   })
 
   it('没有任务挂着的频道没有这个把手', async () => {
@@ -272,7 +275,7 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('只显示和我有关的任务，过滤掉 filling_in 凑数任务且不画蓝灯或报错红灯', async () => {
+  it('只显示和我有关的任务，过滤掉 filling_in 凑数任务，任务行不画蓝灯、报错红灯或呼吸绿', async () => {
     await openProject([
       channel(
         'topic-a',
@@ -288,9 +291,8 @@ describe('频道下面那一整块任务，收得起来', () => {
     const mine = screen.getByRole('button', { name: /任务一/ })
     expect(mine.querySelectorAll('.row-light')).toHaveLength(0)
 
-    const running = screen.getByRole('button', { name: /任务三/ }).querySelectorAll('.row-light')
-    expect(running).toHaveLength(1)
-    expect(running[0]!.classList.contains('row-light--breathe')).toBe(true)
+    // 在跑的任务行不画呼吸绿：同一行只留转动的「在做」图标在动。
+    expect(screen.getByRole('button', { name: /任务三/ }).querySelectorAll('.row-light')).toHaveLength(0)
 
     expect(screen.queryByRole('button', { name: /任务二/ })).toBeNull()
   })

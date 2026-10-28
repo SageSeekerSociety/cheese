@@ -199,7 +199,9 @@ def test_a_document_ai_wrote_is_the_person_who_asked_for_it(client):
     written = client.post(
         f"/projects/{project}/documents",
         json={"title": "新人须知", "content": "第一周：熟悉组里的代码。"},
-        headers={"X-Cheese-Token": mint_session_token(project, general, seat)},
+        headers={
+            "Authorization": f"Bearer {mint_session_token(project, general, seat)}"
+        },
     )
     assert written.status_code == 200, written.text
     doc = written.json()["data"]["id"]

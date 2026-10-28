@@ -530,9 +530,11 @@ class ProjectNotificationService:
         decided_by: str,
         publish: Callable[[str, dict], Awaitable[None]],
         decision_line: DecisionLine,
+        by_assistant: bool = False,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
-        对话，芝士下一轮读得到。"""
+        对话，芝士下一轮读得到。``by_assistant``：是 ``decided_by`` 自己的芝士
+        替他拍的板，那一句照样署他的名，并标明是芝士代他说的。"""
         row = await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
             raise ValidationError(say("notificationOnlyDecisions"))
@@ -554,6 +556,7 @@ class ProjectNotificationService:
                 conversation_id=row.conversation_id,
                 author=decided_by,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",
+                by_assistant=by_assistant,
             )
         saved = await self._repo.save(row)
         if line is not None:

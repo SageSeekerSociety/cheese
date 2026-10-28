@@ -282,6 +282,26 @@ describe('chat recovery after history errors', () => {
     expect(sends().map((b) => b.content)).toEqual(['first', 'second'])
   })
 
+  it('a send in flight stays quiet at first and shows sending only after 500ms', async () => {
+    let answer!: (block: Block) => void
+    vi.mocked(postChatMessage).mockImplementationOnce(
+      (topic, body) => new Promise((yes) => (answer = () => yes(stored(body, topic))))
+    )
+    const view = mountPanel(true)
+    await flushPromises()
+    sockets[0].onopen?.()
+    await flushPromises()
+    await type(view, 'quiet at first')
+
+    expect(view.queryByText(t('work.room.chat.sending'))).toBeNull()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(view.queryByText(t('work.room.chat.sending'))).not.toBeNull()
+
+    answer(undefined as unknown as Block)
+    await flushPromises()
+    expect(view.queryByText(t('work.room.chat.sending'))).toBeNull()
+  })
+
   it('a drop the first reconnect heals never puts up the reconnecting banner', async () => {
     // What a release does to every open room: the socket is cut, and the retry a
     // second later gets straight through. Nothing was lost; nothing to tell.
@@ -655,6 +675,6 @@ describe('a task card when the channel says its tasks changed', () => {
     const status = view.container.querySelector<HTMLElement>(
       '[data-testid="task-card"][data-task-id="k1"] [data-testid="task-card-status"]'
     )
-    expect(status?.dataset.tone).toBe('done')
+    expect(status?.dataset.kind).toBe('closed')
   })
 })

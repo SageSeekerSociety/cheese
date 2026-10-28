@@ -24,37 +24,40 @@ function ms(state: MergeStateWord, who: MergeWho, over: Partial<MergeStateInfo> 
 }
 
 // issue #718「卡上的小圈：谁的活」那张表，逐行。词和圈都只是翻译 —— state 和
-// who 是后端算的，这里断言的是翻出来的字不走样。
+// who 是后端算的，这里断言的是翻出来的字不走样。队友用一个改过的名字：项目可以给它
+// 改名，「正在处理」的主语得是它现在的名字，不是默认的「芝士」。
+const AGENT = '小 C'
+
 describe('mergeBadgeOf', () => {
   it('clean → 可以合并，圈是「等你」', () => {
-    expect(mergeBadgeOf(ms('clean', 'human'))).toEqual({ label: '可以合并', column: 'needs_you' })
+    expect(mergeBadgeOf(ms('clean', 'human'), AGENT)).toEqual({ label: '可以合并', column: 'needs_you' })
   })
 
-  it('dirty → 芝士正在处理，无论 who 说什么（平台 lane 的冲突卡 who 恒 human）', () => {
-    expect(mergeBadgeOf(ms('dirty', 'agent'))).toEqual({ label: '芝士正在处理', column: 'building' })
-    expect(mergeBadgeOf(ms('dirty', 'human'))).toEqual({ label: '芝士正在处理', column: 'building' })
+  it('dirty → 队友正在处理，无论 who 说什么（平台 lane 的冲突卡 who 恒 human）', () => {
+    expect(mergeBadgeOf(ms('dirty', 'agent'), AGENT)).toEqual({ label: '小 C正在处理', column: 'building' })
+    expect(mergeBadgeOf(ms('dirty', 'human'), AGENT)).toEqual({ label: '小 C正在处理', column: 'building' })
   })
 
   it('behind → 平台更新分支', () => {
-    expect(mergeBadgeOf(ms('behind', 'platform'))).toEqual({ label: '平台更新分支', column: 'delivering' })
+    expect(mergeBadgeOf(ms('behind', 'platform'), AGENT)).toEqual({ label: '平台更新分支', column: 'delivering' })
   })
 
-  it('unstable / blocked 检查红了 → 芝士正在处理', () => {
-    expect(mergeBadgeOf(ms('unstable', 'agent'))?.label).toBe('芝士正在处理')
-    expect(mergeBadgeOf(ms('blocked', 'agent'))?.label).toBe('芝士正在处理')
+  it('unstable / blocked 检查红了 → 队友正在处理', () => {
+    expect(mergeBadgeOf(ms('unstable', 'agent'), AGENT)?.label).toBe('小 C正在处理')
+    expect(mergeBadgeOf(ms('blocked', 'agent'), AGENT)?.label).toBe('小 C正在处理')
   })
 
   it('blocked 必跑检查没报到 / CI 在跑 → 等 CI', () => {
-    expect(mergeBadgeOf(ms('blocked', 'ci'))).toEqual({ label: '等待检查', column: 'delivering' })
-    expect(mergeBadgeOf(ms('unstable', 'ci'))?.label).toBe('等待检查')
+    expect(mergeBadgeOf(ms('blocked', 'ci'), AGENT)).toEqual({ label: '等待检查', column: 'delivering' })
+    expect(mergeBadgeOf(ms('unstable', 'ci'), AGENT)?.label).toBe('等待检查')
   })
 
   it('blocked 采纳被新提交作废 → 等采纳，圈是「等你」', () => {
-    expect(mergeBadgeOf(ms('blocked', 'human'))).toEqual({ label: '待审阅', column: 'needs_you' })
+    expect(mergeBadgeOf(ms('blocked', 'human'), AGENT)).toEqual({ label: '待审阅', column: 'needs_you' })
   })
 
   it('unknown 是「还没看过」，中性展示（平台 lane 恒是 clean/dirty，#363 拍板，走不到这档）', () => {
-    expect(mergeBadgeOf(ms('unknown', 'platform'))).toEqual({ label: '状态更新中', column: 'delivering' })
+    expect(mergeBadgeOf(ms('unknown', 'platform'), AGENT)).toEqual({ label: '状态更新中', column: 'delivering' })
   })
 })
 

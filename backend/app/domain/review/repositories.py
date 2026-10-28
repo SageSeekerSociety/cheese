@@ -1,7 +1,7 @@
 """Accept card data access."""
 
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from datetime import datetime
 
 from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, select
@@ -12,12 +12,23 @@ from app.domain.project.models import ProjectForge
 from app.domain.review.models import (
     AcceptApproval,
     AcceptCard,
+    AcceptCardReviewer,
     AcceptStatus,
     DeliverableKind,
 )
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
+
+
+def _clean_handles(handles: Iterable[str]) -> list[str]:
+    """去空白、去重、保序 —— 一条集合语义的边（空 handle 不是评审人）。"""
+    seen: dict[str, None] = {}
+    for handle in handles:
+        name = (handle or "").strip()
+        if name:
+            seen.setdefault(name, None)
+    return list(seen)
 
 
 class AcceptCardRepository:
@@ -28,7 +39,7 @@ class AcceptCardRepository:
         self,
         *,
         topic_id: uuid.UUID,
-        reviewer_handle: str,
+        reviewer_handles: Iterable[str],
         focus: str = "",
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
@@ -46,7 +57,6 @@ class AcceptCardRepository:
         card = AcceptCard(
             topic_id=topic_id,
             task_id=task_id,
-            reviewer_handle=reviewer_handle,
             focus=focus,
             status=status,
             change_subject=change_subject,
@@ -61,7 +71,73 @@ class AcceptCardRepository:
         self._session.add(card)
         await self._session.flush()
         await self._session.refresh(card)
+        await self.set_reviewers(card.id, reviewer_handles)
         return card
+
+    async def reviewer_handles(self, card_id: uuid.UUID) -> list[str]:
+        """谁被派来评审这张卡。
+
+        一卡多人的说法在 `accept_card_reviewer` 这一张表：一卡多行，按派单先后
+        回来。表里一行都没有时回落读 `accept_cards.reviewer_handle` 那一列 ——
+        那是这一刀之前建的卡，也从迁移 `a2f7c1e9d4b3` 回填了；直接拿 ORM 建卡
+        的地方（测试的夹具）只写这一列。回落只在这一种情况下发生：表里有行，
+        以表为准，删光就是删光。
+        """
+        stmt = (
+            select(AcceptCardReviewer.handle)
+            .where(AcceptCardReviewer.card_id == card_id)
+            .order_by(AcceptCardReviewer.created_at)
+        )
+        handles = list((await self._session.scalars(stmt)).all())
+        if handles:
+            return handles
+        card = await self._session.get(AcceptCard, card_id)
+        single = getattr(card, "reviewer_handle", None) if card is not None else None
+        return [single] if single else []
+
+    async def reviewer_handles_for_cards(
+        self, card_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """一批卡的评审人，一次查完 —— 侧栏/快照一次画很多张卡时用。
+
+        按 created_at 升序回来，所以同一张卡后写的排在后面；一卡可以有多行。
+        """
+        if not card_ids:
+            return {}
+        stmt = (
+            select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
+            .where(AcceptCardReviewer.card_id.in_(card_ids))
+            .order_by(AcceptCardReviewer.created_at)
+        )
+        found: dict[uuid.UUID, list[str]] = {}
+        for card_id, handle in (await self._session.execute(stmt)).all():
+            found.setdefault(card_id, []).append(handle)
+        # 表里没有行的那些卡（这一刀之前建的、或夹具直接写列建的）读影子列，
+        # 与 `reviewer_handles` 同一条回落。
+        missing = [cid for cid in card_ids if cid not in found]
+        if missing:
+            cards = await self._session.scalars(
+                select(AcceptCard).where(AcceptCard.id.in_(missing))
+            )
+            for card in cards:
+                if card.reviewer_handle:
+                    found[card.id] = [card.reviewer_handle]
+        return found
+
+    async def set_reviewers(self, card_id: uuid.UUID, handles: Iterable[str]) -> None:
+        """把这张卡的评审人集合替换成 `handles` —— 删掉这张卡的全部旧行，再按集合
+        插回去（去重、丢空白）。
+
+        一卡多人：集合可以不止一个人；任一评审人采纳即可推进（`accept` 那一侧只
+        问「在不在这个集合里」）。
+        """
+        names = _clean_handles(handles)
+        await self._session.execute(
+            delete(AcceptCardReviewer).where(AcceptCardReviewer.card_id == card_id)
+        )
+        for name in names:
+            self._session.add(AcceptCardReviewer(card_id=card_id, handle=name))
+        await self._session.flush()
 
     async def list_approver_handles(self, card_id: uuid.UUID) -> list[str]:
         stmt = (
@@ -163,8 +239,16 @@ class AcceptCardRepository:
         can file again after a rejection, and the current card is the one that
         says where the work stands.
         """
+        return (await self.latest_and_counts_by_task(task_ids))[0]
+
+    async def latest_and_counts_by_task(
+        self, task_ids: Collection[uuid.UUID]
+    ) -> tuple[dict[uuid.UUID, AcceptCard], dict[uuid.UUID, int]]:
+        """`latest_by_task`, plus how many cards each thread has filed in all
+        (「第 N 版」 on a card in review). The same rows answer both, so it is
+        still one query."""
         if not task_ids:
-            return {}
+            return {}, {}
         stmt = (
             select(AcceptCard)
             # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
@@ -177,11 +261,13 @@ class AcceptCardRepository:
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
         latest: dict[uuid.UUID, AcceptCard] = {}
+        counts: dict[uuid.UUID, int] = {}
         for card in (await self._session.scalars(stmt)).all():
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
                 latest[card.task_id] = card
-        return latest
+                counts[card.task_id] = counts.get(card.task_id, 0) + 1
+        return latest, counts
 
     async def listed(
         self,
@@ -213,7 +299,6 @@ class AcceptCardRepository:
                 AcceptCard.id,
                 AcceptCard.topic_id,
                 AcceptCard.task_id,
-                AcceptCard.reviewer_handle,
                 AcceptCard.status,
                 AcceptCard.note_code,
                 AcceptCard.merge_state,
@@ -223,6 +308,8 @@ class AcceptCardRepository:
                 AcceptCard.pr_url,
                 AcceptCard.change_subject,
                 AcceptCard.note,
+                AcceptCard.deliverable_name,
+                AcceptCard.created_at,
             )
             .where(
                 or_(
@@ -416,10 +503,11 @@ class AcceptCardRepository:
 
         stmt = (
             select(AcceptCard)
+            .join(AcceptCardReviewer, AcceptCardReviewer.card_id == AcceptCard.id)
             .outerjoin(Task, Task.id == AcceptCard.task_id)
             .where(
                 AcceptCard.topic_id.in_(topic_ids),
-                AcceptCard.reviewer_handle == reviewer_handle,
+                AcceptCardReviewer.handle == reviewer_handle,
                 or_(AcceptCard.task_id.is_(None), Task.status == TaskStatus.open),
             )
         )

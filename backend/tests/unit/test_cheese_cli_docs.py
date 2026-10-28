@@ -22,7 +22,9 @@ _CHEESE = _SANDBOX / "cheese"
 _SKILL = _SANDBOX / "skills" / "cheese" / "SKILL.md"
 _REFERENCES = _SANDBOX / "skills" / "cheese" / "references"
 
-_TOOL = re.compile(r"`(cheese_[a-z_]+)")
+#: `cheese_task`, or one of an object's verbs: `cheese_task(action=close)`,
+#: `cheese_card(action="redeliver", …)`.
+_TOOL = re.compile(r"`(cheese_[a-z_]+)(?:\(action=\"?([a-z_]+))?")
 _COMMAND_ROW = re.compile(r"^\|\s*`cheese ([a-z][a-z-]*)")
 
 
@@ -46,7 +48,11 @@ def _rows():
 def _mentioned_tools() -> set[str]:
     texts = [_SKILL.read_text(encoding="utf-8")]
     texts += [p.read_text(encoding="utf-8") for p in sorted(_REFERENCES.glob("*.md"))]
-    return {name for text in texts for name in _TOOL.findall(text)}
+    return {
+        f"{name}.{verb}" if verb else name
+        for text in texts
+        for name, verb in _TOOL.findall(text)
+    }
 
 
 def _documented_commands() -> set[str]:
@@ -61,7 +67,15 @@ def _implemented_commands() -> set[str]:
 
 
 def test_every_tool_the_skill_mentions_is_served():
-    served = set(_load_cli().PLATFORM_TOOLS.names())
+    table = _load_cli().PLATFORM_TOOLS
+    served = {
+        *table.names(),
+        *(
+            f"{name}.{verb}"
+            for name in table.names()
+            for verb in table.actions(name) or ()
+        ),
+    }
     mentioned = _mentioned_tools()
     assert mentioned, "the skill names no platform tool"
     assert mentioned - served == set(), (

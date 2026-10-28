@@ -1,3 +1,5 @@
 {
+  "managementNeedsOwnSignIn": "这个授权只用于运行任务，不能做管理操作；用你本人的账号登录后再做",
+  "managementNotForTeammates": "AI 队友不能做管理操作",
   "policyOverTier": "{what}「{label}」属于 {tier} 档，不在本项目允许的档位内；请改用档内的资源，或让项目管理者调整档位策略。"
 }

@@ -184,3 +184,85 @@ it('网页框选：只报网址，不装作有文件身份', () => {
   expect(container.querySelector('.message-quote__identity')).toBeNull()
   expect(container.textContent).not.toContain('undefined')
 })
+
+it('图片上框的一块：报出原图像素的位置和文件身份', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'image-region' as const,
+        path: '示意图.png',
+        source: 'live' as const,
+        version: 'v8',
+        task_id: null,
+        x: 12,
+        y: 40,
+        width: 180,
+        height: 96,
+        natural_width: 1024,
+        natural_height: 768,
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('圈出了图片上的一块区域')
+  expect(container.textContent).toContain('示意图.png')
+  // 位置是原图像素，不是比例——图片有一份不变的原图。
+  expect(container.textContent).toContain('x=12、y=40、宽=180、高=96')
+  expect(container.textContent).toContain('当前工作文件')
+  expect(container.textContent).not.toContain('undefined')
+})
+
+it('表格一片：报出表格软件那个 A1:C3，和这片里的内容', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'sheet-range' as const,
+        path: 'budget.xlsx',
+        source: 'committed' as const,
+        version: 'v7',
+        task_id: null,
+        sheet: 'Sheet1',
+        start: 'B2',
+        end: 'D4',
+        text: '90\t80\n70\t60',
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('引用区域 Sheet1!B2:D4')
+  expect(container.textContent).toContain('budget.xlsx')
+  expect(container.textContent).toContain('90')
+})
+
+it('表格一片：CSV 没有工作表名，区域就是它自己', () => {
+  const { container } = render(MessageQuote, {
+    props: {
+      quote: {
+        kind: 'sheet-range' as const,
+        path: '名单.csv',
+        source: 'live' as const,
+        version: 'v7',
+        task_id: null,
+        sheet: '',
+        start: 'A1',
+        end: 'C3',
+        // 表格里圈一片空格子，摊平出来的就是这个形状：几个制表符和换行。
+        text: '\t\t\n\t\t',
+      },
+    },
+  })
+
+  expect(container.textContent).toContain('引用区域 A1:C3')
+  // 一片里什么都没有时不装作有内容 —— 几个制表符不是「有内容」。
+  expect(container.textContent).toContain('（空）')
+})
+
+it('「在看哪一份」：说这是发消息时开着的文件，不编来源和版本', () => {
+  const { container } = render(MessageQuote, {
+    props: { quote: { kind: 'viewing' as const, path: 'output/招募方案.docx', task_id: null } },
+  })
+  expect(container.textContent).toContain('发这条消息时在看这份文件')
+  expect(container.textContent).toContain('output/招募方案.docx')
+  expect(container.textContent).not.toContain('undefined')
+  expect(container.querySelector('.message-quote__identity')).toBeNull()
+})

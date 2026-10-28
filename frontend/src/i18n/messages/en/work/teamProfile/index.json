@@ -3,12 +3,10 @@
   "applyHint": "The team owner or an admin must approve your request before you join",
   "avatarLabel": "Team avatar",
   "edit": "Edit team profile",
-  "editTitle": "Edit team profile",
   "enter": "Open team",
   "eyebrow": "Team",
   "failed": "Something went wrong. Please try again",
   "forbidden": "Only the team owner and admins can edit the profile",
-  "introHint": "Shown under the team name in the sidebar, up to 250 characters",
   "introLabel": "Team intro",
   "invalid": "This team link no longer works. Ask a team admin for a new one",
   "join": "Join team",
@@ -30,6 +28,5 @@
   "reasonPlaceholder": "Say a little about yourself and why you want to join",
   "retry": "Retry",
   "save": "Save",
-  "saveFailed": "Could not save. Please try again",
-  "saved": "Saved"
+  "saveFailed": "Could not save. Please try again"
 }

@@ -1,12 +1,20 @@
 <template>
-  <!-- The team page frame (AppPage) draws the title and this page's header actions
-       (refresh, add my connection: registered as commands in Models.vue), so the
-       page starts with its lede. -->
-  <div class="mc-page">
-    <div class="mc-lede">
-      <p>{{ t('account.modelConnections.lede') }}</p>
-      <p v-if="!canManage">{{ t('account.modelConnections.readOnly') }}</p>
-    </div>
+  <div class="mc-page settings-page">
+    <header class="settings-page__head">
+      <div class="mc-lede">
+        <h1 class="t-page-title">{{ t('home.nav.teamModels') }}</h1>
+        <p class="settings-page__lede">{{ t('account.modelConnections.lede') }}</p>
+        <p v-if="!canManage" class="settings-page__lede">{{ t('account.modelConnections.readOnly') }}</p>
+      </div>
+      <div class="settings-page__actions">
+        <BaseButton prepend-icon="mdi-refresh" :loading="loading" @click="emit('refresh')">
+          {{ t('account.modelConnections.recheck') }}
+        </BaseButton>
+        <BaseButton kind="secondary" prepend-icon="mdi-plus" @click="addingPersonal = true">
+          {{ t('account.modelConnections.addPersonal') }}
+        </BaseButton>
+      </div>
+    </header>
 
     <p v-if="error" role="alert" class="mc__notice c-danger">{{ error }}</p>
 
@@ -474,7 +482,7 @@ watch(
   },
   { immediate: true }
 )
-/** 「添加我的连接」的对话框开没开；打开它的按钮在页头（Models.vue 登记的命令）。 */
+/** 「添加我的连接」的对话框开没开；打开它的按钮在标题那一行。 */
 const addingPersonal = defineModel<boolean>('addingPersonal', { default: false })
 const personalId = ref('')
 const availablePersonal = computed(() => props.personalChoices.filter((c) => !c.added))

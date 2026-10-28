@@ -1,6 +1,6 @@
 {
   "backendError": "后端报错：{headline}",
   "backendErrorAt": "后端报错（{where}）：{headline}",
-  "backendErrorBurst": "后端报错刷屏：{headline} —— {minutes} 分钟内 {count} 次",
-  "backendErrorBurstAt": "后端报错刷屏（{where}）：{headline} —— {minutes} 分钟内 {count} 次"
+  "backendErrorBurst": "后端报错刷屏：{headline}，{minutes} 分钟内 {count} 次",
+  "backendErrorBurstAt": "后端报错刷屏（{where}）：{headline}，{minutes} 分钟内 {count} 次"
 }

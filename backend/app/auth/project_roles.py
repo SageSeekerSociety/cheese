@@ -21,7 +21,8 @@ for and the admins of its space are nobody here unless they were made mentors.
 
 An AI teammate is not a person and holds no role: it may do what a member may
 by default, and never what manages people, the project or every channel
-(:data:`AGENT_PERMISSIONS`). It works for whoever asked it; what it reads for
+(:data:`AGENT_PERMISSIONS`), and also what only an AI teammate does
+(``project_permissions.AGENT_ONLY``). It works for whoever asked it; what it reads for
 them is decided where it reads (``app.domain.agent.audience``).
 
 What only the owner does is not a permission; :func:`is_owner` answers it.
@@ -53,6 +54,7 @@ from app.domain.project.models import (
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
+    PEOPLE_PERMISSIONS,
     RANK,
     Permission,
     Role,
@@ -64,7 +66,8 @@ from app.domain.team.protocol import TeamMemberRole
 from app.domain.user.models import User
 from app.domain.user.repositories import UserRepository
 
-#: What an AI teammate may do in a project.
+#: What an AI teammate may do in a project: what it does alone, and what a
+#: person may short of managing.
 AGENT_PERMISSIONS: frozenset[Permission] = frozenset(Permission) - {
     Permission.manage_members,
     Permission.change_roles,
@@ -212,7 +215,7 @@ async def _standing(
         if on_roster is None:
             return None
         return Standing(seat=Seat.member, permissions=AGENT_PERMISSIONS)
-    everything = frozenset(Permission)
+    everything = PEOPLE_PERMISSIONS
     if handle == await owner_of(session, project):
         return Standing(seat=Seat.owner, permissions=everything)
     user = await UserRepository(session).get_by_username(handle)
@@ -263,7 +266,7 @@ async def seats(
             )
         )
         team_roles = {name: role for name, role in rows.all()}
-    everything = frozenset(Permission)
+    everything = PEOPLE_PERMISSIONS
     out: dict[str, Standing] = {}
     for handle in handles:
         team_role = team_roles.get(handle)
@@ -372,7 +375,7 @@ async def standings_in(
         )
     ).tuples():
         changed.setdefault(project_id, {})[role] = list(permissions or [])
-    everything = frozenset(Permission)
+    everything = PEOPLE_PERMISSIONS
     out: dict[uuid.UUID, Standing | None] = {}
     for p in projects:
         team_role = team_roles.get(p.team_id) if p.team_id is not None else None

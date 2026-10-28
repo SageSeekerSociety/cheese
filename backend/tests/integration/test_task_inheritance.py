@@ -149,9 +149,9 @@ def _resolve_from_db(client: TestClient, task_id: int):
 def _get(client: TestClient, *, task_id: int, token: str) -> dict:
     resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
     assert resp.status_code == 200, resp.text
-    # 裸响应体：``/tasks`` 这一族（详情、附件清单、参与）都不套
-    # ``{"code","message","data"}``。
-    return resp.json()
+    # 信封响应：前端 axios 栈（``ResponseDataType``）按 ``.data`` 取数，
+    # 这里照同一个契约拆，才不会出现「后端自测绿、前端拿不到」。
+    return resp.json()["data"]
 
 
 def _clear_space_teaching(client: TestClient, space_id: int) -> None:
@@ -207,6 +207,9 @@ def test_the_screen_shows_the_composed_guidance_the_turn_will_read(client: TestC
         resource_pack={"compute_credits": 500},
     )
     token = seed_user(client, "inheritance-viewer")
+    _join_board(
+        client, space_id=_space_id_of(client, task_id), handle="inheritance-viewer"
+    )
 
     data = _get(client, task_id=task_id, token=token)
     expected = _resolve_from_db(client, task_id)
@@ -234,6 +237,11 @@ def test_dropping_the_task_layer_changes_what_the_screen_shows(client: TestClien
         override={"teaching": TASK_WEEK},
     )
     token = seed_user(client, "inheritance-mutation-task")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-mutation-task",
+    )
 
     before = _get(client, task_id=task_id, token=token)
     assert before["teaching"]["mode"] == "spec"
@@ -256,6 +264,11 @@ def test_dropping_the_space_layer_changes_what_the_screen_shows(client: TestClie
     """
     task_id = seed_task_with_protocol(client, space_teaching=SPACE_WEEK)
     token = seed_user(client, "inheritance-mutation-space")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-mutation-space",
+    )
     space_id = _space_id_of(client, task_id)
 
     before = _get(client, task_id=task_id, token=token)
@@ -292,18 +305,18 @@ def test_the_screen_lists_the_members_tier_materials_and_hides_the_admins_tier(
     assert all("url" not in m for m in data["materials"])
 
 
-def test_a_viewer_outside_the_board_gets_no_materials_not_an_error(client: TestClient):
-    """一道没开可见范围的题谁都看得见；看不见那块板的人只是拿到空清单。"""
+def test_a_viewer_outside_the_board_reads_nothing(client: TestClient):
+    """题目只给它那块板里的人：板外的人读这道题的继承清单，和读题目详情一样 404
+    —— 指导、资料一样都不交出去。"""
     task_id = seed_task_with_protocol(client, space_teaching=SPACE_WEEK)
     space_id = _space_id_of(client, task_id)
     _add_material(client, space_id=space_id, name="公开讲义.pdf", visibility="members")
     token = seed_user(client, "inheritance-outsider")
 
-    data = _get(client, task_id=task_id, token=token)
+    resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
 
-    assert data["materials"] == []
-    # 指导那一半照样在：资料拿不到不是「这道题对你不可见」。
-    assert data["teaching"]["source"] == "space"
+    assert resp.status_code == 404, resp.text
+    assert "公开讲义.pdf" not in resp.text
 
 
 def test_an_unapproved_task_is_forbidden_and_hands_over_nothing(client: TestClient):
@@ -328,11 +341,11 @@ def test_an_unapproved_task_is_forbidden_and_hands_over_nothing(client: TestClie
 
     # 详情那一侧是怎么答的，这里就得怎么答 —— 这条断言就是「同一条判据」。
     detail = client.get(f"/tasks/{task_id}", headers=_headers(token))
-    assert detail.status_code == 403, detail.text
+    assert detail.status_code == 404, detail.text
 
     resp = client.get(f"/tasks/{task_id}/inheritance", headers=_headers(token))
-    assert resp.status_code == 403, resp.text
-    # 403 的正文里不许漏出这道题会交出什么。
+    assert resp.status_code == 404, resp.text
+    # 404 的正文里不许漏出这道题会交出什么。
     body = resp.text
     assert "999" not in body
     assert "compute_credits" not in body
@@ -344,3 +357,242 @@ def test_an_unknown_task_is_a_404(client: TestClient):
     token = seed_user(client, "inheritance-404")
     resp = client.get("/tasks/99999999/inheritance", headers=_headers(token))
     assert resp.status_code == 404, resp.text
+
+
+def test_the_screen_shows_the_default_teammate_and_the_skills_it_brings(
+    client: TestClient,
+):
+    """题目指定的默认队友 (#944)：屏幕报出类型名、预设标题、以及它会带的技能。
+
+    这一格就是「含技能」在按下「领取」之前唯一看得见的地方 —— 建出来的项目里
+    那个芝士会带着哪几颗技能，靠的就是这里。
+    """
+    task_id = seed_task_with_protocol(client, default_role="academic-research")
+    token = seed_user(client, "inheritance-agent-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-agent-viewer",
+    )
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["agent"]["typeName"] == "academic-research"
+    assert data["agent"]["displayName"] == "学术研究"
+    assert data["agent"]["skills"] == ["documents", "wolfram"]
+
+
+def test_a_role_that_names_no_shipped_preset_is_not_dressed_up_as_one(
+    client: TestClient,
+):
+    """`default_role` 对不上任何发货预设（老数据、拼错）时不假装有一个队友。
+
+    编一个空技能的名字出来，比空着更糟 —— 它会让人以为这个项目生来带一个芝士。
+    """
+    task_id = seed_task_with_protocol(client, default_role="no-such-role")
+    token = seed_user(client, "inheritance-agent-unknown")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-agent-unknown",
+    )
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["agent"] is None
+
+
+def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestClient):
+    """题目指定的默认队友（含技能）→ 建出的项目里，芝士带着那个预设的技能 (#944)。
+
+    机制早就通了（`_accept_task_protocol` → `set_type` → `initial_configuration`），
+    这一条把它钉住：技能真的落进那一行 `configuration.skills`，而不是只出现在建项目
+    之前的预览里 —— 「看得见」和「真的给了」是两件事，各自要有自己的证据。
+    """
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.agent_type.library import preset_types
+    from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms
+    from app.domain.task.models import TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    handle = "edu-project-owner"
+    task_id = seed_task_with_protocol(client, default_role="academic-research")
+    # A real user id: the membership keys off it (submitter_type 0).
+    seed_user(client, handle)
+    expected = list(preset_types()["academic-research"].skills)
+    holder: dict = {}
+
+    async def _build() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None
+            now = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=user.id,
+                    # ApproveType.APPROVED — the one state that releases the pack.
+                    approved=0,
+                    is_team=False,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.flush()
+            project = await ProjectService(
+                session,
+                default_teammate=default_teammate,
+                task_terms=TaskTerms(session),
+            ).create(
+                owner_handle=handle,
+                name="教育项目",
+                forge_kind="github_app",
+                external_task_id=task_id,
+            )
+            await session.flush()
+            instance = await session.get(
+                AgentInstance, project.default_agent_instance_id
+            )
+            assert instance is not None
+            holder["type_name"] = instance.type_name
+            holder["skills"] = list(instance.configuration.get("skills") or [])
+            await session.commit()
+
+    asyncio.run(_build())
+
+    assert holder["type_name"] == "academic-research"
+    assert holder["skills"] == expected
+
+
+def test_the_screen_shows_the_skills_every_teammate_will_carry(client: TestClient):
+    """题目给项目里每个 AI 队友的技能（`teaching.skills`），领题之前就看得到。"""
+    task_id = seed_task_with_protocol(
+        client,
+        override={"teaching": {"skills": ["documents", "figma"]}},
+    )
+    token = seed_user(client, "inheritance-skills-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-skills-viewer",
+    )
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["teaching"]["skills"] == ["documents", "figma"]
+    assert data["teaching"]["source"] == "task"
+
+
+def test_the_screen_shows_the_pack_prompt_the_default_teammate_gets(
+    client: TestClient,
+):
+    """A 资源包's prompt is added to the default teammate of every project built
+    from the 题目, so the screen says it is in force before the 题目 is taken."""
+    task_id = seed_task_with_protocol(
+        client, resource_pack={"prompt": "先写测试再写实现"}
+    )
+    token = seed_user(client, "inheritance-pack-prompt-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-pack-prompt-viewer",
+    )
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert data["packPrompt"] == "先写测试再写实现"
+
+
+def test_a_plain_viewer_never_reads_the_private_guidance(client: TestClient):
+    """私有指导（#944 第二种可见性）只给出题人/板管理员：一个普通登录用户读这道题
+    的继承清单时，`privatePrompt` 那个键根本不在（不是空串，是没有）。"""
+    task_id = seed_task_with_protocol(
+        client,
+        override={"teaching": {"private_prompt": "参考答案是 42"}},
+    )
+    token = seed_user(client, "inheritance-plain-viewer")
+    _join_board(
+        client,
+        space_id=_space_id_of(client, task_id),
+        handle="inheritance-plain-viewer",
+    )
+
+    data = _get(client, task_id=task_id, token=token)
+
+    assert "privatePrompt" not in data["teaching"]
+
+
+def _default_teammate_body(client: TestClient, task_id: int, handle: str) -> str:
+    """Build a project from ``task_id`` for an approved participant and read
+    its default teammate's persona."""
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.agent_instance.models import AgentInstance
+    from app.domain.project.services import ProjectService
+    from app.domain.task.adapters import TaskTerms
+    from app.domain.task.models import TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    seed_user(client, handle)
+    holder: dict = {}
+
+    async def _build() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            user = await UserRepository(session).get_by_username(handle)
+            assert user is not None
+            now = datetime.now(UTC)
+            session.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=user.id,
+                    approved=0,
+                    is_team=False,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.flush()
+            project = await ProjectService(
+                session,
+                default_teammate=default_teammate,
+                task_terms=TaskTerms(session),
+            ).create(
+                owner_handle=handle,
+                name="题目包项目",
+                forge_kind="github_app",
+                external_task_id=task_id,
+            )
+            await session.flush()
+            instance = await session.get(
+                AgentInstance, project.default_agent_instance_id
+            )
+            assert instance is not None
+            holder["body"] = instance.configuration.get("body") or ""
+            await session.commit()
+
+    asyncio.run(_build())
+    return holder["body"]
+
+
+def test_a_project_built_from_a_task_whose_pack_has_a_prompt_gets_it(
+    client: TestClient,
+):
+    """Until the contract migration moves a 资源包's prompt into the 题目's
+    guidance, a project built from the 题目 gets it at the end of its default
+    teammate's persona, with a preset and without one."""
+    with_preset = seed_task_with_protocol(
+        client,
+        resource_pack={"prompt": "先写测试再写实现"},
+        default_role="academic-research",
+    )
+    bare = seed_task_with_protocol(client, resource_pack={"prompt": "先写测试再写实现"})
+
+    assert _default_teammate_body(client, with_preset, "pack-prompt-preset").endswith(
+        "\n\n先写测试再写实现"
+    )
+    assert (
+        _default_teammate_body(client, bare, "pack-prompt-bare") == "先写测试再写实现"
+    )

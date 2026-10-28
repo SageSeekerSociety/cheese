@@ -166,6 +166,60 @@ def test_the_space_and_the_task_are_both_in_force() -> None:
     assert got.teaching_source == "both"
 
 
+def test_a_task_giving_only_skills_keeps_the_spaces_guidance_whole() -> None:
+    """Skills are not guidance: a 题目 that gives skills and says nothing else
+    leaves the space's requirements, goals and private guidance in force."""
+    space = {
+        "system_prompt": "空间的要求",
+        "learning_goals": ["写出循环"],
+        "private_prompt": "参考答案",
+    }
+    got = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"skills": ["wolfram"]}}),
+        project=_project(),
+    ).teaching
+
+    assert got.system_prompt == "空间的要求"
+    assert got.learning_goals == ["写出循环"]
+    assert got.private_prompt == "参考答案"
+    assert got.skills == ["wolfram"]
+    section = teaching_section(TeachingContext(course=None, teaching=got)) or ""
+    assert "空间的要求" in section
+
+
+def test_a_blank_default_teammate_on_a_task_inherits_the_categorys() -> None:
+    """A blank `default_role` (what 「继承」 stored) says nothing: the level
+    above stands."""
+    got = resolve(
+        category=_category(default_role="fullstack-engineer"),
+        task=_task({"default_role": ""}),
+    )
+
+    assert got.default_role == "fullstack-engineer"
+
+
+def test_the_skills_of_the_space_and_the_task_are_both_carried() -> None:
+    """Skills ride the guidance: the space's and the 题目's are both in force,
+    each named once, and a level with only skills is still a configuration."""
+    got = resolve(
+        space=_space({"skills": ["documents"]}),
+        task=_task({"teaching": {"skills": ["wolfram", "documents", "  "]}}),
+        project=_project(),
+    )
+
+    assert got.teaching.skills == ["documents", "wolfram"]
+    assert got.teaching_source == "both"
+
+
+def test_a_task_with_only_skills_adds_no_guidance_section() -> None:
+    """The skills reach the agent as skills; the 辅导学生 section has nothing to
+    say for them, so it is not there at all."""
+    context = TeachingContext(course=None, teaching=Teaching(skills=["wolfram"]))
+
+    assert teaching_section(context) is None
+
+
 def test_a_task_that_picks_no_way_of_helping_keeps_the_spaces() -> None:
     got = resolve(
         space=_space(GUIDE),
@@ -337,3 +391,152 @@ def test_a_new_session_of_a_course_project_is_told_how_to_help() -> None:
     )
 
     assert "## 辅导学生" in prompt
+
+
+# ── 教育性 (#944)：学习目标 = 这份指导按教学走 ────────────────────────────────
+
+
+def test_goals_alone_get_the_default_teaching_manners() -> None:
+    """写了学习目标而老师没写自己的要求：默认教学要求顶上 —— 「留空」在这里
+    是「用你的教学规矩」，不是「没规矩」。目标单列成靶子。"""
+    section = teaching_section(
+        TeachingContext(
+            course="创研课 2026 秋",
+            teaching=Teaching.from_json({"learning_goals": ["会读栈追踪"]}),
+        )
+    )
+
+    assert section is not None
+    assert "不要直接给出答案" in section
+    assert "别把答案交出去" in section  # 冲突裁决：要得再急也不给（model_spec tutor）
+    assert "亲手写" in section  # 人机分工：关键几行留给学生（learning output style）
+    assert "cheese show" in section  # 形态纪律：能演示就别写长文
+    assert "### 本节学习目标" in section and "- 会读栈追踪" in section
+
+
+def test_the_teacher_own_prompt_wins_and_the_default_never_leaks_in() -> None:
+    section = teaching_section(
+        TeachingContext(
+            course=None,
+            teaching=Teaching.from_json(
+                {"system_prompt": "这次直接讲。", "learning_goals": ["会读栈追踪"]}
+            ),
+        )
+    )
+
+    assert section is not None
+    assert "这次直接讲。" in section
+    assert "不要直接给出答案" not in section
+    # 目标照列 —— 靶子不因为老师换了话术就消失。
+    assert "- 会读栈追踪" in section
+
+
+def test_scope_without_goals_is_not_educational() -> None:
+    """只有范围没有目标（纯课件）：不是教学任务，别把苏格拉底话术塞进
+    人家的项目。"""
+    section = teaching_section(
+        TeachingContext(course=None, teaching=Teaching.from_json({"material_ids": [3]}))
+    )
+
+    assert section is not None
+    assert "不要直接给出答案" not in section
+
+
+def test_fill_substitutes_the_goals_variable() -> None:
+    teaching = Teaching.from_json(
+        {
+            "system_prompt": "这一节要：{learning_goals}",
+            "learning_goals": ["读栈追踪", "二分定位"],
+        }
+    )
+
+    assert teaching.fill(teaching.system_prompt or "") == "这一节要：读栈追踪、二分定位"
+
+
+def test_a_teaching_change_waits_for_the_next_session() -> None:
+    """教学配置**不**是逐轮重说的现状：一个会话保持开场那一份，直到下一次新会话。
+
+    这是 #8d772257 定的语义（`harness/prompt.py` 模块说明第 3 条），#4525 把它写进
+    了 `TRACKED_SECTIONS` 的注释里。往一个上下文里全是旧范围的会话塞新范围，比让它
+    按旧的做完这一轮更糟。"""
+    from app.domain.agent.harness.prompt import TRACKED_SECTIONS
+
+    assert "teaching" not in TRACKED_SECTIONS
+
+
+# ── 题目级默认队友 (#944)：同一份 `protocol_override` 里的另一格 ────────────────
+# 这几条只碰「写/读一格」的胶水；`_task` 这个替身已经有 `protocol_override`。
+
+
+def test_default_role_reads_back_blank_as_nothing() -> None:
+    """`default_role` 的读：空串不是角色，读回来是 None（= 继承上层）。"""
+    from app.api.task_teaching import read_task_default_role
+
+    assert read_task_default_role(_task({"default_role": "  "})) is None
+    assert read_task_default_role(_task({"default_role": "academic-research"})) == (
+        "academic-research"
+    )
+    assert read_task_default_role(_task(None)) is None
+
+
+def test_applying_the_default_role_leaves_the_other_keys_alone() -> None:
+    """整键替换：只动 `default_role` 这一格，`teaching` 与别的覆盖键原样留着。"""
+    from app.api.task_teaching import apply_task_default_role
+
+    task = _task({"teaching": {"current_week": 3}, "shell": "course"})
+
+    apply_task_default_role(task, "academic-research")
+    assert task.protocol_override["default_role"] == "academic-research"
+    assert task.protocol_override["teaching"] == {"current_week": 3}
+    assert task.protocol_override["shell"] == "course"
+
+    # None 是「没写」：不改动已经存下的那一格。
+    apply_task_default_role(task, None)
+    assert task.protocol_override["default_role"] == "academic-research"
+
+    # 空串是「继承」：清掉这道题自己的，项目集那份重新生效。
+    apply_task_default_role(task, "")
+    assert "default_role" not in task.protocol_override
+    assert task.protocol_override["shell"] == "course"
+    assert (
+        resolve(category=_category(default_role="fullstack-engineer"), task=task)
+    ).default_role == "fullstack-engineer"
+
+
+# ── 出题人私有指导 (#944 第二种可见性) ─────────────────────────────────────────
+# 「用 prompt 实现可见性」：私有那段进 agent 的 prompt，但**不进学生可读的响应**
+# （`teaching_to_api` 默认不带它）。不新造权限开关 —— 提不提由接口那一层决定。
+
+
+def test_private_guidance_round_trips_and_counts_toward_emptiness() -> None:
+    teaching = Teaching.from_json(
+        {"system_prompt": "陪着他做", "private_prompt": "参考答案是 42"}
+    )
+
+    assert teaching.private_prompt == "参考答案是 42"
+    # 空配置一个字都不多：但写了私有指导，这份配置就不是空的。
+    assert Teaching.from_json({}).is_empty is True
+    assert Teaching.from_json({"private_prompt": "参考答案"}).is_empty is False
+
+
+def test_private_guidance_reaches_the_agent_prompt_under_its_own_heading() -> None:
+    """私有指导是给 AI 队友的：照它做、但明确不许原样透露给学生。"""
+    section = teaching_section(
+        TeachingContext(course=None, teaching=Teaching(private_prompt="参考答案是 42"))
+    )
+    assert section is not None
+    assert "出题人给你的私有指导" in section
+    assert "参考答案是 42" in section
+
+
+def test_private_guidance_is_omitted_from_the_response_unless_asked() -> None:
+    """`teaching_to_api` 默认不带 `privatePrompt` —— 学生那条读就看不到它；
+    出题人/管理员那条读传 `include_private=True` 才带。"""
+    from app.api.space_payloads import teaching_to_api
+
+    teaching = Teaching(private_prompt="参考答案是 42")
+
+    assert "privatePrompt" not in teaching_to_api(teaching)
+    assert teaching_to_api(teaching, include_private=True)["privatePrompt"] == (
+        "参考答案是 42"
+    )

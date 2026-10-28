@@ -9,6 +9,9 @@ ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
+# The install applies them (package.json's patchedDependencies): the binding
+# that stores the document is one of the patched packages.
+COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 COPY collab ./collab
 COPY src/lib/docSchema ./src/lib/docSchema

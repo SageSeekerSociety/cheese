@@ -25,6 +25,12 @@ class WorkChat:
     def replaying(self, topic_id: uuid.UUID):
         return None
 
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        return False
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        return False
+
     @property
     def _sessions(self) -> async_sessionmaker[AsyncSession]:
         if self.session_factory is None:

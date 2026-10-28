@@ -36,6 +36,6 @@
   "subagentStopEmpty": "A subagent handed back a result (with no message)",
   "taskDispatched": "Sent out a task: {title}",
   "titleAutoRenamed": "Title updated automatically to “{title}” (was “{previous}”)",
-  "computeCloud": "Sandbox · Standard",
-  "computeCloudVm": "Sandbox · Virtual machine"
+  "computeCloud": "Cloud environment · Standard",
+  "computeCloudVm": "Cloud environment · Virtual machine"
 }

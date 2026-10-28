@@ -45,12 +45,12 @@ describe('支线出错时主线上那一行', () => {
   it('额度用完拦下的一轮说额度已用完，不说回复失败', () => {
     const view = show(summary({ failed: true, failed_code: 'credits_exhausted' }))
     expect(view.getByText('额度已用完')).toBeTruthy()
-    expect(view.queryByText('回复失败')).toBeNull()
+    expect(view.queryByText('没能回复，点开看原因')).toBeNull()
   })
 
   it('别的原因出错还是回复失败', () => {
     const view = show(summary({ failed: true, failed_code: null }))
-    expect(view.getByText('回复失败')).toBeTruthy()
+    expect(view.getByText('没能回复，点开看原因')).toBeTruthy()
   })
 })
 

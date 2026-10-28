@@ -11,6 +11,7 @@ import type { RailTask } from '../components/topic-sidebar/moreTasks'
 import type { Topic } from '../cx_types'
 import type { RailMemberMark } from '../lib/memberActivity'
 import type { RowLight } from '../lib/roomLight'
+import type { TaskState } from '../lib/taskState'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import type { TopicUnread } from '../types/channels'
 
@@ -20,11 +21,13 @@ import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled } from '../lib/replyWait'
 import { lightOf as lightFor } from '../lib/roomLight'
+import { taskState } from '../lib/taskState'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
 
 import { t } from '@/i18n'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 侧栏要画的东西全在父级的这几个 props 里；这一层不自己取数。 */
@@ -203,18 +206,37 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   }
 
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
-   *  只保留「有事等我（黄灯）」和「正在跑（呼吸绿）」。 */
-  function taskLight(task: RailTask): RowLight | null {
+   *  只保留「有事等我（黄灯）」和「正在跑（呼吸绿）」。任务行自己不画呼吸绿（见
+   *  `taskRowLight`），它只在收起来的那一堆里替它们说「有任务正在进行」。 */
+  function taskLight(task: RailTask, { moving = true }: { moving?: boolean } = {}): RowLight | null {
     return lightFor(
       {
         awaitsMe: task.awaits_me === true,
         repliedToMe: false,
         // 这条活的会话在跑，或者它走在交付链路上：呼吸绿。
-        moving: task.moving === true,
+        moving: moving && task.moving === true,
         bounced: task.presentation?.phrase === 'bounced',
       },
       clock.value
     )
+  }
+
+  /** 任务行行尾那颗灯：不画呼吸绿。任务行上「在做」的图标已经在转，同一行只留一样
+   *  在动的东西（design-system §9.0）。 */
+  function taskRowLight(task: RailTask): RowLight | null {
+    return taskLight(task, { moving: false })
+  }
+
+  /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
+   *  任务页头同一个样子。这份行没有 `session_running`，「在做」转不转看 `moving`。 */
+  function taskStateOf(task: RailTask): TaskState {
+    const agent = task.agent_handle ? agentNameMap.value.get(task.agent_handle) : undefined
+    return taskState(task, {
+      viewer: myHandle(),
+      nameOf: (handle) => memberOf(handle).name || handle,
+      agentName: agent || agentName.value,
+      now: clock.value,
+    })
   }
 
   // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。
@@ -420,6 +442,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     stalledOf,
     lightOf,
     taskLight,
+    taskRowLight,
+    taskStateOf,
     memberMarks,
     toggleTitle,
   }

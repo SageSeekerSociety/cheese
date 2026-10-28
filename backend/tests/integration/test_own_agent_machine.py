@@ -207,7 +207,7 @@ async def _own_session(client, *, environment_on):
 def _lease(client, own):
     return client.post(
         f"/topics/{own.topic_id}/sessions/{own.session_id}/work-lease",
-        headers={"X-Cheese-Token": own.token},
+        headers={"Authorization": f"Bearer {own.token}"},
         json={"env": {}},
     )
 

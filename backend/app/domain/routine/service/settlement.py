@@ -1,6 +1,6 @@
 """一次执行是怎么结束的：队友自己交回的结果，和它没交回时的判据。
 
-`report` 是队友那一路（`cheese_routine_report`），也是唯一能把一次执行判成功的那
+`report` 是队友那一路（`cheese_routine(action=report)`），也是唯一能把一次执行判成功的那
 一路；`_settle_open_runs` 是平台这一路 —— 投递失败、会话一直没读到、读到了而读进
 去的那段工作失败了（runner 报的「读了，然后失败」，会话退出也在内）、读到了却一直
 没有回音，都由投递台账、那份输入的回执和平台自己记下的失败判出来，不看轮次的起止。`_announce_finished`
@@ -144,7 +144,7 @@ async def _settle_open_runs(session: AsyncSession) -> None:
                 # Read, and the work it was read into failed — the session
                 # exiting included — without a report.
                 run.status = RunStatus.failed.value
-                run.error = "这一轮出错了：" + (
+                run.error = "这次没做完：" + (
                     await _failure_said(session, work) or read.failure or "未知错误"
                 )
                 run.finished_at = read.failed_at
@@ -162,12 +162,12 @@ async def _settle_open_runs(session: AsyncSession) -> None:
         )
         if refused:
             run.status = RunStatus.failed.value
-            run.error = "这一轮没能开始：" + refused
+            run.error = "这次没能开始：" + refused
             run.finished_at = stamp
             continue
         if stamp - run.created_at > START_TIMEOUT:
             run.status = RunStatus.failed.value
-            reason = delivery.last_error or "执行环境没有接单（设备离线或排队过久）"
+            reason = delivery.last_error or "环境没有开始运行：设备离线，或者排队太久"
             run.error = (
                 f"{int(START_TIMEOUT.total_seconds() // 3600)} 小时内没有开始：{reason}"
             )

@@ -43,6 +43,7 @@ export function routine(over: Partial<Routine> = {}): Routine {
     timezone: 'Asia/Shanghai',
     state: 'active',
     last_run_status: 'succeeded',
+    credits_this_month: 128.4,
     agent_handle: 'cheese-demo',
     owner_handle: 'cheese',
     created_by: 'cheese',

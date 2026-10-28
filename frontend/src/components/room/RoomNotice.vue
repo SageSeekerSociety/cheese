@@ -418,7 +418,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <span class="sys-text" v-html="renderPlain(noticeText(block))" />
       </div>
-      <MailDraftCard :mail="notice.mail" :outcome="notice.outcome" />
+      <MailDraftCard :mail="notice.mail" :outcome="notice.outcome" :names="refs.mentionNames" />
     </div>
     <div v-else-if="notice.mode === 'plain'" class="sys-row im-event">
       <div class="sys-line">

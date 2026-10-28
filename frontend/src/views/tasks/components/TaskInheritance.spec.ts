@@ -29,6 +29,8 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
       documentIds: [],
       source: 'both',
     },
+    agent: null,
+    packPrompt: null,
     materials: [],
     ...overrides,
   }
@@ -124,5 +126,39 @@ describe('建项目会继承什么', () => {
     const text = document.body.textContent ?? ''
     expect(text).toContain(i18n.global.t('tasks.inheritance.title'))
     expect(/[一-鿿]/.test(text)).toBe(false)
+  })
+
+  it('默认队友：报出名字与它会带的技能', () => {
+    setLocale('zh-CN')
+    mount(
+      payload({
+        agent: { typeName: 'academic-research', displayName: '学术研究', skills: ['documents', 'wolfram'] },
+      })
+    )
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agent'))
+    expect(text).toContain('学术研究')
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agentSkills'))
+    expect(text).toContain('documents')
+    expect(text).toContain('wolfram')
+  })
+
+  it('没指定默认队友时也说一句，不整行消失', () => {
+    setLocale('zh-CN')
+    mount(payload({ agent: null }))
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agentNone'))
+    expect(text).not.toContain(i18n.global.t('tasks.inheritance.agentSkills'))
+  })
+
+  it('资源包带的那段 prompt 说明它会加给默认队友', () => {
+    setLocale('zh-CN')
+    mount(payload({ packPrompt: '先写测试再写实现' }))
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.packPrompt'))
+    expect(text).toContain('先写测试再写实现')
   })
 })

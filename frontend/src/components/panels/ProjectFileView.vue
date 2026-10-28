@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 频道里点一枚文件 chip 开的那一格：项目当前版本里的这份文件，只读。代码在编辑器里
+// 频道里点一枚文件 chip 开的那一格：项目当前版本里的这份文件，只读（项目里读不到、而
+// 频道自己有这一份时，开的是频道那一份，顶上写明）。代码在编辑器里
 // 打开，带行号就滚到那几行并选中；图片、文档照样画出来；画不出来的给下载。
 //
 // 当前版本里没有这份文件时，说清这一点，再列出这个频道里改过它的任务——它多半是某件
@@ -33,10 +34,15 @@ const props = defineProps<{
   tooLarge: boolean
   /** 当前版本里没有这份文件时，这个频道里改过它的任务。 */
   tasks: RoomTask[]
+  /** 读自频道自己的文件（项目当前版本里读不到它）。 */
+  inRoom: boolean
   isImage: boolean
   isDocument: boolean
   documentType: FileKind | null
-  rawUrl: string
+  /** 图片的 object URL（带 Authorization 取回来的）；还没取到时是空串。 */
+  imageSrc: string
+  /** 图片取不到时的原因；空串就是没出错。 */
+  imageError: string
   docBytes: ArrayBuffer | null
   docLoading: boolean
   docError: string
@@ -58,7 +64,9 @@ const { mdAndUp } = useDisplay()
         {{ mdAndUp ? props.path : props.path.split('/').pop() }}
       </span>
       <v-spacer />
-      <span class="project-file__source">{{ t('work.room.projectFile.current') }}</span>
+      <span class="project-file__source">{{
+        t(props.inRoom ? 'work.room.projectFile.room' : 'work.room.projectFile.current')
+      }}</span>
     </div>
     <div v-if="props.loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
@@ -95,8 +103,16 @@ const { mdAndUp } = useDisplay()
       <PreviewPages v-else-if="props.documentType?.view === 'pages'" :data="props.docBytes" />
       <PreviewSheet v-else :data="props.docBytes" :kind="props.documentType?.sheet ?? 'workbook'" />
     </div>
+    <div v-else-if="props.isImage && props.imageError" class="file-blob">
+      <v-icon size="30" class="c-faint mb-2">mdi-image-broken-variant</v-icon>
+      <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
+      <div class="file-blob__note">{{ props.path }} · {{ props.imageError }}</div>
+      <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
+        {{ t('work.room.changes.downloadOriginal') }}
+      </BaseButton>
+    </div>
     <div v-else-if="props.isImage" class="project-file__image">
-      <img :src="props.rawUrl" :alt="props.path" />
+      <img v-if="props.imageSrc" :src="props.imageSrc" :alt="props.path" />
     </div>
     <div v-else-if="props.binary || props.tooLarge" class="file-blob">
       <v-icon size="30" class="c-faint mb-2">{{ props.tooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}</v-icon>

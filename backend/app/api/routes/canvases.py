@@ -9,7 +9,7 @@ does; the board then reads the canvas again.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
@@ -22,6 +22,8 @@ from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent.teammate_runs import teammate_runs
+from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.canvas.block import blocks
 from app.domain.canvas.schemas import (
@@ -98,21 +100,52 @@ async def _columns(
     db: AsyncSession, task_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, dict[str, str]]:
     """Where each task stands on a person's board: the column and the phrase
-    the task list shows, from the same facts."""
+    the task list shows, from the same facts — and the teammate working it,
+    whom some of those phrases name (「{agent}在做」)."""
     if not task_ids:
         return {}
     cards = await latest_cards_by_task(db, task_ids)
     asked = await awaiting_an_answer(db, task_ids)
     now = datetime.now(UTC)
+    rows = await TaskService(db).list_by_ids(task_ids)
+    runs = await teammate_runs(db, rows)
+    teammates = await _teammates(
+        db, {t.id: (t.project_id, t.room_id, t.agent_handle) for t in rows}
+    )
     return {
-        task.id: presentation.task_presentation(
-            presentation.facts_for_task(
-                task, cards.get(task.id), awaiting_answer=task.id in asked
-            ),
-            now=now,
-        ).as_dict()
-        for task in await TaskService(db).list_by_ids(task_ids)
+        task.id: {
+            **presentation.task_presentation(
+                presentation.facts_for_task(
+                    task,
+                    cards.get(task.id),
+                    awaiting_answer=task.id in asked,
+                    teammate_runs=runs.get(task.id),
+                ),
+                now=now,
+            ).as_dict(),
+            "agent_name": teammates[task.id].display_name,
+            "agent_name_source": teammates[task.id].name_source.value,
+        }
+        for task in rows
     }
+
+
+async def _teammates(
+    db: AsyncSession,
+    tasks: Mapping[uuid.UUID, tuple[uuid.UUID, uuid.UUID, str | None]],
+) -> dict[uuid.UUID, ResolvedAgent]:
+    """The teammate working each task (task id → its project, room and
+    ``agent_handle``; `AgentInstanceService.for_tasks`), a fixed number of reads
+    per project — one, since a card only points at a task of its document's
+    project."""
+    by_project: dict[uuid.UUID, dict[uuid.UUID, tuple[uuid.UUID, str | None]]] = {}
+    for task_id, (project_id, room_id, agent_handle) in tasks.items():
+        by_project.setdefault(project_id, {})[task_id] = (room_id, agent_handle)
+    service = AgentInstanceService(db)
+    teammates: dict[uuid.UUID, ResolvedAgent] = {}
+    for project_id, of_project in by_project.items():
+        teammates.update(await service.for_tasks(project_id, of_project))
+    return teammates
 
 
 async def _state(

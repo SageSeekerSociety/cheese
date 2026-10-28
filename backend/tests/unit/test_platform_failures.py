@@ -263,13 +263,13 @@ _START_LOGS = {
         _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
         "'--detach', 'cheese-private-executor:2.1.299']' returned non-zero exit "
         "status 125.",
-        "Claude Code 启动失败：执行容器没能创建",
+        "Claude Code 启动失败：运行用的容器没能创建",
     ),
     "executor image missing": (
         _RECORD + "Unable to find image 'cheese-private-executor:2.1.299' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor",
-        "Claude Code 启动失败：环境里缺少执行容器的镜像",
+        "Claude Code 启动失败：环境里缺少运行用的容器镜像",
     ),
     "another runner holds the lock": (
         "cheese-runner 0f0f ended: the runner failed\n"
@@ -278,7 +278,7 @@ _START_LOGS = {
         "line 52, in start\n"
         "    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
         "BlockingIOError: [Errno 11] Resource temporarily unavailable",
-        "Claude Code 启动失败：这个频道上一个会话进程还没有退出",
+        "Claude Code 启动失败：这个频道上一次运行的程序还没有退出",
     ),
     "binary missing (dash)": (
         _RECORD + "sh: 1: exec: /opt/cheese/claude/versions/2.1.299: not found",
@@ -311,7 +311,7 @@ _START_LOGS = {
     "platform refused the session's credential": (
         _RECORD + "executor_transport.PlatformHTTPError: Platform HTTP 401: "
         '{"message":"credential expired"}',
-        "Claude Code 启动失败：平台没有接受这个会话的凭证",
+        "Claude Code 启动失败：平台没有接受这次启动的授权",
     ),
     "platform failed": (
         _RECORD + "executor_transport.PlatformHTTPError: Platform HTTP 500: "
@@ -363,3 +363,24 @@ def test_a_session_that_never_ended_nor_came_up_says_it_ran_out_of_time():
     assert (
         failure.content == "Claude Code 启动失败：在等待时限内没有起来，启动记录在现场"
     )
+
+
+def test_a_turn_the_upgrade_cut_short_and_not_resumed_says_the_work_is_safe():
+    """A release that replaces the runner cuts the turn short. When the
+    platform did not start it again, the room's one line says whose work it
+    was, that the files are still there and that a retry carries on — not
+    「这次没做完」 wrapped around it, and not a red alarm."""
+    from app.domain.agent.platform_failures import (
+        RUNNER_REPLACED_CODE,
+        runner_replaced_message,
+    )
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    line, meta = _turn_failure_notice(
+        runner_replaced_message("cheese-ai"), RUNNER_REPLACED_CODE
+    )
+
+    assert line == runner_replaced_message("cheese-ai")
+    assert "<@cheese-ai>" in line and "改好的文件都还在" in line
+    assert meta["severity"] == "warn"
+    assert meta["retryable"] is True

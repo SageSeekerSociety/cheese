@@ -25,7 +25,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import NativeInput
-from app.domain.review.models import AcceptCard
+from app.domain.review.models import AcceptCard, AcceptCardReviewer
 from app.domain.room_task.models import Task, TaskProgress, TaskStatus
 from tests.integration.conftest import (
     in_thread,
@@ -84,14 +84,18 @@ def _planted(
                 s.add(task)
                 await s.flush()
                 if card is not None:
-                    s.add(
-                        AcceptCard(
-                            topic_id=uuid.UUID(room_id),
-                            task_id=task.id,
-                            reviewer_handle="alice",
-                            **card,
-                        )
+                    # 评审人在 `accept_card_reviewer` 表里（一卡一行），卡上那一列只
+                    # 留影子；读的一侧（`awaits_me`）看的是表，所以直接写库的卡要
+                    # 把那一行也写出来。
+                    card_row = AcceptCard(
+                        topic_id=uuid.UUID(room_id),
+                        task_id=task.id,
+                        reviewer_handle="alice",
+                        **card,
                     )
+                    s.add(card_row)
+                    await s.flush()
+                    s.add(AcceptCardReviewer(card_id=card_row.id, handle="alice"))
                 ids[name] = str(task.id)
             await s.commit()
 
@@ -290,7 +294,7 @@ def _answered_in_a_thread(
             "request_id": str(uuid.uuid4()),
             "reply_to": asked["id"],
         },
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 200, r.text
     return room, thread

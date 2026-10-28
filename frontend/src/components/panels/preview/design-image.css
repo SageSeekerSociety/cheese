@@ -67,6 +67,9 @@
   scrollbar-gutter: stable;
   padding: 16px;
 }
+.design-image__pane.is-narrow {
+  padding: 8px;
+}
 .design-image__overlay {
   position: absolute;
   inset: 0;
@@ -87,6 +90,24 @@
   box-sizing: border-box;
   border: 2px solid var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+/* 图上框出来的一处评论：一个点，落在那一块的左上角。形状和表格里那几颗同一种
+   （小圆点、描边配色），点开就是那一串。 */
+.design-image__mark {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background var(--dur-quick) var(--ease-standard);
+}
+.design-image__mark:hover,
+.design-image__mark.is-active {
+  background: var(--accent);
 }
 /* 图上正在编辑的那条文字：虚线框的输入框，位置和字号跟着文字锚点走。 */
 .design-image__text {

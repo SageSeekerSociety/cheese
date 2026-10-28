@@ -43,7 +43,7 @@ async def set_title(
     resolver: ActorResolverDep,
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
-    own session naming it (`cheese_title`, only where the platform cannot).
+    own session naming it (`cheese_room(action=rename)`, only where the platform cannot).
 
     A channel is renamed by whoever manages it: its own admin, or someone whose
     role manages every channel (#3830). Being able to reach the room at all is
@@ -70,7 +70,7 @@ async def set_title(
         if not own_session and not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
         # A task's own session names it to the same width a teammate creating
-        # one is held to (`cheese_title`): told, not cut. A person renaming a
+        # one is held to (`cheese_room(action=rename)`): told, not cut. A person renaming a
         # task is left to `title[:80]` — the width rule is about what an AI
         # teammate writes, and a person can be trusted to know what they meant.
         if own_session and not title_fits(title):
@@ -96,7 +96,7 @@ async def set_title(
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await task_out(db, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     # A channel's name is one of its settings, like its 说明 and who sees it

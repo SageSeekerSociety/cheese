@@ -92,7 +92,7 @@ def test_second_card_still_blocked_while_first_is_pending(client):
         },
     )
     assert r.status_code == 422
-    assert "cheese_redeliver" in r.json()["message"]
+    assert "cheese_card(action=redeliver)" in r.json()["message"]
 
 
 def test_an_accepted_card_still_cannot_be_rejected(client):

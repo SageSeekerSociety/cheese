@@ -60,6 +60,7 @@ const live: Routine = {
   created_by: 'cheese-x',
   next_run_at: '2026-09-28T01:00:00Z',
   last_run_status: 'succeeded',
+  credits_this_month: 0,
   revision: 1,
   created_at: '2026-09-25T00:00:00Z',
   updated_at: '2026-09-25T00:00:00Z',

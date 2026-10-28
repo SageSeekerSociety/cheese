@@ -135,7 +135,7 @@ it('renders the team members page in English', async () => {
   mount(Members)
   await screen.findByText('Bob')
   expect(screen.getByText('Owner')).toBeTruthy()
-  expect(screen.getByText('Join requests')).toBeTruthy()
+  expect(screen.getByRole('heading', { level: 2, name: /Members/ })).toBeTruthy()
   expectNoChinese()
 })
 

@@ -100,7 +100,7 @@ const snapshot = (feedback_proposals: FeedbackProposal[]) =>
     skill_proposals: [],
     tasks: { open: [], recent: [] },
     pins: [],
-    threads: [],
+    threads: { open: [], recycled: [] },
   }) as never
 
 describe('房间里的反馈卡', () => {
@@ -132,6 +132,30 @@ describe('房间里的反馈卡', () => {
     const view = await mount()
     await fireEvent.click(view.getByRole('button', { name: /不用/ }))
     await vi.waitFor(() => expect(view.getAllByText('云端工作电脑反复创建失败')).toHaveLength(1))
+  })
+})
+
+describe('从卡上打开的提交表单', () => {
+  it('「来自谁的排查」叫提这张卡的那位队友在项目里的名字，不写「芝士」', async () => {
+    // 表单开在一个 VOverlay 里，而 happy-dom 没有 visualViewport：不补上弹窗挂不起来。
+    vi.stubGlobal('visualViewport', {
+      width: 1024,
+      height: 768,
+      offsetLeft: 0,
+      offsetTop: 0,
+      addEventListener() {},
+      removeEventListener() {},
+    })
+    const view = await mount()
+    try {
+      await fireEvent.click(view.getByRole('button', { name: i18n.global.t('feedback.proposal.submit') }))
+      await vi.waitFor(() => expect(document.body.textContent).toContain('来自Cedar的排查'))
+      expect(document.body.textContent).not.toContain('来自芝士的排查')
+      expect(document.body.textContent).toContain('「Cedar提的东西有多少真的发出去了」')
+    } finally {
+      view.unmount()
+      vi.unstubAllGlobals()
+    }
   })
 })
 

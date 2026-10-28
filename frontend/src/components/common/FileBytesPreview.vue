@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 一份文件的字节，按它的类型摆出来：文档和 PDF 一页一页、表格一张一张、图片直接显
-// 示、文本原样，其余的说一句只能下载。
+// 示、代码带行号和高亮、文本原样，其余的说一句只能下载。
 //
 // 字节从哪来由调用方给（`read`）：资料库的一份、交付的某一版，取法不一样，摆法一样。
 // Office 文档浏览器画不了，`read(true)` 要的是服务端转好的 PDF。
@@ -9,11 +9,22 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import DesignImage from '@/components/panels/preview/DesignImage.vue'
+import PreviewCode from '@/components/panels/preview/PreviewCode.vue'
+import PreviewMarkdown from '@/components/panels/preview/PreviewMarkdown.vue'
 import PreviewPages from '@/components/panels/preview/PreviewPages.vue'
 import PreviewSheet from '@/components/panels/preview/PreviewSheet.vue'
 import PreviewSlides from '@/components/panels/preview/PreviewSlides.vue'
 import { t } from '@/i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '@/lib/fileKind'
+import {
+  codeLanguageOf,
+  DOCUMENT_TYPES,
+  IMAGE_SUFFIXES,
+  imageMimeOf,
+  NEEDS_CONVERSION,
+  sheetKindOf,
+  SLIDE_SUFFIXES,
+  suffixOf,
+} from '@/lib/fileKind'
 
 const props = withDefaults(
   defineProps<{
@@ -98,9 +109,11 @@ onBeforeUnmount(() => {
     <!-- 读失败就地换成原因加一条重试的路，而不是把用户留在一扇空窗前面。 -->
     <BaseLoadError v-else-if="error !== null" :title="t('work.library.previewError')" :error="error" @retry="load" />
     <template v-else-if="data">
-      <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="filename" />
+      <PreviewSlides v-if="SLIDE_SUFFIXES.has(suffix)" :data="data" :title="filename" />
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
+      <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" />
+      <PreviewCode v-else-if="view === 'code' && text !== null" :source="text" :language="codeLanguageOf(suffix)" />
       <DesignImage v-else-if="imageUrl" :src="imageUrl" :alt="filename" :identity="source" />
       <pre v-else-if="text !== null" class="file-preview__text t-body">{{ text }}</pre>
       <p v-else class="file-preview__note t-body c-muted">{{ t('work.library.downloadOnly') }}</p>

@@ -44,6 +44,7 @@ from tests.integration.conftest import (
     post_project,
     room_agent_headers,
     room_agent_seat,
+    task_agent_headers,
 )
 from tests.support.living_doc import document_of
 
@@ -56,7 +57,13 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
     ``httpx.Response`` for a call that does not come back the usual way (the
     model cut off mid-thought, an upstream error). ``bodies`` is what the model
     was asked."""
-    seen: dict = {"answers": [], "asked": [], "bodies": [], "mints": 0}
+    seen: dict = {
+        "answers": [],
+        "asked": [],
+        "bodies": [],
+        "mints": 0,
+        "nudge": naming.nudge,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/key/generate":
@@ -918,11 +925,13 @@ def test_a_title_the_tasks_own_session_gives_is_still_the_platforms(
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     own = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"],
-            topic_id=tid,
-            agent_handle=room_agent_seat(client, room),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'],
+                topic_id=tid,
+                agent_handle=room_agent_seat(client, room),
+            )
+        }"
     }
     r = client.post(f"/topics/{tid}/title", json={"title": "限流开关"}, headers=own)
     assert r.status_code == 200, r.text
@@ -967,6 +976,51 @@ def test_without_a_gateway_nothing_is_asked(client, alice, gateway, monkeypatch)
 
 
 # ---------- what nudges naming ----------
+
+
+@pytest.mark.parametrize("recover_publication", [False, True])
+def test_publishing_an_attachment_explanation_names_the_task_before_idle(
+    client, alice, gateway, monkeypatch, recover_publication
+):
+    """A published explanation names the task without waiting for session idle."""
+    project = _project(client, alice)
+    room = project["root_topic_id"]
+    rid = _task(client, alice, room)
+    headers = task_agent_headers(project["id"], rid, room_agent_seat(client, room))
+    _say(client, rid, "我之前的任务怎么突然又成待办了？")
+    _say(
+        client,
+        rid,
+        "uploads/screenshot.png",
+        kind=BlockKind.attachment,
+        mime_type="image/png",
+    )
+    assert _run(client, rid, "message") is None
+
+    message = {
+        "content": "这两条是以前的问题卡，今天重新冒出来成了待办，我去查来源。",
+        "request_id": str(uuid.uuid4()),
+    }
+    first = None
+    if recover_publication:
+        # The reply was committed, but the process never nudged naming.
+        first = client.post(f"/topics/{rid}/messages", json=message, headers=headers)
+        assert first.status_code == 200, first.text
+    monkeypatch.setattr(naming, "_default_factory", lambda: client.test_request_factory)
+    monkeypatch.setattr(naming, "nudge", gateway["nudge"])
+    gateway["answers"].append({"keep": False, "title": "旧问题卡重新冒出待办"})
+
+    response = client.post(f"/topics/{rid}/messages", json=message, headers=headers)
+    assert response.status_code == 200, response.text
+    if first is not None:
+        assert response.json()["data"]["id"] == first.json()["data"]["id"]
+
+    async def settle_naming():
+        await asyncio.gather(*tuple(naming._tasks))
+
+    client.portal.call(settle_naming)
+    assert _shown(client, rid) == ("旧问题卡重新冒出待办", "auto")
+    assert _history(client, rid) == [("旧问题卡重新冒出待办", "auto", "name")]
 
 
 def test_what_happens_in_a_task_nudges_its_naming_and_a_channel_does_not(

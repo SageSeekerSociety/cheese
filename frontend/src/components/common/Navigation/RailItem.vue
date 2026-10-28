@@ -325,7 +325,7 @@ button.app-rail-item {
 // or the tile reads as a small square framed inside a bigger one.
 .app-rail-item.app-rail-item--tile {
   background-color: transparent;
-  // v-card 默认 overflow: hidden，会把探出格子的件数角标和右边的竖条裁掉。
+  // v-card 默认 overflow: hidden，会把探出格子的件数角标和左边的竖条裁掉。
   overflow: visible;
 
   &:hover,
@@ -334,19 +334,22 @@ button.app-rail-item {
   }
 }
 
-// 竖条放在头像右侧、靠二级侧栏，避免与电脑的黑色屏幕边框混在一起。
-// 格子 48px 居中在 64px 的 rail 里，右侧有 8px：4px 竖条与头像之间仍留 4px。
-// 选中是长的一条，悬停没选中的格子是短的一截；不加外圈或底色。
-// 颜色沿用 on-surface：浅色主题是深墨，深色主题是浅灰。「＋新建项目」不画竖条。
+// 「你在这儿」是贴着 rail 左边缘的一条竖条（Discord 式）：靠边一侧平直、朝里一侧
+// 圆头，像从屏幕边上长出来的一截，不碰头像，也不和右上角的件数角标打架。
+// 选中是长的一条，悬停没选中的格子是短的一截。
+//
+// 格子 48px 居中在 64px 的 rail 里，左边离 rail 边缘 8px，所以竖条往外挪 8px 贴边。
+// 颜色用 --rail-mark：深色主题是浅灰；浅色主题是中灰，不用正文的深墨——窗口最大化
+// 时贴着的是显示器的黑边，深墨会和黑边连成一片。不用琥珀，琥珀留给主操作和品牌标记。「＋新建项目」不是目的地，不画竖条。
 .app-rail-item:not(.app-rail-item--add)::before {
   content: '';
   position: absolute;
-  right: -8px;
+  left: -8px;
   top: 50%;
   width: 4px;
   height: 0;
-  border-radius: var(--radius-pill);
-  background-color: rgb(var(--v-theme-on-surface));
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background-color: var(--rail-mark);
   transform: translateY(-50%);
   transition: height var(--dur-quick) var(--ease-standard);
   pointer-events: none;

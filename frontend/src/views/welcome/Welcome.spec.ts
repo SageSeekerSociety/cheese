@@ -18,8 +18,10 @@ const saveComposerDraft = vi.fn()
 vi.mock('@/lib/composerDrafts', () => ({ saveComposerDraft: (...a: unknown[]) => saveComposerDraft(...a) }))
 vi.mock('@/query/projects', () => ({ refreshProjects: vi.fn().mockResolvedValue(undefined) }))
 const replace = vi.fn()
+const back = vi.fn()
+const history = { state: {} as { back?: string | null } }
 vi.mock('vue-router', () => ({
-  useRouter: () => ({ replace }),
+  useRouter: () => ({ replace, back, options: { history } }),
   RouterLink: { template: '<a><slot /></a>' },
 }))
 const account = vi.hoisted(() => ({
@@ -51,6 +53,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   account.user = { id: 1, username: 'lin', nickname: '林小满', onboarded_at: null, work_role: null, organization: null }
   finishOnboarding.mockResolvedValue({ project_id: 'p1', root_topic_id: 'general' })
+  history.state = {}
 })
 
 async function next(view: ReturnType<typeof mount>) {
@@ -117,6 +120,26 @@ describe('新手引导', () => {
     const view = mount(true)
     expect(view.getByRole('button', { name: /教课、带学生/ }).getAttribute('aria-pressed')).toBe('true')
     expect(view.queryByRole('button', { name: '跳过引导' })).toBeNull()
+    // 再看一遍的人没有项目要建：给的是「退出引导」，不是「跳过引导」。
+    expect(view.getByRole('button', { name: '退出引导' })).toBeTruthy()
+  })
+
+  it('opened again from the help menu, can be left without making a project', async () => {
+    account.user = { ...account.user, onboarded_at: '2026-10-11T00:00:00Z' }
+    const view = mount(true)
+    await fireEvent.click(view.getByRole('button', { name: '退出引导' }))
+    expect(finishOnboarding).not.toHaveBeenCalled()
+    expect(replace).toHaveBeenCalledWith({ name: 'HomeDefault' })
+  })
+
+  it('opened again from the help menu, leaves back to the page it came from', async () => {
+    account.user = { ...account.user, onboarded_at: '2026-10-11T00:00:00Z' }
+    history.state = { back: '/projects/p1/overview' }
+    const view = mount(true)
+    await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '退出引导' }))
+    expect(back).toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('says why the project was not made and stays on the page', async () => {

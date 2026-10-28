@@ -43,6 +43,7 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.preview_host import preview_origin
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import BlockRepository, _actor_in_place
@@ -53,6 +54,7 @@ from app.domain.agent.preview_owner import inspect_owner
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.project.room_files import ARTIFACT_MIME, clean_artifact_path
+from app.domain.remote_mcp import apps
 from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -75,6 +77,25 @@ async def get_preview(
     if art is None:
         return ok(None)
 
+    if art.mime_type == ARTIFACT_MIME["mcp-app"]:
+        # A third-party server's HTML View (`ui://`). No bytes are read here and
+        # no tunnel is probed: the content host fetches the resource through that
+        # server's connection when the frame asks for it, under its own stricter
+        # policy. `path` names the resource, `server` names whose it is.
+        parts = apps.pointer_parts(art.content)
+        if parts is None:
+            return ok(None)
+        server, uri = parts
+        return ok(
+            {
+                "kind": "mcp-app",
+                "url": preview_origin(topic_id) + "/",
+                "path": uri,
+                "server": server,
+                "mime": art.mime_type,
+                "artifact_id": str(art.id),
+            }
+        )
     if art.mime_type == ARTIFACT_MIME["app"]:
         # Knocked on LIVE, through the tunnel, every time the panel asks. A
         # declared preview is not a running one: the agent's dev server exits,
@@ -146,10 +167,19 @@ async def preview_file(
     if path:
         return ok(
             await library_records.read_attachment_text(
-                db, place.project_id, place.room_id, clean_artifact_path(path)
+                db,
+                place.project_id,
+                place.room_id,
+                clean_artifact_path(path),
+                with_task=await may_read_path(
+                    db, place.project_id, clean_artifact_path(path)
+                ),
             )
         )
     art = await BlockRepository(db).latest_artifact(place.conversation_id)
-    if art is None or art.mime_type == ARTIFACT_MIME["app"]:
+    if art is None or art.mime_type in (
+        ARTIFACT_MIME["app"],
+        ARTIFACT_MIME["mcp-app"],
+    ):
         raise NotFoundError("No file preview")
     return ok(library.read_room_text_file(place.project_id, place.room_id, art.content))

@@ -19,7 +19,7 @@ export interface MergeBadge {
  *  词优先按 state 分：dirty / behind / clean 这三个状态本身就说明了下一步是
  *  什么；unstable / blocked 才需要 who 来分「检查红了」和「CI 还在跑」——那个
  *  分流后端做过了（issue #718 的表格），这里照抄结论。 */
-export function mergeBadgeOf(ms: MergeStateInfo, agentName = t('work.room.defaultAgentName')): MergeBadge {
+export function mergeBadgeOf(ms: MergeStateInfo, agentName: string): MergeBadge {
   switch (ms.state) {
     case 'clean':
       // 绿勾 + 采纳亮；圈是「等你」—— 下一步真的在人手上。平台 lane（没绑

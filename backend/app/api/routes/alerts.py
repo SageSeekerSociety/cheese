@@ -277,6 +277,9 @@ async def resolve_notification(
         notification_id,
         chosen=body.chosen,
         decided_by=handle,
+        # A valid delegated credential is what admitted the caller: their own
+        # 芝士 decides for them, and the line in the room says so.
+        by_assistant=resolver.delegation() is not None,
         publish=get_broker().publish,
         # 拍板那句话落在房间里，那一层 `notification` 够不着（`block/adapters.py`）。
         decision_line=DecisionLine(db),

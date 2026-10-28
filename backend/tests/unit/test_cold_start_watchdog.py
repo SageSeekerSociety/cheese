@@ -248,8 +248,8 @@ async def test_known_expired_credential_fast_fails_with_the_true_reason(db_facto
 
     # The event tells the truth: an expired subscription credential needing host
     # re-auth — NOT the misleading container/disk/network guesses.
-    assert "凭据已过期" in frame["message"]
-    assert "重新认证" in frame["message"]
+    assert "订阅登录已过期" in frame["message"]
+    assert "重新登录" in frame["message"]
     assert "按环境没有启动处理" not in frame["message"]
     # And it does not promise an auto-retry — retrying burns another fuse on the
     # same dead credential.

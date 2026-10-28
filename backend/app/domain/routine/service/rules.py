@@ -259,7 +259,7 @@ UNSET_PROMPT = """\
 {missing}
 - 目标：{instructions}
 {note}
-请照这个目标把它们补上，用 cheese_routine_update(routine="{routine_id}", ...) 写回：
+请照这个目标把它们补上，用 cheese_routine(action=update, routine="{routine_id}", ...) 写回：
 {asks}
 补完这条规则就按你定的开始跑。定完在频道里说一句你定的是什么。
 """

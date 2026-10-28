@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, exists, func, or_, select
+from sqlalchemy import ColumnExpressionArgument, Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -133,6 +133,19 @@ class SpaceRepository:
         )
         return or_(member_exists, admin_exists)
 
+    @staticmethod
+    def build_member_of_predicate(
+        *, space_id: ColumnExpressionArgument[int], user_id: int
+    ) -> ColumnElement[bool]:
+        """「他在 ``space_id`` 这块板里」, as a SQL predicate over whatever row
+        carries that column — ``is_member`` for a query over another table, such
+        as a board's 题目 asking whether the reader is in their board."""
+        return exists().where(
+            Space.id == space_id,
+            Space.deleted_at.is_(None),
+            SpaceRepository.build_membership_predicate(user_id=user_id),
+        )
+
     async def exists_by_name(self, name: str) -> bool:
         stmt = select(Space.id).where(
             and_(Space.name == name, Space.deleted_at.is_(None))
@@ -214,6 +227,7 @@ class SpaceCategoryRepository:
         name: str,
         description: str | None,
         display_order: int,
+        default_role: str | None = None,
     ) -> SpaceCategory:
         now = datetime.now(UTC)
         category = SpaceCategory(
@@ -221,6 +235,7 @@ class SpaceCategoryRepository:
             name=name,
             description=description,
             display_order=display_order,
+            default_role=default_role,
             archived_at=None,
             created_at=now,
             updated_at=now,

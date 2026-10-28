@@ -34,7 +34,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceHealthRow
 from app.domain.platform_stats.ports import TurnCounts
 from app.domain.review.archive import OPEN_CARD_STATUSES
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.review_note_codes import _STUCK as STUCK_NOTE_CODES
 from app.domain.room_task.models import Task, TaskStatus
@@ -127,7 +127,14 @@ class PipelineRepository:
                 AcceptCard.id,
                 AcceptCard.topic_id,
                 AcceptCard.task_id,
-                AcceptCard.reviewer_handle,
+                # 评审人搬到 `accept_card_reviewer` 了（今天恰好一行）——取最早那
+                # 一行，输出形状不变。
+                select(AcceptCardReviewer.handle)
+                .where(AcceptCardReviewer.card_id == AcceptCard.id)
+                .order_by(AcceptCardReviewer.created_at)
+                .limit(1)
+                .scalar_subquery()
+                .label("reviewer_handle"),
                 AcceptCard.status,
                 AcceptCard.note_code,
                 AcceptCard.note,

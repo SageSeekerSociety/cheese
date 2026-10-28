@@ -1,7 +1,7 @@
 """Which gateway key a caller's spend goes on, and whether it may spend now.
 
 The model route (`routes/llm_proxy.py`) and the platform's web search
-(`routes/fetch.py`, `cheese_web_search`) ask the same questions about an
+(`routes/fetch.py`, `cheese_web(action=search)`) ask the same questions about an
 agent's credential, so a search is admitted and paid for exactly as the
 work's model calls are: on the project's key, or its task's when the
 credential works a task whose credits a member owns, or the memory

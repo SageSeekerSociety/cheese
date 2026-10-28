@@ -30,6 +30,7 @@ creation is admitted by ``admit_start(kind=VM, spec=…)``.
 import logging
 import math
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, or_, select, text, update
@@ -105,7 +106,7 @@ class ComputeMeter:
         kind: str,
         spec: str,
         subject: str,
-        project_id: uuid.UUID,
+        project_id: uuid.UUID | None,
         topic_id: uuid.UUID | None = None,
         session_id: uuid.UUID | None = None,
         at: datetime | None = None,
@@ -160,11 +161,19 @@ class ComputeMeter:
             )
         )
 
-    async def settle(self) -> int:
+    async def settle(
+        self,
+        payer_of: Callable[[uuid.UUID], Awaitable[Payer | None]] | None = None,
+    ) -> int:
         """Charge every run that is due: a running one charged
         ``SETTLE_EVERY`` ago or longer, for its whole minutes since; an ended
         one, to its end, the last partial minute rounded up. Returns how many
-        runs were charged. Commits."""
+        runs were charged. Commits.
+
+        A run in a project is charged to the project's payer. One in no
+        project is charged to whoever ``payer_of`` says pays for its
+        conversation (the machine domain's ``holder``); one it cannot say is
+        left uncharged and logged."""
         now = datetime.now(UTC)
         runs = list(
             await self._session.scalars(
@@ -186,7 +195,7 @@ class ComputeMeter:
                 .with_for_update(skip_locked=True)
             )
         )
-        payers: dict[uuid.UUID, Payer] = {}
+        payers: dict[uuid.UUID, Payer | None] = {}
         ledger = Ledger(self._session)
         charged = 0
         for run in runs:
@@ -205,13 +214,22 @@ class ComputeMeter:
                 minutes = math.ceil((run.ended_at - run.billed_until) / _MINUTE)
             if minutes <= 0:
                 continue
-            if run.project_id not in payers:
-                payers[run.project_id] = await payer_for_project(
-                    self._session, run.project_id
+            key = run.project_id or run.topic_id
+            if key is not None and key not in payers:
+                payers[key] = (
+                    await payer_for_project(self._session, run.project_id)
+                    if run.project_id is not None
+                    else await payer_of(key)
+                    if payer_of is not None
+                    else None
                 )
+            payer = payers.get(key) if key is not None else None
+            if payer is None:
+                logger.error("compute run %s has nobody to charge", run.id)
+                continue
             credits = minutes * price / 60
             await ledger.record(
-                payers[run.project_id],
+                payer,
                 credits=credits,
                 model=run.spec,
                 input_tokens=0,

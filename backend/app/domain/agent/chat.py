@@ -57,6 +57,7 @@ from app.domain.agent.gateway_usage import (
     charge_turn_spend,
     project_gateway_key,
 )
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.input_registration import confirm_receipt
 
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
@@ -133,6 +134,7 @@ from app.domain.agent.turn.intake.rooms import room_roster
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
+from app.domain.agent.turn.store.session_inputs import forget_opening
 from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.delivery.input_identity import InputReceipt
@@ -338,12 +340,32 @@ class ChatService(
         return await runner_reports.apply(self, report)
 
     async def inputs_replaced(
-        self, conversation_id: uuid.UUID, agent_handle: str, harness: str, native: str
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        native: str,
+        *,
+        read: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None:
         """The process holding native session ``native`` was replaced
         (`runner_reports.replaced`)."""
         await runner_reports.replaced(
-            self, conversation_id, agent_handle, harness, native
+            self,
+            conversation_id,
+            agent_handle,
+            harness,
+            native,
+            read=read,
+        )
+
+    async def context_compacted(self, session: SessionRef) -> None:
+        """``session`` compacted its context (`turn.store.forget_opening`)."""
+        await forget_opening(
+            self._sessions,
+            conversation_id=session.conversation_id,
+            agent_handle=session.agent_handle,
+            harness=session.harness,
         )
 
     async def result_landed(self, report: Report) -> None:
@@ -447,9 +469,12 @@ class ChatService(
         dream: bool = False,
         task_id: uuid.UUID | None = None,
         credit_owner_handle: str | None = None,
+        machine_conversation_id: uuid.UUID | None = None,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
-        ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
+        ``dream``, the key its memory consolidation runs on, and with
+        ``machine_conversation_id`` the one that conversation's sandboxes
+        call on (gateway_usage.py)."""
         return await project_gateway_key(
             self,
             self._sessions,
@@ -458,6 +483,7 @@ class ChatService(
             dream=dream,
             task_id=task_id,
             credit_owner_handle=credit_owner_handle,
+            machine_conversation_id=machine_conversation_id,
         )
 
     async def _gateway_budget_target(

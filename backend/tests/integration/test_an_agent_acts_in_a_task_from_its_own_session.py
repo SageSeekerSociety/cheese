@@ -10,6 +10,7 @@ get, when the task's own session may do exactly the same thing.
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.harness.channel import mint_session_token
 from tests.integration.conftest import (
     open_task,
     post_project,
@@ -33,7 +34,7 @@ def _channel_session(project_id: str, room: str, seat: str) -> dict[str, str]:
     token = mint_scoped_token(
         project_id=project_id, topic_id=room, agent_handle=seat, access_scope="project"
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _say(client, task_id: str, headers: dict[str, str]):
@@ -71,3 +72,33 @@ def test_the_channel_session_is_told_who_may_close_a_task(client):
     task = client.get(f"/topics/{task_id}/task", headers=session_auth_headers("alice"))
     assert task.status_code == 200, task.text
     assert task.json()["data"]["status"] != "closed"
+
+
+def test_a_task_session_reads_a_neighbouring_task_through_the_channel(client):
+    """一条任务的会话读不到旁边那条任务，但那句拒绝得指路。
+
+    它以前只说「这段凭据属于另一个对话」，停在墙前的人只能去问负责人。按整个
+    频道读是通的，所以这句话要说出来，并且那条路真的通。"""
+    project_id, room, task_id, seat = _channel_and_task(client)
+    other = open_task(client, room, "另一件事", owner="alice")["id"]
+    said = client.post(
+        f"/topics/{other}/messages",
+        json={"content": "另一条任务里说过的话", "request_id": str(uuid.uuid4())},
+        headers=session_auth_headers("alice"),
+    )
+    assert said.status_code == 200, said.text
+    headers = {
+        "Authorization": f"Bearer {mint_session_token(project_id, task_id, seat)}"
+    }
+
+    refused = client.get(f"/topics/{other}/history", headers=headers)
+
+    assert refused.status_code == 403, refused.text
+    error = refused.json()["error"]
+    assert error["i18n"]["key"] == "taskCredentialOtherConversation"
+    assert "channel" in error["message"], error["message"]
+
+    # 它指的那条路真的通：同一个会话按整个频道读得到旁边那条任务的话。
+    read = client.get(f"/topics/{task_id}/history?channel=true", headers=headers)
+    assert read.status_code == 200, read.text
+    assert "另一条任务里说过的话" in [b["content"] for b in read.json()["data"]["data"]]

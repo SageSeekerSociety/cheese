@@ -15,6 +15,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from app.domain.agent import device_link
@@ -44,8 +45,15 @@ async def exec(
     env: dict[str, str] | None = None,
     timeout: float = 60,
     stdin: str | None = None,
+    on_stderr: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """One-shot command on the device → ``{stdout, stderr, exit, truncated}``.
+
+    ``on_stderr`` hears each line the command writes to stderr while it runs.
+    Only a connector that streams sends any; from one built before, it hears
+    nothing and the result is the same. It is called on the link's read loop,
+    which every other frame of the machine arrives on: it returns at once and
+    never raises.
 
     Raises ``DeviceOffline`` when the device has no link and is not on its
     way back (``_linked``), rather than sending into the void and timing out
@@ -57,6 +65,8 @@ async def exec(
     eid = f"e{device.exec_seq}"
     fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
     device.exec_pending[eid] = fut
+    if on_stderr is not None:
+        device.exec_listeners[eid] = on_stderr
     try:
         await device.send(
             device_link.exec_cmd(
@@ -66,6 +76,7 @@ async def exec(
                 cwd=device.spelled(cwd) if cwd else cwd,
                 env={k: device.spelled(v) for k, v in env.items()} if env else env,
                 stdin=stdin,
+                stream=on_stderr is not None,
             )
         )
         return await asyncio.wait_for(fut, timeout=timeout + EXEC_REPLY_SLACK_S)
@@ -74,6 +85,7 @@ async def exec(
         raise
     finally:
         device.exec_pending.pop(eid, None)
+        device.exec_listeners.pop(eid, None)
         _read_a_failure_nobody_awaited(fut)
 
 

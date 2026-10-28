@@ -5,7 +5,8 @@
 * ``POST /projects`` 的 ``team_id`` —— 项目会出现在那个团队的 ``GET
   /projects?team_id=`` 列表里，挂着那个团队的名字，而调用方可能连凭据都没有。
 * ``POST /projects`` 的 ``external_task_id`` —— 那份 赛题 的 资源包 也照发，哪怕
-  调用方根本没报名（判据写成了「有报名但没过审」才拦）。
+  调用方根本没报名（判据写成了「有报名但没过审」才拦）。如今这支键整个不收了：
+  用题目建项目只有「开始做这道题」一条路。
 * ``POST /topics`` 的 ``parent_id`` —— 在别人的项目里建房间时把父指到别人的根
   房间，那片树从此多出一个他管不着的房间。
 
@@ -15,17 +16,17 @@
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
 
-from tests.conftest import seed_claim, seed_task_with_protocol, seed_user
+from tests.conftest import (
+    seed_claim,
+    seed_task_with_protocol,
+    seed_user,
+    start_task_project,
+)
 from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "alice"
 OUTSIDER = "mallory"
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _team(client, owner: str) -> int:
@@ -120,76 +121,71 @@ def test_a_personal_project_still_needs_no_team_named(client):
 
 
 def test_a_stranger_cannot_build_a_project_from_a_task(client):
-    """没报名的人拿一个题号建不了项目，更拿不到资源包。"""
+    """没报名的人拿一个题号建不了这道题的项目，更拿不到资源包：请求体里带题号的
+    建项目一律拒绝（用题目建项目只有「开始做这道题」一条路），什么也不建。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
     seed_user(client, OUTSIDER)
 
     r = post_project(
         client,
-        json={
-            "name": "freeloader",
-            "external_task_id": task_id,
-        },
+        json={"name": "freeloader", "external_task_id": task_id},
         headers=session_auth_headers(OUTSIDER),
         owner=OUTSIDER,
     )
-    assert r.status_code == 403, r.text
+
+    assert r.status_code == 400, r.text
+    assert r.json()["error"]["i18n"]["key"] == "projectFromTaskByStarting"
+    assert client.get(f"/projects/by-task/{task_id}").json()["data"]["total"] == 0
 
 
-def test_a_pending_application_gets_no_pack_either(client):
-    """报名了但没过审：工作区可以先建起来，资源包要等审批。"""
+def test_a_pending_application_makes_no_project_and_so_no_pack(client):
+    """报名了但没过审：点开始也只是在等审批，从这道题来的项目要等批了才有，资源包
+    也就无从领起。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
-    seed_user(client, OUTSIDER)
-    seed_claim(client, task_id, handle=OUTSIDER)  # pending
+    token = seed_user(client, OUTSIDER)
+    seed_claim(client, task_id, handle=OUTSIDER, approved=2)  # pending
 
-    made = _project(client, "pending", OUTSIDER, external_task_id=task_id)
+    r = client.post(
+        f"/tasks/{task_id}/participations/user",
+        json={},
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
-    assert _grants(client, made["id"]) == []
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["project"] is None
+    assert client.get(f"/projects/by-task/{task_id}").json()["data"]["total"] == 0
 
 
 def test_an_approved_applicant_gets_the_pack(client):
-    """过审的报名者照领——这正是修复要保住的那条正路。"""
+    """过审的报名者开始做这道题，照领资源包——这正是修复要保住的那条正路。"""
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
-    seed_user(client, OUTSIDER)
     seed_claim(client, task_id, handle=OUTSIDER, approved=0)  # APPROVED
 
-    made = _project(client, "approved", OUTSIDER, external_task_id=task_id)
+    project_id = start_task_project(client, task_id, handle=OUTSIDER)
 
-    assert _grants(client, made["id"]) == [(task_id, 5000.0)]
+    assert _grants(client, project_id) == [(task_id, 5000.0)]
 
 
 def test_a_team_gets_the_pack_when_its_own_registration_is_approved(client):
     """团队报名（``submitter_type == 1``）问的是团队那行 membership。"""
-    from app.domain.task.models import Task, TaskMembership
+    from app.domain.task.models import Task
 
     team_id = _team(client, OUTSIDER)
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 5000})
 
-    async def _approve_team() -> None:
+    async def _team_task() -> None:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             task = await session.get(Task, task_id)
             assert task is not None
-            # 团队报名的赛题：``member_id`` 于是是 team id，不是人的 id。
             task.submitter_type = 1
-            session.add(
-                TaskMembership(
-                    task_id=task_id,
-                    member_id=team_id,
-                    is_team=True,
-                    approved=0,
-                    created_at=_now(),
-                    updated_at=_now(),
-                )
-            )
             await session.commit()
 
-    asyncio.run(_approve_team())
+    asyncio.run(_team_task())
+    seed_claim(client, task_id, team_id=team_id, approved=0)  # APPROVED
 
-    made = _project(
-        client, "team-project", OUTSIDER, team_id=team_id, external_task_id=task_id
-    )
+    project_id = start_task_project(client, task_id, team_id=team_id, by=OUTSIDER)
 
-    assert _grants(client, made["id"]) == [(task_id, 5000.0)]
+    assert _grants(client, project_id) == [(task_id, 5000.0)]
 
 
 # --- F4: `POST /topics` 的 parent_id ----------------------------------------

@@ -47,6 +47,7 @@ test('the boot script is still in index.html', () => {
 test('a visitor who is not signed in and reads Chinese gets the prerendered page itself', () => {
   assert.equal(boot('/', { prerendered: '/' }), 'page')
   assert.equal(boot('/solutions', { prerendered: '/solutions' }), 'page')
+  assert.equal(boot('/download', { prerendered: '/download' }), 'page')
 })
 
 test('a public page with no prerendered copy for this address is drawn by the app, over its outline', () => {

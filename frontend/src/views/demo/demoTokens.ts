@@ -266,8 +266,18 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
   },
   {
     name: '浮层与装饰',
-    note: '浮层、插销和装饰的那一组：遮罩、焦点圈、滚动条、反色块、品牌光晕。',
-    prefixes: ['--focus-ring', '--overlay', '--selection-', '--scrollbar-', '--inverse-', '--logo-', '--category-'],
+    note: '浮层、插销和装饰的那一组：遮罩、焦点圈、滚动条、反色块、品牌光晕，和左侧 rail 上标出当前项目的竖条。',
+    prefixes: [
+      '--focus-ring',
+      '--overlay',
+      '--selection-',
+      '--scrollbar-',
+      '--lightbox-',
+      '--inverse-',
+      '--logo-',
+      '--category-',
+      '--rail-mark',
+    ],
   },
 ]
 

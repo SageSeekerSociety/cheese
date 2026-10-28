@@ -2,5 +2,6 @@
   "library_original": "Originals in the project library are read-only. Make a copy in the channel to edit it",
   "not_configured": "Online editing is not enabled on this deployment",
   "unsupported": "This kind of file can't be edited online",
-  "attachment_original": "Files sent in a conversation are read-only. Make a copy in the channel to edit it"
+  "attachment_original": "Files sent in a conversation are read-only. Make a copy in the channel to edit it",
+  "too_large": "This file is too large to open for online editing"
 }

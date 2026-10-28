@@ -2,7 +2,7 @@
   "alertKindNotFromInbox": "这一类通知不从项目收件箱写入",
   "alertRecipientOutside": "收件人不在这个项目或频道里",
   "decisionNeedsOptions": "决策请求至少要两个选项；没有要对方选的，改发变更提醒（change_alert）",
-  "notificationNoRecipients": "这条通知没有收件人：这个频道的名册上只有 agent（或者这个项目还没有成员和主人）。点名一个人再发。",
+  "notificationNoRecipients": "这条通知没有收件人：这个频道的名册上只有 AI 队友（或者这个项目还没有成员和主人）。点名一个人再发。",
   "notificationOnlyDecisions": "只有决策请求可以拍板",
   "notificationOptionNotOffered": "所选项不在候选项中"
 }

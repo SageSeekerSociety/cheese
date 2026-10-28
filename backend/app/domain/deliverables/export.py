@@ -448,17 +448,16 @@ async def create_archive(
             manifest["repository"] = {"status": "not_configured"}
         manifest["library"] = {"files": len(stored_files)}
         for name, location, key in stored_files:
-            try:
-                data = await library_files.read_blob(location, key)
-            except NotFoundError as exc:
-                raise UpstreamUnavailableError(
-                    "A library file is missing; no archive was returned"
-                ) from exc
             target = output / "library" / name
             if not target.resolve().is_relative_to((output / "library").resolve()):
                 raise UpstreamUnavailableError("Export path escaped its storage root")
             target.parent.mkdir(parents=True, exist_ok=True)
-            await run_sync(target.write_bytes, data)
+            try:
+                await library_files.save_blob(location, key, target)
+            except NotFoundError as exc:
+                raise UpstreamUnavailableError(
+                    "A library file is missing; no archive was returned"
+                ) from exc
         for topic_id in visible:
             await run_sync(
                 _copy_tree,

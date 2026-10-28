@@ -110,9 +110,16 @@ async def converse(
     # on what is producing the output, not on the machine underneath it.
     runtime = provider
     yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
+    # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）：
+    # 空串时 system prompt 与只有平台指引时逐字节相同。
+    skills = (
+        f"{prep.skills}\n\n---\n\n{prepared.skill_bodies}"
+        if prepared.skill_bodies
+        else prep.skills
+    )
     system_prompt = session_system_prompt(
         prep.base_prompt,
-        prep.skills,
+        skills,
         needs_place=needs_place,
         has_doc=doc_text is not None,
         role=role,
@@ -135,6 +142,8 @@ async def converse(
         overview_doc=overview_doc_text,
         overview_doc_id=prepared.overview_doc_id,
         teaching=teaching,
+        stages=prepared.stages,
+        package=prepared.task_package,
         environment=_session_opening_lines(
             unconnected_mcp=(
                 await unconnected_mcp(

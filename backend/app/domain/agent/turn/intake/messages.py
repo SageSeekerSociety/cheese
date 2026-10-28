@@ -118,11 +118,15 @@ class RunnerIntake:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
         ``may_summon`` is False for a person whose role does not let them use the
         project's AI teammates (#3830): the message is said, and wakes nobody.
+
+        ``by_assistant``: the person's own 芝士 wrote it for them
+        (`Actor.by_assistant`), and the message says so (``meta.by_assistant``).
 
         Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
@@ -147,6 +151,7 @@ class RunnerIntake:
             client_id=client_id,
             quoted_context=quoted_context,
             handoff=handoff,
+            by_assistant=by_assistant,
         )
         turn_id = user_block_id
         recipient = next(
@@ -171,9 +176,8 @@ class RunnerIntake:
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_session`
         # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = self._address_agent(
-            recipient_seat(recipient) if mentioned else None
-        )
+        seat = recipient_seat(recipient) if mentioned else None
+        addressed = self._address_agent(seat)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(
@@ -189,8 +193,17 @@ class RunnerIntake:
         if duplicate:
             return turn_id
         # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        answer_in = (
+            topic_id
+            if not mentioned
+            or (
+                handoff is not None
+                and handoff.place is not None
+                and handoff.place.inner_id is not None
+            )
+            else await answer_place(
+                chat_service.session_factory, user_block_id, topic_id
+            )
         )
         self._schedule_message(
             chat_service,
@@ -686,6 +699,7 @@ class RunnerIntake:
                 post_admission_event,
                 topic_id,
                 delivery_id,
+                draining=chat_service,
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,

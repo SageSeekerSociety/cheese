@@ -150,6 +150,8 @@ const {
   stalledOf,
   lightOf,
   taskLight,
+  taskRowLight,
+  taskStateOf,
   memberMarks,
   toggleTitle,
   topicById,
@@ -614,7 +616,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 v-guide-anchor="i === 0 ? 'task-row' : ''"
                 :task="task"
                 :selected="task.id === selectedTaskId"
-                :light="taskLight(task)"
+                :light="taskRowLight(task)"
+                :state="taskStateOf(task)"
                 :unread="unreadOf(task.id)"
                 :actions="taskActionsFor"
                 :page="page === true"
@@ -629,7 +632,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :key="task.id"
                 :task="task"
                 :selected="task.id === selectedTaskId"
-                :light="taskLight(task)"
+                :light="taskRowLight(task)"
+                :state="taskStateOf(task)"
                 :unread="unreadOf(task.id)"
                 :actions="taskActionsFor"
                 :page="page === true"
@@ -729,7 +733,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
-                        :light="taskLight(task)"
+                        :light="taskRowLight(task)"
+                        :state="taskStateOf(task)"
                         :unread="unreadOf(task.id)"
                         :actions="taskActionsFor"
                         :page="page === true"
@@ -745,7 +750,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
-                        :light="taskLight(task)"
+                        :light="taskRowLight(task)"
+                        :state="taskStateOf(task)"
                         :unread="unreadOf(task.id)"
                         :actions="taskActionsFor"
                         :page="page === true"

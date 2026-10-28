@@ -1,23 +1,17 @@
 """通用附件读路由：`GET /attachments/{id}` 与 `/download` 对谁给字节。
 
-`#1786` 把「谁能下载一份题目材料」立成三条主张，全部写在题内那条路上
-（`GET /tasks/{taskId}/attachments/{attachmentId}/download`）：出题人 / 板管理员 /
-已经领取的人。可同一个文件还有一扇通用的大门 —— `GET /attachments/{attachmentId}`
-与它下面那条 `/download` 只要登录就答，函数体里一行访问判断都没有；同一个文件里的
-`DELETE` 反倒是 owner-gated。三种动作两种口径，于是题内那道闸门可以整个绕过：
-**知道一个可枚举的小整数 id，就拿到了别人材料库里的原始字节。**
+`#1786` 把「谁能下载一份题目材料」立成三条主张：出题人 / 板管理员 / 已经领取的人。
+它们写在题目材料那条路上（`GET /tasks/{taskId}/files/raw`），材料在题目资料库里。
+发题时选的文件先传成这里的一份附件、建题时拷进题目资料库，所以同一份字节在这里还
+有一份 —— 这扇通用的大门曾经只要登录就答，**知道一个可枚举的小整数 id，就拿到了别人
+题目材料的原始字节。**
 
-判据定在两件事上，各自有据可查（`app/domain/attachment/models.py` 里 `Attachment`
-只有 `id / type / url / meta`，**没有**任何归属列）：
-
-1. **挂在某道题上的文件**：判据照抄题内那条路，一个字不另立 —— 出题人 / 板管理员 /
-   已领取的人能读，其余登录用户 403。这是 `task_attachment` 这张关联表能回答的问题，
-   也是审计点名的那个洞。
-2. **不挂在任何题上的文件**：图片对登录用户放行，其余只有上传者本人能读。理由是另
-   一条前端契约：公告与讨论里嵌的图（`AttachmentImage` 节点带的是 `attachmentId`）
+判据有据可查（`app/domain/attachment/models.py` 里 `Attachment` 只有
+`id / type / url / meta`，**没有**任何归属列）：图片对登录用户放行，其余只有上传者
+本人能读。理由是另一条前端契约：公告与讨论里嵌的图（`AttachmentImage` 节点带的是 `attachmentId`）
    由**所有能看见那段内容的人**通过这条通用路由解析出来（`useAttachmentImages.ts`、
-   `Discussions.vue`），把它们掐掉就是一片裂图。而 `type=file` 的散件（交作业的材料、
-   建题前先传上去的文件）没有任何一处前端会跨用户用这条路由去读，所以收紧到上传者本人。
+`Discussions.vue`），把它们掐掉就是一片裂图。而 `type=file` 的散件（交作业的材料、
+建题前先传上去的文件）没有任何一处前端会跨用户用这条路由去读，所以收紧到上传者本人。
 
 **这是缺口，不是完整答案**：`attachment` 上没有归属列，富文本里嵌的 id 也无法反查，
 所以「一张散图对任何登录用户可读」这条本次**没有**修 —— 它被下面那条测试钉住，
@@ -53,7 +47,7 @@ PNG_1PX = bytes.fromhex(
 
 @pytest.fixture
 def upload_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """把本地存储落到 tmp_path（与 `test_task_attachments.py` 同一手）。"""
+    """把本地存储落到 tmp_path（与 `test_task_files.py` 同一手）。"""
     monkeypatch.setattr(settings, "storage_local_path", str(tmp_path))
     storage_module._storage_backend = None
     yield tmp_path
@@ -94,10 +88,17 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
     }
 
 
-def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
+def _create_task(
+    api_client: TestClient,
+    board: dict,
+    *,
+    name: str,
+    attachment_ids: list[int] | None = None,
+) -> int:
     resp = api_client.post(
         "/tasks",
         json={
+            "attachmentIds": attachment_ids or [],
             "name": name,
             "intro": "题",
             "description": '{"type":"doc","content":[]}',
@@ -137,43 +138,12 @@ def _member_of(
     return user, token
 
 
-def _a_manager_of(
-    user_client: UserCreator, api_client: TestClient, board: dict
-) -> tuple[CreatedUser, str]:
-    user = user_client.create_user()
-    token = _login(user_client, api_client, user)
-    resp = api_client.post(
-        f"/spaces/{board['space_id']}/managers",
-        json={"userId": user.user_id, "role": "ADMIN"},
-        headers=_auth(board["creator_token"]),
-    )
-    assert resp.status_code == 201, resp.text
-    return user, token
-
-
 def _claim(api_client: TestClient, task_id: int, token: str) -> int:
     resp = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
     )
     assert resp.status_code == 200, resp.text
     return int(resp.json()["data"]["participant"]["id"])
-
-
-def _upload_to_task(
-    api_client: TestClient,
-    task_id: int,
-    token: str,
-    *,
-    content: bytes = SECRET_BYTES,
-    filename: str = "payroll.csv",
-) -> int:
-    resp = api_client.post(
-        f"/tasks/{task_id}/attachments",
-        headers=_auth(token),
-        files={"file": (filename, io.BytesIO(content), "text/csv")},
-    )
-    assert resp.status_code == 201, resp.text
-    return int(resp.json()["data"]["attachment"]["id"])
 
 
 def _upload_loose(
@@ -209,46 +179,29 @@ def _download(api_client: TestClient, attachment_id: int, token: str | None):
     )
 
 
-# --- 题内那份材料：通用路由也得走题内那道判据 ---------------------------------
+# --- 题目的材料：通用路由不替题目那道判据开门 ---------------------------------
 
 
-def test_a_task_material_is_not_readable_through_the_generic_routes(
+def test_a_file_picked_for_a_task_is_not_readable_through_the_generic_routes(
     api_client: TestClient, user_client: UserCreator, upload_root: Path, board: dict
 ):
-    """审计那条路径：材料挂在题上，无关的第三个人仅登录就去通用大门取字节。"""
-    task_id = _create_task(api_client, board, name="材料在这道题上")
-    attachment_id = _upload_to_task(api_client, task_id, board["creator_token"])
-    _, outsider_token = _member_of(user_client, api_client, board)
+    """审计那条路径：出题人发题时选的文件，无关的人仅登录就去通用大门取字节。领了
+    题的人也一样拿不到这一份：他读的是题目资料库里那一份（`/tasks/{id}/files`）。"""
+    picked = _upload_loose(api_client, board["creator_token"], filename="payroll.csv")
+    task_id = _create_task(
+        api_client, board, name="材料在这道题上", attachment_ids=[picked]
+    )
+    _, member_token = _member_of(user_client, api_client, board)
+    _claim(api_client, task_id, member_token)
 
-    resp = _download(api_client, attachment_id, outsider_token)
+    resp = _download(api_client, picked, member_token)
     assert resp.status_code == 403, resp.text
     assert SECRET_BYTES not in resp.content
-
-    resp = _detail(api_client, attachment_id, outsider_token)
+    resp = _detail(api_client, picked, member_token)
     assert resp.status_code == 403, resp.text
     assert "storageKey" not in resp.text
 
-
-def test_the_task_materials_readers_still_get_it_through_the_generic_routes(
-    api_client: TestClient, user_client: UserCreator, upload_root: Path, board: dict
-):
-    """该放行的照旧放行：出题人、板管理员、已领取的人 —— 与题内那条路同一批人。"""
-    task_id = _create_task(api_client, board, name="题的读者拿得到材料")
-    attachment_id = _upload_to_task(api_client, task_id, board["creator_token"])
-
-    resp = _download(api_client, attachment_id, board["creator_token"])
-    assert resp.status_code == 200, resp.text
-    assert resp.content == SECRET_BYTES
-
-    _, manager_token = _a_manager_of(user_client, api_client, board)
-    assert _download(api_client, attachment_id, manager_token).status_code == 200
-
-    _, member_token = _member_of(user_client, api_client, board)
-    assert _download(api_client, attachment_id, member_token).status_code == 403
-    _claim(api_client, task_id, member_token)
-    resp = _download(api_client, attachment_id, member_token)
-    assert resp.status_code == 200, resp.text
-    assert resp.content == SECRET_BYTES
+    assert _download(api_client, picked, board["creator_token"]).status_code == 200
 
 
 # --- 没挂在任何题上的散件 -----------------------------------------------------

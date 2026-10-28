@@ -1,16 +1,19 @@
 <script setup lang="ts">
 // 频道主线上的一件任务：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。
-// 同一张卡在原处变化（lib/channelTasks）。和支线长成同一块：单独成块时底色和支线一样，
+// 同一张卡在原处变化（lib/channelTasks），状态那一格是 `TaskStateMark`（lib/taskState）。和支线长成同一块：单独成块时底色和支线一样，
 // 多一行这件任务里最后说的一句；`inList` 时是消息下面那一块里的一行；`head` 时是支线
 // 转成任务后，支线那一块顶上的任务名那一行。
 import type { TaskLine } from '../../lib/channelTasks'
 
+import { computed } from 'vue'
+
 import { relTime } from '../../lib/relTime'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 
-defineProps<{
+const props = defineProps<{
   task: TaskLine
   /** 负责人的名字（按房间里的叫法）。 */
   ownerName: string | null
@@ -25,6 +28,15 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
+
+// 第二行：状态有话要说（在做什么、在等什么、卡在哪、待谁审阅）就写那一句，每一种排法
+// 都写；没有时，单独成块的卡写这件任务里最后说的一句。支线顶上那一行两样都不写，它们
+// 在下面的支线那几行里。
+const second = computed(() => {
+  if (props.head) return ''
+  if (props.task.state.line) return props.task.state.line
+  return !props.inList || props.lone ? props.task.latest ?? '' : ''
+})
 </script>
 
 <template>
@@ -34,7 +46,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
     :class="{
       'task-card--row': inList || head,
       'task-card--head': head,
-      'task-card--mine': task.tone === 'mine' && !inList && !head,
+      'task-card--mine': task.mine && !inList && !head,
       'task-card--crowded': !!task.accepted,
     }"
     data-testid="task-card"
@@ -50,17 +62,16 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
       </span>
       <span class="task-card__gap" />
       <span v-if="task.accepted" class="task-card__accepted">{{ task.accepted }}</span>
-      <span class="task-card__status" :data-tone="task.tone" data-testid="task-card-status">
-        <v-icon v-if="task.tone === 'done'" size="13" aria-hidden="true">mdi-check</v-icon>
-        <v-icon v-else-if="task.tone === 'closed'" size="13" aria-hidden="true">mdi-minus</v-icon>
-        <span v-else class="task-card__dot" aria-hidden="true" />
-        {{ task.status }}
-      </span>
+      <TaskStateMark
+        class="task-card__status"
+        data-testid="task-card-status"
+        :state="task.state"
+        :emphasis="task.mine"
+        :size="15"
+      />
       <span v-if="!head" class="task-card__at t-meta">{{ relTime(task.at) }}</span>
     </span>
-    <span v-if="!head && (!inList || lone) && task.latest" class="task-card__latest" data-testid="task-card-latest">{{
-      task.latest
-    }}</span>
+    <span v-if="second" class="task-card__latest" data-testid="task-card-latest">{{ second }}</span>
   </button>
 </template>
 
@@ -93,7 +104,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   gap: 10px;
   min-width: 0;
 }
-/* 和标题对齐（图标 16 + 间距 10）。 */
+/* 第二行：和标题对齐（图标 16 + 间距 10）。 */
 .task-card__latest {
   margin-left: 26px;
   overflow: hidden;
@@ -151,44 +162,9 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   flex: 1;
 }
 .task-card__status {
-  display: inline-flex;
   flex: none;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
-  white-space: nowrap;
-}
-.task-card__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--faint);
-}
-.task-card__status[data-tone='running'],
-.task-card__status[data-tone='done'] {
-  color: var(--ok-ink);
-}
-.task-card__status[data-tone='running'] .task-card__dot {
-  background: var(--ok);
-}
-.task-card__status[data-tone='waiting'],
-.task-card__status[data-tone='mine'] {
-  color: var(--warn-ink);
-}
-.task-card__status[data-tone='mine'] {
-  font-weight: 600;
-}
-.task-card__status[data-tone='waiting'] .task-card__dot,
-.task-card__status[data-tone='mine'] .task-card__dot {
-  background: var(--warn);
-}
-.task-card__status[data-tone='stuck'] {
-  color: var(--danger-ink);
-}
-.task-card__status[data-tone='stuck'] .task-card__dot {
-  background: var(--danger);
 }
 .task-card__at {
   flex: none;

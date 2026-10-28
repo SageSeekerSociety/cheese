@@ -28,6 +28,7 @@ def _tasks(count: int) -> list[Task]:
             reviewer_handle="r" if i % 3 else None,
             contributor_handles=[f"h{i}", "x"] if i % 6 == 0 else [],
             created_by="c",
+            created_by_assistant=i % 3 == 1,
             branch_name=f"task/{i}" if i % 4 == 0 else None,
             base_branch="main",
             base_task_id=uuid.UUID(int=i) if i % 10 == 0 else None,

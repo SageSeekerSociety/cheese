@@ -54,7 +54,7 @@ function loadECharts(): Promise<Init> {
   return loading
 }
 
-function chartTheme(): ChartTheme {
+function chartTheme(still = false): ChartTheme {
   return {
     colors: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => token(`--chart-${i}`)),
     text: token('--text'),
@@ -62,8 +62,14 @@ function chartTheme(): ChartTheme {
     line: token('--line'),
     surface: token('--surface'),
     font: getComputedStyle(document.body).fontFamily,
-    still: reducedMotion(),
+    still: still || reducedMotion(),
   }
+}
+
+export interface ChartCanvasOptions {
+  /** Draw the finished chart and stop. A copy made for paper has nobody
+   *  watching it grow, and a copy taken mid-draw has its bars at no height. */
+  still?: boolean
 }
 
 export function tableRows(chart: PMNode): string[][] {
@@ -90,7 +96,10 @@ export interface ChartState {
 /** A chart's canvas, drawn from `read()`: drawn once it has a width (a chart
  *  in something folded has none yet), resized with it, and redrawn when the
  *  theme changes or `redraw` is called. */
-export function chartCanvas(read: () => ChartState): { canvas: HTMLElement; redraw: () => void; destroy: () => void } {
+export function chartCanvas(
+  read: () => ChartState,
+  opts: ChartCanvasOptions = {}
+): { canvas: HTMLElement; redraw: () => void; destroy: () => void } {
   let chart: ECharts | null = null
   let timer = 0
   let alive = true
@@ -111,7 +120,7 @@ export function chartCanvas(read: () => ChartState): { canvas: HTMLElement; redr
     canvas.setAttribute('aria-label', kindLabel(kind, horizontal))
     chart ??= init(canvas, null, { renderer: 'svg' })
     chart.resize()
-    chart.setOption(chartOption(kind, horizontal, rows, chartTheme(), canvas.clientWidth < 420), true)
+    chart.setOption(chartOption(kind, horizontal, rows, chartTheme(opts.still), canvas.clientWidth < 420), true)
   }
   requestAnimationFrame(() => void draw())
   const resize = new ResizeObserver(() => {

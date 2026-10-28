@@ -22,7 +22,7 @@ from tests.integration.test_sandbox_idle_stop import (
 )
 
 NOTICE = (
-    "沙箱环境已换成新的。每轮结束时的检查点存下的东西都还在：已推送的提交在任务"
+    "沙箱环境已换成新的。每次停下时的检查点存下的东西都还在：已推送的提交在任务"
     "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
     'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
     "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
@@ -30,7 +30,7 @@ NOTICE = (
 )
 
 ROOM_LINE = (
-    "环境不再响应，已换成新的：每轮结束时推送和备份的工作会带过来，之后才做的改动不在了"
+    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
 )
 
 
@@ -74,7 +74,7 @@ def _tool_call(case, seat, *, tells_agent: bool) -> dict:
     called does and a project hook does not."""
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": 5, "tells_agent": tells_agent},
     ).json()["data"]
 

@@ -16,7 +16,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import JSON, Column, MetaData, Table, event, select
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Column,
+    Integer,
+    MetaData,
+    Table,
+    event,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
@@ -24,6 +33,7 @@ from app.domain.addressing import REASON_REVIEWER, Addressed, Recipient
 from app.domain.delivery.ledger import DeliveryEvent, Ledger, Pending
 from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import NotificationType, dedup_key
+from app.domain.happenings.models import Happening
 from app.domain.user.models import User
 
 pytestmark = pytest.mark.anyio
@@ -36,20 +46,26 @@ _USER_FROM = re.compile(r'\bFROM\s+"?user"?\b', re.IGNORECASE)
 
 @pytest.fixture
 async def ledger_sql():
-    """In-memory SQLite engine and session with `user` and `deliveries` tables."""
+    """In-memory SQLite engine and session with the tables a record writes."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = MetaData()
-    for model in (User, Delivery):
+    for model in (User, Delivery, Happening):
         Table(
             model.__tablename__,
             metadata,
             *(
                 Column(
                     col.name,
-                    JSON() if isinstance(col.type, JSONB) else col.type,
+                    JSON()
+                    if isinstance(col.type, JSONB)
+                    # SQLite numbers only an INTEGER primary key itself.
+                    else Integer()
+                    if isinstance(col.type, BigInteger)
+                    else col.type,
                     primary_key=col.primary_key,
                     nullable=col.nullable,
                     unique=col.unique,
+                    server_default=col.server_default,
                 )
                 for col in model.__table__.columns
             ),

@@ -9,8 +9,8 @@
   "expandAwaits": "展开：里面有待处理的事项",
   "expandDelivered": "展开：里面有刚交付完、你还没看过的",
   "expandStalled": "展开：里面有成员卡住了",
-  "expandStopped": "展开：里面有活停下来报错了",
-  "expandWorking": "展开：里面有活在往前走",
+  "expandStopped": "展开：里面有任务停下了，没做完",
+  "expandWorking": "展开：里面有任务正在进行",
   "expandTasks": "展开这个频道下面的任务",
   "fewerTasks": "收起",
   "fillInTip": "这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿",
@@ -20,10 +20,10 @@
   "personalTeam": "个人",
   "projectMenu": "项目菜单",
   "switchProject": "切换项目",
-  "tasksFailed": "没读出来，点一下重试",
+  "tasksFailed": "加载失败，点一下重试",
   "tasksLoading": "正在读取…",
   "topics": "频道",
-  "turnFailed": "{agent}最近一轮报错了",
+  "turnFailed": "{agent}上次没做完",
   "underwayHint": "在项目里还开着、也还没在收尾的任务",
   "workingTip": "{name}正在这里工作"
 }

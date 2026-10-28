@@ -10,6 +10,7 @@ import uuid
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.library import records as library_records
+from app.domain.library.shelf import Shelf
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support import library_uploads
 
@@ -226,7 +227,12 @@ def test_same_name_at_the_same_time_loses_neither(client):
     async def put(data: bytes) -> str:
         async with client.test_factory() as session:
             name = await library_records.add(
-                session, project_id, "同名.txt", data, "user-1", None
+                session,
+                Shelf.of_project(project_id, with_task=False),
+                "同名.txt",
+                data,
+                "user-1",
+                None,
             )
             await session.commit()
             return name

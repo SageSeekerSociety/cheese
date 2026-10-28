@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import ProjectOverviewView from './ProjectOverviewView.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { renderNoticeMessage } from '@/lib/noticeText'
 
 Object.defineProperty(globalThis, 'devicePixelRatio', { configurable: true, value: 1 })
 
@@ -129,6 +130,61 @@ it('最近进展里点一件，去那件任务', async () => {
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
 })
 
+function revised(version: number, changes: ProgressItem['changes']): ProgressItem {
+  return {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version,
+    changes,
+  }
+}
+
+it('题目更新了：写到了第几版、改了什么，点开去看历史版本里的那一版', async () => {
+  const item = revised(3, { rubric: true, files: { replaced: ['数据.csv'] } })
+  const view = mount({ progress: [item], taskLinked: true })
+  const line = view.getByText('第 3 版：改了评分要点、替换 数据.csv')
+  await fireEvent.click(line)
+  expect(view.emitted('open-task-version')).toEqual([[3]])
+})
+
+it('看不到这道题的人：题目更新那一行是一行字，不是一颗点不动的按钮', async () => {
+  const view = mount({ progress: [revised(3, { rubric: true })], taskLinked: false })
+  const line = view.getByText('第 3 版：改了评分要点')
+  expect(line.closest('button')).toBeNull()
+  await fireEvent.click(line)
+  expect(view.emitted('open-task-version')).toBeUndefined()
+})
+
+it('只换了起始代码的那一版：写明换了起始代码', () => {
+  const view = mount({ progress: [revised(2, { starter: 'replaced' })] })
+  expect(view.getByText('第 2 版：替换起始代码')).toBeTruthy()
+})
+
+it('题目的阶段改了：这一版写明改了阶段', () => {
+  const item: ProgressItem = {
+    kind: 'revised',
+    at: new Date().toISOString(),
+    taskId: null,
+    taskTitle: '',
+    taskTitleSource: null,
+    roomId: null,
+    by: null,
+    artifactId: null,
+    artifactName: '',
+    version: 2,
+    changes: { stages: true },
+  }
+  const view = mount({ progress: [item] })
+  expect(view.getByText('第 2 版：改了阶段')).toBeTruthy()
+})
+
 it('没绑平台账号的 GitHub 合并人：原样显示登录名，不去名册里撞同名的人', () => {
   const item: ProgressItem = {
     kind: 'accepted',
@@ -182,9 +238,84 @@ it('领题开的项目：写着这份报名自己截到哪一刻，按看的人�
   expect(closing.getByTestId('overview-deadline').textContent).toBe('题目截止：10月24日 16:05')
 })
 
+it('领的题分了阶段：那一行截止换成阶段时间轴，写着这个项目每个阶段走到哪一步', async () => {
+  const at = new Date(2030, 9, 24, 16, 5).getTime()
+  const view = mount({
+    overviewText: '## 赛题要求',
+    challengeDeadline: { at, mine: true },
+    challengeStages: {
+      stages: [
+        { name: '需求分析', description: '', dueAt: at },
+        { name: '实现', description: '', dueAt: null },
+      ],
+      statuses: ['PASSED', 'NOT_SUBMITTED'],
+    },
+  })
+  expect(view.queryByTestId('overview-deadline')).toBeNull()
+  const timeline = await view.findByTestId('overview-stages')
+  expect(timeline.textContent).toContain('需求分析')
+  expect(timeline.textContent).toContain('截止 10月24日 16:05')
+  expect(timeline.textContent).toContain('已通过')
+  expect(timeline.textContent).toContain('未提交')
+})
+
 it('不是领题开的项目：不写截止', () => {
   const view = mount({ overviewText: '## 现在到哪了' })
   expect(view.queryByTestId('overview-deadline')).toBeNull()
+})
+
+it('仓库从题目的起始代码开始的：在放、放好了、没放成各说一句；没有起始代码的不写', () => {
+  const pending = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'pending', reason: '' } })
+  expect(pending.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库正在放入题目第 3 版的起始代码')
+
+  cleanup()
+  const done = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'done', reason: '' } })
+  expect(done.getByTestId('overview-starter').textContent?.trim()).toBe('代码仓库的起始代码来自题目第 3 版')
+
+  cleanup()
+  const failed = mount({
+    overviewText: '## 赛题要求',
+    starter: { revision: 3, state: 'failed', reason: '压缩包里没有文件' },
+  })
+  expect(failed.getByTestId('overview-starter').textContent?.trim()).toBe(
+    '题目第 3 版的起始代码没能放进代码仓库：压缩包里没有文件'
+  )
+
+  cleanup()
+  const plain = mount({ overviewText: '## 赛题要求', starter: null })
+  expect(plain.queryByTestId('overview-starter')).toBeNull()
+})
+
+it('起始代码没放成：接着说下一步怎么办，「题目」文件夹点得开；在放、放好了的不说', async () => {
+  const failed = mount({
+    overviewText: '## 赛题要求',
+    starter: { revision: 3, state: 'failed', reason: '压缩包里没有文件' },
+  })
+  expect(failed.getByTestId('overview-starter-next').textContent).toContain('起始代码.zip')
+  await fireEvent.click(failed.getByRole('button', { name: '「题目」文件夹' }))
+  expect(failed.emitted('open-task-folder')).toEqual([[]])
+
+  cleanup()
+  const pending = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'pending', reason: '' } })
+  expect(pending.queryByTestId('overview-starter-next')).toBeNull()
+
+  cleanup()
+  const done = mount({ overviewText: '## 赛题要求', starter: { revision: 3, state: 'done', reason: '' } })
+  expect(done.queryByTestId('overview-starter-next')).toBeNull()
+})
+
+it('main 先被占了而没放成的：题目第几版的起始代码只说一次', () => {
+  const view = mount({
+    overviewText: '## 赛题要求',
+    starter: {
+      revision: 3,
+      state: 'failed',
+      reason: renderNoticeMessage({ key: 'starterMainTaken' }, ''),
+    },
+  })
+  const line = view.getByTestId('overview-starter').textContent ?? ''
+  expect(line.split('题目第 3 版').length - 1).toBe(1)
+  expect(line).toContain('main 分支')
 })
 
 it('没写过项目目标：让 AI 队友起草，补充的话一起交出去', async () => {

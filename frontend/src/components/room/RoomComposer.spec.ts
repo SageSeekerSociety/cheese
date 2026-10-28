@@ -711,13 +711,26 @@ describe('动作行', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('输入法上屏留下的时间戳也算：那一下回车不是发送', async () => {
+  it('上屏之后紧接着按的回车是发送，不被当成输入法吃掉', async () => {
+    // 打中文的人上屏之后紧接着按回车发送，两次按键只隔几十毫秒。曾经这里有一个
+    // 「compositionend 之后 100 毫秒内的按键都算输入法」的时间窗，把这一次发送也吃掉了，
+    // 输入框里留下来一行换行（真机 2026-10-24 反馈）。判据只能看这一次按键本身。
     const { box, onSend } = mount()
     await fillComposer(box(), '看看这个')
     focusIn(box())
 
     await fireEvent.compositionEnd(box())
-    await fireEvent.keyDown(box(), { key: 'Enter' })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 13 })
+    expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('上屏那一下的回车本身不是发送：它带 isComposing 或 229', async () => {
+    const { box, onSend } = mount()
+    await fillComposer(box(), '看看这个')
+    focusIn(box())
+
+    await fireEvent.keyDown(box(), { key: 'Enter', isComposing: true })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 229 })
     expect(onSend).not.toHaveBeenCalled()
   })
 

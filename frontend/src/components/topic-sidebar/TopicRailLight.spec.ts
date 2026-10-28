@@ -14,7 +14,7 @@ describe('侧栏行尾那盏灯', () => {
       props: { light: { kind: 'green', breathe: true } },
     })
     expect(breathing.container.querySelector('.row-light--breathe')).not.toBeNull()
-    expect(breathing.container.querySelector('.row-light')?.getAttribute('title')).toBe('有活在往前走')
+    expect(breathing.container.querySelector('.row-light')?.getAttribute('title')).toBe('有任务正在进行')
 
     const delivered = render(TopicRailLight, {
       props: { light: { kind: 'green', breathe: false } },

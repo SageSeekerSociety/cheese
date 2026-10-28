@@ -87,6 +87,7 @@ const base = {
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
   timezone: 'Asia/Shanghai',
   last_run_status: 'succeeded' as const,
+  credits_this_month: 42.5,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   created_by: 'cheese-x',
@@ -109,7 +110,7 @@ beforeEach(() => {
     ],
     total: 2,
   })
-  vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0 })
+  vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0, credits_this_month: 0 })
   // 模板存在项目里（`api/routines.ts` 那三个接口），默认这个项目一条也没有。
   vi.mocked(listRoutineTemplates).mockResolvedValue({ data: [], total: 0 })
 })
@@ -245,7 +246,11 @@ describe('例行事务', () => {
         finished_at: '2026-09-28T01:10:00Z',
       })),
     })
-    vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 34 })
+    vi.mocked(listRoutineRuns).mockResolvedValue({
+      data: [],
+      total: 34,
+      credits_this_month: 0,
+    })
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
 

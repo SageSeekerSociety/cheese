@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import notice_keys, notice_message, say
 from app.domain.addressing import Event, Hand, address
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent
@@ -53,11 +54,15 @@ async def _remind(session: AsyncSession, now: datetime) -> int:
     last_said = await TaskService(session).last_block_at_for_tasks(ids)
     cards = await latest_cards_by_task(session, ids)
     asked = await awaiting_an_answer(session, ids)
+    runs = await teammate_runs(session, tasks)
     due = []
     for task in tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
-                task, cards.get(task.id), awaiting_answer=task.id in asked
+                task,
+                cards.get(task.id),
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )

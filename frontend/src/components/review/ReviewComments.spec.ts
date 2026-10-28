@@ -59,10 +59,13 @@ function sent(over: Partial<ReviewComment>): ReviewComment {
   }
 }
 
+// 这一份管的是写给某几行的批注，批注挂在行下面——所以默认把那一段铺开（`expanded`）。
+// 段头默认收着这一条在 `PanelChanges.spec.ts` 里守。
 function mount(review: Partial<DiffReview>) {
   return render(ChangesDiffList, {
     props: {
       diffs: [DIFF],
+      expanded: new Set([DIFF.path]),
       review: { comments: [], writable: true, me: 'alice', busy: false, agentName: '芝士', ...review },
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },

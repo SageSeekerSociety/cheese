@@ -16,9 +16,9 @@ rules:
               - pattern: await $OBJ.$M(...)
               - metavariable-regex:
                   metavariable: $M
-                  regex: '^(get|get_by_id|get_by_handle|get_task|get_device|get_bundle|owner_of|standing|lookup_account|user_by_handle|may_read_project|_people_seated|_words|instance_for_seat|admit_project|project_name|_session_author|_agent_name|_json|_workflow_runs_page|find)$'
+                  regex: '^(get|get_by_id|get_by_handle|get_task|get_device|get_bundle|owner_of|standing|lookup_account|user_by_handle|may_read_project|_people_seated|_words|instance_for_seat|admit_project|project_name|_session_author|session_author|_agent_name|_json|_workflow_runs_page|find)$'
           - patterns:
               - pattern: await $M(...)
               - metavariable-regex:
                   metavariable: $M
-                  regex: '^(get|get_by_id|get_by_handle|get_task|get_device|get_bundle|owner_of|standing|lookup_account|user_by_handle|may_read_project|_people_seated|_words|instance_for_seat|admit_project|project_name|_session_author|_agent_name|_json|_workflow_runs_page|find)$'
+                  regex: '^(get|get_by_id|get_by_handle|get_task|get_device|get_bundle|owner_of|standing|lookup_account|user_by_handle|may_read_project|_people_seated|_words|instance_for_seat|admit_project|project_name|_session_author|session_author|_agent_name|_json|_workflow_runs_page|find)$'

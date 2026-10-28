@@ -13,7 +13,9 @@ import { useFeedbackTags } from './useFeedbackTags'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import { t } from '@/i18n'
+import { agentNames } from '@/lib/agentNames'
 import { EXPECTATION_KINDS, REPRO_KINDS, useFeedbackStore } from '@/stores/feedback'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 // 标题上限。以前只写在输入框的 maxlength 上，粘一段长标题进来会被悄悄截掉；现在同一个
 // 数字同时喂给 maxlength 和计数器。
@@ -76,6 +78,13 @@ const fromProposal = computed(() => !!store.draft.proposal)
 /** agent 带过来的现场。单独取一份是为了模板里能 `v-if` 之后再读它的三段 —— 在
  *  `store.draft.fromAgent` 那条链上做窄化，模板里读到的类型仍可能是 undefined。 */
 const origin = computed(() => store.draft.fromAgent)
+
+/** 提这张卡的那位队友叫什么：它的 handle 在项目名册上的名字，名册里没有才写项目默认那位。 */
+const workspace = useWorkspaceStore()
+const originAgent = computed(() => {
+  const handle = origin.value?.agentHandle
+  return (handle && agentNames([], workspace.members).get(handle)) || workspace.agentName
+})
 
 /** 手上这份是刚从盘上捞回来的。说出来，而不是静默发生 —— 打开表单看到一段不是自己
  *  刚打的字，不解释一句就像串了别人的内容。 */
@@ -153,9 +162,9 @@ onMounted(() => {
     <section v-if="origin" class="sb-origin">
       <div class="sb-origin__head">
         <v-icon size="16" aria-hidden="true">mdi-robot-outline</v-icon>
-        <span class="t-title">{{ t('feedback.submit.agent.title') }}</span>
+        <span class="t-title">{{ t('feedback.submit.agent.title', { agent: originAgent }) }}</span>
       </div>
-      <p class="sb-origin__note t-body">{{ t('feedback.submit.agent.note') }}</p>
+      <p class="sb-origin__note t-body">{{ t('feedback.submit.agent.note', { agent: originAgent }) }}</p>
       <dl class="sb-origin__facts">
         <template v-if="origin.whatHappened">
           <dt>{{ t('feedback.submit.agent.whatHappened') }}</dt>

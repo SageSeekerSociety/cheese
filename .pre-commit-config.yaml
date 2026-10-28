@@ -81,6 +81,18 @@ repos:
         pass_filenames: false
         files: ^backend/(.*\.py|\.importlinter)$
 
+      # A write route says who may call it (backend/app/api/write_access.py), and
+      # ROUTE_DECIDES says only that its handler decides. The routes that still
+      # declare it move onto Can(permission) a batch at a time; a route added
+      # now declares what it needs. Graded against the merge base like the
+      # boundary check, so the routes that tree has are its own to keep.
+      - id: route-decides
+        name: no new write route leaves its callers to the handler
+        entry: bash -c 'cd backend && uv run python scripts/check_route_decides.py'
+        language: system
+        pass_filenames: false
+        files: ^backend/app/api/.*\.py$
+
       # The two refactors that leave every other gate green: a module becomes a
       # package and its facade stops offering a name, and a name leaves a module
       # for a sibling while the callers still import it from where it left. The

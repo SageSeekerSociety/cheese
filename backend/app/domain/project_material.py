@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import records as library_records
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.overview import pointed_overview
 from app.domain.project.models import Project
@@ -362,4 +363,11 @@ async def _talk(
 
 async def library_names(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
     """资料库里现在有的文件名，按名字排。"""
-    return [name for name, _, _ in await library_records.stored(session, project_id)]
+    return [
+        name
+        for name, _, _ in await library_records.stored(
+            # 项目自己的文件；题目的材料（`题目/`）归题目。
+            session,
+            Shelf.of_project(project_id, with_task=False),
+        )
+    ]

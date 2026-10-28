@@ -82,6 +82,8 @@ export interface AcceptCard {
   change_body: string | null
   status: AcceptStatus
   decided_by: string | null
+  // decided_by 自己的芝士替他做的这个决定。
+  decided_by_assistant?: boolean
   decided_at: string | null
   note: string
   // 这条 note 是「停住了」(error) 还是「还在走」(info)；空 note 是 null。

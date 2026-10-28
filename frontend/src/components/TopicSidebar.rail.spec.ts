@@ -588,6 +588,45 @@ describe('综合自身无灯时，收起来的任务灯仍落在唯一那盏灯�
   })
 })
 
+// 任务行上「在做」的图标会转，行尾就不再亮呼吸绿：同一行只有一样东西在动。收起来时
+// 图标看不见了，那一堆照旧在频道行上说「有任务正在进行」。
+describe('在做的任务行不亮呼吸绿', () => {
+  const moving = {
+    id: 'task-moving',
+    room_id: 'root',
+    title: 'Moving task',
+    title_source: 'user',
+    status: 'open',
+    owner_handle: 'someone-else',
+    moving: true,
+    presentation: { column: 'building', phrase: 'running' },
+  }
+
+  it('展开时任务行行尾没有那盏呼吸的绿灯', () => {
+    const { container } = mount({
+      topics: [topic('root', null, 'root')],
+      roomTaskTotals: { root: 1 },
+      roomTasks: { root: [moving] },
+    })
+    const row = (Array.from(container.querySelectorAll('.rail-task-wrap')) as HTMLElement[]).find((r) =>
+      r.textContent?.includes('Moving task')
+    )
+    expect(row).toBeTruthy()
+    expect(row!.querySelector('.row-light--green')).toBeNull()
+  })
+
+  it('收起来时频道行替它说有任务正在进行', () => {
+    const { container } = mount({
+      topics: [topic('root', null, 'root')],
+      roomTaskTotals: { root: 1 },
+      roomTasks: { root: [moving] },
+      foldedChannels: { root: true },
+    })
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    expect(row.querySelector('.row-light--green')).not.toBeNull()
+  })
+})
+
 // 整页形态：手机上话题列表是页面栈的一层，占满内容区。抽屉和"拖宽度"这两样
 // 在手机上都不成立——但列表本身一条不能少。
 describe('整页形态', () => {

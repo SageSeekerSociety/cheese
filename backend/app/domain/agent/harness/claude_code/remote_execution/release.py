@@ -21,10 +21,14 @@ from pathlib import Path
 # What a mountpoint is doing — told apart in the one way `os.path.ismount` cannot.
 #
 # When a forwarded_fs server process dies, its mount does NOT go away: the
-# directory stays occupied and answers every stat with ENOTCONN. `os.path.ismount`
-# swallows that OSError and returns False, which every caller reads as "nothing is
-# mounted here" — so a mount is attempted onto it and fails, and the cleanup that
-# would have removed it skips it. Nothing ever clears it again.
+# directory stays occupied and every stat on it fails. `os.path.ismount` swallows
+# that OSError and returns False, which every caller reads as "nothing is mounted
+# here" — so a mount is attempted onto it and fails, and the cleanup that would
+# have removed it skips it. Nothing ever clears it again.
+#
+# The error is ENOTCONN where the kernel has a connection to report, and EIO
+# where it does not: a mount whose server was killed answers `Input/output
+# error` (measured on 6.12), so that one is in the list beside the other three.
 #
 # It is not only the room's problem. Anything that walks the directory blocks
 # there, `actions/checkout` included: one left in a CI runner's workspace on
@@ -41,7 +45,7 @@ def mount_state(path):
     try:
         os.lstat(path)
     except OSError as error:
-        if error.errno in (errno.ENOTCONN, errno.ETIMEDOUT, errno.EHOSTDOWN):
+        if error.errno in (errno.ENOTCONN, errno.ETIMEDOUT, errno.EHOSTDOWN, errno.EIO):
             return MOUNT_DEAD
         return MOUNT_NONE
     return MOUNT_LIVE if os.path.ismount(path) else MOUNT_NONE
@@ -289,6 +293,7 @@ def sources():
         name: (directory / name).read_text()
         for name in (
             "client.py",
+            "send_user_file.py",
             "shell_stop.py",
             # The parts of `client.py` it imports from beside itself: the
             # command it runs for the build's shell prefix, the namespace it
@@ -312,6 +317,11 @@ def sources():
             "runtime_calls.py",
             "context_service.py",
             "forwarded_fs.py",
+            # The other direction: this machine's view of the session host's
+            # transcript, and the helper that binds it where the build names
+            # it (`bootstrap` starts that one).
+            "forwarded_transcript.py",
+            "transcript_view.py",
             "release.py",
         )
     }

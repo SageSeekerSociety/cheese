@@ -14,10 +14,6 @@ defineProps<{
   spaces: SpaceLink[]
   awaiting?: number
   currentHandle?: string | null
-  editing: Team | null
-  editingBusy?: boolean
-  editingError?: string
-  editingNameError?: string
   disbanding: Team | null
   disbandBusy?: boolean
   disbandError?: string | null
@@ -35,10 +31,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  edit: [team: Team]
-  'update:editing': [team: Team | null]
-  saveProfile: [payload: { name: string; intro: string; avatarFile?: File }]
-  clearErrors: []
   openDisband: [team: Team]
   'update:disbanding': [team: Team | null]
   confirmDisband: []
@@ -60,10 +52,6 @@ const emit = defineEmits<{
       :spaces="spaces"
       :awaiting="awaiting"
       :current-handle="currentHandle"
-      :editing="editing"
-      :editing-busy="editingBusy"
-      :editing-error="editingError"
-      :editing-name-error="editingNameError"
       :disbanding="disbanding"
       :disband-busy="disbandBusy"
       :disband-error="disbandError"
@@ -78,10 +66,6 @@ const emit = defineEmits<{
       :create-open="createOpen"
       :create-busy="createBusy"
       :create-error="createError"
-      @edit="(team) => emit('edit', team)"
-      @update:editing="(team) => emit('update:editing', team)"
-      @save-profile="(payload) => emit('saveProfile', payload)"
-      @clear-errors="emit('clearErrors')"
       @open-disband="(team) => emit('openDisband', team)"
       @update:disbanding="(team) => emit('update:disbanding', team)"
       @confirm-disband="emit('confirmDisband')"

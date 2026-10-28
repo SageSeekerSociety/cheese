@@ -9,8 +9,8 @@
   "expandAwaits": "Expand: something in here needs you",
   "expandDelivered": "Expand: something in here just finished and you haven't looked",
   "expandStalled": "Expand: someone in here is stuck",
-  "expandStopped": "Expand: something in here stopped with an error",
-  "expandWorking": "Expand: work in here is moving",
+  "expandStopped": "Expand: a task in here stopped before it finished",
+  "expandWorking": "Expand: a task in here is moving",
   "expandTasks": "Expand this channel's tasks",
   "fewerTasks": "Show fewer",
   "fillInTip": "Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
@@ -23,7 +23,7 @@
   "tasksFailed": "Couldn't load them. Click to retry",
   "tasksLoading": "Loading…",
   "topics": "Channels",
-  "turnFailed": "{agent}'s last run failed",
+  "turnFailed": "{agent} didn't finish last time",
   "underwayHint": "Tasks still open in the project and not yet being written up",
   "workingTip": "{name} is working here"
 }

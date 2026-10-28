@@ -102,6 +102,7 @@ lock = core.lock
 resolve_program = core.resolve_program
 socket_path = core.socket_path
 socket_directory = core.socket_directory
+platform_socket_directory = core.platform_socket_directory
 connect = core.connect
 claude_shell = core.claude_shell
 native_path = core.native_path
@@ -109,6 +110,51 @@ gitignored = core.gitignored
 _unquote = core._unquote
 skill_paths = core.skill_paths
 request = core.request
+
+
+def _pipe_socket(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
+
+
+def _start_forge_bridge(forge_sock: Path):
+    """Loopback TCP listener inside the sandbox that pipes to `forge.sock`."""
+
+    class _Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                upstream.connect(str(forge_sock))
+            except OSError:
+                return
+            with upstream:
+                t1 = threading.Thread(
+                    target=_pipe_socket, args=(self.request, upstream), daemon=True
+                )
+                t2 = threading.Thread(
+                    target=_pipe_socket, args=(upstream, self.request), daemon=True
+                )
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+    class _Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    server = _Server(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 class Executor:
@@ -129,6 +175,38 @@ class Executor:
                 self.upgrading = pending["ready"]
         self.root = Path(self.config["workspace"]).resolve(strict=True)
         self.env = dict(os.environ, **self.config.get("env", {}))
+        self.forge_bridge = None
+        if sys.platform != "win32":
+            platform_dir = Path(platform_socket_directory(self.state))
+            forge_sock = platform_dir / "forge.sock"
+            ca_bundle = platform_dir / "ca-bundle.pem"
+            ca_pem = platform_dir / "ca.pem"
+            if forge_sock.exists() and ca_bundle.is_file():
+                self.forge_bridge = _start_forge_bridge(forge_sock)
+                proxy_url = f"http://127.0.0.1:{self.forge_bridge.server_address[1]}"
+                no_proxy_hosts = [
+                    "127.0.0.1",
+                    "localhost",
+                    "127.0.0.2",
+                    "platform.cheese",
+                ]
+                site_fwd = (self.env.get("CHEESE_SITE_FORWARD") or "").rpartition(":")[
+                    0
+                ]
+                if site_fwd:
+                    no_proxy_hosts.append(site_fwd)
+                no_proxy = ",".join(dict.fromkeys(no_proxy_hosts))
+                self.env.update(
+                    HTTPS_PROXY=proxy_url,
+                    https_proxy=proxy_url,
+                    NO_PROXY=no_proxy,
+                    no_proxy=no_proxy,
+                    SSL_CERT_FILE=str(ca_bundle),
+                    REQUESTS_CA_BUNDLE=str(ca_bundle),
+                    GIT_SSL_CAINFO=str(ca_bundle),
+                    CURL_CA_BUNDLE=str(ca_bundle),
+                    NODE_EXTRA_CA_CERTS=str(ca_pem),
+                )
         # Every command this executor runs is a process of its own, in its own
         # process group, with its output in files under `commands/`: whoever
         # asked for it — the central session's shell prefix, or a caller of
@@ -583,6 +661,14 @@ def main():
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))
     elif args.mode == "stop":
+        if sys.platform != "win32":
+            proxy_record = Path(platform_socket_directory(state)) / "forge-proxy.json"
+            if proxy_record.is_file():
+                with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+                    pid = int(json.loads(proxy_record.read_text())["pid"])
+                    os.kill(pid, signal.SIGTERM)
+                with contextlib.suppress(OSError):
+                    proxy_record.unlink()
         try:
             request(state, "shutdown")
         except (FileNotFoundError, ConnectionRefusedError):

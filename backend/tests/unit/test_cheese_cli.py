@@ -316,7 +316,7 @@ def test_raw_request_sends_cheese_token(monkeypatch):
     def fake_urlopen(req, timeout=0):
         seen["url"] = req.full_url
         seen["method"] = req.get_method()
-        seen["token"] = req.get_header("X-cheese-token")
+        seen["token"] = req.get_header("Authorization").removeprefix("Bearer ")
         return _Resp()
 
     monkeypatch.setattr(cli.urllib.request, "urlopen", fake_urlopen)
@@ -542,7 +542,7 @@ def test_the_library_on_the_machine_only_fetches():
 
 
 def test_worktree_prepares_the_task_directory(monkeypatch, tmp_path, capsys):
-    """开活是会话侧的 `cheese_task`；目录在机器上，由这一条准备。"""
+    """开活是会话侧的 `cheese_task(action=open)`；目录在机器上，由这一条准备。"""
     cli = _load()
     prepared = []
 

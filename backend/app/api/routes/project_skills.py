@@ -3,20 +3,26 @@
 An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
 
-The row shape every skill route answers with (`_skill`) and the room's slice of
-it (`proposals_in_room`) are in `app.api.project_skill_rows`: a room's snapshot
-embeds the second and is not a route, so both live under `app.api` where the
-route and the snapshot may ask for the same one (C4 `routes-independent`). This
-module imports the two back — the rows it returns have to be that shape, not a
-second copy of it.
+The row shape every skill route answers with (`_skill`) and one conversation's
+slice of it (`proposals_in_conversation`) are in `app.api.project_skill_rows`: a
+conversation's snapshot embeds the second and is not a route, so both live under
+`app.api` where the route and the snapshot may ask for the same one (C4
+`routes-independent`). This module imports the two back — the rows it returns
+have to be that shape, not a second copy of it.
 """
 
+import asyncio
 import base64
 import binascii
+import json
+import os
 import re
+import shutil
+import time
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,10 +31,13 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import require_role
 from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
-from app.api.write_access import ROUTE_DECIDES
+from app.api.response import Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
+from app.domain import skill_library as native_skills
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.models import Block, BlockKind
@@ -54,6 +63,7 @@ from app.domain.notice_meta import (
 from app.domain.project_permissions import Permission
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
+from app.domain.project_skill.repo_to_skill import draft_chat, repo_to_skill
 from app.domain.project_skill.service import ProjectSkillService
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
@@ -122,7 +132,7 @@ def _by_title(text: str, skills: list[ProjectSkill]) -> str:
     skill's title.
 
     A teammate knows the project's skills by the id at the end of each one
-    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    (it is what it passes to `cheese_skill(action=update)`), so the closest skill it
     names on a proposal card arrives as an id; the person deciding reads
     titles.
     """
@@ -201,19 +211,19 @@ async def list_skills(
 def _post_line(
     db: AsyncSession,
     row: ProjectSkill,
-    room_id: uuid.UUID,
+    conversation_id: uuid.UUID,
     line: str,
     detail: str,
     *,
     edit: bool = False,
 ) -> None:
-    """The room's line about a teammate's proposal: what it is, and a way to
-    the card a person saves it from."""
+    """The conversation's line about a teammate's proposal: what it is, and a
+    way to the card a person saves it from."""
     db.add(
         Block(
             id=uuid.uuid4(),
             project_id=row.project_id,
-            conversation_id=room_id,
+            conversation_id=conversation_id,
             author="system",
             author_type=AuthorType.platform,
             kind=BlockKind.event,
@@ -240,12 +250,13 @@ def _post_line(
 
 
 async def _has_open_line(
-    db: AsyncSession, room_id: uuid.UUID, skill_id: uuid.UUID
+    db: AsyncSession, conversation_id: uuid.UUID, skill_id: uuid.UUID
 ) -> bool:
-    """Whether the room already has a line about this skill nobody decided on."""
+    """Whether the conversation already has a line about this skill nobody
+    decided on."""
     rows = await db.scalars(
         select(Block.meta).where(
-            Block.conversation_id == room_id,
+            Block.conversation_id == conversation_id,
             Block.kind == BlockKind.event,
             Block.meta["event_type"].as_string() == EVENT_SKILL_PROPOSED,
             Block.meta["skill_id"].as_string() == str(skill_id),
@@ -277,7 +288,10 @@ async def create_skill(
         }
     row = await service.create(
         project_id=place.project_id,
-        topic_id=place.room_id,
+        # The conversation the teammate proposed from, not the room it hangs
+        # in: the card and the line below are drawn there, as the other cards a
+        # teammate raises are.
+        topic_id=place.conversation_id,
         by=by,
         by_agent=by_agent,
         name=body.name,
@@ -288,13 +302,13 @@ async def create_skill(
         _post_line(
             db,
             row,
-            place.room_id,
+            place.conversation_id,
             say("skillProposedBy", who=f"<@{by}>", title=row.title),
             say("skillProposedDetail", description=row.description, body=row.body),
         )
     await db.commit()
     await service.publish(place.project_id)
-    await announce_stale(place.room_id, "skills")
+    await announce_stale(place.conversation_id, "skills")
     return ok(_skill(row))
 
 
@@ -308,23 +322,15 @@ class PersonSkillIn(BaseModel):
     imported: bool = False
 
 
-async def _person_in_project(
-    db: AsyncSession, resolver: ActorResolver, project_id: uuid.UUID, what: str
-) -> Actor:
-    actor = await _in_project(db, resolver, project_id, None)
-    _person(actor, what)
-    return actor
-
-
-@router.post("/projects/{project_id}/skills", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/skills")
 async def add_skill(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: PersonSkillIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """A person writes a skill, or adds one read through the import preview."""
-    actor = await _person_in_project(db, resolver, project_id, say("skillAdd"))
+    project_id, actor = at.project.id, at.actor
+    _person(actor, say("skillAdd"))
     if body.imported:
         # What comes from outside reaches every later session and runs its
         # scripts on the work computer; the project's managers decide that.
@@ -351,19 +357,22 @@ class ImportSource(BaseModel):
     url: str = ""
 
 
-@router.post(
-    "/projects/{project_id}/skills/import-preview", dependencies=[ROUTE_DECIDES]
-)
+@router.post("/projects/{project_id}/skills/import-preview")
 async def preview_import(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: ImportSource,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
-    lay it out for a manager to look over. Nothing is saved."""
-    actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    """Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay
+    it out for a manager to look over. Nothing is saved.
+
+    A GitHub folder that already holds a ``SKILL.md`` is read as it is; any other
+    repository is turned into a draft from its README and entry files
+    (``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,
+    so 「预览 → 保存」 downstream does not know the difference.
+    """
+    _person(at.actor, say("skillImport"))
+    await MemberService(db).require(at.project.id, at.actor, Permission.edit_settings)
     if body.content:
         if len(body.content) > importer.MAX_TOTAL_BYTES * 4 // 3 + 4:
             raise ValidationError(say("skillImportTooLarge"))
@@ -373,14 +382,15 @@ async def preview_import(
             raise ValidationError(say("skillImportUnreadable")) from exc
         read = importer.read_upload(body.filename, data)
     elif body.url.strip():
-        read = await importer.read_github(body.url)
+        read = await repo_to_skill(body.url, lambda: draft_chat(db))
     else:
         raise ValidationError(say("skillImportNothing"))
     return ok(read.to_json())
 
 
 async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
-    """A person decided on a teammate's proposal: its line in the room says so."""
+    """A person decided on a teammate's proposal: its line in that conversation
+    says so."""
     if row.source_topic_id is None:
         return
     await settle_proposal(
@@ -400,7 +410,7 @@ async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
 
 
 async def _changed(row: ProjectSkill) -> None:
-    """Tell the room a method came from that its cards changed."""
+    """Tell the conversation a method came from that its cards changed."""
     if row.source_topic_id is not None:
         await announce_stale(row.source_topic_id, "skills")
 
@@ -450,6 +460,11 @@ async def update_skill(
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
     pending = row.state == "draft"
+    if not by_agent:
+        # Rewriting a method changes what every later session follows, and the
+        # method may be another member's -- a manager decides that. A teammate's
+        # edit stays a proposal for a person to confirm instead (`by_agent`).
+        await MemberService(db).require_manager(row.project_id, actor)
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
@@ -460,14 +475,14 @@ async def update_skill(
     if by_agent and topic is not None:
         # The card goes where the teammate was corrected: the person who just
         # corrected it decides there, as with a new skill.
-        room_id = (await place_or_404(db, topic)).room_id
-        row.source_topic_id = room_id
-        if not await _has_open_line(db, room_id, row.id):
+        conversation_id = (await place_or_404(db, topic)).conversation_id
+        row.source_topic_id = conversation_id
+        if not await _has_open_line(db, conversation_id, row.id):
             edit = row.shipped_revision > 0
             _post_line(
                 db,
                 row,
-                room_id,
+                conversation_id,
                 say(
                     "skillEditProposedBy" if edit else "skillProposedBy",
                     who=f"<@{row.proposed_by}>",
@@ -526,7 +541,7 @@ async def decline_skill(
 ) -> dict:
     """A person turns a teammate's pending proposal down."""
     row, actor = await _load(db, resolver, skill_id, None)
-    _person(actor, say("skillDecline"))
+    _person(actor, say("skillDecline", agent=f"<@{row.proposed_by}>"))
     service = ProjectSkillService(db)
     row = await service.decline(row, by=actor.handle)
     await _settled(db, row, saved=False)
@@ -561,6 +576,9 @@ async def delete_skill(
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillDelete"))
+    # Deleting takes the method away from every later session, and it may be
+    # another member's; a manager decides that.
+    await MemberService(db).require_manager(row.project_id, actor)
     project_id = row.project_id
     service = ProjectSkillService(db)
     if row.state == "draft":
@@ -570,3 +588,203 @@ async def delete_skill(
     await service.publish(project_id)
     await _changed(row)
     return ok({"deleted": str(skill_id)})
+
+
+# --- The skill panel: what a teammate carries, and what a room can switch on ---
+#
+# Two shapes of the same catalog. The shipped skills (`sandbox/skills`) already
+# reach every executor, so a name here is only a promise that the turn's prompt
+# will carry that skill's body (`agent/turn/intake/preparation.py`). A project's
+# settings edit ONE teammate's `agent_instances.configuration.skills`
+# (`/projects/{id}/skill-catalog`, below); the room-level switch (`topics.skills`)
+# is the older fallback a prompt falls back to when the teammate carries nothing.
+
+
+class TopicSkillsIn(BaseModel):
+    enabled: list[str] = Field(default_factory=list)
+
+
+class SkillCatalogItem(BaseModel):
+    """A shipped skill the platform can put in a prompt: its name and what it
+    does. `enabled` only exists on a room's list — a project's catalog is the
+    same items without the per-room switch."""
+
+    name: str
+    description: str
+
+
+class TopicSkillItem(SkillCatalogItem):
+    enabled: bool
+
+
+class SkillCatalogOut(Page[SkillCatalogItem]):
+    """A project's catalog of shipped skills."""
+
+
+class TopicSkillsCatalogOut(Page[TopicSkillItem]):
+    """A room's catalog: the same items, each with its own switch."""
+
+
+class TopicSkillsOut(BaseModel):
+    """What a room switched on, after unknown names were dropped."""
+
+    enabled: list[str]
+
+
+class SkillHealthOut(BaseModel):
+    """Whether a skill can run right now, and why not when it cannot."""
+
+    status: str
+    detail: str
+
+
+def _platform_catalog() -> list[dict]:
+    """The shipped skills whose guidance can actually be put in a prompt — a name
+    with no `SKILL.md` on disk (`cheese-docs`, built by composition) is left out:
+    a socket that lights up and does nothing is worse than no socket."""
+    out: list[dict] = []
+    for name in native_skills.shipped_skill_names():
+        doc = native_skills.native_skill_doc(name)
+        if doc is None:
+            continue
+        out.append({"name": name, "description": doc[0]})
+    return out
+
+
+@router.get("/topics/{topic_id}/skills", **typed_response(TopicSkillsCatalogOut))
+async def list_topic_skills(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    enabled = set(place.room.skills or [])
+    items = [{**s, "enabled": s["name"] in enabled} for s in _platform_catalog()]
+    return ok(page(items, len(items)))
+
+
+@router.get("/projects/{project_id}/skill-catalog", **typed_response(SkillCatalogOut))
+async def project_skill_catalog(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The shipped skills a teammate in this project can be armed with. Project,
+    not room: which teammate carries what is a project setting (and only a
+    manager may change it — `projects_agents.py`)."""
+    await _in_project(db, resolver, project_id, None)
+    items = _platform_catalog()
+    return ok(page(items, len(items)))
+
+
+@router.get("/skill-catalog", **typed_response(SkillCatalogOut))
+async def skill_catalog(_: AuthUserInfo = Depends(require_auth_user)) -> dict:
+    """The shipped skills, for a 题目's publisher picking the ones every
+    teammate of its projects carries (`Teaching.skills`). It names no project:
+    the catalog is the platform's and the same for everyone, and a 题目 being
+    written has no project yet — signing in is the whole gate."""
+    items = _platform_catalog()
+    return ok(page(items, len(items)))
+
+
+@router.put(
+    "/topics/{topic_id}/skills",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TopicSkillsOut),
+)
+async def set_topic_skills(
+    topic_id: uuid.UUID,
+    body: TopicSkillsIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    # Only names the platform can actually hand this room: an unknown one would
+    # ride the prompt as a promise nothing backs (`native_skill_bodies`).
+    known = {s["name"] for s in _platform_catalog()}
+    enabled = list(dict.fromkeys(n for n in body.enabled if n in known))
+    place.room.skills = enabled or None
+    await db.commit()
+    return ok({"enabled": enabled})
+
+
+# --- Is this skill runnable right now? ----------------------------------------
+#
+# A switch that says "on" while the tool it names cannot run is worse than no
+# switch. Only Wolfram has a real probe (`scripts/wolfram_mcp.py health`, which
+# reaches the official MCP); the rest answer by their files being present, which
+# is all "loadable" means for a prompt-only skill.
+
+_HEALTH_TTL_S = 300
+_health_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _probe_wolfram() -> dict:
+    # ponytail: 探针在 backend 主机上起一个子进程跑技能自带脚本（上限：宿主要有
+    # uv 且能连到 MCP；探不到就如实说 unavailable/degraded，绝不假装可用）。
+    root = native_skills.native_skill_dir("wolfram")
+    script = root / "scripts" / "wolfram_mcp.py" if root is not None else None
+    if script is None or not script.is_file():
+        return {"status": "unavailable", "detail": "技能文件缺失"}
+    if shutil.which("uv") is None:
+        return {"status": "unavailable", "detail": "未安装 uv"}
+    proc = await asyncio.create_subprocess_exec(
+        "uv",
+        "run",
+        "--quiet",
+        "--script",
+        str(script),
+        "health",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        # 探针跑的是装船目录里的脚本：别让它在平台的技能树里甩下 __pycache__。
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=25)
+    except TimeoutError:
+        proc.kill()
+        return {"status": "degraded", "detail": "探针超时"}
+    if proc.returncode != 0:
+        return {"status": "degraded", "detail": "探针执行失败"}
+    try:
+        payload = json.loads(out.decode() or "{}")
+    except ValueError:
+        return {"status": "degraded", "detail": "探针输出无法解析"}
+    reachable = bool((payload.get("wolfram") or {}).get("available"))
+    return {
+        "status": "ok" if reachable else "degraded",
+        "detail": "Wolfram 通道可用" if reachable else "Wolfram 通道不可达",
+    }
+
+
+@router.get("/topics/{topic_id}/skills/{name}/health", **typed_response(SkillHealthOut))
+async def skill_health(
+    topic_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    place = await place_or_404(db, topic_id)
+    await _in_project(db, resolver, place.project_id, topic_id)
+    return await _skill_health(name)
+
+
+@router.get(
+    "/projects/{project_id}/skills/{name}/health", **typed_response(SkillHealthOut)
+)
+async def project_skill_health(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The same probe, asked from a project's settings instead of a room."""
+    await _in_project(db, resolver, project_id, None)
+    return await _skill_health(name)
+
+
+async def _skill_health(name: str) -> dict:
+    if name not in {s["name"] for s in _platform_catalog()}:
+        raise NotFoundError(say("skillUnknown"))
+    now = time.monotonic()
+    cached = _health_cache.get(name)
+    if cached is not None and now - cached[0] < _HEALTH_TTL_S:
+        return ok(cached[1])
+    result = (
+        await _probe_wolfram() if name == "wolfram" else {"status": "ok", "detail": ""}
+    )
+    _health_cache[name] = (now, result)
+    return ok(result)

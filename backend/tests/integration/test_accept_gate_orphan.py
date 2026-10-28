@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 from app.domain.review import gate_sweep
 from app.domain.review.services import GATE_ABANDONED_PREFIX
 from tests.conftest import wait_work_idle
@@ -63,7 +63,7 @@ def _make_topic(client, project_id: str) -> str:
 def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> str:
     """Insert a historical `pending_gate` row directly — the shape a card had
     before the gate was retired (the API can no longer mint this state)."""
-    from app.domain.review.models import AcceptCard, AcceptStatus
+    from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 
     task_id = delivery_task_id(client, topic_id)
 
@@ -72,12 +72,13 @@ def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> s
             card = AcceptCard(
                 topic_id=uuid.UUID(topic_id),
                 task_id=task_id,
-                reviewer_handle=reviewer,
                 focus="最懂",
                 status=AcceptStatus.pending_gate,
             )
             session.add(card)
             await session.flush()
+            # 评审人搬进 `accept_card_reviewer` 表了（`reviewer_handle` 列已退役）。
+            session.add(AcceptCardReviewer(card_id=card.id, handle=reviewer))
             cid = str(card.id)
             await session.commit()
             return cid
@@ -337,15 +338,17 @@ def test_void_requires_a_logged_in_human(client):
     tid, card_id = _orphan_card(client)
     pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
 
-    # 匿名（全局 sandbox token 仍在，证明它不足以顶一个身份）。
-    client.headers.pop("Authorization")
-    assert _void(client, card_id).status_code == 401
+    # 只有平台密钥，证明它不足以顶一个身份。
+    platform = {"Authorization": f"Bearer {SANDBOX_TOKEN}"}
+    assert _void(client, card_id, headers=platform).status_code == 401
 
     # 芝士拿着**作用域内**的 token 也不行。作废是授权类动作，只给人。
     r = _void(
         client,
         card_id,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

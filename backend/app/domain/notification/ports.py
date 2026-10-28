@@ -21,6 +21,7 @@ class DecisionLine(Protocol):
     """把「拍板了」这一句落进那条对话，交回能直接投出去的那一份。
 
     ``author`` 是拍板的人本人的 handle：这句话署他的名，不署平台的。
+    ``by_assistant``：是他自己的芝士替他拍的板，这一句标明是芝士代说的。
     """
 
     async def __call__(
@@ -30,4 +31,5 @@ class DecisionLine(Protocol):
         conversation_id: uuid.UUID,
         author: str,
         content: str,
+        by_assistant: bool = False,
     ) -> dict: ...

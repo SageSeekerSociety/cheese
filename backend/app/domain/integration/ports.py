@@ -14,6 +14,17 @@ from typing import Protocol
 from uuid import UUID
 
 
+class TeammateNames(Protocol):
+    """What a project's AI teammate is called, for a sentence a person reads."""
+
+    async def name_of(self, project_id: UUID, seat: str) -> str:
+        """The teammate seated as ``seat``: the name its project gave it, or
+        the reader-language default when it still has the one it was born
+        with. An error message is shown outside any room, so a ``<@seat>``
+        token in it would reach the reader as written."""
+        ...
+
+
 class RoomFiles(Protocol):
     """Reading one file out of a room's file area."""
 

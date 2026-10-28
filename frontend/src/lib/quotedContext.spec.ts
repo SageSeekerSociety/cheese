@@ -5,8 +5,10 @@
  * 以及冻结之后谁都改不动——它描述的是「当时那一版」，被改过就不再是同一件事了。
  */
 import type {
+  ImageRegionQuote,
   PagePinQuote,
   SheetCellQuote,
+  SheetRangeQuote,
   SlidePageQuote,
   TextRangeQuote,
   WebElementQuote,
@@ -46,6 +48,18 @@ const cell: SheetCellQuote = {
   sheet: '预算',
   address: 'B7',
   value: '1200',
+}
+
+const sheetArea: SheetRangeQuote = {
+  kind: 'sheet-range',
+  path: 'budget.xlsx',
+  source: 'committed',
+  version: 'v7',
+  task_id: null,
+  sheet: '预算',
+  start: 'B2',
+  end: 'D4',
+  text: '90\t80\n70\t60',
 }
 
 const range: TextRangeQuote = {
@@ -106,6 +120,15 @@ it('表格一格：地址不能空，工作表名可以是空的（CSV），不�
   expect(isQuotedContext({ ...cell, sheet: 2 })).toBe(false)
   expect(isQuotedContext({ ...cell, value: undefined })).toBe(false)
   expect(isQuotedContext({ ...cell, kind: 'grid' })).toBe(false)
+  expect(isQuotedContext(sheetArea)).toBe(true)
+  // CSV 没有工作表名；一片里的内容可以是空；两个角各自都要有。
+  expect(isQuotedContext({ ...sheetArea, sheet: '' })).toBe(true)
+  expect(isQuotedContext({ ...sheetArea, text: '' })).toBe(true)
+  expect(isQuotedContext({ ...sheetArea, start: '' })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, end: '' })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, start: undefined })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, sheet: 2 })).toBe(false)
+  expect(isQuotedContext({ ...sheetArea, kind: 'grid' })).toBe(false)
 })
 
 it('正文一段：标题可以是空（文件开头），原文和前后文必须在', () => {
@@ -129,7 +152,7 @@ it('幻灯片选中一段也带前后文：可选，但带上就得是字符串'
 })
 
 it('文件身份那一半对四种形状一视同仁', () => {
-  for (const quote of [page, pin, cell, range]) {
+  for (const quote of [page, pin, cell, sheetArea, range]) {
     expect(isQuotedContext({ ...quote, path: '' })).toBe(false)
     expect(isQuotedContext({ ...quote, path: undefined })).toBe(false)
     expect(isQuotedContext({ ...quote, version: '' })).toBe(false)
@@ -174,6 +197,40 @@ const webRegion: WebRegionQuote = {
   rect: { x: 0, y: 0, w: 200, h: 100 },
   viewport: { w: 800, h: 600 },
 }
+
+const imageRegion: ImageRegionQuote = {
+  kind: 'image-region',
+  path: '示意图.png',
+  source: 'live',
+  version: 'v8',
+  task_id: null,
+  x: 12,
+  y: 40,
+  width: 180,
+  height: 96,
+  natural_width: 1024,
+  natural_height: 768,
+}
+
+it('图片框选的一块：原图像素加原图尺寸，和网页那一类刚好相反', () => {
+  expect(isQuotedContext(imageRegion)).toBe(true)
+  // 贴左上角（0）是一处合法位置。
+  expect(isQuotedContext({ ...imageRegion, x: 0, y: 0 })).toBe(true)
+  // 框不出东西来的宽高不是一处位置（后端 gt=0）。
+  expect(isQuotedContext({ ...imageRegion, width: 0 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, height: -1 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, x: -1 })).toBe(false)
+  // 原图尺寸是正整数：它来自图片自己，1.5 或 0 都指不回一份原图。
+  expect(isQuotedContext({ ...imageRegion, natural_width: 0 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, natural_width: 1024.5 })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, natural_height: undefined })).toBe(false)
+  // 认不出的形状一律不收。多带的字段由后端拦（`extra="forbid"`）——这一层只核它列到的
+  // 那几样，和别的几种引用同一条。
+  expect(isQuotedContext({ ...imageRegion, kind: 'image-area' })).toBe(false)
+  // 文件身份那一半照旧：缺一样都不是同一份东西。
+  expect(isQuotedContext({ ...imageRegion, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...imageRegion, version: '' })).toBe(false)
+})
 
 it('网页预览的三形状都收：点一个元素、选一段文字、圈一块区域', () => {
   expect(isQuotedContext(webElement)).toBe(true)
@@ -230,4 +287,13 @@ it('网页那两种也走文件身份那一半：路径和版本缺一样就不�
     expect(isQuotedContext({ ...quote, source: 'working' })).toBe(false)
     expect(isQuotedContext({ ...quote, task_id: 3 })).toBe(false)
   }
+})
+
+it('「在看哪一份」：只有路径和所在任务，不带版本和位置', () => {
+  const viewing = { kind: 'viewing', path: 'output/招募方案.docx', task_id: null }
+  expect(isQuotedContext(viewing)).toBe(true)
+  expect(isQuotedContext({ ...viewing, task_id: 'b2c7a1f0-0000-4000-8000-000000000000' })).toBe(true)
+  expect(isQuotedContext({ ...viewing, path: '' })).toBe(false)
+  expect(isQuotedContext({ ...viewing, path: 'x'.repeat(1001) })).toBe(false)
+  expect(isQuotedContext({ ...viewing, task_id: 3 })).toBe(false)
 })

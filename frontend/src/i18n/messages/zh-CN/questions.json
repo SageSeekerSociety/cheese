@@ -63,7 +63,7 @@
     },
     "errors": {
       "inviteFailed": "邀请失败：{reason}",
-      "loadFailed": "读不到可以邀请的人。"
+      "loadFailed": "无法读取可邀请的人"
     }
   },
   "answer": {

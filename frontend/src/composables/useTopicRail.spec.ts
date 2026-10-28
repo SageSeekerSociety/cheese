@@ -244,6 +244,6 @@ describe('折叠开关替收起来的行说话', () => {
     ])
 
     const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
-    expect(title).toContain('往前走')
+    expect(title).toContain('正在进行')
   })
 })

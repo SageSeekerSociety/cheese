@@ -5,15 +5,15 @@
 // `HomeSidebar`、手机整页 `HomeHub`）各挂一份目录，判断只有这一份。
 import type { SpaceLink, Team, TeamMember } from '@/types'
 
-import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
+import { useQuery } from '@tanstack/vue-query'
 
 import { awaitingCount } from '@/composables/useAwaitingCount'
 import { useJoinSpace } from '@/composables/useJoinSpace'
 
-import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { SpacesApi } from '@/api/spaces'
@@ -21,6 +21,9 @@ import { onSpacesChanged } from '@/api/spacesChanged'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
+import { patchQuery, queryClient } from '@/query/client'
+import { mySpacesQuery, myTeamsQuery } from '@/query/homeNav'
+import { keys } from '@/query/keys'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -34,85 +37,58 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   // 给它 `active`，只在看得见的时候取数。整页那一份不传，一直取。
   const active = options.active ?? (() => true)
 
-  const teams = ref<Team[]>([])
-  const spaces = ref<SpaceLink[]>([])
+  // 团队和空间都是服务器上的数据，读的是 `query/homeNav` 里那一份。从空间或项目回到
+  // 首页时这块侧栏会卸载重挂，名单留在缓存里，第一帧就画得出来，不用从空开始等请求。
+  //
+  // 「先用旧名单」只是先画：挂载时一律再到服务器问一次（`refetchOnMount: 'always'`）。
+  // 目录看不见的时候删掉的空间、改过的名字、手机上加的空间，回来这一下就校正了；
+  // 不能只靠缓存过期，那样 30 秒内的变化会被旧名单盖住。
+  const teamsRead = useQuery(
+    computed(() => ({ ...myTeamsQuery(), enabled: active(), refetchOnMount: 'always' })),
+    queryClient
+  )
+  const spacesRead = useQuery(
+    computed(() => ({ ...mySpacesQuery(), enabled: active(), refetchOnMount: 'always' })),
+    queryClient
+  )
+  const teams = computed<Team[]>(() => teamsRead.data.value ?? [])
+  const spaces = computed<SpaceLink[]>(() => spacesRead.data.value ?? [])
 
-  // 名单会被重读很多次（见下面的换页面、拿回焦点）。只认最后发出的那一次，而这里
-  // 自己改过名单（退出、解散、转让、改资料）也算一次更新：早发的读晚回来，会把刚退出
-  // 的团队又画回去。
-  let teamsRead = 0
-  function setTeamsHere(next: Team[]) {
-    teamsRead += 1
-    teams.value = next
-  }
-  async function loadTeams() {
-    const read = ++teamsRead
-    try {
-      const mine = (await TeamsApi.getMyTeams()).teams
-      if (read === teamsRead) teams.value = mine
-    } catch {
-      // 读不到就不列：这是一份目录，不是这一页的内容。
-    }
-  }
-
-  // 空间那一组 = 我加入的空间，加上我建的、还没过审的那几个（待审核或被驳回）。
-  // 后者不在空间列表里（没过审的空间谁的列表里都没有），只能从「我的申请」里读；
-  // 过审的申请就是一个普通空间，已经在前一份里了。和团队名单一样只认最后发出的那一次读。
-  let spacesRead = 0
-  async function loadSpaces() {
-    const read = ++spacesRead
-    try {
-      const [listed, applied] = await Promise.all([
-        SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' }),
-        // 申请读不到不该连累已加入的空间：退回一份空的。
-        SpacesApi.applications().catch(() => ({ items: [] })),
-      ])
-      const next: SpaceLink[] = listed.spaces.map((space) => ({ id: space.id, name: space.name }))
-      for (const item of applied.items) {
-        if (item.reviewStatus === 'APPROVED' || next.some((space) => space.id === item.id)) continue
-        next.push({ id: item.id, name: item.name, review: item.reviewStatus })
-      }
-      if (read === spacesRead) spaces.value = next
-    } catch {
-      // 同上。
-    }
+  // 这里自己改过名单（退出、解散、转让、改资料）：先作废正在路上的那次读，再改缓存。
+  // 那次读是改之前发出去的，晚回来会把刚退出的团队又画回去。
+  async function setTeamsHere(change: (current: Team[]) => Team[]) {
+    await patchQuery<Team[]>(keys.myTeams(), change)
   }
 
-  onMounted(() => {
-    if (!active()) return
-    void loadTeams()
-    void loadSpaces()
-  })
-
-  // 侧栏跨页面一直挂着，只在挂载时读一次的话，刚建的团队、刚被批准加入的团队要整页
-  // 刷新才出现。没有推送告诉它名单变了，于是在人做了点什么的时候重读：换页面（建完
-  // 团队就是跳进那个团队）、窗口重新拿到焦点（批准往往是在别处等来的）。
+  // 名单会变，可后端不推：换页面（建完团队就是跳进那个团队）、窗口重新拿到焦点
+  // （批准往往是在别处等来的）时重读；在别处改了空间或了结了一件待办，也当场重读。
   watch(
     () => route.path,
     () => {
-      if (active()) void loadTeams()
+      if (active()) void teamsRead.refetch()
     }
   )
   useEventListener(window, 'focus', () => {
-    if (active()) void loadTeams()
+    if (active()) void teamsRead.refetch()
   })
   // 在哪一页建了、删了、加入或退出了一个空间，或者改了一份申请：空间那一组当场重读。
   onScopeDispose(
     onSpacesChanged(() => {
-      if (active()) void loadSpaces()
+      if (active()) void spacesRead.refetch()
     })
   )
   // 在待办里接受了一条团队邀请（或别的会了结待办的事）：名单可能多了一个团队，当场重读。
   onScopeDispose(
     onAwaitingChanged(() => {
-      if (active()) void loadTeams()
+      if (active()) void teamsRead.refetch()
     })
   )
-  // 窗口从窄变宽，侧栏这时才露出来，此前一次没读过：补一次。
+  // 窗口从窄变宽，侧栏这时才露出来：补一次。`enabled` 从 false 翻成 true 时只在缓存
+  // 过期才取数，这里不等新鲜期。
   watch(active, (now) => {
     if (!now) return
-    void loadTeams()
-    void loadSpaces()
+    void teamsRead.refetch()
+    void spacesRead.refetch()
   })
 
   // 正在看某个团队的某一页时，那个团队一定是展开的：否则侧栏上找不到「你在这儿」。
@@ -125,7 +101,12 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   const awaiting = awaitingCount()
 
   // ---- 用邀请码加入空间：问后端、成了进那个空间，和待办页共用 `useJoinSpace`。
-  const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace(() => void loadSpaces())
+  const {
+    open: joinOpen,
+    busy: joinBusy,
+    error: joinError,
+    join: joinSpace,
+  } = useJoinSpace(() => void spacesRead.refetch())
 
   // ---- 新建空间：提交以后就是一份待审核的申请，落到那份申请上。侧栏那一组由
   // `onSpacesChanged` 重读，这里不用管。
@@ -149,58 +130,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
       createError.value = t('spaces.create.failed')
     } finally {
       createBusy.value = false
-    }
-  }
-
-  // ---- 改资料。名字全站唯一，撞名要落在名字那一格，别和「没网」「没权限」混成一句。
-  const editing = ref<Team | null>(null)
-  const editingBusy = ref(false)
-  const editingError = ref('')
-  const editingNameError = ref('')
-
-  function edit(team: Team | null) {
-    editing.value = team
-    clearErrors()
-  }
-
-  /** 上一次那句报错不该跟着人打字走：他在名字那一格里一动就撤掉，重新判一次。 */
-  function clearErrors() {
-    editingError.value = ''
-    editingNameError.value = ''
-  }
-
-  async function saveProfile(payload: { name: string; intro: string; avatarFile?: File }) {
-    const team = editing.value
-    if (!team || editingBusy.value) return
-    editingError.value = ''
-    editingNameError.value = ''
-    const name = payload.name.trim()
-    if (!name) {
-      editingNameError.value = t('work.teamProfile.nameRequired')
-      return
-    }
-    editingBusy.value = true
-    try {
-      // 换头像 = 先把图传上去换一个 id，再把它和另外两项一起 PATCH 上去；
-      // 没换图就不带 avatarId，免得把现成的头像覆盖掉。
-      const avatarId = payload.avatarFile ? (await createAvatar(payload.avatarFile)).avatarId : null
-      const { team: updated } = await TeamsApi.update(team.id, {
-        name,
-        intro: payload.intro.trim(),
-        ...(avatarId ? { avatarId } : {}),
-      })
-      setTeamsHere(teams.value.map((row) => (row.id === updated.id ? { ...row, ...updated } : row)))
-      editing.value = null
-      toast.success(t('work.teamProfile.saved'))
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) editingNameError.value = t('work.teamProfile.nameTaken')
-      else if (e instanceof ApiError && e.status === 403) editingError.value = t('work.teamProfile.forbidden')
-      else {
-        editingError.value = t('work.teamProfile.saveFailed')
-        console.error(e)
-      }
-    } finally {
-      editingBusy.value = false
     }
   }
 
@@ -230,7 +159,7 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     disbandBusy.value = false
     disbanding.value = null
     toast.success(t('home.nav.disbandTeamDone', { name: team.name }))
-    forgetTeam(team)
+    await forgetTeam(team)
   }
 
   // ---- 转让团队。所有者退不掉（后端要他先转让或解散），这里就是那条出路；交出去之后
@@ -273,7 +202,9 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     transferError.value = null
     try {
       const { team: updated } = await TeamsApi.transferOwner(team.id, userId)
-      setTeamsHere(teams.value.map((row) => (row.id === updated.id ? { ...row, ...updated, role: 'ADMIN' } : row)))
+      await setTeamsHere((rows) =>
+        rows.map((row) => (row.id === updated.id ? { ...row, ...updated, role: 'ADMIN' } : row))
+      )
       transferring.value = null
     } catch (e) {
       transferError.value = e instanceof Error ? e.message : t('home.nav.transferTeamFailed')
@@ -301,13 +232,13 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     })
     if (result === undefined) return
     toast.success(t('home.nav.leaveTeamDone', { name: team.name }))
-    forgetTeam(team)
+    await forgetTeam(team)
   }
 
   // 这个团队不再是我的了：这一行消失；它的项目也不再是我的，rail 上那几格跟着项目清单走；
   // 正看着它的某一页的话回待办。
-  function forgetTeam(team: Team) {
-    setTeamsHere(teams.value.filter((row) => row.id !== team.id))
+  async function forgetTeam(team: Team) {
+    await setTeamsHere((rows) => rows.filter((row) => row.id !== team.id))
     void useWorkspaceStore().refreshProjects()
     if (currentHandle.value?.toLowerCase() === team.handle.toLowerCase()) void router.replace({ name: 'inbox' })
   }
@@ -325,13 +256,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     createBusy,
     createError,
     createSpace,
-    editing,
-    editingBusy,
-    editingError,
-    editingNameError,
-    edit,
-    clearErrors,
-    saveProfile,
     disbanding,
     disbandBusy,
     disbandError,

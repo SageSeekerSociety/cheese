@@ -57,6 +57,22 @@ used to run on the platform (``Watchdog``): talking without progress, and an
 input left unread. When one runs out it interrupts the agent, and the ``status``
 event that follows names the failure ``stuck`` with the clock that fired.
 
+**The ping is a handshake that outlives the protocol.** A runner lives on the
+session host past the release that started it, so the next release meets
+runners speaking an older version of this protocol, which it does not read. It
+reads their ``ping`` instead, and these fields are the stable handshake every
+version keeps: ``alive``, ``lifecycle`` (``PROTOCOL``), ``launch``,
+``session_id``, ``working`` (the busy flag: a piece of work is under way, from
+its first sign until its ending, while a tool runs included), ``work_id`` (the
+room's work it is doing), ``worker_epoch`` (the registration it holds) and
+``endings`` (its last few works' endings, oldest first, each with its ``work``,
+its typed ``failure``, null when it ended cleanly, and the platform's
+``inputs`` it read). A
+change of ``PROTOCOL`` may add fields to the ping, never drop or redefine
+these: the release that reads them drains a runner at work before replacing it
+(``room.sessions.lifecycle``). ``tests/unit/test_runner_ping_handshake.py``
+holds a runner of this release to them.
+
 Standard library only: this module travels in the runner archive.
 """
 
@@ -64,7 +80,8 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
-#: The version of this protocol a runner speaks (``ping``'s ``lifecycle``).
+#: The version of this protocol a runner speaks (``ping``'s ``lifecycle``). A
+#: runner of any other version is drained and replaced, never read.
 PROTOCOL = 1
 
 # --- event kinds -------------------------------------------------------------
@@ -101,6 +118,9 @@ EXITED_MIDWAY = "exited"
 #: The clocks a runner ends stuck work by (``Watchdog``).
 NO_PROGRESS = "no_progress"
 UNREAD = "unread"
+#: The session stopped producing anything at all while it was at work, and
+#: nothing was running on it that would explain the quiet.
+SILENT = "silent"
 
 #: How long output must be recent for a session to count as talking: talking
 #: without progress for ``no_progress_s`` is a loop, while a session that went
@@ -221,7 +241,7 @@ class Outbox:
 
 
 class Watchdog:
-    """The two clocks a runner ends stuck work by, on the monotonic clock.
+    """The clocks a runner ends stuck work by, on the monotonic clock.
 
     - **no progress** — the session said something within ``TALKING_S`` but
       has called no tool and finished nothing for ``no_progress_s``.
@@ -229,13 +249,26 @@ class Watchdog:
       ``unread_s``. Input is read at tool boundaries, so the clock does not run
       while a tool runs, and after one it runs from the return; before the work
       did anything at all there is no evidence of reading either way.
+    - **silent** — the session has produced nothing at all for ``silent_s``
+      and no tool is running. The other two both need something to go on: a
+      session that said something recently, or an input still waiting to be
+      read. A session whose process is alive but whose build stopped answering
+      has neither, and without this clock nothing ever reports that it
+      stopped — the work stays open, and so does everything that counts it.
 
     0 turns a clock off. The clocks run only while the session is running.
     """
 
-    def __init__(self, *, no_progress_s: float = 0.0, unread_s: float = 0.0):
+    def __init__(
+        self,
+        *,
+        no_progress_s: float = 0.0,
+        unread_s: float = 0.0,
+        silent_s: float = 0.0,
+    ):
         self.no_progress_s = no_progress_s
         self.unread_s = unread_s
+        self.silent_s = silent_s
         self.running_since: float | None = None
         self.progressed = 0.0
         self.said: float | None = None
@@ -245,12 +278,15 @@ class Watchdog:
         #: input id → when it was written, while it is unread.
         self.unread: dict[str, float] = {}
 
-    def configure(self, *, no_progress_s: float, unread_s: float) -> None:
+    def configure(
+        self, *, no_progress_s: float, unread_s: float, silent_s: float = 0.0
+    ) -> None:
         self.no_progress_s, self.unread_s = no_progress_s, unread_s
+        self.silent_s = silent_s
 
     def armed(self) -> bool:
-        """Whether either clock is on."""
-        return self.no_progress_s > 0 or self.unread_s > 0
+        """Whether any clock is on."""
+        return self.no_progress_s > 0 or self.unread_s > 0 or self.silent_s > 0
 
     def started(self, now: float) -> None:
         self.running_since = self.progressed = now
@@ -302,4 +338,11 @@ class Watchdog:
             )
             if now - waiting >= self.unread_s:
                 return UNREAD
+        if self.silent_s > 0 and not self.tools:
+            # Nothing ran and nothing was said: what a build that stopped
+            # answering looks like from here. A tool in flight can be quiet
+            # for as long as it likes — that is the build working, not dying.
+            quiet_since = max(self.progressed, self.said or 0.0)
+            if now - quiet_since >= self.silent_s:
+                return SILENT
         return None

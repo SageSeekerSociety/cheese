@@ -17,7 +17,7 @@ defineProps<{
   <div class="chapter-mark" role="heading" aria-level="3">
     <span class="chapter-mark__rule" aria-hidden="true" />
     <span class="chapter-mark__body">
-      <v-icon size="12" class="chapter-mark__icon">mdi-bookmark-outline</v-icon>
+      <v-icon size="12" class="chapter-mark__icon">mdi-bookmark</v-icon>
       <span class="chapter-mark__no">{{ t('work.room.chapter.mark', { no }) }}</span>
       <span class="chapter-mark__sep" aria-hidden="true">·</span>
       <span class="chapter-mark__title">{{ title }}</span>

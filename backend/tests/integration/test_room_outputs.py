@@ -11,7 +11,7 @@
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, session_auth_headers
 from tests.support import git_store
 
 
@@ -30,9 +30,9 @@ def _room(client, project_id: str, title: str = "改一份文件") -> str:
 def _agent_headers(project_id: str, room_id: str) -> dict:
     """一轮里铸出来的那种凭据 —— 芝士 摆东西出来用的就是它。"""
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id, topic_id=room_id, ttl_s=3600
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=project_id, topic_id=room_id, ttl_s=3600)
+        }"
     }
 
 
@@ -179,3 +179,33 @@ def test_the_room_is_told_what_was_saved(client):
 
     said = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
     assert any("评审简报.html 已存进资料库" in (b.get("content") or "") for b in said)
+
+
+def test_saving_from_a_thread_is_said_in_that_thread_and_waits_on_nobody(client):
+    """在支线里按的保存，那句话说在支线里，不落到主线上；存好了就是办完了，
+    不是「等人处理」。"""
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    _show(client, project_id, room_id, "gemm_bench.cu", "__global__ void k() {}")
+    opened = client.post(
+        f"/topics/{room_id}/threads",
+        json={"title": "写个 gemm 测速"},
+        headers=session_auth_headers("owner"),
+    )
+    assert opened.status_code == 200, opened.text
+    thread_id = opened.json()["data"]["id"]
+
+    assert _save(client, thread_id, "gemm_bench.cu").status_code == 200
+
+    def notices(place_id: str) -> list[dict]:
+        blocks = client.get(f"/topics/{place_id}/blocks").json()["data"]["data"]
+        return [
+            b
+            for b in blocks
+            if "gemm_bench.cu 已存进资料库" in (b.get("content") or "")
+        ]
+
+    in_thread = notices(thread_id)
+    assert len(in_thread) == 1
+    assert in_thread[0]["meta"]["who"] != "human"
+    assert notices(room_id) == []

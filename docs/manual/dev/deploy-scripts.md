@@ -10,6 +10,7 @@ covers:
   - deploy/check-auto-deploy.py
   - deploy/check-forge-workspace-writers.py
   - deploy/release-device-connection.sh
+  - deploy/release-llm-tunnel.sh
   - deploy/release-gateway.sh
   - deploy/release-metering-proxy.sh
   - deploy/release-cloud-control.sh
@@ -59,7 +60,7 @@ covers:
 | 阶段 | 依据 | 做什么 |
 |---|---|---|
 | 记下现状 | `service_container`/`service_image`（`:529-542`） | 存 `PREV_BACKEND_IMAGE`、`PREV_FRONTEND_IMAGE`、`PREV_SHA`；回滚只靠这三样 |
-| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
+| 拉镜像 | `retry_pull`、`pull_backoff_delay`（都在 `deploy/registry-retry.sh`） | 一次部署的 pull 共用 600 秒预算，重试到预算用完，退避封顶 30 秒，磁盘满时才在重试前清理，registry 拒了凭证（`unauthorized`/`denied`）就不再重试。登录不在这个脚本里：dev 的 workflow 在检出要发布的提交之前，用 main 的 `deploy/ghcr-login.sh` 登录 ghcr，同一个 `retry_pull`、自己一份预算；prod 不登录，用 box 上存的凭证；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
 | 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起；事件中继只在它跑的代码变了时才换镜像（`pin_relay_by_code`） |
 | 迁移 | `:649-651` | `dc run --rm backend sh -c "alembic upgrade head"`，失败直接停 |
 | 归属 | `OWNERSHIP_MIGRATED`（`:685`） | 跑 `fix-workspace-ownership.sh`，报告留给回滚用 |
@@ -116,11 +117,14 @@ covers:
 | 脚本 | 一句话 |
 |---|---|
 | `deploy-docker.sh` | dev 与 prod 共用的统一发版；滚动替换 app 层，健康检查失败会回滚 |
+| `registry-retry.sh` | 被 source 的 `retry_pull`：registry 操作重试到时间预算用完，凭证被拒不重试；`deploy-docker.sh` 的 pull 和 `ghcr-login.sh` 共用 |
+| `ghcr-login.sh` | 发版前登录 ghcr，token 走 stdin，用 `retry_pull` 重试；dev 的 workflow 在检出要发布的提交之前用 main 的这份 |
 | `deploy.sh` | etrip 盒子的发版入口（`.github/workflows/deploy.yml` 调 `./deploy.sh <sha>`）：拉镜像、迁移、重启、健康检查 |
 | `image-tag.sh` | 打印某个 rev 的镜像 tag（完整 sha 前 7 位） |
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
 | `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
+| `release-llm-tunnel.sh` | 单独替换常驻的模型隧道；没有排空，每次都要 `LLM_TUNNEL_INTERRUPT=1`，断开的隧道由机器上的助手自己重连 |
 | `release-gateway.sh` | 网关平面单独发版，颜色和代理都蓝绿切换、不断流；只在 GitHub Actions 里跑，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1` |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |
 | `release-cloud-control.sh` | 云机器加密隧道单独发版 |
@@ -165,13 +169,14 @@ covers:
 
 非脚本的顶层内容：compose 在 `deploy/compose/`（`base`、`etrip`、`forgejo`、`gateway`、`subscription`），镜像源码在 `deploy/gateway/`、`deploy/metering-proxy/`、`deploy/office-render/`、`deploy/browser-render/`，ingress 与 TLS 在 `deploy/llm-tunnel/`，CI runner 的 provision/prune/guard 在 `deploy/ci-runner/`，另外还有 `deploy/docker-compose.prod.yml`（etrip 的整栈）和三份 README（`README-backup.md`、`README-room-cleanup.md`、`README-utf8-cutover.md`）。
 
-## 单独发版的四个平面 {#planes}
+## 单独发版的平面 {#planes}
 
 常驻服务不能跟着 app 层一起滚，所以各有自己的 workflow 和脚本：
 
 | 平面 | 脚本 | workflow |
 |---|---|---|
 | 设备连接 ingress | `release-device-connection.sh` | `.github/workflows/release-device-connection.yml` |
+| 模型隧道 | `release-llm-tunnel.sh` | `.github/workflows/release-llm-tunnel.yml` |
 | 网关 | `release-gateway.sh` | `.github/workflows/release-gateway.yml` |
 | 计量代理 | `release-metering-proxy.sh` | `.github/workflows/release-metering-proxy.yml` |
 | 云隧道 | `release-cloud-control.sh` | `.github/workflows/release-cloud-control.yml` |
@@ -189,7 +194,7 @@ covers:
 | 组 | 套房 |
 |---|---|
 | 发版契约 | `test-app-tier-health.sh`、`test_auto_deploy.py`、`test-workspace-ownership.sh` |
-| 常驻 ingress | `test_ingress_lifecycle.py`、`test_front_door_tls.py`、`deploy/llm-tunnel/verify-sites.py` |
+| 常驻 ingress | `test_reserved_port.py`、`test_ingress_lifecycle.py`、`test_front_door_tls.py`、`deploy/llm-tunnel/verify-sites.py` |
 | 网关与计量 | `test_metering_release.py`、`test_metering_health.py`、`test_gateway_release.py`、`test_gateway_health_workflow.py`、`test_claude_login.py`、`backend/scripts/test_gateway_supply_probe.py`、`.github/scripts/test-plan-image-builds.sh` |
 | Forge 配置 | `test_forge_config.py`、`test_forge_workspace_writers.py` |
 | 磁盘与容器 | `test-disk-pressure-guard.sh`、`test-evict-foreign-container.sh`、`test-dev-box-disk-cleanup.sh` |

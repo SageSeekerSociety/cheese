@@ -31,6 +31,7 @@
   "moveDown": "Move down",
   "moveUp": "Move up",
   "openDiagram": "View full screen",
+  "printApp": "A mini-app can't run on paper — open the document to use it",
   "removeColumn": "Delete this column",
   "removeItem": "Delete this item",
   "removeStat": "Delete this stat card",

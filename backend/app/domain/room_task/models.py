@@ -7,6 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -46,7 +47,7 @@ class TaskStatus(enum.StrEnum):
 
 class TaskProgress(enum.StrEnum):
     """Where an open task's work stands between the facts the platform can
-    check: its AI teammate says it (`cheese_task_state`), and two of the
+    check: its AI teammate says it (`cheese_task(action=state)`), and two of the
     platform's own actions set it (a card returned or voided puts the task back
     to ``working``; a card filed clears it).
 
@@ -55,8 +56,10 @@ class TaskProgress(enum.StrEnum):
     where it stands (等审), whatever was reported before. So the teammate never
     says 「待审阅」 or 「关闭」 — those are facts, not reports — and while a card
     is open it cannot report at all (`room_task.progress`). The board reads this
-    in place of a running turn (`presentation.task_presentation`): a teammate
-    waiting on a build is still on it after its turn returns.
+    where the task's own teammate's session does not speak
+    (`presentation.task_presentation`): a teammate waiting on a build is still
+    on it after its session stops, and while its session runs, a report stands
+    only in the run it was made in (`Task.progress_run_*`).
     """
 
     #: Doing the work.
@@ -220,6 +223,11 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
+    # task is theirs, and its page says their 芝士 made it.
+    created_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     # Recorded when an authenticated agent opens the task's worktree. Dispatch
     # and room membership do not establish who performs the work.
     author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -305,6 +313,14 @@ class Task(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     progress_set_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Which run of ``progress_set_by``'s session the report was made in, as
+    # its runner names it (`X-Cheese-Run`: harness, epoch and seq of the
+    # ``running`` event that began the run): while that seat's session runs,
+    # the report stands only in that run. NULL for the platform's own writes
+    # and for a call that named no run (a harness whose runner names none).
+    progress_run_harness: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    progress_run_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    progress_run_seq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     # When the teammate's session ended after its last report: the board says
     # 「已离开」 beside what it said, and never rewrites it. Cleared when the
     # teammate reports again.

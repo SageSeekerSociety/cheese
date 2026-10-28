@@ -43,6 +43,13 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
 })
 
 vi.mock('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
+// 宽窄由 vueuse 的 useElementSize 量，它要真的 ResizeObserver 条目；这里的桩只是一只能手动
+// 触发的回调（下面的 `resize`），两边混用会把那只回调换成 vueuse 的。宽窄在这一份里不是
+// 被测的东西，钉成宽。
+vi.mock('@/lib/previewNarrow', async () => {
+  const { computed } = await import('vue')
+  return { usePreviewNarrow: () => ({ narrow: computed(() => false), measured: computed(() => true) }) }
+})
 
 /** 一页假的：viewport 与 render 都够组件把画布造出来。 */
 function page(number: number) {
@@ -109,7 +116,15 @@ const context = {
   version: 'v7',
 }
 
-function mount(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+/** 挂这一格。`marks` / `activeMark` 是这一份上已有的评论指着的几处（见 `PreviewPages` 的 props）。 */
+type PagesProps = {
+  data: ArrayBuffer | null
+  context?: typeof context
+  marks?: readonly { id: string; page: number; x: number; y: number }[]
+  activeMark?: string | null
+}
+
+function mount(props: PagesProps = { data: new ArrayBuffer(8) }) {
   return render(PreviewPages, {
     props,
     global: {
@@ -124,7 +139,7 @@ function mount(props: { data: ArrayBuffer | null; context?: typeof context } = {
 }
 
 /** 打开一份能画出来的文档：pdf.js 是假的，解析得自己放行，然后等两页都画出来。 */
-async function opened(props: { data: ArrayBuffer | null; context?: typeof context } = { data: new ArrayBuffer(8) }) {
+async function opened(props: PagesProps = { data: new ArrayBuffer(8) }) {
   const ui = mount(props)
   await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
   pdf.resolveDoc?.(DOCUMENT)
@@ -219,9 +234,10 @@ describe('分页文档的阅读视图', () => {
     // 这一条是文字层的字从哪来的：字号 = --total-scale-factor × 每个 span 自己的
     // --font-height，宽高也是 pdf.js 按这个变量写在层上的。它按自己所在的元素读这些
     // 变量，少了就整层按继承来的字号排版——画布照常是对的，只有选中落在别处。
-    // 假的那一页 600 宽，画布就画成 568：两个数都得是同一个比例。
+    // 假的那一页 600 宽，页框就摆成 568（画布铺满页框）：两个数都得是同一个比例。
+    const box = canvas.closest('[data-page]') as HTMLElement
     expect(Number(layer.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(
-      Number.parseFloat(canvas.style.width) / 600,
+      Number.parseFloat(box.style.width) / 600,
       6
     )
     expect(layer.style.getPropertyValue('--scale-round-x')).not.toBe('')
@@ -259,6 +275,136 @@ describe('分页文档的阅读视图', () => {
     await pick(3)
     await waitFor(() => expect(emitted().quote).toHaveLength(1))
     expect(emitted().quote![0]).toEqual([{ text: '第一页', page: 1 }])
+    selection.removeAllRanges()
+  })
+
+  it('有已核过的身份时，选中一段发的是结构化引用，不是那句拼话', async () => {
+    // 这一条原本是这句话的反面：分页文档选段只发一句不带版本的纯文本，而幻灯片同一
+    // 件事发的是带身份、带两侧文字的 `slide-page`。两边本是一回事，受话人拿不到版本
+    // 就回不到读者指的那一版。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const layer = document.createElement('div')
+    layer.className = 'pv-text'
+    // 真的文字层由 pdf.js 立出来；假的这条自己摆一层，好让选区落进它里面，两侧文字
+    // 也才量得到（`contextAround` 量的是它给的根）。
+    const node = document.createTextNode('前文重试三次后文')
+    layer.appendChild(node)
+    host.appendChild(layer)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 2)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [
+      { text: string; page: number; scope: string; context: typeof context; prefix: string; suffix: string },
+    ]
+    expect(payload.text).toBe('重试三次')
+    expect(payload.page).toBe(2)
+    expect(payload.scope).toBe('selection')
+    // 带的是这一份已验证的身份：受话人据此回到读者当时看的那一版。
+    expect(payload.context).toEqual(context)
+    // 两侧文字：同一句话在这一页往往不止一处，前后文才是能分辨它说的是哪一处的东西。
+    expect(payload.prefix).toBe('前文')
+    expect(payload.suffix).toBe('后文')
+    // 老那条出口没被用上——用了就会同时发两种引用。
+    expect(ui.emitted('quote')).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('还没核过身份时，仍旧发那句不带版本的拼话', async () => {
+    // 没有身份不是「不发」——读者那一下指的确实是一处；拼话至少把选中的原文交出去，
+    // 只是指不回哪一版。这条守着别为了结构化把这条老路掐掉。
+    const ui = await opened({ data: new ArrayBuffer(8) })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const host = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const node = document.createTextNode('第一页正文')
+    host.appendChild(node)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 3)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(host)
+
+    await waitFor(() => expect(ui.emitted('quote')).toHaveLength(1))
+    expect(ui.emitted('quote')![0]).toEqual([{ text: '第一页', page: 1 }])
+    expect(ui.emitted('page-context')).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('选区跨了两页时，不拿起点那一页的后文当两侧文字', async () => {
+    // 拖过页脚的选区起在这一页、结在下一页。只核起点的话 `contextAround` 会把结尾挪
+    // 到起点那儿，`suffix` 量出来是空串——交出去的是「这是第 1 页的一段」，那段话
+    // 其实跨到了第 2 页。量不出来就不带两侧文字，别给一段错的。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const first = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const second = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    const makeLayer = (parent: HTMLElement, body: string) => {
+      const layer = document.createElement('div')
+      layer.className = 'pv-text'
+      const node = document.createTextNode(body)
+      layer.appendChild(node)
+      parent.appendChild(layer)
+      return node
+    }
+    const head = makeLayer(first, '跨页开头')
+    const tail = makeLayer(second, '跨页结尾')
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(head, 0)
+    range.setEnd(tail, tail.length)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(first)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; page: number; prefix?: string; suffix?: string }]
+    expect(payload.page).toBe(1)
+    // 两样都不出现：没量准的东西不许冒充「这一页的上下文」。
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
+    selection.removeAllRanges()
+  })
+
+  it('选区落在这一页的错误提示上时，不把它当成正文量两侧', async () => {
+    // 页框里除了文字层，还有画不出来的那一页的说明和评论标记。拿页框当量两侧的根，
+    // 就会把那段说明当正文、把它的前后当上下文——交出去的引用说的是文件里的原文，
+    // 而那段字是界面自己的话。
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    await new Promise((r) => setTimeout(r, 300))
+
+    const pageBox = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    const notice = document.createElement('div')
+    notice.className = 'pv-error'
+    const node = document.createTextNode('这一页无法显示：页流损坏')
+    notice.appendChild(node)
+    pageBox.appendChild(notice)
+    const selection = window.getSelection()!
+    const range = document.createRange()
+    range.setStart(node, 0)
+    range.setEnd(node, 6)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    await fireEvent.mouseUp(pageBox)
+
+    const emitted = (ui.emitted('page-context') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    const [payload] = emitted[0] as [{ text: string; prefix?: string; suffix?: string }]
+    expect(payload.prefix).toBeUndefined()
+    expect(payload.suffix).toBeUndefined()
     selection.removeAllRanges()
   })
 })
@@ -375,5 +521,114 @@ describe('在页面上指一点', () => {
 
     await waitFor(() => expect(ui.container.querySelector('.pv__pin')).toBeNull())
     expect(ui.container.querySelector('.pv')?.className).not.toContain('pv--pointing')
+  })
+})
+
+describe('页上已有的评论标记', () => {
+  const marks = [
+    { id: 'c1', page: 1, x: 0.25, y: 0.5 },
+    { id: 'c2', page: 2, x: 0.75, y: 0.1 },
+  ]
+
+  it('每一处画在它说的那一页、那个比例位置上', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+
+    const onOne = ui.container.querySelector('[data-page="1"] [data-comment-mark="c1"]') as HTMLElement
+    const onTwo = ui.container.querySelector('[data-page="2"] [data-comment-mark="c2"]') as HTMLElement
+    expect(onOne).not.toBeNull()
+    expect(onTwo).not.toBeNull()
+    // 位置写的是比例，页按面板宽度重画、读者缩放都跟着走。
+    expect(onOne.style.left).toBe('25%')
+    expect(onOne.style.top).toBe('50%')
+    expect(onTwo.style.left).toBe('75%')
+    // 各在各的页上：左边那一页只有 c1，右边只有 c2。筛错了（比如每页都把前面的也画上）
+    // 时，读者会在第 1 页上看到第 2 页的那一颗，指着完全不同的地方。
+    expect(ui.container.querySelectorAll('[data-page="1"] [data-comment-mark]')).toHaveLength(1)
+    expect(ui.container.querySelectorAll('[data-page="2"] [data-comment-mark]')).toHaveLength(1)
+  })
+
+  it('这一版里没有的那一页上不画：页数少了，那个页码落不到任何一页', async () => {
+    // 评论记的是「哪一版 + 第几页 + 比例」。换成只有一页的那一版时，第 2 页上的那一处
+    // 没有地方可落——这一档不去猜它去哪了，不画。
+    const ui = await opened({
+      data: new ArrayBuffer(8),
+      context,
+      marks: [{ id: 'c2', page: 9, x: 0.5, y: 0.5 }],
+    })
+    expect(ui.container.querySelector('[data-comment-mark="c2"]')).toBeNull()
+  })
+
+  it('点一处标记，把那一串评论开出来', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+    await fireEvent.click(ui.container.querySelector('[data-comment-mark="c1"]')!)
+
+    const emitted = (ui.emitted('mark') ?? []) as unknown[][]
+    expect(emitted).toEqual([['c1']])
+  })
+
+  it('正在看的那一条画得显眼些', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks, activeMark: 'c2' })
+    expect(ui.container.querySelector('[data-comment-mark="c2"]')?.className).toContain('is-active')
+    expect(ui.container.querySelector('[data-comment-mark="c1"]')?.className).not.toContain('is-active')
+  })
+
+  it('标记接得上指针：它自己就是一个按钮，不是一层盖住页面的透明块', async () => {
+    // 页上原来只有「指位置」点的那个记号（`pointer-events: none`）。评论标记要能点，
+    // 就必须真的收得到点击——顺手给错了类，读者点了没反应，这条守着它。
+    const ui = await opened({ data: new ArrayBuffer(8), context, marks })
+    const mark = ui.container.querySelector('[data-comment-mark="c1"]') as HTMLElement
+    expect(mark.tagName).toBe('BUTTON')
+    expect(mark.className).not.toContain('pv__pin')
+    expect(mark.getAttribute('aria-label')).toBe('评论这一处')
+  })
+})
+
+describe('手指放大', () => {
+  /** 点两下：两次抬起隔 150 毫秒、落在同一处。happy-dom 的触摸事件没有构造参数，自己挂。 */
+  function doubleTap(el: HTMLElement) {
+    for (const at of [1000, 1150]) {
+      for (const type of ['touchstart', 'touchend']) {
+        const event = new Event(type, { bubbles: true, cancelable: true })
+        const point = [{ clientX: 50, clientY: 50, identifier: 0 }]
+        Object.defineProperties(event, {
+          touches: { value: type === 'touchstart' ? point : [] },
+          changedTouches: { value: point },
+          timeStamp: { value: at },
+        })
+        el.dispatchEvent(event)
+      }
+    }
+  }
+  const boxWidth = (ui: ReturnType<typeof mount>) =>
+    Number.parseFloat((ui.container.querySelector('[data-page]') as HTMLElement).style.width)
+
+  it('点两下页放大，再点两下回到整页；画布不清空，等手停了再重画', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+
+    // happy-dom 量不出文字的位置，找不到「那一栏」，按两倍放大。
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(1136)
+    // 拉大的旧图留在页上，不是一块白。
+    expect(ui.container.querySelectorAll('canvas')).toHaveLength(2)
+
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
+  })
+
+  it('指位置开着时点两下不放大：那是在指两处', async () => {
+    const ui = await opened({ data: new ArrayBuffer(8), context })
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(boxWidth(ui)).toBe(568))
+    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    doubleTap(pv)
+    expect(boxWidth(ui)).toBe(568)
   })
 })

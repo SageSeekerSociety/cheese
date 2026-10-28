@@ -1,9 +1,10 @@
 """A task shows what its AI teammate last said about its work.
 
-The teammate says it through its own session (`cheese_task_state`); the board,
-the task's page and the project's lists all show that, and nothing the
-platform sees of the session rewrites it: a turn ending does not, and neither
-does the session going away, which only puts 「已离开」 beside it. While its
+The teammate says it through its own session (`cheese_task(action=state)`); the board,
+the task's page and the project's lists all show that, and the session
+stopping does not rewrite it: a turn ending does not, and neither does the
+session going away, which only puts 「已离开」 beside it. (A session running
+after the report is newer than it: `test_a_task_hears_its_session_through_the_runner`.) While its
 session runs and the report has stopped moving, the platform asks for a new
 one.
 """
@@ -87,6 +88,56 @@ def test_a_blocked_task_waits_on_its_owner(client):
     assert any(item.get("taskId") == task_id for item in mine.json()["data"]["data"])
 
 
+def test_a_blocked_row_on_the_owners_list_says_what_the_teammate_needs(client):
+    """The owner's list says what the teammate is stuck on: the note it gave
+    with its 「卡住了」 is the row's second line. A report with no note leaves the
+    line for the screen to fill, not a stale sentence from somewhere else."""
+    project_id, task_id, seat = _a_task(client)
+
+    def row() -> dict:
+        mine = client.get("/awaiting-me", headers=session_auth_headers("alice"))
+        assert mine.status_code == 200, mine.text
+        return next(
+            i for i in mine.json()["data"]["data"] if i.get("taskId") == task_id
+        )
+
+    assert (
+        _report(
+            client, project_id, task_id, seat, "blocked", "需要仓库的写权限才能推送"
+        ).status_code
+        == 200
+    )
+    assert row()["detail"] == "需要仓库的写权限才能推送"
+
+    assert _report(client, project_id, task_id, seat, "blocked").status_code == 200
+    assert row()["detail"] == ""
+
+
+def test_a_blocked_row_names_the_teammate_by_the_name_the_project_gave_it(client):
+    """When the teammate left no note, the owner's list says who is stuck: a
+    teammate renamed in this project is called by its new name, not the
+    default one."""
+    project_id, task_id, seat = _a_task(client)
+    agents = client.get(
+        f"/projects/{project_id}/agents", headers=session_auth_headers("alice")
+    ).json()["data"]
+    agents = agents.get("data", agents) if isinstance(agents, dict) else agents
+    for agent in agents:
+        r = client.put(
+            f"/projects/{project_id}/agents/{agent['id']}",
+            json={"display_name": "小研"},
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 200, r.text
+
+    assert _report(client, project_id, task_id, seat, "blocked").status_code == 200
+
+    mine = client.get("/awaiting-me", headers=session_auth_headers("alice"))
+    row = next(i for i in mine.json()["data"]["data"] if i.get("taskId") == task_id)
+    assert row["agentName"] == "小研"
+    assert row["agentNameSource"] == "human"
+
+
 def test_only_the_tasks_own_session_reports_its_progress(client):
     """A person reads the report; they do not write it for the teammate."""
     _project_id, task_id, _seat = _a_task(client)
@@ -113,7 +164,7 @@ def test_the_session_leaving_does_not_rewrite_what_the_teammate_said(client):
     async def leave() -> bool:
         async with client.test_factory() as session:
             marked = await note_agent_left(
-                session, uuid.UUID(task_id), at=datetime.now(UTC)
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
             )
             await session.commit()
             return marked
@@ -176,7 +227,7 @@ def test_a_running_session_whose_report_went_stale_is_asked_for_a_new_one(client
     _said_at(client, task_id, now - threshold - timedelta(minutes=1))
     assert client.portal.call(remind, now) == 1
     assert chat.told[0][0] == uuid.UUID(task_id)
-    assert "cheese_task_state" in chat.told[0][1]
+    assert "cheese_task(action=state)" in chat.told[0][1]
     # Asked once; the next ask waits another threshold from this one.
     assert client.portal.call(remind, now + threshold / 2) == 0
     assert client.portal.call(remind, now + threshold) == 1
@@ -203,7 +254,7 @@ def test_a_teammate_that_never_reported_is_asked_once_its_session_has_run_a_whil
 
     assert client.portal.call(remind, now) == 0
     assert client.portal.call(remind, now + threshold) == 1
-    assert "cheese_task_state" in chat.told[0][1]
+    assert "cheese_task(action=state)" in chat.told[0][1]
 
 
 # —— one task, one state: a card's facts beat what the teammate said ——————————
@@ -270,6 +321,29 @@ def test_the_teammate_cannot_say_its_task_awaits_review(client):
 
     assert said.status_code == 400, said.text
     assert _task(client, task_id)["progress_state"] is None
+
+
+def test_filing_a_card_takes_the_left_mark_away_with_the_report(client):
+    """「已离开」 was written beside a report; filing a card ends that report, so
+    the mark goes with it rather than sitting on the task through 等审."""
+    project_id, task_id, seat = _a_task(client)
+    assert (
+        _report(client, project_id, task_id, seat, "waiting", "等构建").status_code
+        == 200
+    )
+
+    async def leave() -> bool:
+        async with client.test_factory() as session:
+            marked = await note_agent_left(
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
+            )
+            await session.commit()
+            return marked
+
+    assert client.portal.call(leave) is True
+    _file_card(client, project_id, task_id)
+
+    assert _task(client, task_id)["agent_left_at"] is None
 
 
 def test_a_returned_card_puts_the_task_back_to_work(client):
@@ -352,13 +426,13 @@ def test_a_closed_task_takes_no_progress_report(client):
 
 def test_a_session_leaving_a_closed_task_marks_nothing(client):
     """「已离开」 is about an open task's work; a closed one says how it ended."""
-    _project_id, task_id, _seat = _a_task(client)
+    _project_id, task_id, seat = _a_task(client)
     _close(client, task_id)
 
     async def leave() -> bool:
         async with client.test_factory() as session:
             marked = await note_agent_left(
-                session, uuid.UUID(task_id), at=datetime.now(UTC)
+                session, uuid.UUID(task_id), by=seat, at=datetime.now(UTC)
             )
             await session.commit()
             return marked

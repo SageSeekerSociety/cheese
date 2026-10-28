@@ -174,7 +174,7 @@ def execution_handler():
         def do_POST(self):
             if self.path != "/execution":
                 return super().do_POST()
-            assert self.headers.get("X-Cheese-Token") == "fixture-place-token"
+            assert self.headers.get("Authorization") == "Bearer fixture-place-token"
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             wire = self.server.state["wire"]
             return self.reply(
@@ -468,7 +468,7 @@ def case(folder, options):
         if options.mode == "normal":
             # The spawn that asked for isolation is no longer refused: the
             # proxy drops the parameter and the subagent runs like any other.
-            # `cheese_task` is still what a caller should use when the work is
+            # `cheese_task(action=open)` is still what a caller should use when the work is
             # itself a deliverable to track and review, but nothing blocks the
             # spawn on it any more.
             isolated = results[-2]

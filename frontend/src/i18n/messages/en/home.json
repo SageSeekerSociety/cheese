@@ -5,9 +5,9 @@
     "loadFailed": "Couldn't load what's waiting on you",
     "feed": "Activity",
     "reason": {
-      "reviewer": "Waiting for your review",
+      "reviewer": "In review",
       "reporter": "Your request has been delivered",
-      "asked": "Waiting for your answer",
+      "asked": "Needs answer",
       "checksFailed": "Checks failed",
       "blocked": "Stuck",
       "bounced": "Returned",
@@ -47,7 +47,7 @@
       "added": "Added by {name} in project settings"
     },
     "task": {
-      "claims": "{n} claims to approve",
+      "claims": "{n} applications to approve",
       "reviews": "{n} submissions to review",
       "and": ", "
     }
@@ -80,7 +80,8 @@
     "disbandTeamDone": "Disbanded “{name}”",
     "disbandTeamFailed": "Couldn't disband the team",
     "disbandTeamTypeName": "Type the team name “{name}” to confirm",
-    "teamDocs": "Documents",
+    "teamLibrary": "Library",
+    "teamSettings": "Settings",
     "teamModels": "Models",
     "spaceReview": {
       "PENDING": "In review",

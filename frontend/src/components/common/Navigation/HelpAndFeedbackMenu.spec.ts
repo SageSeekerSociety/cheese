@@ -18,7 +18,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -128,6 +128,48 @@ describe('帮助与反馈入口', () => {
     const quiet = await mount({}, { unread: 0 })
     const quietEntry = quiet.container.querySelector('.help-entry') as HTMLElement
     await waitFor(() => expect(quietEntry.getAttribute('aria-label')).toBe('帮助与反馈'))
+  })
+
+  // 入口上的点说「有未读」，可点开之后得看得出它指向哪一项、点哪里能清掉：未读只在打开
+  // 「我的反馈」时清零，所以那一项带着同一个记号和件数，读屏读到的名字也说出来。
+  it('有未读时，菜单里的「我的反馈」带着件数，名字说出未读；没有未读时不带', async () => {
+    const some = await mount({}, { unread: 4 })
+    const entry = some.container.querySelector('.help-entry') as HTMLElement
+    await waitFor(() => expect(entry.querySelector('.v-badge')).not.toBeNull())
+    await fireEvent.click(entry)
+    const marked = await screen.findByRole('link', { name: /我的反馈.*4/ })
+    expect(marked.textContent).toContain('4')
+    await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    some.unmount()
+    document.body.innerHTML = ''
+
+    const none = await mount({}, { unread: 0 })
+    await waitFor(() => expect(getFeedbackCounts).toHaveBeenCalled())
+    await fireEvent.click(none.container.querySelector('.help-entry') as HTMLElement)
+    const plain = await screen.findByRole('link', { name: /我的反馈/ })
+    expect(plain.getAttribute('aria-label') ?? '').not.toMatch(/\d/)
+    expect(plain.textContent).not.toMatch(/\d/)
+    // Nothing trails the label: no mark of any shape when there is nothing unread.
+    expect(plain.querySelector('.v-list-item__append')).toBeNull()
+  })
+
+  it('「我的反馈」上的件数到 99 都照写，超过 99 写成 99+', async () => {
+    const at99 = await mount({}, { unread: 99 })
+    const entry99 = at99.container.querySelector('.help-entry') as HTMLElement
+    await waitFor(() => expect(entry99.querySelector('.v-badge')).not.toBeNull())
+    await fireEvent.click(entry99)
+    const row99 = await screen.findByRole('link', { name: /我的反馈.*99/ })
+    expect(row99.textContent).toContain('99')
+    expect(row99.textContent).not.toContain('99+')
+    at99.unmount()
+    document.body.innerHTML = ''
+
+    const at100 = await mount({}, { unread: 100 })
+    const entry100 = at100.container.querySelector('.help-entry') as HTMLElement
+    await waitFor(() => expect(entry100.querySelector('.v-badge')).not.toBeNull())
+    await fireEvent.click(entry100)
+    const row100 = await screen.findByRole('link', { name: /我的反馈.*100/ })
+    expect(row100.textContent).toContain('99+')
   })
 
   it('管理后台那一项只对管理员出现，而且由服务端说了算', async () => {

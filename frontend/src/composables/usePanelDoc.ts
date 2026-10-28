@@ -26,7 +26,13 @@ import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getNotifiedMentions, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
-import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
+import {
+  documentImageDataUrl,
+  documentImageUrl,
+  documentPdf,
+  getDocumentAbout,
+  renameDocument,
+} from '../api/projectDocuments'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -235,6 +241,30 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     return documentImageUrl(did, src.replace(/^\.\//, ''))
   }
 
+  // 印成纸时那张图：同一个取法，但把字节带进纸里（打印的浏览器没有凭证，也够不着
+  // 这份文档）。本来就是自足的地址（公开网址、data:）照原样给。
+  function imageData(src: string): Promise<string> {
+    if (/^(https?:|data:)/i.test(src)) return Promise.resolve(src)
+    const did = documentId.value
+    if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return documentImageDataUrl(did, src.replace(/^\.\//, ''))
+  }
+
+  /** 把排好的一页交给平台印成 PDF，回执落到浏览器的下载里。 */
+  async function savePdf(html: string, filename: string): Promise<void> {
+    const did = documentId.value
+    if (!did) throw new Error(t('work.room.doc.exportPdfFailed'))
+    const blob = await documentPdf(did, html)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.append(link)
+    link.click()
+    link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
   // 文档里的画布：读写都按画布自己的编号；新建、复制一块要知道是给哪份文档的。
   function thisDocument(): string {
     const did = documentId.value
@@ -413,6 +443,8 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     setError,
     fetchDocNodes,
     imageSrc,
+    imageData,
+    savePdf,
     canvas,
     applyEdits,
     undoAgentChanges,

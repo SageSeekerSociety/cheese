@@ -157,10 +157,10 @@ it('carries what the person said into the create request', async () => {
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
     const args = vi.mocked(api.createProject).mock.calls[0]
     expect(args[0]).toBe('这学期的课')
-    // createProject(name, teamId, externalTaskId, forgeKind, intent, agentName)
-    // ——「你打算做什么」是第 5 个参数。它和 agentName 都是主分支后加的，都排在
+    // createProject(name, teamId, forgeKind, intent, agentName)
+    // ——「你打算做什么」是第 4 个参数。它和 agentName 都是主分支后加的，都排在
     // forgeKind 之后，所以这个下标跟着参数表走，别把它当成「第几个参数」的巧合。
-    expect(args[4]).toBe('帮我把这学期的课程材料整理成一份大纲')
+    expect(args[3]).toBe('帮我把这学期的课程材料整理成一份大纲')
   } finally {
     harness.dispose()
   }
@@ -175,7 +175,7 @@ it('creates the project with an empty answer when the question was skipped', asy
     await submitDialog()
 
     expect(vi.mocked(api.createProject)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(api.createProject).mock.calls[0][4]).toBe('')
+    expect(vi.mocked(api.createProject).mock.calls[0][3]).toBe('')
   } finally {
     harness.dispose()
   }
@@ -197,7 +197,7 @@ it('does not let one project inherit the previous answer', async () => {
     await settle()
     await submitDialog()
 
-    expect(vi.mocked(api.createProject).mock.calls[0][4]).toBe('')
+    expect(vi.mocked(api.createProject).mock.calls[0][3]).toBe('')
   } finally {
     harness.dispose()
   }
@@ -218,16 +218,16 @@ it('retries a failed creation as the same project, and starts a new one next tim
 
     const calls = vi.mocked(api.createProject).mock.calls
     expect(calls).toHaveLength(2)
-    // createProject(name, teamId, externalTaskId, forgeKind, intent, agentName, id)
-    expect(calls[0][6]).toBeTruthy()
-    expect(calls[1][6]).toBe(calls[0][6])
+    // createProject(name, teamId, forgeKind, intent, agentName, id)
+    expect(calls[0][5]).toBeTruthy()
+    expect(calls[1][5]).toBe(calls[0][5])
 
     await openDialog()
     type(inDialog('input') as HTMLInputElement, '下一个项目')
     await settle()
     await submitDialog()
-    expect(calls[2][6]).toBeTruthy()
-    expect(calls[2][6]).not.toBe(calls[0][6])
+    expect(calls[2][5]).toBeTruthy()
+    expect(calls[2][5]).not.toBe(calls[0][5])
   } finally {
     harness.dispose()
   }

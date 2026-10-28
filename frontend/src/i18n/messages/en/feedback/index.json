@@ -3,5 +3,5 @@
   "private": "Private",
   "privateHint": "Private feedback: only you, platform admins, and the people who were in the channel where it was filed can see it.",
   "security": "Security",
-  "sessionLine": "Session {id}"
+  "sessionLine": "Run {id}"
 }

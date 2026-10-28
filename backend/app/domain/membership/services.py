@@ -31,6 +31,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.addressing import Event, Hand, address
+from app.domain.authz.policy import can_manage_project_members
 from app.domain.delivery_events import (
     Deliver,
     DeliveryEvent,
@@ -61,6 +62,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
+    PERMISSION_ORDER,
     Permission,
     Role,
     Seat,
@@ -69,6 +71,9 @@ from app.domain.project_permissions import (
 from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
+
+#: What a role may be granted, by name.
+_ROLE_PERMISSION_NAMES = frozenset(p.value for p in PERMISSION_ORDER)
 
 
 async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
@@ -116,6 +121,36 @@ class MemberService:
         a handle, not an authenticated actor; :meth:`require` is the gate for a
         request."""
         return await may(self._session, project_id, handle, permission)
+
+    async def _team_admin(self, project: Project, handle: str) -> bool:
+        user = await user_by_handle(self._session, handle)
+        if user is None:
+            return False
+        return await team_service(self._session).is_team_at_least_admin(
+            project.team_id, user.id
+        )
+
+    async def require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
+        """Only the project's owner or an owner/admin of its team (verified by
+        token) may manage it. Called AFTER ``_ensure_project`` so a missing
+        project still reads as 404 rather than 403 for everyone."""
+
+        async def owner_of(pid: uuid.UUID) -> str | None:
+            project = await self._projects.get(pid)
+            return project.owner_handle if project is not None else None
+
+        async def team_manager(pid: uuid.UUID, handle: str) -> bool:
+            project = await self._projects.get(pid)
+            return project is not None and await self._team_admin(project, handle)
+
+        allowed = await can_manage_project_members(
+            actor,
+            project_id=project_id,
+            project_owner=owner_of,
+            team_manager=team_manager,
+        )
+        if not allowed:
+            raise ForbiddenError(say("projectManageForbidden"))
 
     async def require(
         self, project_id: uuid.UUID, actor: Actor, permission: Permission
@@ -351,6 +386,7 @@ class InvitationService:
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
             role=role.value,
+            invited_by_assistant=actor.by_assistant,
         )
         await self._notify_invitee(invitation, project)
         return invitation
@@ -545,12 +581,13 @@ class RoleService:
         changed: dict[Role, list[str]],
         actor: Actor,
     ) -> None:
-        """Change what roles may do. A permission name nobody knows is refused;
-        a locked permission keeps its place whatever was sent."""
+        """Change what roles may do. A name that is not a role's permission —
+        one nobody knows, or one only an AI teammate holds — is refused; a
+        locked permission keeps its place whatever was sent."""
         await self._members._ensure_project(project_id)
         await self._members.require(project_id, actor, Permission.change_roles)
         for role, names in changed.items():
-            unknown = [n for n in names if n not in Permission._value2member_map_]
+            unknown = [n for n in names if n not in _ROLE_PERMISSION_NAMES]
             if unknown:
                 raise UnprocessableEntityError(
                     say("permissionUnknown", name=unknown[0])

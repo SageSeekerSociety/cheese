@@ -117,7 +117,7 @@ describe('成员管理', () => {
   it('没账号的行把状态说出来，agent 那行挂徽章', () => {
     const view = mount()
     expect(view.queryByText('平台上没有这个账号')).not.toBeNull()
-    expect(view.queryByText('agent')).not.toBeNull()
+    expect(view.queryByText('AI 队友')).not.toBeNull()
   })
 
   it('按下「移出」报的是那一行的 handle 和触发它的事件', async () => {

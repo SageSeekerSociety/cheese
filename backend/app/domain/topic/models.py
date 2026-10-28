@@ -124,6 +124,10 @@ class Topic(UuidPk, Timestamps, Base):
     default_environment: Mapped[dict | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
+    # Skill names this room has switched on (the composer's skill plaza). The
+    # turn prepends their guidance, so every agent in this conversation follows
+    # them. NULL/empty = the room runs on the platform's own guidance only.
+    skills: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).

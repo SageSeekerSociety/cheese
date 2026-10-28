@@ -392,6 +392,11 @@ class TopicMemberService:
             self, topic_id, room_id=room_id
         )
 
+    async def addressable_agent_handles(
+        self, project_id: uuid.UUID, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str | None]:
+        return await housekeeping.addressable_agent_handles(self, project_id, room_ids)
+
     async def add(
         self,
         *,

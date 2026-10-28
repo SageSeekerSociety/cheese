@@ -1,6 +1,7 @@
 {
   "home": "Home",
   "inbox": "Inbox",
+  "market": "Market",
   "newProject": "New {project}",
   "project": {
     "library": "Library",
@@ -28,9 +29,11 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
+    "mineUnread": "My feedback, 1 unread update | My feedback, {n} unread updates",
     "admin": "Admin console",
     "guide": "New-user guide",
-    "tour": "Interface tour"
+    "tour": "Interface tour",
+    "tourStartsInGeneral": "The tour starts in the project's General channel — open it and try again."
   },
   "admin": {
     "queue": "Feedback",
@@ -192,6 +195,7 @@
     "projectWorkspace": "Project workspace",
     "dm": "Direct message",
     "artifact": "Artifact",
-    "member": "Member"
+    "member": "Member",
+    "taskVersions": "Version history"
   }
 }

@@ -63,7 +63,6 @@ def _seeded(client) -> dict[str, str]:
                 AcceptCard(
                     topic_id=room.id,
                     task_id=waiting.id,
-                    reviewer_handle="alice",
                     status=AcceptStatus.pending,
                 )
             )
@@ -169,7 +168,6 @@ def test_a_rooms_own_card_reaches_the_room(client):
                 AcceptCard(
                     topic_id=uuid.UUID(ids["room"]),
                     task_id=None,
-                    reviewer_handle="alice",
                     status=AcceptStatus.pending,
                 )
             )

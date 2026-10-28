@@ -24,6 +24,8 @@ defineProps<{
   atts: ChatAttachment[]
   /** 附件缩略图要从哪个话题的工作区取字节。 */
   topicId: string | null
+  /** 最前面还有宿主自己的几枚（`lead` 插槽，各带 key）：芝士面板的当前页面和选中的字。 */
+  lead?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -47,8 +49,9 @@ function pinLeaving(el: Element) {
   <!-- 这一行长出来、收回去都是高度过渡；里面的标签一个个弹进来，拿掉一个时
        后面的滑过来补位。 -->
   <Transition name="chip-row">
-    <div v-if="replyLabel || quote || atts.length" class="chip-row">
+    <div v-if="lead || replyLabel || quote || atts.length" class="chip-row">
       <TransitionGroup tag="div" name="chip" class="chip-list" @before-leave="pinLeaving">
+        <slot name="lead" />
         <ComposerChip
           v-if="replyLabel"
           key="reply"

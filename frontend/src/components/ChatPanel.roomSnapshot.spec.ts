@@ -67,7 +67,7 @@ it('a room opened with its snapshot draws its roster without asking for it', asy
     skill_proposals: [],
     tasks: { open: [], recent: [] },
     pins: [],
-    threads: [],
+    threads: { open: [], recycled: [] },
   }
   socket.onopen?.()
   await vi.advanceTimersByTimeAsync(0)

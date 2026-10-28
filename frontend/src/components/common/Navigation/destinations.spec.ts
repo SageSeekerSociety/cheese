@@ -130,6 +130,22 @@ describe('一级导航的两份清单', () => {
     expect(new Set(counts).size).toBe(1)
   })
 
+  // 市场的入口在首页那份目录里（挨着空间，`views/home/HomeNav.vue`），不占 rail 的格子，
+  // 也就不占 ⌘N：rail 上有地址的格子只有首页和项目。
+  it('rail 上没有市场那一格，⌘N 只分给首页和项目', () => {
+    const rail = items(railItems(sources(3, 'p1'), DEFAULT_SHELL))
+    expect(rail.some((i) => i.to === '/market')).toBe(false)
+    expect(rail.filter((i) => i.to).map((i) => i.to)).toEqual([
+      '/inbox',
+      '/projects/p0',
+      '/projects/p1',
+      '/projects/p2',
+    ])
+    expect(shortcutTarget(rail, 4)).toBe('/projects/p2')
+    expect(shortcutTarget(rail, 5)).toBeNull()
+    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL))).toHaveLength(3)
+  })
+
   it('桌面 rail 每个项目一格', () => {
     const withProjects = items(railItems(sources(4, 'p0'), DEFAULT_SHELL))
     expect(withProjects.filter((i) => i.to?.startsWith('/projects/'))).toHaveLength(4)

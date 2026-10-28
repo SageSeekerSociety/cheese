@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useDesktopApp } from '@/composables/useDesktopApp'
-import { replayTour } from '@/composables/useProjectTour'
+import { useInterfaceTour } from '@/composables/useInterfaceTour'
 
 import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
@@ -38,8 +38,10 @@ const props = withDefaults(
 
 const store = useFeedbackStore()
 const { t } = useI18n()
+const interfaceTour = useInterfaceTour()
 
-const hasUnread = computed(() => store.counts.unread > 0)
+const unread = computed(() => store.counts.unread)
+const hasUnread = computed(() => unread.value > 0)
 
 const inApp = inDesktopApp()
 const { aboutOpen } = useDesktopApp()
@@ -58,16 +60,33 @@ function openDocs() {
 const items = computed(() => {
   // 使用文档是一个单独的静态站（自己的域名，或者平台的 /docs/），不在这个应用的路由里，所以走 href
   // 整页跳转而不是 `to`：交给路由器只会落到应用自己的 404。
-  const all: { key: string; label: string; to?: string; href?: string; click?: () => void }[] = [
+  const all: {
+    key: string
+    label: string
+    to?: string
+    href?: string
+    click?: () => void
+    /** 未读件数，和 `name`（带件数的可访问名字）一起出现。 */
+    count?: number
+    name?: string
+  }[] = [
     inApp
       ? { key: 'docs', click: openDocs, label: t('navigation.feedback.docs') }
       : { key: 'docs', href: DOCS, label: t('navigation.feedback.docs') },
     { key: 'center', to: '/feedback', label: t('navigation.feedback.center') },
-    { key: 'mine', to: '/feedback/mine', label: t('navigation.feedback.mine') },
+    // 入口上的点就是这一项的未读（清零也只在打开「我的反馈」时发生），所以记号和件数落在
+    // 这一项上，名字也说出来：只在入口上画点，点开菜单的人找不到它指向哪儿。
+    {
+      key: 'mine',
+      to: '/feedback/mine',
+      label: t('navigation.feedback.mine'),
+      ...(hasUnread.value ? { count: unread.value, name: t('navigation.feedback.mineUnread', unread.value) } : {}),
+    },
     // 新手引导随时能再走一遍：回答预填上次的，走完建一个新项目。
     { key: 'guide', to: '/welcome?again=1', label: t('navigation.feedback.guide') },
-    // 界面导览：在项目频道里重新圈一遍频道、输入框、「交给芝士」、总览、资料库。
-    { key: 'tour', click: replayTour, label: t('navigation.feedback.tour') },
+    // 界面导览：从项目的「综合」重新走一遍。导览只在那一页画得出来，所以点它时先带人
+    // 过去（`useInterfaceTour.ts`）；开始不了时说一句该去哪儿点。
+    { key: 'tour', click: () => void interfaceTour.start(), label: t('navigation.feedback.tour') },
   ]
   if (store.isAdmin) {
     all.push({ key: 'admin', to: '/admin/feedback', label: t('navigation.feedback.admin') })
@@ -137,15 +156,31 @@ watch(
       >
         <v-icon size="14" aria-hidden="true">mdi-comment-quote-outline</v-icon>
         <span v-if="!props.compact" class="help-entry__label">{{ t('navigation.feedback.label') }}</span>
-        <!-- 和通知铃铛同一个呈现（`v-badge` 的点）。`v-if` + `:model-value` 一起写是照
-             铃铛那一处来的：Vuetify 的点在 `model-value` 为真时才画。 -->
-        <v-badge v-if="hasUnread" color="error" floating dot :model-value="true" />
+        <!-- Unread dot: a `v-badge` dot, drawn only while `model-value` is true, hence `v-if`
+             and `:model-value` together. Amber (`primary` = --accent): design-system §1.6 gives
+             unread markers amber; red means an error. -->
+        <v-badge v-if="hasUnread" color="primary" floating dot :model-value="true" />
       </v-btn>
     </template>
 
     <v-list min-width="160">
-      <v-list-item v-for="item in items" :key="item.key" :to="item.to" :href="item.href" @click="item.click?.()">
+      <v-list-item
+        v-for="item in items"
+        :key="item.key"
+        :to="item.to"
+        :href="item.href"
+        :aria-label="item.name"
+        @click="item.click?.()"
+      >
         <v-list-item-title>{{ item.label }}</v-list-item-title>
+        <!-- Unread mark in the inbox/timeline style: the inbox row's amber dot, then the count
+             as amber text. Decorative only; the row's aria-label already says it. -->
+        <template v-if="item.count" #append>
+          <span class="mine-unread" aria-hidden="true">
+            <span class="mine-unread__dot" />
+            <span class="mine-unread__count t-num">{{ item.count > 99 ? '99+' : item.count }}</span>
+          </span>
+        </template>
       </v-list-item>
     </v-list>
   </v-menu>
@@ -176,5 +211,27 @@ watch(
 
 .help-entry__label {
   margin-left: 4px;
+}
+
+/* 「我的反馈」上的未读：和收件箱那一行同一个 6px 琥珀点（`InboxRow` 的 .inbox-row__dot），
+   件数用琥珀的字色 --accent-ink（菜单底上浅色 5.8:1、深色 10.1:1），不画实心胶囊。 */
+.mine-unread {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}
+
+.mine-unread__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.mine-unread__count {
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
 }
 </style>

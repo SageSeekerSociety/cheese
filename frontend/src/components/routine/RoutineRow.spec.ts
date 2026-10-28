@@ -72,6 +72,7 @@ const base: Routine = {
   timezone: 'Asia/Shanghai',
   state: 'active',
   last_run_status: 'succeeded',
+  credits_this_month: 128.4,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   created_by: 'cheese-x',

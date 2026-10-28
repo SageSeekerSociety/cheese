@@ -14,6 +14,11 @@ export const keys = {
   /** 我能看到的项目。 */
   projects: () => ['projects'] as const,
 
+  /** 我所在的团队（首页侧栏和手机首页共用这一份目录）。 */
+  myTeams: () => ['teams', 'my'] as const,
+  /** 我加入的空间，加上还没过审的申请（首页同一份目录）。 */
+  mySpaces: () => ['spaces', 'my'] as const,
+
   project: (projectId: string) => ['project', projectId] as const,
   projectRow: (projectId: string) => ['project', projectId, 'row'] as const,
   projectTopics: (projectId: string) => ['project', projectId, 'topics'] as const,

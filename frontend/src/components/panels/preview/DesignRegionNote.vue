@@ -7,15 +7,32 @@ import { designRegionNotePosition } from './designRegionNotePosition'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  target: { label: string; quote: string }
-  note: string
-  geometry: RegionNoteGeometry | null
-  resourceKey: string
-  focusOrigin: Element | null
-  restoreFocus: (resourceKey: string) => void
-}>()
-const emit = defineEmits<{ 'update:note': [value: string]; send: []; cancel: [] }>()
+const props = withDefaults(
+  defineProps<{
+    target: { label: string; quote: string }
+    note: string
+    geometry: RegionNoteGeometry | null
+    resourceKey: string
+    focusOrigin: Element | null
+    restoreFocus: (resourceKey: string) => void
+    canComment?: boolean
+    busy?: boolean
+    commentError?: string
+  }>(),
+  {
+    canComment: false,
+    busy: false,
+    commentError: undefined,
+  }
+)
+const emit = defineEmits<{ 'update:note': [value: string]; send: []; comment: []; cancel: [] }>()
+const recipient = ref<'agent' | 'comment'>('agent')
+watch(
+  () => props.canComment,
+  (allowed) => {
+    if (!allowed) recipient.value = 'agent'
+  }
+)
 const card = ref<HTMLElement | null>(null)
 const input = ref<HTMLInputElement | null>(null)
 const size = ref({ width: 300, height: 100 })
@@ -78,15 +95,20 @@ async function expand(event: MouseEvent) {
   if (document?.hasFocus() && (document.activeElement === opener || document.activeElement === document.body))
     input.value?.focus({ preventScroll: true })
 }
-function close(action: 'send' | 'cancel', event: KeyboardEvent | MouseEvent) {
+function close(action: 'send' | 'comment' | 'cancel', event: KeyboardEvent | MouseEvent) {
   if ('isComposing' in event && (event.isComposing || event.keyCode === 229)) return
-  if (action === 'send' && !props.note.trim()) return
+  if (action !== 'cancel' && (props.busy || !props.note.trim())) return
   event.preventDefault()
   const owned = !!card.value?.contains(card.value.ownerDocument.activeElement)
   const key = props.resourceKey
   const restore = props.restoreFocus
-  if (action === 'send') emit('send')
-  else emit('cancel')
+  if (action === 'comment' || (action === 'send' && props.canComment && recipient.value === 'comment')) {
+    emit('comment')
+  } else if (action === 'send') {
+    emit('send')
+  } else {
+    emit('cancel')
+  }
   if (owned) void nextTick(() => restore(key))
 }
 onBeforeUnmount(() => observer?.disconnect())
@@ -122,8 +144,25 @@ onBeforeUnmount(() => observer?.disconnect())
         @input="emit('update:note', ($event.target as HTMLInputElement).value)"
         @keydown.enter="close('send', $event)"
       />
-      <button type="button" class="design-region-note__send" :disabled="!note.trim()" @click="close('send', $event)">
-        {{ t('work.room.preview.send') }}
+      <select
+        v-show="canComment && !compact"
+        v-model="recipient"
+        class="design-region-note__recipient"
+        data-testid="region-note-recipient"
+        :aria-label="t('work.room.preview.recipientLabel')"
+        :disabled="busy"
+      >
+        <option value="agent">{{ t('work.room.preview.recipientAgent') }}</option>
+        <option value="comment">{{ t('work.room.preview.recipientComment') }}</option>
+      </select>
+      <button
+        type="button"
+        class="design-region-note__send"
+        :aria-label="canComment && recipient === 'comment' ? t('work.room.comments.commentHere') : undefined"
+        :disabled="!note.trim() || busy"
+        @click="close('send', $event)"
+      >
+        {{ canComment && recipient === 'comment' ? t('work.room.comments.comment') : t('work.room.preview.send') }}
       </button>
       <button
         type="button"
@@ -134,6 +173,7 @@ onBeforeUnmount(() => observer?.disconnect())
         ×
       </button>
     </div>
+    <p v-if="commentError" class="design-region-note__error" role="alert">{{ commentError }}</p>
   </div>
 </template>
 
@@ -209,5 +249,39 @@ onBeforeUnmount(() => observer?.disconnect())
 }
 .design-region-note--compact button {
   padding: 0 4px;
+}
+.design-region-note__recipient {
+  flex: none;
+  max-width: 40%;
+  height: 24px;
+  padding: 0 22px 0 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--text);
+  background-color: var(--fill);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 12px) 10px,
+    calc(100% - 8px) 10px;
+  background-size: 4px 4px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  appearance: none;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.design-region-note__recipient:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.design-region-note__error {
+  margin: 0;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--danger-ink);
 }
 </style>

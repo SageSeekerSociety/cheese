@@ -435,11 +435,13 @@ def test_a_room_whose_disk_is_full_is_prepared_again_and_told_so(
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
-    # The next lease's token, which the preview token in the home is
-    # rewritten with and the disk has no room for.
-    room.env["CHEESE_TOKEN"] = "test-2"
+    # A skill the next install writes into the home, which the disk has no
+    # room for (the preview token it once rewrote there is now empty: a room
+    # with its platform socket holds no credential).
+    payload = room.payload()
+    payload["skills"] = {"skills/notes/SKILL.md": "x" * 65536}
 
-    installed = room.install_again()
+    installed = room.install_again(payload)
 
     assert installed["disk_full_mb"] < 64
     assert room.bash("echo ok")["stdout"].strip() == "ok"
@@ -775,7 +777,9 @@ def test_the_install_writes_the_preview_token_into_the_room_not_through_a_link(
     state = Path(json.loads(capsys.readouterr().out)["state"])
     try:
         assert not (outside / "authorized_keys").exists()
-        assert not token.is_symlink() and token.read_text() == "test"
+        # Removed without following the link: a room with its platform socket
+        # holds no preview token file at all.
+        assert not token.is_symlink() and not token.exists()
     finally:
         stopped = subprocess.run(
             [sys.executable, str(runtime.__file__), "stop", "--state", str(state)],

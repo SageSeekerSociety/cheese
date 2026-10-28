@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import model_roles
@@ -40,13 +40,23 @@ from app.core.sentences import NoticeText, error_frame, say
 from app.domain.agent.admission import Hold, Slot, enter
 from app.domain.agent.personal import billing, loops
 from app.domain.agent.personal.keys import person_key
-from app.domain.agent.personal.prompt import about, earlier, now_line, page
+from app.domain.agent.personal.prompt import (
+    about,
+    earlier,
+    files_said,
+    now_line,
+    page,
+)
 from app.domain.agent.personal.session import HOST_WAIT_S, ref
 from app.domain.agent.session_host.answer import (
+    PAST_CEILING,
     Answer,
+    Said,
+    Subagents,
     Thinking,
     Tool,
     ToolArgs,
+    ToolDone,
     ToolFailed,
     Waiting,
     Words,
@@ -64,6 +74,7 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import gate, proposals
 from app.domain.assistant import memory as assistant_memory
 from app.domain.assistant.models import AssistantConversation, AssistantMessage
+from app.domain.notification.live import wake_after_commit
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
@@ -78,16 +89,29 @@ FAILED = say("assistantFailed")
 BUSY = say("assistantBusy")
 #: Said when an answer was stopped for writing the same thing over and over.
 REPEATING = say("assistantRepeating")
-#: How long one question may take, from when it took its conversation: not a
-#: limit an answer is meant to meet. An answer may read a dozen channels, or
-#: wait while the person decides on a card (``assistant_agent.agent_wait``),
-#: and the person can stop it at any time. A runner that went away is noticed
-#: within ``GONE_AFTER_S``, and the conversation's hold is renewed only while
-#: the answer is read; what this bounds is the question's credential, should
-#: everything else fail.
-ANSWER_S = 3600.0
-#: How much longer than that a question's credential lasts.
+#: An answer stopped at its ceiling: what it wrote stays.
+PAST_CEILING_NOTICE = say("assistantPastCeiling", hours=4)
+#: How long one question may take, from when it took its conversation: room
+#: for a long piece of work (marking forty reports, say), not a limit an answer
+#: is meant to meet. The person can stop it at any time; near it the answer is
+#: told to wrap up (``WRAP_UP_S``). A runner that went away is noticed within
+#: ``GONE_AFTER_S``, and the conversation's hold is renewed only while the
+#: answer is read.
+ANSWER_S = 4 * 3600.0
+#: How much longer than its life a question's credential lasts.
 CREDENTIAL_MARGIN_S = 60
+#: How long one credential a question's tools act with lasts. A long answer
+#: is given a new one before then (``RENEW_AFTER_S``), so one that leaked is
+#: good for an hour, not for the answer's whole four.
+ACTING_S = 3600
+RENEW_AFTER_S = 40 * 60
+#: How long before its ceiling an answer is told to wrap up, and what it is
+#: told: it writes down where it got to rather than being cut off mid-step.
+WRAP_UP_S = 5 * 60
+WRAP_UP = (
+    "<平台>\n这一轮还剩不到 5 分钟就会停下。不要再开始新的步骤：用用户提问的语言写下"
+    "已经做完的、结果在哪里、还没做的，作为这一轮的回答。\n</平台>"
+)
 
 
 def busy_key(conversation_id: uuid.UUID | str) -> str:
@@ -224,25 +248,43 @@ class ConversationNotFound(Exception):
     answer, so an id never confirms another person's conversation exists."""
 
 
+#: How many topics the panel reads at a time, and how many of a topic's
+#: messages: the rest are read as the person scrolls up to them.
+TOPICS_PAGE = 30
+MESSAGES_PAGE = 50
+
+
 class AssistantConversations:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
-    async def list(self, user_id: int) -> list[AssistantConversation]:
-        """This person's conversations, wherever they were started, latest
-        first: the topics of their thread with 芝士. One that never got a
-        question (started, then refused for lack of credits, say) is not
-        listed: it has nothing to go back to."""
-        stmt = (
-            select(AssistantConversation)
-            .where(
-                AssistantConversation.user_id == user_id,
-                AssistantConversation.title != "",
-            )
-            .order_by(AssistantConversation.last_active_at.desc())
-            .limit(50)
+    async def list(
+        self,
+        user_id: int,
+        *,
+        before: tuple[datetime, uuid.UUID] | None = None,
+        limit: int = TOPICS_PAGE,
+    ) -> tuple[list[AssistantConversation], bool]:
+        """A page of this person's conversations, wherever they were started,
+        latest first: the topics of their thread with 芝士, from just before
+        ``before`` (the last of the page read before it), and whether there are
+        older ones. One that never got a question (started, then refused for
+        lack of credits, say) is not listed: it has nothing to go back to."""
+        stmt = select(AssistantConversation).where(
+            AssistantConversation.user_id == user_id,
+            AssistantConversation.title != "",
         )
-        return list((await self._s.execute(stmt)).scalars())
+        if before is not None:
+            stmt = stmt.where(
+                tuple_(AssistantConversation.last_active_at, AssistantConversation.id)
+                < tuple_(literal(before[0]), literal(before[1]))
+            )
+        stmt = stmt.order_by(
+            AssistantConversation.last_active_at.desc(),
+            AssistantConversation.id.desc(),
+        ).limit(limit + 1)
+        rows = list((await self._s.execute(stmt)).scalars())
+        return rows[:limit], len(rows) > limit
 
     async def start(self, user_id: int, place: Place) -> AssistantConversation:
         row = AssistantConversation(
@@ -287,6 +329,42 @@ class AssistantConversations:
         )
         return list((await self._s.execute(stmt)).scalars())
 
+    async def latest(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        before: int | None = None,
+        limit: int = MESSAGES_PAGE,
+    ) -> tuple[list[AssistantMessage], bool]:
+        """The last ``limit`` messages of a conversation before message
+        ``before`` (by its ``seq``; the latest when it is None), in order, and
+        whether there are earlier ones."""
+        stmt = select(AssistantMessage).where(
+            AssistantMessage.conversation_id == conversation_id
+        )
+        if before is not None:
+            stmt = stmt.where(AssistantMessage.seq < before)
+        stmt = stmt.order_by(AssistantMessage.seq.desc()).limit(limit + 1)
+        rows = list((await self._s.execute(stmt)).scalars())
+        return rows[:limit][::-1], len(rows) > limit
+
+    async def newest(self, user_id: int) -> tuple[uuid.UUID, uuid.UUID] | None:
+        """The newest message in any of this person's conversations, and its
+        conversation: a panel that last saw another one has something to read."""
+        found = (
+            await self._s.execute(
+                select(AssistantMessage.id, AssistantMessage.conversation_id)
+                .join(
+                    AssistantConversation,
+                    AssistantConversation.id == AssistantMessage.conversation_id,
+                )
+                .where(AssistantConversation.user_id == user_id)
+                .order_by(AssistantMessage.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+        return None if found is None else (found[0], found[1])
+
     async def append(
         self,
         conversation: AssistantConversation,
@@ -312,6 +390,8 @@ class AssistantConversations:
             parts=parts,
         )
         self._s.add(row)
+        # A panel open elsewhere (another tab, another device) reads it again.
+        wake_after_commit(self._s, inbox={conversation.user_id}, pushable=set())
         conversation.last_active_at = datetime.now(UTC)
         if role == "user" and not conversation.title:
             words = text.strip() or "、".join((parts or {}).get("files") or [])
@@ -324,20 +404,27 @@ class AssistantConversations:
 def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
-    whether it failed, each draft write, each publish. Kept with the answer, so
-    the conversation shows them again."""
+    whether it failed, each draft write, each publish, each file it handed the
+    person, each rule it made. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
+    handed: list[dict] = []
+    rules: list[dict] = []
+    branches: list[dict] = []
     reasoning: dict | None = None
 
     def ms(position: str) -> int:
         return int(position.split("-", 1)[0])
 
     for position, event, data in told:
-        if reasoning is not None and event not in ("tool_args",):
+        if reasoning is not None and event not in (
+            "tool_args",
+            "tool_done",
+            "subagents",
+        ):
             # Reasoning lasts until the next thing it does.
             reasoning["ms"] = ms(position) - reasoning.pop("from")
             reasoning = None
@@ -347,6 +434,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
                 "name": "thinking",
                 "args": "",
                 "from": ms(position),
+                **({"at": data["at"]} if isinstance(data.get("at"), int) else {}),
             }
             steps.append(reasoning)
         elif event == "tool":
@@ -354,6 +442,8 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             if call in by_call:
                 continue
             step = {"call": call, "name": data.get("name") or "", "args": ""}
+            if isinstance(data.get("at"), int):
+                step["at"] = data["at"]
             by_call[call] = step
             steps.append(step)
         elif event == "tool_args" and data.get("call") in by_call:
@@ -361,6 +451,10 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             step["args"] = step["args"][: int(data.get("at") or 0)] + str(
                 data.get("text") or ""
             )
+        elif event == "tool_done" and data.get("call") in by_call:
+            for named in ("shown", "effect"):
+                if data.get(named):
+                    by_call[data["call"]][named] = str(data[named])
         elif event == "tool_failed" and data.get("call") in by_call:
             by_call[data["call"]]["failed"] = str(data.get("text") or "")
         elif event == "change":
@@ -369,15 +463,24 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             published.append(data)
         elif event == "proposal":
             proposed.append(data)
+        elif event == "handed":
+            handed.append(data)
+        elif event == "rule":
+            rules.append(data)
+        elif event == "subagents":
+            branches = list(data.get("branches") or [])
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed):
+    if not (steps or edits or published or proposed or handed or rules):
         return None
     return {
         "steps": steps,
         "edits": edits,
         "published": published,
         **({"proposals": proposed} if proposed else {}),
+        **({"handed": handed} if handed else {}),
+        **({"rules": rules} if rules else {}),
+        **({"subagents": branches} if branches else {}),
     }
 
 
@@ -390,6 +493,41 @@ KIND = "personal"
 #: ended (``routine.personal.ended``): given the run, the answer, and whether
 #: it failed or was stopped.
 RunEnded = Callable[[uuid.UUID, Answer, bool, bool], Awaitable[None]]
+#: What is done when a person's own question that took a while was answered
+#: while they were not looking (``routine.personal.answered``): given the
+#: person, the conversation, the answer's words, how many things it left for
+#: them to confirm, and the question's id.
+Answered = Callable[[int, uuid.UUID, str, int, str], Awaitable[None]]
+
+#: An answer that took at least this long is told to a person not looking at
+#: it when it ends; a quick one they are waiting for.
+TELL_AFTER_S = 120
+#: How long a panel's word that it is showing a conversation holds: it says so
+#: again sooner than this while it does (``looking``).
+LOOKING_S = 30
+
+
+def _looking_key(conversation_id: str) -> str:
+    return f"assistant:looking:{conversation_id}"
+
+
+async def looking(redis: Redis, conversation_id: uuid.UUID) -> None:
+    """A panel is showing this conversation to its person right now."""
+    await redis.set(_looking_key(str(conversation_id)), "1", ex=LOOKING_S)
+
+
+def _acting(consumption: Consumption) -> str:
+    """A new credential for an answer's tools, as the one it was asked with."""
+    acting = consumption.data.get("acting") or {}
+    return mint_delegated_credential(
+        user_id=int(consumption.data["user"]),
+        handle=str(acting.get("handle") or consumption.data["user"]),
+        work=consumption.work_id,
+        project_id=acting.get("project"),
+        ttl_s=ACTING_S + CREDENTIAL_MARGIN_S,
+        read_only=False,
+        conversation=consumption.key,
+    )
 
 
 class Answers:
@@ -403,11 +541,17 @@ class Answers:
         consumptions: Consumptions,
         redis: Callable[[], Redis | None],
         run_ended: RunEnded | None = None,
+        answered: Answered | None = None,
     ) -> None:
         self._sessions = sessions
         self._consumptions = consumptions
         self._redis = redis
         self._run_ended = run_ended
+        self._answered = answered
+        # When the credential of each answer read here was last given, on
+        # this process's clock, and which were told to wrap up.
+        self._acting_since: dict[str, float] = {}
+        self._wrapping_up: set[str] = set()
         # What each answer read here has written, and which were stopped for
         # writing the same thing over and over (``loops``).
         self._written: dict[str, tuple[str, int]] = {}
@@ -422,8 +566,10 @@ class Answers:
     async def took(
         self,
         consumption: Consumption,
-        item: Waiting | Words | Tool | ToolArgs | ToolFailed | Thinking,
+        item: Waiting | Said,
     ) -> None:
+        if not isinstance(item, Waiting):
+            await self._keep_going(consumption)
         if isinstance(item, Waiting):
             await self._consumptions.publish(consumption, "queued", {})
         elif isinstance(item, Words):
@@ -432,12 +578,31 @@ class Answers:
             )
             await self._look_for_loops(consumption, item.text)
         elif isinstance(item, Tool):
+            # ``at``: how much of the answer's text came before it, so the
+            # page shows the call between what was said before and after.
             await self._consumptions.publish(
-                consumption, "tool", {"name": item.name, "call": item.call}
+                consumption,
+                "tool",
+                {"name": item.name, "call": item.call, "at": item.at},
+            )
+        elif isinstance(item, Subagents):
+            # The branches it started, how each is going and what it did.
+            await self._consumptions.publish(
+                consumption, "subagents", {"branches": list(item.branches)}
+            )
+        elif isinstance(item, ToolDone):
+            await self._consumptions.publish(
+                consumption,
+                "tool_done",
+                {
+                    "call": item.call,
+                    **({"shown": item.shown} if item.shown else {}),
+                    **({"effect": item.effect} if item.effect else {}),
+                },
             )
         elif isinstance(item, Thinking):
             # That it reasons, never what: the page shows 思考中.
-            await self._consumptions.publish(consumption, "thinking", {})
+            await self._consumptions.publish(consumption, "thinking", {"at": item.at})
         elif isinstance(item, ToolArgs):
             # A call's arguments as they are written: the page shows a form
             # field filling with the value before the call writes it.
@@ -450,6 +615,47 @@ class Answers:
             await self._consumptions.publish(
                 consumption, "tool_failed", {"call": item.call, "text": item.text}
             )
+
+    async def _keep_going(self, consumption: Consumption) -> None:
+        """What a long answer needs while it is read: a new credential before
+        the one it acts with runs out, and, near its ceiling, a word to wrap
+        up. Each is said once, and neither stops the answer if it fails."""
+        work, now = consumption.work_id, time.monotonic()
+        since = self._acting_since.get(work)
+        if since is None and consumption.deadline is not None:
+            # Read here first: its credential was given when it was said, at
+            # the latest a ceiling before its deadline. Counted from then.
+            said = consumption.deadline - ANSWER_S
+            since = now - max(0.0, time.time() - said)
+            self._acting_since[work] = since
+        if since is not None and now - since >= RENEW_AFTER_S:
+            self._acting_since[work] = now
+            try:
+                await self._consumptions.act_as(consumption, _acting(consumption))
+            except Exception:
+                logger.warning("renewing answer %s's credential failed", work)
+        due = consumption.deadline
+        if (
+            due is not None
+            and work not in self._wrapping_up
+            and due - time.time() <= WRAP_UP_S
+        ):
+            self._wrapping_up.add(work)
+            try:
+                await self._consumptions.steer(consumption, WRAP_UP)
+            except Exception:
+                logger.warning("telling answer %s to wrap up failed", work)
+
+    async def _unseen(self, consumption: Consumption) -> bool:
+        """Whether an answer ended that the person should be told of: it took
+        a while, and no panel is showing its conversation now."""
+        asked_at = consumption.data.get("asked_at")
+        if self._answered is None or not isinstance(asked_at, (int, float)):
+            return False
+        if time.time() - asked_at < TELL_AFTER_S:
+            return False
+        redis = self._redis()
+        return redis is None or not await redis.exists(_looking_key(consumption.key))
 
     async def _look_for_loops(self, consumption: Consumption, more: str) -> None:
         work = consumption.work_id
@@ -476,6 +682,8 @@ class Answers:
         text, refusal = answer.text, FAILED
         failed: str | None = answer.error
         self._written.pop(consumption.work_id, None)
+        self._acting_since.pop(consumption.work_id, None)
+        self._wrapping_up.discard(consumption.work_id)
         if consumption.work_id in self._repeating:
             self._repeating.discard(consumption.work_id)
             failed, refusal = "the answer kept saying the same thing", REPEATING
@@ -492,8 +700,16 @@ class Answers:
         if stopped:
             # What it had written when it was stopped stays, marked as such.
             text, failed = written.strip(), None
+        elif failed == PAST_CEILING:
+            # Told to wrap up before it, it wrote down where it got to: that
+            # stays, and the person is told why it ended there.
+            text, refusal = written.strip(), PAST_CEILING_NOTICE
         parts = parts_of(await self._consumptions.told(consumption.work_id))
-        if (text and not failed) or stopped or parts:
+        if parts and not failed and not stopped and not text.strip():
+            # It worked and then wrote nothing: the page says so rather than
+            # showing an answer with no words.
+            parts = {**parts, "silent": True}
+        if (text and failed in (None, PAST_CEILING)) or stopped or parts:
             if answer.usage is not None and answer.usage.calls:
                 # Each model call's prompt and how much of it the provider's
                 # cache answered: how well the conversation keeps its start.
@@ -507,7 +723,7 @@ class Answers:
                 await store.append(
                     conversation,
                     "assistant",
-                    "" if failed and not stopped else text,
+                    "" if failed and not stopped and failed != PAST_CEILING else text,
                     stopped=stopped,
                     parts=parts,
                 )
@@ -528,6 +744,19 @@ class Answers:
                 )
             except Exception:  # the answer is kept either way
                 logger.exception("ending routine run %s failed", run)
+        elif not failed and not stopped and await self._unseen(consumption):
+            try:
+                assert self._answered is not None
+                asks = sum(
+                    1
+                    for p in (parts or {}).get("proposals") or []
+                    if p.get("state", "pending") == "pending"
+                )
+                await self._answered(
+                    user_id, conversation_id, text, asks, consumption.work_id
+                )
+            except Exception:  # the answer is kept either way
+                logger.exception("telling of answer %s failed", consumption.work_id)
         closing = [("error", error_frame(refusal))] if failed else []
         return [*closing, ("done", {"stopped": stopped})]
 
@@ -544,10 +773,14 @@ async def ask(
     slot: Slot,
     context: str = "",
     kind: str = billing.ASKING,
-    files: list[tuple[int, str]] | None = None,
+    files: list[tuple[str, str]] | None = None,
     project: uuid.UUID | None = None,
     run: uuid.UUID | None = None,
     shown: dict | None = None,
+    told: str | None = None,
+    cited: str = "",
+    asked_with: dict | None = None,
+    kept: bool = False,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
     the background (``Answers``), and what its readers see of it is the
@@ -561,14 +794,20 @@ async def ask(
     ``started`` (`personal.session`). ``context`` is the page the person has
     open, when the conversation has not been told it yet (``page_to_say``);
     ``kind`` the line its spend is charged under (``billing``); ``files`` the
-    ones handed over with it, as (id, name); ``project`` the one the page is
+    ones handed over with it, as (the ref 芝士 reads it by, name); ``project`` the one the page is
     in, which its tools are let into as the person (and into no other).
 
     ``run`` is a routine's run asking on its own (``routine.personal``): what
     it says is the platform's, not the person's (``role`` ``platform``), and
     the run is told when the answer ends. Its id is the answer's ``work``, so
     the cards the run puts up are found by it. ``shown`` is how the panel
-    names the routine, in place of what the platform told 芝士."""
+    names the routine, in place of what the platform told 芝士. ``told`` is
+    the question as 芝士 reads it, when that differs from how it is kept (what
+    it cites, by name); ``cited`` what it cites, written out after it;
+    ``asked_with`` is kept with the question: where it was asked, the text
+    selected, what it cites. ``kept``: the question is in the conversation
+    already (said mid-answer, and the answer ended before 芝士 heard it), so
+    it is not written down again."""
     work = run or uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -576,14 +815,18 @@ async def ask(
         before = await store.messages(conversation_id)
         # Files handed over alone are the whole question: they are kept
         # with it, so the conversation shows them when it is read again.
-        await store.append(
-            conversation,
-            "platform" if run else "user",
-            question,
-            parts={"files": [name for _, name in files]}
-            if files
-            else ({"shown": shown} if shown else None),
-        )
+        if not kept:
+            await store.append(
+                conversation,
+                "platform" if run else "user",
+                question,
+                parts={
+                    **({"files": [name for _, name in files]} if files else {}),
+                    **({"shown": shown} if shown and not files else {}),
+                    **(asked_with or {}),
+                }
+                or None,
+            )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
         # What it remembers of them goes with the start of a conversation, never
@@ -618,17 +861,16 @@ async def ask(
             handle=handle or str(user_id),
             work=str(work),
             project_id=None if project is None else str(project),
-            ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
+            ttl_s=ACTING_S + CREDENTIAL_MARGIN_S,
             read_only=False,
             conversation=str(conversation_id),
         )
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
-        said = "\n\n".join(part for part in (page(context), question) if part)
-        if files:
-            said += "\n\n附上的文件（用 cheese_read 读）：\n" + "\n".join(
-                f"- {name}（files/{file_id}）" for file_id, name in files
-            )
+        said = "\n\n".join(
+            part for part in (page(context), told or question, cited) if part
+        )
+        said += files_said(files or [])
         if decided:
             said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(
                 f"- {proposals.outcome(card)}" for card in decided
@@ -652,6 +894,12 @@ async def ask(
         data={
             "user": user_id,
             "billing": kind,
+            "asked_at": time.time(),
+            # Who its tools act as, so whoever reads the answer can renew it.
+            "acting": {
+                "handle": handle or str(user_id),
+                "project": None if project is None else str(project),
+            },
             **({"run": str(run)} if run else {}),
         },
         work_id=work,

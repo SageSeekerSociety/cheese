@@ -206,3 +206,41 @@ def test_someone_outside_the_project_cannot_speak_into_its_room(client, gateway,
     r = _speak(client, bob, place["room_id"], _wav(1.0))
     assert r.status_code in (403, 404), r.text
     assert gateway["asr"] == []
+
+
+def test_said_to_ones_own_cheese_it_is_in_no_project_and_shares_the_day(
+    client, gateway, alice, monkeypatch
+):
+    """Speaking to one's own 芝士 needs no room; it is billed to nobody's
+    project, and it counts against the same daily seconds as a room's."""
+    monkeypatch.setattr(settings, "voice_daily_seconds", 5)
+    place = _room(client, alice)
+    assert _speak(client, alice, place["room_id"], _wav(3.0)).status_code == 200
+
+    r = client.post(
+        "/assistant/voice",
+        files={"file": ("voice.wav", _wav(1.5), "audio/wav")},
+        headers=alice,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["text"] == "@芝士 帮我看一下这段。"
+    assert r.json()["data"]["remaining_seconds"] == 0
+
+    async def outside_projects():
+        async with client.test_factory() as s:
+            return list(
+                await s.scalars(
+                    select(ResourceUsage.kind).where(
+                        ResourceUsage.project_id.is_(None),
+                        ResourceUsage.kind.in_(("voice_asr", "voice_polish")),
+                    )
+                )
+            )
+
+    assert sorted(asyncio.run(outside_projects())) == ["voice_asr", "voice_polish"]
+    over = client.post(
+        "/assistant/voice",
+        files={"file": ("voice.wav", _wav(1.0), "audio/wav")},
+        headers=alice,
+    )
+    assert over.status_code == 429, over.text

@@ -1,6 +1,6 @@
 {
   "backendError": "Backend error: {headline}",
   "backendErrorAt": "Backend error ({where}): {headline}",
-  "backendErrorBurst": "Repeated backend error: {headline} — {count} times in {minutes} min",
-  "backendErrorBurstAt": "Repeated backend error ({where}): {headline} — {count} times in {minutes} min"
+  "backendErrorBurst": "Repeated backend error: {headline}, {count} times in {minutes} min",
+  "backendErrorBurstAt": "Repeated backend error ({where}): {headline}, {count} times in {minutes} min"
 }

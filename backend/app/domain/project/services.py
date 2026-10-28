@@ -3,6 +3,7 @@
 import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -13,14 +14,21 @@ from app.core.sentences import say
 from app.domain.delivery_events import SettleCard
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.environment import project_environment
+from app.domain.project.forge import PreparedRepository
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
-from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.models import (
+    AiMode,
+    Project,
+    ProjectGitInstallation,
+    ProjectStarterPush,
+)
 from app.domain.project.ports import (
     Claim,
     ComputeCredits,
     DefaultTeammate,
     SeatMentors,
     SeedOverview,
+    StarterSource,
     TaskBrief,
     TaskTerms,
 )
@@ -41,6 +49,22 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
+
+
+class ClaimInProgressError(ConflictError):
+    """This team's claim of this task is being opened by another request right
+    now; asking again in a moment finds its project."""
+
+    retryable = True
+
+
+@dataclass(frozen=True)
+class ClaimedRepository:
+    """What a claim settled before taking its lock: the repository it made on
+    the forge, and the starter code that repository is to begin with."""
+
+    repository: PreparedRepository
+    starter: StarterSource | None
 
 
 def _intent_brief(intent: str) -> str:
@@ -149,6 +173,7 @@ class ProjectService:
         *,
         display_name: str | None = None,
         type_name: str | None = None,
+        pack_prompt: str | None = None,
     ) -> None:
         """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
 
@@ -158,7 +183,11 @@ class ProjectService:
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("default_teammate was not handed in")
         await self._default_teammate(
-            self._session, project, display_name=display_name, type_name=type_name
+            self._session,
+            project,
+            display_name=display_name,
+            type_name=type_name,
+            pack_prompt=pack_prompt,
         )
 
     async def _has_earmark(self, project: Project, task_id: int) -> bool:
@@ -228,6 +257,7 @@ class ProjectService:
         forge_kind: str = "forgejo",
         intent: str = "",
         project_id: uuid.UUID | None = None,
+        claimed: ClaimedRepository | None = None,
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -286,11 +316,38 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import provision_repository
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import bind_repository, provision_repository
 
         if forge_kind == "forgejo":
-            await provision_repository(project.id, self._session)
+            # A 题目's starter code is the repository's first commit (#4767):
+            # the archive as it is at this moment, so a later replacement
+            # reaches only later claims. The repository is created empty and
+            # the push runs after this transaction commits
+            # (`task.starter_jobs`): unpacking and pushing a large archive must
+            # not hold the claim open.
+            if claimed is not None:
+                # The claim made the repository before taking its lock.
+                source = claimed.starter
+                await bind_repository(self._session, claimed.repository)
+            else:
+                source = (
+                    await self._terms().starter(external_task_id)
+                    if external_task_id is not None
+                    else None
+                )
+                await provision_repository(
+                    project.id, self._session, initialize=source is None
+                )
+            if source is not None:
+                self._session.add(
+                    ProjectStarterPush(
+                        project_id=project.id,
+                        library_file_id=source.library_file_id,
+                        revision=source.revision,
+                        message=source.message,
+                    )
+                )
         # What the person said they wanted to do, carried into the project's
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
@@ -320,23 +377,36 @@ class ProjectService:
         layer up and are handed in by whoever has them.
         """
 
-        # Serialize registration workspace creation for this task. Two teammates
-        # submitting together must not leave two projects for one application.
-        await self._repo.lock_external_task(task.id)
         team_id = (
             claim.member_id
             if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
-        projects = await self._repo.list_for_external_task(task.id)
-        for project in projects:
-            if project.team_id == team_id and team_id is not None:
-                return project
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
+            return found
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import prepare_repository
+
+        # Two teammates submitting together must not leave two projects, or two
+        # repositories, for one application. This team's claim of this task is
+        # taken here, until commit, before the repository is made; a second
+        # claim arriving meanwhile is turned away at once (it asks again and
+        # finds the project) rather than waiting on the forge behind this one.
+        # No claim of another team or another task ever meets this lock.
+        if not await self._repo.try_lock_claim(task.id, team_id):
+            raise ClaimInProgressError(say("claimInProgress"))
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
+            return found
+        starter = await self._terms().starter(task.id)
+        project_id = uuid.uuid4()
+        repository = await prepare_repository(project_id, initialize=starter is None)
         project = await self.create(
             name=task.name[:200],
             owner_handle=owner_handle,
             team_id=team_id,
             external_task_id=task.id,
+            project_id=project_id,
+            claimed=ClaimedRepository(repository=repository, starter=starter),
         )
         # The claimer agreed to the task's mentors before claiming; they join
         # the project it opened, once — a project reused on reapplication keeps
@@ -356,6 +426,17 @@ class ProjectService:
         )
         await self._seed_overview(project, brief)
         return project
+
+    async def claimed_project(
+        self, task_id: int, team_id: int | None
+    ) -> Project | None:
+        """The project this team already opened for this task, if any."""
+        if team_id is None:
+            return None
+        for project in await self._repo.list_for_external_task(task_id):
+            if project.team_id == team_id:
+                return project
+        return None
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
         """Whether a document is some project's goals document."""
@@ -644,7 +725,9 @@ class ProjectService:
         terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        await self._seed_default_teammate(project, type_name=terms.default_role)
+        await self._seed_default_teammate(
+            project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
+        )
         if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
             await self._grant_earmark(
                 project, task_id, credits_total=terms.compute_credits

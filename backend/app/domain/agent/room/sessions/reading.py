@@ -29,6 +29,7 @@ from app.domain.agent.platform_failures import classify_session_start
 from app.domain.agent.reads import (
     Abandoned,
     CaughtUp,
+    Compacted,
     ControlsMoved,
     Ended,
     Followed,
@@ -46,7 +47,7 @@ from app.domain.agent.reads import (
 )
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Live
-from app.domain.agent.service import AgentResult
+from app.domain.agent.service import AgentCompacting, AgentResult
 
 logger = logging.getLogger("app.domain.agent.room.sessions")
 
@@ -235,6 +236,11 @@ async def _take(
             read.text_seen,
             read.unsolicited,
         )
+        if isinstance(event, AgentCompacting) and event.done and not event.error:
+            # Whichever way it came — the harness's own when the window
+            # filled, or `cheese_session(action=compact)` — the event names no seat, and what
+            # the room forgets is this seat's.
+            await svc._hear(live.session, Read(str(work), Compacted()))
     return False
 
 

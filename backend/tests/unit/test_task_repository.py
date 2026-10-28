@@ -136,6 +136,15 @@ def _mock_scalars(lst):
     return m
 
 
+def _mock_scalars_first(val):
+    """`result.scalars().first()` —— 单条查询用的那种结果。"""
+    m = MagicMock()
+    s = MagicMock()
+    s.first.return_value = val
+    m.scalars.return_value = s
+    return m
+
+
 def _mock_rowcount(count):
     m = MagicMock()
     m.rowcount = count
@@ -466,7 +475,7 @@ class TestTaskMembershipRepository:
     async def test_get_user_membership(self):
         session = _mock_session()
         m = _membership()
-        session.execute.return_value = _mock_scalar(m)
+        session.scalar.return_value = m
         repo = TaskMembershipRepository(session)
 
         result = await repo.get_user_membership(1, 10)
@@ -530,7 +539,7 @@ class TestTaskMembershipRepository:
     async def test_get_by_task_and_member(self):
         session = _mock_session()
         m = _membership()
-        session.execute.return_value = _mock_scalar(m)
+        session.scalar.return_value = m
         repo = TaskMembershipRepository(session)
 
         result = await repo.get_by_task_and_member(1, 10)
@@ -757,7 +766,7 @@ class TestTaskSubmissionReviewRepository:
     async def test_get_by_submission_id(self):
         session = _mock_session()
         r = _review()
-        session.execute.return_value = _mock_scalar(r)
+        session.execute.return_value = _mock_scalars_first(r)
         repo = TaskSubmissionReviewRepository(session)
 
         result = await repo.get_by_submission_id(1)
@@ -785,7 +794,7 @@ class TestTaskSubmissionReviewRepository:
     @pytest.mark.anyio
     async def test_exists_by_submission_id_true(self):
         session = _mock_session()
-        session.execute.return_value = _mock_scalar(1)
+        session.execute.return_value = _mock_scalars_first(1)
         repo = TaskSubmissionReviewRepository(session)
 
         assert await repo.exists_by_submission_id(1) is True
@@ -793,7 +802,7 @@ class TestTaskSubmissionReviewRepository:
     @pytest.mark.anyio
     async def test_exists_by_submission_id_false(self):
         session = _mock_session()
-        session.execute.return_value = _mock_scalar(None)
+        session.execute.return_value = _mock_scalars_first(None)
         repo = TaskSubmissionReviewRepository(session)
 
         assert await repo.exists_by_submission_id(1) is False
@@ -804,9 +813,14 @@ class TestTaskSubmissionReviewRepository:
         repo = TaskSubmissionReviewRepository(session)
 
         result = await repo.create_review(
-            submission_id=1, accepted=True, score=90, comment="Excellent"
+            submission_id=1,
+            reviewer_id=7,
+            accepted=True,
+            score=90,
+            comment="Excellent",
         )
         assert result.submission_id == 1
+        assert result.reviewer_id == 7
         assert result.accepted is True
         assert result.score == 90
         session.add.assert_called_once()

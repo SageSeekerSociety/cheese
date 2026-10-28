@@ -4,12 +4,8 @@
 而安静与正在运行无法区分。所以两件事一起做：房间与任务进「待处理 · 待回答」，同时
 通知发起那一轮的人。芝士是代他执行这件事的，这个问题在等的是他。
 
-判据是 #1084 定的那一条，不新增存储 —— **最近一条提问消息没有作答记录**
-（`answer_log` 或上游点选的 `answered`，两种形状并存），且此后没人给过回应。回应有
-三条出路：有人点了选项（就是回复那道题的一句话）、被问的人直接打字回了一句、或者
-**芝士自己又接着说了一句**（#2046：芝士问完没等人答就自己把活做完又发了几条进展，
-房间却一直停在「待回答」）。最后一条只管芝士自己问出口的题 —— 人问的那道题，芝士
-在不在房间里说话都与它无关。
+判据是最近一条提问本身的作答记录（`answer_log`，历史题还有 `answered`）。
+有效回答和明确跳过改变待回答状态；题后旁聊、芝士继续发进展都不代表结题。
 """
 
 import uuid
@@ -163,13 +159,8 @@ def test_a_second_question_after_an_answered_one_still_counts(
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
-def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
-    """芝士问完没等回答，自己又接着说了几句 —— 那道题不再挂在人身上 (#2046)。
-
-    实况：芝士在房间里问「截图里那个灰底圆角块是哪一处」，没等人答就自己找到根因、
-    把活做完、又发了几条进展，而房间从 01:36 一直停在「待回答」，直到人真去点一下
-    才灭。提问的人自己往前走了，球就不在他手上了。
-    """
+def test_an_agents_followup_does_not_settle_its_question(client):
+    """补充进展不是撤题：题还没回答，频道仍提示待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
     question_row(
@@ -179,7 +170,7 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
 
     _agent_says(client, room, "找到根因了，改完推上去了")
 
-    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
 
 def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):

@@ -9,15 +9,15 @@ request — headers, DB, WebSocket. Routes call ``resolve(...)`` (replacing ever
 ``authorize_topic(...)``.
 
 The wiring routes import — ``ActorResolverDep``, ``MediaActorResolverDep``,
-``DELEGATED_ROUTES``, the media cookie, ``require_seated_agent`` — is in the
-kernel of the same package, ``app/api/auth/__init__.py``. Import that.
+the media cookie, ``require_seated_agent`` — is in the kernel of the same
+package, ``app/api/auth/__init__.py``. Import that.
 
 **Read through ``pkg``, never imported here.** ``pkg`` is the facade, and the
 names below come off it at CALL time on purpose: the two repositories the tests
 replace to watch this class (``UserRepository`` in
 ``tests/unit/test_actor_numeric_handle.py`` and
 ``tests/unit/test_token_scope_violation.py``, plus ``TopicMemberService`` in
-those same two), the delegated-route table, the token verifier, and
+those same two), the token verifier, and
 ``require_seated_in_its_room``. A module-local import would step past every one
 of those replacements in silence; the facade is the only place a replacement is
 seen (``app/domain/review/services`` reads its own patch points the same way).
@@ -33,12 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import auth as pkg
 from app.auth.audience import rooms_its_audience_may_read
 from app.auth.audience import seats_only as _private
+from app.auth.caller import handle_named_by
 from app.auth.project_access import (
     may_read_project,
     may_write_project,
     outsiders_reading,
 )
 from app.auth.project_roles import may
+from app.common.auth import verify_access_token
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -49,6 +51,7 @@ from app.core.obs import get_logger
 from app.core.sandbox_auth import (
     DelegatedClaims,
     delegated_claims,
+    held_by_a_machine,
     is_global_sandbox_token,
     looks_like_delegated_credential,
     looks_like_project_agent_credential,
@@ -58,10 +61,7 @@ from app.core.sandbox_auth import (
     verify_scoped_token,
 )
 from app.core.sentences import say
-from app.domain.agent.device_attribution import resolve_screen_actor
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.assistant import passes
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.conversation import services as conversations
 from app.domain.identity.actor import Actor, resolve_actor
@@ -89,19 +89,11 @@ class ActorResolver:
         session: AsyncSession,
         bearer: str | None,
         cheese_token: str,
-        screen_token: str = "",
         writes: bool = False,
-        endpoint: str | None = None,
-        gate_pass: str = "",
+        allow_machine: bool = False,
     ):
         self._session = session
-        # What a person's 芝士 shows at a gated route (``GATED_ROUTES``), and
-        # whether it has already been let through this request.
-        self._gate_pass = gate_pass
-        self._through_gate = False
-        # Which route this is (``module.function``), for a delegated credential,
-        # which opens only the routes in ``DELEGATED_ROUTES``.
-        self._endpoint = endpoint
+        self._allow_machine = allow_machine
         # Whether this request changes something. A write that names a project,
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
@@ -112,10 +104,6 @@ class ActorResolver:
         self._answer_for_readers: tuple[uuid.UUID | None] | None = None
         self._bearer = bearer
         self._cheese_token = cheese_token
-        # A ``cheese`` call made from inside a self-hosted device screen carries that
-        # screen's token (``X-Cheese-Screen``). It makes the call act as the screen's
-        # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
-        self._screen_token = screen_token
         self._credentials = ProjectAgentCredentialService(session)
 
     def for_reading(self) -> "ActorResolver":
@@ -152,15 +140,22 @@ class ActorResolver:
         conversation — not its room, not another task — even the session-wide
         one that otherwise reaches across its project. Routes that name no
         conversation (the project's library, its documents) it reaches as any
-        session of the project does."""
+        session of the project does.
+
+        The refusal points the way out rather than naming the rule: a session
+        that stopped here once stood still for a task next to its own, while
+        what the task said stays readable through the channel-scoped search.
+        """
         if not self._cheese_token or topic_id is None:
             return
         claims = scoped_token_claims(self._cheese_token)
-        named = (claims or {}).get("t")
+        if claims is None or (not self._allow_machine and held_by_a_machine(claims)):
+            return
+        named = claims.get("t")
         if not named or named == str(topic_id):
             return
         if await conversations.is_task(self._session, uuid.UUID(named)):
-            raise ForbiddenError("This credential works another conversation")
+            raise ForbiddenError(say("taskCredentialOtherConversation"))
 
     def delegation(self) -> DelegatedClaims | None:
         """The question the presented credential acts for, when it is a valid
@@ -176,38 +171,20 @@ class ActorResolver:
     ) -> Actor:
         """The person a 芝士 answers for, as the actor: what the route allows is
         judged by what that person may do. Refused outright (never anonymous)
-        when the credential is not valid, the route is not one it opens, the
-        route changes something and the question may only be answered, or the
-        route acts somewhere the credential was not minted for."""
+        when the credential is not valid, the request changes something and the
+        question may only be answered, or the route acts somewhere the
+        credential was not minted for.
+
+        Which of the person's actions 芝士 takes, and which it asks about
+        first, is its harness's to decide before a tool runs
+        (``run_platform_tool``), not this credential's: it never reaches a
+        place the model could use it from."""
         claims = self.delegation()
         if claims is None:
             raise AuthenticationRequiredError(
                 "Delegated credential is invalid or expired"
             )
-        writes = pkg.DELEGATED_ROUTES.get(self._endpoint or "")
-        if (
-            writes is None
-            and (self._endpoint or "") in pkg.GATED_ROUTES
-            and claims.agent is None
-            and claims.topic_id is None
-        ):
-            # A person's own 芝士, only as far as its gate let it through
-            # (`assistant.passes`).
-            if topic_id is not None and project_id is None:
-                project_id = await self.project_of_topic(topic_id)
-            if not self._through_gate:
-                self._through_gate = await passes.use(
-                    self._gate_pass,
-                    work=claims.work,
-                    endpoint=self._endpoint or "",
-                    places={str(p) for p in (topic_id, project_id) if p is not None},
-                )
-            if not self._through_gate:
-                raise ForbiddenError(say("assistantGateNotPassed"))
-            writes = True
-        if writes is None:
-            raise ForbiddenError("This credential does not open this route")
-        if writes and claims.read_only:
+        if self._writes and not read_only and claims.read_only:
             raise ForbiddenError("This question may only be answered, not act")
         if topic_id is not None and project_id is None:
             project_id = await self.project_of_topic(topic_id)
@@ -353,6 +330,7 @@ class ActorResolver:
                     if topic_id and not (claims and claims.get("s") == "project")
                     else None
                 ),
+                allow_machine=self._allow_machine,
             )
 
         # The credential names a fixed participant. A project credential uses
@@ -388,50 +366,15 @@ class ActorResolver:
             if (
                 topic_id is None
                 and project_id is None
-                and scoped_token_claims(self._cheese_token) is not None
+                and (claims := scoped_token_claims(self._cheese_token)) is not None
+                and (self._allow_machine or not held_by_a_machine(claims))
             ):
                 raise ForbiddenError(
                     "This credential is restricted to one project; "
                     "call a route that names the project or room"
                 )
             raise AuthenticationRequiredError("Agent credential is invalid or expired")
-        actor = await self._recover_numeric_handle(actor)
-        # An authenticated actor whose credential carried no int PK: look the
-        # row up by handle, because int-keyed rows (device.owner_user_id) cannot
-        # be bound without it. Asked of every such actor rather than only of the
-        # agents — the caller's KIND was never what made the id missing (a
-        # legacy cheesex token puts the handle in ``sub`` and carries no id
-        # either), so branching on it just left those callers unbound.
-        if actor.authenticated and actor.user_id is None:
-            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
-            if user is not None:
-                actor = replace(actor, user_id=user.id)
-        # Device-screen attribution (P3): a cheese call from inside an enrolled device's
-        # screen carries that screen's token. It is a per-screen capability that proves
-        # the call runs as that screen's agent — so it acts as the device agent-user
-        # (agent-as-user), overriding the generic cheese identity. The write-access
-        # declarations (app/api/write_access.py) are unaffected; this only decides
-        # *who* the actor is.
-        if self._screen_token:
-            screen = resolve_screen_actor(device_hub, self._screen_token)
-            if screen is not None:
-                # The screen runs for one project, and acts as its agent there
-                # only. A request naming another one is out of its scope, the
-                # same answer a project credential for another project gets.
-                target = project_id or (
-                    await self.project_of_topic(topic_id) if topic_id else None
-                )
-                if screen.project_id is not None and target not in (
-                    None,
-                    screen.project_id,
-                ):
-                    _log.info("screen_scope_violation", got=str(screen.project_id))
-                    raise ForbiddenError(say("credentialOtherProject"))
-                return Actor(
-                    handle=screen.agent_handle,
-                    user_id=screen.agent_user_id,
-                    via="cheese",
-                )
+        actor = await self._bound(actor)
         return actor
 
     async def _refuse_archived_write(
@@ -597,7 +540,7 @@ class ActorResolver:
         if not self._cheese_token:
             return
         claims = scoped_token_claims(self._cheese_token)
-        if claims is None:
+        if claims is None or (not self._allow_machine and held_by_a_machine(claims)):
             return
         if project_id is not None and claims.get("p") != str(project_id):
             _log.info("token_scope_violation", kind="project", got=claims.get("p"))
@@ -636,31 +579,59 @@ class ActorResolver:
             _log.info("credential_scope_violation", got=claims.project_id)
             raise ForbiddenError(say("credentialOtherProject"))
 
+    async def _bound(self, actor: Actor) -> Actor:
+        """``actor`` named by both its handle and its user id.
+
+        An authenticated actor whose credential carried no int PK: look the
+        row up by handle, because int-keyed rows (device.owner_user_id) cannot
+        be bound without it. Asked of every such actor rather than only of the
+        agents — the caller's KIND was never what made the id missing (a
+        legacy cheesex token puts the handle in ``sub`` and carries no id
+        either), so branching on it just left those callers unbound."""
+        actor = await self._recover_numeric_handle(actor)
+        if actor.authenticated and actor.user_id is None:
+            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
+            if user is not None:
+                actor = replace(actor, user_id=user.id)
+        return actor
+
+    def presented_sign_in(self) -> bool:
+        """Whether the request carried a person's sign-in at all — verified or
+        not. A route that answers per caller turns a failed one into a 401
+        rather than an anonymous answer (`reject_failed_credential`)."""
+        return bool(self._bearer)
+
+    async def person(self) -> Actor | None:
+        """The person this request acts as, for the routes that know only
+        people (a team, a space, an account): their own sign-in, or their 芝士
+        on a route listed for it (`resolve` judges that, and refuses the rest).
+        An AI teammate's credential and the development override name no
+        person here; neither does a sign-in that does not verify."""
+        if looks_like_delegated_credential(self._cheese_token):
+            actor = await self.resolve()
+        elif self._bearer:
+            identity = pkg._token_verifier(self._bearer)
+            if identity is None:
+                return None
+            actor = await self._bound(
+                Actor(handle=identity.handle, user_id=identity.user_id, via="token")
+            )
+        else:
+            return None
+        return actor if actor.user_id is not None else None
+
     async def _recover_numeric_handle(self, actor: Actor) -> Actor:
-        """Repair a token actor whose handle degraded into the int User PK.
-
-        ``_token_verifier`` falls back to the ``sub`` claim when a main-minted
-        token carries no ``handle``; ``sub`` is the int PK, so the actor ends up
-        named e.g. ``"470"``. Every authorization key in the platform is the
-        handle STRING (``topic_memberships.member_handle``, ``member.user_handle``,
-        ``project.owner_handle``) — a numeric handle therefore matches no roster
-        and no project membership, and the caller silently loses every permission
-        they actually hold. Resolve the real username from the id instead.
-
-        A user we cannot resolve keeps the numeric handle (authorization still
-        denies, as it must) but is logged loudly — the previous behaviour failed
-        silently, which is what made this class of bug so hard to trace.
-        """
-        if actor.via != "token" or actor.user_id is None:
+        """A token actor named the way every reader names one
+        (`app.auth.caller.handle_named_by`): by the handle its token states, or,
+        for a token that states none, by the user its id points at. Every
+        authorization key in the platform is the handle STRING, so a token
+        named by its int PK would match no roster."""
+        if actor.via != "token" or not self._bearer:
             return actor
-        if not actor.handle.isdigit():
+        claims = verify_access_token(self._bearer)
+        if claims is None:
             return actor
-        user = await pkg.UserRepository(self._session).get_by_id(actor.user_id)
-        if user is None:
-            _log.warning("token_handle_unresolved", user_id=actor.user_id)
-            return actor
-        _log.info("token_handle_recovered", user_id=actor.user_id, handle=user.username)
-        return replace(actor, handle=user.username)
+        return replace(actor, handle=await handle_named_by(self._session, claims))
 
     async def authorize_topic(
         self,
@@ -911,7 +882,7 @@ class ActorResolver:
         seat it works from, and the credential names that place, so a request
         does not have to name it again.
         """
-        if actor.via != "cheese" or self._screen_token:
+        if actor.via != "cheese":
             return None
         claims = scoped_token_claims(self._cheese_token)
         if not claims or not claims.get("a") or not claims.get("t"):

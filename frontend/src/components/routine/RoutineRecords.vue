@@ -16,7 +16,7 @@ import NavLink from '../common/NavLink.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { routineFileName, routineRunLabel, routineRunTime } from '@/lib/routine'
+import { creditsLabel, routineFileName, routineRunLabel, routineRunTime } from '@/lib/routine'
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +25,8 @@ const props = withDefaults(
     runs?: RoutineRun[]
     /** 筛过之后一共几次。 */
     total?: number
+    /** 这条规则**本月**的点数 —— 整条规则的，不是这一页的。翻到第几页都一样。 */
+    creditsThisMonth?: number
     page?: number
     pages?: number
     /** 只留没能执行的那几次。 */
@@ -34,7 +36,16 @@ const props = withDefaults(
      *  能开文件的工作面板）；房间面板里那一格不给，那里的每一份都当场点开。 */
     roomTo?: NavTarget
   }>(),
-  { runs: () => [], total: 0, page: 1, pages: 1, failedOnly: false, loading: false, roomTo: undefined }
+  {
+    runs: () => [],
+    total: 0,
+    creditsThisMonth: 0,
+    page: 1,
+    pages: 1,
+    failedOnly: false,
+    loading: false,
+    roomTo: undefined,
+  }
 )
 
 const emit = defineEmits<{
@@ -87,6 +98,12 @@ function doJump() {
       </div>
     </div>
 
+    <!-- 这条规则本月合计。摆在明细上面、抬头下面：它是这一整条规则的数，翻页不变，
+         读的人先看到它再往下看是哪几次花的。 -->
+    <p class="records__sum t-body" :title="t('routines.spend.hint')" data-testid="routine-records-spend">
+      {{ t('routines.spend.recordsTotal', { points: creditsLabel(creditsThisMonth) }) }}
+    </p>
+
     <button
       type="button"
       class="records__filter"
@@ -108,6 +125,9 @@ function doJump() {
         <span class="t-meta c-faint">{{ routineRunTime(run.scheduled_for || run.created_at) }}</span>
         <span class="records__what">
           <span class="t-body records__status">{{ routineRunLabel(run.status) }}</span>
+          <span v-if="run.credits != null" class="t-meta c-faint records__spend" data-testid="routine-run-spend">
+            {{ creditsLabel(run.credits) }}
+          </span>
           <template v-if="missed(run)">
             <button
               type="button"
@@ -228,6 +248,17 @@ function doJump() {
 }
 .records__status {
   color: var(--text);
+}
+/* 这一整条规则本月合计的那一行：摆在明细上面，和数字一样对齐读。 */
+.records__sum {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+/* 一次执行花了多少点：和「已完成」并排，安静一档。 */
+.records__spend {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .records__why {
   padding: 0;

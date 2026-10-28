@@ -32,24 +32,19 @@ export default {
           component: () => import('@/views/teams/detail/TeamProjects.vue'),
         },
         {
-          path: 'members',
-          name: 'TeamsDetailMembers',
-          component: () => import('@/views/teams/detail/Members.vue'),
-        },
-        {
-          // 团队的文档（#3774）：只属于团队、不属于哪个项目的那些。个人名下的就是自己的文档。
-          // 打开的一份挂在它下面，侧栏的「文档」也就亮着。
-          path: 'docs',
+          // 团队的资料库：团队自己的文档（#3774）和文件在一张表里，和项目的资料库一样。个人
+          // 名下的就是自己的资料库。打开的一份文档挂在它下面，侧栏的「资料库」也就亮着。
+          path: 'library',
           component: RouterPassThrough,
           children: [
             {
               path: '',
-              name: 'TeamsDetailDocs',
-              component: () => import('@/views/teams/detail/Documents.vue'),
+              name: 'TeamsDetailLibrary',
+              component: () => import('@/views/teams/detail/Library.vue'),
             },
             {
-              // 其中一份，整页打开：不套团队页的外框，页头写「某团队的文档 / 标题」。
-              path: ':docId',
+              // 其中一份，整页打开：不套团队页的外框，页头写「某团队的资料库 / 标题」。
+              path: 'docs/:docId',
               name: 'TeamsDocument',
               component: () => import('@/views/teams/TeamDocument.vue'),
               props: true,
@@ -57,20 +52,60 @@ export default {
           ],
         },
         {
+          // 文档原先单独一页，并进资料库以后发出去的旧链接照旧能用。
+          path: 'docs',
+          redirect: (to) => ({ name: 'TeamsDetailLibrary', params: { handle: to.params.handle } }),
+        },
+        {
+          path: 'docs/:docId',
+          redirect: (to) => ({ name: 'TeamsDocument', params: { handle: to.params.handle, docId: to.params.docId } }),
+        },
+        // 设置：盖在整个窗口上的一层（Detail.vue 画 `TeamSettings`），和个人、空间、项目的
+        // 设置同一个外框。每一栏照旧是自己的地址；`settings` 在桌面上落到第一栏，手机上是目录。
+        {
+          path: 'settings',
+          name: 'TeamsDetailSettings',
+          component: RouterPassThrough,
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
+          // 名称、头像、简介和团队地址。
+          path: 'profile',
+          name: 'TeamsDetailProfile',
+          component: () => import('@/views/teams/detail/Profile.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
+          path: 'members',
+          name: 'TeamsDetailMembers',
+          component: () => import('@/views/teams/detail/Members.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
           path: 'compute',
           name: 'TeamsDetailCompute',
           component: () => import('@/views/teams/detail/Compute.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
         },
         {
           path: 'models',
           name: 'TeamsDetailModels',
           component: () => import('@/views/teams/detail/Models.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
         },
         {
           // Credits belong to the team, including the personal team.
           path: 'credits',
           name: 'TeamsDetailCredits',
           component: () => import('@/views/teams/detail/Credits.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
+          // 所有者在这里转让或解散团队，其他成员在这里退出。
+          path: 'leave',
+          name: 'TeamsDetailLeave',
+          component: () => import('@/views/teams/detail/Leave.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
         },
       ],
     },

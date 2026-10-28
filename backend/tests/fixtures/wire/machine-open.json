@@ -1,0 +1,14 @@
+{
+  "type": "machine.open",
+  "origin": "device",
+  "why": "A process in a session's sandbox connected to its platform socket. `path` is the state directory exactly as the backend named it in the execution.call that made the connector listen there; the sandbox cannot choose it, and it is the only thing that says whose stream this is.",
+  "frame": {
+    "t": "machine.open",
+    "id": "machine-5b1e0c9d2f7a4e86b3c1d0a9f8e7d6c5",
+    "path": "$HOME/.cheese/sandboxes/7d6c5b4a/9f8e7d6c/state"
+  },
+  "meaning": {
+    "stream_id": "machine-5b1e0c9d2f7a4e86b3c1d0a9f8e7d6c5",
+    "state": "$HOME/.cheese/sandboxes/7d6c5b4a/9f8e7d6c/state"
+  }
+}

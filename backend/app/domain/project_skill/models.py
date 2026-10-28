@@ -54,8 +54,19 @@ class ProjectSkill(UuidPk, Timestamps, Base):
     origin: Mapped[str] = mapped_column(
         String(16), default="person", server_default="person"
     )
+    #: The conversation the proposal was raised in — the channel's own line, a
+    #: task's or a 支线's, and the card appears where the teammate was. It
+    #: points at ``conversations``, not ``topics``: a task and a 支线 are
+    #: conversations too and have no ``topics`` row (the column keeps its old
+    #: name, as ``feedback_proposal_dismissals.topic_id`` does). None for a skill
+    #: a person wrote, and for one whose conversation is gone.
     source_topic_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+        ForeignKey(
+            "conversations.id",
+            ondelete="SET NULL",
+            name="fk_project_skills_source_topic_id_conversations",
+        ),
+        nullable=True,
     )
     proposed_by: Mapped[str] = mapped_column(String(64))
     confirmed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

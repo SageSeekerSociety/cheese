@@ -36,7 +36,7 @@ from app.core.errors import (
     UnprocessableEntityError,
     ValidationError,
 )
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.domain.textfile import text_payload
 
 
@@ -116,15 +116,18 @@ def max_bytes_for(name: str | None) -> int:
     return MAX_FILE_BYTES
 
 
-def refuse_oversize(size: int, name: str | None = None) -> None:
+def refuse_oversize(
+    size: int, name: str | None = None, limit: int | None = None
+) -> None:
     """超过这一类文件上限的字节不落地，报「超限」而不是别的，带着那一类的上限。
 
     房间文件和资料库的每一个字节都从这里过，所以上限只有一处、也只有一层：调用方
-    漏判也好、直连后端绕开网关也好，字节都写不进去。
+    漏判也好、直连后端绕开网关也好，字节都写不进去。``limit`` 是另有上限的地方
+    （团队的资料库）自己的那一条。
     """
-    limit = max_bytes_for(name)
+    limit = max_bytes_for(name) if limit is None else limit
     if size > limit:
-        raise UnprocessableEntityError(say("fileTooLarge", mb=limit // (1024 * 1024)))
+        raise UnprocessableEntityError(say("fileTooLarge", size=size_text(limit)))
 
 
 def size_of(content: Content) -> int:

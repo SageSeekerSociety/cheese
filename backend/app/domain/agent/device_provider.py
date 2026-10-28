@@ -28,6 +28,7 @@ from app.core.config import settings
 from app.core.sentences import NoticeText, say
 from app.domain.agent import machine_launcher, screen_identity
 from app.domain.agent.device_hub import (
+    RECONNECT_GRACE_S,
     DeviceCallError,
     DeviceHub,
     DeviceOffline,
@@ -69,7 +70,11 @@ logger = logging.getLogger(__name__)
 # How long the launcher file write may go unanswered. The hub adds 5s of grace
 # on top for the exec.result frame itself.
 _LAUNCHER_SHIP_TIMEOUT_S = 30
-_SESSION_RECONNECT_GRACE_S = 10.0
+# The same window the link itself gives a machine to come back
+# (`RECONNECT_GRACE_S`), not a second number: at 10s a machine that returned
+# between the two was "gone" to a turn starting now and "still on its way" to the
+# calls around it, and the turn failed with 「环境尚未配置或未连接」.
+_SESSION_RECONNECT_GRACE_S = RECONNECT_GRACE_S
 _SESSION_RECONNECT_POLL_S = 0.25
 
 

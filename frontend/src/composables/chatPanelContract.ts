@@ -101,6 +101,9 @@ export interface ChatPanelOptions {
   topicList: () => Topic[]
   unreadOnOpen: () => number
   focusBlock: () => string | null
+  /** 时间线和输入区共同的那一栏（面板根）：输入区离开又回来会夹住滚动位置，重写
+   *  判定得观察这一层。滚动框的直接父元素可能只是时间线的包装层。 */
+  column?: () => HTMLElement | null
   /** 我发的一条落了库，这是后端回的那一条（带着它 @ 到、不在频道里的人）。 */
   onPosted?: (block: PostedMessage) => void
   emit: ChatPanelEmit

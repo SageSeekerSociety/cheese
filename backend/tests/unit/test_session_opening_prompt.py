@@ -2,7 +2,7 @@
 
 这个小节从 #175 来，当时装的是一个**每轮**的抬头：时间预算、磁盘、验收卡。三样
 后来都不该在这儿了——倒计时根本不存在（说有会让 agent 赶工），卡和磁盘是同一个
-commit 造的 `cheese_status` 一次调用的事，而抬头只是把某一轮的快照冻进了整个会
+commit 造的 `cheese_session(action=status)` 一次调用的事，而抬头只是把某一轮的快照冻进了整个会
 话。剩下的两条是任何调用和任何一轮都重建不出来的：这台机器多大，以及上一轮做到
 哪了。
 
@@ -77,8 +77,8 @@ def test_what_a_session_opens_with_says_nothing_about_this_particular_turn() -> 
     some of them are continuations."""
     joined = "\n".join(_session_opening_lines(sandbox=(2048, 2)))
 
-    assert "本轮" not in joined
-    assert "本轮接着上一轮跑" in _resume_notice()
+    assert "接着上次做" not in joined
+    assert "这次接着上次做" in _resume_notice()
 
 
 def test_the_roster_tells_the_agent_each_persons_clock() -> None:
@@ -108,3 +108,28 @@ def test_a_roster_without_any_zone_adds_no_clock_advice() -> None:
     ).text
 
     assert "UTC" not in text
+
+
+def test_the_roster_says_whose_agent_a_teammate_is_by_their_name() -> None:
+    """A member can bring their own agent into a project. What that agent says
+    is its own, not its owner's, so the roster tells the reader whose agent each
+    one is, by the name people know the owner by rather than their login."""
+    text = build_session_opening(
+        roster=[
+            {"name": "张三", "handle": "zhangsan", "agent": False},
+            {
+                "name": "助手",
+                "handle": "cheese-1",
+                "agent": True,
+                "owner_handle": "zhangsan",
+            },
+            {"name": "芝士", "handle": "cheese-2", "agent": True},
+        ]
+    ).text
+
+    brought = next(line for line in text.splitlines() if "handle: cheese-1" in line)
+    assert "张三" in brought
+    # A project's own AI teammate has an identity of its own and no owner.
+    project_own = next(line for line in text.splitlines() if "handle: cheese-2" in line)
+    assert "张三" not in project_own
+    assert "带" not in project_own

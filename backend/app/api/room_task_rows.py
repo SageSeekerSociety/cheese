@@ -33,6 +33,7 @@ from app.domain.addressing import Event, address
 from app.domain.agent.model_catalog import catalog
 from app.domain.agent.opening import opening_state
 from app.domain.agent.session_state import running_conversations
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -41,7 +42,7 @@ from app.domain.block.waits import MemberWaits
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.queries import latest_cards_by_task
+from app.domain.review.queries import latest_cards_and_counts_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
@@ -63,27 +64,95 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, task, card=None) -> dict:
+async def task_out(db, task, card=None, *, me: str) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
+    runs = await teammate_runs(db, [task])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
-        presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+        presentation.facts_for_task(
+            task,
+            card,
+            awaiting_answer=task.id in asked,
+            teammate_runs=runs.get(task.id),
+        ),
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
+    # 递给谁在 `accept_card_reviewer` 表里（一卡多人）；页头那一格写集合里的第一个，
+    # 和侧栏（`task_rows`）读的是同一个。
+    reviewers = (
+        (await AcceptService(db).reviewer_handles_for_cards([card.id])).get(card.id, [])
+        if card is not None
+        else []
+    )
+    out.update(_task_markers(task, card, shown, asked.get(task.id), me, reviewers))
     # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
-        reviewer=card.reviewer_handle if card is not None else None,
+        reviewer=reviewers[0] if reviewers else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
     out["from_thread"] = task.id in await from_threads(db, [task.id])
     return out
+
+
+def card_row(card, version: int | None) -> dict | None:
+    """The card a task row carries: where it rides (PR) and, for a card in
+    review, what the row's second line says — whom it waits on (the card's own
+    reviewer), 「第 N 版」 (``version``, how many cards the task has filed),
+    what was handed in, and since when. ``card`` is
+    the `AcceptCard` row or the `RailCard` value; both carry these fields."""
+    if card is None:
+        return None
+    return {
+        "id": str(card.id),
+        "status": str(card.status),
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
+        "version": version,
+        # 卡递给谁审阅：改由别人审阅之后，任务上建时定的那位就不对了。
+        "reviewer": "、".join(_card_reviewers(card)) or None,
+        "subject": card.change_subject or card.deliverable_name or None,
+        "since": _iso(card.created_at),
+    }
+
+
+def _card_reviewers(card) -> tuple[str, ...]:
+    """一张卡的审阅人集合：ORM 行还留着 `reviewer_handle` 那一列，`RailCard` 只有集合。"""
+    handles = getattr(card, "reviewer_handles", None)
+    if handles:
+        return tuple(handles)
+    single = getattr(card, "reviewer_handle", None)
+    return (single,) if single else ()
+
+
+def _task_markers(task, card, shown, asking, me: str, reviewers=()) -> dict[str, bool]:
+    """Attention includes the reporter; personal wording names the next actor."""
+    asked = () if asking is None else asking.waiting(task.people)
+    handles = tuple(reviewers) or (_card_reviewers(card) if card is not None else ())
+    reviewer = handles[0] if handles else None
+    owner = task.owner_handle if presentation.owner_acts_on(shown) else None
+    attention = address(
+        Event(
+            reviewers=handles,
+            reporter=task.reporter_handle,
+            asked_also=asked,
+            owner=owner,
+        ),
+        hand_of(shown.column),
+    ).reason_for(me)
+    waiting = presentation.waiting_on(
+        shown, reviewer=reviewer, asked=me if me in asked else None
+    )
+    return {
+        "awaits_me": attention is not None,
+        "needs_my_action": bool(me) and (waiting == me or owner == me),
+    }
 
 
 async def task_rows(
@@ -98,8 +167,18 @@ async def task_rows(
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
     thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
+    cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
+        thread_ids
+    )
+    # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：整屏卡
+    # 的评审人一次查完 —— 按**卡的 id** 查，`cards` 的键是活的 id。
+    card_reviewers = await AcceptCardRepository(db).reviewer_handles_for_cards(
+        [card.id for card in cards.values()]
+    )
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
+    # 哪几条活自己那位队友的会话此刻在跑、在哪一次跑里：那样的活是「在做」，除非它
+    # 在这一次里报过别的（`presentation`）。
+    runs = await teammate_runs(db, [task for task, _ in threads])
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
     for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
@@ -119,13 +198,20 @@ async def task_rows(
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
+        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
+            ),
             now=now,
         )
+        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         waiting = presentation.waiting_on(
             shown,
-            reviewer=card.reviewer_handle if card is not None else None,
+            reviewer=reviewers[0] if reviewers else None,
             asked=asked[task.id].only() if task.id in asked else None,
         )
         accepted = landed.get(task.id, [])
@@ -140,7 +226,9 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
+                **_task_markers(
+                    task, card, shown, asked.get(task.id), actor.handle, reviewers
+                ),
                 "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
@@ -152,14 +240,7 @@ async def task_rows(
                 )
                 if task.id in said
                 else None,
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
+                "card": card_row(card, versions.get(task.id)),
             }
         )
     return items
@@ -268,7 +349,7 @@ async def project_task_rows(
     sessions are running answer it without a query; when it is not given, this
     reads the task conversations once."""
     task_ids = [t.id for t in tasks]
-    cards = await latest_cards_by_task(db, task_ids)
+    cards, versions = await latest_cards_and_counts_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
     # （`ix_blocks_questions`）。它压过队友报的「在做」，所以不能留给调用方
     # 各自去问。
@@ -285,41 +366,31 @@ async def project_task_rows(
         set() if running_of is not None else await running_conversations(db, task_ids)
     )
     is_running = running_of or running.__contains__
+    # 第六次：哪几条活自己那位队友的会话在跑、在哪一次跑里 —— 那一格的「在做」。和上面
+    # 那一半不是一回事：侧栏的呼吸绿看这段对话里有没有任何会话在跑，那一格只认这条活
+    # 自己的队友（`agent.teammate_runs`）。
+    runs = await teammate_runs(db, tasks)
     items = []
     for task in tasks:
         card = cards.get(task.id)
         said_at = last_said.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card, awaiting_answer=task.id in asked),
+            presentation.facts_for_task(
+                task,
+                card,
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
+            ),
             now=now,
         )
         last_activity = said_at or task.created_at
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
-        asking = asked.get(task.id)
-        awaits = address(
-            Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
-                reporter=task.reporter_handle,
-                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知、待办
-                # 同一个名单（`announce.notify_question`）。题根本不在等，就没有这
-                # 一层。
-                asked_also=() if asking is None else asking.waiting(task.people),
-                owner=(
-                    task.owner_handle if presentation.owner_acts_on(shown) else None
-                ),
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
         items.append(
             {
                 **task_row_json(task),
                 "presentation": shown.as_dict(),
-                "awaits_me": awaits is not None,
+                **_task_markers(task, card, shown, asked.get(task.id), me),
                 # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
                 # 未恢复的失败，或调用方没算）。判据在
                 # `block/waits.MemberWaits.unresolved_failures`：一条活停下来报错、
@@ -341,14 +412,7 @@ async def project_task_rows(
                     shown, last_activity=last_activity, now=now
                 ),
                 "last_activity_at": last_activity.isoformat(),
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
+                "card": card_row(card, versions.get(task.id)),
             }
         )
     return items
@@ -467,13 +531,14 @@ async def room_task_items(
 
 
 async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
-    """Say on each task row whether a session of its AI teammate is running in
-    it right now (`session_running`), as the session protocol declares it.
+    """Say on each task row whether any agent's session is running in it right
+    now (`session_running`), as the session protocol declares it.
 
     For readers that act on whether the teammate is at work — the orchestrator's
     patrol, which must not nudge a session in the middle of a long command. The
-    board does not read it: what a task shows is what its teammate reported
-    (`presentation`).
+    board cell reads a narrower fact (`agent.teammate_runs`: the task's own
+    teammate's run, weighed against its report); this says whether any session
+    in the task runs.
     """
     running = await running_conversations(db, [uuid.UUID(item["id"]) for item in items])
     return [
@@ -481,12 +546,14 @@ async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict
     ]
 
 
-async def task_page_row(db: AsyncSession, place, task) -> dict:
+async def task_page_row(db: AsyncSession, place, task, *, me: str) -> dict:
     """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
-    cards = await AcceptService(db).latest_by_task([task.id])
-    out = await task_out(db, task, cards.get(task.id))
+    cards, versions = await AcceptCardRepository(db).latest_and_counts_by_task(
+        [task.id]
+    )
+    out = await task_out(db, task, cards.get(task.id), me=me)
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)
@@ -495,17 +562,10 @@ async def task_page_row(db: AsyncSession, place, task) -> dict:
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
         choices=catalog(project.settings if project else None),
     )
-    card = cards.get(task.id)
-    out["card"] = (
-        None
-        if card is None
-        else {
-            "id": str(card.id),
-            "status": str(card.status),
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-        }
-    )
+    out["card"] = card_row(cards.get(task.id), versions.get(task.id))
+    # 它的会话此刻在不在跑（runner 报的，不是队友自己说的「在做」）：页头那颗
+    # 「在做」只在这时候动，会话闲着就静止。
+    out["session_running"] = task.id in await running_conversations(db, [task.id])
     out["opening"] = await _opening(db, task)
     return out
 

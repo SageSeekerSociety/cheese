@@ -21,6 +21,7 @@ from app.domain.room_task.presentation import (
     Done,
     NeedsYou,
     RoomFacts,
+    Run,
     TaskFacts,
     owner_acts_on,
     room_presentation,
@@ -31,6 +32,11 @@ from app.domain.topic.models import TopicStatus
 
 NOW = datetime(2026, 8, 31, 12, 0, tzinfo=UTC)
 JUST_NOW = NOW - timedelta(minutes=1)
+#: 做这条活的那位队友的座位，和它会话的两次跑。
+SEAT = "cheese-teammate"
+LAST_RUN = Run(SEAT, "claude-code", 3, 41)
+THIS_RUN = Run(SEAT, "claude-code", 3, 57)
+RUNNING = frozenset({THIS_RUN})
 
 
 def task(**kw) -> TaskFacts:
@@ -74,7 +80,7 @@ TASK_CASES = [
         Column.needs_you,
         NeedsYou.awaiting_answer,
     ),
-    # 队友自己报的状态：它说在做、在等、卡住了，看板就照说。
+    # 队友自己报的状态：没有会话在跑时，它说在做、在等、卡住了，看板就照说。
     (
         "队友说在做",
         task(progress=TaskProgress.working),
@@ -267,6 +273,101 @@ TASK_CASES = [
     ),
     # 什么都没留下就关了：不做了。
     ("没留结论就关了", task(status=TaskStatus.closed), Column.done, Done.closed),
+    # —— 队友的会话在跑（runner 报的事实）和它报的话：看是不是同一次跑 ——
+    # 它的会话在跑，它还没报过：在做，不是「开启」。
+    (
+        "会话在跑，队友没报过",
+        task(teammate_runs=RUNNING),
+        Column.building,
+        Building.running,
+    ),
+    # 它在上一次跑里说在等构建，构建跑完把它叫醒了：那句「在等」说的是上一次的事。
+    (
+        "上一次跑里说了在等，现在又在跑",
+        task(
+            progress=TaskProgress.waiting, progress_run=LAST_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 它在上一次跑里说卡住了，有人回了它、它又跑起来：在做，不再点负责人。
+    (
+        "上一次跑里说了卡住，现在又在跑",
+        task(
+            progress=TaskProgress.blocked, progress_run=LAST_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 改动被退回，它的会话在跑：它在改，球不在负责人手上。
+    (
+        "改动被退回，会话在改",
+        task(card=card(AcceptStatus.rejected), teammate_runs=RUNNING),
+        Column.building,
+        Building.running,
+    ),
+    # 它就在这一次跑里说的在等、卡住：说的时候它就在这一次里，照它说的。
+    (
+        "这一次跑里说了在等",
+        task(
+            progress=TaskProgress.waiting, progress_run=THIS_RUN, teammate_runs=RUNNING
+        ),
+        Column.building,
+        Building.waiting,
+    ),
+    (
+        "这一次跑里说了卡住",
+        task(
+            progress=TaskProgress.blocked, progress_run=THIS_RUN, teammate_runs=RUNNING
+        ),
+        Column.needs_you,
+        NeedsYou.blocked,
+    ),
+    # 换了一个进程、日志从头记：上一个进程那一次和这一次 seq 相同，epoch 不同，
+    # 不是同一次。
+    (
+        "上一个进程里同号的那一次",
+        task(
+            progress=TaskProgress.blocked,
+            progress_run=Run(SEAT, "claude-code", 2, 57),
+            teammate_runs=RUNNING,
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 它的会话在跑，但平台没记下是哪一次：它在这一次
+    # 里说过什么，平台认不出来，在做。
+    (
+        "会话在跑、runner 没说是哪一次",
+        task(
+            progress=TaskProgress.blocked,
+            progress_run=THIS_RUN,
+            teammate_runs=frozenset(),
+        ),
+        Column.building,
+        Building.running,
+    ),
+    # 卡说下一步在谁手上，会话在跑盖不过它：它在答审阅人的话，任务还是在等审阅。
+    (
+        "等人采纳时会话在跑",
+        task(card=card(AcceptStatus.pending), teammate_runs=RUNNING),
+        Column.needs_you,
+        NeedsYou.awaiting_review,
+    ),
+    # 题还没人回答：这一次问完就停，下一步在人手上。
+    (
+        "提问未回答时会话在跑",
+        task(awaiting_answer=True, teammate_runs=RUNNING),
+        Column.needs_you,
+        NeedsYou.awaiting_answer,
+    ),
+    # 关了就是结束：会话在跑也不把它说回在做。
+    (
+        "关闭后会话还在跑",
+        task(status=TaskStatus.closed, teammate_runs=RUNNING),
+        Column.done,
+        Done.closed,
+    ),
 ]
 
 
@@ -290,8 +391,11 @@ def test_a_conclusion_is_read_off_the_row():
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).has_conclusion is False
-    assert facts_for_task(Task(conclusion="查清了")).has_conclusion is True
+    assert facts_for_task(Task(), teammate_runs=None).has_conclusion is False
+    assert (
+        facts_for_task(Task(conclusion="查清了"), teammate_runs=None).has_conclusion
+        is True
+    )
 
 
 def test_what_the_teammate_said_is_read_off_the_row():
@@ -300,9 +404,17 @@ def test_what_the_teammate_said_is_read_off_the_row():
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).progress is None
-    said = Task(progress_state=TaskProgress.waiting)
-    assert facts_for_task(said).progress is TaskProgress.waiting
+    assert facts_for_task(Task(), teammate_runs=None).progress is None
+    said = Task(
+        progress_state=TaskProgress.waiting,
+        progress_set_by=SEAT,
+        progress_run_harness="claude-code",
+        progress_run_epoch=3,
+        progress_run_seq=41,
+    )
+    facts = facts_for_task(said, teammate_runs=None)
+    assert facts.progress is TaskProgress.waiting
+    assert facts.progress_run == LAST_RUN
 
 
 def test_a_blocked_task_is_its_owners_to_act_on():
@@ -558,9 +670,7 @@ def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
             "auto_merge_armed_by": spec.get("auto_merge_armed_by"),
         }
         card_id = uuid.uuid4()
-        row = AcceptCard(
-            id=card_id, topic_id=uuid.uuid4(), reviewer_handle="alice", **shared
-        )
+        row = AcceptCard(id=card_id, topic_id=uuid.uuid4(), **shared)
         return facts_for_card(row), facts_for_card(RailCard(id=card_id, **shared))
 
     specs = [

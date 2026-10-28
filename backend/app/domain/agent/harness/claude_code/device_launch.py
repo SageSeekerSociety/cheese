@@ -348,7 +348,7 @@ api = os.environ.get("CHEESE_API", "").rstrip("/")
 if blob is None and api:
     request = urllib.request.Request(
         api + "/connector/skill-bundles/" + want,
-        headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
+        headers={{"Authorization": "Bearer " + os.environ.get("CHEESE_TOKEN", "")}},
     )
     # The pause between attempts grows from this step; a test sets it to 0.
     step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))
@@ -390,6 +390,9 @@ CHEESE_SKILLS"""
     settings_json = json.dumps(session_settings(), ensure_ascii=False)
     claude_args = " " + shlex.join(LAUNCH_ARGS)
     pinned_version = CLAUDE_PINNED_VERSION
+    executor_download = (
+        Path(release.__file__).with_name("executor_download.py").read_text()
+    )
     helper_sources = release.sources()
     # base64 through the script: the archive is bytes. Single-quoted into the
     # script: the literal `$HOME` in the state is the CONNECTOR's placeholder,
@@ -401,10 +404,12 @@ CHEESE_SKILLS"""
     quoted_state = f'"{root}"'.join(shlex.quote(part) for part in state.split(root))
     archive = base64.b64encode(build()).decode()
 
-    def holes(system_prompt: str, helper_sources: dict[str, str]) -> tuple[str, str]:
-        """The configure and prepare holes, written for this prompt and these
-        helpers: once for the launch, and once for what the launch is compared
-        by (below)."""
+    def holes(
+        system_prompt: str, helper_sources: dict[str, str], installer: str
+    ) -> tuple[str, str]:
+        """The configure and prepare holes, written for this prompt, these
+        helpers and this installer of the pinned build: once for the launch,
+        and once for what the launch is compared by (below)."""
         execution_setup = 'mkdir -p "$SEAT/remote-execution"\n'
         for name, source in helper_sources.items():
             execution_setup += (
@@ -518,13 +523,19 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
       MINGW*|MSYS*|CYGWIN*) _cplat="win32-$_carch" ;;
       *) _cplat="darwin-$_carch" ;;
     esac
-    mkdir -p "$(dirname "$_pin")"
-    if curl -fsSL --retry 3 --retry-delay 2 -m 300 \\
-        "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
-        -o "$_pin.new" && [ -s "$_pin.new" ]; then
-      chmod +x "$_pin.new" && mv "$_pin.new" "$_pin"
-    else
-      rm -f "$_pin.new"
+    # By the installer every room's preparation uses (`executor_download`): a
+    # download cut off — here, in a room, or by the desktop app fetching it
+    # ahead — is continued rather than restarted, checked against the digest
+    # the platform names, and one install at a time on the machine.
+    if python3 - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
+        "$_pin" "{pinned_version}" <<'CHEESE_EXECUTOR_DOWNLOAD'
+{installer}
+try:
+    install(sys.argv[1], __import__("pathlib").Path(sys.argv[2]), sys.argv[3])
+except Exception as stopped:  # noqa: BLE001 - said, and the launch goes on
+    sys.exit("cheese-launch: " + str(stopped))
+CHEESE_EXECUTOR_DOWNLOAD
+    then :; else
       echo "cheese-launch: could not fetch claude {pinned_version} for \\
 $_cplat from the platform; trying what the machine has" >&2
     fi
@@ -623,7 +634,7 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
         # Which start of the runner this is, so a wait on it reads only what
         # this start left in the runner's log (``runner.LAUNCH``).
         env[LAUNCH] = launch_name
-    configure, prepare = holes(system_prompt, helper_sources)
+    configure, prepare = holes(system_prompt, helper_sources, executor_download)
     launch = MachineLaunch(
         configure=configure,
         credentials=_OWN_KEY_CREDENTIALS
@@ -652,13 +663,15 @@ cheese_launch_phase credentials_selected
     # started with. The resume offer names the conversation, which a relaunch
     # continues, and the launch name is new on every turn. The helpers a
     # release puts into a running session are left out too, since changing
-    # one is a release and not a relaunch. Everything
+    # one is a release and not a relaunch, and so is the installer of the
+    # pinned build, which runs before the session starts and is not kept by
+    # it. Everything
     # else here is read once by a process that keeps it for its life — the
     # binary, the argv, the seat's base settings, the skills, the runner,
     # the environment,
     # and everything `client.prepare` writes — so any change to it has to
     # reach a live session as a new one.
-    configured, prepared = holes("", release.launch_only(helper_sources))
+    configured, prepared = holes("", release.launch_only(helper_sources), "")
     fixed_env = {
         k: v for k, v in env.items() if k not in ("CHEESE_RESUME_SESSION", LAUNCH)
     }

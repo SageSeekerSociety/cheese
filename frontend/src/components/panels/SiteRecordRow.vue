@@ -17,9 +17,19 @@ const props = withDefaults(
     loadImage: (digest: string) => Promise<string>
     /** 名册 handle → 名字：平台写的一句话里点到人（`<@handle>`）时照它换成名字。 */
     memberNames?: Record<string, string>
+    /** 这一行是此刻才到的（不是打开时画出来的、也不是往上翻出来的）：淡入一下。 */
+    arriving?: boolean
   }>(),
-  { memberNames: () => ({}) }
+  { memberNames: () => ({}), arriving: false }
 )
+const emit = defineEmits<{ (e: 'settle'): void }>()
+
+/** 淡入演完就把这一行从「才到的」里拿掉：class 一直挂着的话，它的动画会压住之后
+ *  要演的那一下。Vue 给 scoped 的 keyframes 名字加了后缀，所以比前缀。
+ *  `MarkdownView` 里面自己的动画也会冒上来，按名字挡掉。 */
+function settleArrival(e: AnimationEvent) {
+  if (e.animationName.startsWith('site-arrive')) emit('settle')
+}
 const parts = computed(() => recordParts(props.block).filter((p) => props.raw || p.kind !== 'thinking'))
 const json = computed(() =>
   props.block.meta?.before_launch
@@ -50,7 +60,13 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
 </script>
 
 <template>
-  <article v-if="raw || parts.length || !block.meta?.record" class="record-row" :data-record-id="block.id">
+  <article
+    v-if="raw || parts.length || !block.meta?.record"
+    class="record-row"
+    :class="{ 'record-row--arriving': arriving }"
+    :data-record-id="block.id"
+    @animationend="settleArrival"
+  >
     <header v-if="raw && !block.meta?.before_launch" class="record-row__meta">
       <span>{{ kind }}</span
       ><span>{{ block.meta?.harness }}</span>
@@ -70,7 +86,8 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
       </details>
       <details v-else-if="part.kind === 'tool'" class="record-row__tool" :class="{ 'record-row--failed': part.failed }">
         <summary>
-          <strong>{{ toolLabel(part.action || part.name || '') }}</strong> <span>{{ part.preview }}</span>
+          <strong>{{ part.action ? toolLabel(part.action) : toolLabel(part.name || '', part.input) }}</strong>
+          <span>{{ part.preview }}</span>
           <span v-if="part.failed">{{ t('work.room.site.failed') }}</span>
         </summary>
         <pre>{{
@@ -147,6 +164,19 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
   font-size: 13px;
   color: var(--text);
 }
+/* 此刻才到的一行：淡入并从下面 4px 升到位（见 `arriving`），和对话栏的新消息同一个
+   动作。只动透明度和位置——高度不变，底部那个「钉住」就看不见它，读者不会被推走。 */
+.record-row--arriving {
+  animation: site-arrive var(--dur-base) var(--ease-out);
+}
+@keyframes site-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+/* 减弱动效不自己写 `animation: none`：全局兜底会把时长压到近 0，而 `animationend`
+   照旧会来、这一行的类照旧会被摘掉；自己关掉反而让它一直挂着。 */
 .record-row__meta {
   display: flex;
   flex-wrap: wrap;

@@ -1,4 +1,7 @@
 // PanelPreviewView 的 props 契约：这一格要什么，全写在这里。摆在视图外面，取数那一层和这一格看的是同一份说明，视图文件也留在一千行以内。
+import type { PreviewCommentsBundle } from '../../../composables/panelPreview/comments'
+import type { PanelPreviewLiveEdit } from '../../../composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '../../../composables/panelPreview/versions'
 import type { DocumentRevisionsBundle } from '../../../composables/useDocumentRevisions'
 import type { UploadAnnotation } from '../../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../../composables/usePreviewFrames'
@@ -65,14 +68,25 @@ export interface PreviewViewProps {
   canPage?: boolean
   /** 网页那一页本身；还没取到就是 null。 */
   docPageHtml?: string | null
+  /** 这一份文件上的评论：线程、写一条新的、回复和解决
+   *  （`composables/panelPreview/comments.ts`）。 */
+  comments?: PreviewCommentsBundle
+  /** 在预览格里和几个人一起改一份 markdown 的会话
+   *  （`composables/panelPreview/liveEdit.ts`）。 */
+  liveEdit?: PanelPreviewLiveEdit
   /** 这一份 .docx 的修订：清单、只读、处理动作都在里面（`useDocumentRevisions.ts`）。 */
   revs: DocumentRevisionsBundle
   /** 在线编辑那一份会话：编辑器实例、盯版本、另存都在里面（`useRoomFileEditor.ts`）。 */
   editor: RoomFileEditorBundle
   /** 同一栏历史：编辑器旁边那一栏和下面文档条那一栏读的是同一份（`useRoomFileHistory.ts`）。 */
   fileHistory: RoomFileHistoryBundle
+  /** 文档条上的版本：第几版、本版改了几处、两版对比、看旧版（`composables/panelPreview/versions.ts`）。
+   *  不给就不摆这一套（组件预览站、单测里那些只看正文的场景）。 */
+  versions?: PreviewVersionsBundle
   /** 现在开着哪一份的编辑会话；null 就是没开。开不开由外面记，因为关掉之后还要重取那一页。 */
   editing: string | null
   /** 文档条下面那一栏历史开着没有。 */
   showHistory: boolean
+  /** 这间房的队友叫什么：预览连不上时那句话请它去查（项目可以给它改名）。 */
+  agentName?: string
 }

@@ -44,13 +44,23 @@
             <!-- Work in a project: what you are asked to do, then which thing, then what it waits on. -->
             <InboxRow v-if="item.kind === 'work'" :to="linkTo(item)" :time="relTime(item.at)" :at="item.at">
               <template #lead>
-                <v-icon :icon="iconOf(item)" size="16" />
+                <TaskStateMark v-if="stateOf(item)" :state="stateOf(item)!" :size="16" icon-only />
+                <v-icon v-else :icon="iconOf(item)" size="16" />
               </template>
               <template #title>
                 <span class="waiting__ask" :class="`waiting__ask--${askOf(item).tone}`">{{ askOf(item).text }}</span>
                 <span :data-user-content="itemTitleWritten(item) || undefined">{{ itemTitle(item) }}</span>
               </template>
-              <span v-if="item.detail" class="waiting__detail t-body" data-user-content>{{ item.detail }}</span>
+              <span v-if="item.detail || reviewedOf(item)" class="waiting__detail t-body"
+                ><span v-if="item.detail" data-user-content>{{ item.detail }}</span
+                ><template v-if="item.detail && reviewedOf(item)"> · </template>{{ reviewedOf(item) }}</span
+              >
+              <span
+                v-else-if="item.phrase === 'blocked'"
+                class="waiting__detail t-body"
+                data-testid="waiting-blocked"
+                >{{ t('work.taskState.blockedFallback', { name: teammateOf(item) }) }}</span
+              >
               <span v-if="item.topicId" class="waiting__where" :data-user-content="item.topicTitle || undefined">
                 # {{ topicTitle({ title: item.topicTitle }) }}
               </span>
@@ -210,6 +220,7 @@
 
 <script setup lang="ts">
 import type { WaitingAsk, WaitingItem, WaitingRun, WaitingTask, WaitingWork } from '@/cx_types'
+import type { TaskState } from '@/lib/taskState'
 
 import { computed, ref } from 'vue'
 
@@ -218,8 +229,11 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import InboxRow from '@/components/common/Notification/InboxRow.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { waitingKey as keyOf } from '@/lib/waitingKey'
 
@@ -237,6 +251,13 @@ const props = defineProps<{
   /** 正在回答的那一条邀请或申请（`waitingKey`）。 */
   replying: string | null
 }>()
+
+// 卡住了没留话时那一句点做它的 AI 队友的名字。清单跨项目，每一行不带它叫什么，所以说
+// 默认名（和名册还没到时一样）。
+/** 做这件任务的队友叫什么：后端给了它的名字就照它叫（改过名的项目叫改过的名字）。 */
+function teammateOf(item: WaitingWork): string {
+  return teammateName(item.agentName, item.agentNameSource ?? 'default') || teammateName(null, 'default')
+}
 
 const emit = defineEmits<{
   retry: []
@@ -257,6 +278,29 @@ function askOf(item: WaitingWork): { text: string; tone: 'warn' | 'danger' } {
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
   if (item.phrase === 'blocked') return { text: t('home.inbox.reason.blocked'), tone: 'warn' }
   return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
+}
+
+/** 等你审阅的那一行，在改动主题后面说第几版、什么时候提交的；别的行没有这一段。 */
+function reviewedOf(item: WaitingWork): string {
+  if (item.reason !== 'reviewer') return ''
+  return [
+    item.cardVersion ? t('work.taskState.version', { n: item.cardVersion }) : '',
+    item.cardSince ? t('work.taskState.submitted', { time: relTime(item.cardSince) }) : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+/** 停在一件任务的某一格上的那几条（审阅、回答、负责人要动手的），行首画那一格的状态
+ *  记号，和全部任务、任务页头同一个样子；其余（需求有了结果、拍板、变更提醒）画它那一类的
+ *  图标。 */
+function stateOf(item: WaitingWork): TaskState | null {
+  if (!item.taskId || !(item.reason === 'reviewer' || item.reason === 'asked' || item.reason === 'owner')) return null
+  if (item.phrase === 'decision' || item.phrase === 'change_alert') return null
+  return taskState(
+    { id: item.taskId, presentation: { column: 'needs_you', phrase: item.phrase } },
+    { viewer: '', agentName: teammateOf(item) }
+  )
 }
 
 /** 左边那个小图标：一眼分出是哪一类事。 */
@@ -319,7 +363,8 @@ function askLabelOf(item: WaitingAsk): string {
 }
 
 function askTitleOf(item: WaitingAsk): string {
-  const person = item.person.name
+  // 邀请人自己的芝士替他发的邀请，照实说是芝士代他邀请的。
+  const person = item.byAssistant ? t('work.onBehalf.who', { name: item.person.name }) : item.person.name
   if (item.kind === 'project_invite') return t('home.inbox.invite.project', { person })
   if (item.kind === 'project_transfer') return t('home.inbox.invite.transfer', { person })
   if (item.kind === 'team_invite') return t('home.inbox.invite.team', { person })

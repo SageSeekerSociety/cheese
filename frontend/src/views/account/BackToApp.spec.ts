@@ -8,7 +8,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { keepAppChallenge, pendingAppChallenge } from './appSignIn'
+import { keepAppChallenge, keepReturnOrigin, pendingAppChallenge, pendingReturnOrigin } from './appSignIn'
 import BackToApp from './BackToApp.vue'
 
 import { UserAuthApi } from '@/api/userAuth'
@@ -85,5 +85,20 @@ describe('handing a browser sign-in to the app', () => {
     const { router } = await arrive()
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
     expect(UserAuthApi.startAppSignIn).not.toHaveBeenCalled()
+  })
+
+  it('takes a sign-in started on another origin of this deployment back there, without asking', async () => {
+    const assign = vi.spyOn(window.location, 'assign').mockImplementation(() => {})
+    keepAppChallenge(CHALLENGE)
+    keepReturnOrigin('https://alias.example')
+    const { view } = await arrive()
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith('https://alias.example/account/oauth/from-browser?code=the-code')
+    )
+    expect(UserAuthApi.startAppSignIn).toHaveBeenCalledWith(CHALLENGE, 'https://alias.example')
+    expect(view.queryByRole('button', { name: 'Continue' })).toBeNull()
+    expect(pendingAppChallenge()).toBeNull()
+    expect(pendingReturnOrigin()).toBeNull()
   })
 })

@@ -28,6 +28,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.project.services import ProjectService
 from app.domain.room_task import heard
@@ -161,7 +162,7 @@ async def _card_block(
         author_type=AuthorType.platform,
         content=say(
             "taskCreated",
-            actor=f"<@{actor}>",
+            actor=acted_by(actor, by_assistant=task.created_by_assistant),
             title=said_title(task),
             owner=f"<@{task.owner_handle}>" if task.owner_handle else "",
         ),
@@ -200,9 +201,13 @@ async def create_task(
     thread_id: uuid.UUID | None = None,
     seat_project: SeatProject,
     team: ProjectTeam,
+    by_assistant: bool = False,
 ) -> Task:
     """Open a task in a room: a conversation of its own, owned by one person,
     with an empty living document for its agent to write.
+
+    ``by_assistant``: ``created_by``'s own 芝士 opens it for them
+    (`Actor.by_assistant`); the task and the line announcing it say so.
 
     ``thread_id`` turns a 支线 into the task, in place: the task takes its
     id, so its conversation and its AI teammate's session go on as they
@@ -275,6 +280,7 @@ async def create_task(
     )
     task.upgraded_from_block_id = origin_block_id
     task.source_block_id = source_block_id
+    task.created_by_assistant = by_assistant
     if named and named_by_teammate:
         task.title_calibrated = True
         tasks.record_title(task, reason="teammate", by=teammate)

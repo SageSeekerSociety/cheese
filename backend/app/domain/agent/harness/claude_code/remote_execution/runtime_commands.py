@@ -522,8 +522,8 @@ def shell(self, params):
                     raise ValueError("Command ID already belongs to different input")
                 return {"started": True, **held}
             cwd = Path(native_path(params.get("cwd") or str(self.root)))
-            if not cwd.is_dir():
-                # Gone since the session last looked: its own reset.
+            # 看不见的 cwd 会抛 EPERM：Path.is_dir 吞不住，os.path.isdir 当它不在
+            if not os.path.isdir(cwd):
                 cwd = self.root
             env = self.command_env()
             env.update(

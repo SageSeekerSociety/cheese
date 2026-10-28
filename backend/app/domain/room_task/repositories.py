@@ -60,6 +60,17 @@ class ListedTask:
     title_source: TaskTitleSource
     status: TaskStatus
     progress_state: TaskProgress | None
+    #: 报那个状态的座位、和它是在那个座位的哪一次跑里报的：那位队友在另一次跑里
+    #: 跑着，那句话就让位（`presentation`）。
+    progress_set_by: str | None
+    progress_run_harness: str | None
+    progress_run_epoch: int | None
+    progress_run_seq: int | None
+    #: 队友报那个状态时附的一句（`Task.progress_note`）：「待我处理」里卡住那一行
+    #: 的第二行说的就是它要你做什么。
+    progress_note: str | None
+    #: 做它的队友坐的那个座位（`Task.agent_handle`）；空的时候是频道的那位。
+    agent_handle: str | None
     owner_handle: str | None
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
@@ -166,6 +177,12 @@ class TaskRepository:
                 Task.title_source,
                 Task.status,
                 Task.progress_state,
+                Task.progress_set_by,
+                Task.progress_run_harness,
+                Task.progress_run_epoch,
+                Task.progress_run_seq,
+                Task.progress_note,
+                Task.agent_handle,
                 Task.owner_handle,
                 Task.reporter_handle,
                 Task.contributor_handles,
@@ -187,6 +204,12 @@ class TaskRepository:
                 title_source=row.title_source,
                 status=row.status,
                 progress_state=row.progress_state,
+                progress_set_by=row.progress_set_by,
+                progress_run_harness=row.progress_run_harness,
+                progress_run_epoch=row.progress_run_epoch,
+                progress_run_seq=row.progress_run_seq,
+                progress_note=row.progress_note,
+                agent_handle=row.agent_handle,
                 owner_handle=row.owner_handle,
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),

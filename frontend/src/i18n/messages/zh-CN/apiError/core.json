@@ -1,19 +1,20 @@
 {
   "accessDenied": "无权访问",
   "clientDisconnected": "客户端已断开",
+  "clientOutdated": "这个页面的版本已过期，刷新后再继续",
   "consentRequired": "请阅读并同意《用户协议》和《隐私政策》",
   "consentStale": "协议已更新，请刷新页面后重新阅读并同意",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",
   "deviceOffline": "设备 {device} 离线",
-  "gatewayTimeout": "上游没有及时应答",
+  "gatewayTimeout": "依赖的服务没有及时应答，稍后重试",
   "invalidRequestParameters": "请求参数不合法",
   "invalidToken": "登录凭证无效",
   "listCursorUnreadable": "游标无效，从头再取一次",
   "permissionDenied": "没有这项权限",
   "quotaExceeded": "已超出配额",
   "resourceNotFound": "资源不存在",
-  "serverInternalError": "服务器内部错误",
+  "serverInternalError": "服务器出错，稍后重试",
   "systemBusy": "系统繁忙，请稍后重试",
   "tokenExpired": "登录凭证已过期",
-  "upstreamUnavailable": "上游服务不可用"
+  "upstreamUnavailable": "依赖的外部服务暂时不可用，稍后重试"
 }

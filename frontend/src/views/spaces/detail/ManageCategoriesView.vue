@@ -116,6 +116,14 @@
           :hint="t('spaces.detail.manageCategories.displayOrderHint')"
           v-bind="displayOrderProps"
         ></v-text-field>
+
+        <DefaultTeammatePicker
+          v-model="defaultRole"
+          :raw-value="editingDefaultRole"
+          :types="agentTypes"
+          :types-failed="agentTypesFailed"
+          class="mt-4"
+        />
       </v-form>
     </AdaptiveDialog>
   </div>
@@ -126,11 +134,11 @@
 // 发事件——读分类、增删改、读失败怎么显示，都归容器 `ManageCategories.vue`（场景规则
 // 见 docs/manual/dev/scenes.md）。
 import type { MenuAction } from '@/components/common/menuAction'
+import type { AgentType } from '@/cx_types'
 import type { SpaceCategory } from '@/types'
 
 import { reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -143,7 +151,10 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
+import { defaultRolePayload } from '@/lib/teaching'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useDialog } from '@/plugins/dialog'
 
 export interface CategoryFormValues {
@@ -160,11 +171,14 @@ defineProps<{
   failed: boolean
   errorReason: string | null
   forbidden: boolean
+  /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
+  agentTypes: AgentType[]
+  agentTypesFailed: boolean
 }>()
 
 const emit = defineEmits<{
   retry: []
-  submit: [payload: { id: number | null; values: CategoryFormValues }]
+  submit: [payload: { id: number | null; values: CategoryFormValues; defaultRole?: string }]
   delete: [id: number]
   archive: [id: number]
   unarchive: [id: number]
@@ -178,6 +192,10 @@ const { confirm } = useDialog()
 const rowMenu = useRowMenu<number>()
 
 const editingCategory = ref<SpaceCategory | null>(null)
+
+/** 这个分类的默认队友（#944）：`''` = 这一层不单独指定；`raw` 是它原始的覆盖值。 */
+const defaultRole = ref('')
+const editingDefaultRole = ref<string | null>(null)
 
 /** 一个分类那一行的 ⋯：归档了的只剩「恢复」和「删除」。 */
 function categoryActions(category: SpaceCategory): MenuAction[] {
@@ -246,6 +264,8 @@ const openCreateDialog = () => {
     },
   })
   editingCategory.value = null
+  defaultRole.value = ''
+  editingDefaultRole.value = null
   dialogOpen.value = true
 }
 
@@ -258,6 +278,8 @@ const openEditDialog = (category: SpaceCategory) => {
     },
   })
   editingCategory.value = category
+  defaultRole.value = category.defaultRole ?? ''
+  editingDefaultRole.value = category.defaultRole ?? null
   dialogOpen.value = true
 }
 
@@ -265,6 +287,9 @@ const submitForm = handleSubmit((values) => {
   emit('submit', {
     id: editingCategory.value?.id ?? null,
     values: values as CategoryFormValues,
+    // 默认队友（#944）：本来没写、又选回「继承」→ 不带这个键（不动空间那份）；
+    // 本来写过、又选回「继承」→ 带空串，明确清掉这一格的覆盖。
+    defaultRole: defaultRolePayload(defaultRole.value, editingDefaultRole.value),
   })
 })
 

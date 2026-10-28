@@ -91,16 +91,18 @@ def failure_fields(error=None, response=None):
     if response is None:
         response = getattr(error, "response", None)
     if response is not None and response.status_code >= 400:
-        code = None
+        # The gateway's one reading of "the account behind this row has no
+        # money" (`provider_credit.py`), which also takes the row out of rotation.
+        from cheese_provider_credit import out_of_credit  # deferred-import: litellm imports this module while loading itself
+
+        no_credit = False
         refusal = {}
         if response.is_stream_consumed:
             try:
                 if len(response.content) <= 65536:
+                    no_credit = out_of_credit(response.text)
                     body = response.json()
                     detail = body.get("error", {}) if isinstance(body, dict) else {}
-                    candidate = detail.get("code") if isinstance(detail, dict) else None
-                    if str(candidate) in {"1113", "insufficient_quota"}:
-                        code = str(candidate)
                     if response.status_code == 429 and isinstance(detail, dict):
                         refusal = refusal_fields(detail.get("message"))
             except (ValueError, httpx.ResponseNotRead):
@@ -108,7 +110,7 @@ def failure_fields(error=None, response=None):
         status = response.status_code
         category = (
             "provider_quota"
-            if code
+            if no_credit
             else "http_auth"
             if status in (401, 403)
             else "rate_limit"
@@ -118,7 +120,6 @@ def failure_fields(error=None, response=None):
         return {
             "category": category,
             "status": status,
-            "provider_code": code,
             **refusal,
         }
     for kind, category in (

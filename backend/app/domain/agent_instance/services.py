@@ -2,13 +2,14 @@
 
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import (
@@ -59,6 +60,9 @@ class ResolvedAgent:
     # screens show that in their reader's language (``models.NameSource``).
     name_source: NameSource = NameSource.human
     configuration: dict = field(default_factory=dict)
+    # What a save sends back so a stale one can be refused instead of landing on
+    # top of whoever wrote first (``AgentInstance.version``).
+    version: int = 1
 
 
 def initial_configuration(type_name: str | None = None) -> AgentConfiguration:
@@ -170,7 +174,7 @@ class AgentInstanceService:
         if peer is not None:
             return peer
         seat = await TopicMemberService(self._session).addressable_agent_handle(
-            topic.id
+            topic.id, room_id=topic.id
         )
         seated = await self.for_seat_handle(project, seat)
         return seated if seated is not None else await self.for_project(project)
@@ -224,6 +228,38 @@ class AgentInstanceService:
         still worked, by the one its room would give it."""
         given = await self.for_seat_handle(project, agent_handle)
         return given or await self.for_topic(room, project)
+
+    async def for_tasks(
+        self,
+        project_id: uuid.UUID,
+        tasks: Mapping[uuid.UUID, tuple[uuid.UUID, str | None]],
+    ) -> dict[uuid.UUID, ResolvedAgent]:
+        """`for_task` for a page of one project's tasks, given as task id →
+        (room id, ``Task.agent_handle``), in a fixed number of reads however many
+        tasks and rooms there are: the project's teammates once, and the rosters
+        of the rooms whose task was given nobody still here once
+        (`TopicMemberService.addressable_agent_handles`)."""
+        by_seat = {
+            agent_instance_handle(instance.id): instance
+            for instance in await self.list_for_project(project_id)
+        }
+        rooms = {room for room, given in tasks.values() if given not in by_seat}
+        seats = await TopicMemberService(self._session).addressable_agent_handles(
+            project_id, sorted(rooms)
+        )
+        default: ResolvedAgent | None = None
+        answer: dict[uuid.UUID, ResolvedAgent] = {}
+        for task_id, (room, given) in tasks.items():
+            instance = by_seat.get(given or "") or by_seat.get(seats.get(room) or "")
+            if instance is not None:
+                answer[task_id] = self.resolved(instance)
+                continue
+            if default is None:
+                project = await self._session.get(Project, project_id)
+                assert project is not None, "a task's project outlives it"
+                default = await self.for_project(project)
+            answer[task_id] = default
+        return answer
 
     async def for_task_by_id(
         self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
@@ -294,6 +330,16 @@ class AgentInstanceService:
         if project is None:
             raise NotFoundError(say("projectNotFound"))
         return await self.for_handle(project, handle)
+
+    async def for_seat_handle_in(
+        self, project_id: uuid.UUID, handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_seat_handle`，但按 id 找项目那一行 —— 给只拿得到 id 的调用方（路由层
+        为一句给人看的话叫出队友的名字）。项目不在了就是 None，和不是队友同一个答案。"""
+        project = await self._session.get(Project, project_id)
+        if project is None:
+            return None
+        return await self.for_seat_handle(project, handle)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The role instructions saved on this agent."""
@@ -376,13 +422,69 @@ class AgentInstanceService:
         await self._require_known_type(type_name)
         instance.configuration = initial_configuration(type_name).model_dump()
         instance.type_name = type_name or None
+        # The whole configuration was just replaced, so this is a write like any
+        # other: a save that read the old version must not be allowed to land on
+        # top of it.
+        instance.version = instance.version + 1
         return instance
 
     async def configure(
-        self, instance: AgentInstance, config: AgentConfiguration
+        self,
+        instance: AgentInstance,
+        config: AgentConfiguration,
+        *,
+        expected_version: int | None = None,
     ) -> None:
+        """Replace this agent's saved configuration.
+
+        ``expected_version`` is the version the caller read. Given, the write
+        happens only while the row is still at it: an agent's ``configuration``
+        is one JSON replaced whole, so last-write-wins quietly drops the first
+        of two people editing one teammate's skills. A stale version raises
+        ``ConflictError`` carrying the version that is current, so the screen
+        can say what happened and re-read. Omitted, the write is unconditional —
+        what every caller that is not a person's own save already means.
+
+        The check is the ``WHERE`` clause, not an ``if`` above the write: two
+        writers that read the same version would both pass a comparison made
+        here (``living_doc.repositories.set_content`` takes the same stand).
+        """
         await self._validate_model(instance.project_id, config, instance.id)
-        instance.configuration = config.model_dump()
+        if expected_version is None:
+            instance.configuration = config.model_dump()
+            # The attribute, not the SQL expression below: assigning the
+            # expression here would put a BinaryExpression where an int lives.
+            instance.version = instance.version + 1
+            instance.updated_at = datetime.now(UTC)
+            return
+        written = await self._session.scalar(
+            update(AgentInstance)
+            .where(
+                AgentInstance.id == instance.id,
+                AgentInstance.version == expected_version,
+            )
+            .values(
+                configuration=config.model_dump(),
+                version=AgentInstance.version + 1,
+                updated_at=datetime.now(UTC),
+            )
+            .returning(AgentInstance.id)
+        )
+        if written is None:
+            # Somebody wrote between the read and now. Re-read the row so the
+            # caller (and the screen behind it) learns the version that won.
+            await self._session.refresh(instance)
+            raise ConflictError(
+                say("agentSkillsStale"), data={"version": instance.version}
+            )
+        await self._session.refresh(instance)
+
+    async def append_to_persona(self, instance: AgentInstance, text: str) -> None:
+        """Add a paragraph to the end of this teammate's persona (``body``):
+        the 资源包's prompt, at project creation (``adapters.default_teammate``)."""
+        config = AgentConfiguration.model_validate(instance.configuration or {})
+        config.body = "\n\n".join(part for part in (config.body, text) if part)
+        await self.configure(instance, config)
 
     async def _validate_model(
         self,
@@ -397,6 +499,10 @@ class AgentInstanceService:
             device = await self._session.get(DeviceRow, config.execution_device_id)
             if device is None or device.team_id != project.team_id:
                 raise ValidationError(say("deviceNotInProject"))
+        if config.model is None:
+            # 这次保存没碰模型（只改了技能之类）：没有要校验的选择，自己的队友
+            # 也一样 —— 「保留原来的模型」不该被当成「选了一个不被允许的模型」。
+            return
         own = await self._session.get(OwnAgent, instance_id) if instance_id else None
         if own is not None:
             if own.account_connection_id:
@@ -439,8 +545,6 @@ class AgentInstanceService:
             )
             if config.model not in models:
                 raise ValidationError(say("teamConnectionModelRefused"))
-            return
-        if config.model is None:
             return
         choices = self._models(project.settings) if self._models else []
         choice = next((c for c in choices if c["id"] == config.model), None)
@@ -562,4 +666,5 @@ class AgentInstanceService:
                 else NameSource.default
             ),
             configuration=instance.configuration,
+            version=instance.version,
         )

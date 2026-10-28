@@ -8,7 +8,8 @@
   "groups": {
     "account": "Account",
     "app": "Desktop app",
-    "devices": "Devices and connections"
+    "devices": "Devices and connections",
+    "usage": "Usage"
   },
   "invites": "Invite friends",
   "notifications": "Notifications",

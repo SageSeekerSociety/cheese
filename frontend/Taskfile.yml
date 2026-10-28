@@ -7,6 +7,7 @@ tasks:
       - pnpm install --frozen-lockfile
     sources:
       - pnpm-lock.yaml
+      - patches/*
     generates:
       - node_modules/**/*
   dev:

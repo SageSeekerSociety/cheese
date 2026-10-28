@@ -83,7 +83,7 @@
     "kind": {
       "backend": "后端报错",
       "frontend": "前端报错",
-      "turn": "轮次失败",
+      "turn": "AI 队友运行失败",
       "recovered": "平台处理"
     },
     "detail": "详情",
@@ -106,7 +106,7 @@
       "vms": "其中 {n} 台是整机虚拟机。",
       "slots": "沙箱槽位",
       "slotsNote": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台",
-      "waiting": "等沙箱的会话",
+      "waiting": "等沙箱的 AI 队友",
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
@@ -115,8 +115,8 @@
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
-      "refusing": "此刻在拒绝新会话：provider 近期连坏 {n} 台（最近一次 {at}），平台在等下一次试探成功",
-      "atCap": "宿主机数已到上限 {max}：没有空槽时，新会话会被拒绝"
+      "refusing": "此刻不再接新的 AI 队友：provider 近期连坏 {n} 台（最近一次 {at}），平台在等下一次试探成功",
+      "atCap": "宿主机数已到上限 {max}：没有空槽时，新启动的 AI 队友会被拒绝"
     },
     "hosts": "宿主机",
     "noHosts": "此刻一台宿主机都没有",
@@ -160,9 +160,10 @@
       "stopping": "销毁已 {for}",
       "active": "{ago}前用过工具",
       "reclaim": "最早 {in}后回收",
-      "overdue": "已过空闲期还没回收（房间最近一轮结束得更晚、或后台命令还在跑，都会往后推）"
+      "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）"
     },
     "placed": "{at} 放上来",
+    "personal": "个人对话",
     "taskRoom": "任务",
     "spec": "{cores} 核 · {memory} GB · {disk} GB",
     "dur": {
@@ -181,7 +182,7 @@
       "replaced": "宿主机坏掉、换了一台",
       "released": "回收（空闲 / 额度用完）",
       "releasedValue": "{idle} / {unpaid}",
-      "refused": "被拒的会话（池满 / provider 失败）",
+      "refused": "被拒的 AI 队友启动（池满 / provider 失败）",
       "refusedValue": "{sessions} 个（{full} / {failing}）",
       "hostsLost": "放弃的宿主机（provider 报错 · 失联 · 没注册上）",
       "hostsLostValue": "{n} 台（{error} · {away} · {never}）",

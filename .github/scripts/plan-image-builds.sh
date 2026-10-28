@@ -173,6 +173,15 @@ else
         ;;
     esac
 
+    # The web build bakes in the API generation it sends with every request
+    # (frontend/Dockerfile, the `api` context). A backend whose generation rose
+    # while the frontend image stayed would refuse every page, new ones too.
+    case "$changed_path" in
+      backend/api-generation)
+        frontend=true
+        ;;
+    esac
+
     # The backend image carries the sentence catalogs it renders push and
     # desktop notices from (backend/Dockerfile, the `i18n` context).
     case "$changed_path" in
@@ -188,7 +197,7 @@ else
     # dependencies both are installed from.
     case "$changed_path" in
       frontend/collab/* | frontend/src/lib/docSchema/* \
-        | frontend/package.json | frontend/pnpm-lock.yaml)
+        | frontend/package.json | frontend/pnpm-lock.yaml | frontend/patches/*)
         collab=true
         ;;
     esac

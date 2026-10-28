@@ -7,9 +7,13 @@ the agent's, so two days' runs do not each decide differently what "untriaged"
 means, and a day with nothing waiting runs no turn at all.
 
 **Untriaged** is 已收录 with no assignee: assigning and claiming both move a
-report to 处理中 (`FeedbackService.advance`), so a report still at `received`
-is one nobody has touched. Only reports the teammate could read are handed out
-— public and not flagged as a security matter, the arm `may_see` opens to a
+report to 处理中 (`FeedbackService.advance`), and a claim that is let go of puts
+it back at 已收录 (`FeedbackService.release`) — releasing means 「as if it had
+never been claimed」, so the report carries no trace of it. A batch is still not
+handed out twice: the caller passes what that rule already handed out on an
+earlier run (`RoutineRun.feedback_offered`), because that record belongs to the
+rule, not to the report. Only reports the teammate could read are handed out —
+public and not flagged as a security matter, the arm `may_see` opens to a
 non-admin. The private and security queues stay with the people on the triage
 roster.
 
@@ -24,7 +28,7 @@ task.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.announce import KIND_LABELS
@@ -36,37 +40,44 @@ MAX_BATCH = 10
 STEPS = "\n".join(
     (
         "逐条处理：",
-        "1. 用 cheese_feedback_get 读全文和评论。",
-        "2. 用 cheese_feedback_claim 领下来；领不到（已经有人在修，或者已经办完）"
+        "1. 用 cheese_feedback(action=get) 读全文和评论。",
+        "2. 用 cheese_feedback(action=claim) 领下来；领不到（已经有人在修，或者已经办完）"
         "就跳过这一条。",
         "3. 调查：复现、读代码、查日志，判断是不是真问题、根因在哪。",
         "4. 能修的先用 cheese_ask 问规则的主人要不要建任务修，一条反馈一道题，选项"
-        "「建任务」「不修」；他选了「建任务」，再用 cheese_task 另开一件任务（owner 填"
+        "「建任务」「不修」；他选了「建任务」，再用 cheese_task(action=open) 另开一件任务（owner 填"
         "他），写清根因、修法和反馈编号。任务里修好的提交单独一行写 "
         "`Fixes-feedback: FB-<编号>`，合并上线后平台会自动记「已修复」「已上线」。"
-        "这一轮里不改代码。",
+        "这次不改代码。",
         "5. 修不了或不该修（设计如此、复现不了、要别人拍板）：不要改它的状态。"
         "把你的判断和建议（例如「建议标为不修复，因为……」）写进交回结果的 summary，"
-        "由规则的主人决定；不再跟进的用 cheese_feedback_release 放掉。",
+        "由规则的主人决定；不再跟进的用 cheese_feedback(action=release) 放掉。",
         "交回结果时逐条写清：编号、结论（创建的任务 / 建议 / 跳过）和理由。",
     )
 )
 
 
-async def untriaged(session: AsyncSession, limit: int) -> list[Feedback]:
-    """The oldest public reports nobody has picked up, at most `limit`."""
+async def untriaged(
+    session: AsyncSession, limit: int, *, exclude: Select | None = None
+) -> list[Feedback]:
+    """The oldest public reports nobody has picked up, at most `limit`.
+
+    `exclude`, when given, selects feedback ids this rule already handed out
+    on an earlier run. It comes from the caller because that record lives on
+    the rule's runs, not on the report.
+    """
+    query = select(Feedback).where(
+        Feedback.deleted_at.is_(None),
+        Feedback.status == FeedbackStatus.received,
+        Feedback.assignee_handle.is_(None),
+        Feedback.visibility == FeedbackVisibility.public,
+        Feedback.security.is_(False),
+    )
+    if exclude is not None:
+        query = query.where(Feedback.id.not_in(exclude))
     return list(
         await session.scalars(
-            select(Feedback)
-            .where(
-                Feedback.deleted_at.is_(None),
-                Feedback.status == FeedbackStatus.received,
-                Feedback.assignee_handle.is_(None),
-                Feedback.visibility == FeedbackVisibility.public,
-                Feedback.security.is_(False),
-            )
-            .order_by(Feedback.created_at, Feedback.display_no)
-            .limit(limit)
+            query.order_by(Feedback.created_at, Feedback.display_no).limit(limit)
         )
     )
 

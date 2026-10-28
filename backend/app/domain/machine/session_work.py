@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import contextlib
 import errno
 import hashlib
 import json
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, for_a_machine
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
@@ -49,6 +50,7 @@ from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
 from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
@@ -59,6 +61,7 @@ from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
+    SANDBOX_REPLACED,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -169,6 +172,13 @@ async def _session_author(db, project, handle: str) -> str:
     if teammate is None:
         return handle
     return await AgentInstanceService(db).ensure_identity(teammate)
+
+
+async def session_author(db, project, handle: str) -> str:
+    """``_session_author``, for the caller of a sandbox's platform-socket
+    request (`domain.machine.caller`): what the session's launch credential
+    names, and so what the request acts as."""
+    return await _session_author(db, project, handle)
 
 
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
@@ -357,8 +367,10 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
             if key.startswith(("CHEESE_", "GIT_"))
         },
         "CHEESE_API": api,
-        "CHEESE_TOKEN": token,
-        "CHEESE_PROJECT": str(project_id),
+        # The machine's copy, marked as held there (`sandbox_auth.for_a_machine`).
+        "CHEESE_TOKEN": for_a_machine(token) if token else "",
+        # Empty for a sandbox in no project (``holder``).
+        "CHEESE_PROJECT": str(project_id or ""),
         "CHEESE_TOPIC": str(topic_id),
         "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
@@ -386,6 +398,7 @@ async def _start_executor(
     setup,
     sandbox,
     platform_machine,
+    on_stderr=None,
 ):
     """Bring a session's executor up on ``device_id`` and answer what it
     reports: a running one on this release, in a sandbox exactly when asked,
@@ -396,7 +409,8 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox.
+    sandbox. ``on_stderr`` hears what the install writes to stderr while it
+    runs (`install_progress`).
 
     Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
     a machine that stopped answering — its connector gone silent, its executor
@@ -459,6 +473,7 @@ async def _start_executor(
             platform_machine=platform_machine,
         ),
         timeout=lease_claim.INSTALL_MOST_S,
+        on_stderr=on_stderr,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
@@ -489,7 +504,13 @@ class ExecutorSetupFailed(RuntimeError):
     def reason(self) -> str:
         if f"[Errno {errno.ENOSPC}]" in str(self):
             return DISK_FULL
-        lines = [line.strip() for line in str(self).splitlines() if line.strip()]
+        # The download's progress lines are for the room's line
+        # (`install_progress`), not an account of why it stopped.
+        lines = [
+            line.strip()
+            for line in str(self).splitlines()
+            if line.strip() and downloaded(line.strip()) is None
+        ]
         return lines[-1] if lines else "Executor setup failed"
 
 
@@ -773,11 +794,8 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     await db.commit()
     return {
         "target": lease,
-        "token": bind_resource_token(
-            token,
-            resource,
-            session_id=str(session_id),
-            lease_generation=lease["generation"],
+        "token": holder.credential(
+            token, session_id=str(session_id), lease_generation=lease["generation"]
         ),
     }
 
@@ -942,6 +960,12 @@ async def _attempt(
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
     location = row.runtime_location or {}
+    # ponytail: 本地只有一台机器，会话主机与工作电脑必然是同一台；生产护栏
+    # 「项目文件别和执行会话挤在一台机器上」在这里只能挡下整个演示（agent 的
+    # Bash/文件工具全被 403，wolfram 技能脚本跑不起来），所以 development 下放行。
+    # 上限：会话与项目工具共用一个连接器，资源不再隔离。
+    # 升级路径：注册第二台机器当工作电脑后，或部署在非 development，这条不再触发。
+    single_machine = settings.environment == "development"
     if (
         # A member's own agent may work on the machine its session runs on,
         # its owner's, when that is where its environment is: the session then
@@ -949,6 +973,7 @@ async def _attempt(
         location.get("channel") != OWNER_CHANNEL
         and ready
         and (lease or {}).get("device_id") == location.get("device_id")
+        and not single_machine
     ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     now = datetime.now(UTC)
@@ -1078,7 +1103,11 @@ async def _attempt(
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
     host = row.runtime_location["device_id"]
-    if device_id == host and row.runtime_location.get("channel") != OWNER_CHANNEL:
+    if (
+        device_id == host
+        and row.runtime_location.get("channel") != OWNER_CHANNEL
+        and not single_machine
+    ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
@@ -1149,12 +1178,10 @@ async def _attempt(
             env=env,
             api=api,
             host_api=host_api,
-            namespace=holder.namespace,
-            project_id=holder.project_id,
+            holder=holder,
             # The executor and its progress lines belong to the conversation;
             # its machine and lock to the holder.
             topic_id=row.conversation_id,
-            holder_id=topic_id,
             actor_handle=actor_handle,
             work_resource=work_resource,
             hub=hub,
@@ -1211,10 +1238,8 @@ async def _install(
     env,
     api,
     host_api,
-    namespace,
-    project_id,
+    holder,
     topic_id,
-    holder_id,
     actor_handle,
     work_resource,
     hub,
@@ -1238,31 +1263,42 @@ async def _install(
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
         sessions = AgentSessionService(db)
-        execution_token = bind_resource_token(
-            token, resource, session_id=str(session_id), lease_generation=generation
+        execution_token = holder.credential(
+            token, session_id=str(session_id), lease_generation=generation
         )
+        namespace = holder.namespace
         setup = _executor_env(
             env,
             api=api,
-            token=execution_token,
-            project_id=project_id,
+            token=holder.sandbox_token(execution_token),
+            project_id=holder.project_id,
             topic_id=topic_id,
             author=actor_handle,
             work_resource=work_resource,
         )
         disk_full_mb = None
+        # On a person's own computer the room sees the runtime download
+        # (`install_progress`); a Cloud machine's getting ready is the
+        # platform's own, kept out of the conversation (`progress`).
+        shown = (
+            InstallProgress(bind, session_id=session_id, device_id=device_id)
+            if owner_device
+            else contextlib.nullcontext()
+        )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                info = await _start_executor(
-                    hub,
-                    lease,
-                    device_id=device_id,
-                    namespace=namespace,
-                    work_resource=work_resource,
-                    setup=setup,
-                    sandbox=sandbox,
-                    platform_machine=platform_machine,
-                )
+                async with shown as heard:
+                    info = await _start_executor(
+                        hub,
+                        lease,
+                        device_id=device_id,
+                        namespace=namespace,
+                        work_resource=work_resource,
+                        setup=setup,
+                        sandbox=sandbox,
+                        platform_machine=platform_machine,
+                        on_stderr=heard,
+                    )
                 target = {
                     **reservation,
                     "status": "ready",
@@ -1360,7 +1396,7 @@ async def _install(
                 # before setup starts (above).
                 return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
-        current = await holders.lock_for_work(db, holder_id)
+        current = await holders.lock_for_work(db, holder.id)
         row = await sessions.by_id(session_id, lock=True)
         if (
             row is None
@@ -1392,7 +1428,7 @@ async def _install(
             # Only a room's sessions work on people's own machines.
             await tell_device_owner(
                 db,
-                topic=await TopicService(db).get_or_404(holder_id),
+                topic=await TopicService(db).get_or_404(holder.id),
                 row=row,
                 device=device,
                 lease=target,
@@ -1425,7 +1461,8 @@ async def _install(
             return _Preparing(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
-        notices = [SANDBOX_LOST] * bool(lost)
+        lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
+        notices = [lost_notice] * bool(lost)
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {

@@ -45,6 +45,12 @@ export interface WaitingWork {
   threadId?: string | null
   /** 第二行：等的是什么（提问的原话、改动的主题、停住的原因、拍板的说明）；没有就空。 */
   detail?: string
+  /** 等你审阅的那一行才有：这件任务递的第几版、什么时候递上来的（ISO）。 */
+  cardVersion?: number | null
+  cardSince?: string | null
+  /** 卡住那一行才有：做这件任务的队友叫什么，和名字的来历（`default` 时按读者的语言叫）。 */
+  agentName?: string | null
+  agentNameSource?: string | null
   /** 来自通知的才有：哪一条、它的标题（要拍板的问题、改了什么），决策请求可选的答案。 */
   alertId?: number | null
   headline?: string
@@ -74,6 +80,8 @@ export interface WaitingAsk {
   role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
   /** 邀请或申请时附的那句话；没写是空串。 */
   message: string
+  /** 邀请是发起人自己的芝士替他发的。 */
+  byAssistant?: boolean
   at: string
 }
 

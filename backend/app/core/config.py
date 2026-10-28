@@ -185,6 +185,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # a browser could already send starts being refused. That nginx line is a
     # separate number in a separate file: raise one and raise the other.
     attachment_max_bytes: int = 100 * 1024 * 1024
+    # A team's own library (a person's is their personal team's): how much it
+    # holds in all, the versions a file was replaced from included. Unset, it
+    # follows where new files are kept (`library.records.capacity`): 1 GB on
+    # this server's disk, 20 GB in the files bucket. Set, it is the total for
+    # every team whatever the store. No team has a capacity of its own.
+    team_library_bytes: int | None = None
+    # A task's starter code (`app/domain/project/starter.py`): how many files
+    # and how many bytes it may unpack to, and how many times larger than the
+    # zip itself it may unpack (past 64 MiB); more is refused as a zip bomb.
+    starter_max_files: int = 20_000
+    starter_max_bytes: int = 2 * 1024 * 1024 * 1024
+    starter_max_ratio: int = 200
     redis_url: str = "redis://localhost:6379/0"
     # Per-client request limits (`app/core/request_limits.py`). Measured on the
     # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
@@ -245,6 +257,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # the compose file may claim it.
     deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
+    #: The other origins this deployment is served under, `frontend_url` being
+    #: the canonical one: a JSON list, FRONTEND_ALIASES='["https://example.cn"]'.
+    #: A request that arrives on one of them is answered for that origin
+    #: (`app.core.origins`).
+    frontend_aliases: list[str] = []
     #: A person's mail server may resolve to a private or loopback address, and
     #: may be spoken to without TLS. Only for a local test mail server: on a
     #: deployment it would let anyone make the backend dial its own network.
@@ -324,7 +341,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # 不受限，所以这个数字挡的是一台机器上同时跑多少层进程，不是平台认不认孙辈的
     # 活。部署想让一条活自己再往下派就抬高它，代码里没有一处跟着这个数字分岔。
     claude_code_max_subagent_spawn_depth: int = 1
-    # 每个会话多一样工具 `cheese_compact`：agent 可以请平台压缩自己这个会话的
+    # 每个会话多一样工具 `cheese_session(action=compact)`：agent 可以请平台压缩自己这个会话的
     # 上下文。默认关着——打开它只是给 agent 一个开口，怎么用要看它怎么用；v1 只在
     # dev 上开着观察。开了就是写进会话环境的那一句（CHEESE_COMPACT_TOOL），所以
     # 「没开开关的座位看不到它」由 `sandbox/cheese` 一处决定。
@@ -454,7 +471,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # The platform names tasks itself, off the agent's turn: a small model
     # through the gateway, on a virtual key of its own capped at this budget
     # per 30 days. Unset gateway admin credentials = an unnamed task's own
-    # session is reminded to name it with `cheese_title`.
+    # session is reminded to name it with `cheese_room(action=rename)`.
     # Fallback of the platform model role of the same name: read only while
     # no administrator has pointed the role (app.core.model_roles).
     topic_naming_model: str = "deepseek-flash"
@@ -466,6 +483,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # What a conversation's sandboxes may spend a day on models, per budget
+    # holder (`gateway_usage.MachineGatewayKey`): their calls go out on a key
+    # of their own with this cap on the gateway, so a machine whose owner
+    # relays its platform socket spends no more. The session's own calls are
+    # not counted against it. A first value, not yet measured against a day of
+    # real reviews.
+    machine_model_daily_budget_usd: float = 10.0
     # --- Voice input (app/domain/voice) ---
     # The composer's microphone: a speech model through the gateway, then a
     # small model that tidies the transcript into a message. Recorded per
@@ -543,7 +567,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
-    # for the agent path (`cheese_feedback_propose`): a misfiring loop proposes
+    # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad
     # afternoon and a topic nobody can read. Proposal cards are the one kind of
     # "the next step is on a person" that nobody is waiting on, so unlike a
@@ -627,6 +651,20 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
+    # How long a session at work may produce nothing at all — no output, no
+    # tool call, nothing running on it — before the runner calls it stuck and
+    # reports its ending itself. The other two clocks both need something to
+    # go on (something said recently, an input still unread); a process that
+    # is alive but whose build stopped answering has neither, and without this
+    # clock nothing ever reports that it stopped. A tool in flight does not
+    # count as silence: that is a long command working, not a build dying.
+    agent_stuck_silence_s: float = 1800.0
+    # How long a Claude Code runner another release started may go on with the
+    # work it was doing when this release took it over (`RUNNER_DRAIN_S`),
+    # counted from when the drain began (`agent_sessions.drain_started_at`). It
+    # gets nothing new meanwhile, and the seat's messages wait; past this its
+    # work is interrupted and resumed on a runner of this release.
+    runner_drain_s: float = 1800.0
 
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no
@@ -652,6 +690,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # script, and the deploy overlay mounts the proxy's cert read-only and points
     # this at it.
     subscription_ca_backend_path: str = ""
+    # ponytail: 本地开发的逃生口，默认关；开着时屏幕不经计费代理，直接把 `agent_env()`
+    # 的网关交给它。不拿 `environment == development` 当判据（测试也在 development 上，
+    # 会读成绿灯假象）。上限：无计费与模型改写；升级路径：配好 CA 与 meter 后无需再开。
+    agent_direct_gateway: bool = False
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
     # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
     # is refused before it is forwarded once the window's completed turns plus
@@ -815,6 +857,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (`app.periodic_jobs.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.
     queued_message_sweep_interval_s: int = 10
+    # How often the clock takes back questions nobody answered: one indexed read
+    # of the open questions near their deadline per run (`app.periodic_jobs`).
+    # The deadline itself is 72 hours, so the minute a sweep lands on is not
+    # something a reader notices.
+    question_expiry_sweep_interval_s: int = 300
+    # How long until a dead 支线 is recycled (`thread/recycle.py`). The bound it
+    # measures is three days, so this only decides how late the sweep may be;
+    # an hour costs one scan of the open 支线 with a failure in them per run.
+    thread_recycle_interval_s: int = 3600
     # How long a backend on its way out waits for the prompts it is still
     # sending, and the receipts it is still expecting, before it hands its
     # sessions to the next backend anyway (`app.core.ownership`). It has to fit
@@ -846,6 +897,9 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+    # 公开 GitHub 读取（技能市场、「从网上取一份技能」导入）的只读凭据；不替代上面的
+    # App——那个是按安装授权的。不设也能读，只是与全站共用每小时 60 次的匿名额度。
+    github_token: str = ""
 
     forgejo_url: str = ""
     forgejo_api_url: str = ""
@@ -997,6 +1051,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (the bucket below). A file's record says where its own bytes are, so
     # changing this moves nothing that is already stored.
     files_store: Literal["local", "bucket"] = "local"
+    # How large one file kept in the files bucket may be: a library file, and
+    # a task's material. A dataset can be several GB, and its bytes never pass
+    # through this server (they go to the bucket in parts, straight from the
+    # browser or machine, and come back the same way). Files kept on this
+    # server's disk keep the smaller ceilings in `app.domain.library.service`.
+    files_bucket_file_max_bytes: int = 20 * 1024**3
     # A bucket of its own, with a key that reaches only it: these are private
     # files, and the key is not the one the public and transcript buckets use.
     # A browser puts an upload straight into it, so its CORS rules must let the
@@ -1018,6 +1078,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # settings. The merge dropped them, so those code
     # paths hit AttributeError at runtime; restored verbatim from origin/main
     # (aliases kept where the env var name differs from the field name). ---
+    # 为没有自带 SKILL.md 的仓库生成草稿的网关模型；一次一 call，记管理员额度。
+    skill_draft_model: str = "deepseek-flash"
+    skill_draft_max_tokens: int = 4096
+    skill_draft_timeout_s: float = 120.0
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")
@@ -1082,9 +1146,6 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         """
         return bool(self.vapid_public_key and self.vapid_private_key)
 
-    enforce_task_participant_limit_check: bool = Field(
-        default=False, alias="APPLICATION_ENFORCE_TASK_PARTICIPANT_LIMIT_CHECK"
-    )
     rank_check_enforced: bool = Field(
         default=False, alias="APPLICATION_RANK_CHECK_ENFORCED"
     )
@@ -1297,6 +1358,38 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         )
 
     @model_validator(mode="after")
+    def _frontend_aliases_are_origins(self) -> "Settings":
+        """Each alias is a browser origin, written as browsers do, and none is
+        the canonical one: a request's origin is found by comparing its Host
+        with these, and the Origin header of a grant or a passkey with them."""
+        canonical = browser_origin(self.frontend_url)
+        aliases: list[str] = []
+        for value in self.frontend_aliases:
+            parts = urlsplit(value.strip().lower())
+            host = parts.hostname or ""
+            local = host == "localhost" or host.endswith(".localhost")
+            if (
+                parts.scheme not in ("https", "http")
+                or (parts.scheme == "http" and not local)
+                or not host
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+                or parts.username
+            ):
+                # i18n-exempt: refuses the boot; read by an operator in the log
+                raise RuntimeError(
+                    f"FRONTEND_ALIASES entry {value!r} is not an https origin. "
+                    "Write the scheme and host only, e.g. https://example.cn "
+                    "(http is accepted for *.localhost)."
+                )
+            origin = browser_origin(value)
+            if origin != canonical and origin not in aliases:
+                aliases.append(origin)
+        self.frontend_aliases = aliases
+        return self
+
+    @model_validator(mode="after")
     def _docs_origin_is_an_origin(self) -> "Settings":
         """``docs_origin`` is a browser origin of its own, written as browsers do.
 
@@ -1329,7 +1422,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
                 "Write the scheme and host only, e.g. https://docs.okcheese.com "
                 "(http is accepted for *.localhost)."
             )
-        if host == (urlsplit(self.frontend_url.strip().lower()).hostname or ""):
+        if host in {
+            urlsplit(origin).hostname
+            for origin in (self.frontend_url.strip().lower(), *self.frontend_aliases)
+        }:
             raise RuntimeError(
                 f"DOCS_ORIGIN={self.docs_origin!r} is the platform's own host "
                 f"(FRONTEND_URL={self.frontend_url!r}). The docs need a host of "

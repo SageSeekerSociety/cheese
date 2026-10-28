@@ -20,10 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
-from app.api.doc_access import require_role
+from app.api.project_library import shelf_for
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
@@ -38,8 +38,10 @@ from app.domain.agent.file_edits import announce_editor_save
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.living_doc import collab, room_file_collab
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
@@ -60,11 +62,8 @@ async def _in_room(
     db: AsyncSession,
     resolver: ActorResolver,
     topic_id: uuid.UUID,
-    *,
-    writes: bool = False,
 ) -> tuple[Place, Actor]:
-    """The room and who is in it; ``writes`` also asks that their role lets them
-    change files (#3830)."""
+    """The room and who is in it."""
     place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
@@ -72,8 +71,6 @@ async def _in_room(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    if writes:
-        await require_role(db, actor, place.project_id, Permission.edit_content)
     return place, actor
 
 
@@ -134,6 +131,45 @@ class RoomFileListOut(Page[RoomFileOut]):
     truncated: bool
 
 
+class RoomFileRevisionOut(BaseModel):
+    """一次保存留下的那一版：地址、第几版、版本号、大小、谁从哪条路存的。
+
+    `room_files.revision_out` 那一份的形状——保存、恢复、编辑器回调都回它。版本是内容
+    的哈希前 16 位，和读文件时拿到的是同一个 id（`domain/textfile.content_version`）。
+    """
+
+    id: str
+    path: str
+    seq: int
+    version: str
+    size: int
+    author: str
+    author_kind: str
+    #: 这一版从哪个门进来的：取值见 ``room_files.SOURCES``。
+    source: str
+    note: str | None
+    #: 在线编辑器（OnlyOffice）那次会话的钥匙；走别条路的保存是空的。
+    editor_key: str | None
+    created_at: str
+
+
+class LiveEditorOut(BaseModel):
+    """开实时编辑器要的那点东西：一份文档名、一张票、能不能改，加上它的正文。
+
+    `enabled` 为假时只有 `reason`（``not_configured``、``unsupported``），和
+    `open_in_editor` 同一个形状，界面按同一个办法说人话。`content` 是这份文件此刻
+    的 Markdown：编辑器拿它当起点，协作服务那边还没有活状态时也拿它做第一次转换。
+    """
+
+    enabled: bool
+    reason: str | None = None
+    document: str | None = None
+    ticket: str | None = None
+    read_only: bool | None = None
+    version: str | None = None
+    content: str | None = None
+
+
 @router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
 async def list_files(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -178,11 +214,12 @@ async def room_file_raw(
     topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
 ) -> Response:
     """The file as it is now, with its version — what `cheese pull` reads."""
-    place, _ = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
     name = library.library_name(clean)
     if name is not None:
-        data = await library_records.read(db, place.project_id, name)
+        shelf = await shelf_for(db, place.project_id)
+        data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, clean
@@ -223,19 +260,15 @@ async def file_revision_raw(
     return _bytes_response(data, name, row.sha256[:16])
 
 
-@router.post(
-    "/topics/{topic_id}/files/revisions/{revision_id}/restore",
-    dependencies=[ROUTE_DECIDES],
-)
+@router.post("/topics/{topic_id}/files/revisions/{revision_id}/restore")
 async def restore_file_revision(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
     revision_id: uuid.UUID,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Put an earlier save back. The current state becomes one more revision
     back, so a restore is itself undoable."""
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
     made = await room_files.restore_revision(
         db,
@@ -249,9 +282,11 @@ async def restore_file_revision(
     return ok(room_files.revision_out(made))
 
 
-@router.post("/topics/{topic_id}/files/copy", dependencies=[ROUTE_DECIDES])
+@router.post("/topics/{topic_id}/files/copy")
 async def copy_into_room(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Make an editable copy of a file in this room.
 
@@ -259,14 +294,15 @@ async def copy_into_room(
     was given, and the room works on its own copy — which is also how a user's
     file becomes the template for a new one without being overwritten.
     """
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
     if artifact_kind_for(target) not in ARTIFACT_MIME:
         raise ValidationError(say("unsupportedFileType"))
     name = library.library_name(source)
     if name is not None:
-        data = await library_records.read(db, place.project_id, name)
+        shelf = await shelf_for(db, place.project_id)
+        data = await library_records.read(db, shelf, name)
     else:
         data = await asyncio.to_thread(
             library.read_room_file, place.project_id, place.room_id, source
@@ -316,16 +352,18 @@ async def list_templates(
     return ok(page(items, len(items)))
 
 
-@router.post("/topics/{topic_id}/files/new", dependencies=[ROUTE_DECIDES])
+@router.post("/topics/{topic_id}/files/new")
 async def new_from_template(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """A new room document, copied from a standard template.
 
     The name must keep the template's format: a 「报告」 saved as .xlsx would be a
     file that no program opens as what its name says.
     """
-    place, actor = await _in_room(db, resolver, topic_id, writes=True)
+    place, actor = at.place, at.actor
     template = catalogue.find(str(body.get("template") or ""))
     if template is None:
         raise ValidationError(say("templateNotFound"))
@@ -423,6 +461,75 @@ async def open_in_editor(
     )
 
 
+@router.post("/topics/{topic_id}/files/text", **typed_response(RoomFileRevisionOut))
+async def write_text_file(
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
+    body: dict,
+    db: DbSession,
+) -> dict:
+    """Save an edit to a room file that is text.
+
+    The counterpart of `write_file` on the workspace side, for the room's own
+    files rather than a task's worktree. The preview panel edits a markdown
+    file where it is shown, and what it saves has to land as a new version of
+    the file everyone reads — not as a copy somewhere else.
+
+    `version` is the one the caller read (the room-file read hands back
+    `content_version`, the same id this route compares against). It is required,
+    not optional: a save that skipped the read has nothing to compare against and
+    would overwrite whoever saved in between — the one thing this route exists to
+    prevent. The same rule the workspace side enforces (`taskFileReadBeforeSave`).
+    """
+    place, actor = at.place, at.actor
+    path = _room_path(str(body.get("path") or ""))
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise ValidationError(say("contentRequired"))
+    expected = str(body.get("version") or "")
+    if not expected:
+        raise ValidationError(say("taskFileReadBeforeSave"))
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, path
+    ):
+        raise NotFoundError(say("roomFileNotFound"))
+    # 这是「文本」那条路：一份二进制（docx、表格、图片）也能有这个地址，把 UTF-8 写进
+    # 去就把它毁了（旧版还在历史里，但文件本身没了）。读的人拿到的 `binary` 为真，
+    # 那也正是「这一份不是文本」；这里照同一条读法问一次，不靠面板那一层只给 markdown
+    # 开按钮。同一次读也把版本带回来——比的就是读它的人手上那一版。
+    #
+    # 判 `binary`，不是判 `content` 是不是 null：大过 `MAX_TEXT_BYTES` 的文本（1 MB）
+    # 正文也不交出来（`too_large`），但它是文本、写得回去——`save_room_file` 收得下
+    # 它。`binary` 和 `too_large` 在 `domain/textfile.py` 里是分开的两件事。
+    shown = await asyncio.to_thread(
+        library.read_room_text_file, place.project_id, place.room_id, path
+    )
+    if shown.get("binary"):
+        raise UnprocessableEntityError(say("roomFileNotText"))
+    version = shown.get("version")
+    if version is None:
+        raise NotFoundError(say("roomFileNotFound"))
+    if expected != version:
+        raise ConflictError(
+            say("roomFileMovedOn"), data={"version": version, "path": path}
+        )
+    made = await room_files.save_room_file(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=path,
+        data=content.encode("utf-8"),
+        author=actor.handle,
+        author_kind=author_kind(actor),
+        source="editor",
+        base_version=version,
+        note=str(body.get("note") or "") or None,
+        warm_preview=office.prewarm,
+        file_store=library,
+    )
+    await db.commit()
+    return ok(room_files.revision_out(made))
+
+
 @router.get("/office-editor/files/{link}")
 async def editor_fetches_file(link: str) -> Response:
     """The document, for the editor. The link token is the only credential."""
@@ -434,6 +541,79 @@ async def editor_fetches_file(link: str) -> Response:
         library.read_room_file, target.project_id, target.room_id, target.path
     )
     return _bytes_response(data, target.path.rsplit("/", 1)[-1], content_version(data))
+
+
+@router.get("/topics/{topic_id}/files/collab", **typed_response(LiveEditorOut))
+async def open_live_editor(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """A ticket that opens this room file in the live editor, where several
+    people edit it at once.
+
+    The counterpart of `open_in_editor` for the office files: same shape, same
+    gate (opening a room is enough to read; changing it needs
+    `edit_content`). The file gets a live state made for it on first open, and
+    its id is what the collaboration service names the document by.
+
+    Only text is served here: the office kinds go through OnlyOffice, whose
+    edits land as whole-file saves, not as a shared live document. A file that
+    is not there is a 404; the ones that cannot open live answer `enabled` false
+    with a `reason` the screen words
+    (`work.room.fileEditor.unavailable.<reason>`): `not_configured`,
+    `unsupported` (a binary), `too_large` (text over the preview's ceiling,
+    whose text is never read into a body).
+    """
+    place, actor = await _in_room(db, resolver, topic_id)
+    clean = _room_path(path)
+    if not collab.enabled():
+        return ok({"enabled": False, "reason": "not_configured"})
+    if not await asyncio.to_thread(
+        library.room_file_exists, place.project_id, place.room_id, clean
+    ):
+        raise NotFoundError(say("roomFileNotFound"))
+    shown = await asyncio.to_thread(
+        library.read_room_text_file, place.project_id, place.room_id, clean
+    )
+    if shown.get("binary"):
+        return ok({"enabled": False, "reason": "unsupported"})
+    content = shown.get("content")
+    if content is None:
+        # Text over the ceiling is not read into a body at all (`too_large`).
+        # Opening it live would seed the state with text nobody read, and the
+        # service's first store would write that back over the file.
+        return ok({"enabled": False, "reason": "too_large"})
+    can_edit = actor.authenticated and await may(
+        db, place.project_id, actor.handle, Permission.edit_content
+    )
+    agent = await IdentityService(db).is_agent(actor.handle)
+    row = await room_file_collab.open_for(
+        db,
+        project_id=place.project_id,
+        room_id=place.room_id,
+        path=clean,
+        content=content,
+    )
+    await db.commit()
+    name = collab.room_file_name(row.id)
+    return ok(
+        {
+            "enabled": True,
+            "document": name,
+            "ticket": collab.sign_ticket(
+                name=name,
+                handle=actor.handle,
+                agent=agent,
+                read_only=not can_edit,
+                suggest_only=False,
+            ),
+            "read_only": not can_edit,
+            "version": shown.get("version"),
+            "content": content,
+        }
+    )
 
 
 #: https://api.onlyoffice.com/docs/docs-api/usage-api/callback-handler/

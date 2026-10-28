@@ -60,15 +60,16 @@ async def main():
                 raise AssertionError("Original error swallowed")
         assert records[-1]["category"] == expected
         assert "secret" not in json.dumps(records)
-    for status, code, expected in (
-        (429, "1113", "provider_quota"),
-        (429, None, "rate_limit"),
-        (401, None, "http_auth"),
-        (500, None, "http_error"),
+    for status, code, message, expected in (
+        (429, "1113", "[1113][余额不足或无可用资源包,请充值。] secret body", "provider_quota"),
+        (400, "invalid_request_error", "Insufficient Balance secret body", "provider_quota"),
+        (429, None, "secret body", "rate_limit"),
+        (401, None, "secret body", "http_auth"),
+        (500, None, "secret body", "http_error"),
     ):
         response = httpx.Response(
             status,
-            json={"error": {"code": code, "message": "secret body"}},
+            json={"error": {"code": code, "message": message}},
             request=httpx.Request("POST", "https://secret.invalid"),
         )
         error = httpx.HTTPStatusError(

@@ -4,7 +4,7 @@
   "cc": "抄送",
   "confirmSend": "确认发送",
   "discard": "放弃",
-  "discardFailed": "没有放弃成功",
+  "discardFailed": "放弃失败",
   "discarded": "已放弃",
   "from": "从 {account}",
   "hint": "发出去的就是上面这封；{name}不能替你发。",

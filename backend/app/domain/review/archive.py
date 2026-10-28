@@ -98,6 +98,7 @@ async def _converge_card(
     # 只在空的时候补：已有的决议痕迹不覆盖。
     if card.decided_by is None and by is not None:
         card.decided_by = by
+        card.decided_by_assistant = False
     if card.decided_at is None:
         card.decided_at = now
 

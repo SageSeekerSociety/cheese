@@ -38,6 +38,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.usage.models import ResourceUsage
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.conftest import seed_user
 from tests.integration.conftest import a_team, post_project, session_auth_headers
 from tests.support.devices import enrollment_team
@@ -200,7 +201,7 @@ def _seed_machine_stock(client, owner_handle: str) -> None:
                     team_id=await enrollment_team(sql_device_service(session), owner),
                     device_id="stats-device-1",
                     name="一台设备",
-                    token="stats-token-1",
+                    token_digest=digest_token("stats-token-1"),
                     owner_user_id=owner,
                     created_at=datetime.now(UTC),
                 )
@@ -826,7 +827,6 @@ def _room_with_card(client, *, decided_at: datetime) -> None:
             s.add(
                 AcceptCard(
                     topic_id=room.id,
-                    reviewer_handle=REPORTER,
                     focus="最懂",
                     status=AcceptStatus.accepted,
                     decided_at=decided_at,

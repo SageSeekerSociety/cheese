@@ -32,6 +32,7 @@ from app.core.sentences import say
 from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.living_doc.services import Documents
 from app.domain.living_doc.shares import Shares
 from app.domain.project.room_files import (
@@ -166,13 +167,15 @@ class SharedDocumentOut(BaseModel):
 async def read_shared(token: str, db: DbSession, response: Response) -> dict:
     """The shared document's current version, for anyone holding the link."""
     doc = await _shared(db, token)
+    shared_by = await _shared_by(db, doc.id)
+    await db.commit()
     response.headers.update(_UNLISTED)
     return ok(
         {
             "title": doc.title,
             "content": doc.content,
             "updated_at": doc.updated_at,
-            "shared_by": await _shared_by(db, doc.id),
+            "shared_by": shared_by,
         }
     )
 
@@ -282,7 +285,11 @@ async def shared_image(
     name = library.library_name(clean)
     if kind not in _IMAGE_KINDS or doc.project_id is None or name is None:
         raise UnprocessableEntityError(say("docShareImageUnavailable"))
-    data = await library_records.read(db, doc.project_id, name)
+    # A share link has no reader to hold to a task's rule, so `题目/` (the
+    # task's materials, `mount`) is not part of what a shared document shows:
+    # an image from there is refused like any file the link may not reach.
+    shelf = Shelf.of_project(doc.project_id, with_task=False)
+    data = await library_records.read(db, shelf, name)
     return Response(
         content=data,
         media_type=ARTIFACT_MIME[kind],

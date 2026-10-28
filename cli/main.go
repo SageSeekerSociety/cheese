@@ -16,6 +16,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/apicli"
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/daemoncmd"
+	"github.com/SageSeekerSociety/cheese/cli/internal/sysproxy"
 )
 
 // version is overridable at link time:
@@ -24,6 +25,14 @@ import (
 var version = "dev"
 
 func main() {
+	// Everything this binary reaches out to — the control link, the runtime it
+	// fetches, its own update, the server's API — should go the way this
+	// computer is set to reach the network. On Windows that setting lives in
+	// the system proxy, not the environment Go reads, so a campus network that
+	// only admits the proxy left the connector dialling into a wall. Wired
+	// before anything can make a request.
+	sysproxy.Install()
+
 	// API hydration happens before Cobra executes, so select the profile first.
 	selection := pflag.NewFlagSet("profile", pflag.ContinueOnError)
 	selection.ParseErrorsWhitelist.UnknownFlags = true

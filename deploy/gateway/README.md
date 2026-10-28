@@ -151,6 +151,20 @@ issued, all but the one kept for tests. The endpoint admits campus
 addresses only, so a box serving it needs the route in docs/infrastructure.md
 ("Campus model API").
 
+A row whose provider account has run out of money (DeepSeek's `400
+Insufficient Balance`, Zhipu's `[1113]`, Volcengine's `SetLimitExceeded`,
+Moonshot's suspended account, OpenAI's `insufficient_quota` and the like) is
+taken out of rotation for ten minutes, after which one request tries the
+account again (`provider_credit.py`); the router's own cooldown is seconds,
+and none at all for a 400. Requests meanwhile go to the model's other rows by
+`order`. A request that ran into the empty row while another row is only busy
+is answered 429 with that row's Retry-After, so Claude Code's retry reaches it;
+once every row of a model is out of credit, the answer is a 402 whose message
+starts `cheese_upstream_credit_exhausted`, which Claude Code does not retry.
+Every row the gateway finds empty is named in the
+`x-cheese-upstream-out-of-credit` response header; the metering proxy reports
+each one to the backend, which alerts the administrators once per row.
+
 `qwen-audio-asr` uses Alibaba Bailian (Beijing) for the composer's voice input.
 Set `DASHSCOPE_API_KEY` in `$HOME/gateway/compose/.env`. A workspace that was
 given its own dedicated endpoint also sets `DASHSCOPE_API_BASE` there (for
@@ -383,7 +397,7 @@ the answer reports; `patch_deepseek_search_cost.py` makes it count
 `test_deepseek_search_cost.py` holds the charge to tokens plus each search. A
 row that cannot search needs no price.
 
-The platform's own web search (`cheese_web_search`, backend `/web-search`) is
+The platform's own web search (`cheese_web(action=search)`, backend `/web-search`) is
 asked here too, at `/v1/search/deepseek-search` on the caller's own virtual
 key: `search_tools` in `config.yaml` names DeepSeek's search API, which the
 pinned LiteLLM has no provider for, so `deepseek_search.py` is one and
@@ -428,7 +442,8 @@ from a broken stream. The probe prints categories and token counts, never provid
 error messages or generated text.
 
 Failure records distinguish observed DNS, TLS, timeout, HTTP authentication,
-rate-limit, and documented quota errors; an unknown HTTP 500 is not labeled a
+rate-limit, and provider out-of-credit errors (`provider_quota`, read by
+`provider_credit.py`'s classifier); an unknown HTTP 500 is not labeled a
 network cause. Timing completion means HTTP EOF, while the supply probe also
 checks the Messages terminal event.
 

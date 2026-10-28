@@ -43,6 +43,7 @@ from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     join_project_team,
     post_project,
+    room_agent_seat,
     session_auth_headers,
 )
 from tests.support.counting_session import counting_sql
@@ -51,6 +52,7 @@ EXPECTED_TOPIC_KEYS = {
     "accepted_at",
     "accepted_by",
     "activity",
+    "agent_handle",
     "archived_at",
     "awaits_me",
     "can_manage",
@@ -93,6 +95,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "contributor_handles",
     "created_at",
     "created_by",
+    "created_by_assistant",
     "delivered_head",
     "document_id",
     "historical_delivery_id",
@@ -100,6 +103,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "incomplete_since",
     "last_activity_at",
     "moving",
+    "needs_my_action",
     "number",
     "owner_handle",
     "pr_number",
@@ -134,10 +138,6 @@ _TASK_CARDS_SELECT = re.compile(
 )
 _AWAITING_PLACES_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM\s+\(SELECT DISTINCT ON \(blocks\.conversation_id\)",
-    re.IGNORECASE,
-)
-_AWAITING_SPOKE_SELECT = re.compile(
-    r"^\s*SELECT anon_1\.place,\s*said_since\.author,\s*said_since\.at\s+FROM unnest\(",
     re.IGNORECASE,
 )
 _UNDERWAY_TASKS_SELECT = re.compile(
@@ -216,7 +216,7 @@ def _seed_populated_project(client) -> tuple[str, list[str]]:
                     await cards_repo.add(
                         topic_id=topic.id,
                         task_id=task.id,
-                        reviewer_handle="carol",
+                        reviewer_handles=["carol"],
                         status=AcceptStatus.pending,
                         change_subject=f"feat(test): deliver {task.id.hex[:8]}",
                     )
@@ -338,13 +338,10 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
         s for s in seen if _TASK_CARDS_SELECT.search(s)
     ]
 
-    # 4. `blocks` awaiting_an_answer (places + unnest lateral) is read once
-    #    across the room list and all sidebar task rows.
+    # 4. Question records are read once across the room list and all sidebar
+    #    task rows. Later speech no longer determines whether they are settled.
     assert _count(seen, _AWAITING_PLACES_SELECT) == 1, [
         s for s in seen if _AWAITING_PLACES_SELECT.search(s)
-    ]
-    assert _count(seen, _AWAITING_SPOKE_SELECT) == 1, [
-        s for s in seen if _AWAITING_SPOKE_SELECT.search(s)
     ]
 
     # 5. Underway `tasks` (tasks_of_rooms, underway_counts, underway_with,
@@ -464,3 +461,29 @@ def test_topic_names_list_defers_sandbox_environment_columns(client):
     assert len(topic_selects) == 1
     assert "topics.environment" not in topic_selects[0]
     assert "topics.default_environment" not in topic_selects[0]
+
+
+def test_every_room_row_names_the_seat_its_teammate_sits_in(client):
+    """A row's state can name the room's teammate (「{agent}在做」), and a project
+    may have renamed it, so the row says which seat that is — the one a message
+    nobody addressed goes to — and the list and the header agree on it."""
+    headers = session_auth_headers("alice")
+    pid = post_project(client, json={"name": "P"}, owner="alice").json()["data"]["id"]
+    rooms = [
+        client.post(
+            "/topics", json={"project_id": pid, "title": title}, headers=headers
+        ).json()["data"]["id"]
+        for title in ("甲", "乙")
+    ]
+
+    listed = {
+        row["id"]: row["agent_handle"]
+        for row in client.get(f"/topics?project_id={pid}", headers=headers).json()[
+            "data"
+        ]["data"]
+    }
+    for room in rooms:
+        seat = room_agent_seat(client, room)
+        assert listed[room] == seat
+        header = client.get(f"/topics/{room}", headers=headers).json()["data"]
+        assert header["agent_handle"] == seat

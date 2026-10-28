@@ -30,6 +30,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs
 
+import jwt
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -365,13 +366,12 @@ def _scoped_token(
     project: str = "p1",
     ttl_s: float = 3600.0,
 ) -> str:
-    """A token shaped exactly like the backend's mint_scoped_token. Signed for
-    real: the addon verifies the HMAC, so a hand-written string would only ever
-    exercise the reject path."""
-    raw = json.dumps({"p": project, "t": "t1", "exp": time.time() + ttl_s})
-    body = base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
-    digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
-    return f"{body}.{base64.urlsafe_b64encode(digest).decode().rstrip('=')}"
+    """A session credential as the backend mints one (``agent+jwt``) under
+    ``secret``. Signed for real: the addon verifies the signature, so a
+    hand-written string would only ever exercise the reject path."""
+    key = hmac.digest(secret.encode(), b"cheese:credential:agent", hashlib.sha256)
+    claims = {"p": project, "t": "t1", "exp": int(time.time() + ttl_s)}
+    return jwt.encode(claims, key, algorithm="HS256", headers={"typ": "agent+jwt"})
 
 
 def _basic(password: str) -> str:
@@ -902,17 +902,23 @@ def test_a_gateway_turn_never_carries_the_sessions_credential(
 
 
 def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path):
-    """The backend hands a gateway project's key only to a caller presenting the
-    proxy's own credential: the session's bearer alone names the room, and a
-    session holding that bearer must not be able to fetch the key itself. So
-    the proxy's admission call carries both, and the gateway turn is routed on
-    the key that answer brings back."""
+    """The backend hands a gateway project's key only to the proxy asking as
+    itself: a session holds its own credential and must not be able to fetch
+    the key with it. So the proxy asks with its own credential, names the
+    session it admits in the body, and routes the gateway turn on the key that
+    answer brings back."""
     secret = "s3cr3t"
     asked: list[dict] = []
 
     class Backend(BaseHTTPRequestHandler):
         def do_POST(self):  # the stdlib's name
-            asked.append({k.lower(): v for k, v in self.headers.items()})
+            length = int(self.headers.get("Content-Length") or 0)
+            asked.append(
+                {
+                    "headers": {k.lower(): v for k, v in self.headers.items()},
+                    "body": json.loads(self.rfile.read(length) or b"{}"),
+                }
+            )
             body = json.dumps(
                 {
                     "data": {
@@ -951,9 +957,9 @@ def test_the_proxy_asks_admission_with_its_own_credential(monkeypatch, tmp_path)
     finally:
         server.shutdown()
 
-    (headers,) = asked
-    assert headers["authorization"] == f"Bearer {token}"
-    assert headers["x-cheese-token"] == secret
+    (call,) = asked
+    assert call["headers"]["authorization"] == f"Bearer {secret}"
+    assert call["body"] == {"session": token}
     assert flow.request.host == "litellm.invalid"
     assert flow.request.headers["authorization"] == "Bearer sk-virtual-project-key"
 
@@ -2099,6 +2105,67 @@ async def test_a_gateway_body_cut_mid_stream_carries_its_event_count(
     # the message, so a number in it would split one recurring failure in two
     # every time the cut landed somewhere else.
     assert "2" not in error["message"]
+
+
+async def _gateway_answer_naming(mod, status: int, body: dict, named: str | None):
+    """A gateway answer, with the rows it names as out of credit, if any."""
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    await mod.requestheaders(flow)
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    if named is not None:
+        flow.response.headers["x-cheese-upstream-out-of-credit"] = named
+    flow.response.content = json.dumps(body).encode()
+    mod.responseheaders(flow)
+    mod.response(flow)
+    return flow.response
+
+
+async def test_rows_the_gateway_found_out_of_credit_are_told_to_the_admins(
+    monkeypatch, tmp_path
+):
+    """Only the platform can top up a provider account. Every row the gateway
+    names as out of credit reaches the error intake as its own record, from
+    the room whose request met it, whether a later row answered the request or
+    no row could; an answer naming none reports nothing."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    answered = {
+        "type": "message",
+        "content": [],
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+
+    await _gateway_answer_naming(
+        mod,
+        200,
+        answered,
+        "deepseek-flash deepseek/deepseek-chat 1a2b3c4d; deepseek-flash opencode/flash 9c0d1e2f",
+    )
+    await _gateway_answer_naming(
+        mod,
+        402,
+        {
+            "type": "error",
+            "error": {
+                "type": "api_error",
+                "message": "cheese_upstream_credit_exhausted: ...",
+            },
+        },
+        "glm-5.3 anthropic/glm-5.3 5e6f7a8b",
+    )
+    await _gateway_answer_naming(mod, 200, answered, None)
+    await asyncio.gather(*mod._failure_reports)
+    records = [error for _url, body in posted for error in body["errors"]]
+    assert [r["upstream_failure"] for r in records] == ["provider_credit"] * 3, records
+    named = [r["where"] for r in records]
+    assert any("deepseek/deepseek-chat 1a2b3c4d" in w for w in named), named
+    assert any("opencode/flash 9c0d1e2f" in w for w in named), named
+    assert any("anthropic/glm-5.3 5e6f7a8b" in w for w in named), named
+    assert all(body["project_id"] == "project" for _url, body in posted), posted
 
 
 async def test_a_gateway_that_never_answers_is_recorded_as_a_lost_call(

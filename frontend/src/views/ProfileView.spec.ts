@@ -12,7 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProfileView from './ProfileView.vue'
 
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics, setUserRemark } from '@/api'
+import {
+  deleteUnderstanding,
+  getMemberSummary,
+  getUserProfile,
+  getUserTopics,
+  listProjectAgents,
+  setUserRemark,
+} from '@/api'
 import i18n, { setLocale } from '@/i18n'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))
@@ -21,6 +28,7 @@ vi.mock('@/api', () => ({
   getUserProfile: vi.fn(),
   getUserTopics: vi.fn(),
   getMemberSummary: vi.fn(),
+  listProjectAgents: vi.fn(),
   deleteUnderstanding: vi.fn(),
   setUserRemark: vi.fn(),
 }))
@@ -94,6 +102,7 @@ beforeEach(() => {
   me.handle = 'lin'
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.mocked(getMemberSummary).mockResolvedValue(null as never)
+  vi.mocked(listProjectAgents).mockResolvedValue({ data: [], total: 0 } as never)
 })
 afterEach(() => {
   cleanup()

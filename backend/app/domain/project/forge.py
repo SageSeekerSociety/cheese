@@ -37,11 +37,17 @@ from app.domain.project.github_app import (
     parse_github_repo,
     repository_named,
 )
-from app.domain.project.models import Project, ProjectForge, ProjectGitInstallation
+from app.domain.project.models import (
+    Project,
+    ProjectForge,
+    ProjectGitInstallation,
+    ProjectStarterPush,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
 )
+from app.domain.project.starter import Remote
 
 
 async def binding_for_project(
@@ -58,6 +64,29 @@ async def binding_for_project(
                 .execution_options(populate_existing=True)
             )
     return binding
+
+
+async def starter_push(
+    project_id: uuid.UUID, session: AsyncSession
+) -> ProjectStarterPush | None:
+    """The 题目 starter code this project's repository begins with, and where its
+    push stands; None for a repository that began without one."""
+    return await session.get(ProjectStarterPush, project_id)
+
+
+async def starter_remote(project_id: uuid.UUID, session: AsyncSession) -> Remote:
+    """The project's Forgejo repository as the starter push reaches it: the
+    backend's own address of the forge (`api_url` without `/api/v1`) and the
+    project account's credential."""
+    binding = await binding_for_project(project_id, session)
+    if binding is None or binding.kind != "forgejo" or not binding.account_password:
+        raise GatewayUnavailableError(say("forgeNoRepository"))
+    return Remote(
+        url=binding.api_url.removesuffix("/api/v1").rstrip("/")
+        + f"/{binding.repo}.git",
+        username=binding.repo.split("/", 1)[0],
+        password=forge_password(binding),
+    )
 
 
 # How long a GitHub binding's name is trusted before GitHub is asked again
@@ -466,6 +495,14 @@ async def branch_head(
 async def default_branch(project_id: uuid.UUID, session: AsyncSession) -> str:
     binding = await binding_for_project(project_id, session)
     if binding is None:
+        # ponytail: 本地没有 forgejo（`FORGEJO_URL` 空）时项目没有仓库绑定，而
+        # `default_branch` 是建任务的第一句话（`room_task/services.open_thread`），
+        # 于是连一个任务都建不出来（503「项目没有代码仓库」），agent 也就拿不到
+        # 那台能跑命令的工作机（房间主线只在只读支线作答）。开发档假定主干叫 main。
+        # 上限：分支不存在；推送、合并、交付在本地仍然一律不可用（各自另有出口）。
+        # 升级路径：配好 FORGEJO_URL 并建出仓库后，这条不再触发。
+        if settings.environment == "development" and not settings.forgejo_url:
+            return "main"
         raise GatewayUnavailableError(say("forgeNoRepository"))
     data = await repository_data(project_id, session)
     if not data or not data.get("default_branch"):
@@ -491,6 +528,30 @@ class ForgeUnreachableError(GatewayUnavailableError):
     retryable = True
 
 
+@dataclass(frozen=True)
+class PreparedRepository:
+    """A project's Forgejo account and repository, made on the forge and not yet
+    recorded: `prepare_repository` makes it, `bind_repository` records it."""
+
+    project_id: uuid.UUID
+    repo: str
+    url: str
+    api_url: str
+    default_branch: str
+    sealed_password: str
+
+    def binding(self) -> ProjectForge:
+        return ProjectForge(
+            project_id=self.project_id,
+            kind="forgejo",
+            repo=self.repo,
+            url=self.url,
+            api_url=self.api_url,
+            default_branch=self.default_branch,
+            account_password=self.sealed_password,
+        )
+
+
 async def provision_repository(
     project_id: uuid.UUID,
     session: AsyncSession,
@@ -498,23 +559,16 @@ async def provision_repository(
     initialize: bool = True,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> ProjectForge:
-    try:
-        return await _provision_repository(
-            project_id, session, initialize=initialize, transport=transport
-        )
-    except httpx.TimeoutException as exc:
-        raise ForgeUnreachableError(say("forgeServiceTimeout")) from exc
-    except httpx.RequestError as exc:
-        raise ForgeUnreachableError(say("forgeServiceUnreachable")) from exc
+    """The project's Forgejo repository, made on first call.
 
+    ``initialize=False`` leaves it empty: a repository whose first commit comes
+    from elsewhere — a legacy repository migrated in, or a 题目's starter code
+    (`task.starter_jobs`, run in the background after the claim commits).
 
-async def _provision_repository(
-    project_id: uuid.UUID,
-    session: AsyncSession,
-    *,
-    initialize: bool,
-    transport: httpx.AsyncBaseTransport | None,
-) -> ProjectForge:
+    A caller that holds a lock while it creates the project makes the
+    repository first (`prepare_repository`) and records it under the lock
+    (`bind_repository`): the forge is never waited on with a row locked.
+    """
     existing = await binding_for_project(project_id, session)
     if existing is not None:
         await ensure_repository_webhook(existing, transport=transport)
@@ -522,6 +576,49 @@ async def _provision_repository(
     project = await session.get(Project, project_id)
     if project and (project.settings or {}).get("forge_kind") == "github_app":
         raise GatewayUnavailableError(say("forgeConnectGithubFirst"))
+    prepared = await prepare_repository(
+        project_id, initialize=initialize, transport=transport
+    )
+    return await bind_repository(session, prepared)
+
+
+async def bind_repository(
+    session: AsyncSession, prepared: PreparedRepository
+) -> ProjectForge:
+    """Record a repository `prepare_repository` made as the project's."""
+    binding = prepared.binding()
+    session.add(binding)
+    await session.flush()
+    return binding
+
+
+async def prepare_repository(
+    project_id: uuid.UUID,
+    *,
+    initialize: bool = True,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> PreparedRepository:
+    """Make the project's account, repository and event subscription on the
+    forge, touching no database row. Repeatable: the account is named after the
+    project id and its password derived from it, so a second call adopts what
+    the first made. One whose project never commits is removed by
+    `sweep_orphan_accounts`."""
+    try:
+        return await _prepare_repository(
+            project_id, initialize=initialize, transport=transport
+        )
+    except httpx.TimeoutException as exc:
+        raise ForgeUnreachableError(say("forgeServiceTimeout")) from exc
+    except httpx.RequestError as exc:
+        raise ForgeUnreachableError(say("forgeServiceUnreachable")) from exc
+
+
+async def _prepare_repository(
+    project_id: uuid.UUID,
+    *,
+    initialize: bool,
+    transport: httpx.AsyncBaseTransport | None,
+) -> PreparedRepository:
     if not settings.forgejo_url or not settings.forgejo_admin_token:
         raise GatewayUnavailableError(say("forgeHostingNotConfigured"))
     public = settings.forgejo_url.rstrip("/")
@@ -578,19 +675,16 @@ async def _provision_repository(
                 say("forgejoRepoCreateFailed", status=response.status_code)
             )
         data = response.json()
-    binding = ProjectForge(
+    prepared = PreparedRepository(
         project_id=project_id,
-        kind="forgejo",
         repo=f"{username}/project",
         url=f"{public}/{username}/project.git",
         api_url=api,
         default_branch=data.get("default_branch") or "main",
-        account_password=seal_forge_password(project_id, password),
+        sealed_password=seal_forge_password(project_id, password),
     )
-    session.add(binding)
-    await session.flush()
-    await ensure_repository_webhook(binding, transport=transport)
-    return binding
+    await ensure_repository_webhook(prepared.binding(), transport=transport)
+    return prepared
 
 
 async def sweep_orphan_accounts(

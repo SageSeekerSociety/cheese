@@ -43,7 +43,16 @@ export interface RefNames {
    * chip says "this goes to the teammate", which the button beside Send mirrors.
    */
   agentFaces?: boolean
+  /**
+   * What a question to 芝士 cites, by the id in its `<#id>`: its kind and name. A
+   * library file (`file-<id>`) or a 题目 (`problem-<id>`) is not a conversation or a
+   * document, so nothing else could name it; the panel knows each from when it was
+   * picked, or from what the question kept.
+   */
+  cited?: Record<string, { kind: 'channel' | 'task' | 'doc' | 'file' | 'problem'; title: string }>
 }
+
+const CITED_ICON = { doc: 'mdi-file-document-outline', file: 'mdi-paperclip', problem: 'mdi-trophy-outline' }
 
 /** What a message's `<@handle>` told, with `names` as the room hands them over:
  *  each one notified its person, except someone a members-only channel cannot
@@ -97,7 +106,24 @@ export function refChip(
 ): HTMLElement {
   const el = document.createElement('span')
   el.className = 'mention'
-  if (kind === '#') {
+  const cited = kind === '#' ? names.cited?.[id] : undefined
+  if (cited) {
+    if (cited.kind === 'channel' || cited.kind === 'task') {
+      el.classList.add('topic-ref')
+      el.dataset.topic = id
+      el.textContent = `#${cited.title}`
+    } else {
+      el.classList.add('file-ref')
+      if (cited.kind === 'doc') {
+        el.classList.add('doc-ref')
+        el.dataset.topic = id
+      }
+      const icon = document.createElement('i')
+      icon.className = `mdi ${CITED_ICON[cited.kind]} file-ref__icon`
+      icon.setAttribute('aria-hidden', 'true')
+      el.append(icon, document.createTextNode(cited.title))
+    }
+  } else if (kind === '#') {
     const shown = topicRef(id, names)
     el.classList.add('topic-ref')
     el.textContent = shown.text
@@ -193,6 +219,8 @@ export function plainRefs(text: string, names: RefNames): string {
   return text.replace(REF_TOKEN, (_m, k: string, id: string, fid: string) => {
     if (fid) return fid.split('/').pop() || fid
     if (k === '@') return didNotify(id, names) ? `@${names.mentionNames[id] || id}` : names.mentionNames[id] || id
+    const cited = names.cited?.[id]
+    if (cited) return cited.kind === 'channel' || cited.kind === 'task' ? `#${cited.title}` : cited.title
     return topicRef(id, names).text
   })
 }

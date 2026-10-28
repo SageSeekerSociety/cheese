@@ -8,7 +8,8 @@
   "previewNotHtml": "转换结果不是有效的网页",
   "previewNotPdf": "转换结果不是有效的 PDF",
   "previewOver10Mb": "文件超过 10 MB，无法生成预览",
-  "previewServiceError": "文档预览服务出错",
+  "previewSelectionStale": "这次预览选的已经不是刚打开的那一份了，重新打开预览就好",
+  "previewServiceError": "文档预览服务出错，稍后重试",
   "previewServiceUnreachable": "文档预览服务暂时无法访问",
   "previewTooLarge": "文件超过 {mb}MB，无法生成预览"
 }

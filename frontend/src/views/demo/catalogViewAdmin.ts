@@ -293,7 +293,7 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
         props: {
           overview: { ...CRV_MACHINES, pool: { ...CRV_MACHINES.pool, provider_failures: 3, refusing: true } },
         },
-        expect: '此刻在拒绝新会话',
+        expect: '此刻不再接新的 AI 队友',
       },
       {
         get name() {

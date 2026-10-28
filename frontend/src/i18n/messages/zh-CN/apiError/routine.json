@@ -24,7 +24,7 @@
   "routineTemplateGoalRequired": "模板要写明它要干什么",
   "routineTemplateNotFound": "没有这条模板",
   "routineTriggerInvalid": "触发方式只能是定时或三种项目事件之一",
-  "routinesRoomMemberOnly": "你不是这个频道的成员，看不到这个频道的例行事务",
+  "routinesRoomMemberOnly": "只有这个频道的成员能看到它的例行事务",
   "scheduleHourlyMinute": "每小时执行要给出第几分钟（0–59）",
   "scheduleMonthlyDay": "每月执行要给出几号（1–31）",
   "scheduleTimeFormat": "执行时间要写成 HH:MM，例如 09:00",
@@ -32,8 +32,9 @@
   "timezoneUnknown": "不认识的时区：{name}",
   "routineResumeNeedsTrigger": "先给它定个触发方式，它才知道什么时候跑",
   "assistantRoutineOnceAt": "运行时间要在现在之后的一年内，写成 2026-10-23T08:00 这样",
-  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due 或 invite",
-  "assistantRoutineAlreadyRan": "这条只运行一次的例行事务已经运行过了。要再运行，改一个新的时间",
-  "assistantRoutineLimit": "例行事务最多 {max} 条，删掉不用的再新建",
-  "assistantRoutineInRun": "例行事务运行时不能新建或修改例行事务"
+  "assistantRoutineTrigger": "触发方式只能是 schedule、mention、review、due、invite、filed 或 decided",
+  "assistantRoutineAlreadyRan": "这条只做一次的自动化已经运行过了。要再运行，改一个新的时间",
+  "assistantRoutineLimit": "只做一次的和反复做的自动化各最多 {max} 条，删掉不用的再新建",
+  "assistantRoutineInRun": "自动化运行时不能新建或修改自动化",
+  "assistantRoutineWhichTask": "要给出是哪个任务（task），或用 mine 表示用户提的任务"
 }

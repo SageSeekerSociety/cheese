@@ -13,7 +13,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
-import { taskState as taskStateOf } from '@/utils/tasks'
+import { canStillAct, taskState as stateOfTask } from '@/utils/tasks'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
@@ -25,11 +25,18 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { agentDocked, agentOpen, toggleAgent, useAgentContext, useAgentSurface } from '@/stores/agent'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
-import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
+import {
+  useTaskData,
+  useTaskManagement,
+  useTaskParticipation,
+  useTaskProgress,
+  useTeamParticipation,
+} from '@/views/tasks/composables'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -47,7 +54,7 @@ const taskDataModule = useTaskData()
 const { taskId, taskData, loading, error, isTaskCreator, isSpaceAdmin, participationInfo, loadTaskData } =
   taskDataModule
 
-const { onJoinTaskClicked, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
+const { onJoinTaskClicked, openApprovedClaim, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
   useTaskParticipation(taskDataModule)
 const {
   availableTeams,
@@ -60,6 +67,8 @@ const {
   loadJoinedTeams,
 } = useTeamParticipation(taskDataModule)
 const { confirmDeleteTask } = useTaskManagement(taskDataModule)
+// 每个阶段上的进度：说明、我的提交、数据几个页签和右栏都读这一份。
+const { progress, load: loadProgress } = useTaskProgress()
 
 const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 
@@ -71,6 +80,7 @@ const canManage = computed(() => isTaskCreator.value || isSpaceAdmin.value)
 const { mdAndUp } = useDisplay()
 useAgentContext(() => ({
   page: { kind: 'task', id: taskId.value },
+  label: taskData.value?.name ? t('tasks.assistant.page.problem', { name: taskData.value.name }) : undefined,
   intro: t('tasks.assistant.reads'),
   greeting: t('tasks.assistant.greeting'),
   starters: (['basics', 'start', 'hard'] as const).map((k) => t(`tasks.assistant.starters.${k}`)),
@@ -125,7 +135,8 @@ const myClaimRejected = computed(
 
 /** `participantLimit` 的 0 是「不限」，不是「一个人都不许」。 */
 const limit = computed(() => ((taskData.value?.participantLimit ?? 0) > 0 ? taskData.value!.participantLimit : null))
-const claimCount = computed(() => taskData.value?.participants.total ?? 0)
+/** 参与者：申请通过的人。「参与者」页签上的数和名额满没满都按它；还在等批准的在页签里另成「申请中」一格。 */
+const participantCount = computed(() => taskData.value?.participants.approved ?? 0)
 const deadlinePassed = computed(() => {
   const at = taskData.value?.deadline
   return at != null && at < Date.now()
@@ -134,32 +145,68 @@ const notStarted = computed(() => {
   const at = taskData.value?.registrationStartAt
   return at != null && at > Date.now()
 })
-const full = computed(() => limit.value !== null && claimCount.value >= limit.value)
+const full = computed(() => limit.value !== null && participantCount.value >= limit.value)
 
-/** 题目名旁边那一枚：这道题此刻对所有人是什么状态（和我领没领无关）。 */
+/** 直接开始的题点了就开始；申请制的题先申请，出题人通过才开始。 */
+const startsDirectly = computed(() => taskData.value?.startMode === 'DIRECT')
+/** 我（或我的团队）从这道题来的项目：有它，主操作就是「继续做」，打开它。申请还在等的
+ *  不给（接口只对通过了的领取给它）：早先的版本申请时就开了项目，等通过前只显示在等。 */
+const myProject = computed(() => taskData.value?.myProject ?? null)
+const myProjectTo = computed(() => (myProject.value ? `/projects/${myProject.value.id}` : ''))
+/** 通过了还没有项目（申请制的题刚通过，或上次建仓库没成）：主操作是「开始做这道题」，
+ *  开始做就是用这道题新建项目。 */
+const approvedWithoutProject = computed(() => joined.value && !myProject.value)
+
+/** 题目名旁边那一枚：题目自己的状态，对谁都一样（Zhifei 2026-10-26）。我这一份走到哪了在右栏
+ *  「我的进度」，我现在能做什么在按钮上。 */
 const taskState = computed(() => {
   if (!taskData.value) return null
-  const state = taskStateOf(taskData.value)
+  const state = stateOfTask(taskData.value)
   return { label: t(`tasks.page.state.${state.key}`), tone: state.tone }
 })
 
-/** 领取那颗按钮。领不了的时候按钮还在，灰着，字写清为什么。 */
+/** 主操作那颗按钮：我现在能做什么，按我自己这一份说。做不了的时候按钮还在，灰着，字写清为什么：
+ *  - 手上有通过了的领取、还没开始：我自己的提交截止没到就能开始（两种开始方式都一样，`canStillAct`），
+ *    过了是「已过期」；题目结束了是「已结束」。题目的截止不挡我。
+ *  - 申请在等、被拒了：写这一份走到哪了。
+ *  - 没有领取：题目的截止、名额、开放时间挡着的，写题目的状态（申请制「申请已截止」，直接开始「已截止」）。 */
 const claim = computed(() => {
   const task = taskData.value
   if (!task) return null
-  if (myClaimPending.value) return { label: t('tasks.page.claim.pending'), disabled: true }
-  if (myClaimRejected.value) return { label: t('tasks.page.claim.rejected'), disabled: true }
-  if (task.approved !== 'APPROVED') return { label: t('tasks.page.claim.notApproved'), disabled: true }
-  if (deadlinePassed.value) return { label: t('tasks.page.state.closed'), disabled: true }
+  if (approvedWithoutProject.value) {
+    if (canStillAct(task)) return { label: t('tasks.page.claim.start'), disabled: false }
+    return {
+      label: task.endedAt != null ? t('tasks.page.state.ended') : t('tasks.page.claim.expired'),
+      disabled: true,
+    }
+  }
+  if (myClaimPending.value) return { label: t('tasks.page.mine.pending'), disabled: true }
+  if (myClaimRejected.value) return { label: t('tasks.page.mine.rejected'), disabled: true }
+  if (task.approved !== 'APPROVED')
+    return {
+      label: startsDirectly.value ? t('tasks.page.claim.notApprovedStart') : t('tasks.page.claim.notApproved'),
+      disabled: true,
+    }
+  if (task.endedAt != null) return { label: t('tasks.page.state.ended'), disabled: true }
+  if (deadlinePassed.value)
+    return {
+      label: startsDirectly.value ? t('tasks.page.state.closed') : t('tasks.page.state.applyClosed'),
+      disabled: true,
+    }
   if (notStarted.value) return { label: t('tasks.page.state.notStarted'), disabled: true }
   if (full.value) return { label: t('tasks.page.state.full'), disabled: true }
-  return { label: t('tasks.page.claim.claim'), disabled: false }
+  return { label: startsDirectly.value ? t('tasks.page.claim.start') : t('tasks.page.claim.claim'), disabled: false }
 })
 
 /** 这一颗按钮不自己发请求：发 `join-clicked`，由 `TaskDialogs` 与 `useTaskParticipation` 接着走
- *  （实名确认、团队选择都在里面）。 */
+ *  （实名确认、团队选择都在里面）。通过了还没开始的，打开开始的确认框。 */
 function onClaim() {
   if (claim.value?.disabled) return
+  const approved = myIdentity.value
+  if (approvedWithoutProject.value && approved?.approved === 'APPROVED') {
+    openApprovedClaim({ type: approved.type, memberId: approved.memberId })
+    return
+  }
   events.emit('join-clicked')
 }
 
@@ -185,13 +232,14 @@ async function loadMine() {
   }
 }
 
-/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：题目已结束，
+/** 领了之后的主操作：交第一版或再交一版。服务端不收的时候不给这颗按钮：这一份再也动不了，
  *  或者只能交一次而且已经交过。 */
 const submitAction = computed(() => {
   if (!joined.value || !taskData.value) return null
   // 已经在交作业的表单上：表单自己有「提交」，这一行不再给第二颗。
   if (route.name === routeNames.submit) return null
-  if (taskData.value.endedAt) return null
+  // 交不了的不给：过了我自己的截止、题目结束了，服务端都不收（`canStillAct`）。
+  if (!canStillAct(taskData.value)) return null
   if (myLatest.value && !taskData.value.resubmittable) return null
   return myLatest.value ? t('tasks.page.submit.again') : t('tasks.page.submit.first')
 })
@@ -222,7 +270,7 @@ const tabs = computed(() => {
       key: 'roster',
       label: t('tasks.page.tabs.roster'),
       to: { name: routeNames.participants, params: params.value },
-      count: claimCount.value,
+      count: participantCount.value,
     })
     list.push({
       key: 'data',
@@ -230,6 +278,11 @@ const tabs = computed(() => {
       to: { name: routeNames.insights, params: params.value },
     })
   }
+  list.push({
+    key: 'versions',
+    label: t('tasks.page.tabs.versions'),
+    to: { name: routeNames.versions, params: params.value },
+  })
   return list
 })
 
@@ -247,6 +300,9 @@ const showSide = computed(() => route.name !== routeNames.participants && route.
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 const reviewing = ref<{ id: number; name: string } | null>(null)
+/** 分了阶段的题，每个阶段单独批改：对话框里先选批哪个阶段。 */
+const reviewStage = ref(0)
+const stages = computed(() => taskData.value?.stages ?? [])
 
 function closeReview() {
   reviewing.value = null
@@ -265,12 +321,14 @@ async function load() {
   setDynamicTitle(task.name, 'TaskShell')
   if (task.submitterType === 'TEAM') loadJoinedTeams()
   if (myIdentity.value) loadMine()
+  loadProgress(task.id)
 }
 
 /** 有人的领取或提交变了：页头的主操作和右栏的进度都从我那一份报名和它最新一版来，两样一起重读。
  *  不转圈：页签内容（比如刚批完的领取者表）留在原地。 */
 async function reloadMine() {
   await loadTaskData({ quiet: true })
+  if (taskData.value) loadProgress(taskData.value.id)
   if (myIdentity.value) await loadMine()
   else myLatest.value = null
 }
@@ -289,6 +347,7 @@ onMounted(() => {
   })
   events.on('leave-team', (teamId) => leaveTaskWithTeam(teamId))
   events.on('review-participant', (who) => {
+    reviewStage.value = 0
     reviewing.value = who
   })
   // 批了领取、判了一版、交上一版：页头、右栏的进度和页签上的版本号都跟着重读。
@@ -308,6 +367,17 @@ onMounted(() => {
       <span class="td__crumb-here" data-user-content>{{ taskData?.name ?? '' }}</span>
     </nav>
     <template #actions>
+      <BaseButton
+        kind="ghost"
+        class="td__ask"
+        :active="agentOpen"
+        data-testid="task-ask"
+        :aria-label="t('tasks.assistant.ask')"
+        :title="t('tasks.assistant.ask')"
+        @click="toggleAgent"
+      >
+        <CheeseAvatar :size="20" />
+      </BaseButton>
       <template v-if="canManage">
         <BaseButton kind="secondary" prepend-icon="mdi-pencil-outline" @click="editTask">{{
           t('tasks.page.edit')
@@ -331,7 +401,7 @@ onMounted(() => {
       <div class="td__lead">
         <div class="td__titleline">
           <h1 class="td__title t-page-title" data-user-content>{{ taskData.name }}</h1>
-          <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`">
+          <span v-if="taskState" class="td__state" :class="`td__state--${taskState.tone}`" data-testid="task-state">
             {{ taskState.label }}
           </span>
         </div>
@@ -346,21 +416,22 @@ onMounted(() => {
         <p v-if="intro.summary" class="td__summary" data-user-content>{{ intro.summary }}</p>
       </div>
 
-      <div class="td__act">
-        <BaseButton kind="secondary" class="td__ask" :active="agentOpen" data-testid="task-ask" @click="toggleAgent">
-          <span class="td__ask-mark" aria-hidden="true"><CheeseAvatar :size="18" /></span>
-          {{ t('tasks.assistant.ask') }}
-        </BaseButton>
+      <!-- One main action: start / apply / continue. Handing in is a quieter text button beside it. -->
+      <div v-if="myProject || claim || submitAction" class="td__act">
         <BaseButton
           v-if="submitAction"
-          kind="primary"
+          kind="ghost"
           prepend-icon="mdi-plus"
+          data-testid="task-submit"
           :to="{ name: routeNames.submit, params }"
         >
           {{ submitAction }}
         </BaseButton>
+        <BaseButton v-if="myProject" kind="primary" data-testid="task-continue" :to="myProjectTo">
+          {{ t('tasks.page.claim.continue') }}
+        </BaseButton>
         <BaseButton
-          v-else-if="!joined && claim"
+          v-else-if="claim"
           class="td__claim"
           data-testid="task-claim"
           :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
@@ -407,6 +478,7 @@ onMounted(() => {
             :participation-info="participationInfo"
             :is-creator="isTaskCreator"
             :is-admin="isSpaceAdmin"
+            :progress="progress"
           />
         </router-view>
       </div>
@@ -416,23 +488,34 @@ onMounted(() => {
         :task="taskData"
         :identity="myIdentity"
         :latest="myLatest"
+        :progress="progress"
         @leave="events.emit('leave-clicked')"
       />
     </div>
   </div>
 
   <v-dialog :model-value="reviewing !== null" max-width="860" scrollable @update:model-value="closeReview">
-    <TaskSubmissionHistory
-      v-if="reviewing && taskData"
-      :task-id="taskData.id"
-      :participant-id="reviewing.id"
-      :reviewable="true"
-      :is-dialog="true"
-      :outlined="true"
-      :highlight-latest="true"
-      :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
-      @changed="events.emit('participation-changed')"
-    />
+    <div v-if="reviewing && taskData" class="td__review">
+      <TaskStageTimeline
+        v-if="stages.length"
+        class="td__review-stages"
+        :stages="stages"
+        selectable
+        :current="reviewStage"
+        @select="reviewStage = $event"
+      />
+      <TaskSubmissionHistory
+        :task-id="taskData.id"
+        :participant-id="reviewing.id"
+        :stage="stages[reviewStage]?.id ?? null"
+        :reviewable="true"
+        :is-dialog="true"
+        :outlined="true"
+        :highlight-latest="true"
+        :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
+        @changed="events.emit('participation-changed')"
+      />
+    </div>
   </v-dialog>
 
   <!-- 领取/退队/实名那几张对话框：老机器，事件总线上接了它。 -->
@@ -448,6 +531,19 @@ onMounted(() => {
 
 <style scoped lang="scss">
 @use '../../styles/breakpoints.scss' as bp;
+
+.td__review {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.td__review-stages {
+  padding: 16px 16px 0;
+}
 
 .td__crumb {
   display: flex;
@@ -563,9 +659,9 @@ onMounted(() => {
   padding-top: 2px;
 }
 
-.td__ask-mark {
-  display: inline-flex;
-  margin-right: 6px;
+.td__ask {
+  min-width: 36px;
+  padding: 0 8px;
 }
 
 .td-ask :deep(.v-navigation-drawer__content) {

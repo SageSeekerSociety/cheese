@@ -90,6 +90,13 @@ class TeachingRequest(BaseModel):
     mode: Literal["guide", "example", "spec", "free"] | None = None
     #: The teacher's own requirements, in their words.
     system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    #: 出题人的**私有**指导（#944 第二种可见性）：进 AI 队友的 prompt、**不进学生
+    #: 可读的响应**。写它和写 `systemPrompt` 同一条路，读它只在出题人/管理员那几条
+    #: 读写上（`teaching_to_api(include_private=True)`）。
+    private_prompt: str | None = Field(default=None, alias="privatePrompt")
+    #: 本节学习目标。写上它这份指导就按教育性走：`systemPrompt` 留空时带上
+    #: 平台的默认教学要求（`harness.opening.DEFAULT_TEACHING_PROMPT`）。
+    learning_goals: list[str] = Field(default_factory=list, alias="learningGoals")
     #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
     #: 存指向它们的 id。
     material_ids: list[Annotated[int, Field(gt=0)]] = Field(
@@ -101,9 +108,15 @@ class TeachingRequest(BaseModel):
             str, Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
         ]
     ] = Field(default_factory=list, alias="documentIds")
+    #: Skills every AI teammate of the projects under this level carries on
+    #: every turn (`Teaching.skills`): names from the platform's skill catalog
+    #: (`GET /skill-catalog`), or a skill a participant's own machine holds.
+    skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list
+    )
 
 
-def teaching_to_api(teaching: Teaching) -> dict:
+def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
     """The read side of `TeachingRequest`: the same camelCase keys.
 
     The column stores snake_case (the spelling `Teaching.from_json` reads), and
@@ -111,13 +124,23 @@ def teaching_to_api(teaching: Teaching) -> dict:
     the stored dict: a form fills itself from what it reads and saves that back
     whole, so a read in another spelling shows it blank and the next save erases
     the stored config.
+
+    ``include_private`` is the one key that is NOT always present: the 私有指导
+    (`privatePrompt`) is 出题人可见, so it is carried only on the reads/writes a
+    teacher or a board manager is looking at. Default off — every reader that
+    did not ask is a student's, and a forgotten call site then leaks nothing.
     """
-    return {
+    data = {
         "mode": teaching.mode,
         "systemPrompt": teaching.system_prompt,
+        "learningGoals": list(teaching.learning_goals),
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
+        "skills": list(teaching.skills),
     }
+    if include_private:
+        data["privatePrompt"] = teaching.private_prompt
+    return data
 
 
 class CreateSpaceCategoryRequest(BaseModel):
@@ -126,6 +149,10 @@ class CreateSpaceCategoryRequest(BaseModel):
     name: str = Field(..., min_length=1)
     description: str | None = None
     display_order: int = Field(default=0, alias="displayOrder")
+    #: 项目集级默认队友 (#944) — same semantics as the PATCH: omitting it leaves
+    #: the column unset; an empty string means the same as omitting it here
+    #: (there is no inherited value to clear on a row that does not exist yet).
+    default_role: str | None = Field(default=None, alias="defaultRole")
 
 
 class PatchSpaceCategoryRequest(BaseModel):
@@ -136,6 +163,10 @@ class PatchSpaceCategoryRequest(BaseModel):
     display_order: int | None = Field(default=None, alias="displayOrder")
     archived: bool | None = None
     archived_at: int | None = Field(default=None, alias="archivedAt")
+    #: 项目集级默认队友 (#944) — a platform-shipped agent type name every 题目
+    #: under this 分组 starts from. Omitting it leaves the stored value alone; an
+    #: empty string clears it (the 题目 then inherits nothing at this level).
+    default_role: str | None = Field(default=None, alias="defaultRole")
 
 
 class CreateSpaceDomainGroupRequest(BaseModel):
@@ -194,7 +225,7 @@ class PatchSpaceManagerRequest(BaseModel):
     role: str = Field(..., min_length=1)
 
 
-def _space_to_api_model(space: SpaceRow) -> dict:
+def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> dict:
     created_at_ms = int(space.created_at.timestamp() * 1000) if space.created_at else 0
     updated_at_ms = int(space.updated_at.timestamp() * 1000) if space.updated_at else 0
     return {
@@ -210,9 +241,11 @@ def _space_to_api_model(space: SpaceRow) -> dict:
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
         # 空间级「给 AI 队友的指导」(#944) — the settings form reads it back, so it
-        # has to be here rather than only on the write path.
+        # has to be here rather than only on the write path. `include_private` is
+        # set only where the caller is a board manager (the settings page).
         "teaching": teaching_to_api(
-            Teaching.from_json(getattr(space, "teaching", None))
+            Teaching.from_json(getattr(space, "teaching", None)),
+            include_private=include_private,
         ),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -277,7 +310,9 @@ async def _invite_codes_to_api_models(
     ]
 
 
-def _category_to_api_model(cat: SpaceCategoryRow) -> dict:
+def _category_to_api_model(
+    cat: SpaceCategoryRow, *, include_private: bool = False
+) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
     raw_archived_at = getattr(cat, "archived_at", None)
@@ -290,6 +325,8 @@ def _category_to_api_model(cat: SpaceCategoryRow) -> dict:
         "name": cat.name,
         "description": cat.description,
         "displayOrder": cat.display_order,
+        # 项目集级默认队友 (#944) — the edit form reads it back too.
+        "defaultRole": getattr(cat, "default_role", None),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
@@ -401,16 +438,21 @@ async def _build_full_space_payload(
     *,
     service: SpaceService,
     db,
+    include_private: bool = False,
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
     Always includes `admins` (hydrated) and `classificationTopics` so that any
     GET/POST/PATCH response is interchangeable from the frontend's perspective
     (its store overwrites local state with the response payload).
+
+    ``include_private`` is passed through to the teaching payload — a board
+    manager's view (settings page, create/patch reply) carries the 私有指导;
+    a member's does not.
     """
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    space_data = _space_to_api_model(space)
+    space_data = _space_to_api_model(space, include_private=include_private)
     space_data["admins"] = await _build_admins_payload(
         space.id, service=service, user_repo=user_repo, profile_repo=profile_repo
     )

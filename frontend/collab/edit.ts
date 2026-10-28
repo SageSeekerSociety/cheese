@@ -31,6 +31,7 @@ import type { Node as PMNode, Slice } from '@tiptap/pm/model'
 import type { Mapping } from '@tiptap/pm/transform'
 
 import {
+  applySuggestion,
   revertSuggestion,
   revertSuggestions,
   transformToSuggestionTransaction,
@@ -118,6 +119,56 @@ function counterpart(before: PMNode, r: PMNode): (k: number) => number | null {
   }
 }
 
+/** The change `[start, endA)` of `before` → `[start, endB)` of `after`, as
+ *  whole blocks when it does not stay inside one block's text.
+ *
+ *  The two versions are compared character by character, so a change that
+ *  adds, removes or retypes blocks is found from the first character that
+ *  differs to the last: a paragraph added before one that starts with the same
+ *  character begins inside that paragraph's text. Placed as it is, it splits
+ *  and joins paragraphs, which a suggestion records on text, and which leaves
+ *  an empty paragraph behind when rejected. So such a change is taken again,
+ *  block by block, in the container both its ends are in: the blocks that
+ *  differ, between the ones both versions have alike at either end. Everything
+ *  before `start` is the same in both versions, so that container opens at the
+ *  same place in both. */
+function wholeBlocks(
+  before: PMNode,
+  after: PMNode,
+  start: number,
+  endA: number,
+  endB: number
+): { start: number; endA: number; endB: number } {
+  const $a = before.resolve(start)
+  const $b = after.resolve(start)
+  if ($a.parent.isTextblock && $a.sameParent(before.resolve(endA)) && $b.sameParent(after.resolve(endB))) {
+    return { start, endA, endB }
+  }
+  const depth = Math.min($a.sharedDepth(endA), $b.sharedDepth(endB))
+  const one = $a.node(depth)
+  const two = $b.node(depth)
+  const base = $a.start(depth)
+  let head = 0
+  let from = base
+  while (head < one.childCount && head < two.childCount && one.child(head).eq(two.child(head))) {
+    from += one.child(head).nodeSize
+    head++
+  }
+  let toA = base + one.content.size
+  let toB = base + two.content.size
+  for (
+    let tail = 0;
+    tail < one.childCount - head &&
+    tail < two.childCount - head &&
+    one.child(one.childCount - 1 - tail).eq(two.child(two.childCount - 1 - tail));
+    tail++
+  ) {
+    toA -= one.child(one.childCount - 1 - tail).nodeSize
+    toB -= two.child(two.childCount - 1 - tail).nodeSize
+  }
+  return { start: from, endA: toA, endB: toB }
+}
+
 interface Located {
   from: number
   to: number
@@ -125,8 +176,8 @@ interface Located {
 }
 
 /** Where the change from `before` to `after` lands in R, or why it cannot. */
-function locate(before: PMNode, after: PMNode, r: PMNode): Located | 'unstable' | null {
-  const start = before.content.findDiffStart(after.content)
+function locate(before: PMNode, after: PMNode, r: PMNode, mode: EditMode): Located | 'unstable' | null {
+  let start = before.content.findDiffStart(after.content)
   if (start === null) return null
   const ends = before.content.findDiffEnd(after.content) ?? { a: start, b: start }
   let { a: endA, b: endB } = ends
@@ -136,6 +187,9 @@ function locate(before: PMNode, after: PMNode, r: PMNode): Located | 'unstable' 
     endA += overlap
     endB += overlap
   }
+  // A suggestion is made of whole blocks where it is not text inside one; a
+  // direct change goes in exactly where it differs.
+  if (mode === 'suggest') ({ start, endA, endB } = wholeBlocks(before, after, start, endA, endB))
   const starts = offsets(before)
   const rStarts = offsets(r)
   const nb = before.childCount
@@ -211,11 +265,14 @@ function revertMarks(doc: PMNode, ids: Iterable<string>): PMNode {
 }
 
 /** The change as a suggestion, or null when it cannot be one. A suggestion
- *  marks text: the document's blocks cannot carry a suggestion mark, so a
- *  change that reshapes whole blocks (a paragraph turned into a list, two
- *  paragraphs joined) can only be made directly. So can one that leaves no
- *  text to accept or reject, or that would change the document's text before
- *  anyone accepts it. */
+ *  marks the text it adds and removes, or the whole blocks it adds, removes or
+ *  retypes — a block in a run of blocks or list items (suggestableBlocks). A
+ *  change to the rows or columns of a table, the columns of a row of columns,
+ *  or the items of a timeline or stat cards
+ *  marks a part those hold in a fixed shape, so it can only be made directly.
+ *  So can one that leaves nothing to accept or reject, one that would change
+ *  the text before anyone accepts it, and one whose acceptance would not give
+ *  the text the change asks for. */
 function suggestAs(tr: Transaction, state: EditorState, id: string): PMNode | null {
   let doc: PMNode
   try {
@@ -227,6 +284,11 @@ function suggestAs(tr: Transaction, state: EditorState, id: string): PMNode | nu
   const proposed = pendingSuggestions(doc).find((item) => item.id === id)
   if (!proposed || (!proposed.old && !proposed.new)) return null
   if (nodeMarkdown(withoutSuggestions(doc)) !== nodeMarkdown(withoutSuggestions(state.doc))) return null
+  let accepted = doc
+  applySuggestion(id)(EditorState.create({ doc }), (applied) => {
+    accepted = applied.doc
+  })
+  if (nodeMarkdown(withoutSuggestions(accepted)) !== nodeMarkdown(withoutSuggestions(tr.doc))) return null
   return doc
 }
 
@@ -279,7 +341,7 @@ export function applyEdits(
           body: { error: 'content', index, message: problem.message, line: problem.line },
         }
       }
-      const located = locate(parseMarkdown(md), parseMarkdown(next), r)
+      const located = locate(parseMarkdown(md), parseMarkdown(next), r, mode)
       if (located === 'unstable') return { ok: false, status: 409, body: { error: 'edit', index, reason: 'unstable' } }
       if (located === null) {
         applied.push({ old: edit.old, new: edit.new })

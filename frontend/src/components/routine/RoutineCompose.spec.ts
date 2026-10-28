@@ -31,7 +31,7 @@ beforeAll(() => {
 
 function open() {
   return render(Compose, {
-    props: { modelValue: true, routine: null, rooms: [], defaultRoom: 'room-1', error: '' },
+    props: { modelValue: true, routine: null, rooms: [], defaultRoom: 'room-1', error: '', agentName: '小 C' },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -82,5 +82,15 @@ describe('RoutineCompose trigger', () => {
     }
     expect(payload.body.trigger).toBe('')
     expect(payload.body.spec).toEqual({})
+  })
+})
+
+// 项目可以给队友改名：表上说到「谁照目标开工」时写它现在的名字，不写默认的「芝士」。
+describe('RoutineCompose names the teammate', () => {
+  it('改过名的队友：说明里写它的名字', () => {
+    const { container } = open()
+    const text = container.textContent ?? ''
+    expect(text).toContain('由小 C参照目标生成')
+    expect(text).not.toContain('芝士')
   })
 })

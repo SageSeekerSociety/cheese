@@ -66,7 +66,7 @@ blocks: cloud/budget, codex/budget
 
 准入怎么判预算、怎么解析供给，见[准入与供给](/dev/admission)。
 
-计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），用沙盒自己的短期令牌说明是哪个房间，再附上代理自己的凭据（`X-Cheese-Token`）——只有带着它，网关池的答复里才有项目 key。这是唯一的控制点，回答三件事：
+计量代理转发每个 `/v1/messages` 之前，调用主 API 的 `POST /llm/admission`（`backend/app/api/routes/llm_proxy.py`），以代理自己的凭据发问，请求体里放沙盒的短期令牌说明是哪个房间——只有代理本身来问，网关池的答复里才有项目 key。这是唯一的控制点，回答三件事：
 
 ```demo-sim
 title: 每个请求先问准入
@@ -154,6 +154,8 @@ blocks: cloud/binding
 ## Codex、Pi 和模型隧道 {#others}
 
 Codex 和 Pi 不能用 `HTTPS_PROXY` 引流，它们被指向 `{平台地址}/llm/v1`。主 API 的这条路由校验调用方的短期令牌，换上项目的虚拟网关 key，再把上游响应原样流回去。Claude Code 通过模型隧道把 CONNECT 流量带到计量代理（`backend/app/domain/agent/machine_tunnel.py`）。所有会话都跑在会话主机上，云机器和用户电脑只执行命令、存文件，所以隧道助手也只在会话主机上：它拨会话主机到后端的那条路（`machine_address.tunnel_url`，在会话主机配置的后端地址上接 `/llm/tunnel`）。
+
+沙箱自己环境里那张绑了会话的令牌调不了这两条路（`/llm/v1` 回 403，模型隧道握手前就拒）：它抄到哪里都不能当模型池的钥匙。沙箱里的程序（比如仓库里的审查脚本）不用令牌：它连沙箱自己的平台 socket，问 `/llm/...`，后端按此刻租着这个沙箱的会话认人，走的就是上面这条路由（`machine_model`），额度和网关 key 都一样（`docs/remote-execution.md`）。
 
 无论哪种，上游 key 都不出平台主机：机器上只有它自己的短期令牌。
 

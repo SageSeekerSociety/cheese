@@ -104,7 +104,7 @@
   "naming": {
     "kpi": {
       "calls": "Naming calls",
-      "callsNote": "Requests on the gateway's dedicated naming key. Naming runs in the background, outside anyone's turn, so these calls count against no project's usage.",
+      "callsNote": "Requests on the gateway's dedicated naming key. Naming runs in the background, outside any run someone started, so these calls count against no project's usage.",
       "callsFailed": "{failed} of them failed",
       "successRate": "Call success rate",
       "successRateNote": "The gateway's own reading: the request reached the model and came back. A truncated answer, or one wrapped in broken JSON, is still a success there — those are only written to the log, which is why this page has no \"naming success rate\".",
@@ -192,7 +192,12 @@
       "respond": "Answer an inbox item",
       "member": "Manage members",
       "channel": "Create a channel",
-      "fetch": "Read a web page"
+      "fetch": "Read a web page",
+      "settings": "Change settings",
+      "announce": "Announce",
+      "category": "Manage categories",
+      "invite_code": "Manage invite codes",
+      "problem_review": "Review problems"
     }
   }
 }

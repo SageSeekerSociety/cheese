@@ -22,6 +22,7 @@ from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import executor_launch
+from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, session_work
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
@@ -260,9 +261,8 @@ def _install_case(
     monkeypatch.setattr(session_work, "HostPool", _Pool)
     monkeypatch.setattr(session_work.holders, "lock_for_work", _lock_for_work)
     monkeypatch.setattr(session_work, "publish_line", AsyncMock())
-    monkeypatch.setattr(
-        session_work, "bind_resource_token", lambda *a, **k: "scoped-token"
-    )
+    monkeypatch.setattr(holders, "bind_resource_token", lambda *a, **k: "scoped-token")
+    monkeypatch.setattr(session_work, "for_a_machine", lambda token: token)
     monkeypatch.setattr(lease_claim, "kept", _kept)
 
     if call_exc is not None:
@@ -308,10 +308,8 @@ def _install_case(
         env={},
         api="http://localhost:8000",
         host_api="http://localhost:8000",
-        namespace=uuid.uuid4(),
-        project_id=uuid.uuid4(),
+        holder=holders.Room(id=uuid.uuid4(), project_id=uuid.uuid4(), generation="1"),
         topic_id=uuid.uuid4(),
-        holder_id=uuid.uuid4(),
         actor_handle="someone",
         work_resource=str(uuid.uuid4()),
         hub=hub,

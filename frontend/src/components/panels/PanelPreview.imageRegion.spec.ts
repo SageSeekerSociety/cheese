@@ -26,6 +26,11 @@ vi.mock('../../api', async (importOriginal) => {
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
+// 图片这一档也要画评论标记（`drawsMarks`），所以线程列表在栏关着时就会被读——这一条
+// 是那一档的性质，不是这几条用例要看的事，桩掉即可（真走一遍在 `PanelPreview.fileMarks.spec.ts`）。
+const threadsApi = vi.hoisted(() => ({ listFileThreads: vi.fn(), postFileThread: vi.fn() }))
+vi.mock('../../api/fileThreads', () => threadsApi)
+threadsApi.listFileThreads.mockResolvedValue({ data: [], total: 0 })
 
 const bytes = new Uint8Array([1, 2, 3, 4]).buffer
 const version = createHash('sha256').update(new Uint8Array(bytes)).digest('hex').slice(0, 16)
@@ -113,7 +118,7 @@ it('routes a confirmed natural-pixel region from the actual named image and veri
   expect(api.previewFileBytes).toHaveBeenCalledWith('room', 'design.png', null, 'committed')
   expect(api.attachmentImageUrl).not.toHaveBeenCalled()
   expect(ui.emitted().locate).toBeUndefined()
-  const input = ui.getByPlaceholderText('说明要改什么')
+  const input = ui.getByPlaceholderText('输入修改要求或批注内容…')
   expect(ui.getByRole('button', { name: '发送' }).hasAttribute('disabled')).toBe(true)
   await fireEvent.keyDown(input, { key: 'Enter', keyCode: 13, isComposing: false })
   expect(ui.emitted().locate).toBeUndefined()
@@ -126,7 +131,7 @@ it('routes a confirmed natural-pixel region from the actual named image and veri
   expect(message).toContain('x=100 y=100 width=200 height=100')
   expect(message).toContain('让这块留白更紧凑')
   expect(ui.emitted().locate).toHaveLength(1)
-  expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
 })
 it.each([null, 'bbbbbbbbbbbbbbbb'])(
   'keeps the image readable but cannot send regions for metadata version %s',
@@ -155,12 +160,12 @@ it.each([
     const ui = mount()
     await paint(ui)
     await select(ui)
-    await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '旧图的说明')
+    await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '旧图的说明')
     vi.mocked(api.readPreviewFile).mockResolvedValue({ ...file(nextVersion), source })
     vi.mocked(api.previewFileBytes).mockReturnValue(new Promise(() => {}))
     await ui.rerender({ ...panelProps, refreshTick: 1 })
     await waitFor(() => expect(api.previewFileBytes).toHaveBeenCalledTimes(2))
-    expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+    expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
     expect(ui.emitted().locate).toBeUndefined()
   }
 )
@@ -168,10 +173,10 @@ it('cancels the region note without posting a message', async () => {
   const ui = mount()
   await paint(ui)
   await select(ui)
-  const input = ui.getByPlaceholderText('说明要改什么')
+  const input = ui.getByPlaceholderText('输入修改要求或批注内容…')
   await fireEvent.update(input, '未发送的说明')
   await fireEvent.keyDown(input, { key: 'Escape' })
-  expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
   expect(ui.container.querySelector('.design-image__selection')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
 })
@@ -179,7 +184,7 @@ it('does not send on composition Enter and sends once on an explicit committed E
   const ui = mount()
   await paint(ui)
   await select(ui)
-  const input = ui.getByPlaceholderText('说明要改什么')
+  const input = ui.getByPlaceholderText('输入修改要求或批注内容…')
   await fireEvent.update(input, '调整文字')
   await fireEvent.keyDown(input, { key: 'Enter', keyCode: 229, isComposing: true })
   expect(ui.emitted().locate).toBeUndefined()
@@ -303,4 +308,49 @@ it('gives the wheel to zoom when the image is the whole screen', async () => {
   const event = new WheelEvent('wheel', { deltaY: -100, cancelable: true })
   pane.dispatchEvent(event)
   expect(event.defaultPrevented).toBe(true)
+})
+
+it('draws a mark on the image for a region comment, and opening the panel follows a click', async () => {
+  // 评论栏关着也画得出来：线程列表是 `drawsMarks` 让读的。点一下就把那一串打开。
+  threadsApi.listFileThreads.mockResolvedValue({
+    data: [
+      {
+        comment: {
+          id: 'c1',
+          author: 'li',
+          content: '这块不对',
+          anchor_quote: null,
+          anchor: {
+            kind: 'image-region',
+            path: 'design.png',
+            source: 'committed',
+            version,
+            task_id: null,
+            x: 200,
+            y: 200,
+            width: 100,
+            height: 100,
+            natural_width: 1000,
+            natural_height: 500,
+          },
+          created_at: '',
+        },
+        revision: 1,
+        state: 'open',
+        replies: [],
+      },
+    ],
+    total: 1,
+  })
+  const ui = mount()
+  await paint(ui)
+  const dot = await waitFor(() => {
+    const found = ui.container.querySelector<HTMLElement>('.design-image__mark')
+    expect(found).toBeTruthy()
+    return found!
+  })
+  expect(dot.dataset.commentMark).toBe('c1')
+  // 原图 (200,200) × 0.5 = 屏上 (100,100)。
+  expect(dot.style.left).toBe('100px')
+  expect(dot.style.top).toBe('100px')
 })

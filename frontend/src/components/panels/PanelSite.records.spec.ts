@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePanelSite } from '../../composables/usePanelSite'
 import { storageRemove } from '../../lib/browserStorage'
+import { forgetWindows } from '../../lib/siteWindow'
 
 import PanelSite from './PanelSite.vue'
 
@@ -72,6 +73,8 @@ function open() {
   )
 }
 beforeEach(() => {
+  // 现场那一窗存在模块级的表里：前一条用例留下的窗口会变成这一条的「上次打开」。
+  forgetWindows()
   storageRemove('cheese.site.view')
   api.getTranscript.mockReset()
   api.sessionRecordImageUrl.mockReset()
@@ -99,6 +102,45 @@ describe('the header stays put', () => {
     await waitFor(() => expect(view.container.textContent).toContain('work.room.site.empty'))
     expect(view.container.querySelector('.site-head')).toBeTruthy()
     expect(view.getByRole('button', { name: 'Raw records' })).toBeTruthy()
+  })
+})
+
+describe('a record with nothing to show', () => {
+  it('gets no group head of its own in the overview', async () => {
+    // 输入排队这类平台记账行没有可显示的内容。它们没有轮次 id，一个个都单独成组，
+    // 组头就会顶出一串「时刻 · 0 步」、底下什么也没有。
+    const queued = record('1', [])
+    queued.turn_id = null
+    queued.created_at = '2026-10-19T10:00:01Z'
+    queued.meta = {
+      record: { type: 'command_lifecycle', state: 'queued' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [queued, tool('2', 'make test')], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.getAllByText('make test').length).toBeGreaterThan(0))
+
+    expect(view.container.querySelectorAll('.turn__head'), '记账行不该有自己的组头').toHaveLength(1)
+    // 原始记录视图照旧把它们摊开。
+    await fireEvent.click(view.getByRole('button', { name: 'Raw records' }))
+    expect(view.getByText('command_lifecycle')).toBeTruthy()
+  })
+
+  it('keeps a turn that has not drawn a step yet, with its head', async () => {
+    // 一轮开头那条 `command_lifecycle/started` 也没有可显示的内容，但它属于这一轮：
+    // 丢掉它，这一轮连组头一起消失，直到第一个步骤到达。
+    const started = record('1', [])
+    started.turn_id = 'turn-1'
+    started.created_at = '2026-10-19T10:00:01Z'
+    started.meta = {
+      record: { type: 'command_lifecycle', state: 'started' },
+      parts: [],
+      platform: false,
+    } as Block['meta']
+    api.getTranscript.mockResolvedValue({ data: [started], has_more: false })
+    const view = open()
+    await waitFor(() => expect(view.container.querySelectorAll('.turn__head')).toHaveLength(1))
   })
 })
 

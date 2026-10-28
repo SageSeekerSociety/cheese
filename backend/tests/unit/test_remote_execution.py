@@ -384,8 +384,8 @@ def test_a_platform_tools_pictures_reach_the_model_in_the_messages_api_shape():
                                      data: 'd2lkZQ=='}},
           ]})},
         };
-        const call = {tool: 'mcp__native__cheese_app_save', tool_use_id: 'save',
-                      code: '<p>x</p>'};
+        const call = {tool: 'mcp__native__cheese_app', tool_use_id: 'save',
+                      action: 'save', code: '<p>x</p>'};
         assert.deepEqual(await handlers['tool.call'](api, call), {
           result: [
             {type: 'text', text: '已保存小程序 k1 的第 1 版。'},
@@ -1342,7 +1342,7 @@ def test_executor_release_waits_for_commands_and_preserves_results(
             changed
         ).decode()
         before = source.read_bytes()
-        payload["env"]["CHEESE_TOKEN"] = "refreshed-while-busy"
+        payload["env"]["CHEESE_AUTHOR"] = "refreshed-while-busy"
         try:
             bootstrap.configure(payload)
         except RuntimeError as error:
@@ -1354,13 +1354,13 @@ def test_executor_release_waits_for_commands_and_preserves_results(
         deferred = json.loads(capsys.readouterr().out)
         assert deferred["upgrade_pending"] is True
         assert deferred["pid"] == original["pid"]
-        assert (home / ".cheese/cheese-preview.token").read_text() == (
-            "refreshed-while-busy"
-        )
-        assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
-            == "refreshed-while-busy"
-        )
+        # The room holds no credential; the preview helper asks its socket.
+        assert not (home / ".cheese/cheese-preview.token").exists()
+        stored = json.loads((state / "config.json").read_text())["env"]
+        assert stored["CHEESE_AUTHOR"] == "refreshed-while-busy"
+        # A deferred upgrade merges the new install into the running one; the
+        # credential it was handed does not come back with it.
+        assert stored["CHEESE_TOKEN"] == ""
         assert source.read_bytes() == before
         assert ready()["pid"] == original["pid"]
         (home / "room/release").touch()
@@ -1487,13 +1487,13 @@ def test_running_executor_prepares_updated_room_without_restart(
         )
         # The fixture replaces the CLI; all other installed helpers are unchanged.
         assert set(delta["files"]) == {"cheese"}
-        payload["env"]["CHEESE_TOKEN"] = "refreshed"
+        payload["env"]["CHEESE_AUTHOR"] = "refreshed"
         ready = runtime.request(state, "prepare", payload)
         assert ready["pid"] == original["pid"]
         assert ready["workspace"] == str(home / "room")
-        assert (home / ".cheese/cheese-preview.token").read_text() == "refreshed"
+        assert not (home / ".cheese/cheese-preview.token").exists()
         assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_AUTHOR"]
             == "refreshed"
         )
         for iteration in range(2):
@@ -1589,12 +1589,12 @@ def test_modified_verified_binary_with_wrong_version_is_not_reused(tmp_path):
     fallback.parent.mkdir(parents=True)
     fallback.write_text(binary.read_text())
     fallback.chmod(0o700)
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     binary.write_text("#!/bin/sh\necho '0.0.0'\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
     assert binary.read_bytes() == fallback.read_bytes()
     fallback.write_text("#!/bin/sh\necho 0.0.0\n")
-    assert bootstrap.binary(tmp_path, "http://unused") == str(binary)
+    assert bootstrap.binary(tmp_path, "http://unused", tmp_path) == str(binary)
 
 
 def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
@@ -1624,7 +1624,7 @@ def test_a_proven_pin_is_not_run_again_by_the_next_preparation(tmp_path):
                 "import runpy, sys\n"
                 "from pathlib import Path\n"
                 "found = runpy.run_path(sys.argv[1])['binary']"
-                "(Path(sys.argv[2]), 'http://unused')\n"
+                "(Path(sys.argv[2]), 'http://unused', sys.argv[2])\n"
                 "print(found)\n",
                 bootstrap.__file__,
                 str(tmp_path),

@@ -12,6 +12,7 @@
 import type { TaskDeliveryFilter, TaskFilter } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { BoardColumn, RoomTask } from '@/cx_types'
+import type { TaskState } from '@/lib/taskState'
 
 import { computed, ref } from 'vue'
 
@@ -21,9 +22,11 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { columnLabel, myPhraseLabel, phraseLabel } from '@/lib/board'
+import { columnLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
+import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
 
 const props = defineProps<{
@@ -33,6 +36,10 @@ const props = defineProps<{
   /** 只看这个频道；null 是整个项目。 */
   channelId: string | null
   names: Record<string, string>
+  /** 频道 id → 坐在那个频道的队友叫什么；任务没单独指定队友时用它。 */
+  roomAgentNames?: Record<string, string>
+  /** 项目默认的那位 AI 队友叫什么：任务没单独指定队友时，卡住了的那一句点它的名。 */
+  agentName?: string
   /** handle → 头像图；没挑过的是空串，退回首字母。和 names 同源。 */
   avatars: Record<string, string>
   me: string
@@ -167,13 +174,12 @@ const channelActions = computed<MenuAction[]>(() => [
 const pickedChannel = computed(() => (props.channelId ? channelTitle.value.get(props.channelId) ?? null : null))
 const pickedGlyph = computed(() => props.channels.find((c) => c.id === props.channelId)?.glyph ?? 'mdi-pound')
 const nameOf = (handle: string) => props.names[handle] || handle
+const agentNameOf = (task: RoomTask) =>
+  (task.agent_handle && props.names[task.agent_handle]) || props.roomAgentNames?.[task.room_id] || props.agentName || ''
 
-function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
-  if (task.status === 'closed') return { text: t('work.channelTasks.closed'), tone: 'plain' }
-  if (task.presentation.phrase === 'accepted') return { text: t('taskList.open'), tone: 'plain' }
-  if (task.awaits_me) return { text: myPhraseLabel(task.presentation.phrase), tone: 'mine' }
-  if (task.presentation.phrase === 'running') return { text: phraseLabel('running'), tone: 'running' }
-  return { text: phraseLabel(task.presentation.phrase), tone: 'plain' }
+// 状态那一格：图标、颜色、动不动和下面那一行都在 `lib/taskState.ts`。
+function stateOf(task: RoomTask): TaskState {
+  return taskState(task, { viewer: props.me, nameOf, agentName: agentNameOf(task) })
 }
 </script>
 
@@ -270,9 +276,14 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         <ul class="tasks__list">
           <li v-for="task in group.tasks" :key="task.id">
             <button type="button" class="tasks__row" @click="emit('open-task', task)">
-              <span class="tasks__title t-body" :data-user-content="task.title || undefined">{{
-                taskTitle(task)
-              }}</span>
+              <span class="tasks__head">
+                <span class="tasks__title t-body" :data-user-content="task.title || undefined">{{
+                  taskTitle(task)
+                }}</span>
+                <span v-if="stateOf(task).line" class="tasks__line" data-testid="task-state-line">{{
+                  stateOf(task).line
+                }}</span>
+              </span>
               <span class="tasks__channel c-faint" :data-user-content="channelTitle.get(task.room_id) || undefined"
                 ># {{ channelTitle.get(task.room_id) ?? '' }}</span
               >
@@ -290,8 +301,8 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   >+{{ task.contributor_handles.length }}</span
                 >
               </span>
-              <span class="tasks__state" :class="`tasks__state--${stateOf(task).tone}`">
-                <span>{{ stateOf(task).text }}</span>
+              <span class="tasks__state">
+                <TaskStateMark :state="stateOf(task)" :emphasis="task.awaits_me === true" />
                 <span v-if="task.accepted_at" class="tasks__accepted">{{ t('taskList.deliveryAccepted') }}</span>
               </span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
@@ -336,7 +347,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                 }}</span>
               </span>
               <span class="tasks__state">
-                <span>{{ stateOf(task).text }}</span>
+                <TaskStateMark :state="stateOf(task)" />
                 <span v-if="task.accepted_at" class="tasks__accepted">{{ t('taskList.deliveryAccepted') }}</span>
               </span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
@@ -461,9 +472,23 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 .tasks__row--stalled .tasks__title {
   color: var(--muted);
 }
+.tasks__head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .tasks__title {
   overflow: hidden;
   color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 状态下面那一行：在做什么、在等什么、卡在哪、待谁审阅。 */
+.tasks__line {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -496,13 +521,6 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 .tasks__accepted {
   color: var(--ok-ink);
   font-weight: 400;
-}
-.tasks__state--mine {
-  color: var(--accent-ink);
-  font-weight: 600;
-}
-.tasks__state--running {
-  color: var(--ok-ink);
 }
 .tasks__when {
   text-align: right;
@@ -547,6 +565,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
     gap: 4px 8px;
     padding: 10px 0;
   }
+  .tasks__head,
   .tasks__title {
     grid-area: title;
   }

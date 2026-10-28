@@ -34,10 +34,20 @@ export type SpaceTeaching = {
   mode?: TeachingMode | null
   /** 老师自己写的补充要求。 */
   systemPrompt?: string | null
+  /**
+   * 出题人的**私有**指导（#944 第二种可见性）：进 AI 队友的 prompt，但不进学生
+   * 可读的响应 —— 服务端只在出题人/板管理员的读写上带这一格（`teaching_to_api`
+   * 的 `includePrivate`）。所以它**可能缺席**：缺席 = 这条读看不到它，不是「没写」。
+   */
+  privatePrompt?: string | null
+  /** 本节学习目标。写上它这份指导就按教育性走（要求留空时带默认教学要求）。 */
+  learningGoals?: string[]
   /** 课件 / 知识的**引用**（id），不是副本。 */
   materialIds?: number[]
   /** 课程让 AI 队友读的团队文档（#3774）。 */
   documentIds?: string[]
+  /** 项目里每个 AI 队友每一轮都带上的技能名。 */
+  skills?: string[]
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
@@ -107,6 +117,11 @@ export type SpaceCategory = {
   archivedAt: number | null
   /** 项目集级的「给 AI 队友的指导」；没设的分类六格全空。 */
   teaching?: SpaceTeaching
+  /**
+   * 项目集自己写的默认队友（#944）:平台预设名；`null` = 这一层没说（继承空间）。
+   * 这是**原始覆盖值**，与提交时的「空串 = 清掉」不同。
+   */
+  defaultRole?: string | null
 }
 
 /** One 公告 — see `SpacesApi.listAnnouncements`. */
@@ -223,6 +238,8 @@ export type SpaceTaskVisibilityStatus =
 export type SpaceMyPublishedTask = {
   taskId: number
   taskName: string
+  /** 怎么开始：直接开始的题没有申请。 */
+  startMode?: 'DIRECT' | 'APPLY'
   category: SpaceMyPublishedTaskCategory
   approved: AnalyticsApproveType
   visibilityStatus: SpaceTaskVisibilityStatus
@@ -286,11 +303,13 @@ export type SpaceApplication = {
 }
 
 /**
- * 首页目录里一个空间那一行：id、名字，以及还没过审时是哪一种。过审的空间点进去是
- * 它自己的目录；还在审核或被驳回的，点进去是这份申请。
+ * 首页目录里一个空间那一行：id、名字、头像，以及还没过审时是哪一种。过审的空间点进去
+ * 是它自己的目录；还在审核或被驳回的，点进去是这份申请。
  */
 export type SpaceLink = {
   id: number
   name: string
+  /** 素材 id；没挑过头像就是 null，那一行画按 id 派生的彩色首字母。 */
+  avatarId?: number | null
   review?: 'PENDING' | 'REJECTED'
 }

@@ -171,8 +171,8 @@ const { mdAndUp } = useDisplay()
 .app-page__head--admin .app-page__head-row {
   max-width: var(--page-w-admin);
 }
-/* 满宽那一档的正文自己管内边距，铺满内容区的几页（看板、资料库、团队的项目、知识库、
-   工作电脑）都离左边 24。页头标题跟着它们缩进同样的距离。 */
+/* 满宽那一档的正文自己管内边距，铺满内容区的几页（资料库和在那里打开的文档、产物、项目
+   章程、团队的项目和文档）都离左边 24。页头标题跟着它们缩进同样的距离。 */
 .app-page__head--full {
   padding: 0 24px;
 }

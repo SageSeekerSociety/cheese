@@ -141,8 +141,11 @@ def _spec(keeps_nothing: bool) -> SessionSpec:
 
 async def _started_task(tmp_path: Path, relaunch):
     machine = Machine()
-    host = SessionHost(machine, mirrors=tmp_path)
-    host._drivers = {PI: cast(HarnessDriver, Driver(machine, relaunch))}
+    host = SessionHost(
+        machine,
+        mirrors=tmp_path,
+        drivers={PI: cast(HarnessDriver, Driver(machine, relaunch))},
+    )
     ref = SessionRef(PI, "task-session")
     access = _access()
     await host.start(ref, _spec(keeps_nothing=True), access)

@@ -5,8 +5,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod connect;
+mod executor;
 mod links;
 mod notices;
+// Unpacking the packed connector copy. Only Windows downloads it itself, so
+// off Windows the helpers are unused; their tests run wherever the crate is.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod packed;
 mod platform;
 mod resident;
 mod updates;
@@ -62,6 +67,7 @@ const SERVER_PERMISSIONS: &[&str] = &[
     "allow-update-status",
     "allow-check-for-updates",
     "allow-restart-to-update",
+    "allow-executor-status",
 ];
 
 fn from_server(url: &Url) -> bool {
@@ -110,7 +116,17 @@ async fn connect_this_machine(
     let percent = |value: u8| drop(progress.send(Progress::Percent { value }));
     let code = |text: &str| drop(progress.send(Progress::Code { text: text.into() }));
     let events = connect::Events { step: &step, percent: &percent, code: &code };
-    connect::connect(ORIGIN, &resources, &known_device_ids, team_id, &running, &events).await
+    connect::connect(ORIGIN, &resources, &known_device_ids, team_id, &running, &events).await?;
+    // The Claude Code build a teammate runs here, fetched in the background
+    // while the computer is already in use (executor.rs).
+    tauri::async_runtime::spawn(async move { executor::fetch(&app).await });
+    Ok(())
+}
+
+/// Where fetching ahead the build a teammate runs here stands (executor.rs).
+#[tauri::command]
+fn executor_status(app: tauri::AppHandle) -> executor::Status {
+    executor::status(&app)
 }
 
 /// Which device this computer is, so the page can tell whether it is already connected.
@@ -290,6 +306,7 @@ fn main() {
         .manage(resident::StartHidden::default())
         .manage(notices::Notices::default())
         .manage(updates::Updates::default())
+        .manage(executor::Executor::default())
         .invoke_handler(tauri::generate_handler![
             connect_this_machine,
             cancel_connect,
@@ -309,7 +326,8 @@ fn main() {
             notices::stop_notices,
             updates::update_status,
             updates::check_for_updates,
-            updates::restart_to_update
+            updates::restart_to_update,
+            executor_status
         ])
         // Closing the window keeps the app running (resident.rs); quitting is ⌘Q
         // on macOS and 退出 in the tray menu elsewhere.
@@ -339,6 +357,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_menu(app_menu(app.handle())?)?;
             tauri::async_runtime::spawn(updates::keep_updated(app.handle().clone()));
+            tauri::async_runtime::spawn(executor::keep_fetched(app.handle().clone()));
             notices::resume(app.handle());
             // The installer registers the scheme; registering again at each start
             // mends an install that lost it. macOS reads it from the bundle instead.
@@ -367,7 +386,7 @@ fn main() {
             // the title bar lies over the page, the app's own version, and what else
             // the app can do for it.
             let about = format!(
-                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"teamEnrollment\", \"modelCredentialLogin\"] }};",
+                "window.__CHEESE_APP__ = {{ origin: {ORIGIN:?}, theme: {theme:?}, titleBar: {TITLE_BAR:?}, version: {version:?}, start: {start}, can: [\"notices\", \"badge\", \"autostart\", \"links\", \"updates\", \"device\", \"teamEnrollment\", \"modelCredentialLogin\", \"executor\"] }};",
                 version = app.package_info().version.to_string(),
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );

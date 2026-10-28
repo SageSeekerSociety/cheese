@@ -13,8 +13,19 @@ import { setLocale } from '@/i18n'
 const text = 'Whole page text from displayed PDF '.repeat(30)
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
-  return { ...actual, readPreviewFile: vi.fn(), previewDocumentPdfSnapshot: vi.fn() }
+  return {
+    ...actual,
+    readPreviewFile: vi.fn(),
+    previewDocumentPdfSnapshot: vi.fn(),
+    // 房间里的文档一打开就读版本清单（文档条上的「第 N 版」），这里没有历史。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
+  }
 })
+// 分页文档现在也会读这一份的评论串（页上要画已有的评论标记），所以这一条也得打桩。
+vi.mock('@/api/fileThreads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/fileThreads')>()),
+  listFileThreads: vi.fn(async () => ({ data: [], total: 0 })),
+}))
 vi.mock('./preview/PreviewSlides.vue', () => ({
   default: {
     props: ['data', 'context'],
@@ -60,7 +71,7 @@ it('wires the real PanelPreview reader to whole-page context only after matching
   await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(false))
   expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledWith('room', 'deck.pptx', null, 'committed')
   await fireEvent.click(ui.getByText('page'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'explain')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), 'explain')
   await fireEvent.click(ui.getByText('发送'))
   const request = submitQuestion.mock.calls[0]?.[0]
   expect(request).toMatchObject({ topicId: 'room', intent: 'ask-agent' })
@@ -83,7 +94,7 @@ it.each([null, 'bbbbbbbbbbbbbbbb'])(
     await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(true))
     await fireEvent.click(ui.getByText('page'))
-    expect(ui.queryByPlaceholderText('说明要改什么')).toBeNull()
+    expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
     expect(submitQuestion).not.toHaveBeenCalled()
   }
 )
@@ -104,7 +115,7 @@ it('does not bind a late A conversion to B metadata in the real owning container
   await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(false))
   old.resolve({ bytes: new ArrayBuffer(8), sourceVersion: 'aaaaaaaaaaaaaaaa' })
   await fireEvent.click(ui.getByText('page'))
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), 'explain')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), 'explain')
   await fireEvent.click(ui.getByText('发送'))
   const request = submitQuestion.mock.calls[0]?.[0]
   expect(request).toMatchObject({ topicId: 'room', intent: 'ask-agent' })

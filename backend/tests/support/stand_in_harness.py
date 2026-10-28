@@ -10,5 +10,11 @@ from app.domain.agent.harness import Harness
 
 
 def registered(monkeypatch, name: str, **bits: bool) -> None:
-    stand_in = Harness(name, name, **bits)
-    monkeypatch.setitem(harness_module.HARNESSES, name, stand_in)
+    """从注册表自己的门进一个替身，随用例撤销。
+
+    注册表（``HARNESSES``）是随代码上线的名单，这里不再自己往里写——走
+    ``register_harness``，出用例时替身被拿走，表回到出厂的样子。
+    """
+    harness_module.register_harness(
+        name, Harness(name, name, **bits), swap=monkeypatch.setitem
+    )

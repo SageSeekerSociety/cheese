@@ -32,7 +32,7 @@ class MachineSandboxOut(BaseModel):
     id: str
     spec: str
     state: str
-    project_id: str
+    project_id: str | None
     project: str | None
     room_id: str
     room: str | None

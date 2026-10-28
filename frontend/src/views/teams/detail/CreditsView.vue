@@ -116,18 +116,24 @@ const warning = computed(() => {
 </script>
 
 <template>
-  <div class="tcv">
-    <header class="tcv__actions">
-      <BaseButton kind="secondary" :to="{ name: 'CreditPlans', query: teamHandle ? { team: teamHandle } : {} }">{{
-        t('usage.plans.view')
-      }}</BaseButton>
-      <CreditTopUp
-        v-if="canManage"
-        :requests="requests"
-        :busy="offersBusy"
-        :error="offersError"
-        @request="emit('request', 'top_up', $event)"
-      />
+  <div class="tcv settings-page">
+    <header class="settings-page__head">
+      <div>
+        <h1 class="t-page-title">{{ t('home.nav.teamCredits') }}</h1>
+        <p v-if="personal" class="settings-page__lede">{{ t('teams.settings.creditsLedePersonal') }}</p>
+      </div>
+      <div class="settings-page__actions">
+        <BaseButton kind="secondary" :to="{ name: 'CreditPlans', query: teamHandle ? { team: teamHandle } : {} }">{{
+          t('usage.plans.view')
+        }}</BaseButton>
+        <CreditTopUp
+          v-if="canManage"
+          :requests="requests"
+          :busy="offersBusy"
+          :error="offersError"
+          @request="emit('request', 'top_up', $event)"
+        />
+      </div>
     </header>
     <v-skeleton-loader v-if="loading && !usage" type="article, image" />
 
@@ -226,8 +232,10 @@ const warning = computed(() => {
   </div>
 </template>
 
+<style scoped src="@/styles/settings-card.css"></style>
+
 <style scoped>
-/* 列宽和内边距由外框 AppPage 的 `read` 档给，标题和正文同一条左沿。 */
+/* 列宽和水平内边距由设置那一层的内容列给（SettingsOverlay 的 `.so__content`），标题和正文同一条左沿。 */
 .tcv {
   display: flex;
   flex-direction: column;
@@ -302,11 +310,6 @@ const warning = computed(() => {
   outline-offset: 2px;
 }
 
-.tcv__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 .tcv__balance {
   padding: 24px;
   border: 1px solid var(--line);

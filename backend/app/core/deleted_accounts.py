@@ -22,6 +22,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.config import settings
 from app.core.errors import format_error_response
 from app.core.obs import get_logger
@@ -89,10 +90,9 @@ def _say_unchecked(error: BaseException) -> None:
 
 
 def _token(scope: Scope) -> str:
-    headers = Headers(scope=scope)
-    scheme, _, value = headers.get("authorization", "").partition(" ")
-    if scheme.lower() == "bearer" and value.strip():
-        return value.strip()
+    token = credentials.presented(Headers(scope=scope))
+    if token:
+        return token
     # A browser cannot set a header on an iframe or a WebSocket.
     return QueryParams(scope.get("query_string", b"")).get("token") or ""
 

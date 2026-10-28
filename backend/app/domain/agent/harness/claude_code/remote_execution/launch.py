@@ -4,6 +4,7 @@ import asyncio
 import base64
 import functools
 import hashlib
+import hmac
 import json
 import time
 from pathlib import Path
@@ -53,10 +54,13 @@ class SandboxRefused(RuntimeError):
 
 
 def refused(installed: dict) -> SandboxRefused | None:
-    """The refusal an install's exec result reports, if it is one."""
+    """The refusal an install's exec result reports, if it is one: the last
+    line of its stderr. What the install said before it — how far a download
+    got — is not the refusal."""
     if installed.get("exit") != bootstrap.SANDBOX_UNAVAILABLE_EXIT:
         return None
-    return SandboxRefused(json.loads((installed.get("stderr") or "").strip()))
+    said = (installed.get("stderr") or "").strip().splitlines()
+    return SandboxRefused(json.loads(said[-1] if said else ""))
 
 
 def can_prepare(info, sandbox=None):
@@ -158,6 +162,11 @@ def payload_for(
         "platform_machine": platform_machine,
         "project": str(project_id),
         "resource": str(resource_id),
+        "proxy_proof": hmac.new(
+            settings.sandbox_signing_secret.encode(),
+            f"machine-proxy:{project_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest(),
         "env": values,
         "environment": environment,
         # Where this room's package downloads come from. The addresses travel

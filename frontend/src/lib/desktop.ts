@@ -221,20 +221,26 @@ async function untilOnline(deviceId: string | null): Promise<boolean> {
   return false
 }
 
+/** How a connection ended: it is this computer's device now, the person
+ *  stopped it, or it did not work. */
+export type ConnectOutcome = 'connected' | 'cancelled' | 'failed'
+
 /** Connects this computer, showing each step in the dialog; `quiet`, for a
  *  computer connected before, shows the dialog only when a step needs the
  *  person, and closes it again once connected. Asked while one is under way,
- *  it shows that one. */
-export async function startConnecting(options: { quiet?: boolean; teamId?: number } = {}) {
+ *  it shows that one and answers null. */
+export async function startConnecting(
+  options: { quiet?: boolean; teamId?: number } = {}
+): Promise<ConnectOutcome | null> {
   const bridge = desktopBridge()
-  if (!bridge) return
+  if (!bridge) return null
   if (deviceFlow.stage === 'progress') {
     // Asked for while a reconnect runs out of sight: show it, through to the end.
     if (!options.quiet) {
       deviceFlow.open = true
       quiet = false
     }
-    return
+    return null
   }
   quiet = !!options.quiet
   Object.assign(deviceFlow, { open: !quiet, stage: 'progress', failure: null, deviceId: null, percent: null })
@@ -267,15 +273,18 @@ export async function startConnecting(options: { quiet?: boolean; teamId?: numbe
     deviceFlow.deviceName = enrolled?.name ?? ''
     if (!(await untilOnline(deviceFlow.deviceId))) {
       stop({ step: 'start', detail: '' })
-      return
+      return 'failed'
     }
     deviceFlow.current = null
     if (quiet) {
       deviceFlow.open = false
       deviceFlow.stage = 'ask'
     } else deviceFlow.stage = 'done'
+    return 'connected'
   } catch (err) {
-    stop(failure(err))
+    const why = failure(err)
+    stop(why)
+    return why.step === 'cancelled' ? 'cancelled' : 'failed'
   } finally {
     quiet = false
   }
@@ -302,34 +311,47 @@ export async function cancelConnecting() {
   await desktopBridge()?.cancelConnect()
 }
 
-// Whether this person was already asked to connect this computer: asked once,
-// and from then on it is the settings page's to change.
-const askedKey = (userId: number) => `cheese.desktop.askedToConnect.${userId}`
+// Whether this person answered 「暂不接入」 about this computer. Connecting on
+// its own at sign-in must not overrule that answer.
+const declinedKey = (userId: number) => `cheese.desktop.connectDeclined.${userId}`
 
-export function markAsked(userId: number) {
-  // A write that does not land only means the question may come again at the
-  // next launch — which is what it does when it cannot be asked at all.
-  storageSet(askedKey(userId), '1')
+export function markDeclinedToConnect(userId: number) {
+  // A write that does not land only means the machine may be connected at the
+  // next launch — which is what happens when the answer cannot be kept.
+  storageSet(declinedKey(userId), '1')
 }
 
-function asked(userId: number) {
-  return storageGet(askedKey(userId)) === '1'
+function declined(userId: number) {
+  return storageGet(declinedKey(userId)) === '1'
 }
 
 /** At sign-in: a computer connected before and now away comes back on its
- *  own; one never connected is asked about, once. */
+ *  own, and one never connected is connected on its own too — installing the
+ *  app is meant to end with this computer serving a team, not with a question.
+ *  It serves the person's own team, which every account has. The dialog shows
+ *  the steps and the download's progress; it is never a question. */
 export async function offerToConnect(userId: number) {
   const bridge = desktopBridge()
   if (!bridge) return
-  const [stored, devices] = await Promise.all([bridge.thisDevice(), myDevices().catch(() => null)])
+  // Every enrollment on this computer, not only the default profile: the app's
+  // first connection is filed under the team's profile.
+  const [ids, devices] = await Promise.all([bridge.thisDevices(), myDevices().catch(() => null)])
   if (devices === null) return
-  const mine = stored ? devices.find((d) => d.device_id === stored) : undefined
-  if (mine?.online) return
-  if (mine) {
-    // Connected before: bring it back without asking.
-    await startConnecting({ quiet: true, teamId: mine.team_id })
+  const mine = devices.filter((device) => ids.includes(device.device_id))
+  if (mine.length) {
+    // Connected before: bring back each one that is away. One enrollment up
+    // says nothing about another — a computer serves several teams, each its
+    // own connector — so this is per device, not "is this computer online".
+    for (const device of mine.filter((d) => !d.online)) {
+      await startConnecting({ quiet: true, teamId: device.team_id })
+    }
     return
   }
-  if (asked(userId)) return
-  Object.assign(deviceFlow, { open: true, stage: 'ask', failure: null, steps: [], current: null, percent: null })
+  // Enrolled here but none of them this person's: removed from its team, or
+  // another account's. Do not enroll it again behind their back.
+  if (ids.length) return
+  if (declined(userId)) return
+  // Stopping the first connection is a 「暂不接入」 like any other: the next
+  // launch must not start it again. A failure is not.
+  if ((await startConnecting()) === 'cancelled') markDeclinedToConnect(userId)
 }

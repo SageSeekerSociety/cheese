@@ -107,10 +107,10 @@ class ComputePool:
         harness holds its seat; what it wrote so far stays. For an agent no
         longer in the room: whatever it goes on doing, the room turns away."""
         for runtime in self._runtimes():
-            live = runtime.live.get((topic_id, agent_handle))
-            if live is not None:
+            held = runtime.holding((topic_id, agent_handle))
+            if held is not None:
                 with contextlib.suppress(DeviceCallError, DeviceOffline):
-                    await runtime.interrupt(live.session)
+                    await runtime.interrupt(held)
 
     async def stop_work(self, conversation_id: uuid.UUID) -> None:
         """Take away the work every teammate is doing in this conversation;
@@ -118,10 +118,10 @@ class ComputePool:
         alone."""
         for runtime in self._runtimes():
             for seat in [seat for seat in runtime.work if seat[0] == conversation_id]:
-                live = runtime.live.get(seat)
-                if live is not None:
+                held = runtime.holding(seat)
+                if held is not None:
                     with contextlib.suppress(DeviceCallError, DeviceOffline):
-                        await runtime.interrupt(live.session)
+                        await runtime.interrupt(held)
 
     def working_conversations(self) -> set[uuid.UUID]:
         """Every conversation a seat this process holds is working in."""
@@ -129,7 +129,7 @@ class ComputePool:
             seat[0]
             for runtime in self._runtimes()
             for seat in runtime.work
-            if seat in runtime.live
+            if runtime.holding(seat) is not None
         }
 
     def default(self) -> "RoomSessions":
@@ -355,6 +355,21 @@ class ComputePool:
             if (work := runtime.work_in_flight(topic_id, agent_handle)) is not None
         }
         return works.pop() if len(works) == 1 else None
+
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Is this seat's runner another release's, finishing the work it was
+        doing? A message for the seat waits until it has been replaced."""
+        return any(
+            runtime.draining(topic_id, agent_handle) for runtime in self._runtimes()
+        )
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Whether the room is to be told now that a message waits for this
+        seat's drain: once per drain."""
+        return any(
+            runtime.tell_draining(topic_id, agent_handle)
+            for runtime in self._runtimes()
+        )
 
     def holds(self, topic_id: uuid.UUID, agent_handle: str | None = None) -> bool:
         """Does any backend still hold a live session for this topic — for

@@ -138,18 +138,16 @@ async def for_site(
     author: str | None = None,
     limit: int = 500,
     before: tuple[datetime, str, str, int] | None = None,
+    after: tuple[datetime, str, str, int] | None = None,
 ) -> list[dict]:
     """The conversation's run records between two moments, as the 现场 reads
-    them (oldest first). `author` keeps only that teammate's."""
-    upper = None
-    if before is not None:
-        at, source, seat, sequence = before
-        if source == "platform":
-            upper = (at, seat, uuid.UUID(int=sequence))
-        elif source < "platform":
-            upper = (at, "", uuid.UUID(int=0))
-        else:
-            upper = (at, "\U0010ffff", uuid.UUID(int=2**128 - 1))
+    them (oldest first). `author` keeps only that teammate's.
+
+    `before` walks up from a page in hand and `after` walks forward from one;
+    each is a 现场 cursor — a moment, the family that wrote it, its seat and
+    its id — turned into this table's own (moment, seat, id) bound."""
+    upper = None if before is None else _bound(before, forward=False)
+    lower = None if after is None else _bound(after, forward=True)
     kept = await of_conversation(
         session,
         conversation_id,
@@ -158,5 +156,27 @@ async def for_site(
         limit=limit,
         seat=author,
         before=upper,
+        after=lower,
     )
     return [as_payload(r) for r in kept if (author is None or r.seat == author)]
+
+
+def _bound(
+    key: tuple[datetime, str, str, int], *, forward: bool
+) -> tuple[datetime, str, uuid.UUID]:
+    """A 现场 cursor as the run-record table's (moment, seat, id) bound.
+
+    A cursor's middle field says which family wrote it. `platform` rows carry
+    their seat verbatim. Anything else is a record or a pre-launch turn, whose
+    seat here is empty — walking up that ends at "nothing at this moment", and
+    walking forward it starts at "everything at this moment" (a row already on
+    screen is dropped by id when the client merges, so taking the whole moment
+    is the safe side of the bound)."""
+    at, source, seat, sequence = key
+    if source == "platform":
+        return (at, seat, uuid.UUID(int=sequence))
+    if forward:
+        return (at, "", uuid.UUID(int=0))
+    if source < "platform":
+        return (at, "", uuid.UUID(int=0))
+    return (at, "\U0010ffff", uuid.UUID(int=2**128 - 1))

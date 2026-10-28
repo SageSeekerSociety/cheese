@@ -46,17 +46,17 @@ module-level `APIRouter` under `app.api.routes`, so the same
 import base64
 import binascii
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
-from app.api.doc_access import require_role
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -192,7 +192,15 @@ async def list_document_revisions(
     clean = clean_artifact_path(path)
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    raw = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    raw = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
     try:
         found = revisions_in(raw, clean)
     except RevisionsUnsupported as exc:
@@ -208,12 +216,11 @@ async def list_document_revisions(
     )
 
 
-@router.post("/{topic_id}/documents/revisions", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/documents/revisions")
 async def decide_document_revisions(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.edit_content, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Accept or reject tracked changes, and write the document back.
 
@@ -227,14 +234,10 @@ async def decide_document_revisions(
     copy to a decision taken against the older one, so a moved file is a
     conflict here rather than an overwrite.
     """
-    # A task's id reaches its room's roster, files and documents.
-    topic = (await place_or_404(db, topic_id)).room
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    # Deciding a change writes the file back: a person's role has to change files.
-    await require_role(db, actor, topic.project_id, Permission.edit_content)
+    # A task's id reaches its room's roster, files and documents; deciding a
+    # change writes the file back, so `Can` asks for edit_content.
+    topic = at.place.room
+    actor = at.actor
     topic_id = topic.id
     clean = clean_artifact_path(body.get("path") or "")
     if library.library_name(clean) is not None:
@@ -254,7 +257,10 @@ async def decide_document_revisions(
     task = uuid.UUID(str(source)) if source else None
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    raw = await source_bytes(db, topic.project_id, topic_id, clean, task)
+    # A library file was refused above; this reads the room's own files only.
+    raw = await source_bytes(
+        db, topic.project_id, topic_id, clean, task, with_task=False
+    )
     actual = content_version(raw)
     if actual != expected:
         raise ConflictError(

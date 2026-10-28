@@ -1,12 +1,12 @@
 {
-  "askFailed": "Could not read it",
+  "askFailed": "Couldn't read it",
   "collapse": "Hide details",
-  "connected": "Session connected",
+  "connected": "AI teammate connected",
   "expand": "Show details",
-  "label": "Session details",
-  "loadFailed": "Could not load the session state",
-  "none": "No session running",
-  "several": "{count} sessions are running in this channel; pick a teammate to view one",
+  "label": "AI teammate details",
+  "loadFailed": "Could not load the AI teammate's status. Try again later",
+  "none": "No AI teammate working",
+  "several": "{count} AI teammates are working in this channel; pick one to view",
   "teammate": "Teammate",
   "view": "View",
   "what": "What to view"

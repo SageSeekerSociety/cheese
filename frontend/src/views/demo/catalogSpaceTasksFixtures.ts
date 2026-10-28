@@ -23,6 +23,7 @@ import type {
   User,
 } from '@/types'
 import type { DomainGroup } from '@/types/spaces'
+import type { TaskVersionData } from '@/types/taskFiles'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
@@ -278,7 +279,7 @@ export const TASK_DEMO: Task = {
   editable: true,
   description: '## 题目说明\n\n实现一个**优先级调度器**，跑通给定的三组样例。',
   submissionSchema: [{ prompt: '代码仓库地址', type: 'TEXT' }],
-  participants: { total: 5, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
+  participants: { total: 5, approved: 4, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
   submittable: true,
   createdAt: NOW - 20 * DAY,
   updatedAt: NOW - 3 * DAY,
@@ -289,23 +290,41 @@ export const TASK_DEMO: Task = {
 
 /** 这道题的材料清单（说明页那一栏）。 */
 export const TASK_BRIEF_ATTACHMENTS: TaskAttachmentData[] = [
+  { name: '实验指导书.pdf', size: 2_400_000, addedAt: NOW - 9 * DAY },
+  { name: 'starter.zip', size: 12_400_000, addedAt: NOW - 9 * DAY },
+]
+
+/** 历史版本：发布、加了一份数据、换了数据又删了草稿；最早那一版记版本时还没记文件。 */
+export const TASK_VERSIONS: TaskVersionData[] = [
   {
-    id: 7801,
-    name: '实验指导书.pdf',
-    size: 2_400_000,
-    contentType: 'application/pdf',
-    uploaderId: 1,
-    downloadCount: 18,
-    createdAt: NOW - 9 * DAY,
+    number: 3,
+    at: NOW - 1 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { files: { replaced: ['数据.csv'], removed: ['草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 48_000 },
+      { name: '题目说明.md', size: 1_200 },
+    ],
   },
   {
-    id: 7802,
-    name: 'starter.zip',
-    size: 12_400_000,
-    contentType: 'application/zip',
-    uploaderId: 1,
-    downloadCount: 6,
-    createdAt: NOW - 9 * DAY,
+    number: 2,
+    at: NOW - 4 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { description: true, files: { added: ['数据.csv', '草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 40_000 },
+      { name: '草稿.txt', size: null },
+      { name: '题目说明.md', size: 1_100 },
+    ],
+  },
+  {
+    number: 1,
+    at: NOW - 9 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { published: true },
+    files: null,
   },
 ]
 

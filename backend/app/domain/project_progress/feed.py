@@ -1,8 +1,8 @@
 """项目总览上的「最近进展」：这个项目最近发生了什么。
 
 不另存一张表：每一条都是已经记在别处的事实 —— 任务什么时候建的、采纳的、关掉
-的，卡什么时候被退回，产物什么时候出了新的一版，任务从什么时候起停住了。
-这里只把它们按时间摆在一起。
+的，卡什么时候被退回，产物什么时候出了新的一版，任务从什么时候起停住了，项目
+来自的那道题目在项目建好之后又更新到了第几版。这里只把它们按时间摆在一起。
 
 看得见什么由调用方给：`rooms` 是读者看得见、而且没有归档的频道，不在里面的频道
 的任务不进来，同一条规矩（私密频道只给它的成员看）不在这里重新判一遍。
@@ -17,9 +17,11 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.teammate_runs import teammate_runs
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.deliverables import artifacts
 from app.domain.oauth.services import handles_for_github_ids
+from app.domain.project.models import Project
 from app.domain.review.queries import (
     accepted_by_task,
     latest_cards_by_task,
@@ -27,6 +29,7 @@ from app.domain.review.queries import (
 )
 from app.domain.room_task import presentation
 from app.domain.room_task.services import TaskService
+from app.domain.task import package
 
 #: 往回看多久。总览说的是「最近」，再早的去任务列表里翻。
 WINDOW = timedelta(days=14)
@@ -43,6 +46,8 @@ CLOSED = "closed"
 RETURNED = "returned"
 STALLED = "stalled"
 VERSION = "version"
+#: 项目来自的题目更新到了新的一版。
+REVISED = "revised"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +66,12 @@ class Happening:
     #: `by` 是不是一个 GitHub 登录名（而不是平台 handle）。只有「GitHub 上的
     #: 合并人没绑平台账号」这一种：界面不能拿它去名册里撞同名的平台账号。
     by_github: bool = False
-    #: 产物的新版本：哪一项、第几版。
+    #: 产物的新版本：哪一项、第几版。题目的新一版也用 `version` 说第几版。
     artifact_id: uuid.UUID | None = None
     artifact_name: str = ""
     version: int | None = None
+    #: 题目的新一版改了什么（`TaskPackageRevision.changes`）。
+    changes: dict | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -79,6 +86,7 @@ class Happening:
             "artifactId": str(self.artifact_id) if self.artifact_id else None,
             "artifactName": self.artifact_name,
             "version": self.version,
+            "changes": self.changes,
         }
 
 
@@ -179,10 +187,14 @@ async def recent(
     last_said = await TaskService(session).last_block_at_for_tasks(ids)
     cards = await latest_cards_by_task(session, ids)
     asked = await awaiting_an_answer(session, ids)
+    runs = await teammate_runs(session, open_tasks)
     for task in open_tasks:
         shown = presentation.task_presentation(
             presentation.facts_for_task(
-                task, cards.get(task.id), awaiting_answer=task.id in asked
+                task,
+                cards.get(task.id),
+                awaiting_answer=task.id in asked,
+                teammate_runs=runs.get(task.id),
             ),
             now=now,
         )
@@ -203,6 +215,21 @@ async def recent(
                     artifact_id=item.id,
                     artifact_name=item.name,
                     version=item.version,
+                )
+            )
+
+    project = await session.get(Project, project_id)
+    if project is not None and project.external_task_id is not None:
+        # 建项目之后题目又改过的每一版：项目里做的人要知道题目不是领时那样了。
+        for revision in await package.since(
+            session, project.external_task_id, max(since, project.created_at)
+        ):
+            found.append(
+                Happening(
+                    kind=REVISED,
+                    at=revision.created_at,
+                    version=revision.number,
+                    changes=revision.changes or {},
                 )
             )
 

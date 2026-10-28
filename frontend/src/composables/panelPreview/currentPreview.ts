@@ -11,6 +11,7 @@ import { readPreviewFile, requestPreviewSession } from '../../api'
 import { APP_NAVIGATION_BUDGET_MS } from '../usePreviewFrames'
 
 import { t } from '@/i18n'
+import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
 import { readPreview } from '@/query/room'
 
 export interface CurrentPreviewDeps {
@@ -96,7 +97,7 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
         art.version ?? null,
         art.instance ?? null,
       ])
-      const known = art.kind === 'app' || !!art.version
+      const known = art.kind === 'app' || art.kind === 'mcp-app' || !!art.version
       const unchanged =
         known &&
         (host.incoming.value?.identity === identity ||
@@ -157,6 +158,10 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
           host.fail(t('tasks.preview.unavailable'))
           return
         }
+      } else if (art.kind === 'mcp-app') {
+        // 第三方 View：没有房间文件可读。字节在远端服务器上，由内容域按自己的策略取；
+        // 这一层只记下它是哪一种资源。
+        state.previewMime.value = art.mime || MCP_APP_MIME
       } else {
         state.previewMime.value = art.mime || 'text/html'
         try {
@@ -190,7 +195,7 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
         // text/markdown 发出来浏览器只显示源码；其余是因为「读得成文本」不代表它是
         // 网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
         // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
-        if (state.documentType.value) {
+        if (state.documentType.value || state.isVideoArtifact.value) {
           host.reset()
           state.previewUrl.value = null
           return
@@ -210,7 +215,9 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
             ? art.instance
               ? { artifact_id: art.artifact_id, instance: art.instance }
               : undefined
-            : { artifact_id: art.artifact_id, version: art.version, path: art.path }
+            : art.kind === 'mcp-app'
+              ? { artifact_id: art.artifact_id }
+              : { artifact_id: art.artifact_id, version: art.version, path: art.path }
         )
         if (!stillCurrent()) return
         state.previewUrl.value = art.url
@@ -219,7 +226,7 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
           {
             url: art.url,
             label: art.path,
-            mime: art.mime || 'text/html',
+            mime: art.mime || (art.kind === 'mcp-app' ? MCP_APP_MIME : 'text/html'),
             version: art.version ?? null,
             live: art.kind === 'app',
             identity,

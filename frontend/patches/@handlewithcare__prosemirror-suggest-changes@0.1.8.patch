@@ -1,0 +1,43 @@
+diff --git a/dist/commands.js b/dist/commands.js
+index c6606e7c6cb3b6269d9e0a6bb8bceeaae88e9c63..a319e1fbaf2203cae068be9dd52b8251387a99d1 100644
+--- a/dist/commands.js
++++ b/dist/commands.js
+@@ -48,8 +48,9 @@ import { getSuggestionMarks } from "./utils.js";
+             const prevChar = tr.doc.textBetween(deletionFrom - 1, deletionFrom, "x", "x");
+             const nextChar = // textBetween is fine with negative positions (??),
+             // but it errors if passed a position greater than the
+-            // size of the doc
+-            deletionTo <= tr.doc.content.size ? tr.doc.textBetween(deletionTo, deletionTo + 1, "x", "x") : "";
++            // size of the doc — `deletionTo + 1` is, for a block that
++            // ends the document
++            deletionTo < tr.doc.content.size ? tr.doc.textBetween(deletionTo, deletionTo + 1, "x", "x") : "";
+             const addedRange = prevChar === " " && nextChar === " " ? 1 : 0;
+             tr.deleteRange(deletionFrom, deletionTo + addedRange);
+             return false;
+@@ -193,7 +194,9 @@ export function applySuggestionsToRange(doc, from, to) {
+         const { deletion, insertion } = getSuggestionMarks(state.schema);
+         const tr = state.tr;
+         applySuggestionsToTransform(state.doc, tr, insertion, deletion, suggestionId, from, to);
+-        applyModificationsToTransform(tr.doc, tr, 1, undefined, from, to);
++        // Only this suggestion's modifications: with no id, accepting one
++        // suggestion accepted every pending modification in the document.
++        applyModificationsToTransform(tr.doc, tr, 1, suggestionId, from, to);
+         if (!tr.steps.length) return false;
+         tr.setMeta(suggestChangesKey, {
+             skip: true
+@@ -249,11 +252,14 @@ export function applySuggestionsToRange(doc, from, to) {
+         const { deletion, insertion } = getSuggestionMarks(state.schema);
+         const tr = state.tr;
+         applySuggestionsToTransform(state.doc, tr, deletion, insertion, suggestionId, from, to);
++        // Only this suggestion's modifications, and counted before giving up:
++        // one that only modifies (a paragraph made a heading) was otherwise
++        // never rejected, and rejecting any other undid every modification.
++        applyModificationsToTransform(tr.doc, tr, -1, suggestionId, from, to);
+         if (!tr.steps.length) return false;
+         tr.setMeta(suggestChangesKey, {
+             skip: true
+         });
+-        applyModificationsToTransform(tr.doc, tr, -1, undefined, from, to);
+         dispatch?.(tr);
+         return true;
+     };

@@ -87,8 +87,21 @@ export function usePanelSite(scope: PanelSiteScope) {
   // 手上这一窗 transcript（读最近一页 / 往上翻 / 过 MAX_WINDOW 封顶 / socket 上来的行
   // 落到哪儿）都在 useSiteTranscript 里。递进去的是「现在读的是谁」和这一窗自己的滚动
   // 容器；读回来的人由 noteAgents / noteStarts 记到这一栏自己的名册和轮次上。
-  const { transcript, hasOlder, loading, loadingOlder, errorMsg, load, onSiteScroll, receive } = useSiteTranscript({
+  const {
+    transcript,
+    hasOlder,
+    loading,
+    loadingOlder,
+    errorMsg,
+    errorForbidden,
+    arrived,
+    load,
+    retry,
+    onSiteScroll,
+    receive,
+  } = useSiteTranscript({
     topicId: scope.topicId,
+    active: scope.active,
     viewing: () => viewing.value,
     scrollRef,
     following: stick.following,
@@ -168,6 +181,10 @@ export function usePanelSite(scope: PanelSiteScope) {
     loading,
     loadingOlder,
     errorMsg,
+    errorForbidden,
+    arrived,
+    load,
+    retry,
     onSiteScroll,
     receive,
     selectAgent,

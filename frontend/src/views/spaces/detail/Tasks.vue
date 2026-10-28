@@ -47,6 +47,11 @@ type QueryOptions = {
   lifecycle?: 'recruiting' | 'closed'
 }
 
+// 「全部」是一张表，分三段（Zhifei 2026-10-26）：最上面「我参与的」——我手上有一份的题，不管题目
+// 开着还是截止，不收起；下面是别的题里还能领的；最后是别的题里已截止或名额已满的，收起。下面两段
+// 按题目自己的状态分，对谁都一样（`joined: false` 把我手上的题留在上面那段）。「我参与的」那一格
+// 列的就是最上面那一段。
+
 const route = useRoute()
 const router = useRouter()
 const searchQuery = ref('')
@@ -140,12 +145,14 @@ const queryOptions = computed<QueryOptions>(() => ({
   keywords: searchQuery.value ? searchQuery.value : undefined,
   topics: selectedTopics.value.length ? [...selectedTopics.value] : undefined,
   categoryId: selectedCategoryId.value || undefined,
-  joined: scope.value === 'participating' ? true : undefined,
+  joined: scope.value === 'participating' ? true : scope.value === 'all' ? false : undefined,
   lifecycle: scope.value === 'all' ? 'recruiting' : undefined,
 }))
 
 /** 「已截止或名额已满」那一份：同样的筛选，只是换成另一半。 */
 const closedOptions = computed<QueryOptions>(() => ({ ...queryOptions.value, lifecycle: 'closed' }))
+/** 「全部」最上面「我参与的」那一段：同样的筛选，只要我手上有的，不分开着还是截止。 */
+const mineOptions = computed<QueryOptions>(() => ({ ...queryOptions.value, joined: true, lifecycle: undefined }))
 
 async function listTasks(pageStart: string | undefined, options: QueryOptions | undefined) {
   if (!options || !options.space) return createEmptyResult<Task, string>()
@@ -177,6 +184,7 @@ const {
 } = usePaging<Task, QueryOptions, string>(listTasks, undefined, queryOptions.value)
 
 const closed = usePaging<Task, QueryOptions, string>(listTasks, undefined, closedOptions.value)
+const mine = usePaging<Task, QueryOptions, string>(listTasks, undefined, mineOptions.value)
 /** 收起来的那一段开着没有；换了筛选就收回去。 */
 const closedOpen = ref(false)
 
@@ -260,6 +268,8 @@ watch(
     if (value === 'all') {
       closed.reset(undefined, closedOptions.value)
       void closed.loadMore()
+      mine.reset(undefined, mineOptions.value)
+      void mine.loadMore()
     }
   },
   { deep: true, immediate: true }
@@ -288,8 +298,8 @@ onMounted(async () => {
     v-model:selected-category="selectedCategoryIdModel"
     v-model:selected-topics="selectedTopics"
     v-model:sort="sortKey"
-    :announcements="announcements"
     v-model:closed-open="closedOpen"
+    :announcements="announcements"
     :announcements-target="announcementsTarget"
     :category-filter-options="categoryFilterOptions"
     :has-more="hasMore"
@@ -306,12 +316,17 @@ onMounted(async () => {
     :space-id="spaceId"
     :tasks="tasks"
     :total="total"
+    :mine-tasks="scope === 'all' ? mine.data.value : []"
+    :mine-total="scope === 'all' ? mine.total.value : 0"
+    :mine-has-more="mine.hasMore.value"
+    :mine-loading-more="mine.loadingMore.value"
     :closed-tasks="scope === 'all' ? closed.data.value : []"
     :closed-total="scope === 'all' ? closed.total.value : 0"
     :closed-has-more="closed.hasMore.value"
     :closed-loading-more="closed.loadingMore.value"
     @load-more="loadMore"
     @load-more-closed="closed.loadMore"
+    @load-more-mine="mine.loadMore"
     @load-published-tasks="loadPublishedTasks"
     @update:pending-only="setPendingOnly"
     @update:scope="selectScope"

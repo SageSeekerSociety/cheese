@@ -75,6 +75,24 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
+// 预览格里那份 markdown 换成协同编辑器之后，它绑真实协同文档（socket、Yjs），不该
+// 装进这一只面板的用例里。这一只要的是另一件事：**这一格真的把那一包递了下去**（
+// `PanelPreview` 摊 props 时漏掉它，「编辑」按钮就永远不出现，而组件自己的单测看不见
+// ——它直接挂的是 `PanelPreviewView`）。
+vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
+  default: {
+    name: 'PreviewMarkdownLive',
+    props: ['live'],
+    template: '<div data-testid="markdown-live" :data-path="live.editingPath.value" />',
+  },
+}))
+
+// 那一包协同会话开的是一条真 socket（`useDocCollab`），这一只面板的用例不装它：
+// 换成一只什么都不连的替身。面板这一半要的只是「哪一份开着」那两件读得到。
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
+
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
 // 那个约定：改完、恢复完，面板按新版本重取这一页。两者的手势各按自己那一半的接口
 // 做：历史那一边叫取数那一包（`fileHistory.restore`，和真组件一样），编辑器那一边
@@ -144,6 +162,47 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+/** 一份能直接改的 markdown，摆在预览格里。 */
+function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n') {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content,
+    version: 'v1',
+    bytes: content.length,
+    binary: false,
+    too_large: false,
+  })
+}
+
+it('offers edit on a markdown file, and hands the panel its live session', async () => {
+  // 这一条盯的是「这一格真的把协同编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
+  // `live-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
+  editableMarkdown()
+  mount()
+
+  const button = await screen.findByTestId('edit-file')
+  await fireEvent.click(button)
+
+  // 点下去是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await screen.findByTestId('markdown-live')
+  expect(editor.getAttribute('data-path')).toBe('output/说明.md')
+})
+
+it('手机上不摆这个按钮：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+  editableMarkdown()
+  const width = window.innerWidth
+  window.innerWidth = 400
+  try {
+    mount()
+    // 正文画出来了，说明这一档确实上了屏；只是没有「编辑」。
+    await screen.findByTestId('markdown')
+    expect(screen.queryByTestId('edit-file')).toBeNull()
+  } finally {
+    window.innerWidth = width
+  }
+})
+
 it('shows a Word report rather than offering it as a download', async () => {
   mount()
 
@@ -196,7 +255,7 @@ it('turns a pointed-at cell into a message naming the file and the address', asy
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这个数字应该按季度摊')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这个数字应该按季度摊')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -211,7 +270,7 @@ it('a CSV has no sheet, so its address is the cell alone', async () => {
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一行重复了')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一行重复了')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -224,7 +283,7 @@ it('turns a selected sentence into a message naming the page it came from', asyn
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('pages'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话和摘要对不上')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话和摘要对不上')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -257,7 +316,7 @@ it('turns a selected markdown sentence into a message naming its section', async
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这里也要写清楚')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这里也要写清楚')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -293,7 +352,7 @@ it('writes only the near side when the quote runs to the end of the document', a
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一整段都要重写')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一整段都要重写')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -326,7 +385,7 @@ it('says the quote is at the top of the file when nothing precedes it', async ()
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话要改')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话要改')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())

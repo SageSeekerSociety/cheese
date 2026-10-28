@@ -1,0 +1,4 @@
+{
+  "docPrintFailed": "没能印出这份文档的 PDF，稍后重试",
+  "docPrintUnavailable": "这个部署没有启用页面打印，暂时导不出 PDF"
+}

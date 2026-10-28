@@ -132,7 +132,15 @@ describe('空间设置：给 AI 队友的指导', () => {
 
     await waitFor(() =>
       expect(updateSpace).toHaveBeenCalledWith(SPACE_ID, {
-        teaching: { mode: 'spec', systemPrompt: '先写测试', materialIds: [], documentIds: [] },
+        teaching: {
+          mode: 'spec',
+          systemPrompt: '先写测试',
+          privatePrompt: null,
+          learningGoals: [],
+          materialIds: [],
+          documentIds: [],
+          skills: [],
+        },
       })
     )
   })
@@ -146,7 +154,15 @@ describe('空间设置：给 AI 队友的指导', () => {
 
     await waitFor(() => expect(updateSpace).toHaveBeenCalledTimes(1))
     expect(updateSpace.mock.calls[0][1]).toEqual({
-      teaching: { mode: null, systemPrompt: null, materialIds: [], documentIds: [] },
+      teaching: {
+        mode: null,
+        systemPrompt: null,
+        privatePrompt: null,
+        learningGoals: [],
+        materialIds: [],
+        documentIds: [],
+        skills: [],
+      },
     })
   })
 

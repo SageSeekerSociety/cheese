@@ -15,6 +15,7 @@ import type { Block } from '../cx_types'
 
 import i18n, { t } from '../i18n'
 
+import { byAssistant } from './authorship'
 import { docLineInTurn } from './docEditLine'
 
 /** 一天有多少毫秒。算「隔了几天」用整天的边界，不是按 24 小时除。 */
@@ -77,9 +78,10 @@ export function dayLabelsFor(rows: readonly GroupableRow[]): Map<string, string>
   return out
 }
 
-/** 同一个人（同一种身份）说的：按 handle 判，头像和名字都不参与。 */
+/** 同一个人（同一种身份）说的：按 handle 判，头像和名字都不参与。他自己说的和他的芝士替他
+ *  说的不接成一段：后一种要在名字旁边标出来，接在他自己那段下面就没有名字那一行可标。 */
 export function sameSpeaker(a: Block, b: Block): boolean {
-  return a.author === b.author && a.author_type === b.author_type
+  return a.author === b.author && a.author_type === b.author_type && byAssistant(a) === byAssistant(b)
 }
 
 /**

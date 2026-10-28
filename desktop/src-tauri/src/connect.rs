@@ -150,7 +150,7 @@ impl Running {
         self.cancelled.load(Ordering::Relaxed)
     }
 
-    fn begin(&self) -> bool {
+    pub(crate) fn begin(&self) -> bool {
         if self.busy.swap(true, Ordering::Relaxed) {
             return false;
         }
@@ -158,7 +158,7 @@ impl Running {
         true
     }
 
-    fn end(&self) {
+    pub(crate) fn end(&self) {
         *self.pid.lock().unwrap() = None;
         self.busy.store(false, Ordering::Relaxed);
     }
@@ -355,7 +355,7 @@ pub async fn claude_logout(login_id: String, profile: Option<&str>) -> Result<()
 }
 
 /// All Claude operations select the same enrollment as the device being managed.
-fn claude_command(profile: Option<&str>) -> Command {
+pub(crate) fn claude_command(profile: Option<&str>) -> Command {
     let mut cmd = platform::cheesehost();
     cmd.args(["--profile", profile.unwrap_or("default")]);
     cmd

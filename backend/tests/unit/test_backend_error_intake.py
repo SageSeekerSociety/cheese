@@ -117,17 +117,44 @@ async def test_only_model_failures_count_toward_the_burst(monkeypatch):
         ("SubscriptionHTTPError", "http_auth"),
         ("GatewayHTTPError", "http_auth"),
         ("SubscriptionEgressOffline", "egress_offline"),
+        ("GatewayUpstreamOutOfCredit", "provider_credit"),
     ],
 )
 async def test_a_failure_someone_can_fix_is_told_at_once(monkeypatch, kind, category):
-    """A refused credential or an offline egress fails every turn of a quiet
-    deployment, far below any burst threshold; it is told the first time."""
+    """A refused credential, an offline egress or a provider account out of
+    credit fails every turn of a quiet deployment, far below any burst
+    threshold; it is told the first time."""
     backend_log, topic, added, alerts = _recorded(monkeypatch)
     await _fail(
         backend_log, topic, kind, where="model subscription", upstream_failure=category
     )
     assert len(alerts) == 1
     assert alerts[0][1]["key"] != "model-failure-burst"
+
+
+async def test_each_empty_provider_account_is_its_own_alert(monkeypatch):
+    """Two rows out of credit are two accounts to top up: the second must not
+    be held back as a repeat of the first, while the same row named again is
+    the same alert (`alerting` tells a key once per repeat window)."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    for row in (
+        "deepseek-flash deepseek/deepseek-chat 1a2b3c4d",
+        "glm-5.3 anthropic/glm-5.3 5e6f7a8b",
+    ):
+        for _ in range(2):
+            error = BackendErrorIn(
+                message=f"The provider account behind gateway row {row} is out of credit",
+                exc_type="GatewayUpstreamOutOfCredit",
+                where=f"model gateway: {row}",
+                upstream_failure="provider_credit",
+            )
+            await backend_log.record(
+                None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+            )
+    keys = [kw["key"] for _args, kw in alerts]
+    assert len(keys) == 4 and len(set(keys)) == 2, keys
+    told = [" ".join(args[1]) for args, _kw in alerts]
+    assert "deepseek/deepseek-chat" in told[0] and "anthropic/glm-5.3" in told[-1], told
 
 
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'

@@ -43,6 +43,7 @@ import { docAppShotUrl, getDocApp, getDocAppVersion } from '@/api/docApps'
 import i18n, { loadPlatformSentences, localeReady } from '@/i18n'
 import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { firstPageReady, stylesheetsLoaded } from '@/lib/bootReady'
+import { markTitleBarOverlay } from '@/lib/desktopApp'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { answerDocAppsWith } from '@/lib/docApps'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
@@ -63,6 +64,10 @@ persistProjectList()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()
+
+// macOS 桌面版把红黄绿三颗窗口按钮画在页面上：给 <html> 挂个类，样式表据此让位
+// （style.css 的 --window-buttons-inset）。别的平台不挂，值和位置都不动。
+markTitleBarOverlay()
 
 // 公开页的 HTML 是构建时预渲染的（scripts/prerender.mjs）。启动脚本认定来的正是它渲染
 // 给的那位访客（index.html 的 data-boot="page"）时，应用在这份 HTML 上接管（hydrate），

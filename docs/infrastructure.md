@@ -12,9 +12,9 @@ separate data — don't conflate them.
 
 | Env | Public | App host | DB | Stack | Deploys via |
 |---|---|---|---|---|---|
-| **dev / test** | xiaoyuer's test domain | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
+| **dev / test** | `okcheese.com` (mainland entry `okcheese.cn`) | `cheese-dev-env1-app` (192.168.16.5, ghg private net) | `cheese-dev-env1-postgresql` (192.168.16.7) | Docker Compose (`deploy/deploy-docker.sh`) | **auto on merge to `main`** |
 | **prod (RUC)** | `cheese.ruc.edu.cn` | `cheese-prod-app` (192.168.16.8, ghg private net) | `cheese-prod-postgresql` (192.168.16.10) | Docker Compose (`deploy/deploy-docker.sh`) | **published GitHub Release → approval** |
-| **etrip** | `etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
+| **etrip** | `ruc-etrip.cn` | `etrip` (8.217.1.152, Aliyun HK) | in-container `cheese_prod_postgres` (paradedb) + `cheesex-pg` | Docker Compose (`/opt/cheese-deploy`) | **published GitHub Release → approval** |
 
 Notes:
 - dev and prod are on ghg's private `192.168.16.0/24` (no public inbound). etrip
@@ -245,7 +245,8 @@ services `backend` and `backend-b` on `BACKEND_PORT` and `BACKEND_PORT_NEXT`;
 with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 `frontend-b` on loopback `FRONTEND_SLOT_PORT` (18088) and `FRONTEND_PORT_NEXT`.
 The deploy starts the idle slot of each on the new image, waits for its health
-check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
+check, smoke-tests both (below), rewrites `backend.conf` and `frontend.conf`
+and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs, if its image
 content changed: collab, browser-render and office-render are named by digest,
@@ -273,6 +274,27 @@ compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
 network name (`backend`, dialled by `device-connection` and the office editor;
 `frontend`, by the backend's docs index).
+
+The smoke test (`smoke_release` in `deploy/deploy-docker.sh`, which runs
+`deploy/release-smoke.py` in the release's backend image) uses the new slots on
+their loopback ports the way a person does, before app-router sends them
+anything: the sign-in route refuses a wrong password, `/users/me` names the
+deploy's own account, that account's own task opens through
+`/topics/{task}/task` (a project and task it creates the first time), the inbox
+WebSocket every signed-in page holds sends its first frame, sign-out answers,
+and the new frontend serves `index.html` and the hashed script it
+names. Each check prints one `smoke <check> ok|FAILED` line into the deploy
+log. Any failure removes the new slots and stops the release with app-router
+untouched, so a release that is ready but cannot be used never takes traffic.
+
+The account is the one at `deploy-smoke@placeholder.internal`, an address the
+platform never mails, with a random handle and no password: the release opens
+its session inside its own image rather than signing in, because sign-in
+failures are counted per handle and handles are readable by any signed-in user,
+so a password sign-in would let anyone hold releases back. Nothing about it is
+stored on the box. A rollback does not smoke-test the release it returns to,
+and a box without app-router slots (prod, etrip) skips the test and logs that
+it did.
 
 The containers therefore alternate between `cheese-backend-1` and
 `cheese-backend-b-1` (likewise for the frontend); anything that needs one asks
@@ -329,9 +351,13 @@ of its turns without ending them and releases the lock. The successor then picks
 where it stands and starts any turn a message was left waiting for. A Claude
 Code runner that does not speak the lifecycle protocol the successor reads
 (`harness/driven/lifecycle.py`, `PROTOCOL`) is replaced rather than picked up:
-what it was written and never read is offered again, and the turn it was in
-ends with `runner_replaced` and is resumed at once. The whole
-of that fits in the backend's 60-second `stop_grace_period`, which is why the
+an idle one at once, with what it was written and never read offered again,
+and one at work once its ping says the work is done (it gets no new input
+meanwhile and the seat's messages wait). Only past `RUNNER_DRAIN_S` (30
+minutes by default) is its turn interrupted, ending with `runner_replaced` and
+resumed at once. That drain runs in the successor after the handover, not
+inside it. The handover itself fits in the backend's 60-second
+`stop_grace_period`, which is why the
 old slot is stopped before it is removed: `docker rm -f` alone is a SIGKILL.
 The in-place recreate on boxes without `ACTIVE_BACKEND_DIR` hands over the same
 way, to the container that replaces it.
@@ -349,10 +375,12 @@ box** (label `cheese-dev`), gated on `build.yml`'s images, then
 
 ### Rolling dev back to a named commit
 
-The deploy's own rollback covers one case: the health check fails, and
-`deploy/deploy-docker.sh` restores the previous images. A release that is
-healthy but wrong is rolled back by nothing — it keeps serving until someone
-releases a commit they name:
+The deploy refuses a release whose new slots fail the smoke test before it
+takes traffic (see [the runtime section](#the-runtime-docker-deploy-by-sha)),
+and its own rollback covers a failed health check after the switch, where
+`deploy/deploy-docker.sh` restores the previous images. A release that passes
+both but is wrong in a way they do not exercise is rolled back by nothing — it
+keeps serving until someone releases a commit they name:
 
 ```bash
 gh workflow run deploy-dev.yml --ref main -f ref=<full sha>
@@ -472,7 +500,10 @@ The required gate compares executed JUnit node IDs with an independently
 collected full-suite manifest. Every required case must run once, with no skips.
 Artifacts retain each attempt; rerunning failed jobs uses the latest evidence
 for each partition. Layer floors apply before partitioning. The existing Kotlin
-exclusion and opt-in live Forgejo evaluations remain outside the required set.
+exclusion remains outside the required set. The live Forgejo tests
+(`tests/forgejo`) are not in it either: they need a real forge, so `e2e.yml`'s
+`forgejo live` job runs them after merge against the pinned container
+`tests/forgejo/start.sh` starts.
 
 Reproduce a partition from `backend/` with the same test services and pinned
 tools as `test.yml`. Use a fresh output directory for each run:
@@ -734,9 +765,9 @@ record the path and never the query string, because several URLs carry a
 credential in it (the room chat socket's `?token=`, `/llm/tunnel?token=`).
 
 The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
-covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
-`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
-script — including across the 「container up, pipe dead」 incident (#579), whose
+covered too. It is recreated outside `deploy-docker.sh` (the tunnel by
+`release-llm-tunnel.yml`, api-front by `deploy/llm-tunnel/up.sh`), so its logs
+used to vanish whenever one of them was recreated — including across the 「container up, pipe dead」 incident (#579), whose
 first-hand account was exactly what nobody could read afterwards.
 
 ## Box ops runbook — changing backend env on a box
@@ -1174,13 +1205,15 @@ number, linked to beian.miit.gov.cn, as the filing requires.
 - The Aliyun instance firewall and ufw allow 22, 80 and 443.
 - `okcheese.com` stays in Hong Kong and is not served here.
 
-The backend knows one public address, `FRONTEND_URL` (okcheese.com). Password
-and email-code sign-in and the workspace work on okcheese.cn because nothing
-checks the Host, and links copied there are okcheese.cn links. What is bound to
-okcheese.com does not work on okcheese.cn: passkeys (their rpId is okcheese.com),
-GitHub and Google sign-in (their callback is okcheese.com, where the state
-cookie set on .cn is missing), embedded previews and Sites (their CSP and grant
-check name okcheese.com), and docs sign-in. Mailed links point to okcheese.com.
+okcheese.com is the backend's canonical origin, `FRONTEND_URL`; okcheese.cn is
+served by the same backend as an alias once the backend env lists it in
+`FRONTEND_ALIASES` (`backend/app/core/origins.py`). A request's origin is read
+from its `Host`. Browser flows return to the origin they ran on; passkeys keep
+the rpId okcheese.com and are accepted on the alias through
+`/.well-known/webauthn`; previews, Sites and docs sign-in accept every origin.
+GitHub and Google sign-in started on okcheese.cn run on okcheese.com, where
+their callback is registered, and the sign-in is handed back to okcheese.cn
+(`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong

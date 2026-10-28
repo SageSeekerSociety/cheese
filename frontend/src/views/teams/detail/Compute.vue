@@ -90,6 +90,7 @@ watch(
   <ComputeView
     v-model:error="error"
     :devices="devices"
+    :personal="!!team?.personal"
     :can-manage="canManage"
     :loading="loading"
     :load-failed="loadError !== null"

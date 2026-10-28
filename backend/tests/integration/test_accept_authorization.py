@@ -339,7 +339,7 @@ def test_every_card_decision_route_refuses_a_non_member(client, route, body):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403, r.text
-    assert "你不是这个频道的成员" in r.json()["message"]
+    assert "只有这个频道的成员" in r.json()["message"]
 
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["status"] == "pending"

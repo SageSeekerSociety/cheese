@@ -52,9 +52,9 @@ class BackendHost:
         # The credential a session launches with (`mint_session_token`): its
         # room's agent, in this conversation.
         self.headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, topic, room_agent_seat(client, topic)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, topic, room_agent_seat(client, topic))
+            }"
         }
         self.doc_versions: dict = {}
         self.synced: list[str] = []
@@ -97,7 +97,7 @@ def test_a_message_is_published_as_written(client, room):
 
     history = client.get(f"/topics/{room[1]}/blocks").json()["data"]["data"]
     assert [b["content"] for b in history if b["kind"] == "message"] == [content]
-    listed = cheese.run_platform_tool("cheese_chat_list", {}, host)
+    listed = cheese.run_platform_tool("cheese_chat", {"action": "list"}, host)
     assert "检查通过了。" in listed
 
 
@@ -133,44 +133,54 @@ def test_a_stale_write_to_the_living_doc_is_refused_with_the_way_out(client, tas
     """两条会话都读过第 N 版；先写的赢，后写的被拒并被告知怎么办。"""
     first = BackendHost(client, *task)
     second = BackendHost(client, *task)
-    assert "还是空的" in cheese.run_platform_tool("cheese_doc_get", {}, first)
-    cheese.run_platform_tool("cheese_doc_get", {}, second)
+    assert "还是空的" in cheese.run_platform_tool(
+        "cheese_doc", {"action": "get"}, first
+    )
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, second)
 
-    cheese.run_platform_tool("cheese_doc_set", {"content": "# 第一版\n"}, first)
+    cheese.run_platform_tool(
+        "cheese_doc", {"action": "set", "content": "# 第一版\n"}, first
+    )
     with pytest.raises(cheese.PlatformToolError) as refused:
         cheese.run_platform_tool(
-            "cheese_doc_set", {"content": "# 另一个人的版本\n"}, second
+            "cheese_doc", {"action": "set", "content": "# 另一个人的版本\n"}, second
         )
 
-    assert "cheese_doc_get" in str(refused.value)
-    assert "第一版" in cheese.run_platform_tool("cheese_doc_get", {}, second)
+    assert "cheese_doc(action=get)" in str(refused.value)
+    assert "第一版" in cheese.run_platform_tool("cheese_doc", {"action": "get"}, second)
     # Having read again, the second writer gets through.
     cheese.run_platform_tool(
-        "cheese_doc_set", {"content": "# 另一个人的版本\n"}, second
+        "cheese_doc", {"action": "set", "content": "# 另一个人的版本\n"}, second
     )
-    assert "另一个人的版本" in cheese.run_platform_tool("cheese_doc_get", {}, first)
+    assert "另一个人的版本" in cheese.run_platform_tool(
+        "cheese_doc", {"action": "get"}, first
+    )
 
 
 def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
     client, task
 ):
     host = BackendHost(client, *task)
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     cheese.run_platform_tool(
-        "cheese_doc_set",
-        {"content": "# 目标\n\n本周交初稿。\n\n## 范围\n\n只做前端。\n"},
+        "cheese_doc",
+        {
+            "action": "set",
+            "content": "# 目标\n\n本周交初稿。\n\n## 范围\n\n只做前端。\n",
+        },
         host,
     )
 
     said = cheese.run_platform_tool(
-        "cheese_doc_edit",
-        {"edits": [{"old": "本周交初稿。", "new": "周五交初稿。"}]},
+        "cheese_doc",
+        {"action": "edit", "edits": [{"old": "本周交初稿。", "new": "周五交初稿。"}]},
         host,
     )
     assert "改了 1 处" in said
     cheese.run_platform_tool(
-        "cheese_doc_edit",
+        "cheese_doc",
         {
+            "action": "edit",
             "edits": [{"old": "只做前端。", "new": "前端和接口。"}],
             "suggest": True,
             "reason": "接口也在范围内",
@@ -178,7 +188,7 @@ def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
         host,
     )
 
-    read = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    read = cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     text, _, pending = read.partition("待处理的修改建议")
     assert "周五交初稿。" in text and "只做前端。" in text
     assert "前端和接口。" not in text
@@ -187,28 +197,67 @@ def test_an_edit_changes_only_its_passage_and_a_suggestion_is_listed_apart(
 
 def test_an_edit_whose_passage_is_gone_says_so_and_changes_nothing(client, task):
     host = BackendHost(client, *task)
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
-    cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+    cheese.run_platform_tool(
+        "cheese_doc", {"action": "set", "content": "本周交初稿。\n"}, host
+    )
 
     with pytest.raises(cheese.PlatformToolError) as refused:
         cheese.run_platform_tool(
-            "cheese_doc_edit", {"edits": [{"old": "下周", "new": "周五"}]}, host
+            "cheese_doc",
+            {"action": "edit", "edits": [{"old": "下周", "new": "周五"}]},
+            host,
         )
 
     assert "一处都没改" in str(refused.value)
-    assert "cheese_doc_get" in str(refused.value)
-    assert cheese.run_platform_tool("cheese_doc_get", {}, host) == "本周交初稿。\n"
+    assert "cheese_doc(action=get)" in str(refused.value)
+    assert (
+        cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+        == "本周交初稿。\n"
+    )
+
+
+def test_a_suggestion_that_cannot_be_made_is_not_sent_back_to_reread(client, task):
+    """Quoting the document again cannot turn a change a suggestion cannot
+    mark (a row added to a table) into one it can, so the refusal says what
+    can be done instead."""
+    host = BackendHost(client, *task)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+    cheese.run_platform_tool(
+        "cheese_doc", {"action": "set", "content": "本周交初稿。\n"}, host
+    )
+    client.collab.refuse_suggestions = True
+
+    with pytest.raises(cheese.PlatformToolError) as refused:
+        cheese.run_platform_tool(
+            "cheese_doc",
+            {
+                "action": "edit",
+                "edits": [{"old": "本周交初稿。", "new": "本周交初稿。\n\n下周评审。"}],
+                "suggest": True,
+            },
+            host,
+        )
+
+    said = str(refused.value)
+    assert "一处都没改" in said
+    assert "重读" not in said
+    assert "直接改" in said and "在对话里说" in said
+    assert (
+        cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+        == "本周交初稿。\n"
+    )
 
 
 def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
-    """`cheese_task` creates the task for the person who asked for it. Creating
+    """`cheese_task(action=open)` creates the task for the person who asked for it. Creating
     one needs no machine."""
     project, topic = room
     host = BackendHost(client, project, topic)
 
     said = cheese.run_platform_tool(
         "cheese_task",
-        {"title": "数据清洗", "summary": "按新口径", "owner": "alice"},
+        {"action": "open", "title": "数据清洗", "brief": "按新口径", "owner": "alice"},
         host,
     )
 
@@ -221,7 +270,7 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
 
 def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, room):
     """侧栏放不下的标题，后端拒绝、CLI 把平台原话交给 AI 改短。工具报的是
-    下一步怎么走（再调一次 `cheese_task`），不是一句「失败了」。"""
+    下一步怎么走（再调一次 `cheese_task(action=open)`），不是一句「失败了」。"""
     project, topic = room
     host = BackendHost(client, project, topic)
 
@@ -229,24 +278,25 @@ def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, ro
         cheese.run_platform_tool(
             "cheese_task",
             {
+                "action": "open",
                 "title": "把这一条过于冗长的任务标题改短到侧栏一行里放得下",
-                "summary": "按新口径",
+                "brief": "按新口径",
                 "owner": "alice",
             },
             host,
         )
 
     assert "48" in str(refused.value)
-    assert "cheese_task" in str(refused.value)
+    assert "cheese_task(action=open)" in str(refused.value)
     assert client.get(f"/topics/{topic}/tasks").json()["data"]["data"] == []
 
 
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("cheese_members", {}),
-        ("cheese_status", {}),
-        ("cheese_library_ls", {}),
+        ("cheese_room", {"action": "members"}),
+        ("cheese_session", {"action": "status"}),
+        ("cheese_library", {"action": "list"}),
     ],
 )
 def test_each_room_tool_is_accepted_by_the_backend(client, room, tool, arguments):
@@ -255,12 +305,14 @@ def test_each_room_tool_is_accepted_by_the_backend(client, room, tool, arguments
 
 
 def test_a_task_session_names_its_task(client, room):
-    """`cheese_title` names the task its session works in; a channel is named
+    """`cheese_room(action=rename)` names the task its session works in; a channel is named
     by whoever manages it, not by its AI teammate."""
     project, channel = room
     task = open_task(client, channel, "", owner="alice")["id"]
     host = BackendHost(client, project, task)
-    assert cheese.run_platform_tool("cheese_title", {"text": "推荐原型"}, host)
+    assert cheese.run_platform_tool(
+        "cheese_room", {"action": "rename", "text": "推荐原型"}, host
+    )
     assert client.get(f"/topics/{task}/task").json()["data"]["title"] == "推荐原型"
 
 
@@ -270,32 +322,44 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
     project, topic = room
     host = BackendHost(client, project, topic)
     host.headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project,
-            topic_id=topic,
-            agent_handle=room_agent_seat(client, topic),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project,
+                topic_id=topic,
+                agent_handle=room_agent_seat(client, topic),
+                access_scope='project',
+            )
+        }"
     }
 
     said = cheese.run_platform_tool(
-        "cheese_doc_new", {"title": "竞品定价对比", "content": "三家都有年付"}, host
+        "cheese_doc",
+        {"action": "new", "title": "竞品定价对比", "content": "三家都有年付"},
+        host,
     )
     document = said.split("编号 ", 1)[1].split("（", 1)[0]
-    assert "竞品定价对比" in cheese.run_platform_tool("cheese_doc_list", {}, host)
+    assert "竞品定价对比" in cheese.run_platform_tool(
+        "cheese_doc", {"action": "list"}, host
+    )
     cheese.run_platform_tool(
-        "cheese_doc_edit",
-        {"document": document, "edits": [{"old": "年付", "new": "年付折扣"}]},
+        "cheese_doc",
+        {
+            "action": "edit",
+            "document": document,
+            "edits": [{"old": "年付", "new": "年付折扣"}],
+        },
         host,
     )
 
     assert (
-        cheese.run_platform_tool("cheese_doc_get", {"document": document}, host)
+        cheese.run_platform_tool(
+            "cheese_doc", {"action": "get", "document": document}, host
+        )
         == "三家都有年付折扣"
     )
     # A channel has no living document of its own to have changed instead.
     with pytest.raises(cheese.PlatformHTTPError, match="channelHasNoDocument"):
-        cheese.run_platform_tool("cheese_doc_get", {}, host)
+        cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     lines = client.get(
         f"/topics/{topic}/blocks", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
@@ -321,16 +385,20 @@ def test_a_document_made_in_a_thread_is_shown_in_that_thread(client, room):
     ).json()["data"]["id"]
     host = BackendHost(client, project, thread)
     host.headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project,
-            topic_id=thread,
-            agent_handle=room_agent_seat(client, topic),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project,
+                topic_id=thread,
+                agent_handle=room_agent_seat(client, topic),
+                access_scope='project',
+            )
+        }"
     }
 
     cheese.run_platform_tool(
-        "cheese_doc_new", {"title": "竞品定价对比", "content": "三家都有年付"}, host
+        "cheese_doc",
+        {"action": "new", "title": "竞品定价对比", "content": "三家都有年付"},
+        host,
     )
 
     def lines(conversation):
@@ -357,19 +425,21 @@ def test_a_new_version_of_a_mini_app_is_what_the_document_then_shows(
     host = BackendHost(client, *task)
 
     made = cheese.run_platform_tool(
-        "cheese_app_save", {"code": "<p>第一版</p>", "title": "试算"}, host
+        "cheese_app", {"action": "save", "code": "<p>第一版</p>", "title": "试算"}, host
     )
     block = made[made.index(":::app") :].replace("一句话说明", "拖动看结果。")
     key = block.split()[1].split("@")[0]
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
-    cheese.run_platform_tool("cheese_doc_set", {"content": f"正文\n\n{block}\n"}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+    cheese.run_platform_tool(
+        "cheese_doc", {"action": "set", "content": f"正文\n\n{block}\n"}, host
+    )
 
     said = cheese.run_platform_tool(
-        "cheese_app_save", {"code": "<p>第二版</p>", "app": key}, host
+        "cheese_app", {"action": "save", "code": "<p>第二版</p>", "app": key}, host
     )
 
     assert "第 2 版" in said
-    shown = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    shown = cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     assert f":::app {key}@2 试算" in shown
     assert f"{key}@1" not in shown
 
@@ -380,24 +450,34 @@ def test_a_refused_edit_that_named_no_document_says_it_searched_this_ones(client
     one it meant unless the refusal says which document was searched."""
     project, _ = task
     host = BackendHost(client, *task)
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
-    cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
+    cheese.run_platform_tool(
+        "cheese_doc", {"action": "set", "content": "本周交初稿。\n"}, host
+    )
     made = cheese.run_platform_tool(
-        "cheese_doc_new", {"title": "处置表", "content": "PR #2996。\n"}, host
+        "cheese_doc",
+        {"action": "new", "title": "处置表", "content": "PR #2996。\n"},
+        host,
     )
     library = re.search(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", made).group(0)
 
     with pytest.raises(cheese.PlatformToolError) as unnamed:
         cheese.run_platform_tool(
-            "cheese_doc_edit", {"edits": [{"old": "PR #2996。", "new": "已合。"}]}, host
+            "cheese_doc",
+            {"action": "edit", "edits": [{"old": "PR #2996。", "new": "已合。"}]},
+            host,
         )
     assert "没给 document" in str(unnamed.value)
     assert "实况文档" in str(unnamed.value)
 
     with pytest.raises(cheese.PlatformToolError) as named:
         cheese.run_platform_tool(
-            "cheese_doc_edit",
-            {"document": library, "edits": [{"old": "不在文里", "new": "x"}]},
+            "cheese_doc",
+            {
+                "action": "edit",
+                "document": library,
+                "edits": [{"old": "不在文里", "new": "x"}],
+            },
             host,
         )
     assert "没给 document" not in str(named.value)

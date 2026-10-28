@@ -34,6 +34,7 @@ import { activityWeeks, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
+import { skillIcon } from '@/lib/skillIcons'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -154,6 +155,19 @@ const dmRoute = computed(() => {
   const own = typeof here.instance_handle === 'string' ? here.instance_handle : props.handle
   const peer = here.source === 'agent' ? agentDmKey(own) : props.handle
   return { name: 'workspace-dm', params: { projectId: props.projectId, peer } }
+})
+
+/** 他名下那几个 AI 队友里，handle 对得上这一个。—— 人没有「带的技能」。
+ *
+ *  只画名字，不画数字：几颗是这个人自己的事，资料页只回答「是哪些」。
+ *  也不画健康圆点：圆点得拿**项目**去探（`getSkillHealth(projectId, …)`），
+ *  资料页不为看一眼技能多发一遍探针。 */
+const carriedSkills = computed<string[]>(() => {
+  // 名册里的链接用的是座位名（`seat_handle`，如 `cheese-c6cf7aefd1d5`），而
+  // `/projects/{id}/agents` 的那份把两个名字都给了（`handle` 是 `cheese`）。对座位名
+  // 才认得出是哪一个 —— 对 `handle` 永远对不上，这一格就永远不亮。
+  const agent = (data.value?.agents ?? []).find((a) => a.seat_handle === props.handle)
+  return agent?.configuration.skills ?? []
 })
 </script>
 
@@ -313,6 +327,25 @@ const dmRoute = computed(() => {
                 t('users.profile.inProject.weekly', { count: inProject.weekly_contributions ?? 0 })
               }}</span>
             </header>
+            <!-- 带的技能：只有 AI 队友有名字可对。技能跟着人走，所以这一格挂在他身上，
+                 不是挂在房间上（见 `useAgentSkills`）。只读：编辑在项目设置里。 -->
+            <div
+              v-if="carriedSkills.length"
+              class="profile__card profile__card--pad profile__skills"
+              data-section="carried-skills"
+            >
+              <div class="profile__card-head">
+                <span class="t-eyebrow-read">{{ t('users.profile.inProject.skills') }}</span>
+              </div>
+              <ul class="profile__sockets">
+                <li v-for="name in carriedSkills" :key="name" class="profile__socket" :title="name">
+                  <span class="profile__socket-hole"
+                    ><v-icon size="18">{{ skillIcon(name) }}</v-icon></span
+                  >
+                  <span class="profile__socket-name">{{ name }}</span>
+                </li>
+              </ul>
+            </div>
             <div class="profile__pair">
               <!-- 收件箱只有本人打得开，别人的主页上这一格永远是空的，所以只在自己的页上画。 -->
               <div v-if="isSelf" class="profile__card profile__card--pad">

@@ -202,6 +202,10 @@ EVENT_FILE_EDITED: Final = "file_edited"
 #: 是改的人或 AI 队友；改的是一位 AI 队友的设置时，`meta.agent` 是它的 handle。
 #: 这一行就是这次改动的记录，没有另一张表。
 EVENT_SETTING_CHANGED: Final = "setting_changed"
+#: AI 队友的运行程序正在下载到一个人自己的电脑上（`machine/install_progress.py`）。
+#: 一台电脑在一段对话里只占一行，下载的进度原地更新，装好或停下时同一行改成结果
+#: （`meta.state`）。
+EVENT_EXECUTOR_INSTALL: Final = "executor_install"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_failure` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -271,6 +275,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MENTION_FUSED,
         EVENT_FILE_EDITED,
         EVENT_SETTING_CHANGED,
+        EVENT_EXECUTOR_INSTALL,
     }
 )
 

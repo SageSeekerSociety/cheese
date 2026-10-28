@@ -33,7 +33,9 @@ A browser showing the inbox feed holds a lighter connection of its own:
   is closed with 4401, which tells the page to ask for a new one.
 - It is sent ``{"kind": "inbox", "latest": <id> | null}``, the newest row in
   the person's inbox of any type, on opening and whenever that changes; the page
-  reads the rows itself. Nothing else is computed per wake — not the waiting
+  reads the rows itself. ``{"kind": "assistant", "conversation": <id>}`` says
+  one of the person's conversations with 芝士 said more, so a panel open on it
+  reads it again. Nothing else is computed per wake — not the waiting
   count the app's badge needs — because a browser has one open on every feed. A
   beat works as it does for the app.
 """
@@ -58,8 +60,10 @@ from app.common.auth import (
     get_current_session_id,
     verify_notice_token,
 )
+from app.core import credentials
 from app.core.errors import BadRequestError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.personal.service import AssistantConversations
 from app.domain.notification.live import (
     behind,
     latest_in_inbox,
@@ -118,8 +122,7 @@ async def _behind(chat: ChatService, user_id: int, cursor: int) -> bool:
 
 @router.websocket("/notifications/live")
 async def live(websocket: WebSocket, chat: ChatDep) -> None:
-    bearer = websocket.headers.get("authorization", "")
-    claims = verify_notice_token(bearer.removeprefix("Bearer ").strip())
+    claims = verify_notice_token(credentials.presented(websocket.headers))
     handle = await _signed_in(chat, *claims) if claims is not None else None
     if claims is None or handle is None:
         # Refused before the handshake completes: the app sees a 403 and waits
@@ -191,6 +194,13 @@ async def _latest(chat: ChatService, user_id: int) -> int | None:
         return await latest_in_inbox(db, user_id)
 
 
+async def _said_to(chat: ChatService, user_id: int) -> tuple | None:
+    """The newest message in the person's conversations with 芝士, and its
+    conversation."""
+    async with chat.session_factory() as db:
+        return await AssistantConversations(db).newest(user_id)
+
+
 async def _sign_in(
     websocket: WebSocket, chat: ChatService
 ) -> tuple[int, uuid.UUID] | None:
@@ -214,6 +224,7 @@ async def inbox(websocket: WebSocket, chat: ChatDep) -> None:
         user_id, sid = claims
         with listening(user_id, inbox=True) as woken:
             latest = await _latest(chat, user_id)
+            said = await _said_to(chat, user_id)
             await websocket.send_json({"kind": "inbox", "latest": latest})
             hung_up = asyncio.create_task(_until_closed(websocket))
             # A clock of its own, as in `live` above, so a busy connection is
@@ -240,10 +251,20 @@ async def inbox(websocket: WebSocket, chat: ChatDep) -> None:
                     # On a beat this is also the catch-up for a row the other
                     # backend slot committed during a deploy, which woke nobody here.
                     now = await _latest(chat, user_id)
-                    if now != latest:
+                    told = now != latest
+                    if told:
                         latest = now
                         await websocket.send_json({"kind": "inbox", "latest": latest})
-                    elif beat_round:
+                    # A conversation with 芝士 said more (an answer ended, a
+                    # routine ran): a panel open on it reads it again.
+                    newer = await _said_to(chat, user_id)
+                    if newer is not None and newer != said:
+                        said = newer
+                        told = True
+                        await websocket.send_json(
+                            {"kind": "assistant", "conversation": str(newer[1])}
+                        )
+                    if not told and beat_round:
                         await websocket.send_json({"kind": "beat"})
             finally:
                 hung_up.cancel()

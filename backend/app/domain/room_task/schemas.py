@@ -36,6 +36,8 @@ class TaskOut(BaseModel):
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
     created_by: str | None = None
+    # ``created_by``'s own 芝士 opened it for them.
+    created_by_assistant: bool = False
     branch_name: str | None = None
     base_branch: str | None = None
     base_task_id: uuid.UUID | None = None
@@ -71,10 +73,14 @@ class TaskOut(BaseModel):
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
+    # Attention includes people following the outcome, such as the reporter.
+    awaits_me: bool = False
+    # Whether the displayed next action is assigned to the caller.
+    needs_my_action: bool = False
 
 
 class ProgressIn(BaseModel):
-    """What the task's AI teammate reports (`cheese_task_state`)."""
+    """What the task's AI teammate reports (`cheese_task(action=state)`)."""
 
     state: TaskProgress
     note: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)

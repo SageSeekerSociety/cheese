@@ -106,6 +106,18 @@ const emptyLineHint = computed(() => JSON.stringify(t('work.room.doc.emptyLineHi
   text-decoration: line-through var(--danger);
   cursor: pointer;
 }
+/* 整块的建议：记号包在整块外面。要加的块、要删的块和改了类型的块，左边各有一道
+   竖线；字照上面的样子绿底或删除线。 */
+.doc-editor
+  :deep(.doc-suggestion:has(> :is(p, h1, h2, h3, h4, h5, h6, ul, ol, li, blockquote, pre, div, table, details, img))) {
+  display: block;
+  padding-left: 8px;
+  border-bottom: none;
+  border-left: 2px solid var(--ok);
+}
+.doc-editor :deep(del.doc-suggestion:has(> *)) {
+  border-left-color: var(--danger);
+}
 .doc-editor :deep(.doc-suggestion-focus) {
   outline: 2px solid color-mix(in srgb, var(--ok) 45%, transparent);
   outline-offset: 1px;

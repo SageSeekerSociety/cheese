@@ -56,7 +56,3 @@ task dev:sandbox      # 前台运行；Ctrl-C 停掉它起的服务
 「启动时」是从运行到打印端口，峰值都落在 `vite optimize` 跑完、迁移开始的那一两秒；「运行中」是之后 Vite 起来的头一分钟加上浏览那一趟，取两者大的那个；「闲置」是浏览之前那一分钟的最后 20 秒。预打包还放在开发服务器里的时候，同样的冷启动在 3 GiB 下运行中峰值 2698 MiB、闲置 2310 MiB,2.5 GiB 和 2 GiB 都在 Vite 预打包时被杀。3 GiB 下另起一个占住 512 MiB 的进程（顶替 agent 自己）再跑一遍，冷启动峰值 2265 MiB（含那 512 MiB），冷、热都没有被杀。
 
 冷启动的时间主要花在下载上（Postgres 和 pg_search 约 85 MB，加上 Python 和前端依赖），网速慢的机器会更久。装完以后家目录里：`backend/.venv` 537 MB、`frontend/node_modules` 1.1 GB（7.5 万个文件）、Postgres 安装 193 MB、数据 91 MB。
-
-## 唯一要自己补的:provider 凭据
-
-**别再花时间重新诊断它**:`test_market_api.py::test_market_lists_ai_and_compute_pools` 那一条红是缺环境,不是代码有 bug。一个 profile 的 `available` 是 `bool(auth_token or oauth_token)`（`app/domain/agent/profiles.py`）,所以 `settings.anthropic_auth_token` 没设时,默认 AI 池诚实地报告不可用。随便给个非空值就解决——`ANTHROPIC_AUTH_TOKEN=dummy-for-test uv run pytest tests/integration/test_market_api.py` 就绿了,过程中不会真去调 provider。

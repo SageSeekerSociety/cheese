@@ -25,6 +25,7 @@ from app.core.errors import NotFoundError
 from app.domain.agent.personal import people
 from app.domain.assistant import refs
 from app.domain.assistant.refs import Ref
+from app.domain.block.authorship import speaker
 from app.domain.block.queries import messages_page
 from app.domain.living_doc.services import Documents
 from app.domain.notification.preferences import local_time
@@ -68,6 +69,16 @@ class Reader:
     session: AsyncSession
     user_id: int
     timezone: str | None
+
+
+@dataclass(frozen=True)
+class Read:
+    """What a ref read: ``subject`` names it the way the person knows it
+    (「频道「综合」」), and is what 芝士's step shows in place of the ref;
+    ``text`` is it written out for 芝士."""
+
+    subject: str
+    text: str
 
 
 def _when(reader, moment) -> str:
@@ -138,7 +149,8 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
         if len(text) > MESSAGE_CHARS:
             text = text[:MESSAGE_CHARS] + "……"
         lines.append(
-            f"[{_when(reader, block.created_at)}] {named.of(block.author)}：{text}"
+            f"[{_when(reader, block.created_at)}] "
+            f"{speaker(block, named.of(block.author))}：{text}"
         )
     shown_from = total - (page - 1) * MESSAGES - len(rows) + 1
     head = (
@@ -148,7 +160,7 @@ async def _messages(reader: Reader, conversation_id: uuid.UUID, page: int) -> st
     return head + "\n" + "\n".join(lines) + more
 
 
-async def _channel(reader: Reader, access: Access, ref: Ref, page: int) -> str:
+async def _channel(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project, found = await _numbered(reader, ref, address.Numbered.channel)
     place = await access.topic(found.id)
     room = place.room
@@ -171,10 +183,10 @@ async def _channel(reader: Reader, access: Access, ref: Ref, page: int) -> str:
                 for t in tasks[:LISTED]
             ]
     lines.append(await _messages(reader, place.conversation_id, page))
-    return "\n".join(lines)
+    return Read(f"频道「{room.title}」", "\n".join(lines))
 
 
-async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> str:
+async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project, found = await _numbered(reader, ref, address.Numbered.task)
     place = await access.topic(found.id)
     task = place.task
@@ -191,11 +203,12 @@ async def _task(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     card = (await latest_cards_by_task(reader.session, [task.id])).get(task.id)
     if card is not None:
         lines.append(
-            f"审阅卡：{_STATUS.get(card.status, card.status)}，审阅人 "
-            f"{card.reviewer_handle or '未定'}；读：{refs.review(project.slug, found.number)}"
+            f"审阅：{_STATUS.get(card.status, card.status)}，由 "
+            f"{'、'.join(card.reviewer_handles) or '未定的人'} 审阅；"
+            f"读：{refs.review(project.slug, found.number)}"
         )
     lines.append(await _messages(reader, place.conversation_id, page))
-    return "\n".join(lines)
+    return Read(f"任务「{task.title}」", "\n".join(lines))
 
 
 _STATUS: dict[str, str] = {
@@ -221,17 +234,18 @@ def checks_of(card: AcceptCard) -> str:
     return ""
 
 
-async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
+async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project, found = await _numbered(reader, ref, address.Numbered.task)
     place = await access.topic(found.id)
     latest = (await latest_cards_by_task(reader.session, [found.id])).get(found.id)
+    subject = f"任务「{place.task.title}」的审阅"
     if latest is None:
-        return f"任务「{place.task.title}」还没有审阅卡。"
+        return Read(subject, f"任务「{place.task.title}」还没有提交审阅。")
     card = await reader.session.get(AcceptCard, latest.id)
     assert card is not None
     lines = [
-        f"任务「{place.task.title}」的审阅卡（{refs.review(project.slug, found.number)}）",
-        f"状态：{_STATUS.get(card.status, str(card.status))}；审阅人：{card.reviewer_handle}",
+        f"任务「{place.task.title}」的审阅（{refs.review(project.slug, found.number)}）",
+        f"状态：{_STATUS.get(card.status, str(card.status))}；由 {card.reviewer_handle} 审阅",
     ]
     if card.decided_by:
         lines.append(f"由 {card.decided_by} 于 {_when(reader, card.decided_at)} 决定")
@@ -254,12 +268,15 @@ async def _review(reader: Reader, access: Access, ref: Ref, page: int) -> str:
     if card.gate_output:
         lines.append("检查输出：\n" + card.gate_output)
     lines.append(
-        "采纳或退回用 cheese_review_decide；要看具体改了哪些文件，到任务页的「改动」。"
+        "采纳或退回用 cheese_card(action=decide)；要看具体改了哪些文件，到任务页的「改动」。"
     )
-    return _paged("\n".join(lines), refs.review(project.slug, found.number), page)
+    return Read(
+        subject,
+        _paged("\n".join(lines), refs.review(project.slug, found.number), page),
+    )
 
 
-async def _doc(reader: Reader, access: Access, ref: Ref, page: int) -> str:
+async def _doc(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project, found = await _numbered(reader, ref, address.Numbered.document)
     await access.document(found.id)
     doc = await Documents(reader.session).get(found.id)
@@ -267,10 +284,12 @@ async def _doc(reader: Reader, access: Access, ref: Ref, page: int) -> str:
         raise NotFoundError.for_resource("document", ref.number or 0)
     here = refs.doc(project.slug, found.number)
     head = f"文档《{doc.title or '未命名'}》（{here}），项目「{project.name}」\n"
-    return head + _paged(doc.content or "", here, page)
+    return Read(
+        f"文档《{doc.title or '未命名'}》", head + _paged(doc.content or "", here, page)
+    )
 
 
-async def _project(reader: Reader, access: Access, ref: Ref, page: int) -> str:
+async def _project(reader: Reader, access: Access, ref: Ref, page: int) -> Read:
     project = await _project_of(reader, ref.slug)
     await access.project(project.id)
     slug = project.slug
@@ -303,10 +322,10 @@ async def _project(reader: Reader, access: Access, ref: Ref, page: int) -> str:
         f"- 《{d.title or '未命名'}》（{refs.doc(slug, d.number)}）"
         for d in numbered[:LISTED]
     ]
-    return _paged("\n".join(lines), slug, page)
+    return Read(f"项目「{project.name}」", _paged("\n".join(lines), slug, page))
 
 
-Render = Callable[[Reader, Access, Ref, int], Awaitable[str]]
+Render = Callable[[Reader, Access, Ref, int], Awaitable[Read]]
 
 #: What each kind of ref reads as.
 KINDS: dict[str, Render] = {
@@ -318,7 +337,7 @@ KINDS: dict[str, Render] = {
 }
 
 
-async def read(reader: Reader, access: Access, ref: Ref, page: int = 1) -> str:
+async def read(reader: Reader, access: Access, ref: Ref, page: int = 1) -> Read:
     """The thing ``ref`` names, written out; raises not found for a kind this
     module does not read (the caller reads those elsewhere)."""
     render = KINDS.get(ref.kind)

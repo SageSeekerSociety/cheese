@@ -2,6 +2,7 @@
 import type { SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { DragGesture } from '@use-gesture/vanilla'
 
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
@@ -11,6 +12,7 @@ import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
+import { NARROW_PX } from '@/lib/previewNarrow'
 
 const props = withDefaults(
   defineProps<{
@@ -58,7 +60,7 @@ const ready = computed(() => !loading.value && !failure.value && count.value > 0
  *  松一档只会选出一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
-const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
+const showRail = computed(() => ready.value && !presenting.value && !narrow.value && (railOverride.value ?? true))
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
 let textGeneration = 0
@@ -167,13 +169,15 @@ async function askPage() {
   }
 }
 watch(
-  [current, revision, fit, size, sheet, presenting, ready],
+  [current, revision, fit, size, sheet, presenting, ready, narrow],
   () => {
     const host = sheet.value
     if (!host || !ready.value) return
+    // 窄处四周只留 8px：手机上一页本来就只有屏宽那么大，省下的边都给这一页。
+    const gutter = narrow.value && !presenting.value ? 16 : 32
     void paint(current.value, host, {
-      width: Math.max(32, size.value.width - 32),
-      height: fit.value || presenting.value ? Math.max(32, size.value.height - 32) : undefined,
+      width: Math.max(32, size.value.width - gutter),
+      height: fit.value || presenting.value ? Math.max(32, size.value.height - gutter) : undefined,
       text: true,
     })
   },
@@ -215,7 +219,7 @@ watch(
   () => {
     observer?.disconnect()
     observer = new ResizeObserver(() => {
-      narrow.value = (root.value?.clientWidth ?? 800) < 560
+      narrow.value = (root.value?.clientWidth ?? 800) < NARROW_PX
       if (stage.value) size.value = { width: stage.value.clientWidth, height: stage.value.clientHeight }
     })
     if (root.value) observer.observe(root.value)
@@ -223,8 +227,37 @@ watch(
   },
   { flush: 'post' }
 )
+// ---- 左右滑翻页 ----
+//
+// 手指横着拖，这一页跟着走；松手时甩得够快、或者拖过了三分之一页宽，就翻到下一页 / 上一页，
+// 不够就弹回原处。只认手指：鼠标在页上拖是在选字。竖着的滑动留给浏览器（`touch-action:
+// pan-y`），这一格比一页高的时候照样能上下滚。
+const dragX = ref(0)
+let swipe: DragGesture | null = null
+watch(
+  stage,
+  (el) => {
+    swipe?.destroy()
+    swipe = null
+    if (!el) return
+    swipe = new DragGesture(
+      el,
+      ({ active, movement: [mx], swipe: [sx], last }) => {
+        if (!ready.value) return
+        dragX.value = active ? mx : 0
+        if (!last) return
+        const page = sx ? -sx : Math.abs(mx) > el.clientWidth / 3 ? -Math.sign(mx) : 0
+        if (page) go(current.value + page)
+      },
+      { axis: 'x', filterTaps: true, pointer: { touch: true } }
+    )
+  },
+  { flush: 'post' }
+)
+
 onBeforeUnmount(() => {
   textGeneration += 1
+  swipe?.destroy()
   observer?.disconnect()
   if (sheet.value) cancelPaint(sheet.value)
   if (presenting.value && restoreFocus?.isConnected) restoreFocus.focus()
@@ -232,85 +265,101 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
-  <section
-    ref="root"
-    class="slides"
-    :class="{ 'slides--presenting': presenting }"
-    tabindex="0"
-    :aria-label="t('slides.reader')"
-    @keydown="keyboard"
-  >
-    <header class="slides__toolbar">
-      <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
-      <button v-if="ready && !presenting" type="button" :aria-pressed="showRail" @click="railOverride = !showRail">
-        {{ t('slides.thumbnails') }}
-      </button>
-      <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
-        {{ t('slides.previous') }}
-      </button>
-      <form class="slides__jump" @submit.prevent="jumpTo">
-        <input
-          v-model="jump"
-          type="number"
-          min="1"
-          :max="count || 1"
-          :disabled="!ready"
-          :aria-label="t('slides.pageNumber')"
-          @change="jumpTo"
-        />
-        <span class="t-meta" aria-live="polite">/ {{ count }}</span>
-      </form>
-      <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
-        {{ t('slides.next') }}
-      </button>
-      <button v-if="!presenting" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
-        {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
-      </button>
-      <button type="button" :disabled="!ready" @click="presentation">
-        {{ t(presenting ? 'slides.exit' : 'slides.present') }}
-      </button>
-      <button
-        v-if="context && !presenting"
-        type="button"
-        :disabled="!canAskPage || pageBusy"
-        :title="t('slides.wholePageHint')"
-        @click="askPage"
-      >
-        {{ t('slides.askPage') }}
-      </button>
-      <button v-if="canDownload && !presenting" type="button" @click="emit('download')">
-        {{ t('slides.download') }}
-      </button>
-    </header>
-    <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
-    <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
-      <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
-      <p v-if="problem" class="t-meta">{{ problem }}</p>
-    </div>
-    <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
-    <div v-else class="slides__body">
-      <SlideThumbRail
-        v-if="showRail"
-        :count="count"
-        :current="current"
-        :revision="revision"
-        :paint="paint"
-        :cancel-paint="cancelPaint"
-        @select="go"
-      />
-      <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
-      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
-      <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
-        <div ref="sheet" class="slides__sheet" :data-page="current" />
+  <!-- 放映时整块挪到 body 下：面板外面有两层带 view-transition-name 的容器（话题页、面板页签区），
+       它们各自成一个绘制层级，留在里面的话 z-index 再高也压不过侧栏和分隔线，左边被侧栏盖住、
+       中间透出分隔线。不放映时原地渲染。 -->
+  <Teleport to="body" :disabled="!presenting">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
+    <section
+      ref="root"
+      class="slides"
+      :class="{ 'slides--presenting': presenting, 'slides--narrow': narrow }"
+      tabindex="0"
+      :aria-label="t('slides.reader')"
+      @keydown="keyboard"
+    >
+      <header class="slides__toolbar">
+        <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
+        <button
+          v-if="ready && !presenting && !narrow"
+          type="button"
+          :aria-pressed="showRail"
+          @click="railOverride = !showRail"
+        >
+          {{ t('slides.thumbnails') }}
+        </button>
+        <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
+          {{ t('slides.previous') }}
+        </button>
+        <form class="slides__jump" @submit.prevent="jumpTo">
+          <input
+            v-model="jump"
+            type="number"
+            min="1"
+            :max="count || 1"
+            :disabled="!ready"
+            :aria-label="t('slides.pageNumber')"
+            @change="jumpTo"
+          />
+          <span class="t-meta" aria-live="polite">/ {{ count }}</span>
+        </form>
+        <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
+          {{ t('slides.next') }}
+        </button>
+        <button v-if="!presenting && !narrow" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
+          {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
+        </button>
+        <button type="button" :disabled="!ready" @click="presentation">
+          {{ t(presenting ? 'slides.exit' : 'slides.present') }}
+        </button>
+        <button
+          v-if="context && !presenting"
+          type="button"
+          :disabled="!canAskPage || pageBusy"
+          :title="t('slides.wholePageHint')"
+          @click="askPage"
+        >
+          {{ t('slides.askPage') }}
+        </button>
+        <button v-if="canDownload && !presenting" type="button" @click="emit('download')">
+          {{ t('slides.download') }}
+        </button>
+      </header>
+      <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
+      <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
+        <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
+        <p v-if="problem" class="t-meta">{{ problem }}</p>
       </div>
-    </div>
-    <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
-    <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
-      {{ problem || t('slides.rendererMissing') }}
-    </p>
-    <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
-  </section>
+      <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
+      <div v-else class="slides__body">
+        <SlideThumbRail
+          v-if="showRail"
+          :count="count"
+          :current="current"
+          :revision="revision"
+          :paint="paint"
+          :cancel-paint="cancelPaint"
+          @select="go"
+        />
+        <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
+        <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
+          <div
+            ref="sheet"
+            class="slides__sheet"
+            :class="{ 'is-dragging': dragX !== 0 }"
+            :data-page="current"
+            :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
+          />
+        </div>
+      </div>
+      <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
+      <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
+        {{ problem || t('slides.rendererMissing') }}
+      </p>
+      <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -331,7 +380,9 @@ onBeforeUnmount(() => {
 .slides--presenting {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay);
+  /* 挪到 body 下以后它和弹窗同在一层比高低：放在 Vuetify 弹窗下面一档，放映中按 ? 打开的
+     快捷键帮助、确认框这些照样盖在放映上面，而侧栏、分隔线都在它下面。 */
+  z-index: var(--z-overlay-below-vuetify);
   /* 放映是整屏的：顶上那条工具栏（上一页 / 页码 / 下一页 / 退出）钻进刘海。让出顶部
      安全区；底边不补，幻灯片照旧铺满——Home 横杠压在画面上是放映的常态。 */
   padding-top: env(safe-area-inset-top, 0px);
@@ -345,6 +396,13 @@ onBeforeUnmount(() => {
   padding: 8px;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
+}
+
+/* 只有放映（整层铺满窗口）那一档才要：这时工具栏第一颗按钮落在窗口左上角，桌面版
+   macOS 里要让开三颗窗口按钮（style.css 的 --window-buttons-inset，别处恒为 0）。
+   嵌在工作面板里的时候它在页面中间，不写这一条。 */
+.slides--presenting .slides__toolbar {
+  padding-left: max(8px, var(--window-buttons-inset));
 }
 .slides__title {
   min-width: 0;
@@ -404,6 +462,17 @@ onBeforeUnmount(() => {
   position: relative;
   flex: none;
   background: var(--surface);
+  /* 松手弹回原处时有个过程；跟着手指走的那一段不能有，否则一路慢半拍。 */
+  transition: transform var(--dur-quick) var(--ease-standard);
+}
+.slides__sheet.is-dragging {
+  transition: none;
+}
+/* 窄处：一页铺满宽度，四周只留 8px；横着滑归翻页，竖着滑照旧滚。缩略图和「适合页面」
+   不摆——一栏缩略图在手机上要占掉三分之一屏，而一页本来就是按宽度铺的。 */
+.slides--narrow .slides__stage {
+  padding: 8px;
+  touch-action: pan-y;
 }
 .slides__state {
   padding: 32px 16px;

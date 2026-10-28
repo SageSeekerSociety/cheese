@@ -9,9 +9,8 @@ binding — never from a column or a hard-coded handle check.
 the fallback identity only; every topic's 分身 gets its OWN row, handle
 ``cheese-<topic hex>``, so an action is attributable to the 分身 that took it and
 a single 分身 can be de-authorized (drop it from the topic roster) without waiting
-for its token to expire. This mirrors the device-screen agent (一个 agent 是一个
-屏幕, ``app.domain.agent.device_attribution``): identity per execution context,
-not one collapsed platform account.
+for its token to expire: identity per execution context, not one collapsed
+platform account.
 
 Display collapses even though identity forks: every agent user carries a profile
 whose nickname is 芝士, so the UI keeps showing one familiar name while the audit

@@ -119,8 +119,8 @@ jobs:
   acceptance:
     runs-on: ubuntu-latest
     env:
-      ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:c45b38e7be6089a2a9830460ba5d2028e62c505a00d614ac452080ba72eafcbd
-      ACCEPTANCE_OWNER_REVISION: 071a67fc6eba30d63e8746bfb13ffd7c83587099
+      ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:48f693df661a2569cfdbdf260476973c710837fbdd138f5e50834c762ea86467
+      ACCEPTANCE_OWNER_REVISION: 151b1cf7226a6874d720b1008ebbb1f6d9038f9e
       ACCEPTANCE_COMMIT: ${{ github.sha }}
     permissions:
       contents: read
@@ -194,7 +194,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: test-openai-key
           ANTHROPIC_AUTH_TOKEN: test-anthropic-token
-        # Use the deployed team-owned owner with the schema after lending removal.
+        # The owner released with #4915, which reads every credential as a bearer.
         # Extract its connector too: the owner checks binary digests and updates mismatches.
         run: |
           backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py \

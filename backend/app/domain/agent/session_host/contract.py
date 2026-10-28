@@ -117,6 +117,13 @@ class SessionSpec:
     #: The tool table's tools it has (`sandbox/cheese`), by name; None is all
     #: of them.
     tools: tuple[str, ...] | None = None
+    #: With ``tools`` and an execution target: whether the session works on
+    #: the target with its harness's own tools, commands included, rather
+    #: than only reading it. A person's 芝士 in its own sandbox.
+    works: bool = False
+    #: With ``tools``: whether it may hand parts of its work to branches of
+    #: its own (`Agent`, `SendMessage`, `TaskStop`; a person's 芝士).
+    branches: bool = False
     #: None is the session host's own limits.
     footprint: Footprint | None = None
     #: How long it may sit idle before it exits; None is the runner's own.
@@ -210,6 +217,18 @@ class Prompt:
 
 
 @dataclass(frozen=True)
+class Ending:
+    """How one work of a runner ended, as its ping says."""
+
+    work: str
+    #: It ended in a failure (any typed failure: the model service's, the
+    #: runner's own clocks, an interrupt).
+    failed: bool
+    #: The platform's inputs it read, by input id.
+    inputs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SessionStatus:
     """A running session, as its runner says it is now."""
 
@@ -224,10 +243,19 @@ class SessionStatus:
     #: The machine answered that this session's runner is not there at all
     #: (``host.attach``). Its process is gone with it.
     runner_gone: bool = False
-    #: The runner speaks an earlier protocol than this release reads: one the
-    #: previous release started (``host.attach``). It is not read; the next
-    #: start replaces it, resuming its conversation.
+    #: The runner speaks another lifecycle protocol than this release reads:
+    #: one another release started (``host.attach``). It is not read and given
+    #: nothing; the room replaces it once it is idle (``room.sessions.lifecycle``),
+    #: resuming its conversation.
     outdated: bool = False
+    #: The registration the runner holds (its ping's ``worker_epoch``): what a
+    #: call this process makes without registering it carries.
+    epoch: int = 0
+    #: Which start of the runner answered (its ping's ``launch``).
+    launch: str | None = None
+    #: How the runner's last few works ended (its ping's ``endings``): how a
+    #: runner this release does not read says what its work came to.
+    endings: tuple[Ending, ...] = ()
 
 
 class InputUnconfirmed(SessionError):

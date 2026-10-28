@@ -14,6 +14,7 @@ from tests.integration.conftest import (
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.session_records import assistant_texts, records, wait_for_record
@@ -68,6 +69,33 @@ def test_calling_cheese_in_the_main_line_runs_in_that_messages_thread(
 
     assert asyncio.run(replied_to()) == asked["id"]
     assert records(client, room) == []
+
+
+def _until(ws, predicate) -> dict:
+    """读到第一条满足 ``predicate`` 的帧（它之前的都丢掉）。"""
+    while True:
+        frame = ws.receive_json()
+        if predicate(frame):
+            return frame
+
+
+def test_the_main_line_is_told_it_is_answering_the_moment_the_thread_opens(client):
+    """@ 芝士 在频道主线上：房间会收到「有人在答」，答在哪儿也说得准。
+
+    从一次真的发出（`receive_message` 解析出点名的是哪个席位、把消息落进哪条
+    支线）走到房间那一帧，整条线在这儿锁住 —— 席位解析错了就一条支线都开不
+    起来，这一帧也就永远不来。
+    """
+    _project, room = _channel(client)
+    with room_socket(client, room, "alice") as ws:
+        asked = post_message(
+            client, room, "alice", {"content": "@芝士 首页要改哪些地方？"}
+        )
+        heard = _until(ws, lambda f: f["type"] == "thread_activity" and f["active"])
+    # 谁在答：芝士坐的那个席位。答在哪儿：这条消息的支线（`_open` 是幂等的，
+    # 拿回来的就是它）。
+    assert heard["member"]
+    assert heard["thread_id"] == _open(client, asked["id"])["id"]
 
 
 def test_the_main_line_shows_how_a_thread_grew(client):
@@ -148,7 +176,7 @@ def test_new_replies_are_news_only_to_the_people_who_took_part(client):
     def unread_for(handle: str) -> bool:
         r = client.get(f"/topics/{room}/threads", headers=session_auth_headers(handle))
         assert r.status_code == 200, r.text
-        (row,) = r.json()["data"]
+        (row,) = r.json()["data"]["open"]
         assert row["reply_count"] == 1
         return row["unread"]
 

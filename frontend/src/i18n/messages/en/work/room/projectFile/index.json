@@ -1,5 +1,6 @@
 {
   "current": "Project's current version · Read-only",
   "inTask": "View it in the task \"{title}\"",
-  "missing": "This file isn't in the project's current version"
+  "missing": "This file isn't in the project's current version",
+  "room": "This channel's file · Read-only"
 }

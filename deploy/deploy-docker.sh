@@ -30,8 +30,10 @@
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE, FRONTEND_IMAGE and COLLAB_IMAGE must name
 #                      existing images.
-#   DEPLOY_PULL_ATTEMPTS         how many times to try each pull   (default 3)
-#   DEPLOY_PULL_BACKOFF_SECONDS  waits between pull attempts       (default "5 15")
+#   DEPLOY_PULL_BUDGET_SECONDS   how long the pulls keep being retried, counted
+#                                from the first pull (default 600; see
+#                                registry-retry.sh)
+#   DEPLOY_PULL_BACKOFF_CAP_SECONDS  the longest wait between attempts (default 30)
 #   CI_POSTGRES_IMAGE / CI_REDIS_IMAGE  pinned refs to protect from image
 #                      prune, see retain_ci_service_images() below (defaults
 #                      match test.yml/e2e.yml `services:`)
@@ -58,16 +60,6 @@ HEALTH_INTERVAL_SECONDS="${DEPLOY_HEALTH_INTERVAL_SECONDS:-3}"
 # "owner never becomes healthy" path without waiting the real minute.
 OWNER_HEALTH_SECONDS="${DEPLOY_OWNER_HEALTH_SECONDS:-60}"
 APP_IMAGE_SOURCE="${DEPLOY_APP_IMAGE_SOURCE:-registry}"
-# Three attempts, 5s then 15s apart. A pull dies here for transient reasons far
-# more often than for real ones — a ghcr blip, or containerd failing to commit a
-# downloaded layer because its ingest file vanished mid-pull (Deploy run #174,
-# 2026-08-09: `rename …/ingest/…/data -> …/blobs/sha256/…: no such file or
-# directory`). A fresh pull opens a NEW ingest record rather than re-committing
-# the broken one, so a retry clears exactly that class of failure. The 20s total
-# is deliberately small: a genuinely unavailable image must still fail this
-# deploy quickly instead of holding the box's single shared runner.
-PULL_ATTEMPTS="${DEPLOY_PULL_ATTEMPTS:-3}"
-PULL_BACKOFF_SECONDS="${DEPLOY_PULL_BACKOFF_SECONDS:-5 15}"
 # This box's only runner also serves test.yml/e2e.yml, whose `services:`
 # postgres/redis images are pulled straight by Docker for the job and belong
 # to no container once it ends — `docker image prune -af` below reclaims them
@@ -665,27 +657,20 @@ if [ -n "${ACTIVE_BACKEND_DIR:-}" ] && [ -n "${ACTIVE_FRONTEND_DIR:-}" ]; then
     || fail "FRONTEND_PORT_DIRECT='${FRONTEND_PORT_DIRECT}' is not a port, ip:port or [ipv6]:port app-router can listen on; nothing was changed"
 fi
 
-if [ "${CHEESE_CENTRAL_SESSION_HOST:-}" = "1" ] && {
-  ! command -v fusermount >/dev/null || ! ldconfig -p | grep 'libfuse.so.2 ' >/dev/null
-}; then
-  log "installing central-session FUSE runtime"
-  (
-    . /etc/os-release
-    [ -n "${VERSION_CODENAME:-}" ] || fail "/etc/os-release has no VERSION_CODENAME"
-    fuse_apt_source="$(mktemp)"
-    trap 'rm -f "$fuse_apt_source"' EXIT
-    chmod 0644 "$fuse_apt_source"
-    printf '%s\n' \
-      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/debian $VERSION_CODENAME main" \
-      > "$fuse_apt_source"
-    fuse_apt_options=(
-      -o "Dir::Etc::sourcelist=$fuse_apt_source"
-      -o "Dir::Etc::sourceparts=-"
-    )
-    sudo apt-get "${fuse_apt_options[@]}" update -qq
-    sudo apt-get "${fuse_apt_options[@]}" install -y -qq fuse libfuse2
-  )
-fi
+# A room's transcript view is mounted on the machine its tools run on, not
+# here: this box is the session host, and the executor for an ordinary room is
+# a pool host the platform provisions. That machine gets FUSE the way it gets
+# everything else — cheesehost places the library the executor loads by path
+# (`cli/internal/devenv`, the `fuse-runtime` pin in `agent/toolchain.py`) and
+# the executor writes the one line `/etc/fuse.conf` needs, as root, only where
+# the platform owns the machine (`bootstrap.fuse_is_mountable`). Nothing is
+# installed here, and nothing is installed on a machine a person enrolled.
+#
+# This block used to `apt-get install fuse libfuse2` on the central session
+# host. It never took effect: the view is not mounted on this machine. It is
+# left as a comment rather than deleted silently, because the two lines it
+# wrote — the packages and `user_allow_other` — moved, and the next person to
+# look for them will look here.
 
 [ -f "$COMPOSE" ] || fail "compose file not found: $COMPOSE"
 
@@ -827,9 +812,21 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
   _slot_args=(-f "$SLOTS_OVERLAY")
 fi
 
-case "$PULL_ATTEMPTS" in
-  ''|*[!0-9]*|0) fail "DEPLOY_PULL_ATTEMPTS must be a positive integer (got: '$PULL_ATTEMPTS')" ;;
-esac
+# The pull budget, its backoff and retry_pull, shared with ghcr-login.sh.
+. "$HERE/registry-retry.sh"
+
+# What retry_pull does before retrying a pull that failed on a full disk.
+# Idempotent and safe on a live box: prune only removes what nothing
+# references. Deliberately NOT touching containerd's ingest area, stopping
+# dockerd, or killing containers — a failed retry is recoverable, a wedged
+# box is not.
+reclaim_before_pull_retry() {
+  if [ "$APP_IMAGE_SOURCE" = registry ]; then
+    reclaim_docker_disk "before pull retry" true
+  else
+    reclaim_docker_disk "before pull retry" false
+  fi
+}
 
 # Disk watermark around every pull and every reclaim. Triaging the 2026-08-09
 # pull failures from CI was impossible because the deploy log carried no disk
@@ -939,57 +936,6 @@ on_exit() {
     fi
   fi
   exit "$rc"
-}
-
-# Backoff for the Nth failed attempt; the last configured value repeats if there
-# are more attempts than delays.
-pull_backoff_delay() {
-  local attempt="$1" i=0 delay=0 candidate
-  for candidate in $PULL_BACKOFF_SECONDS; do
-    i=$((i + 1))
-    delay="$candidate"
-    [ "$i" -ge "$attempt" ] && break
-  done
-  printf '%s' "$delay"
-}
-
-# retry_pull <description> <command…>
-#
-# Keeps `set -euo pipefail` semantics intact: failures are captured explicitly
-# rather than swallowed, and once the attempts are spent this still calls fail(),
-# so the deploy exits non-zero exactly as it did before. The docker output of
-# each attempt streams to the deploy log as it happens (capturing it would kill
-# the progress lines that made the #174 stall diagnosable), so the summary names
-# the attempts and their exit codes and points at that output.
-retry_pull() {
-  local what="$1"
-  shift
-  local attempt=1 rc=0 delay errors=""
-  while :; do
-    rc=0
-    "$@" || rc=$?
-    if [ "$rc" -eq 0 ]; then
-      [ "$attempt" -eq 1 ] || log "$what: succeeded on attempt $attempt/$PULL_ATTEMPTS"
-      return 0
-    fi
-    errors="${errors:+$errors; }attempt $attempt exited $rc"
-    log_disk "$what failed, attempt $attempt"
-    [ "$attempt" -lt "$PULL_ATTEMPTS" ] || break
-    delay="$(pull_backoff_delay "$attempt")"
-    log "$what: attempt $attempt/$PULL_ATTEMPTS failed (exit $rc); reclaiming disk, retrying in ${delay}s"
-    # Idempotent and safe on a live box: prune only removes what nothing
-    # references. Deliberately NOT touching containerd's ingest area, stopping
-    # dockerd, or killing containers — a failed retry is recoverable, a wedged
-    # box is not.
-    if [ "$APP_IMAGE_SOURCE" = registry ]; then
-      reclaim_docker_disk "before pull retry" true
-    else
-      reclaim_docker_disk "before pull retry" false
-    fi
-    sleep "$delay"
-    attempt=$((attempt + 1))
-  done
-  fail "$what failed after $PULL_ATTEMPTS attempts ($errors); see each attempt's docker output above for the underlying error"
 }
 
 # Capture the exact currently-running images so rollback also works when an
@@ -1600,6 +1546,59 @@ wait_for_frontend() {
   return 1
 }
 
+# ---- Functional smoke test of the new slots, before the switch ----
+# /readyz says the new backend can serve, not that anyone can sign in, open a
+# task or hear from the server. So the new slots are used the way a person
+# uses them (deploy/release-smoke.py: the sign-in route, /users/me, the smoke
+# account's own task, the inbox WebSocket, sign-out, the frontend's index and
+# one hashed script), on their loopback ports, before app-router sends them
+# anything. A failure leaves app-router, and the slots serving, as they were.
+#
+# Before the switch and not after it: everything checked is served by the new
+# slots themselves, and the only thing the switch changes is the upstream line
+# app-router reads, which the routed /readyz after rollout_app already probes.
+# A check after the switch could only fail into a rollback, a second switch.
+#
+# The account is the deploy's own and has no password: `provision` finds or
+# makes it in this release's image and opens a session for it, which reaches
+# `check` through the environment and never the log. A password sign-in would
+# let anyone who sends that handle wrong passwords hold every release back
+# (deploy/release-smoke.py says why). Only boxes with app-router slots get
+# here; the others (prod, etrip) never create the account.
+#
+# A rollback returns to the release that served before this one, and is not
+# held back by a smoke test of it.
+SMOKE_RELEASE=true
+# $1 the new backend's port, $2 the new frontend's ('' when it is not rolled).
+smoke_release() {
+  local backend_port="$1" frontend_port="$2" image out session line rc=0
+  local DEPLOY_SMOKE_USER_ID="" DEPLOY_SMOKE_TOKEN="" DEPLOY_SMOKE_REFRESH=""
+  if [ "$SMOKE_RELEASE" != true ]; then
+    log "smoke: not run for a rollback; that release served before this one"
+    return 0
+  fi
+  image="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$IMAGE_TAG}"
+  log "smoke: checking the new slots before the switch (backend :$backend_port${frontend_port:+, frontend :$frontend_port})"
+  out="$(dc run --rm --no-deps -T backend python - provision < "$HERE/release-smoke.py" 2>&1)" || rc=$?
+  # The session line carries its tokens: it is kept out of the log.
+  printf '%s\n' "$out" | { grep -v '^smoke-session ' || true; } | while IFS= read -r line; do log "  $line"; done
+  [ "$rc" = 0 ] || return "$rc"
+  session="$(printf '%s\n' "$out" | sed -n 's/^smoke-session //p' | tail -n 1)"
+  read -r DEPLOY_SMOKE_USER_ID DEPLOY_SMOKE_TOKEN DEPLOY_SMOKE_REFRESH <<< "$session" || true
+  if [ -z "${DEPLOY_SMOKE_REFRESH:-}" ]; then
+    log "  smoke provision FAILED it opened no session"
+    return 1
+  fi
+  # The tokens travel in the environment, never on a command line.
+  DEPLOY_SMOKE_USER_ID="$DEPLOY_SMOKE_USER_ID" DEPLOY_SMOKE_TOKEN="$DEPLOY_SMOKE_TOKEN" \
+    DEPLOY_SMOKE_REFRESH="$DEPLOY_SMOKE_REFRESH" docker run --rm -i --network host \
+    -e DEPLOY_SMOKE_USER_ID -e DEPLOY_SMOKE_TOKEN -e DEPLOY_SMOKE_REFRESH "$image" python - check \
+    --backend "http://127.0.0.1:$backend_port" \
+    ${frontend_port:+--frontend "http://127.0.0.1:$frontend_port"} < "$HERE/release-smoke.py" 2>&1 \
+    | while IFS= read -r line; do log "  $line"; done || rc=$?
+  return "$rc"
+}
+
 rollout_app() {
   local backend_from backend_to backend_port old_backend old_backend_port handover switched_at
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
@@ -1641,6 +1640,15 @@ rollout_app() {
       dc rm -f -s "$backend_to" "$frontend_to" >/dev/null 2>&1 || true
       fail "next frontend ($frontend_to) is unhealthy; the running backend and frontend were not touched"
     fi
+  fi
+  if ! smoke_release "$backend_port" "$frontend_port"; then
+    dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
+    # The first forge migration stops the backends a release replaces
+    # (migrate_project_repositories): then nothing serves until one passes.
+    if [ -z "$old_backend" ] || [ "$(docker inspect --format '{{.State.Running}}' "$old_backend" 2>/dev/null)" != true ]; then
+      fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; $backend_from is not running (the repository migration stops it), so no backend serves until a release passes"
+    fi
+    fail "the new slots failed the smoke test (the FAILED line above names the check) and were removed; app-router was not switched and still points at $backend_from${frontend_from:+ and $frontend_from}"
   fi
 
   local ports_now=false
@@ -1728,6 +1736,7 @@ if [ -n "$ACTIVE_BACKEND_DIR" ]; then
     dc up -d --no-deps frontend || fail "compose up frontend failed"
   fi
 else
+  log "smoke: skipped, this box has no app-router slots (ACTIVE_BACKEND_DIR unset) to check a release on before it serves"
   log "bringing up backend + frontend…"
   # The frontend waits on the backend's healthcheck, which is /readyz, so a
   # build that never becomes ready makes this `up` fail. Leave that verdict to
@@ -1863,6 +1872,7 @@ if [ "$code" != ok ]; then
         export COLLAB_IMAGE
         write_slots_overlay
         MODEL_STREAM_GRACE_SECONDS="$ROLLBACK_MODEL_STREAM_GRACE_SECONDS"
+        SMOKE_RELEASE=false
         # A subshell does not run the script's exit trap.
         trap 'retire_old_backend now "the rollback did not complete"' EXIT
         rollout_app

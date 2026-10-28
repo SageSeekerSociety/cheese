@@ -58,11 +58,15 @@ pub async fn install_connector(
     let _ = std::fs::remove_file(&partial);
     let url = format!("{origin}/connector/latest/windows-{arch}/cheesehost.exe");
     // A download cut mid-transfer resumes (-C -) instead of failing the
-    // install, as the server's install.sh and install.ps1 do.
+    // install, as the server's install.sh and install.ps1 do. Accept-Encoding
+    // names the packed copy by hand instead of curl's --compressed, which
+    // decodes as it goes: the file on disk stays a gzip stream, so a resumed
+    // range still lands on the same file, and unpack below hands over the
+    // bytes the machine runs.
     let mut attempt = 1;
     loop {
         let mut cmd = Command::new("curl.exe");
-        cmd.args(["-fSL", "-#", "-C", "-", "-o"])
+        cmd.args(["-fSL", "-#", "-C", "-", "-H", "Accept-Encoding: gzip", "-o"])
             .arg(&partial)
             .arg(&url)
             .creation_flags(CREATE_NO_WINDOW);
@@ -77,7 +81,14 @@ pub async fn install_connector(
         attempt += 1;
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    std::fs::rename(&partial, &path).map_err(|e| e.to_string())
+    // The gzip magic says which copy arrived, not a header: a resumed
+    // transfer's own response may not repeat Content-Encoding, and the file
+    // assembled across attempts is what gets unpacked.
+    if crate::packed::is_gzip(&partial)? {
+        crate::packed::unpack(&partial, &path).map_err(|e| e.to_string())
+    } else {
+        std::fs::rename(&partial, &path).map_err(|e| e.to_string())
+    }
 }
 
 pub async fn prepare(_resources: &Path, _events: &Events<'_>, _running: &Running) -> Result<(), Failure> {

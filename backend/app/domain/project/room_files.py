@@ -55,7 +55,7 @@ from app.core.sentences import say
 from app.domain.notice_meta import (
     EVENT_LIBRARY_SAVED,
     SEVERITY_INFO,
-    WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.project.models import RoomFileRevision
@@ -114,7 +114,8 @@ async def save_to_library(
         meta=notice(
             EVENT_LIBRARY_SAVED,
             severity=SEVERITY_INFO,
-            who=WHO_HUMAN,
+            # 一个人已经存好了，没有谁要再动手：不是「等人处理」那一档。
+            who=WHO_PLATFORM,
             detail=say("librarySavedDetail", actor=by, file=leaf),
             detail_label=say("labelSaveToLibrary"),
         ),
@@ -437,11 +438,21 @@ ARTIFACT_MIME = {
     "jpg": "image/jpeg",
     "gif": "image/gif",
     "webp": "image/webp",
+    # Source code and plain text. The preview draws them with line numbers and
+    # highlighting from the extension (frontend `lib/fileKind.ts`); what the
+    # content domain sends is the bytes as text, never as a page to run.
+    "text": "text/plain",
     # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
     # lives on, reached over the preview tunnel that machine dialled out. HOW to
     # run it — and on which port — is the agent's judgment; the platform only
     # carries what answers there.
     "app": "application/x-cheesex-app",
+    # MCP Apps: the artifact points at a THIRD party's HTML View, a `ui://`
+    # resource on a remote MCP server the project declares. Its ``content`` is a
+    # JSON pointer ``{server, uri}`` (see ``app.domain.remote_mcp.apps``); the
+    # platform fetches the bytes through that server's connection, never from a
+    # room file, and the preview host serves them under a stricter policy.
+    "mcp-app": "text/html;profile=mcp-app",
 }
 
 #: Which artifact kind a filename implies, when the caller named none.
@@ -467,6 +478,54 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".jpeg": "jpg",
     ".gif": "gif",
     ".webp": "webp",
+    # Source code and plain text: the same suffixes the frontend draws with its
+    # code viewer (`lib/fileKind.ts`, CODE_TYPES). Before this they fell through
+    # to html and a `.py` reached the content domain as a page.
+    ".py": "text",
+    ".pyi": "text",
+    ".js": "text",
+    ".mjs": "text",
+    ".cjs": "text",
+    ".jsx": "text",
+    ".ts": "text",
+    ".mts": "text",
+    ".cts": "text",
+    ".tsx": "text",
+    ".vue": "text",
+    ".java": "text",
+    ".kt": "text",
+    ".c": "text",
+    ".h": "text",
+    ".cpp": "text",
+    ".cc": "text",
+    ".cxx": "text",
+    ".hpp": "text",
+    ".hh": "text",
+    ".cs": "text",
+    ".go": "text",
+    ".rs": "text",
+    ".rb": "text",
+    ".php": "text",
+    ".swift": "text",
+    ".lua": "text",
+    ".r": "text",
+    ".sh": "text",
+    ".bash": "text",
+    ".zsh": "text",
+    ".json": "text",
+    ".yaml": "text",
+    ".yml": "text",
+    ".toml": "text",
+    ".ini": "text",
+    ".sql": "text",
+    ".css": "text",
+    ".scss": "text",
+    ".less": "text",
+    ".xml": "text",
+    ".diff": "text",
+    ".patch": "text",
+    ".txt": "text",
+    ".log": "text",
 }
 
 

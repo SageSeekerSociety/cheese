@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 任务页顶上那一行：这个任务是从哪句话来的。引的是那句原话（谁说的、在哪说的、什么
 // 时候），点它就回到那段对话、停在那一条上。自己新建的任务没有这句话，就照实说是谁
-// 新建的；AI 队友建的而平台没记下它在回哪句话，也照实说没记下，不拿别的话顶替。
+// 新建的（他自己的芝士替他建的，也照实说）；AI 队友建的而平台没记下它在回哪句话，也照实说
+// 没记下，不拿别的话顶替。
 import type { RoomTask } from '@/cx_types'
 import type { TaskSource } from '@/types/taskOrigin'
 
@@ -40,6 +41,7 @@ const quote = computed(() => {
 const madeHere = computed(() => {
   const by = props.task.created_by
   if (!by) return t('work.task.source.unknown')
+  if (props.task.created_by_assistant) return t('work.task.source.byAssistant', { name: nameOf(by) })
   return isAgentHandle(by)
     ? t('work.task.source.byAgent', { name: nameOf(by) })
     : t('work.task.source.byPerson', { name: nameOf(by) })

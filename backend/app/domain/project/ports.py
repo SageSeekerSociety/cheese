@@ -66,6 +66,7 @@ class DefaultTeammate(Protocol):
         *,
         display_name: str | None = None,
         type_name: str | None = None,
+        pack_prompt: str | None = None,
     ) -> None: ...
 
 
@@ -183,7 +184,7 @@ class LibraryFiles(Protocol):
 
     ``stored`` 交回的是一串 ``(名字, 存储, 键)``，不是 ``LibraryFileRecord``：搬字节
     发生在事务结束之后、别人的域里（导出），本包只拿这三样，键读回字节再叫
-    ``read_blob``。
+    ``save_blob``。
     """
 
     async def add(
@@ -206,8 +207,9 @@ class LibraryFiles(Protocol):
         """这个项目库里每一份的名字、存储和键。"""
         ...
 
-    async def read_blob(self, location: str, key: str) -> bytes:
-        """那双 ``(存储, 键)`` 底下的字节。"""
+    async def save_blob(self, location: str, key: str, target: Path) -> None:
+        """那双 ``(存储, 键)`` 底下的字节写进 ``target``，一段一段地写，不整份进
+        内存。"""
         ...
 
 
@@ -251,6 +253,18 @@ class TaskBrief:
 
 
 @dataclass(frozen=True)
+class StarterSource:
+    """领题这一刻的起始代码：题目资料库里那一行的 id，题目第几版，第一个提交怎么写。
+
+    只记是哪一份，不取字节：解开、推送在领题提交之后另做
+    （`app.domain.project.models.ProjectStarterPush`）。"""
+
+    library_file_id: uuid.UUID
+    revision: int
+    message: str
+
+
+@dataclass(frozen=True)
 class Claim:
     """一条赛题报名：谁报的、是不是小队、审过没有。
 
@@ -275,6 +289,10 @@ class AcceptedTerms:
 
     default_role: str | None
     compute_credits: float
+    #: The 资源包's prompt, appended to the default teammate's persona until the
+    #: contract migration after b7d4e1a9c2f3 moves it into the guidance (that
+    #: migration's PR removes it).
+    pack_prompt: str | None = None
 
 
 class TaskTerms(Protocol):
@@ -305,6 +323,10 @@ class TaskTerms(Protocol):
 
     async def terms(self, task_id: int) -> AcceptedTerms:
         """这道赛题审过之后要落的条款。"""
+        ...
+
+    async def starter(self, task_id: int) -> StarterSource | None:
+        """这道题此刻的起始代码是哪一份（#4767 第二节）；没有、题已经没了给 ``None``。"""
         ...
 
 

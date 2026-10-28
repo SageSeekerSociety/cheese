@@ -79,6 +79,7 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [] } as never)
   vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({ applications: [] } as never)
+  vi.mocked(TeamsApi.listTeamInvitations).mockResolvedValue({ invitations: [] } as never)
   // 默认「点了确定」：取消那一格在下面的用例里单独摆。
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
@@ -111,13 +112,13 @@ function mount(overrides: Partial<Team>) {
 describe('who manages the team link', () => {
   it('an admin who is not among the listed examples', async () => {
     mount({ role: 'ADMIN' })
-    await screen.findByText('团队地址与加入')
+    await screen.findByText('加入方式')
   })
 
   it('not an ordinary member', async () => {
     mount({ role: 'MEMBER' })
-    await waitFor(() => screen.getByText('成员列表'))
-    expect(screen.queryByText('团队地址与加入')).toBeNull()
+    await screen.findByRole('heading', { level: 2, name: '成员' })
+    expect(screen.queryByText('加入方式')).toBeNull()
   })
 })
 
@@ -127,29 +128,29 @@ describe('who the join link is read for', () => {
   it('an ordinary member never asks for it', async () => {
     mount({ role: 'MEMBER' })
 
-    await screen.findByText('成员列表')
+    await screen.findByRole('heading', { level: 2, name: '成员' })
     expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
   })
 
   it('reads it once the reader is given the right to bring people in', async () => {
     const { team } = mount({ role: 'MEMBER' })
-    await screen.findByText('成员列表')
+    await screen.findByRole('heading', { level: 2, name: '成员' })
     expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
 
     team.value.role = 'ADMIN'
 
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledWith(7))
-    await screen.findByText('团队地址与加入')
+    await screen.findByText('加入方式')
   })
 
   it('drops the link and stops asking for it when the right is taken away', async () => {
     const { team } = mount({ role: 'OWNER' })
-    await screen.findByText('团队地址与加入')
+    await screen.findByText('加入方式')
     await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1))
 
     team.value.role = 'MEMBER'
 
-    await waitFor(() => expect(screen.queryByText('团队地址与加入')).toBeNull())
+    await waitFor(() => expect(screen.queryByText('加入方式')).toBeNull())
     expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1)
   })
 })
@@ -210,61 +211,30 @@ describe('running the team link', () => {
   })
 })
 
-describe('the team address', () => {
-  it('moves the page to the new address once the team is renamed', async () => {
-    const { team } = mount({ role: 'OWNER' })
-    vi.mocked(TeamsApi.update).mockResolvedValue({ team: { ...team.value, handle: 'zhishi' } } as never)
-
-    await fireEvent.update(await screen.findByLabelText('团队地址'), ' zhishi ')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith({
-        name: 'TeamsDetailMembers',
-        params: { handle: 'zhishi' },
-        query: {},
-      })
-    )
-    expect(TeamsApi.update).toHaveBeenCalledWith(7, { handle: 'zhishi' })
-    expect(team.value.handle).toBe('zhishi')
-  })
-
-  it('says so when another team or a person already holds the address', async () => {
-    vi.mocked(TeamsApi.update).mockRejectedValue(
-      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
-    )
-    mount({ role: 'OWNER' })
-
-    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-
-    await screen.findByText('这个地址已被占用')
-    expect(replace).not.toHaveBeenCalled()
-  })
-
-  it('does not carry a rejected address over to the next team', async () => {
-    vi.mocked(TeamsApi.update).mockRejectedValue(
-      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
-    )
-    const { team } = mount({ role: 'OWNER' })
-
-    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
-    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await screen.findByText('这个地址已被占用')
-
-    // 换一个团队：上一队那条「被占用」不该在下一队还挂着。
-    team.value.id = 8
-
-    await waitFor(() => expect(screen.queryByText('这个地址已被占用')).toBeNull())
-  })
-})
-
 describe('bringing people in', () => {
-  it('the owner of a shared team can invite and review requests', async () => {
+  it('the owner of a shared team can invite, and sees requests and invitations once there are some', async () => {
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({
+      applications: [
+        { id: 31, status: 'PENDING', createdAt: Date.now(), user: { id: 9, username: 'qinmo', nickname: 'qinmo' } },
+      ],
+    } as never)
+    vi.mocked(TeamsApi.listTeamInvitations).mockResolvedValue({
+      invitations: [
+        { id: 41, status: 'PENDING', createdAt: Date.now(), user: { id: 11, username: 'frank', nickname: 'frank' } },
+      ],
+    } as never)
     mount({ role: 'OWNER' })
     await screen.findByRole('button', { name: /邀请成员/ })
-    expect(screen.getByText('加入申请')).toBeTruthy()
-    expect(screen.getByText('已发送邀请')).toBeTruthy()
+    await screen.findByRole('heading', { name: /加入申请/ })
+    await screen.findByRole('heading', { name: /已发送邀请/ })
+  })
+
+  it('no request and no invitation: those two cards are not drawn', async () => {
+    mount({ role: 'OWNER' })
+    await screen.findByRole('button', { name: /邀请成员/ })
+    await waitFor(() => expect(TeamsApi.listTeamInvitations).toHaveBeenCalled())
+    expect(screen.queryByRole('heading', { name: /加入申请/ })).toBeNull()
+    expect(screen.queryByRole('heading', { name: /已发送邀请/ })).toBeNull()
   })
 })
 
@@ -288,8 +258,8 @@ describe('moving someone out', () => {
     vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [peer, qinmo] } as never)
     mount({ role: 'ADMIN' })
 
-    await screen.findByRole('button', { name: '移除成员' })
-    expect(screen.getAllByRole('button', { name: '移除成员' })).toHaveLength(1)
+    await screen.findByRole('button', { name: 'qinmo 的操作' })
+    expect(screen.queryByRole('button', { name: 'zhaoyu 的操作' })).toBeNull()
   })
 
   it('an admin is asked first, and a yes takes them off the team', async () => {
@@ -297,7 +267,8 @@ describe('moving someone out', () => {
     vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
     mount({ role: 'ADMIN' })
 
-    await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
+    await fireEvent.click(await screen.findByText('移除成员'))
 
     // 移出后他不再能进这个团队：行里的入口是灰的，这一下确认才是红的。
     expect(dialogMock.confirm).toHaveBeenCalledWith('移出后他不再是团队成员，也不再能访问团队的项目。', {
@@ -313,7 +284,8 @@ describe('moving someone out', () => {
     vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [qinmo] } as never)
     mount({ role: 'ADMIN' })
 
-    await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
+    await fireEvent.click(await screen.findByRole('button', { name: 'qinmo 的操作' }))
+    await fireEvent.click(await screen.findByText('移除成员'))
 
     expect(dialogMock.confirm).toHaveBeenCalledTimes(1)
     expect(TeamsApi.removeMember).not.toHaveBeenCalled()
@@ -326,8 +298,9 @@ describe('角色说明', () => {
   it('成员表里每个人的角色旁写着一句这个角色能做什么', async () => {
     vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [qinmo] } as never)
     mount({ role: 'ADMIN' })
-    // 普通成员没有角色小标，那句话里连角色名一起写出来。
-    await screen.findByText('普通成员 · 参与团队的项目')
+    // 每一行都有角色小标，旁边一句这个角色能做什么。
+    await screen.findByText('参与团队的项目')
+    expect(screen.getByText('普通成员', { selector: '.members-chip' })).toBeTruthy()
   })
 })
 
@@ -370,7 +343,7 @@ describe('answering a join request', () => {
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledWith(7, 31)
   })
 
-  it('shows pending request count on the tab immediately and updates in real time when inbox pushes', async () => {
+  it('shows the pending request count at once and updates it in real time when the inbox pushes', async () => {
     const first = {
       id: 31,
       status: 'PENDING',
@@ -386,22 +359,18 @@ describe('answering a join request', () => {
     let applications = [first]
     vi.mocked(TeamsApi.listTeamJoinRequests).mockImplementation(async () => ({ applications }) as never)
 
-    // 默认停在「成员列表」页签，不点「加入申请」也该立刻读出待处理数字。
     mount({ role: 'OWNER' })
 
-    const requestsTab = await screen.findByRole('tab', { name: /加入申请/ })
-    await waitFor(() => expect(requestsTab.textContent).toContain('1'))
-
-    // 切到「加入申请」页签：第一条申请已经在表里。
-    await fireEvent.click(requestsTab)
+    const requests = await screen.findByRole('heading', { name: /加入申请/ })
+    await waitFor(() => expect(requests.textContent).toContain('1'))
     await screen.findByText('shenlan')
 
-    // 有人新递了一条申请，收件箱连接推来通知：不用刷新页面，列表和页签角标当场更新。
+    // 有人新递了一条申请，收件箱连接推来通知：不用刷新页面，列表和数字当场更新。
     applications = [first, second]
     for (const fn of inboxListeners) fn()
 
     await screen.findByText('lz123y')
-    await waitFor(() => expect(requestsTab.textContent).toContain('2'))
+    await waitFor(() => expect(requests.textContent).toContain('2'))
   })
 
   it('does not fetch join requests for a regular member until they become an admin', async () => {

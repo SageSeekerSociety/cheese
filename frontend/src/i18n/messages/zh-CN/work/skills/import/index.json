@@ -4,6 +4,7 @@
   "addTitle": "添加「{title}」",
   "back": "返回",
   "file": "SKILL.md 或技能文件夹的 .zip",
+  "notes": "这次读得可能不全：{notes}",
   "read": "读取",
   "readFailed": "读取失败",
   "scripts": "含 {n} 个脚本，会在环境里运行。添加前先看一遍",

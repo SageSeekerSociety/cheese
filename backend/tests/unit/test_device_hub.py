@@ -157,7 +157,9 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     )
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         request = ws.receive_json()
@@ -197,7 +199,9 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
 
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         assert hub.is_online("dev")
@@ -293,9 +297,38 @@ async def test_open_screen_sends_session_create_and_registers_token():
     assert create["t"] == "session.create"
     assert create["command"] == ["claude"]
     assert create["env"] == {"K": "V"} and create["screen"] == screen.token
-    # The screen is discoverable by its token (attribution) and by sid.
-    assert hub.screen_by_token(screen.token) is screen
     assert hub.screen(screen.sid) is screen
+
+
+async def test_open_screen_on_an_offline_device_is_not_reported_as_opened():
+    """No link means nothing was written: the caller must not be told it was.
+
+    A turn that trusted the return waited on a runner that was never started,
+    until its own timeout (the caller had checked `is_online` a moment before
+    the drop). The screen stays on the books so cleanup and a later reassert
+    can still find it.
+    """
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.detach_device("dev1", t)
+
+    with pytest.raises(DeviceOffline):
+        await hub.open_screen("dev1", ["claude"], **_screen_args())
+    assert t.sent == [{"t": "welcome", "v": 1}], "nothing was sent into the void"
+    assert len(hub._screens) == 1, "the registry keeps it for cleanup and reassert"
+
+
+async def test_reassert_screen_on_an_offline_device_says_so():
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
+    await hub.detach_device("dev1", t)
+
+    with pytest.raises(DeviceOffline):
+        await hub.reassert_screen(screen, command=["claude", "--new"])
+    assert len(t.sent) == 2, "only the welcome and the first create went out"
 
 
 async def test_exec_on_an_offline_device_fails_at_once_instead_of_timing_out():
@@ -385,9 +418,7 @@ async def test_adopt_screen_reregisters_running_screen_after_restart():
         project_id=project,
         topic_id=topic,
     )
-    # Discoverable by sid and by its token (attribution) again.
     assert hub.screen("s-kept") is screen
-    assert hub.screen_by_token("kept-tok") is screen
     assert screen.agent_user_id == agent and screen.topic_id == topic
     # Idempotent: adopting the same sid returns the already-registered screen.
     again = hub.adopt_screen(
@@ -423,17 +454,20 @@ async def test_inbound_frame_updates_last_seen():
 async def test_screens_for_topic_spans_devices_online_or_not():
     """The lifecycle reaper reverse-looks-up a topic's screen to free it. topic_id is
     globally unique, so the lookup returns every device's screen for it — including
-    one on a device that never attached a transport (offline)."""
+    one whose device has gone offline since it was opened."""
     hub = DeviceHub()
     await hub.attach_device("dev1", FakeDeviceTransport())
     topic = uuid.uuid4()
     a = await hub.open_screen(
         "dev1", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
-    # dev2 has no transport (never attached) — its screen is still registered.
+    # dev2 opened its screen and then went offline — it is still registered.
+    dev2 = FakeDeviceTransport()
+    await hub.attach_device("dev2", dev2)
     b = await hub.open_screen(
         "dev2", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
+    await hub.detach_device("dev2", dev2)
     other = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     found = {s.sid for s in hub.screens_for_topic(topic)}
@@ -457,9 +491,8 @@ async def test_reassert_screen_resends_adopt_create_under_same_identity():
     assert create["sid"] == screen.sid and create["screen"] == screen.token
     assert create["command"] == ["claude", "--new"]
     assert create["env"] == {"K": "V"}
-    # The registry still resolves the screen by the same sid and token.
+    # The registry still resolves the screen by the same sid.
     assert hub.screen(screen.sid) is screen
-    assert hub.screen_by_token(screen.token) is screen
     assert screen.command == ["claude", "--new"]
 
 
@@ -906,7 +939,9 @@ def test_a_connector_that_falls_silent_is_taken_offline(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "heartbeat"})
@@ -925,7 +960,9 @@ def test_a_connector_that_keeps_beating_stays_online(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         for _ in range(10):
@@ -945,7 +982,9 @@ def test_a_connector_that_never_heartbeats_is_not_judged_by_silence(monkeypatch)
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "hello", "v": 1})

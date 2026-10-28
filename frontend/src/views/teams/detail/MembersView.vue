@@ -3,7 +3,7 @@ import type { LookedUpUser } from '@/api'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { TeamMember, TeamMembershipApplication } from '@/types'
 
-import { computed } from 'vue'
+import { computed, nextTick, watch } from 'vue'
 
 import { getAvatarUrl } from '@/utils/materials'
 
@@ -17,8 +17,8 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 
-// 小队成员这一屏的画法：三格列表（成员 / 加入申请 / 已发送邀请）加一个邀请框，只吃数据、
-// 往上报动作。取数与写入都在页面里（`Members.vue`）—— 所以「谁在管理这个团队」由页面算好
+// 团队设置「成员」那一栏的画法：加入方式、加入申请、成员、已发送邀请四张卡（申请和邀请
+// 有内容才出现）加一个邀请框，只吃数据、往上报动作。取数与写入都在页面里（`Members.vue`）—— 所以「谁在管理这个团队」由页面算好
 // 递上来，删一位之前的确认框也留在那一层。这一半一行取数都没有。
 //
 // 加入链接那张卡（`TeamJoinLinkCard`）也是只吃数据、往上报动作的：页面把数据摆好，从下面
@@ -66,6 +66,7 @@ const emit = defineEmits<{
   confirmInvite: []
 }>()
 
+/** 通知点进来时要看的那一张（`members` / `requests` / `invitations`）：它出现时滚到那里。 */
 const activeTab = defineModel<string>('activeTab', { required: true })
 const isInviteDialogActive = defineModel<boolean>('isInviteDialogActive', { required: true })
 const inviteQuery = defineModel<string>('inviteQuery', { required: true })
@@ -73,6 +74,16 @@ const inviteRoleInput = defineModel<string>('inviteRoleInput', { required: true 
 const inviteMessageInput = defineModel<string>('inviteMessageInput', { required: true })
 
 const { locale } = i18n.global
+
+watch(
+  () => [activeTab.value, props.joinRequests.length, props.invitations.length] as const,
+  async ([tab]) => {
+    if (tab === 'members') return
+    await nextTick()
+    document.getElementById(`team-${tab}`)?.scrollIntoView?.({ block: 'start' })
+  },
+  { immediate: true }
+)
 
 // 右键一位成员：行尾那几颗（升管理员、降成员、移出）收成一份，弹在鼠标那一点上。
 // 谁看得见哪一项和那几颗按钮同一套判据。移出看服务端给的 canRemove：能不能移出取决于
@@ -107,6 +118,7 @@ function memberActions(member: TeamMember): MenuAction[] {
 }
 
 const pendingRequests = computed(() => props.joinRequests.filter((request) => request.status === 'PENDING'))
+const pendingInvitations = computed(() => props.invitations.filter((invitation) => invitation.status === 'PENDING'))
 
 const roleOptions = computed(() => [
   { title: t('teams.members.roleMember'), value: 'MEMBER', props: { subtitle: t('teams.members.roleMemberHint') } },
@@ -120,11 +132,11 @@ function roleHint(role?: string): string {
   return t('teams.members.roleMemberHint')
 }
 
-/** Owner and admin rows already carry a role chip; a plain member carries none, so its
- *  note spells the role out too. */
-function memberRoleNote(role?: string): string {
-  if (role === 'OWNER' || role === 'ADMIN') return roleHint(role)
-  return `${t('teams.members.roleMember')} · ${roleHint(role)}`
+/** Every row carries its role as a chip, the plain member's too. */
+function roleLabel(role?: string): string {
+  if (role === 'OWNER') return t('teams.members.roleOwner')
+  if (role === 'ADMIN') return t('teams.members.roleAdmin')
+  return t('teams.members.roleMember')
 }
 
 const formatDate = (timestamp: number) => {
@@ -135,22 +147,6 @@ const formatDate = (timestamp: number) => {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'PENDING':
-      return 'warning'
-    case 'APPROVED':
-    case 'ACCEPTED':
-      return 'success'
-    case 'REJECTED':
-    case 'DECLINED':
-    case 'CANCELED':
-      return 'error'
-    default:
-      return 'grey'
-  }
 }
 
 const getStatusText = (status: string) => {
@@ -174,429 +170,359 @@ const getStatusText = (status: string) => {
 </script>
 
 <template>
-  <div>
-    <!-- 操作区 -->
-    <div class="d-flex align-center mb-4">
-      <v-spacer></v-spacer>
-      <v-dialog v-model="isInviteDialogActive" max-width="500">
-        <template #activator="{ props: activatorProps }">
-          <BaseButton
-            v-if="canBringPeopleIn"
-            v-bind="activatorProps"
-            kind="primary"
-            prepend-icon="mdi-account-plus"
-            size="sm"
-          >
-            {{ t('teams.members.invite') }}
-          </BaseButton>
-        </template>
+  <div class="settings-page">
+    <header class="settings-page__head">
+      <h1 class="t-page-title">{{ t('home.nav.teamMembers') }}</h1>
+      <!-- The page's one main action, on the title's line like every settings page. -->
+      <BaseButton
+        v-if="canBringPeopleIn"
+        kind="primary"
+        prepend-icon="mdi-account-plus"
+        @click="isInviteDialogActive = true"
+      >
+        {{ t('teams.members.invite') }}
+      </BaseButton>
+    </header>
 
-        <template #default="{ isActive }">
-          <v-form @submit.prevent="emit('confirmInvite')">
-            <v-card :title="t('teams.members.invite')">
-              <v-card-text>
-                <v-text-field
-                  v-model="inviteQuery"
-                  autocomplete="off"
-                  :label="t('teams.members.inviteLabel')"
-                  :placeholder="t('teams.members.invitePlaceholder')"
-                  variant="outlined"
-                  :loading="lookingUp"
-                  :error-messages="lookupError ? [lookupError] : []"
-                  :hide-details="!lookupError"
-                  class="mb-4"
+    <v-dialog v-model="isInviteDialogActive" max-width="500">
+      <template #default="{ isActive }">
+        <v-form @submit.prevent="emit('confirmInvite')">
+          <v-card :title="t('teams.members.invite')">
+            <v-card-text>
+              <v-text-field
+                v-model="inviteQuery"
+                autocomplete="off"
+                :label="t('teams.members.inviteLabel')"
+                :placeholder="t('teams.members.invitePlaceholder')"
+                variant="outlined"
+                :loading="lookingUp"
+                :error-messages="lookupError ? [lookupError] : []"
+                :hide-details="!lookupError"
+                class="mb-4"
+              />
+              <!-- 先把查到的人摆出来：邀请的是这一位，按下按钮之前就看得见。 -->
+              <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
+                <UserAvatar
+                  :name="found.name || found.handle"
+                  :avatar="getAvatarUrl(found.avatar_id)"
+                  :seed="found.handle"
+                  :size="32"
+                  class="mr-3"
                 />
-                <!-- 先把查到的人摆出来：邀请的是这一位，按下按钮之前就看得见。 -->
-                <div v-if="found" class="d-flex align-center mb-4" data-testid="found-user">
-                  <UserAvatar
-                    :name="found.name || found.handle"
-                    :avatar="getAvatarUrl(found.avatar_id)"
-                    :seed="found.handle"
-                    :size="32"
-                    class="mr-3"
-                  />
-                  <div class="min-w-0">
-                    <div class="t-body">{{ found.name || found.handle }}</div>
-                    <div class="t-meta c-muted">{{ found.handle }}</div>
-                  </div>
-                  <v-spacer />
-                  <span v-if="alreadyIn" class="t-meta c-muted">{{ t('teams.members.alreadyIn') }}</span>
+                <div class="min-w-0">
+                  <div class="t-body">{{ found.name || found.handle }}</div>
+                  <div class="t-meta c-muted">{{ found.handle }}</div>
                 </div>
-                <v-select
-                  v-model="inviteRoleInput"
-                  autocomplete="off"
-                  :items="roleOptions"
-                  :label="t('teams.members.roleLabel')"
-                  variant="outlined"
-                  hide-details
-                  class="mb-4"
-                ></v-select>
-                <v-textarea
-                  v-model="inviteMessageInput"
-                  autocomplete="off"
-                  :label="t('teams.members.inviteMessageLabel')"
-                  variant="outlined"
-                  :placeholder="t('teams.members.inviteMessagePlaceholder')"
-                  rows="3"
-                  auto-grow
-                  hide-details
-                ></v-textarea>
-              </v-card-text>
+                <v-spacer />
+                <span v-if="alreadyIn" class="t-meta c-muted">{{ t('teams.members.alreadyIn') }}</span>
+              </div>
+              <v-select
+                v-model="inviteRoleInput"
+                autocomplete="off"
+                :items="roleOptions"
+                :label="t('teams.members.roleLabel')"
+                variant="outlined"
+                hide-details
+                class="mb-4"
+              ></v-select>
+              <v-textarea
+                v-model="inviteMessageInput"
+                autocomplete="off"
+                :label="t('teams.members.inviteMessageLabel')"
+                variant="outlined"
+                :placeholder="t('teams.members.inviteMessagePlaceholder')"
+                rows="3"
+                auto-grow
+                hide-details
+              ></v-textarea>
+            </v-card-text>
 
-              <v-card-actions>
-                <v-spacer></v-spacer>
-                <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-                <BaseButton type="submit" kind="primary" :disabled="!found || alreadyIn">{{
-                  t('teams.members.inviteSubmit')
-                }}</BaseButton>
-              </v-card-actions>
-            </v-card>
-          </v-form>
-        </template>
-      </v-dialog>
-    </div>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
+              <BaseButton type="submit" kind="primary" :disabled="!found || alreadyIn">{{
+                t('teams.members.inviteSubmit')
+              }}</BaseButton>
+            </v-card-actions>
+          </v-card>
+        </v-form>
+      </template>
+    </v-dialog>
 
-    <!-- 加入链接那张卡：数据在页面那一层，由页面从这个口子递进来。 -->
+    <!-- 加入方式那张卡：数据在页面那一层，由页面从这个口子递进来。 -->
     <slot name="join-link" />
 
-    <!-- 标签页 -->
-    <v-tabs v-model="activeTab" color="primary" class="mb-4">
-      <v-tab value="members">{{ t('teams.members.tabMembers') }}</v-tab>
-      <v-tab v-if="canBringPeopleIn" value="requests">
+    <!-- 加入申请：有申请时才有这一张，标题上是还在等的条数。 -->
+    <section
+      v-if="canBringPeopleIn && (loadingRequests || failedRequests || joinRequests.length)"
+      id="team-requests"
+      class="settings-card"
+    >
+      <h2 class="settings-card__title members-card__title">
         {{ t('teams.members.tabRequests') }}
-        <v-badge
-          v-if="pendingRequests.length > 0"
-          :content="pendingRequests.length"
-          color="error"
-          inline
-          class="ml-1"
-        ></v-badge>
-      </v-tab>
-      <v-tab v-if="canBringPeopleIn" value="invitations">{{ t('teams.members.tabInvitations') }}</v-tab>
-    </v-tabs>
-
-    <v-window v-model="activeTab">
-      <!-- 成员列表 -->
-      <v-window-item value="members">
-        <BaseLoadError
-          v-if="failedMembers"
-          :title="t('teams.members.loadMembersFailed')"
-          :error="membersError"
-          @retry="emit('retryMembers')"
-        />
-
-        <v-card v-if="!failedMembers" flat rounded="lg">
-          <v-list>
-            <v-list-item
-              v-for="member in members"
-              :key="member.user.id"
-              class="member-item"
-              @contextmenu="memberActions(member).length && rowMenu.open(member.user.id, $event)"
+        <span v-if="pendingRequests.length" class="members-card__count">{{ pendingRequests.length }}</span>
+      </h2>
+      <div v-if="loadingRequests && !joinRequests.length" class="members-card__loading">
+        <v-progress-circular indeterminate size="24" color="primary" :aria-label="t('work.teamLink.loading')" />
+      </div>
+      <BaseLoadError
+        v-else-if="failedRequests"
+        class="members-card__error"
+        :title="t('teams.members.loadRequestsFailed')"
+        :error="requestsError"
+        @retry="emit('retryRequests')"
+      />
+      <ul v-else class="members-list">
+        <li v-for="request in joinRequests" :key="request.id" class="members-row">
+          <UserAvatar
+            :avatar="getAvatarUrl(request.user.avatarId)"
+            :name="request.user.nickname"
+            :seed="request.user.username"
+            size="36"
+          />
+          <div class="members-row__main">
+            <div class="members-row__name">
+              <span class="members-row__nick">{{ request.user.nickname }}</span>
+              <span v-if="request.status !== 'PENDING'" class="members-chip">{{ getStatusText(request.status) }}</span>
+            </div>
+            <div v-if="request.message" class="members-row__note">{{ request.message }}</div>
+            <div class="members-row__note">
+              {{ t('teams.members.requestedAt', { time: formatDate(request.createdAt) }) }}
+            </div>
+          </div>
+          <div v-if="request.status === 'PENDING'" class="members-row__actions">
+            <BaseButton :disabled="answering !== undefined" @click="emit('rejectRequest', request.id)">
+              {{ t('teams.members.reject') }}
+            </BaseButton>
+            <BaseButton
+              kind="secondary"
+              :loading="answering === request.id"
+              :disabled="answering !== undefined"
+              @click="emit('approveRequest', request.id)"
             >
-              <AdaptiveMenu
-                v-if="memberActions(member).length"
-                v-bind="rowMenu.bind(member.user.id)"
-                :actions="memberActions(member)"
-                :title="member.user.nickname"
-              >
-                <template #activator />
-              </AdaptiveMenu>
-              <template #prepend>
-                <UserAvatar
-                  :avatar="getAvatarUrl(member.user.avatarId)"
-                  :name="member.user.nickname"
-                  :seed="member.user.username"
-                  size="40"
-                  class="mr-3"
+              {{ t('teams.members.approve') }}
+            </BaseButton>
+          </div>
+          <div v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'" class="members-row__note">
+            <i18n-t v-if="request.processedBy?.nickname" scope="global" keypath="teams.members.processedBy" tag="span">
+              <template #name>
+                <UserRef
+                  :handle="request.processedBy.username"
+                  :name="request.processedBy.nickname"
+                  :project-id="null"
                 />
               </template>
-              <!-- The name truncates on its own; the role badge sits beside it and never
-                   shrinks. Inside the title's one clipped line the badge was cut off with a
-                   long name, leaving an empty grey box. -->
-              <v-list-item-title class="member-item__title font-weight-medium">
-                <span class="member-item__name">{{ member.user.nickname }}</span>
-                <v-chip v-if="member.role === 'OWNER'" color="primary" size="small" variant="tonal">{{
-                  t('teams.members.roleOwner')
-                }}</v-chip>
-                <v-chip v-else-if="member.role === 'ADMIN'" color="secondary" size="small" variant="tonal">{{
-                  t('teams.members.roleAdmin')
-                }}</v-chip>
-              </v-list-item-title>
-              <!-- What this role can actually do. A bare 所有者/管理员 label leaves the
-                   difference between an admin and a member unstated. -->
-              <v-list-item-subtitle class="member-item__note">{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
-              <template #append>
-                <div class="d-flex align-center">
-                  <v-tooltip v-if="isSelfOwner && member.role === 'MEMBER'" location="bottom">
-                    <template #activator="{ props: activatorProps }">
-                      <BaseButton
-                        v-bind="activatorProps"
-                        icon="mdi-account-arrow-up"
-                        size="sm"
-                        :aria-label="t('teams.members.promote')"
-                        @click="emit('promote', member.user.id)"
-                      />
-                    </template>
-                    <span>{{ t('teams.members.promote') }}</span>
-                  </v-tooltip>
-                  <v-tooltip v-if="isSelfOwner && member.role === 'ADMIN'" location="bottom">
-                    <template #activator="{ props: activatorProps }">
-                      <BaseButton
-                        v-bind="activatorProps"
-                        icon="mdi-account-arrow-down"
-                        size="sm"
-                        :aria-label="t('teams.members.demote')"
-                        @click="emit('demote', member.user.id)"
-                      />
-                    </template>
-                    <span>{{ t('teams.members.demote') }}</span>
-                  </v-tooltip>
-                  <v-tooltip v-if="member.canRemove" location="bottom">
-                    <template #activator="{ props: activatorProps }">
-                      <BaseButton
-                        v-bind="activatorProps"
-                        kind="ghost"
-                        icon="mdi-delete"
-                        size="sm"
-                        :aria-label="t('teams.members.remove')"
-                        @click="emit('removeMember', member.user.id)"
-                      />
-                    </template>
-                    <span>{{ t('teams.members.remove') }}</span>
-                  </v-tooltip>
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card>
+            </i18n-t>
+            <template v-else>{{ t('teams.members.processed') }}</template>
+          </div>
+        </li>
+      </ul>
+    </section>
 
-        <BaseEmptyState
-          v-if="!failedMembers && members.length === 0"
-          icon="mdi-account-group"
-          :title="t('teams.members.emptyMembers')"
-          :desc="t('teams.members.emptyMembersHint')"
-        />
-      </v-window-item>
+    <section id="team-members" class="settings-card">
+      <h2 class="settings-card__title members-card__title">
+        {{ t('home.nav.teamMembers') }}
+        <span v-if="members.length" class="members-card__count">{{ members.length }}</span>
+      </h2>
+      <BaseLoadError
+        v-if="failedMembers"
+        class="members-card__error"
+        :title="t('teams.members.loadMembersFailed')"
+        :error="membersError"
+        @retry="emit('retryMembers')"
+      />
+      <BaseEmptyState
+        v-else-if="members.length === 0"
+        size="inline"
+        class="settings-empty"
+        :title="t('teams.members.emptyMembers')"
+      />
+      <ul v-else class="members-list">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- right-click opens the same menu as the row's ⋯ button, which is the keyboard's way -->
+        <li
+          v-for="member in members"
+          :key="member.user.id"
+          class="members-row"
+          @contextmenu="memberActions(member).length && rowMenu.open(member.user.id, $event)"
+        >
+          <UserAvatar
+            :avatar="getAvatarUrl(member.user.avatarId)"
+            :name="member.user.nickname"
+            :seed="member.user.username"
+            size="36"
+          />
+          <div class="members-row__main">
+            <!-- The name truncates on its own; the role chip beside it never shrinks. -->
+            <div class="members-row__name">
+              <span class="members-row__nick">{{ member.user.nickname }}</span>
+              <span class="members-chip">{{ roleLabel(member.role) }}</span>
+            </div>
+            <!-- What this role can actually do: a bare 管理员 leaves the difference to a member unstated. -->
+            <div class="members-row__note">{{ roleHint(member.role) }}</div>
+          </div>
+          <AdaptiveMenu
+            v-if="memberActions(member).length"
+            v-bind="rowMenu.bind(member.user.id)"
+            :actions="memberActions(member)"
+            :title="member.user.nickname"
+          >
+            <template #activator="{ props: activatorProps }">
+              <BaseButton
+                v-bind="activatorProps"
+                icon="mdi-dots-horizontal"
+                size="sm"
+                :aria-label="t('teams.members.actions', { name: member.user.nickname })"
+              />
+            </template>
+          </AdaptiveMenu>
+        </li>
+      </ul>
+    </section>
 
-      <!-- 加入申请 -->
-      <v-window-item value="requests">
-        <v-card v-if="loadingRequests" flat class="d-flex justify-center align-center pa-6">
-          <v-progress-circular indeterminate color="primary"></v-progress-circular>
-        </v-card>
-
-        <BaseLoadError
-          v-else-if="failedRequests"
-          :title="t('teams.members.loadRequestsFailed')"
-          :error="requestsError"
-          @retry="emit('retryRequests')"
-        />
-
-        <BaseEmptyState
-          v-else-if="joinRequests.length === 0"
-          icon="mdi-account-arrow-right"
-          :title="t('teams.members.emptyRequests')"
-          :desc="t('teams.members.emptyRequestsHint')"
-        />
-
-        <v-card v-else flat rounded="lg">
-          <v-list>
-            <v-list-item
-              v-for="request in joinRequests"
-              :key="request.id"
-              class="request-item"
-              :class="{ 'pending-request': request.status === 'PENDING' }"
-            >
-              <template #prepend>
-                <UserAvatar
-                  :avatar="getAvatarUrl(request.user.avatarId)"
-                  :name="request.user.nickname"
-                  :seed="request.user.username"
-                  size="40"
-                  class="mr-3"
-                />
-              </template>
-              <v-list-item-title class="font-weight-medium">
-                {{ request.user.nickname }}
-                <v-chip :color="getStatusColor(request.status)" size="x-small" variant="tonal" class="ml-2">
-                  {{ getStatusText(request.status) }}
-                </v-chip>
-              </v-list-item-title>
-              <v-list-item-subtitle v-if="request.message" class="text-caption text-truncate">
-                {{ request.message }}
-              </v-list-item-subtitle>
-              <v-list-item-subtitle class="text-caption">
-                {{ t('teams.members.requestedAt', { time: formatDate(request.createdAt) }) }}
-              </v-list-item-subtitle>
-
-              <template #append>
-                <div v-if="request.status === 'PENDING'" class="d-flex">
-                  <BaseButton
-                    kind="primary"
-                    size="sm"
-                    prepend-icon="mdi-check"
-                    class="mr-2"
-                    :loading="answering === request.id"
-                    :disabled="answering !== undefined"
-                    @click="emit('approveRequest', request.id)"
-                  >
-                    {{ t('teams.members.approve') }}
-                  </BaseButton>
-                  <BaseButton
-                    kind="danger"
-                    size="sm"
-                    prepend-icon="mdi-close"
-                    :disabled="answering !== undefined"
-                    @click="emit('rejectRequest', request.id)"
-                  >
-                    {{ t('teams.members.reject') }}
-                  </BaseButton>
-                </div>
-                <div
-                  v-else-if="request.status === 'APPROVED' || request.status === 'REJECTED'"
-                  class="text-caption text-medium-emphasis"
-                >
-                  <i18n-t
-                    v-if="request.processedBy?.nickname"
-                    scope="global"
-                    keypath="teams.members.processedBy"
-                    tag="span"
-                  >
-                    <template #name>
-                      <UserRef
-                        :handle="request.processedBy.username"
-                        :name="request.processedBy.nickname"
-                        :project-id="null"
-                      />
-                    </template>
-                  </i18n-t>
-                  <template v-else>{{ t('teams.members.processed') }}</template>
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card>
-      </v-window-item>
-
-      <!-- 已发送邀请 -->
-      <v-window-item value="invitations">
-        <v-card v-if="loadingInvitations" flat class="d-flex justify-center align-center pa-6">
-          <v-progress-circular indeterminate color="primary"></v-progress-circular>
-        </v-card>
-
-        <BaseLoadError
-          v-else-if="failedInvitations"
-          :title="t('teams.members.loadInvitationsFailed')"
-          :error="invitationsError"
-          @retry="emit('retryInvitations')"
-        />
-
-        <BaseEmptyState
-          v-else-if="invitations.length === 0"
-          icon="mdi-email-outline"
-          :title="t('teams.members.emptyInvitations')"
-          :desc="t('teams.members.emptyInvitationsHint')"
-        />
-
-        <v-card v-else flat rounded="lg">
-          <v-list>
-            <v-list-item
-              v-for="invitation in invitations"
-              :key="invitation.id"
-              class="invitation-item"
-              :class="{ 'pending-invitation': invitation.status === 'PENDING' }"
-            >
-              <template #prepend>
-                <UserAvatar
-                  :avatar="getAvatarUrl(invitation.user.avatarId)"
-                  :name="invitation.user.nickname"
-                  :seed="invitation.user.username"
-                  size="40"
-                  class="mr-3"
-                />
-              </template>
-              <v-list-item-title class="font-weight-medium">
-                {{ invitation.user.nickname }}
-                <v-chip :color="getStatusColor(invitation.status)" size="x-small" variant="tonal" class="ml-2">
-                  {{ getStatusText(invitation.status) }}
-                </v-chip>
-              </v-list-item-title>
-              <v-list-item-subtitle v-if="invitation.message" class="text-caption text-truncate">
-                {{ invitation.message }}
-              </v-list-item-subtitle>
-              <v-list-item-subtitle class="text-caption">
-                {{ t('teams.members.invitedAt', { time: formatDate(invitation.createdAt) }) }}
-              </v-list-item-subtitle>
-
-              <template #append>
-                <BaseButton
-                  v-if="invitation.status === 'PENDING'"
-                  kind="ghost"
-                  size="sm"
-                  icon="mdi-delete"
-                  :aria-label="t('global.cancel')"
-                  @click="emit('cancelInvitation', invitation.id)"
-                />
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card>
-      </v-window-item>
-    </v-window>
+    <!-- 已发送邀请：有邀请时才有这一张。 -->
+    <section
+      v-if="canBringPeopleIn && (loadingInvitations || failedInvitations || invitations.length)"
+      id="team-invitations"
+      class="settings-card"
+    >
+      <h2 class="settings-card__title members-card__title">
+        {{ t('teams.members.tabInvitations') }}
+        <span v-if="pendingInvitations.length" class="members-card__count">{{ pendingInvitations.length }}</span>
+      </h2>
+      <div v-if="loadingInvitations && !invitations.length" class="members-card__loading">
+        <v-progress-circular indeterminate size="24" color="primary" :aria-label="t('work.teamLink.loading')" />
+      </div>
+      <BaseLoadError
+        v-else-if="failedInvitations"
+        class="members-card__error"
+        :title="t('teams.members.loadInvitationsFailed')"
+        :error="invitationsError"
+        @retry="emit('retryInvitations')"
+      />
+      <ul v-else class="members-list">
+        <li v-for="invitation in invitations" :key="invitation.id" class="members-row">
+          <UserAvatar
+            :avatar="getAvatarUrl(invitation.user.avatarId)"
+            :name="invitation.user.nickname"
+            :seed="invitation.user.username"
+            size="36"
+          />
+          <div class="members-row__main">
+            <div class="members-row__name">
+              <span class="members-row__nick">{{ invitation.user.nickname }}</span>
+              <span class="members-chip">{{ getStatusText(invitation.status) }}</span>
+            </div>
+            <div v-if="invitation.message" class="members-row__note">{{ invitation.message }}</div>
+            <div class="members-row__note">
+              {{ t('teams.members.invitedAt', { time: formatDate(invitation.createdAt) }) }}
+            </div>
+          </div>
+          <BaseButton v-if="invitation.status === 'PENDING'" @click="emit('cancelInvitation', invitation.id)">
+            {{ t('teams.members.cancelInvitation') }}
+          </BaseButton>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
-<style scoped lang="scss">
-.member-item {
-  transition: background-color 0.2s ease;
-  border-radius: 8px;
-  margin-bottom: 2px;
+<style scoped src="@/styles/settings-card.css"></style>
 
-  &:hover {
-    background-color: var(--fill);
-  }
+<style scoped>
+.members-card__title {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
 }
 
-.member-item__title {
+.members-card__count {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.members-card__loading {
+  display: flex;
+  justify-content: center;
+  padding: 16px 24px 20px;
+}
+
+.members-card__error {
+  margin: 0 24px 16px;
+}
+
+.members-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.members-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-height: 60px;
+  padding: 10px 16px 10px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.members-row:first-child {
+  border-top: 0;
+}
+
+.members-row__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.members-row__name {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.member-item__name {
   min-width: 0;
+}
+
+.members-row__nick {
   overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: var(--lh-14);
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.member-item__title .v-chip {
+.members-chip {
   flex-shrink: 0;
+  padding: 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  background: var(--fill);
+  border-radius: var(--radius-sm);
 }
 
-/* The note says what the role can do; it wraps rather than ending in an ellipsis. */
-.member-item .member-item__note {
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
+.members-row__note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
-.request-item,
-.invitation-item {
-  transition: background-color 0.2s ease;
-  border-radius: 8px;
-  margin-bottom: 4px;
-  border-left: 3px solid transparent;
+.members-row__actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
 
-  &:hover {
-    background-color: var(--fill);
+@media (max-width: 767.98px) {
+  .members-row {
+    flex-wrap: wrap;
+    padding: 10px 16px;
   }
-}
-
-.pending-request {
-  border-left-color: var(--v-theme-warning);
-  background-color: rgba(var(--v-theme-warning), 0.05);
-}
-
-.pending-invitation {
-  border-left-color: var(--v-theme-info);
-  background-color: rgba(var(--v-theme-info), 0.05);
 }
 </style>

@@ -23,6 +23,11 @@
     "tools": "Click Install in the window macOS opens; this continues once it is done"
   },
   "later": "Not now",
+  "prefetch": {
+    "fetching": "Downloading what AI teammates run on this device in the background ({percent}%). You can click Done; it keeps going.",
+    "preparing": "Getting what AI teammates run on this device ready in the background. You can click Done; it keeps going.",
+    "ready": "What AI teammates run on this device is downloaded, so their first task here won’t wait for it."
+  },
   "progressTitle": "Connecting this device",
   "retry": "Try again",
   "step": {

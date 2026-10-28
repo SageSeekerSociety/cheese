@@ -10,7 +10,7 @@
 model_list: []
 
 # The platform's own web search (backend `/web-search`, the agents'
-# `cheese_web_search`), asked on the caller's virtual key at
+# `cheese_web(action=search)`), asked on the caller's virtual key at
 # /v1/search/deepseek-search, so it is admitted, logged and drained like that
 # key's model calls. DeepSeek's search API as a provider: deepseek_search.py.
 search_tools:
@@ -63,6 +63,9 @@ litellm_settings:
   # cheese_no_explicit_cache loses its cache_control marks
   # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
   # refused past that total (`spend_cap.py`).
+  # A row whose provider account is out of credit is taken out of rotation
+  # for minutes and named for the administrators (`provider_credit.py`, which
+  # also wraps the router at worker start-up).
   # A request carrying web search goes to a deployment that runs it, and an
   # answer that did not search reaches the client as an error, not as a
   # search that found nothing (`web_search.py`).
@@ -73,6 +76,7 @@ litellm_settings:
     - cheese_upstream_headers.handler
     - cheese_no_explicit_cache.handler
     - cheese_spend_cap.handler
+    - cheese_provider_credit.handler
     - cheese_web_search.handler
   # Providers LiteLLM has no route for, served by a handler of ours behind the
   # chat API (`qwen_asr.py`).

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, turn_inputs
+from app.domain.agent.models import STOP_STOPPED
 from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
@@ -171,7 +172,7 @@ class TurnLifecycle:
         try:
             async with self._sessions() as session:
                 closed = await AgentTurnRepository(session).close_one(
-                    topic_id, turn_id, datetime.now(UTC)
+                    topic_id, turn_id, datetime.now(UTC), reason=STOP_STOPPED
                 )
                 if closed:
                     await session.commit()
@@ -191,6 +192,16 @@ class TurnLifecycle:
         return death_evidence.seat_state(
             self.live, self._compute, topic_id, agent_handle
         )
+
+    def draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Is this seat's runner another release's, finishing its work? Its
+        messages wait until it has been replaced (``ComputePool.draining``)."""
+        return self._compute.draining(topic_id, agent_handle)
+
+    def tell_draining(self, topic_id: uuid.UUID, agent_handle: str) -> bool:
+        """Whether the room is to be told now that a message waits for this
+        seat's drain: once per drain."""
+        return self._compute.tell_draining(topic_id, agent_handle)
 
     def has_live_screen(
         self, topic_id: uuid.UUID, agent_handle: str | None = None

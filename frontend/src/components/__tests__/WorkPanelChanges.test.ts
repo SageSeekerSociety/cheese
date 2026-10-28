@@ -86,6 +86,9 @@ vi.mock('../../api', async () => {
     ),
     listFiles: (...a: unknown[]) => listFiles(...a),
     readFile: (...a: unknown[]) => readFile(...a),
+    // 点一枚文件 chip 时先问房间里有没有这一份（`useRoomFileProbe`）；这些用例里的
+    // a.py / first.py 都在任务的工作树上，房间自己没有，按「读不到」回答。
+    readPreviewFile: vi.fn().mockRejectedValue(new Error('file not found')),
     writeFile: (...a: unknown[]) => writeFile(...a),
     // Everything else the panel calls on mount — quiet, empty answers.
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),

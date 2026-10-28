@@ -8,7 +8,8 @@
   "groups": {
     "account": "账号",
     "app": "桌面端",
-    "devices": "设备与连接"
+    "devices": "设备与连接",
+    "usage": "用量"
   },
   "invites": "邀请好友",
   "notifications": "通知",

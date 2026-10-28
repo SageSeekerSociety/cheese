@@ -149,7 +149,7 @@ async def _tool(
             plan["method"],
             plan["path"],
             json=plan.get("body"),
-            headers={"X-Cheese-Token": credential},
+            headers={"Authorization": f"Bearer {credential}"},
         )
 
 
@@ -278,7 +278,7 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
     async def edit(credential, question):
         response = await _tool(
             credential,
-            "cheese_doc_edit",
+            "cheese_doc.edit",
             {"edits": [{"old": "讲范围", "new": "讲边界"}]},
         )
         assert response.status_code == 200, response.text
@@ -318,7 +318,7 @@ def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkey
     edit = client.portal.call(
         _tool,
         held["credential"],
-        "cheese_doc_edit",
+        "cheese_doc.edit",
         {"edits": [{"old": "范围", "new": "x"}]},
         held_env,
     )
@@ -387,7 +387,9 @@ def test_the_team_memory_is_read_in_full(client, sessions):
     read: dict[str, str] = {}
 
     async def recall(credential, question):
-        response = await _tool(credential, "cheese_memory_read", {"name": "deploy.md"})
+        response = await _tool(
+            credential, "cheese_memory.project", {"name": "deploy.md"}
+        )
         assert response.status_code == 200, response.text
         read["text"] = next(
             row["content"]

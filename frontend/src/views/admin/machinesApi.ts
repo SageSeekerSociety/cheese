@@ -48,7 +48,7 @@ export interface MachineSandbox {
   id: string
   spec: string
   state: SandboxState
-  project_id: string
+  project_id: string | null
   project: string | null
   room_id: string
   room: string | null

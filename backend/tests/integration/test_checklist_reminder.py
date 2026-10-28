@@ -28,7 +28,6 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
-from tests.support.session_records import wait_for_record
 
 PLAN = [
     {"content": "核实 issue 论断", "status": "completed"},
@@ -97,7 +96,7 @@ def _room(client) -> tuple[str, dict]:
     ).json()["data"]
     thread = in_thread(client, t["id"], "user-1")
     token = mint_scoped_token(project_id=p["id"], topic_id=thread)
-    return thread, {"X-Cheese-Token": token}
+    return thread, {"Authorization": f"Bearer {token}"}
 
 
 def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
@@ -109,11 +108,17 @@ def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
 
 
 def _start(client, ws, topic_id: str, *, handle: str = "user-1") -> uuid.UUID:
-    """Start a turn on ``topic_id`` and leave it running; return its work_id."""
+    """Start a turn on ``topic_id`` and leave it running; return its work_id.
+
+    Returns once the room has heard the session start its work (``turn_started``
+    on ``ws``): that is when the platform knows which work the session is on,
+    and so what ``PUT /progress`` stamps the checklist with. The session's own
+    records are archived before its runner's report is applied, so seeing what
+    it said is not that.
+    """
     post_message(client, topic_id, handle, {"content": "@芝士 做一件事"})
-    wait_for_record(
-        client, topic_id, lambda record: "Internal output" in str(record), owner=handle
-    )
+    while ws.receive_json()["type"] != "turn_started":
+        pass
     live = client.portal.call(
         chat_of(client).live.active_turn_ids.get, uuid.UUID(topic_id)
     )
@@ -289,7 +294,7 @@ def test_a_tasks_own_checklist_is_reminded_the_same_way(
     task = open_task(client, room, owner="user-1")
     task_id = str(task["id"])
     token = mint_scoped_token(project_id=task["project_id"], topic_id=task_id)
-    headers = {"X-Cheese-Token": token}
+    headers = {"Authorization": f"Bearer {token}"}
     with room_socket(client, task_id, "user-1") as ws:
         _start(client, ws, task_id)
         _its_own_checklist(client, task_id, headers, clock)

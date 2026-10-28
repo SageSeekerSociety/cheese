@@ -2,89 +2,48 @@
 /**
  * 资料库里一份文件的每一版：版本号、什么时候、谁换上的、多大；每一版都能下载。
  *
- * 「恢复为当前」把选中的旧版**复制**成新的一版——历史只增不减，被恢复的那一版和它
- * 之后的几版都还在，所以只要一次轻确认。恢复之后引用这个名字的消息读到的就是它。
+ * 「恢复为当前」把选中的旧版复制成新的一版，所以只要一次轻确认。请求在
+ * `composables/useLibraryVersions.ts`，这里只摆、只报动作。
  */
 import type { LibraryVersion } from '@/lib/libraryApi'
 
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
-import { downloadFile } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
-import { libraryVersionRawUrl, listLibraryVersions, restoreLibraryVersion } from '@/lib/libraryApi'
 import { relTime } from '@/lib/relTime'
 
-const props = defineProps<{
-  projectId: string
+defineProps<{
   /** 看哪一份；null 时对话框关着。 */
   path: string | null
+  versions: LibraryVersion[]
+  loading: boolean
+  /** 没取到时为什么；取到了是 null。 */
+  failed: string | null
+  actionError: string
+  /** 正在恢复的那一版的 id。 */
+  restoring: string | null
   /** 能不能恢复：放进、替换、恢复只有人能做。 */
   canRestore: boolean
   fmtBytes: (n: number) => string
 }>()
-const emit = defineEmits<{ close: []; restored: [path: string, version: number] }>()
+const emit = defineEmits<{
+  close: []
+  retry: []
+  download: [version: LibraryVersion]
+  restore: [version: LibraryVersion]
+}>()
 
-const versions = ref<LibraryVersion[]>([])
-const loading = ref(false)
-const failed = ref<string | null>(null)
-const actionError = ref('')
 const confirming = ref<LibraryVersion | null>(null)
-/** 正在恢复的是哪一版（null = 没有在恢复）：只让那一行转圈。 */
-const restoring = ref<string | null>(null)
-let session = 0
 
-async function load() {
-  const path = props.path
-  const id = ++session
-  versions.value = []
-  failed.value = null
-  actionError.value = ''
-  if (!path) return
-  loading.value = true
-  try {
-    const list = await listLibraryVersions(props.projectId, path)
-    if (id === session) versions.value = list
-  } catch (e) {
-    if (id === session) failed.value = e instanceof Error ? e.message : t('work.library.versionsFailed')
-  } finally {
-    if (id === session) loading.value = false
-  }
-}
-watch(() => props.path, load, { immediate: true })
-
-const fileName = () => (props.path ?? '').split('/').pop() || (props.path ?? '')
-
-async function download(version: LibraryVersion) {
-  if (!props.path) return
-  actionError.value = ''
-  try {
-    await downloadFile(libraryVersionRawUrl(props.projectId, props.path, version.id), fileName())
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
-  }
-}
-
-async function restore() {
+function restore() {
   const target = confirming.value
-  const path = props.path
   confirming.value = null
-  if (!target?.id || !path) return
-  restoring.value = target.id
-  actionError.value = ''
-  try {
-    await restoreLibraryVersion(props.projectId, path, target.id)
-    emit('restored', path, target.version)
-    await load()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.restoreFailed')
-  } finally {
-    restoring.value = null
-  }
+  if (target) emit('restore', target)
 }
 </script>
 
@@ -96,7 +55,7 @@ async function restore() {
     size="md"
     @update:model-value="(open: boolean) => !open && emit('close')"
   >
-    <BaseLoadError v-if="failed" :title="t('work.library.versionsFailed')" :error="failed" @retry="load" />
+    <BaseLoadError v-if="failed" :title="t('work.library.versionsFailed')" :error="failed" @retry="emit('retry')" />
     <p v-else-if="loading" class="lv__loading t-meta">{{ t('work.library.versionsLoading') }}</p>
     <BaseEmptyState v-else-if="!versions.length" size="inline" :title="t('work.library.versionsEmpty')" />
     <ol v-else class="lv__list" :aria-label="t('work.library.versionsTitle', { name: path ?? '' })">
@@ -118,7 +77,7 @@ async function restore() {
             }}
           </span>
         </div>
-        <BaseButton size="sm" @click="download(v)">{{ t('work.library.download') }}</BaseButton>
+        <BaseButton size="sm" @click="emit('download', v)">{{ t('work.library.download') }}</BaseButton>
         <BaseButton
           v-if="canRestore && !v.current"
           size="sm"

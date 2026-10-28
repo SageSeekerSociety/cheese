@@ -7,9 +7,11 @@ RUN corepack enable
 
 # The manifests alone, so editing a component does not reinstall the world: this
 # layer is reused until the lockfile itself changes. The pnpm store lives on a
-# cache mount, so even a lockfile edit fetches only what it added.
+# cache mount, so even a lockfile edit fetches only what it added. The install
+# applies the dependency patches in patches/ (package.json's patchedDependencies).
 FROM base as deps
 COPY package.json pnpm-lock.yaml ./
+COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 FROM deps as dev
@@ -18,6 +20,9 @@ CMD ["pnpm", "dev"]
 
 FROM deps as build
 COPY . ./
+# The API generation the build bakes in (vite.config.ts) is the backend's file,
+# outside this context: it comes in through the named `api` context (build.yml).
+COPY --from=api api-generation /backend/api-generation
 ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__

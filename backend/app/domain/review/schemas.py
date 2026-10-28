@@ -21,6 +21,9 @@ class AcceptCardCreate(BaseModel):
     # default is a sentence telling them how to fix it, not pydantic's
     # `Field required`.
     reviewer_handle: str | None = Field(default=None, max_length=64)
+    # 一卡多人：递给哪几个人由递卡的人说了算。给了这个就整体替换掉那个集合
+    # （去重、去空白）；只给 `reviewer_handle` 时是「一个」。两者都空就爬默认阶梯。
+    reviewer_handles: list[str] | None = None
     # 审阅重点，长度在 review/services 里把关：超了要回一句教人怎么写的话，
     # 不是 pydantic 的 `String should have at most N characters`。
     focus: str = ""
@@ -71,6 +74,10 @@ class AcceptCardDescribe(BaseModel):
     #: None = 不动正文（只改标题）；空串 = 把正文清空。这两件事不一样，所以
     #: 「没传」和「传了空的」必须能区分，默认值才是 None 而不是 ""。
     change_body: str | None = None
+    #: 审阅重点：交付的人请审阅人确认的那几件事。None = 不动它；空串 = 清空。
+    #: 上限和递卡时同一道检查（`cards.clean_focus`：三条、合计 300 字），理由
+    #: 写在 `AcceptService.redescribe` 里。
+    focus: str | None = None
 
 
 class AcceptCardRedeliver(BaseModel):
@@ -181,7 +188,11 @@ class AcceptCardOut(BaseModel):
     id: uuid.UUID
     topic_id: uuid.UUID
     task_id: uuid.UUID | None = None
-    reviewer_handle: str
+    # 递给谁验收。不在 `accept_cards` 那一行上了（评审人在 `accept_card_reviewer`
+    # 表里），所以 `model_validate(card)` 拿不到它 —— `describe` 从表里取出来补上。
+    reviewer_handle: str | None = None
+    # 一卡多人：完整的集合。`reviewer_handle` 是它的「、」拼接，留着给旧读者。
+    reviewer_handles: list[str] = []
     focus: str
     # The commit this card will become, as filed — so the reviewer can see the
     # subject that is about to enter the project's history BEFORE accepting,
@@ -190,6 +201,8 @@ class AcceptCardOut(BaseModel):
     change_body: str | None = None
     status: AcceptStatus
     decided_by: str | None
+    #: ``decided_by``'s own 芝士 decided for them.
+    decided_by_assistant: bool = False
     decided_at: datetime | None
     note: str
     #: 这条 note 是「停住了」(error) 还是「还在走」(info)，空 note 是 None。

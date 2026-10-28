@@ -1,0 +1,14 @@
+{
+  "type": "exec.output",
+  "origin": "device",
+  "why": "One line a running exec wrote to stderr, sent while it runs because the exec asked for `stream`: how an executor install's download progress reaches the room before the install ends.",
+  "frame": {
+    "t": "exec.output",
+    "id": "e7",
+    "stderr": "{\"executor_download\": {\"have\": 120000000, \"total\": 240000000}}"
+  },
+  "meaning": {
+    "exec_id": "e7",
+    "line": "{\"executor_download\": {\"have\": 120000000, \"total\": 240000000}}"
+  }
+}

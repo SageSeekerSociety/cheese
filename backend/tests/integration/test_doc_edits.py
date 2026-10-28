@@ -7,7 +7,7 @@ so.
 - A person editing a passage (restoring one change) edits as themselves.
 - A change that lands on a pending suggestion: one an agent seat left is
   dropped and the change goes in, one a person left is refused. The same holds
-  for a whole-document write (cheese_doc_set), which drops every suggestion.
+  for a whole-document write (cheese_doc(action=set)), which drops every suggestion.
 
 The collaboration service is the stand-in in tests/support/collab.py.
 """
@@ -351,7 +351,7 @@ def test_an_agent_edit_over_a_persons_pending_suggestion_is_refused(client):
 
 
 def test_a_whole_document_write_goes_through_when_only_a_seats_suggestion_pends(client):
-    """An agent's own suggestion is not a person's to decide: cheese_doc_set
+    """An agent's own suggestion is not a person's to decide: cheese_doc(action=set)
     still replaces the whole document, dropping it."""
     task, seat, agent = _document(client)
     proposed = _edit(client, task, agent, ("讲范围", "讲边界"), mode="suggest")
@@ -372,7 +372,7 @@ def test_a_whole_document_write_goes_through_when_only_a_seats_suggestion_pends(
 
 
 def test_a_whole_document_write_is_refused_while_a_persons_suggestion_pends(client):
-    """cheese_doc_set would drop a suggestion a person is still deciding on:
+    """cheese_doc(action=set) would drop a suggestion a person is still deciding on:
     it is refused, and the document is left alone."""
     task, _, _ = _document(client)
     _suggested_by(client, task, "alice")

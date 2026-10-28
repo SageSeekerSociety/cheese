@@ -9,14 +9,20 @@
 import type { RoomFileEditorSession, RoomFileRevision } from '@/api'
 import type { PenStroke, ShapeStroke } from '@/components/panels/preview/designSketch'
 import type { ImageRegionHandle, ImageRegionTarget } from '@/components/panels/preview/usePreviewImageRegion'
+import type { PreviewCommentsBundle } from '@/composables/panelPreview/comments'
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
 import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
-import type { DocumentRevision, FileContent } from '@/cx_types'
+import type { DocumentRevision, FileContent, ProjectMemberRow } from '@/cx_types'
+import type { DocComment, DocThread, DocThreadActions, DocThreadState } from '@/lib/docThreadTypes'
 
-import { computed, ref, shallowRef } from 'vue'
+import { computed, reactive, ref, shallowRef } from 'vue'
 
+import { useDocPeople } from '@/composables/useDocPeople'
+
+import { AGENT_NAME } from './catalogFixtures/common'
 import { previewPanelProps } from './catalogFixtures'
+import { DEMO_TOPIC } from './demoPanels'
 
 import { fileHistoryBundle, revisionsBundle, roomFileEditorBundle } from '@/test/panelBundles'
 
@@ -180,6 +186,7 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     previewReadError: null,
     pickTarget: null,
     pickOn: false,
+    agentName: AGENT_NAME,
     ...over,
   }
 }
@@ -233,5 +240,116 @@ export function imageStageProps(over: Record<string, unknown> = {}): Record<stri
     docError: '',
     annotateError: '',
     ...over,
+  }
+}
+
+// ---- 这一份文件上的评论 -------------------------------------------------------
+
+/** 评论挂的那份文件：预览台上摆着的那一篇 markdown。 */
+export const PREVIEW_COMMENT_PATH = 'docs/week-1.md'
+export const PREVIEW_COMMENT_VERSION = '9f8e7d6'
+
+/**
+ * 这一栏里的名册：两个人，一个挑过头像（`avatar_id` 3），一个没挑（null）。
+ *
+ * 没挑过的那一位按规矩画彩色首字母 —— 不退回全站默认脸，那正是这一栏以前的毛病。
+ * 预览站里没有头像服务，挑过的那个也可能取不到图，`UserAvatar` 那时同样退到首字母；
+ * 要看的不是一张图，是「名字从名册读、头像按人各归各的」这条接线。
+ */
+const COMMENT_ROSTER: ProjectMemberRow[] = [
+  { user_handle: 'wang', name: '王长鑫', role: 'owner', source: 'owner', avatar_id: 3 },
+  { user_handle: 'li', name: '李甘', role: 'member', source: 'team', avatar_id: null },
+]
+
+/** 名册那一包（真的 `useDocPeople`）：名字和头像都从这里读，和产品里同一处。 */
+function commentPeople() {
+  return useDocPeople({
+    members: () => COMMENT_ROSTER,
+    agentHandle: () => 'cheese',
+    agentName: () => AGENT_NAME,
+  })
+}
+
+/** 一条评论：锚点记着它写在哪一版上，版本对得上，位置就还算数（`marked`）。 */
+function comment(id: string, author: string, content: string, at: string, quote: string | null = null): DocComment {
+  return { id, author, content, anchor_quote: quote, anchor: { version: PREVIEW_COMMENT_VERSION }, created_at: at }
+}
+
+/** 两串评：一串人开的头、芝士在答；一串已经解决。 */
+export function previewCommentThreads(): DocThreadState {
+  const threads: DocThread[] = [
+    {
+      comment: comment('fc-1', 'li', '这里的用时要不要一起写进去？', '2026-09-30T02:00:00.000Z', '搜索次数翻倍。'),
+      revision: 2,
+      state: 'open',
+      replies: [
+        {
+          sequence: 1,
+          comment: comment('fc-1-1', 'wang', '写进去了，改成「用时少了一秒」。', '2026-09-30T02:04:00.000Z'),
+        },
+        {
+          sequence: 2,
+          comment: comment('fc-1-2', 'cheese', '这一版已经同步到正文了。', '2026-09-30T02:06:00.000Z'),
+        },
+      ],
+      answering: 'working',
+    },
+    {
+      comment: comment('fc-2', 'wang', '课件和作业分开两页放吧。', '2026-09-29T08:00:00.000Z'),
+      revision: 1,
+      state: 'resolved',
+      replies: [],
+    },
+  ]
+  return { threads, activity: { 'fc-1': { state: 'working' } }, errors: {}, busy: false, unknown: null }
+}
+
+/** 预览站里写评论、解决、重开都不写：不动的空动作。 */
+const COMMENT_ACTIONS: DocThreadActions = {
+  reply: async () => {},
+  resolve: async () => {},
+  reopen: async () => {},
+  recover: async () => undefined,
+  stopAgent: async () => {},
+}
+
+/** `PreviewComments` 那一栏的整串 props。 */
+export function previewCommentsProps(over: Record<string, unknown> = {}): Record<string, unknown> {
+  const people = commentPeople()
+  return {
+    topicId: DEMO_TOPIC,
+    path: PREVIEW_COMMENT_PATH,
+    version: PREVIEW_COMMENT_VERSION,
+    author: 'wang',
+    threadState: previewCommentThreads(),
+    threadActions: COMMENT_ACTIONS,
+    pick: null,
+    writable: true,
+    post: async () => {},
+    agentName: AGENT_NAME,
+    nameOf: (handle: string) => people.names.value[handle] ?? handle,
+    avatarOf: (handle: string) => people.avatars.value[handle] ?? '',
+    ...over,
+  }
+}
+
+/**
+ * 预览那一格递下去的评论包（`usePanelPreviewComments` 的返回）：开着没有是这一格
+ * 自己的状态，`toggle` 真的翻它 —— 于是预览站上那颗「评论」和栏里的 × 都点得动。
+ */
+export function previewCommentsBundle(over: { open?: boolean } = {}): PreviewCommentsBundle {
+  const people = commentPeople()
+  const open = ref(over.open ?? false)
+  return {
+    target: computed(() => ({ topicId: DEMO_TOPIC, path: PREVIEW_COMMENT_PATH, version: PREVIEW_COMMENT_VERSION })),
+    open,
+    toggle: () => {
+      open.value = !open.value
+    },
+    author: 'wang',
+    threads: { state: reactive(previewCommentThreads()), actions: COMMENT_ACTIONS, refresh: async () => {} },
+    post: async () => {},
+    nameOf: (handle: string) => people.names.value[handle] ?? handle,
+    avatarOf: (handle: string) => people.avatars.value[handle] ?? '',
   }
 }

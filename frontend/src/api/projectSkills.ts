@@ -78,3 +78,29 @@ export function declineProjectSkill(id: string): Promise<ProjectSkill> {
 export function deleteProjectSkill(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/skills/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+// ---- 技能面板：一个队友带哪些技能，和它们现在能不能跑 ----
+//
+// 平台随会话发货的原生技能目录（`/skill-catalog`），以及每一颗探一次的健康。两条都
+// 按项目授权（后端 `_in_project`）。队友带到哪些技能存在 `agent.configuration.skills`，
+// 那条走 `updateProjectAgent`，不在这里。
+export interface SkillHealth {
+  status: 'ok' | 'degraded' | 'unavailable'
+  detail: string
+}
+
+export function listSkillCatalog(projectId: string): Promise<ListPayload<{ name: string; description: string }>> {
+  return request<ListPayload<{ name: string; description: string }>>(
+    `/projects/${encodeURIComponent(projectId)}/skill-catalog`
+  )
+}
+
+/** 同一份发货目录，不经项目：出题人给题目挑技能时还没有项目（`GET /skill-catalog`）。 */
+export function listPlatformSkills(): Promise<ListPayload<{ name: string; description: string }>> {
+  return request<ListPayload<{ name: string; description: string }>>('/skill-catalog')
+}
+
+export function getSkillHealth(projectId: string, name: string): Promise<SkillHealth> {
+  const path = `/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(name)}/health`
+  return request<SkillHealth>(path)
+}

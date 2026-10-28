@@ -12,6 +12,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 
 import asyncio
 import subprocess
+import threading
 import time
 import uuid
 import uuid as _uuid
@@ -321,6 +322,9 @@ class FakeGitHubPrClient:
         self.status_error: Exception | None = None
         # How long GitHub takes to say where a PR stands.
         self.status_delay_s: float = 0.0
+        # (entered, release): a status read sets `entered` and then waits for
+        # `release`, so a test can act while a reading is in flight.
+        self.status_gate: tuple[threading.Event, threading.Event] | None = None
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -433,6 +437,10 @@ class FakeGitHubPrClient:
     async def pull_request_status(
         self, *, owner, repo, number, token
     ) -> PullRequestStatus:
+        if self.status_gate is not None:
+            entered, release = self.status_gate
+            entered.set()
+            await asyncio.to_thread(release.wait, 30)
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
@@ -822,6 +830,14 @@ def app_world(client, monkeypatch):
         }
 
     monkeypatch.setattr(project_forge, "provision_repository", provision)
+
+    # A project started from a task gets its repository prepared and then
+    # bound (`ProjectService.for_participation`), not provisioned: it joins
+    # this world the same way.
+    async def bind_repository(session, prepared):
+        return await provision(prepared.project_id, session)
+
+    monkeypatch.setattr(project_forge, "bind_repository", bind_repository)
     monkeypatch.setattr(project_forge, "default_branch", default_branch)
     monkeypatch.setattr(project_forge, "branch_head", branch_head)
     monkeypatch.setattr(pr_publish, "branch_head", branch_head)
@@ -1983,7 +1999,8 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
     assert card["status"] == "pending"
     assert card["pr_number"] == number  # PR 还挂在卡上：改完卡就能重试
     # 执行者是唯一该醒的人 —— 改卡会把 PR 标题一起改掉，检查按新标题重跑。
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "提交审阅时的标题不一致")
+    assert "提交审阅时的标题不一致" in settled
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
 
@@ -1991,7 +2008,7 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
 def test_accept_merges_again_once_the_card_says_the_line_the_pr_shows(
     client, app_world
 ):
-    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_describe` 会
+    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_card(action=describe)` 会
     同时把 PR 标题改掉（`pr_publish.sync_pr_text`），两行又成同一个字符串，合并照
     常 —— 这道闸拦住的是「分家」，不是这一次合并本身。"""
     fake = app_world["fake"]
@@ -2032,7 +2049,8 @@ def test_poll_holds_the_notice_and_the_armed_merge_while_the_titles_disagree(
     wait_work_idle()
 
     assert fake.merge_calls == []  # 检查绿也不合
-    settled = _task_settled(client, tid, "标题和卡片不一致")
+    settled = _task_settled(client, tid, "提交审阅时的标题不一致")
+    assert "提交审阅时的标题不一致" in settled
     assert "fix(review): land the title the checks judged" in settled
     assert "chore(test): file an accept card" in settled
     card = _cards(client, tid)[0]
@@ -3200,7 +3218,9 @@ def test_merge_anyway_is_for_humans_only(client, app_world):
     r = _merge_anyway(
         client,
         cid,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]
@@ -4171,6 +4191,39 @@ def test_a_correction_is_validated_like_the_original_subject(client, sweeping):
     assert sweeping["patched"] == []
 
 
+def test_the_review_focus_can_be_corrected_while_the_card_is_pending(client, sweeping):
+    """推新提交换的是代码，卡还是同一张：递卡时写下的重点可能已经过期，而它
+    和改动页一起构成「要确认什么」。它和正文一样是说明，所以能改；PR 正文里
+    没有它，改它不必碰 GitHub。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(
+        client,
+        tid,
+        focus="原来的第一条已经不在这次改动里\n现在只需要看回执的落点",
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["focus"] == (
+        "原来的第一条已经不在这次改动里\n现在只需要看回执的落点"
+    )
+    assert sweeping["patched"] == []
+    room = _task_settled(client, tid, "现在只需要看回执的落点")
+    assert "原来的第一条已经不在这次改动里" in room
+
+
+def test_a_focus_correction_keeps_the_filing_limit(client, sweeping):
+    """审阅重点的上限不因为换了入口就放宽：它仍是一眼要读完的三条。"""
+    pid, tid = _room_with_work(client)
+    _make_card(client, tid)
+
+    r = _describe(client, tid, focus="一\n二\n三\n四")
+
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "acceptFocusTooLong"
+
+
 def test_a_correction_leaves_a_trace_in_the_task(client, sweeping):
     """谁在什么时候把它从什么改成了什么。这条入口能改「这次改动会在历史里说
     什么」，所以它自己必须可追溯。"""
@@ -4284,7 +4337,6 @@ def _treeless_card(client, topic_id: str, status: str) -> None:
             s.add(
                 AcceptCard(
                     topic_id=_uuid.UUID(topic_id),
-                    reviewer_handle="alice",
                     focus="",
                     status=AcceptStatus(status),
                     change_subject="chore(old): a card from before trees",

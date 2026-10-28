@@ -16,6 +16,7 @@
 // 文档的字节与两种读法（`documentBytes.ts`）、在线编辑与历史（`editing.ts`）、元数据的
 // 轮询（`polling.ts`）各自成篇拆在 `panelPreview/` 下。返回的那一包和拆之前一模一样，
 // 组件、演示夹具与单测都不用动。
+import type { McpAppMessage } from '@/lib/mcpAppBridge'
 import type { ChatAttachment } from '../cx_types'
 import type { ImageUpload, PanelPreviewOptions, PanelPreviewProps } from './panelPreview/types'
 
@@ -23,12 +24,16 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
+import { usePanelPreviewLiveEdit } from './panelPreview/liveEdit'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { usePanelPreviewVersions } from './panelPreview/versions'
+import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
 import { t } from '@/i18n'
@@ -44,7 +49,28 @@ export type {
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
   // 帧的托管：授权表投进哪一帧、帧报到什么状态，都在它那儿。
-  const frames = usePreviewFrames(options.frameName, { onEscape: options.onEscape, onPick: options.onPick })
+  /** 第三方 View 里的表单点提交（`ui/message`）：拼成一条普通提问往上递。 */
+  function submitAppMessage(message: McpAppMessage) {
+    const url = frames.displayed.value?.url
+    const topicId = props.topicId
+    if (!url || !topicId || !message.text.trim()) return
+    options.onAppMessage?.({
+      topicId,
+      content: message.text,
+      intent: 'ask-agent',
+      quotedContext: {
+        kind: 'web-region',
+        url,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+        viewport: { w: Math.max(1, window.innerWidth), h: Math.max(1, window.innerHeight) },
+      },
+    })
+  }
+  const frames = usePreviewFrames(options.frameName, {
+    onEscape: options.onEscape,
+    onPick: options.onPick,
+    onAppMessage: submitAppMessage,
+  })
   const state = createPreviewState()
   const named = usePanelNamedFile({ props, state, frames })
   const target = useCurrentPreview({ props, options, state, frames, loadNamed: named.loadFile })
@@ -117,10 +143,36 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
   }
 
   const doc = usePanelPreviewDocument({ props, state })
+  // 这一份文件上的评论：线程、写一条新的、回复和解决。
+  //
+  // 名册那一包（`useDocPeople`）先建：评论卡上的名字和头像从它来，和文档评论栏
+  // 同一处、同一份实现——不是预览这一格自己再算一遍。不接它的话卡上会显示 handle
+  // 加色块（那曾经是个静默的 bug）。
+  const people = useDocPeople({
+    members: () => props.members ?? [],
+    agentHandle: () => props.agentHandle ?? null,
+    agentName: () => props.agentName ?? '',
+  })
+  const comments = usePanelPreviewComments({ props, state, people, docPage: () => doc.docPage.value })
   const edits = usePanelPreviewEditing({
     props,
     state,
     onOpenFile: options.onOpenFile,
+    refreshDocument: doc.refreshDocument,
+  })
+  // 文档条上的版本：第几版、本版改了几处、两版对比、看旧版。清单就是上面那一栏历史。
+  const versions = usePanelPreviewVersions({
+    props,
+    state,
+    fileHistory: edits.fileHistory,
+    people,
+    editing: edits.editing,
+  })
+  // 在预览格里和几个人一起改一份 markdown：正文走协作服务，存回那一份房间文件本身
+  // （Office 那几种走 OnlyOffice，文本这一条不经过它）。
+  const liveEdit = usePanelPreviewLiveEdit({
+    props,
+    state,
     refreshDocument: doc.refreshDocument,
   })
 
@@ -171,12 +223,17 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docPage: doc.docPage,
     canPage: doc.canPage,
     docPageHtml: doc.docPageHtml,
+    // 这一份文件上的评论（同上，原样递下去）
+    comments,
     // 在线编辑 + 历史（各自的取数那一包，原样递下去）
     revs: edits.revs,
     editing: edits.editing,
     showHistory: edits.showHistory,
     editor: edits.editor,
     fileHistory: edits.fileHistory,
+    versions,
+    // 在预览格里直接改一份 markdown（存回房间文件本身）
+    liveEdit,
     // 动作
     load,
     downloadArtifact,
@@ -186,6 +243,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     closeEditor: edits.closeEditor,
     toggleHistory: edits.toggleHistory,
     toggleDocPage: doc.toggleDocPage,
+    setDocNarrow: doc.setNarrow,
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: frames.setPickMode,

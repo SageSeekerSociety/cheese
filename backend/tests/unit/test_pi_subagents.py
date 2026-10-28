@@ -32,6 +32,7 @@ from app.domain.agent.harness.pi.runner import Runner
 from app.domain.agent.harness.pi.subscription import Subscription
 from app.domain.agent.harness.prompt import (
     PLATFORM_NOTICE,
+    REPEATED_FAILURE,
     SHARED_CHECKOUT,
     STEP_TITLES,
     SUBAGENT_TODO_WRITE,
@@ -350,7 +351,12 @@ async def test_a_subagent_is_told_the_rules_every_agent_of_the_session_keeps(
 
         (first, *_) = session.requests("child-default")
         request = json.dumps(first, ensure_ascii=False)
-        for rule in (SUBAGENT_TODO_WRITE, SHARED_CHECKOUT, STEP_TITLES):
+        for rule in (
+            SUBAGENT_TODO_WRITE,
+            SHARED_CHECKOUT,
+            STEP_TITLES,
+            REPEATED_FAILURE,
+        ):
             assert json.dumps(rule, ensure_ascii=False)[1:-1] in request, rule
 
 

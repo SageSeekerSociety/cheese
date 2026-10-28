@@ -31,6 +31,7 @@ import io
 import json
 import re
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -45,6 +46,7 @@ from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
 from app.core.storage import StorageBackend, private_storage
 from app.domain.conversation.models import Conversation
+from app.domain.session_record import models as session_record_models
 from app.domain.session_record.archive import (
     INDEX_PREFIX,
     describe,
@@ -60,10 +62,14 @@ from app.domain.session_record.models import SessionRecord
 SEAL_AFTER = timedelta(minutes=5)
 #: How often the sealer looks.
 SEAL_EVERY_S = 60
-#: The most one sealed object holds, before gzip. A turn larger than this is
-#: several objects; one record larger than this is an object of its own.
-SEAL_MAX_BYTES = 8 << 20
-SEAL_MAX_RECORDS = 2000
+#: The most one sealed object holds, before gzip: about what a reader opens in
+#: one page (the transcript asks 120, the raw view at most 500). A page is what
+#: is fetched, and gzip cannot be read from the middle, so an object much
+#: larger than a page means every page pays for a whole turn. A turn larger
+#: than this is several objects; one record larger than this is an object of
+#: its own.
+SEAL_MAX_BYTES = 2 << 20
+SEAL_MAX_RECORDS = 512
 #: How many runs one pass of the sealer seals before it lets go.
 SEAL_RUNS_PER_PASS = 200
 
@@ -458,6 +464,47 @@ def unpack(body: bytes) -> list[dict]:
     ]
 
 
+#: How many sealed bodies one page fetches at once. A page's records span
+#: several turns, each turn's objects are fetched with a round trip of their
+#: own, and those round trips overlap instead of adding up.
+SEALED_FETCH_PARALLEL = 8
+
+#: How many bytes of sealed bodies this process keeps. Sealed objects never
+#: change (the table refuses UPDATE; the sealer publishes a key only after it
+#: has read the bytes back), so a body read for one page is a body the next
+#: read — the poll behind every open 现场, the reader paging up — asks for
+#: again. The cap bounds what one busy conversation can hold.
+SEALED_CACHE_BYTES = 64 << 20
+
+_sealed_bodies: OrderedDict[str, bytes] = OrderedDict()
+_sealed_bytes = 0
+
+
+def _remember_sealed(key: str, body: bytes) -> None:
+    global _sealed_bytes
+    if key in _sealed_bodies:
+        return
+    _sealed_bodies[key] = body
+    _sealed_bytes += len(body)
+    while _sealed_bytes > SEALED_CACHE_BYTES and _sealed_bodies:
+        _, gone = _sealed_bodies.popitem(last=False)
+        _sealed_bytes -= len(gone)
+
+
+async def sealed_body(storage: StorageBackend, key: str) -> bytes:
+    """One sealed object's bytes, from this process's cache when it has them."""
+    body = _sealed_bodies.get(key)
+    if body is not None:
+        _sealed_bodies.move_to_end(key)
+        return body
+    body = await storage.download(key)
+    if body is None:
+        # i18n-exempt: an invariant broken in storage, a 500 for the logs
+        raise RuntimeError(f"sealed session records missing: {key}")
+    _remember_sealed(key, body)
+    return body
+
+
 # --- reading -----------------------------------------------------------------
 
 
@@ -513,6 +560,21 @@ def decode_cursor(cursor: str) -> Key:
     except Exception as exc:  # any malformed cursor is the same refusal
         # i18n-exempt: the route turns this into its own refusal
         raise ValueError("not a session record cursor") from exc
+
+
+def _page_is_full(found: list[dict], limit: int, newest: bool, edge: datetime) -> bool:
+    """Whether a run starting/ending at `edge` can still put a record in the page.
+
+    `found` holds more than `limit` records already: keep the page's own
+    records and say whether this run's edge is past the last of them. The trim
+    happens here, so `found` never grows past `limit + 1` while the read walks
+    the runs.
+    """
+    if len(found) <= limit:
+        return False
+    found.sort(key=_key, reverse=newest)
+    del found[limit + 1 :]
+    return edge < found[limit]["_at"] if newest else edge > found[limit]["_at"]
 
 
 async def read(
@@ -584,11 +646,97 @@ async def read(
             seen.add(key)
             found.append(item)
 
-    # The bucket's index survives the database's thirty-day index. Identity and
-    # time bounds in the key let us skip bodies belonging to other turns and
-    # stop opening runs once the page is full. Objects stay private.
+    # The database still holds every record younger than thirty days — a sealed
+    # run keeps its row until the retention sweep — so its rows are read first
+    # and the bucket's index is consulted only when they cannot fill the page.
+    # They are read in the same widening batches the index walk uses: a page
+    # that spans several turns must fetch those bodies together, and one that
+    # already has all it needs must stop opening runs.
+    sealed = None
+    batch: list = []
+
+    async def flush() -> None:
+        nonlocal sealed
+        if not batch:
+            return
+        keys: list[str] = [r.object_key for r in batch if r.object_key]
+        if keys and sealed is None:
+            sealed = storage or private_storage()
+        bodies: dict[str, bytes | None] = {}
+        if keys:
+            assert sealed is not None
+            bodies = dict(
+                zip(
+                    keys,
+                    await asyncio.gather(*(sealed_body(sealed, key) for key in keys)),
+                    strict=True,
+                )
+            )
+        for row in batch:
+            body = bodies.get(row.object_key) if row.object_key is not None else None
+            if row.object_key is not None and body is not None:
+                opened.add(row.object_key)
+                collect(
+                    await asyncio.to_thread(unpack, body),
+                    row.turn_id,
+                    row.agent_handle,
+                    row.harness,
+                )
+            else:
+                collect(
+                    await open_run(row, storage),
+                    row.turn_id,
+                    row.agent_handle,
+                    row.harness,
+                )
+        batch.clear()
+
+    width = 1
+    async for row in await db.stream_scalars(query):
+        if row.object_key is not None and row.object_key in opened:
+            continue
+        if _page_is_full(found, limit, newest, row.last_at if newest else row.first_at):
+            break
+        batch.append(row)
+        if len(batch) >= width:
+            await flush()
+            width = min(width * 2, SEALED_FETCH_PARALLEL)
+    await flush()
+    # The bucket's index survives the database's thirty-day index: what the
+    # rows no longer hold is still there, under its own key. Listing it is a
+    # round trip, so it is skipped whenever it cannot name anything this page
+    # is missing:
+    #
+    # - A forward read (`after`) from inside the retention window. Every run it
+    #   could name is filtered to `last_at >= after[0]`, and a row is swept only
+    #   once its own `last_at` is past the window — so each of those runs still
+    #   has its row, and the listing could only hand back what the rows already
+    #   gave. This is the read the open panel makes: its cursor is seconds old,
+    #   every three seconds, and that listing was the renewal's whole cost —
+    #   right up to the rate limit that made the read answer as a timeout.
+    # - A newest-page read the rows already overfilled: there is a boundary to
+    #   hand back and nothing older could displace it. At exactly `limit` the
+    #   reader must still be sent into the archive — the surplus that would
+    #   have named their way up may be records whose rows were swept.
+    #
+    # Nothing else may skip it. A backward read (`before`, or neither cursor)
+    # has no floor under it: the record just above the page may be one whose
+    # row the sweep has already taken.
+    #
+    # The window is `models.RETENTION` — the very value `retention.expire`
+    # deletes by — read through the module rather than imported as a name: a
+    # reader holding its own copy would skip the listing while a sweep by the
+    # real value had taken the rows, and answer a short page as if it were
+    # complete. (It lives in `models`, below both this module and `retention`,
+    # because `retention` imports this one.)
+    window = datetime.now(UTC) - session_record_models.RETENTION
+    inside_the_window = after is not None and after[0] >= window
     archive = storage or bucket()
-    if archive is not None:
+    if (
+        archive is not None
+        and not inside_the_window
+        and not (newest and len(found) > limit)
+    ):
         runs = []
         async for key in archive.list_keys(f"{INDEX_PREFIX}/{conversation_id}/"):
             run = describe(key)
@@ -600,42 +748,47 @@ async def read(
                 continue
             if before is not None and run["first_at"] > before[0]:
                 continue
+            if run["object_key"] in opened:
+                continue
             runs.append(run)
         runs.sort(
             key=lambda r: r["last_at"] if newest else r["first_at"], reverse=newest
         )
-        for run in runs:
-            if len(found) > limit:
-                found.sort(key=_key, reverse=newest)
-                del found[limit + 1 :]
-                edge = run["last_at"] if newest else run["first_at"]
-                if edge < found[limit]["_at"] if newest else edge > found[limit]["_at"]:
-                    break
-            body = await archive.download(run["object_key"])
-            opened.add(run["object_key"])
-            if body is None:
-                # i18n-exempt: an invariant broken in storage, a 500 for the logs
-                raise RuntimeError(
-                    f"sealed session records missing: {run['object_key']}"
-                )
-            collect(
-                await asyncio.to_thread(unpack, body),
-                run["turn_id"],
-                run["agent_handle"],
-                run["harness"],
-            )
-    async for row in await db.stream_scalars(query):
-        if row.object_key in opened:
-            continue
-        if len(found) > limit:
-            found.sort(key=_key, reverse=newest)
-            del found[limit + 1 :]
-            edge = row.last_at if newest else row.first_at
-            if edge < found[limit]["_at"] if newest else edge > found[limit]["_at"]:
+        # Fetch the run the page needs, then two, four…: the first fetch pays
+        # one round trip, and the ones after it overlap rather than queue. A
+        # page that one object already fills never fetches a second.
+        at = 0
+        width = 1
+        while at < len(runs):
+            if _page_is_full(
+                found,
+                limit,
+                newest,
+                runs[at]["last_at"] if newest else runs[at]["first_at"],
+            ):
                 break
-        collect(
-            await open_run(row, storage), row.turn_id, row.agent_handle, row.harness
-        )
+            batch = runs[at : at + width]
+            bodies = await asyncio.gather(
+                *(sealed_body(archive, run["object_key"]) for run in batch)
+            )
+            stopped = False
+            for run, body in zip(batch, bodies, strict=True):
+                if _page_is_full(
+                    found, limit, newest, run["last_at"] if newest else run["first_at"]
+                ):
+                    stopped = True
+                    break
+                opened.add(run["object_key"])
+                collect(
+                    await asyncio.to_thread(unpack, body),
+                    run["turn_id"],
+                    run["agent_handle"],
+                    run["harness"],
+                )
+                at += 1
+            if stopped:
+                break
+            width = min(width * 2, SEALED_FETCH_PARALLEL)
     found.sort(key=_key, reverse=newest)
     page = found[:limit]
     cursor = encode_cursor(_key(page[-1])) if len(found) > limit else None
@@ -651,8 +804,5 @@ async def open_run(row: SessionRecord, storage: StorageBackend | None) -> list[d
         return row.records
     assert row.object_key is not None
     bucket = storage or private_storage()
-    body = await bucket.download(row.object_key)
-    if body is None:
-        # i18n-exempt: an invariant broken in storage, a 500 for the logs
-        raise RuntimeError(f"sealed session records missing: {row.object_key}")
+    body = await sealed_body(bucket, row.object_key)
     return await asyncio.to_thread(unpack, body)

@@ -11,8 +11,11 @@ from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.integration.conftest import (
+    add_external_member,
+    open_task,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 from tests.integration.test_project_roles import _invite
@@ -194,6 +197,22 @@ def _proposal(name: str = "weekly-report", **extra) -> dict:
     }
 
 
+def test_a_teammate_refused_a_decline_hears_whose_proposal_it_was(client):
+    """Declining is a person's call. The teammate that tries is told so in words
+    that name the teammate who proposed it — by its seat, which reads as the
+    name the project gave it — never a hard-coded 芝士."""
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+
+    refused = client.post(f"/skills/{skill['id']}/decline")
+
+    assert refused.status_code == 403, refused.text
+    error = refused.json()["error"]
+    assert f"<@{room_agent_seat(client, room)}>" in error["message"]
+    assert "芝士" not in error["message"]
+
+
 def test_a_declined_proposal_is_not_proposed_again_but_a_person_may_write_it(client):
     project = _project(client)
     room = _room(client, project)
@@ -305,6 +324,63 @@ def test_a_proposal_cannot_absorb_someones_private_memory(client):
         json=_proposal(absorbs=[f"private/{OWNER}/style.md"]),
     )
     assert refused.status_code == 422, "a project method absorbed a personal memory"
+
+
+# --- The composer's skill panel: what a room switches on ---------------------
+
+
+def _room_skills(client, room: str, headers=PERSON) -> dict[str, bool]:
+    """The room's platform skills, name → switched on."""
+    listed = client.get(f"/topics/{room}/skills", headers=headers)
+    return {s["name"]: s["enabled"] for s in listed.json()["data"]["data"]}
+
+
+def test_a_room_switches_a_platform_skill_on_and_off(client):
+    project = _project(client)
+    room = _room(client, project)
+    before = _room_skills(client, room)
+    assert "wolfram" in before, "the platform's own skills are not offered"
+    assert not any(before.values()), "a new room started with a skill already on"
+
+    turned = client.put(
+        f"/topics/{room}/skills", json={"enabled": ["wolfram"]}, headers=PERSON
+    )
+    assert turned.status_code == 200, turned.text
+    assert turned.json()["data"]["enabled"] == ["wolfram"]
+    assert _room_skills(client, room)["wolfram"] is True
+
+    # It is the ROOM that switched it on: a sibling room is untouched.
+    other = _room(client, project, title="另一间")
+    assert _room_skills(client, other)["wolfram"] is False
+
+    off = client.put(f"/topics/{room}/skills", json={"enabled": []}, headers=PERSON)
+    assert off.status_code == 200, off.text
+    assert _room_skills(client, room)["wolfram"] is False
+
+
+def test_a_room_keeps_only_the_names_the_platform_hands_it(client):
+    project = _project(client)
+    room = _room(client, project)
+    turned = client.put(
+        f"/topics/{room}/skills",
+        json={"enabled": ["wolfram", "no-such-skill", "wolfram"]},
+        headers=PERSON,
+    )
+    assert turned.status_code == 200, turned.text
+    assert turned.json()["data"]["enabled"] == ["wolfram"], "an unknown name got stored"
+
+
+def test_a_stranger_cannot_switch_a_room_on(client):
+    project = _project(client)
+    room = _room(client, project)
+    stranger = session_auth_headers("user-2")
+    assert client.get(f"/topics/{room}/skills", headers=stranger).status_code in (
+        401,
+        403,
+    )
+    assert client.put(
+        f"/topics/{room}/skills", json={"enabled": ["wolfram"]}, headers=stranger
+    ).status_code in (401, 403)
 
 
 def _proposal_lines(client, room: str, skill_id: str) -> list[dict]:
@@ -431,6 +507,42 @@ def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
     assert line["meta"]["state"] == "over"
 
 
+def test_a_proposal_raised_in_a_task_lands_in_the_task(client):
+    """A task is a conversation of its own. The card and the line about the
+    proposal are drawn where the teammate was, so a proposal raised while
+    working in a task belongs to that task — not to the channel it hangs in,
+    where the task page cannot find it and the channel would show a card about
+    work it never saw."""
+    project = _project(client)
+    room = _room(client, project)
+    task = open_task(client, room, owner=OWNER)["id"]
+
+    proposed = client.post(f"/topics/{task}/skills", json=_proposal())
+    assert proposed.status_code == 200, proposed.text
+    skill = proposed.json()["data"]
+    assert skill["source_topic_id"] == task, (
+        "the card is not in the task it was raised in"
+    )
+
+    [line] = _proposal_lines(client, task, skill["id"])
+    assert line["meta"]["who"] == "human"
+    assert _proposal_lines(client, room, skill["id"]) == [], (
+        "the task's proposal also went to the channel"
+    )
+
+    # The card itself, not only the line: it is drawn from the room snapshot a
+    # subscription opens with, so that is the reading that has to carry it.
+    # Without this, a snapshot still slicing by the room passes everything above.
+    with room_socket(client, task, OWNER) as ws:
+        in_task = ws.subscribed["room"]["skill_proposals"]
+    with room_socket(client, room, OWNER) as ws:
+        in_channel = ws.subscribed["room"]["skill_proposals"]
+    assert [s["id"] for s in in_task] == [skill["id"]], (
+        "the task's snapshot does not carry its own proposal"
+    )
+    assert in_channel == [], "the channel's snapshot carries the task's proposal"
+
+
 def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
     project = _project(client)
     room = _room(client, project)
@@ -450,6 +562,37 @@ def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
     shown = card["proposal"]["related"]
     assert existing["id"] not in shown, shown
     assert "「项目周报」" in shown, shown
+
+
+# --- Who may touch someone else's method -------------------------------------
+
+
+def test_only_a_manager_rewrites_or_deletes_another_members_method(client):
+    """A method reaches every later session and may be another member's: a
+    fellow member reads it, but only a manager rewrites or deletes it."""
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=METHOD, headers=PERSON).json()[
+        "data"
+    ]
+    assert skill["state"] == "active"
+
+    add_external_member(client, project, "user-2", by=OWNER)
+    outsider = session_auth_headers("user-2")
+    read = client.get(f"/projects/{project}/skills", headers=outsider)
+    assert read.status_code == 200, read.text
+
+    refused = client.patch(
+        f"/skills/{skill['id']}", json={"body": "改写"}, headers=outsider
+    )
+    assert refused.status_code == 403, refused.text
+    assert "改写" not in _shipped(project)["skills/weekly-report/SKILL.md"]
+
+    refused = client.delete(f"/skills/{skill['id']}", headers=outsider)
+    assert refused.status_code == 403, refused.text
+    assert "skills/weekly-report/SKILL.md" in _shipped(project)
+
+    assert client.delete(f"/skills/{skill['id']}", headers=PERSON).status_code == 200
 
 
 def test_naming_a_room_gives_a_person_no_skill_their_role_does_not(client):

@@ -3,7 +3,7 @@
   "conflict": "Merge conflicts with the main branch, {long}, and {agent} isn't on it",
   "device": "{agent}'s environment can't be reached, {long}. Someone probably needs to turn that computer on or connect it",
   "environment": "{agent}'s environment hasn't recovered yet, {long}",
-  "gate": "Failed the quality gate, {long}, and {agent} isn't revising it",
+  "gate": "Platform checks failed, {long}, and {agent} isn't revising it",
   "mention": "Someone mentioned {agent}, {long} with no reply",
   "provisioning": "{agent}'s environment isn't ready yet, {long}",
   "rejected": "This version was sent back, {long}, and {agent} isn't revising it",

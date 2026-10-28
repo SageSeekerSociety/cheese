@@ -32,6 +32,7 @@ from app.domain.room_cleanup import retire
 from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import project_service, registered
 from tests.support.devices import enrollment_team
 
@@ -227,7 +228,7 @@ async def test_uncertain_stop_blocks_reuse_until_device_confirms(client, monkeyp
     )
     async with client.test_factory() as session:
         assert (await session.get(RoomCleanup, cleanup_id)).state == "preparing"
-        with pytest.raises(ConflictError, match="正在停止"):
+        with pytest.raises(ConflictError, match="正在停下"):
             await TopicService(session).unarchive(
                 room_id,
                 by="owner",
@@ -517,7 +518,7 @@ async def enrolled(session, *device_ids: str) -> None:
             DeviceRow(
                 device_id=device_id,
                 name=device_id,
-                token=f"{device_id}-token",
+                token_digest=digest_token(f"{device_id}-token"),
                 owner_user_id=owner,
                 team_id=await enrollment_team(sql_device_service(session), owner),
                 supply=Supply.cloud,

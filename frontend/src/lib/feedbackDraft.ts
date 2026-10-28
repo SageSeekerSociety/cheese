@@ -124,6 +124,7 @@ function parseDraft(value: unknown): FeedbackDraft | null {
       evidence: str(agent.evidence),
       ...(typeof agent.sessionId === 'string' ? { sessionId: agent.sessionId } : {}),
       ...(typeof agent.environment === 'string' ? { environment: agent.environment } : {}),
+      ...(typeof agent.agentHandle === 'string' ? { agentHandle: agent.agentHandle } : {}),
     }
   }
   const proposal = raw.proposal as Record<string, unknown> | undefined

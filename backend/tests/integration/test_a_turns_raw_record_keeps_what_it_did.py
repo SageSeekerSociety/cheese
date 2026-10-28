@@ -242,8 +242,12 @@ class _Session:
         finally:
             journal.close()
 
-    def drain(self, *, fresh_mirror: bool = False) -> None:
-        """One drain by the backend; a fresh mirror reads the runner from the start."""
+    def drain(self, *, fresh_mirror: bool = False, pages: int = 1) -> None:
+        """Drains by the backend; a fresh mirror reads the runner from the start.
+
+        One drain takes one journal page (the journal's `PAGE`); a journal with
+        more records than that needs as many drains to be taken whole.
+        """
         if fresh_mirror or not self.mirrors:
             self.mirrors += 1
         mirror = self.tmp_path / f"mirror-{self.mirrors}.sqlite"
@@ -289,7 +293,8 @@ class _Session:
 
         async def run() -> None:
             try:
-                await reading.drain()
+                for _ in range(pages):
+                    await reading.drain()
             finally:
                 await reading.release()
 
@@ -404,7 +409,7 @@ def test_image_pixels_survive_mirroring_and_are_room_authorized(
     assert response.status_code == 200, response.text
     assert response.content == pixels
     assert response.headers["content-type"] == "image/png"
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("stranger")}
     assert client.get(path, headers=stranger).status_code in (401, 403, 404)
     other = _room_for(client)
     assert (
@@ -421,7 +426,7 @@ def test_image_pixels_survive_mirroring_and_are_room_authorized(
     )
     exact = f"/topics/{session.ref.topic_id}/session-records/{cursor}"
     assert client.get(exact).status_code == 200
-    owner = {"X-Cheese-Token": "", **session_auth_headers("user-1")}
+    owner = {"Authorization": "", **session_auth_headers("user-1")}
     assert (
         client.delete(f"/topics/{session.ref.topic_id}", headers=owner).status_code
         == 200
@@ -451,14 +456,18 @@ def test_agent_history_tools_read_search_and_page_complete_raw_records(
 
     host = Host()
     found = tools.run_platform_tool(
-        "cheese_chat_search", {"kind": "event", "query": "HEAD OF THE OUTPUT"}, host
+        "cheese_chat",
+        {"action": "search", "kind": "event", "query": "HEAD OF THE OUTPUT"},
+        host,
     )
     record_id = re.search(r"id=(record:[A-Za-z0-9_-]+)", found)[1]
     result = ""
     offset = 0
     while True:
         text = tools.run_platform_tool(
-            "cheese_chat_get", {"message_id": record_id, "offset": offset}, host
+            "cheese_chat",
+            {"action": "get", "message_id": record_id, "offset": offset},
+            host,
         )
         result += text
         more = re.search(r"offset=(\d+)", text)
@@ -534,8 +543,13 @@ def test_channel_record_search_crosses_task_conversations_without_paging_gaps(
             return response.json()
 
     result = tools.run_platform_tool(
-        "cheese_chat_search",
-        {"kind": "event", "query": "channel-evidence child-two", "channel": True},
+        "cheese_chat",
+        {
+            "action": "search",
+            "kind": "event",
+            "query": "channel-evidence child-two",
+            "channel": True,
+        },
         Host(),
     )
     assert "channel-evidence child-two" in result
@@ -751,9 +765,8 @@ def test_a_record_nested_deep_is_kept_and_read_back(client, tmp_path):
 
 @pytest.mark.parametrize("harness", [CLAUDE_CODE, CODEX])
 def test_the_lines_read_out_is_what_a_transcript_holds(client, tmp_path, harness):
-    """`lines=true` is the shape `cheese transcript` writes to a file: one row
-    per record, the same keys whichever harness wrote it, and the subagent's
-    thread named."""
+    """`lines=true` gives one row per record, the same keys whichever harness
+    wrote it, and the subagent's thread named."""
     session = _Session(client, tmp_path, harness, _room_for(client))
     work = str(uuid.uuid4())
     session.write(session.records(work))
@@ -813,10 +826,10 @@ def test_the_platforms_repeated_words_are_not_in_the_file(client, tmp_path):
     ).json()["data"]["items"]
     said = [part["text"] for row in rows for part in row["parts"]]
     assert "照我说的做" in said
-    assert not any("没听到你说话" in text for text in said)
+    assert not any("分钟了还没回" in text for text in said)
     # The journal still holds every word: this is the file's projection only.
     whole = json.dumps(session.read(turn_id=work), ensure_ascii=False)
-    assert "没听到你说话" in whole
+    assert "分钟了还没回" in whole
 
 
 def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):
@@ -838,7 +851,7 @@ def test_the_line_read_hands_out_only_this_conversation(client, tmp_path):
     assert {row["conversation"] for row in rows} == {None}
     assert all(row["author"] == mine.ref.agent_handle for row in rows)
 
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("a-stranger")}
     for params in ({}, {"lines": True}):
         refused = client.get(
             f"/topics/{mine.ref.topic_id}/session-records",
@@ -856,7 +869,7 @@ def test_who_may_not_read_the_room_may_not_read_its_record(client, tmp_path):
     session.drain()
     assert session.read()
     room = session.ref.topic_id
-    stranger = {"X-Cheese-Token": "", **session_auth_headers("a-stranger")}
+    stranger = {"Authorization": "", **session_auth_headers("a-stranger")}
     site = client.get(f"/topics/{room}/transcript", headers=stranger)
     record = client.get(f"/topics/{room}/session-records", headers=stranger)
     assert site.status_code in (401, 403, 404), site.text

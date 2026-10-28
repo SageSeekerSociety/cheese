@@ -1,15 +1,15 @@
 {
-  "sessions": "本机正在运行的 AI 会话",
-  "noSessions": "暂无运行中的 AI 会话",
-  "sessionsFailed": "会话或防休眠设置加载失败",
+  "sessions": "本机正在工作的 AI 队友",
+  "noSessions": "暂无正在工作的 AI 队友",
+  "sessionsFailed": "正在工作的 AI 队友和防休眠设置加载失败，刷新页面重试",
   "sleepFailed": "防休眠设置保存失败",
-  "preventSleep": "AI 会话运行时防止休眠",
-  "preventSleepHint": "本机有 AI 会话运行时防止系统空闲休眠，会话全部结束后恢复。这个设置对这台电脑的所有接入生效",
+  "preventSleep": "AI 队友工作时防止休眠",
+  "preventSleepHint": "本机有 AI 队友在工作时防止系统空闲休眠，全部停下后恢复。这个设置对这台电脑的所有接入生效",
   "lidHint": "Mac 合盖且使用电池时仍会休眠",
   "since": "自 {time} 开始",
   "role": {
-    "center": "中心机",
-    "executor": "执行机"
+    "center": "运行 AI 队友",
+    "executor": "提供环境"
   },
   "loadFailed": "加载失败",
   "name": "设备名称",

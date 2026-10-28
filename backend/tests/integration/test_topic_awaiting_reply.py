@@ -472,7 +472,6 @@ def _card(client, pid, rid, task_id, **fields) -> str:
             card = AcceptCard(
                 topic_id=uuid.UUID(rid),
                 task_id=uuid.UUID(task_id),
-                reviewer_handle="alice",
                 status=AcceptStatus.pending,
                 **fields,
             )

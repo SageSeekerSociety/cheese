@@ -105,6 +105,10 @@ class TopicOut(BaseModel):
     # 打字，几百 KB 的清单每 30 秒都命中不了 304、原样重传一遍（`routes/topics.py`）。
     # 房间 socket 上那份 `activity_snapshot` 仍是完整的（含打字）—— 那是房内实时显示。
     activity: list[MemberActivityOut] = Field(default_factory=list)
+    # 这间房的 AI 队友：没人点名的话交给名册上的哪一席（`TopicMemberService.
+    # addressable_agent_handle`），一位都没坐就是 None。行上那句状态说到队友时
+    # （「{agent}在做」）叫的是它，项目可以给它改名。同样只有 list/get 话题时填。
+    agent_handle: str | None = None
     # 这个房间在等哪位成员、从什么时候开始、为什么（`block/waits.py`）：它那一轮
     # 报错了、有人点了它的名还没回、卡停在要它修的地方。多久算太久在前端按当下的
     # 钟判。同样只有 list/get 话题时填。

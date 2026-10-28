@@ -4,7 +4,7 @@ session taking the write-up, and time passing.
 The runtime that runs a session is not here; `write_up_read` plays the part a
 session plays for the delivery ledger (fenced, read, over), and `written_up`
 adds the one thing that closes the task: the session closing it
-(`cheese_close_task`).
+(`cheese_task(action=close)`).
 """
 
 import uuid
@@ -78,7 +78,7 @@ def teammate_seat(client, task_id: str) -> tuple[uuid.UUID, str]:
 
 def written_up(client, task_id: str) -> None:
     """The task's AI teammate reads its write-up instruction, writes it up, and
-    closes the task from its own session (`cheese_close_task`)."""
+    closes the task from its own session (`cheese_task(action=close)`)."""
     write_up_read(client, task_id)
     project_id, handle = teammate_seat(client, task_id)
     closed = client.post(

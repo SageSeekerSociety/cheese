@@ -142,7 +142,7 @@ def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
     assert len(summaries) == 1
     summary = summaries[0]
     assert summary["kind"] == "event"
-    assert summary["content"] == "这一轮改了 1 个文件（+2 -1）\nbackend/app/x.py"
+    assert summary["content"] == "这次改了 1 个文件（+2 -1）\nbackend/app/x.py"
     assert summary["meta"]["changeset"]["commit"] == "abc1234"
     assert summary["meta"]["changeset"]["files"] == [
         {"path": "backend/app/x.py", "added": 2, "removed": 1}

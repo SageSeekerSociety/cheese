@@ -260,7 +260,7 @@ class DocumentWriter:
                 f"实况文档已被 {editors} 更新至第 {doc.version} 版，"
                 f"{self._summarize(previous_content, content)}。"
                 "你此前读到的内容可能已经过期。继续依据它工作或写回之前，"
-                "先用 cheese_doc_get 重新读取；基于旧版本的写回会被拒绝。"
+                "先用 cheese_doc(action=get) 重新读取；基于旧版本的写回会被拒绝。"
             )
         )
         if for_agent is None and earlier is not None and consumed_turn(earlier) is None:

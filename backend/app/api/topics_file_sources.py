@@ -35,6 +35,8 @@ async def source_bytes(
     path: str,
     task: uuid.UUID | None,
     source: Literal["live", "committed"] = "live",
+    *,
+    with_task: bool,
 ) -> bytes:
     """One of this room's files, from whichever store holds it.
 
@@ -53,4 +55,6 @@ async def source_bytes(
             path, source
         )
         return data
-    return await library_records.read_attachment(db, project_id, room_id, path)
+    return await library_records.read_attachment(
+        db, project_id, room_id, path, with_task=with_task
+    )

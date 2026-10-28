@@ -32,7 +32,6 @@ RETIRED = "房间"
 #: count per file: see the module docstring for what that would let through.
 BASELINE: Counter[tuple[str, str]] = Counter(
     {
-        ("admin.json", "已过空闲期还没回收（房间最近一轮结束得更晚、或后台命令还在跑，都会往后推）"): 1,
         ("apiError/account.json", "登录后才能进入这个房间"): 1,
         ("ask.json", "撤回后这道题重新等回答，谁都能再选一次。你发的那句话还留在房间里。"): 1,
         (
@@ -42,7 +41,6 @@ BASELINE: Counter[tuple[str, str]] = Counter(
         ("feedback/dashboard.json", "房间"): 1,
         ("global.json", "房间里任何地方都行"): 1,
         ("notifications/ROOM_NOTICE.json", "随房间归档"): 1,
-        ("roomNotice/routine.json", "本房间"): 1,
     }
 )
 

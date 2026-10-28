@@ -2,7 +2,7 @@
   "drafting": "{name}正在做这件任务",
   "draftingWhat": "文档会在做的过程中写好",
   "failed": "{name}没能开始做这件任务",
-  "failedWhy": "这一轮没有完成",
+  "failedWhy": "这次没做完",
   "retry": "重试",
   "waiting": "还没能开始，环境连上后会继续",
   "writeMyself": "自己写"

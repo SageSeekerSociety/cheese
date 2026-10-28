@@ -4,12 +4,18 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
+    and_,
+    case,
+    cast,
     delete,
     exists,
     func,
+    literal,
     select,
+    update,
 )
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentEnvironment, AgentRead, AgentSession
@@ -81,14 +87,63 @@ class AgentSessionRepository:
         )
 
     async def save_told(
-        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str, told: dict
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        told: dict,
+        was: dict | None,
     ) -> None:
-        """Record what project state this agent's conversation has been told."""
-        await self._upsert(
+        """Record what project state this agent's conversation has been told,
+        unless the record moved off ``was`` (what the turn read before choosing
+        what to tell) in the meantime.
+
+        It moves when a compaction ends between that read and this write
+        (``forget_told``): the turn told only what changed since ``was``, and
+        writing its digests over the cleared record would say the unchanged
+        sections are still in the window when the compaction just took them
+        out. Left cleared, the next input tells the whole state.
+        """
+        now = datetime.now(UTC)
+        stmt = insert(AgentSession).values(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            values={"told": told},
+            told=told,
+            updated_at=now,
+        )
+        # `told` is a JSON column, which has no equality operator; JSONB does.
+        unchanged = (
+            AgentSession.told.is_(None)
+            if was is None
+            else cast(AgentSession.told, JSONB) == cast(literal(was, JSON), JSONB)
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[
+                    AgentSession.conversation_id,
+                    AgentSession.agent_handle,
+                    AgentSession.harness,
+                ],
+                set_={"told": stmt.excluded.told, "updated_at": now},
+                where=unchanged,
+            )
+        )
+        await self._session.flush()
+
+    async def forget_told(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """Record that this conversation no longer holds what it was told."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(told=None, updated_at=datetime.now(UTC))
         )
 
     async def save_place(
@@ -152,6 +207,53 @@ class AgentSessionRepository:
             return
         row.runtime_location = {**row.runtime_location, "let_go": True}
         await self._session.flush()
+
+    async def drain(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        harness: str,
+        launch: str,
+    ) -> datetime:
+        """When the drain of runner ``launch`` on this session began: now,
+        unless a drain of that same runner is already under way
+        (``AgentSession.drain_started_at``)."""
+        same = and_(
+            AgentSession.drain_launch == launch,
+            AgentSession.drain_started_at.is_not(None),
+        )
+        started = await self._session.scalar(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(
+                drain_started_at=case(
+                    (same, AgentSession.drain_started_at), else_=func.now()
+                ),
+                drain_launch=launch,
+            )
+            .returning(AgentSession.drain_started_at)
+        )
+        # A seat recovery found has its row; one deleted since starts now.
+        return started or datetime.now(UTC)
+
+    async def drained(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> None:
+        """The drain of this session's runner is over: it was replaced."""
+        await self._session.execute(
+            update(AgentSession)
+            .where(
+                AgentSession.conversation_id == conversation_id,
+                AgentSession.agent_handle == agent_handle,
+                AgentSession.harness == harness,
+            )
+            .values(drain_started_at=None, drain_launch=None)
+        )
 
     async def _upsert(
         self,

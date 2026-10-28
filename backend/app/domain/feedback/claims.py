@@ -32,6 +32,9 @@ from app.domain.project.models import Project
 #: The timeline note on the 处理中 step a claim records.
 CLAIMED_NOTE = "已领取"
 
+#: The timeline note on the 已收录 step a release records.
+RELEASED_NOTE = "已放弃领取"
+
 _DISPLAY_REF = re.compile(r"^FB-(\d+)$", re.IGNORECASE)
 
 

@@ -17,7 +17,9 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import PROJECT, tell_project
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.session_state import running_conversations
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
@@ -32,6 +34,7 @@ from app.domain.delivery.agent import (
 from app.domain.delivery.ledger import deliver, settle_card
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
+from app.domain.integration import periodic as integration_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
@@ -43,6 +46,7 @@ from app.domain.task import periodic as task_periodic
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.team.repositories import TeamRepository
+from app.domain.thread import periodic as thread_periodic
 from app.domain.topic_membership.services import TopicMemberService, addressable_seat
 from app.domain.usage import periodic as usage_periodic
 from app.domain.user.services import usernames_by_ids
@@ -80,6 +84,8 @@ PERIODIC_JOB_NAMES = (
     "notification digest",
     "delivery resend",
     "docs question retention",
+    "question expiry",
+    "thread recycling",
     "turn resumes",
     "failed turn resume deliveries",
     "timed deliveries",
@@ -87,7 +93,9 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "assistant routines",
     "assistant memory tidy",
+    "feishu authorization renewal",
     "task deadline sweep",
+    "starter code pushes",
     "memory dream",
     "platform model roles refresh",
     "model spend cap alert",
@@ -249,8 +257,18 @@ def periodic_jobs(
         get_runner=get_runner,
         assistants=assistants,
     )
-    task_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    integration_periodic.register_periodic_jobs(jobs, sessions=sessions)
+
+    async def starter_settled(project_id: uuid.UUID, room_id: uuid.UUID) -> None:
+        await tell_project(room_id, PROJECT, project_id=project_id)
+
+    task_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, starter_settled=starter_settled
+    )
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    thread_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, running=running_conversations
+    )
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

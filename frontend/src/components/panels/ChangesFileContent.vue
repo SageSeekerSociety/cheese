@@ -43,7 +43,9 @@ const props = defineProps<{
   effectiveView: 'diff' | 'edit'
   openDiffLines: DiffLine[]
   openIsImage: boolean
-  openRawUrl: string
+  openImageSrc: string
+  /** 图片取不到时的原因；空串就是没出错。 */
+  openImageError: string
   fileBinary: boolean
   fileTooLarge: boolean
   fileBytes: number
@@ -111,8 +113,19 @@ const { mdAndUp } = useDisplay()
      the acceptance flow never stood up. Line numbers, wrapping and windowing
      all live in ChangesDiff. -->
   <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
+  <!-- An image that could not be fetched says so and offers the bytes; an empty
+       pane read as "still loading" forever. -->
+  <div v-else-if="props.openPath && props.openIsImage && props.openImageError" class="file-blob">
+    <v-icon size="30" class="c-faint mb-2">mdi-image-broken-variant</v-icon>
+    <div class="file-blob__title">{{ t('work.room.changes.cantDisplay') }}</div>
+    <div class="file-blob__note">{{ props.openPath }} · {{ props.openImageError }}</div>
+    <BaseButton kind="secondary" size="sm" class="mt-3" @click="emit('download')">
+      <v-icon size="16" class="me-1">mdi-download-outline</v-icon>
+      {{ t('work.room.changes.downloadOriginal') }}
+    </BaseButton>
+  </div>
   <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
-    <img :src="props.openRawUrl" :alt="props.openPath" />
+    <img v-if="props.openImageSrc" :src="props.openImageSrc" :alt="props.openPath" />
   </div>
   <!-- Binary / oversized: no editor. Opening one in Monaco meant every
      byte utf-8 could not decode came back as U+FFFD, and the save button

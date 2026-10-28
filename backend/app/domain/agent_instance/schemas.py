@@ -18,11 +18,18 @@ class AgentInstanceCreate(BaseModel):
 
 
 class AgentInstanceUpdate(BaseModel):
-    """Edit the name or saved configuration of one agent."""
+    """Edit the name or saved configuration of one agent.
+
+    ``expected_version`` is the version this edit was built from — what the
+    screen read before the person started changing it. Given, the save lands
+    only while the agent is still at it, and a 409 says somebody wrote first.
+    Omitted, the save replaces the configuration unconditionally.
+    """
 
     model_config = ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, max_length=64)
     configuration: AgentConfiguration | None = None
+    expected_version: int | None = None
 
 
 class AgentInstanceOut(BaseModel):
@@ -40,11 +47,17 @@ class AgentInstanceOut(BaseModel):
     # reader's language.
     name_source: str = "human"
     configuration: AgentConfiguration
+    # Sent back on every read so a save can carry it: a save built from a stale
+    # one is refused rather than overwriting whoever wrote first.
+    version: int = 1
     # Whether this is the project's default — what a new topic gets.
     is_default: bool = False
     # False = retired. Still listed, still resolvable by the rooms already on
     # it, still owns its memory — just not on offer for new work.
     is_active: bool = True
+    # The handle editing this agent right now, or None. A courtesy read, not a
+    # gate: a stale save is refused by ``version`` whatever this says.
+    editing: str | None = None
     created_at: datetime | None = None
 
 

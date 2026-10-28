@@ -48,6 +48,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.agent_session.models import AgentSession
 from app.domain.topic.services import TopicService
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import project_service, registered
 from tests.turn_log import a_topic, open_turn
 
@@ -111,6 +112,12 @@ class _Chat:
 
     def replaying(self, topic_id):
         return None
+
+    def draining(self, topic_id, agent_handle):
+        return False
+
+    def tell_draining(self, topic_id, agent_handle):
+        return False
 
     async def converse(self, **kw):
         self.converse_calls.append(kw)
@@ -438,7 +445,7 @@ async def _a_room_with_hands(factory) -> tuple[uuid.UUID, uuid.UUID, str]:
             DeviceRow(
                 device_id=_MACHINE,
                 name="Machine",
-                token=uuid.uuid4().hex,
+                token_digest=digest_token(uuid.uuid4().hex),
                 team_id=project.team_id,
                 owner_user_id=owner.id,
                 created_at=datetime.now(UTC),
@@ -520,7 +527,7 @@ async def _invoke(client: AsyncClient, topic_id, token: str, *, key: str = "tool
             "method": "invoke",
             "params": {"id": key, "tool": "Bash", "args": {"command": "git push"}},
         },
-        headers={"x-cheese-token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
 
@@ -687,7 +694,7 @@ async def test_a_call_without_an_id_records_nothing(
     response = await owner_client.post(
         f"/topics/{topic}/execution/{topic}",
         json={"method": "ping", "params": {}},
-        headers={"x-cheese-token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 504

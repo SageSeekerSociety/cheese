@@ -52,6 +52,7 @@ from app.api.auth import (
 )
 from app.api.byte_response import blob_response, media_bytes_response
 from app.api.inert_headers import INERT_HEADERS, NO_SNIFF
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.topics_deps import _actor_in_place
@@ -65,6 +66,7 @@ from app.core.sentences import exception_text, say
 from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.library.shelf import Shelf
 from app.domain.preview.office import (
     OfficeRenderFailed,
     OfficeRenderUnavailable,
@@ -205,7 +207,10 @@ async def upload_attachment(
         name = clean_artifact_path(library_path)
         # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
         ref = library.library_ref(name)
-        stored = await library_records.stored_file(db, topic.project_id, name)
+        reads_task = await may_read_path(db, topic.project_id, ref)
+        stored = await library_records.stored_file(
+            db, Shelf.of_project(topic.project_id, with_task=reads_task), name
+        )
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
         return ok({"path": ref, "mime": mime, "bytes": stored.size})
@@ -345,7 +350,11 @@ async def attachment_raw(
     }
     if task is None and source == "live":
         stored = await library_records.attachment_file(
-            db, topic.project_id, room_id, clean
+            db,
+            topic.project_id,
+            room_id,
+            clean,
+            with_task=await may_read_path(db, topic.project_id, clean),
         )
         response: Response
         if isinstance(stored, library_records.Stored):
@@ -361,7 +370,15 @@ async def attachment_raw(
         else:
             response = FileResponse(stored, media_type=media_type, headers=headers)
     else:
-        data = await source_bytes(db, topic.project_id, room_id, clean, task, source)
+        data = await source_bytes(
+            db,
+            topic.project_id,
+            room_id,
+            clean,
+            task,
+            source,
+            with_task=await may_read_path(db, topic.project_id, clean),
+        )
         response = media_bytes_response(
             data,
             media_type,
@@ -404,7 +421,15 @@ async def attachment_as_pdf(
         raise ValidationError(say("previewFormatUnsupported"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
             say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
@@ -464,7 +489,15 @@ async def attachment_as_html(
         raise ValidationError(say("previewFormatUnsupported"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
             say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))

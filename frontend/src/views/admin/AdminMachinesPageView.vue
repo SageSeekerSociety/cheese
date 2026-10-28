@@ -441,9 +441,11 @@ const failureNote = computed(() =>
               <!-- 和宿主机那一行同一套列：房间落在「宿主机」列下，状态落在「阶段」列下。 -->
               <div v-for="s in h.sandboxes" :key="s.id" class="mc-row mc-row--sandbox" role="row">
                 <span class="mc-caret" />
-                <a class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
+                <a v-if="s.project_id" class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
                   {{ s.project ?? '—' }} / {{ s.room ?? t('admin.machines.taskRoom') }}
                 </a>
+                <!-- A person's own conversation is theirs alone: named, not linked. -->
+                <span v-else class="mc-place">{{ t('admin.machines.personal') }}</span>
                 <span class="mc-phase">
                   <span class="status-dot" :class="stateDot(s.state)" />
                   {{ t(STATE_LABEL[s.state]) }}

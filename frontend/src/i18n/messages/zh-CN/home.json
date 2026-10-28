@@ -5,12 +5,12 @@
     "loadFailed": "无法读取待处理事项",
     "feed": "动态",
     "reason": {
-      "reviewer": "待你审阅",
+      "reviewer": "待审阅",
       "reporter": "你提的需求已有交付",
-      "asked": "待你回答",
+      "asked": "待回答",
       "checksFailed": "检查未通过",
-      "blocked": "卡住了",
-      "bounced": "已退回",
+      "blocked": "卡住",
+      "bounced": "退回",
       "decide": "待你决定",
       "read": "变更提醒",
       "invited": "待你答复",
@@ -47,7 +47,7 @@
       "added": "{name} 在项目设置中添加"
     },
     "task": {
-      "claims": "{n} 份领取待批准",
+      "claims": "{n} 份申请待通过",
       "reviews": "{n} 份提交待评审",
       "and": "，"
     }
@@ -80,7 +80,8 @@
     "disbandTeamDone": "已解散「{name}」",
     "disbandTeamFailed": "解散团队失败",
     "disbandTeamTypeName": "输入团队名「{name}」确认",
-    "teamDocs": "文档",
+    "teamLibrary": "资料库",
+    "teamSettings": "设置",
     "teamModels": "模型",
     "spaceReview": {
       "PENDING": "待审核",

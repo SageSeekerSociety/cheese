@@ -1,4 +1,4 @@
-// 房间里那张技能提议卡的数据：芝士在这个房间提议、还在等人的那些，以及保存和拒绝。
+// 那段对话里那张技能提议卡的数据：芝士在这段对话提议、还在等人的那些，以及保存和拒绝。
 //
 // 卡片组件只管画（components 下不许取数），取数放在这里，由聊天栏调用。
 import type { Ref } from 'vue'
@@ -11,8 +11,8 @@ import { t } from '@/i18n'
 import { keys } from '@/query/keys'
 import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 
-export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
-  /** 这个房间里芝士提议、还在等人的那些。 */
+export function useSkillProposals(projectId: Ref<string>, conversationId: Ref<string>) {
+  /** 这段对话里芝士提议、还在等人的那些。 */
   const proposals = ref<ProjectSkill[]>([])
   /** 这一轮里刚保存的：卡就地变成一句「已保存」，直到人离开这个页面。 */
   const saved = ref<ProjectSkill[]>([])
@@ -21,21 +21,21 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
 
   /** 读一次。拉不到就当没有：这张卡是顺路问一句，不该让对话栏报错。 */
   async function load() {
-    const room = roomId.value
-    const key = keys.roomSkillProposals(room)
-    // 先画上一次在这个房间看到的那几张，读回来再换（见 query/snapshot 的 `lastSeen`）。
+    const conversation = conversationId.value
+    const key = keys.roomSkillProposals(conversation)
+    // 先画上一次在这段对话看到的那几张，读回来再换（见 query/snapshot 的 `lastSeen`）。
     proposals.value = lastSeen<ProjectSkill[]>(key) ?? []
     try {
-      // 只有进房间时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
+      // 只有进这段对话时的第一次读用快照里那一块（query/snapshot），之后每次都问服务器。
       const got = await fromSnapshot(key, async () =>
         (await listProjectSkills(projectId.value)).data.filter(
-          (s) => s.state === 'draft' && s.proposal && s.source_topic_id === room
+          (s) => s.state === 'draft' && s.proposal && s.source_topic_id === conversation
         )
       )
       seen(key, got)
-      if (roomId.value === room) proposals.value = got
+      if (conversationId.value === conversation) proposals.value = got
     } catch {
-      if (roomId.value === room) proposals.value = []
+      if (conversationId.value === conversation) proposals.value = []
     }
   }
 
@@ -45,7 +45,7 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
     try {
       const row = await run()
       proposals.value = proposals.value.filter((p) => p.id !== s.id)
-      const key = keys.roomSkillProposals(roomId.value)
+      const key = keys.roomSkillProposals(conversationId.value)
       seen(
         key,
         (lastSeen<ProjectSkill[]>(key) ?? []).filter((p) => p.id !== s.id)

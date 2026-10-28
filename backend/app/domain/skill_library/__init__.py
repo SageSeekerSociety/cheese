@@ -59,7 +59,14 @@ def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
 #: stale on a device is exactly the kind of split nobody notices,
 #: because both machines run and only one of them is right.
 _NATIVE_SKILL_SRC = Path(__file__).resolve().parents[3] / "sandbox" / "skills"
-_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram")
+_SHIPPED_NATIVE_SKILLS = (
+    "cheese",
+    "documents",
+    "showcase",
+    "wolfram",
+    "skill-creator",
+    "mcp-builder",
+)
 
 #: What can travel. A skill is not one markdown file: `documents` ships the
 #: scripts that do the editing and the reference files they are explained in,
@@ -110,6 +117,43 @@ def shipped_skill_names() -> list[str]:
 def native_skill_files() -> dict[str, str]:
     """Files relative to the session's CLAUDE_CONFIG_DIR, never its worktree."""
     return dict(_native_skill_files())
+
+
+def native_skill_dir(name: str) -> Path | None:
+    """The directory a shipped native skill lives in, or None for a name that is
+    not one of ours or whose directory is missing."""
+    if name not in _SHIPPED_NATIVE_SKILLS:
+        return None
+    root = _NATIVE_SKILL_SRC / name
+    return root if root.is_dir() else None
+
+
+def native_skill_doc(name: str) -> tuple[str, str] | None:
+    """`(description, body)` of a shipped native skill's SKILL.md.
+
+    ``None`` when the name is not one of ours or the file is missing — the
+    caller treats both the same way: nothing to say about it.
+    """
+    root = native_skill_dir(name)
+    if root is None:
+        return None
+    path = root / "SKILL.md"
+    if not path.is_file():
+        return None
+    meta, body = parse_frontmatter(path)
+    return meta.get("description", ""), body
+
+
+def native_skill_bodies(names: list[str]) -> str:
+    """The instructions of the named native skills, for a room that switched
+    them on: the same text the executor already holds, put into the turn so
+    every agent in the conversation follows it from its first word."""
+    chunks: list[str] = []
+    for name in names:
+        doc = native_skill_doc(name)
+        if doc is not None:
+            chunks.append(doc[1])
+    return "\n\n---\n\n".join(chunks)
 
 
 # Read once per process: these files ship inside the image and cannot change

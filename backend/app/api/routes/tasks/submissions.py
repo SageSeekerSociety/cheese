@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
+from pydantic import BaseModel
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
@@ -15,15 +16,17 @@ from app.api.task_deps import (
     get_task_service,
     get_task_submission_review_service,
     get_task_submission_service,
-    get_team_service,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
+from app.auth import can
+from app.auth import task_roles as task_seats
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import ClaimPermission
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -34,28 +37,151 @@ from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.task.access import (
     bind_review_path,
-    ensure_can_read_participation,
 )
+from app.domain.task.claims import claim_of
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
     TaskSubmissionReviewService,
     TaskSubmissionService,
 )
-from app.domain.task.submission_state import past_deadline
+from app.domain.task.stages import (
+    open_stage,
+    stage_index,
+    stage_lines,
+    stages_to_api,
+)
+from app.domain.task.submission_state import (
+    past_deadline,
+    stage_change_effect,
+    stage_distribution,
+    stage_states_of,
+)
 from app.domain.task_notices import notices as task_notices
-from app.domain.team.services import TeamService
 
 router = APIRouter(prefix="/tasks")
+
+
+class TaskStageOut(BaseModel):
+    name: str
+    description: str
+    dueAt: int | None
+
+
+class MyStageProgress(BaseModel):
+    participantId: int
+    stages: list[str]
+
+
+class TaskProgress(BaseModel):
+    stages: list[TaskStageOut]
+    mine: MyStageProgress | None
+    distribution: list[dict[str, int]] | None
+
+
+@router.get(
+    "/{taskId}/progress",
+    summary="Task Progress By Stage",
+    **typed_response(TaskProgress),
+    dependencies=[Can(TaskPermission.view)],
+)
+async def get_task_progress(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    task_service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """Where things stand on each of the task's stages.
+
+    ``mine``: the caller's own claim (approved), one status per stage
+    (``submission_state`` STAGE_*), or null without one. ``distribution``: for
+    whoever grades the task, how many approved claims are at each status on
+    each stage; null for everyone else. A task without stages has one stage.
+    """
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+
+    claim = await claim_of(db, task=task, user_id=auth_user.user_id)
+    mine = (
+        {
+            "participantId": claim.id,
+            "stages": await stage_states_of(db, claim),
+        }
+        if claim is not None and claim.approved == 0
+        else None
+    )
+    distribution = (
+        await stage_distribution(db, task.id)
+        if await task_seats.teaches(db, task, auth_user.user_id)
+        else None
+    )
+    return ok(
+        {
+            "stages": stages_to_api(await task_service.list_stages(task.id)),
+            "mine": mine,
+            "distribution": distribution,
+        }
+    )
+
+
+class StageChangeIn(BaseModel):
+    #: The stages as the save would send them (``PATCH /tasks/{id}``'s ``stages``).
+    stages: list[dict]
+
+
+class StageChangeEffectOut(BaseModel):
+    failing: int
+    reopening: int
+    #: Who those are, by name (a team's claim by the team's name), in claim order.
+    failingNames: list[str]
+    reopeningNames: list[str]
+    #: The stages, by name, that would be past due with nothing handed in.
+    failingStages: list[str]
+
+
+@router.post(
+    "/{taskId}/stages/effect",
+    summary="What Saving These Stages Would Do To Claims",
+    dependencies=[Can(TaskPermission.teach)],
+    **typed_response(StageChangeEffectOut),
+)
+async def get_stage_change_effect(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    body: StageChangeIn,
+    task_service: TaskService = Depends(get_task_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """How many claims saving ``stages`` would turn failed (``failing``) and
+    how many it would take out of failed again (``reopening``), who they are
+    and which stages they would miss, so the publisher can be told before
+    saving. Nothing is written. Only whoever may
+    change the task asks."""
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    effect = await stage_change_effect(db, task.id, stage_lines(body.stages))
+    return ok(
+        {
+            "failing": effect.failing,
+            "reopening": effect.reopening,
+            "failingNames": list(effect.failing_names),
+            "reopeningNames": list(effect.reopening_names),
+            "failingStages": list(effect.failing_stages),
+        }
+    )
 
 
 @router.get(
     "/{taskId}/participants/{participantId}/submissions",
     summary="List Task Submissions",
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task_submissions(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    stage: str | None = Query(default=None, max_length=16),
     allVersions: bool = Query(default=False),
     queryReview: bool = Query(default=False),
     reviewed: bool | None = Query(default=None),
@@ -66,7 +192,6 @@ async def get_task_submissions(
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
-    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -81,14 +206,7 @@ async def get_task_submissions(
 
     # 出题者或本版管理员看得到这道题下任何人的提交；成员只看自己（或自己
     # 所在小队）的那一份。
-    await ensure_can_read_participation(
-        session=db,
-        task=task,
-        membership=membership,
-        user_id=auth_user.user_id,
-        team_service=team_service,
-        forbidden_message="You are not authorized to view these submissions",
-    )
+    await can.require(db, auth_user.user_id, ClaimPermission.read, membership)
 
     if sortBy not in {"createdAt", "updatedAt"}:
         raise BadRequestError(f"Invalid sortBy: {sortBy}")
@@ -102,6 +220,11 @@ async def get_task_submissions(
     items, total = await submission_service.list_submissions(
         task_id=task_id,
         participant_id=participant_id,
+        stage=(
+            stage_index(stage, await task_service.stage_keys(task_id))
+            if stage is not None
+            else None
+        ),
         all_versions=allVersions,
         query_review=queryReview,
         reviewed=reviewed,
@@ -128,17 +251,17 @@ async def get_task_submissions(
 @router.post(
     "/{taskId}/participants/{participantId}/submissions",
     summary="Create Submission",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def post_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     participant_id: Annotated[int, Path(ge=1, alias="participantId")],
     contents: list[dict],
+    stage: str | None = Query(default=None, max_length=16),
     db=Depends(get_db),
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
-    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
@@ -161,21 +284,18 @@ async def post_task_submission(
     # late hand-in is let through.
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
+    # Each stage is handed in on its own, named by its id, and closes at its
+    # own due date.
+    stage_at = stage_index(stage, await task_service.stage_keys(task_id))
+    await open_stage(db, task_id, stage_at, datetime.now(UTC))
 
-    if membership.is_team:
-        is_member = await team_service.is_team_member(
-            membership.member_id, auth_user.user_id
-        )
-        if not is_member:
-            raise ForbiddenError("Only team members can submit for this team task")
-    else:
-        if membership.member_id != auth_user.user_id:
-            raise ForbiddenError("Only the participant themselves can submit")
+    await can.require(db, auth_user.user_id, ClaimPermission.hand_in, membership)
 
     if not task.resubmittable:
         existing, _ = await submission_service.list_submissions(
             task_id=task_id,
             participant_id=participant_id,
+            stage=stage_at,
             all_versions=False,
             query_review=False,
             limit=1,
@@ -188,6 +308,7 @@ async def post_task_submission(
         participant_id=participant_id,
         submitter_id=auth_user.user_id,
         contents=contents,
+        stage=stage_at,
     )
     # Commit before answering: the page that just submitted opens the submission
     # history next, and must find what it handed in. Same reason as the commit in
@@ -199,7 +320,7 @@ async def post_task_submission(
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{version}",
     summary="Update Submission",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.view)],
 )
 async def patch_task_submission(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -209,8 +330,8 @@ async def patch_task_submission(
     submission_service: TaskSubmissionService = Depends(get_task_submission_service),
     membership_service: TaskMembershipService = Depends(get_task_membership_service),
     task_service: TaskService = Depends(get_task_service),
-    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
     task = await task_service.get_task(task_id=task_id)
     if task is None:
@@ -232,18 +353,11 @@ async def patch_task_submission(
         raise BadRequestError(say("submissionChallengeEnded"))
     if past_deadline(membership.deadline, datetime.now(UTC)):
         raise BadRequestError(say("submissionPastDeadline"))
+    stage = await submission_service.stage_of_version(participant_id, version)
+    if stage is not None:
+        await open_stage(db, task_id, stage, datetime.now(UTC))
 
-    if membership.is_team:
-        is_member = await team_service.is_team_member(
-            membership.member_id, auth_user.user_id
-        )
-        if not is_member:
-            raise ForbiddenError("Only team members can edit this submission")
-    else:
-        if membership.member_id != auth_user.user_id:
-            raise ForbiddenError(
-                "Only the participant themselves can edit their submission"
-            )
+    await can.require(db, auth_user.user_id, ClaimPermission.hand_in, membership)
 
     submission_dto = await submission_service.modify_submission(
         task_id=task_id,
@@ -258,7 +372,7 @@ async def patch_task_submission(
 @router.post(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Create Submission Review",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def post_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -277,15 +391,15 @@ async def post_task_submission_review(
         participant_id=participant_id,
         submission_id=submission_id,
     )
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only the author or a board manager can create review")
 
-    existing = await review_service.get_review_dto(submission_id)
+    # 一版可以有多位老师各判一份：冲突只看**这个人**有没有判过。
+    existing = await review_service.get_review_dto(submission_id, auth_user.user_id)
     if existing.get("reviewed"):
         raise ConflictError("Review already exists for this submission")
 
     review_dto = await review_service.create_review(
         submission_id=submission_id,
+        reviewer_id=auth_user.user_id,
         accepted=payload.accepted,
         score=payload.score,
         comment=payload.comment,
@@ -314,6 +428,7 @@ async def _tell_reviewed(db, task, membership, submission_id: int, review: dict,
 @router.get(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Get Submission Review",
+    dependencies=[Can(TaskPermission.view)],
 )
 async def get_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -322,7 +437,6 @@ async def get_task_submission_review(
     review_service: TaskSubmissionReviewService = Depends(
         get_task_submission_review_service
     ),
-    team_service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
@@ -339,14 +453,7 @@ async def get_task_submission_review(
         submission_id=submission_id,
     )
 
-    await ensure_can_read_participation(
-        session=db,
-        task=task,
-        membership=membership,
-        user_id=auth_user.user_id,
-        team_service=team_service,
-        forbidden_message="You are not authorized to view this review",
-    )
+    await can.require(db, auth_user.user_id, ClaimPermission.read, membership)
 
     review_dto = await review_service.get_review_dto(submission_id)
 
@@ -369,8 +476,8 @@ async def _update_task_submission_review(
     """The one review update PATCH and PUT both perform.
 
     PUT requires the whole review while PATCH fills in only what it is given;
-    that difference belongs to the request model. The path binding, the
-    permission check and the write stay here so the two verbs cannot drift.
+    that difference belongs to the request model. The path binding and the write
+    stay here so the two verbs cannot drift; both routes declare ``teach``.
     """
     task, membership = await bind_review_path(
         session=db,
@@ -378,9 +485,6 @@ async def _update_task_submission_review(
         participant_id=participant_id,
         submission_id=submission_id,
     )
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only the author or a board manager can update review")
-
     review_dto = await review_service.patch_review(
         submission_id=submission_id,
         accepted=payload.accepted,
@@ -394,7 +498,7 @@ async def _update_task_submission_review(
 @router.patch(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Re-Review Submission",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -421,7 +525,7 @@ async def patch_task_submission_review(
 @router.put(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Update Submission Review (Full Replace)",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def put_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -448,7 +552,7 @@ async def put_task_submission_review(
 @router.delete(
     "/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
     summary="Delete Submission Review",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def delete_task_submission_review(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -466,8 +570,6 @@ async def delete_task_submission_review(
         participant_id=participant_id,
         submission_id=submission_id,
     )
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only the author or a board manager can delete review")
 
     existing = await review_service.get_review_dto(submission_id)
     if not existing.get("reviewed"):

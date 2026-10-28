@@ -193,3 +193,48 @@ export function createBashTool(cwd: string, settings: { operations?: any } = {})
     },
   };
 }
+
+// A branch of a person's 芝士 is a session in the same process
+// (`registerBranches`). These only let the extension load; how a branch works
+// and hands back is tested with pi itself (`test_personal_sessions.py`).
+
+export function createExtensionRuntime() {
+  return {};
+}
+
+export const ModelRuntime = {
+  async create(_paths: object) {
+    return {};
+  },
+};
+
+export const SessionManager = {
+  inMemory(_cwd?: string) {
+    return {};
+  },
+};
+
+export const SettingsManager = {
+  inMemory(_settings?: object) {
+    return {};
+  },
+};
+
+export async function createAgentSession(_options: object) {
+  const listeners: ((event: any) => void)[] = [];
+  return {
+    session: {
+      subscribe(listener: (event: any) => void) {
+        listeners.push(listener);
+        return () => {};
+      },
+      async prompt(_text: string) {},
+      async steer(_text: string) {},
+      async abort() {},
+      getLastAssistantText() {
+        return "";
+      },
+      dispose() {},
+    },
+  };
+}

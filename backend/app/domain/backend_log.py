@@ -109,7 +109,7 @@ class BackendErrorIn(BaseModel):
 
 
 class BackendErrorBatchIn(BaseModel):
-    # Both optional: a scoped X-Cheese-Token already names the room, and the
+    # Both optional: a scoped agent credential already names the room, and the
     # route prefers the token's claims over anything the body asserts.
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
@@ -335,15 +335,21 @@ _MODEL_FAILURE_TYPES = frozenset(
         "SubscriptionRateLimited",
         "SubscriptionEgressOffline",
         "SubscriptionUnreachable",
+        "GatewayUpstreamOutOfCredit",
     }
 )
 
 
 #: Failures someone here can fix, told as soon as they happen rather than when
-#: they pile up: the platform's own credential refused upstream (401/403), and
-#: the subscription egress being offline. Either can fail every turn of a quiet
-#: deployment at a rate far below the burst threshold below, indefinitely.
-_ACTIONABLE_MODEL_FAILURES = frozenset({"http_auth", "egress_offline"})
+#: they pile up: the platform's own credential refused upstream (401/403), the
+#: subscription egress being offline, and a provider account behind a gateway
+#: row out of credit (`deploy/gateway/provider_credit.py`). Each can fail every
+#: turn of a quiet deployment at a rate far below the burst threshold below,
+#: indefinitely. The alert is keyed by `where` as well, which names the row for
+#: an account out of credit: two empty accounts are two top-ups.
+_ACTIONABLE_MODEL_FAILURES = frozenset(
+    {"http_auth", "egress_offline", "provider_credit"}
+)
 
 #: How many model failures inside how long make an alert. One failed model call
 #: is not news: across 2026-10-12..15 the gateway carried ~1,300 calls per 30
@@ -542,7 +548,7 @@ async def record(
                 alerting.send(
                     "模型请求失败",
                     [scrub_secrets(err.message) + _stream_note(err), *where],
-                    key=f"model-actionable:{err.exc_type}:{err.upstream_failure}",
+                    key=f"model-actionable:{err.exc_type}:{err.upstream_failure}:{err.where or ''}",
                 )
             counts = model_failures.over(err.exc_type, time.time())
             if counts is not None:

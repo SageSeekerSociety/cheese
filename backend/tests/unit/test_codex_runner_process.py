@@ -50,7 +50,7 @@ async def test_standalone_owner_survives_client_disconnect(
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.path == "/execution":
-                assert self.headers["X-Cheese-Token"] == "fixture"
+                assert self.headers["Authorization"] == "Bearer fixture"
                 assert body["method"] == "mcp"
                 data = json.dumps({"tools": []}).encode()
                 content_type = "application/json"

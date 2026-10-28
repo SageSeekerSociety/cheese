@@ -1,6 +1,7 @@
 """Stable process that owns device and terminal WebSockets across backend releases."""
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -8,15 +9,17 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.api import machine_relay
 from app.api.routes.connector import router as connector_router
 from app.api.routes.execution import router as execution_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.obs import configure_logging
 from app.domain.agent.device_hub import DeviceOffline, device_hub, offline_headers
-from app.domain.agent.device_hub_rpc import screen_to_json
+from app.domain.agent.device_hub import machine as machine_streams
+from app.domain.agent.device_hub_rpc import STREAMED_EXEC, screen_to_json
 
 # The same logging as the business backend: plain tracebacks rendered off the
 # hot path, secrets scrubbed, application INFO lines visible. Left to structlog's
@@ -92,6 +95,11 @@ async def admit_execution_request() -> AsyncIterator[None]:
 
 
 app.include_router(execution_router, dependencies=[Depends(admit_execution_request)])
+
+# What a sandbox asks on its platform socket is answered by the business
+# backend; this process only knows which device and state it came in on.
+if settings.connector_origin_url:
+    machine_streams.serve(machine_relay.over_http(settings.connector_origin_url))
 
 
 @app.get("/healthz")
@@ -188,12 +196,13 @@ async def snapshot(
     }
 
 
-@app.post("/internal/device-connection/call/{name}")
+@app.post("/internal/device-connection/call/{name}", response_model=None)
 async def call(
     name: str,
     body: dict[str, Any],
     x_device_connection_secret: str | None = Header(default=None),
-) -> dict[str, Any]:
+    accept: str | None = Header(default=None),
+) -> dict[str, Any] | StreamingResponse:
     _authorize(x_device_connection_secret)
     if name not in _RPC_METHODS:
         raise HTTPException(status_code=404, detail="unknown device connection call")
@@ -204,41 +213,101 @@ async def call(
             detail="device connection owner is draining",
             headers=_DRAINING,
         )
+    if name == "exec" and accept == STREAMED_EXEC:
+        return _streamed_exec(body)
     held = _held_read(name, body)
     if not held:
         _active_rpc_calls += 1
     try:
         result = await _dispatch(name, body)
-    except DeviceOffline as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="device offline",
-            headers=offline_headers(exc),
-        ) from exc
-    except TimeoutError as exc:
-        # A device that holds a link but never answers. ``device_hub.exec``
-        # waits ``timeout + EXEC_REPLY_SLACK_S`` on the reply future and then
-        # raises; unclaimed, that reached the catch-all handler, which answers
-        # 500「服务器内部错误」 — a fault in THIS process, which is the one
-        # thing it was not.
-        # The caller then reported the device's silence under its own name
-        # instead: `cleanup device inventory failed device=a3dc2940aee2` with a
-        # bare `Server error '500'`, three times in 90 minutes on 2026-09-16.
-        #
-        # No ``X-Device-Id`` here, deliberately: that header is how the client
-        # tells an offline device apart from everything else, and a device that
-        # is connected but silent is not offline. Sending it would turn every
-        # timeout into a `DeviceOffline`, which is the opposite of describing it.
-        device_id = body.get("device_id")
-        named = f" {device_id}" if isinstance(device_id, str) and device_id else ""
-        raise HTTPException(
-            status_code=504,
-            detail=f"device{named} did not answer {name} in time",
-        ) from exc
+    except (DeviceOffline, TimeoutError) as exc:
+        raise _unanswered(name, body, exc) from exc
     finally:
         if not held:
             _active_rpc_calls -= 1
     return {"result": result}
+
+
+def _streamed_exec(body: dict[str, Any]) -> StreamingResponse:
+    """An exec answered while it runs: ``{"stderr": line}`` for each line the
+    command writes to stderr, then ``{"result": ...}``. A streamed answer's
+    status goes out before anything is known, so a device that did not answer
+    ends it with ``{"error": ...}``: the status, detail and headers
+    `_unanswered` would otherwise have answered with."""
+    global _active_rpc_calls
+    lines: asyncio.Queue[str | None] = asyncio.Queue()
+    run = asyncio.create_task(device_hub.exec(**body, on_stderr=lines.put_nowait))
+    # Counted until the exec ends, not until the handler returns: the answer
+    # outlives the handler, and a release has to wait for the exec, which is in
+    # `exec_pending` only once it has been sent. Counted only once the task
+    # exists: a body the hub cannot take raises above, and nothing then ends it.
+    _active_rpc_calls += 1
+    run.add_done_callback(_ended)
+    run.add_done_callback(lambda _: lines.put_nowait(None))
+    # A caller that goes away does not stop the command, as with an exec
+    # answered at once; how it ended is then nobody's to read.
+    run.add_done_callback(_read_the_failure)
+
+    async def frames() -> AsyncIterator[str]:
+        while (line := await lines.get()) is not None:
+            yield json.dumps({"stderr": line}) + "\n"
+        try:
+            result = run.result()
+        except (DeviceOffline, TimeoutError) as exc:
+            failure = _unanswered("exec", body, exc)
+            yield json.dumps({"error": _failure_frame(failure)}) + "\n"
+        except Exception:
+            logger.exception("streamed exec failed")
+            yield json.dumps({"error": {"status": 500, "detail": "exec failed"}}) + "\n"
+        else:
+            yield json.dumps({"result": result}) + "\n"
+
+    return StreamingResponse(frames(), media_type=STREAMED_EXEC)
+
+
+def _ended(_: asyncio.Task) -> None:
+    global _active_rpc_calls
+    _active_rpc_calls -= 1
+
+
+def _failure_frame(failure: HTTPException) -> dict[str, Any]:
+    return {
+        "status": failure.status_code,
+        "detail": failure.detail,
+        "headers": dict(failure.headers or {}),
+    }
+
+
+def _unanswered(
+    name: str, body: dict[str, Any], exc: DeviceOffline | TimeoutError
+) -> HTTPException:
+    """What a call the device did not answer is answered with: offline, or
+    connected and silent past its deadline."""
+    if isinstance(exc, DeviceOffline):
+        return HTTPException(
+            status_code=409,
+            detail="device offline",
+            headers=offline_headers(exc),
+        )
+    # A device that holds a link but never answers. ``device_hub.exec``
+    # waits ``timeout + EXEC_REPLY_SLACK_S`` on the reply future and then
+    # raises; unclaimed, that reached the catch-all handler, which answers
+    # 500「服务器内部错误」 — a fault in THIS process, which is the one
+    # thing it was not.
+    # The caller then reported the device's silence under its own name
+    # instead: `cleanup device inventory failed device=a3dc2940aee2` with a
+    # bare `Server error '500'`, three times in 90 minutes on 2026-09-16.
+    #
+    # No ``X-Device-Id`` here, deliberately: that header is how the client
+    # tells an offline device apart from everything else, and a device that
+    # is connected but silent is not offline. Sending it would turn every
+    # timeout into a `DeviceOffline`, which is the opposite of describing it.
+    device_id = body.get("device_id")
+    named = f" {device_id}" if isinstance(device_id, str) and device_id else ""
+    return HTTPException(
+        status_code=504,
+        detail=f"device{named} did not answer {name} in time",
+    )
 
 
 def _read_the_failure(task: asyncio.Task) -> None:

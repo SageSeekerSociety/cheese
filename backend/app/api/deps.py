@@ -157,6 +157,7 @@ def consumptions_for(
             consumptions,
             redis,
             run_ended=partial(routine_personal.ended, sessions),
+            answered=partial(routine_personal.answered, sessions),
         ),
     )
     consumptions.serve(thread.KIND, thread.Replies(chat, chat.session_factory))

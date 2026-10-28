@@ -5,7 +5,7 @@
   "askAnswerUndelivered": "一条答案没能送达，提问的那段对话已经结束",
   "askAnswerUndeliveredDetail": "答案只能送进当初提问的那一段对话，而那段对话已经结束、不会再回来。这条答案没有被读到，平台也不再重试。要接着说的话，把答案当普通消息再发一次就行。",
   "blockUpgradedRoomId": "频道 {id}",
-  "blockUpgradedTaskId": "活 {id}",
+  "blockUpgradedTaskId": "任务 {id}",
   "blockUpgradedToRoom": "一条消息已转为频道",
   "blockUpgradedToTask": "一条消息已转为任务",
   "computeAnyDevice": "自有设备 · 自动选择",
@@ -15,7 +15,7 @@
   "docCommentedHandedTo": "{actor} 评论了文档，已交给 {seat}",
   "labelResult": "结果",
   "labelRoutineWork": "交给芝士的工作",
-  "labelUpgradedTo": "升级成了什么",
+  "labelUpgradedTo": "转成了什么",
   "mailDrafted": "芝士在 {account} 里写好了一封草稿，等 {owner} 确认后才会发送",
   "policyResourceMachine": "环境",
   "routineProposalConfirmed": "芝士起草的「{title}」已确认，会按设定执行",
@@ -34,8 +34,8 @@
   "skillProposed": "芝士提议新增技能「{title}」",
   "subagentStart": "分身开工",
   "subagentStopEmpty": "分身交回了一次结果（没有留话）",
-  "taskDispatched": "派出一条活：{title}",
+  "taskDispatched": "派出一个任务：{title}",
   "titleAutoRenamed": "标题自动更新为「{title}」（原为「{previous}」）",
-  "computeCloud": "沙箱 · 标准",
-  "computeCloudVm": "沙箱 · 虚拟机"
+  "computeCloud": "云端环境 · 标准",
+  "computeCloudVm": "云端环境 · 虚拟机"
 }

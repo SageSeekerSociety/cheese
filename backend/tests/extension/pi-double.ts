@@ -116,6 +116,20 @@ export class FakePi {
     return { content: event.content, isError: event.isError };
   }
 
+  /** A finished message as pi 1.0.0 ends it (`emitMessageEnd` in
+   *  `core/extensions/runner.ts`): each `message_end` handler may hand back a
+   *  replacement of the same role, the next sees it, and the last stands in the
+   *  transcript the model reads. A tool pi does not know ends this way only:
+   *  its "not found" is written before any `tool_call` or `tool_result`. */
+  async endMessage(message: any, ctx: any = {}) {
+    let current = message;
+    for (const handler of this.handlers.get("message_end") ?? []) {
+      const answer = await handler({ type: "message_end", message: current }, ctx);
+      if (answer?.message && answer.message.role === current.role) current = answer.message;
+    }
+    return current;
+  }
+
   async call(name: string, params: any, ctx: any = {}) {
     const tool = this.tools.get(name);
     assert.ok(tool, `${name} was never registered`);

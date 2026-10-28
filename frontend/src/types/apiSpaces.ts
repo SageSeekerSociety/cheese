@@ -103,6 +103,8 @@ export type PostSpaceCategoryRequestData = {
   displayOrder?: number
   /** 课程级教学配置。写上就**整份替换**（协议那套整键语义），省掉它则原样不动。 */
   teaching?: SpaceTeaching
+  /** 项目集的默认队友（#944）：平台预设名。省略 = 不动；空串 = 清掉这一格的覆盖。 */
+  defaultRole?: string
 }
 
 export type PatchSpaceCategoryRequestData = Partial<PostSpaceCategoryRequestData>
@@ -284,7 +286,8 @@ export type SpaceAnalyticsStalledClaim = {
   userId: number
   name: string
   isTeam: boolean
-  claimedAt: number
+  /** When the claim started: its project was created. */
+  startedAt: number
 }
 
 export type SpaceAnalyticsPeople = {

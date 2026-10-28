@@ -1,6 +1,6 @@
 ---
 name: documents
-description: 读取、产出或修改 Word、PowerPoint、Excel、PDF 文件时使用：用户上传了这类文件要你看；用户明确要一个 .docx、.pptx、.xlsx 或 .pdf 文件，比如幻灯片、表格、要交给外面的人的 Word 稿；用户要你改一份已有的文件、还要求格式别动。只要一份给人读的文档、没说要文件时，写芝士文档（cheese-docs），不用这个。说明工具在哪、改已有文件为什么不走「打开再另存」、产出之后怎么让用户看见。
+description: 读写或修改 Word、PowerPoint、Excel、PDF 文件时用：用户传了这类文件，或要产出带格式的办公文档。只要给人读的文档，就写芝士文档。
 ---
 
 # 办公文档
@@ -13,7 +13,7 @@ description: 读取、产出或修改 Word、PowerPoint、Excel、PDF 文件时�
 - **用户给的文档**：格式必须保留，因此**不应大幅修改**。改动面大意味着结构变化，而
   「结构变了、原格式还在」是自相矛盾的——这时候回到用户那里确认要怎么改，而不是自己动手
   构造大段 XML。定点改几句话走下面的 `office.py`。
-- **你自己上一轮产出的文档**：没有别人的格式需要保留，按新要求重新生成就好，不必绕着
+- **你自己之前产出的文档**：没有别人的格式需要保留，按新要求重新生成就好，不必绕着
   修改走。
 
 分不清的时候按「是别人的」办：多问一句的代价，比交回一份排版散掉的文件小得多。
@@ -39,7 +39,7 @@ command -v typst && command -v pandoc
 | 要做的 | 用 | 细节 |
 |---|---|---|
 | 读用户给的材料、几份交叉核对、写带出处的结论 | `scripts/read.py`（带页码/段号/单元格；扫描页渲染成图片给你看；列出没读到的部分） | `references/sources.md` |
-| 补外部资料、找项目里已有的信息、标来源 | WebSearch/WebFetch/`cheese_fetch`；项目检索接口 | `references/sources.md` |
+| 补外部资料、找项目里已有的信息、标来源 | WebSearch/WebFetch/`cheese_web(action=fetch)`；项目检索接口 | `references/sources.md` |
 | 只想快速看一眼 Word/PPT/ODT/HTML | `pandoc` | `references/reading.md` |
 | **在一份已有的 Word 上改** | `scripts/office.py` | `references/word.md` |
 | **在一份已有的 PPT 上改** | `scripts/office.py --plain` | `references/slides.md` |
@@ -116,7 +116,7 @@ uv run --with lxml python3 "$SKILL/scripts/office.py" validate 改后.docx --bas
 而且 git 不会在二进制文件里留冲突标记：它把你这一版留在工作目录里、只报一句撞了。这时
 候直接提交，看起来像解决了冲突，实际上是把对方那次修改整个丢掉，而且哪里都不会报错。
 
-做法是在他那一版上把你这一轮的改动重做一遍：
+做法是在他那一版上把你这次的改动重做一遍：
 
 ```bash
 SKILL="<这个技能的目录>"
@@ -152,12 +152,12 @@ cheese_ask(questions=[{
     "question": "《报告》两边都改了同一段，重做落不下去，保留哪一版？",
     "options": [
         {"text": "用我这一版", "explain": "他那次修改不保留"},
-        {"text": "用主干那一版", "explain": "我这一轮不保留"}
+        {"text": "用主干那一版", "explain": "我这次的改动不保留"}
     ]
 }])
 ```
 
-同样交给人的还有两种：你这一轮不是用 `edit` 改的（没有可重放的替换），以及两边各自重写
+同样交给人的还有两种：你这次不是用 `edit` 改的（没有可重放的替换），以及两边各自重写
 了整份文档（重做没有意义）。
 
 ## 造一份新文件
@@ -227,7 +227,7 @@ cheese show output/报告.docx --note "改了第三节的结论，其余未动"
 - 每次保存平台都留一版，用户能自己恢复到任何一版，所以不用为「留底」另存副本。
 - 保存不等于交付。这份文件要**正式交出去**时，把房间里最新的那一版取进任务目录再递卡：
   `cheese pull output/报告.docx -o <任务目录>/output/报告.docx`，然后
-  `cheese_accept_request(deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
+  `cheese_card(action="request", deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
   之后房间里再怎么改、恢复到哪一版，都不影响已经交出去的那份。
 
 ## 交付前自己看一眼

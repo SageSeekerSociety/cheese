@@ -65,6 +65,17 @@ from app.domain.agent.resumable_failures import (
             "to host generativelanguage.googleapis.com:443（unknown）",
             STREAM_ENDED,
         ),
+        # The metering proxy's own 503 when its admission check cannot answer,
+        # verbatim from 2026-10-27 11:00. It said "billing", was read as a
+        # spent balance, and a spent balance is a state no wait changes — so
+        # the seat sat idle until a person retried. It is a 503: wait and ask.
+        (
+            "API Error: 503 cheese: task billing attribution is temporarily "
+            "unavailable; retry shortly. This is a server-side issue, usually "
+            "temporary — try again in a moment. If it persists, check "
+            "https://status.claude.com.（server_error）",
+            OVERLOADED,
+        ),
     ],
 )
 def test_a_passing_failure_resumes(said, kind):
@@ -86,6 +97,15 @@ def test_a_passing_failure_resumes(said, kind):
         "API Error: Server is temporarily limiting requests (not your usage limit)"
         ' · litellm.RateLimitError: AnthropicException - {"error": {"code": "1113",'
         ' "message": "quota exhausted", "type": "limitation"}}',
+        # Volcengine's paused account and the gateway's answer once no row of
+        # the model has credit (deploy/gateway/provider_credit.py).
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        ' · litellm.RateLimitError: {"error":{"code":"SetLimitExceeded","message":'
+        '"Your account [2100] has reached the set usage limit for this model, and '
+        'the model service has been paused."}}',
+        'API Error: 402 {"type":"error","error":{"type":"api_error","message":'
+        "\"cheese_upstream_credit_exhausted: the platform's own account with every "
+        'provider serving deepseek-flash is out of credit."}}',
         # Our gateway's lifetime cap on an upstream key. LiteLLM words it as a
         # rate limit, and the platform used to resume it until the streak ran
         # out — six rounds of ten harness retries, all refused (2026-10-21).

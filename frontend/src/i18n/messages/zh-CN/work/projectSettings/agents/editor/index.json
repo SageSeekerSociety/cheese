@@ -4,7 +4,7 @@
   "body": "角色设定（可留空）",
   "compact": "自动整理上下文",
   "compactCustom": "自己设定何时整理（不勾＝跟随默认）",
-  "compactHint": "调低：整理更勤、每轮更省，但更早丢掉细节。默认在上下文快满时才整理。",
+  "compactHint": "调低：整理更勤、每次运行更省，但更早丢掉细节。默认在上下文快满时才整理。",
   "compactValue": "上下文用到 {percent}% 时整理",
   "editHint": "修改只影响这个队友，下次运行时生效",
   "effort": "思考强度",
@@ -31,8 +31,6 @@
   "presetCustom": "自行填写",
   "save": "保存",
   "saveFailed": "保存失败",
-  "skills": "技能",
-  "skillsHint": "随这个队友带进每个会话的技能，输入名字后回车添加",
   "titleEdit": "修改 AI 队友",
   "titleNew": "新建 AI 队友"
 }

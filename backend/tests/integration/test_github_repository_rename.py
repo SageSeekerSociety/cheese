@@ -140,7 +140,6 @@ def _bound_project(client, github, *, repository_id, card_repo=OLD):
                 AcceptCard(
                     topic_id=uuid.UUID(room),
                     task_id=uuid.UUID(task),
-                    reviewer_handle="alice",
                     status=AcceptStatus.pending,
                     pr_number=7,
                     pr_url=f"https://github.com/{card_repo}/pull/7",
@@ -200,7 +199,7 @@ def test_a_renamed_repository_keeps_working_under_its_new_name(
     metadata = client.get(
         f"/projects/{project}/git/tasks/{task}",
         headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)
+            "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
         },
     )
     assert metadata.status_code == 200, metadata.text
@@ -209,7 +208,7 @@ def test_a_renamed_repository_keeps_working_under_its_new_name(
 
     credential = client.get(
         "/sandbox/forge-token",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=project)},
+        headers={"Authorization": f"Bearer {mint_scoped_token(project_id=project)}"},
     )
     assert credential.status_code == 200, credential.text
     assert credential.json()["data"]["repo"] == NEW
@@ -259,7 +258,7 @@ def test_a_github_outage_serves_the_binding_as_it_is(client, github):
     metadata = client.get(
         f"/projects/{project}/git/tasks/{task}",
         headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)
+            "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
         },
     )
     assert metadata.status_code == 200, metadata.text

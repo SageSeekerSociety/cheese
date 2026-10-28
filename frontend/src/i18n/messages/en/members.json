@@ -29,8 +29,8 @@
     "addedBy": "added by {by} · {time}",
     "noAccount": "No such account",
     "noAccountTitle": "This handle has no account on the platform (or the account was deleted) — check the spelling in the deployment config; changing it takes server access",
-    "agentBadge": "agent",
-    "agentBadgeTitle": "Agents cannot perform management actions, so this row's permission is unusable — check this name in the deployment config"
+    "agentBadge": "AI teammate",
+    "agentBadgeTitle": "AI teammates cannot take admin actions, so this row's permission is unused. Check this name in the deployment config"
   },
   "empty": {
     "root": "Nobody in the config (normal for local dev; required for deployment)",

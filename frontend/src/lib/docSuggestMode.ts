@@ -9,14 +9,13 @@
 // through the shared document, not an undo or redo, and not accepting or
 // rejecting a suggestion (its commands mark those to be skipped).
 //
-// A whole block cannot be suggested. Text, and a paragraph split or joined,
-// the library records as marks on text; a whole block inserted or removed
-// (paragraphs pasted in, a list item added) it records as a mark on the block
-// node, and the shared document does not keep marks on blocks (y-tiptap stores
-// only a text run's marks), so such a suggestion would reach everyone else as
-// a plain change. The schema allows no suggestion mark
-// on a block, the library throws when it tries, and that edit is dropped with
-// `onRefused` said instead.
+// Text, and a paragraph split or joined, the library records as marks on text;
+// a whole block inserted, removed or retyped (paragraphs pasted in, a list item
+// added, a paragraph made a heading) as a mark on the block, which the shared
+// document keeps too. A block a table, a row of columns, a timeline or stat cards hold
+// in a fixed shape cannot carry one (docSchema's suggestableBlocks): the
+// library throws when it tries, and that edit is dropped with `onRefused` said
+// instead.
 import type { Editor } from '@tiptap/core'
 import type { Transaction } from '@tiptap/pm/state'
 

@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.sentences import say
+from app.domain import happenings
 from app.domain.addressing import Event
 from app.domain.deliverables import artifacts
 from app.domain.delivery_events import SettleCard
@@ -154,6 +155,7 @@ async def _tell_the_reviewer(
     `about_card` 填一句话是不是「等你动手」那一类：是就填卡的 id，卡一有决定它
     就从收件箱里消失（`_settle_the_card`）；说结局的那几句不填。
     """
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
@@ -161,7 +163,7 @@ async def _tell_the_reviewer(
         content=content,
         meta={"source": "accept", **meta},
         author="accept",
-        points_at=Event(reviewers=(card.reviewer_handle, *also)),
+        points_at=Event(reviewers=(*reviewers, *also)),
         about_card=about_card,
     )
 
@@ -191,6 +193,34 @@ async def _settle_the_card(
         # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError("settle_card was not handed in")
     await settle_card(session, card.id, {"outcome": outcome})
+    if outcome in ("accepted", "rejected") and card.task_id is not None:
+        task = await session.get(Task, card.task_id)
+        if task is not None:
+            await _happened(
+                session, happenings.TASK_DECIDED, card, task, outcome=outcome
+            )
+
+
+async def _happened(
+    session: AsyncSession, kind: str, card: AcceptCard, task: Task, **more: str
+) -> None:
+    """说给等着这件事的规则听（`happenings`）：哪个任务、谁提的、谁审。"""
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
+    await happenings.happened(
+        session,
+        kind,
+        task_id=task.id,
+        project_id=task.project_id,
+        payload={
+            "title": task.title,
+            "number": task.number,
+            "topicId": str(task.room_id),
+            "reporter": task.reporter_handle or "",
+            "createdBy": task.created_by or "",
+            "reviewers": list(reviewers),
+            **more,
+        },
+    )
 
 
 async def _announce_filed(
@@ -226,12 +256,15 @@ async def _announce_filed(
         for part in (card.change_subject or "", (card.change_body or "").strip())
         if part
     )
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await announce(
         session,
         place_id=topic.id,
         task_id=task.id,
         content=say(
-            "cardFiled", task=task.title, reviewer=f"<@{card.reviewer_handle}>"
+            "cardFiled",
+            task=task.title,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
         ),
         meta=notice(
             EVENT_CARD_FILED,
@@ -241,11 +274,12 @@ async def _announce_filed(
             detail_label=say("labelChanges"),
         ),
         points_at=Event(
-            reviewers=(card.reviewer_handle,),
+            reviewers=tuple(reviewers),
             reporter=task.reporter_handle,
         ),
         about_card=card.id,
     )
+    await _happened(session, happenings.TASK_FILED, card, task)
 
 
 async def _announce_new_artifact(
@@ -309,11 +343,16 @@ async def _notify_ready(
     signature = pr_signals.signature("ready", card.pr_head_sha or "")
     if ledger.already_sent(pr_signals.NudgeKind.ready, signature):
         return
+    reviewers = await AcceptCardRepository(session).reviewer_handles(card.id)
     await _tell_the_reviewer(
         session,
         card,
         topic,
-        say("acceptReady", pr=card.pr_number, reviewer=f"<@{card.reviewer_handle}>"),
+        say(
+            "acceptReady",
+            pr=card.pr_number,
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        ),
         meta=notice(
             EVENT_ACCEPT_READY,
             severity=SEVERITY_INFO,

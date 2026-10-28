@@ -12,13 +12,16 @@
 // 动作），这一节只画和接线。
 import type { ProjectAgent } from '@/cx_types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { toast } from 'vuetify-sonner'
 
+import { useAgentSkills } from '@/composables/useAgentSkills'
 import { useProjectAgents } from '@/composables/useProjectAgents'
 
 import OwnAgentsSettings from './OwnAgentsSettings.vue'
 
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
+import AgentSkillsDialog from '@/components/agents/AgentSkillsDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -84,6 +87,46 @@ function openEdit(agent: ProjectAgent) {
   editing.value = agent
   editorOpen.value = true
 }
+
+// 「技能」：每个队友各开一份面板，编辑它带哪些技能。技能跟着人走（见 useAgentSkills），
+// 所以入口在这一行队友上。保存后把那行就地改掉，不整份重拉。
+const skillTarget = ref<ProjectAgent | null>(null)
+const skillsOpen = ref(false)
+const skills = useAgentSkills(
+  () => props.projectId,
+  () => skillTarget.value,
+  (message) => toast.error(message),
+  (agentId, list, version) => {
+    const row = agents.value.find((a) => a.id === agentId)
+    if (row) {
+      // 名册是 query 缓存里那一份、只读：改它会被静默丢掉。换一份新对象指给面板，
+      // 这一次保存带的就是翻过页的 version，下一次不用白撞一次 409。
+      skillTarget.value = {
+        ...row,
+        configuration: { ...row.configuration, skills: list },
+        version,
+      }
+    }
+  },
+  // 409：别人先写了。重读一遍，并把面板目标重指到新读回来的那一行 —— 名单
+  // 刷新是整份换成新对象，skillTarget 不跟过去，下一次保存还带旧 version，只会再撞 409。
+  async () => {
+    await refresh()
+    const fresh = agents.value.find((a) => a.id === skillTarget.value?.id)
+    if (fresh) skillTarget.value = fresh
+  }
+)
+function openSkills(agent: ProjectAgent) {
+  skillTarget.value = agent
+  skillsOpen.value = true
+  void skills.openSkills()
+  // 打开就占住「编辑中」：别人进来会看到「XX 正在编辑」，而不是白改一场。
+  void skills.holdAgent(agent.id)
+}
+// 关掉就放掉。租约自己会过期，这只是不让人等那 120 秒。
+watch(skillsOpen, (isOpen) => {
+  if (!isOpen && skillTarget.value) void skills.releaseAgent(skillTarget.value.id)
+})
 
 // 确认框在这次请求期间不关：按钮上的 loading 就在它里面。成败都收掉它 —— 停下了
 // 的那一个不再是一行队友，失败的由上面那条 alert 说理由。
@@ -165,6 +208,9 @@ async function confirmDeactivate() {
             >
               {{ t('work.projectSettings.agents.setDefault') }}
             </BaseButton>
+            <BaseButton v-if="a.is_active !== false" size="sm" @click="openSkills(a)">{{
+              t('work.room.skills.button')
+            }}</BaseButton>
             <BaseButton size="sm" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</BaseButton>
             <BaseButton v-if="a.is_active !== false" size="sm" @click="deactivateTarget = a">
               {{ t('work.projectSettings.agents.deactivate') }}
@@ -180,6 +226,25 @@ async function confirmDeactivate() {
     </div>
 
     <AgentEditorDialog v-model="editorOpen" :project-id="projectId" :agent="editing" :types="types" @saved="refresh" />
+
+    <AgentSkillsDialog
+      v-if="skillTarget"
+      v-model="skillsOpen"
+      :agent-name="teammateName(skillTarget.display_name, skillTarget.name_source) || skillTarget.handle"
+      :carried="skills.carriedItems.value"
+      :available="skills.available.value"
+      :health="skills.skillHealth.value"
+      :device-id="skills.deviceId.value"
+      :market="skills.market.value"
+      :market-loading="skills.marketLoading.value"
+      :editing-blocked="skills.editingBlocked.value"
+      :editing-by="skills.editingBy.value"
+      :loading="skills.loading.value"
+      :scanning="skills.scanning.value"
+      :saving="skills.saving.value"
+      :can-manage="skills.canManage.value"
+      @install="(payload) => void skills.fetchWebSkill(payload.url, payload.kind)"
+    />
 
     <ConfirmDialog
       v-model="deactivateOpen"

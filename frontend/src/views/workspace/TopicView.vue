@@ -3,7 +3,7 @@ import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -32,6 +32,7 @@ import { t } from '@/i18n'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
+import { VIEWING_CONTEXT } from '@/lib/viewingContext'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
@@ -116,6 +117,17 @@ const {
 
 // ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----
 const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
+// 右栏此刻开着哪一份文件：撰写框上「芝士会看到你在看什么」那一行读它
+// （lib/viewingContext.ts）。面板收起时什么也没在看。
+const viewingPath = ref<string | null>(null)
+provide(
+  VIEWING_CONTEXT,
+  computed(() =>
+    viewingPath.value && (!mdAndUp.value || panelOpen.value)
+      ? { kind: 'viewing' as const, path: viewingPath.value, task_id: props.taskId ?? null }
+      : null
+  )
+)
 const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
 const { freezeChatWidth, startPaneDrag } = panes
 
@@ -155,6 +167,8 @@ const {
   creatingThread,
   canOpenThread,
   createThread,
+  canRestoreThread,
+  restoreAThread,
   threadTime,
   AUTHOR,
   taskPage,
@@ -392,7 +406,7 @@ void openPlace()
           class="pane-resizer"
           :title="t('work.topic.resize')"
           @mousedown.prevent="startPaneDrag"
-          @dblclick="store.setChatPct(50)"
+          @dblclick="store.resetChatPct()"
         />
 
         <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
@@ -455,6 +469,7 @@ void openPlace()
             @open-card="onOpenCard"
             @mention-click="handleMentionClick"
             @update:tab="onPanelTab"
+            @viewing="viewingPath = $event"
             @locate="onLocate"
           >
             <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。 -->
@@ -518,6 +533,8 @@ void openPlace()
             <template v-if="!taskId" #threads>
               <PanelThreads
                 :rows="channelThreads.rows.value"
+                :recycled="channelThreads.recycled.value"
+                :can-restore="canRestoreThread"
                 :loading="channelThreads.loading.value"
                 :error="channelThreads.error.value"
                 :refs="{ mentionNames: memberNames, topicTitles: {} }"
@@ -527,6 +544,7 @@ void openPlace()
                 @open="showThread"
                 @open-task="onOpenCard"
                 @new="newThreadOpen = true"
+                @restore="restoreAThread"
               />
             </template>
             <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->

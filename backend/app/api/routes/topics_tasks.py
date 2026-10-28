@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
@@ -60,7 +59,8 @@ from app.api.topics_deps import (
     BlockRepository,
     ProjectRepository,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
+from app.auth.project_roles import may
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
@@ -96,7 +96,7 @@ from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.place import place_or_404
-from app.domain.room_task.progress import set_progress
+from app.domain.room_task.progress import RUN_HEADER, parse_run, set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -197,8 +197,8 @@ async def get_task(
     """The task this conversation is — the same shape a room's `/tasks` lists.
     404 for a room's own conversation. What is said in it is read like any
     conversation's (`/topics/{task}/blocks`)."""
-    place, _actor, task = await task_conversation(db, resolver, topic_id)
-    return ok(await task_page_row(db, place, task))
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await task_page_row(db, place, task, me=actor.handle or ""))
 
 
 @router.get("/{topic_id}/related")
@@ -241,19 +241,27 @@ async def conclude_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """关闭任务：its owner or its own session says it is over. With a
-    conclusion it is done — the work did not end in a merge (research, a
-    decision); without one it was put down. Delivered work closes by itself
-    when its change is accepted.
+    """关闭任务：someone who works it — its owner or a contributor — or its
+    own session says it is over. With a conclusion it is done — the work did
+    not end in a merge (research, a decision); without one it was put down.
+    Delivered work closes by itself when its change is accepted.
+
+    Closing is not undone by reopening (its open cards are voided, its pull
+    request closed), so it is kept to the people whose word the task's
+    teammate acts on (`TaskService.takes_part`); reopening is wider.
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     tasks = TaskService(db)
-    # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
-    elif actor.handle != task.owner_handle:
+    elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
+    credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
+    # Who reported it and who works it is the owner's to change (`update_task`);
+    # a contributor closing the task does not get to rewrite that.
+    if credits and actor.via != "cheese" and actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -268,7 +276,7 @@ async def conclude_task(
         if text
         else None
     )
-    if {"reporter_handle", "contributor_handles"} & body.model_fields_set:
+    if credits:
         await tasks.set_credits(
             task,
             reporter_handle=(
@@ -321,7 +329,7 @@ async def conclude_task(
     # The 支线 line under the message the task was made from is said by its AI
     # teammate, so whose teammate it is comes in here too.
     await tell_origin(db, task, ended, task_teammate=task_teammate)
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -336,10 +344,13 @@ async def report_progress(
     body: ProgressIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    run: str | None = Header(default=None, alias=RUN_HEADER),
 ) -> dict:
-    """The task's AI teammate says where its work stands (`cheese_task_state`):
-    what the board shows for it until it says again. Only the task's own
-    session reports; a person reads it, and says what they need in the task.
+    """The task's AI teammate says where its work stands (`cheese_task(action=state)`):
+    what the board shows for it until it says again, or until its session
+    runs again in a run it has not reported in (`presentation.task_presentation`).
+    Only the task's own session reports; a person reads it, and says what they
+    need in the task.
 
     Refused while a card waits on the task's review: the card says where the
     task stands then (等审), and a report would either change nothing on the
@@ -352,15 +363,19 @@ async def report_progress(
     card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     if card is not None and card.status in OPEN_CARD_STATUSES:
         raise ConflictError(say("taskProgressWhileInReview"))
+    by = actor.handle or ""
     set_progress(
         task,
         body.state,
         note=body.note,
-        by=actor.handle or "",
+        by=by,
         at=datetime.now(UTC),
+        # Which run of its session the call was made in, as its runner
+        # names it (`executor_transport.PlatformHost.run`).
+        run=parse_run(run),
     )
     await db.flush()
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -371,11 +386,21 @@ async def reopen_task(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """重新打开：the owner takes a closed task up again. Its AI teammate goes on
-    from the project's latest code when it has landed something."""
+    """重新打开：anyone in the project who works tasks (`Permission.tasks`)
+    takes a closed task up again, or its own session does, so a teammate that
+    closed its task too early can take that back. Wider than who closes it:
+    reopening is undone by closing again and is announced with who did it,
+    while closing voids cards and closes the pull request for good. Its AI
+    teammate goes on from the project's latest code when it has landed
+    something."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
-    if not actor.authenticated or actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+    if actor.via == "cheese":
+        if resolver.credential_conversation() != task.id:
+            raise ForbiddenError(say("taskOwnSessionReopens"))
+    elif not actor.authenticated or not await may(
+        db, place.project_id, actor.handle, Permission.tasks
+    ):
+        raise ForbiddenError(say("taskOwnSessionReopens"))
     # The same test `reopen` moves a task onto a new branch by.
     new_branch = task.branch_name is not None and task.delivered_head is not None
     task = await TaskService(db).reopen(task)
@@ -391,7 +416,7 @@ async def reopen_task(
             ),
         ),
     )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -410,26 +435,18 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/tasks")
 async def create_task(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.tasks, at="topic_id")],
     body: TaskCreateIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """新建任务：a task owned by whoever creates it, empty until they say what
     it is for. Its agent starts on the owner's first message; its owner
     reviews its changes (`TaskService.default_reviewer`)."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    place, actor = at.place, at.actor
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    await require_role(db, actor, place.project_id, Permission.tasks)
     task = await task_dispatch.create_task(
         db,
         room_id=place.room_id,
@@ -437,6 +454,7 @@ async def create_task(
         title=body.title,
         seat_project=seat_project,
         team=project_team,
+        by_assistant=actor.by_assistant,
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
@@ -474,7 +492,7 @@ async def update_task(
                 by=actor.handle, added=[], removed=[actor.handle]
             ),
         )
-        out = await task_out(db, task)
+        out = await task_out(db, task, me=actor.handle or "")
         await db.commit()
         return ok(out)
     members = TopicMemberService(db)
@@ -529,7 +547,7 @@ async def update_task(
                     by=actor.handle, added=added, removed=removed
                 ),
             )
-    out = await task_out(db, task)
+    out = await task_out(db, task, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -593,7 +611,7 @@ async def create_teammate_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """An AI teammate makes a task (`cheese_task`) on someone's word, from the
+    """An AI teammate makes a task (`cheese_task(action=open)`) on someone's word, from the
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
     under the message the 支线 is under. A teammate whose own idea it is asks
     first (`cheese_ask`), and the person who answers is who it does it for."""

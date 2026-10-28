@@ -1,15 +1,21 @@
 """平台在会话还在干活时，自己往会话里说的两句话；和做任务的会话还在跑时，问它任务
 做到哪了的那一句（`StaleProgressReminder`）。
 
-两句话问的是同一件事的两半：会话在干活，而房间里看得见的东西停在原地。看得见的有两
-样——话，和步骤清单——所以是两句，不是一句。分开，是因为它们能分开停：会话可以一直
-在说话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也成立。
-`QuietSessionReminders.silence` 管前一样，`QuietSessionReminders.checklist` 管后一样。
+两句话问的是两件事。`QuietSessionReminders.silence` 问话：有人对它说了话，它读到
+以后一句没回。回过一句它就安心干活，不再催它说话：干活的过程在现场看得到，做到哪了
+看清单和任务状态，对话里只说要人出手的事、大家该知道的变化和做完的结果。
+`QuietSessionReminders.checklist` 问清单：会话在干活，清单却停在原地。它们能分开停：
+会话可以回过话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也成立。
 
 判据都是平台核得了的事，不看轮次：会话此刻在不在干活（这台进程持有的座位、它的
 runner 说在干活，`ComputePool.working_conversations`），它为手上这段工作读进去的输入
 （`native_inputs` 的回执，`_read_at`）带着谁的话，它之后说没说过话（房间里它署名的消息），清单
 是不是它这一段工作写的（`TopicProgress.turn_id` 是会话手上那段工作）。
+
+**两句都不在「这一步已经不归它管」的时候说。** 它所在的对话上有一张还开着的验收卡
+时，做到哪一步由卡说（`_spoken_for`，和 `StaleProgressReminder` 同一个集合），平台不
+再去问队友：卡递出去、等验收人看的那个窗口，正是这两句最不该敲的时候，而每敲一次都
+是一遍真实的模型调用。
 
 放进去的路和人的中途消息是同一条（`notify_running_session`）：会话开工时取的那份
 快照，之后只有人打字或者平台叫它一声才能变。这里的两句就是「平台叫它一声」。
@@ -27,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from sqlalchemy import Uuid, case, column, exists, func, select, table
+from sqlalchemy import Uuid, and_, case, column, exists, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -144,16 +150,19 @@ async def _asked(
 
 async def _said_since(
     session: AsyncSession, conversation: uuid.UUID, acting: str, since: datetime
-) -> datetime | None:
-    """``acting`` 在这里最近一次说话的时刻，只算 ``since`` 之后的：别的队友说话
-    不算它说了。"""
-    return await session.scalar(
-        select(func.max(Block.created_at)).where(
-            Block.conversation_id == conversation,
-            Block.kind == BlockKind.message,
-            participant_blocks(),
-            Block.author == acting,
-            Block.created_at > since,
+) -> bool:
+    """``acting`` 在 ``since`` 之后有没有在这里说过话：别的队友说话不算它说了。"""
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    Block.conversation_id == conversation,
+                    Block.kind == BlockKind.message,
+                    participant_blocks(),
+                    Block.author == acting,
+                    Block.created_at > since,
+                )
+            )
         )
     )
 
@@ -163,13 +172,54 @@ async def _said_since(
 Seat = tuple[uuid.UUID, str, str]
 
 
+#: The review domain's cards, read as a bare table: that domain imports this
+#: one, so a card is read here by its row (as `room_task.closing` does).
+_cards = table(
+    "accept_cards",
+    column("topic_id", Uuid),
+    column("task_id", Uuid),
+    column("status"),
+)
+#: The statuses of a card that is still open (`review.archive.OPEN_CARD_STATUSES`,
+#: which a unit test holds this copy to): while one is, the card says where the
+#: task stands (等审, fixing its checks, resolving a conflict), not its teammate.
+OPEN_CARD_STATUSES = ("pending", "pending_gate", "conflict")
+
+
+async def _spoken_for(
+    session: AsyncSession, conversations: Collection[uuid.UUID]
+) -> set[uuid.UUID]:
+    """这些对话里，哪几个的下一步已经交给一张还开着的验收卡在说。
+
+    两个来源同一个答案：一条活自己的卡（`task_id` 就是这段对话），和一个房间
+    自己那张（`task_id` 为空、`topic_id` 是这段对话）。卡开着的时候，做到哪一步
+    由卡说；`StaleProgressReminder` 对任务问的也是这一件事，集合是同一个
+    `OPEN_CARD_STATUSES`。
+    """
+    if not conversations:
+        return set()
+    wanted = set(conversations)
+    rows = await session.execute(
+        select(_cards.c.task_id, _cards.c.topic_id).where(
+            _cards.c.status.in_(OPEN_CARD_STATUSES),
+            or_(
+                _cards.c.task_id.in_(wanted),
+                and_(_cards.c.task_id.is_(None), _cards.c.topic_id.in_(wanted)),
+            ),
+        )
+    )
+    return {task_id or topic_id for task_id, topic_id in rows}
+
+
 class QuietSessionReminders:
-    """会话在干活、房间里看得见的东西却停在原地，叫它一声。
+    """会话在干活，有人的话没回、或者清单停在原地，叫它一声。
 
     按座位算（会话所在的对话、它署名用的那一席）：一间房里几位队友并行在干，各
     有各的沉默，别人说话不算它说了。两样记在这台进程里（上一次为话提醒、上一次为
     清单提醒），只记在干活的座位上：不在干活了就忘掉，下一次从头算。换了进程最多
-    早一个阈值多问一句。"""
+    早一个阈值多问一句。
+
+    一处不说：**这一步还轮到它动**（`_spoken_for`：卡开着就由卡说）。"""
 
     def __init__(self, chat: SessionNotices, working: Working) -> None:
         self._chat = chat
@@ -213,27 +263,34 @@ class QuietSessionReminders:
             return False
 
     async def silence(self, now: datetime) -> int:
-        """在回一个人的话、却从读到那句话起（或上一次说话起）一直没出声的座位，
-        每过 `chat_progress_reminder_after_s` 听到一次。读进去的不是人话的会话
-        （平台叫它做的检查、别的队友的话）有它自己的通知规矩，这里不管。"""
+        """读到一个人的话之后一句都没回的座位，每过 `chat_progress_reminder_after_s`
+        听到一次。回过以后不再叫它：之后它在干活时不出声是该有的样子。读进去的不是
+        人话的会话（平台叫它做的检查、别的队友的话）有它自己的通知规矩，这里不管。"""
         threshold = settings.chat_progress_reminder_after_s
         seats = self._at_work()
         if not seats:
             return 0
         due: list[tuple[Seat, int, str | None]] = []
         async with self._chat.session_factory() as session:
+            spoken_for = await _spoken_for(
+                session, {conversation for conversation, _s, _a in seats}
+            )
             for seat in seats:
                 conversation, handle, acting = seat
+                if conversation in spoken_for:
+                    continue
                 work = self._working.work_in_flight(conversation, handle)
                 asked = await _asked(session, conversation, acting, work)
                 if asked is None:
                     continue
-                spoke = await _said_since(session, conversation, acting, asked.read_at)
-                quiet_since = spoke or asked.read_at
-                since = max(quiet_since, self._silence_reminded.get(seat, quiet_since))
+                if await _said_since(session, conversation, acting, asked.read_at):
+                    continue
+                since = max(
+                    asked.read_at, self._silence_reminded.get(seat, asked.read_at)
+                )
                 if (now - since).total_seconds() < threshold:
                     continue
-                minutes = int((now - quiet_since).total_seconds() // 60)
+                minutes = int((now - asked.read_at).total_seconds() // 60)
                 due.append((seat, minutes, await language_of(session, asked.author)))
 
         async def remind(seat: Seat, minutes: int, language: str | None) -> bool:
@@ -262,8 +319,13 @@ class QuietSessionReminders:
             return 0
         due: list[tuple[Seat, int, str | None]] = []
         async with self._chat.session_factory() as session:
+            spoken_for = await _spoken_for(
+                session, {conversation for conversation, _s, _a in seats}
+            )
             for seat in seats:
                 conversation, handle, acting = seat
+                if conversation in spoken_for:
+                    continue
                 row = await conversation_progress(session, conversation)
                 if row is None or row.turn_id is None:
                     continue
@@ -306,17 +368,8 @@ class ProgressNotices(Protocol):
     ) -> object: ...
 
 
-#: The review domain's cards, read as a bare table: that domain imports this
-#: one, so a card is read here by its row (as `room_task.closing` does).
-_cards = table("accept_cards", column("task_id", Uuid), column("status"))
-#: The statuses of a card that is still open (`review.archive.OPEN_CARD_STATUSES`,
-#: which a unit test holds this copy to): while one is, the card says where the
-#: task stands (等审, fixing its checks, resolving a conflict), not its teammate.
-OPEN_CARD_STATUSES = ("pending", "pending_gate", "conflict")
-
-
 class StaleProgressReminder:
-    """做任务的会话还在跑，而它报的任务状态（`cheese_task_state`）停在原地超过
+    """做任务的会话还在跑，而它报的任务状态（`cheese_task(action=state)`）停在原地超过
     `chat_progress_reminder_after_s`，就问它一句。
 
     判据都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议声明的状态：

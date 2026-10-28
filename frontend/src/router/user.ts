@@ -55,6 +55,24 @@ export default {
           meta: { palette: { label: 'account.settings.invites', icon: 'mdi-account-plus-outline' } },
         },
         {
+          // 自己名下的设备、模型和额度：它们属于这个人名下那个单人团队，页面和团队设置里的
+          // 是同一份（`views/teams/detail`），团队由这一层（layouts/user/Settings.vue）读好递下去。
+          // 旧地址 `/teams/<自己>/compute` 这几条在 `teams/Detail.vue` 里转到这里。
+          path: 'compute',
+          name: 'UserSettingsCompute',
+          component: () => import('@/views/teams/detail/Compute.vue'),
+        },
+        {
+          path: 'models',
+          name: 'UserSettingsModels',
+          component: () => import('@/views/teams/detail/Models.vue'),
+        },
+        {
+          path: 'credits',
+          name: 'UserSettingsCredits',
+          component: () => import('@/views/teams/detail/Credits.vue'),
+        },
+        {
           // 芝士替这个人用的邮箱和飞书。
           path: 'connections',
           name: 'UserSettingsConnections',

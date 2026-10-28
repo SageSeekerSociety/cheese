@@ -65,6 +65,7 @@ sharing the hub's state, not the cross-feature coupling C3 is there to catch.
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from app.domain.agent import connector_build, device_link
@@ -339,9 +340,6 @@ class DeviceHub:
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await sessions.list_screens(self, device_id)
 
-    def screen_by_token(self, token: str) -> HubScreen | None:
-        return sessions.screen_by_token(self, token)
-
     def screen(self, sid: str) -> HubScreen | None:
         return sessions.screen(self, sid)
 
@@ -387,6 +385,7 @@ class DeviceHub:
         env: dict[str, str] | None = None,
         timeout: float = 60,
         stdin: str | None = None,
+        on_stderr: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         return await calls.exec(
             self,
@@ -396,6 +395,7 @@ class DeviceHub:
             env=env,
             timeout=timeout,
             stdin=stdin,
+            on_stderr=on_stderr,
         )
 
     async def call_executor(

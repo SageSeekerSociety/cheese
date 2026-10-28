@@ -102,7 +102,7 @@ class Letter:
     headline: str
     #: 别人的原话（芝士的问题另有标题位，不重复放这里）。
     quote: str = ""
-    #: (标签, 值)，比如 ("房间", "登录页改版")。
+    #: (标签, 值)，比如 ("频道", "登录页改版")。
     details: tuple[tuple[str, str], ...] = field(default_factory=tuple)
     action: str = "到芝士里查看"
     link: str = ""
@@ -153,9 +153,9 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             subject=f"{agent} 问你：{_clip(question, _SUBJECT_LIMIT)}"
             if question
             else f"{agent} 有一个问题待你回答",
-            eyebrow=f"{agent} 在等你回答，这一轮已暂停",
+            eyebrow=f"{agent} 在等你回答，你回答后它接着做",
             headline=question or "有一个问题待你回答",
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="去回答",
             link=link,
         )
@@ -174,6 +174,25 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
             details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
             action="查看文档",
+            link=link,
+        )
+    if type_ == "MENTION" and _text(payload, "roomPath"):
+        # 一份房间文件上的一条评论（`api.routes.file_comments`）：是哪个文件，比
+        # 在哪个频道要紧。
+        who = _text(payload, "authorName") or _text(payload, "author") or "有人"
+        name = _text(payload, "documentTitle")
+        headline = (
+            f"{who} 在文件「{name}」里提到了你"
+            if name
+            else f"{who} 在一份文件里提到了你"
+        )
+        return Letter(
+            subject=headline,
+            eyebrow="有人提到了你",
+            headline=headline,
+            quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
+            details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),
+            action="查看文件",
             link=link,
         )
     if type_ in ("MENTION", "THREAD_REPLY") and room:
@@ -233,7 +252,7 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             subject=_clip(content, _SUBJECT_LIMIT),
             eyebrow=f"「{room}」需要你处理" if room else "需要你处理",
             headline=content,
-            details=(("房间", room),) if room else (),
+            details=(("频道", room),) if room else (),
             action="打开房间",
             link=link,
         )

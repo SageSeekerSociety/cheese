@@ -92,7 +92,7 @@ flowchart LR
         ccr["审阅卡片<br/>1 审阅 2 发送 0 忽略"]
     end
     subgraph L3["上报契约"]
-        propose["反馈提案工具<br/>cheese_feedback_propose"]
+        propose["反馈提案工具<br/>cheese_feedback(action=propose)"]
         render["渲染提案卡<br/>一条消息块, 不是旁白"]
         submit["统一提交管道<br/>POST /feedback"]
     end
@@ -166,7 +166,7 @@ flowchart LR
 - pi：平台工具不走 MCP，`harness/pi/catalog.py` 直接读机器上装着的那个 CLI，`platform.ts` 再把每个注册成 pi 的原生工具。
 - codex：从 executor 的 `native` 服务器和其余 MCP 服务器发现，平台工具随它那份 CLI 一起来。
 
-所以 `cheese feedback propose` 加进那棵树，三个 harness 同时就有了。两条值得记住的推论：**工具名是算出来的**（`feedback propose` → `cheese_feedback_propose`），**`help=` 就是工具 schema**（写进 argparse 的措辞直接是模型看到的那份，不存在文档和实现漂移）。另外，「无屏巡检轮次不给这个工具」不需要专门实现——该命令和 `cheese chat send` 一样要 `CHEESE_TOPIC`，巡检轮次没有话题，命令自己就拒绝；**门在服务端，不在工具清单上**。
+所以 `cheese feedback propose` 加进那棵树，三个 harness 同时就有了。两条值得记住的推论：**工具名是算出来的**（`feedback propose` → `cheese_feedback(action=propose)`），**`help=` 就是工具 schema**（写进 argparse 的措辞直接是模型看到的那份，不存在文档和实现漂移）。另外，「无屏巡检轮次不给这个工具」不需要专门实现——该命令和 `cheese chat send` 一样要 `CHEESE_TOPIC`，巡检轮次没有话题，命令自己就拒绝；**门在服务端，不在工具清单上**。
 
 ## agent 只能提案，不能发布
 

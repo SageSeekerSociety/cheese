@@ -4,7 +4,8 @@
 帧都算），再按 ``t`` 认：``hello`` 是这一条链路重新立起来的时刻（认识它自报的
 build/target/executor，唤醒在等重连的调用，顺手看看它的 build 是不是我们发布的
 那个）；``exec.result``/``execution.*``/``session.result``/``localfs.*`` 各自去
-``HubDevice`` 上那张对应的 future 表里找 ``id``，找到就设结果或异常；``screen.data``
+``HubDevice`` 上那张对应的 future 表里找 ``id``，找到就设结果或异常；``machine.*`` 是
+沙箱从平台 socket 发起的流，交给 ``machine``；``screen.data``
 是屏幕的原始字节，转发给观看端。认不出来的帧就这样丢掉——连接器也是这么对待它不认
 识的帧的（见 ``_update_if_stale`` 的说明）。
 
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.domain.agent import device_link
 from app.domain.agent.device_contract import DeviceCallError, HubScreen, ViewerTransport
+from app.domain.agent.device_hub import machine
 
 if TYPE_CHECKING:
     from app.domain.agent import device_hub as pkg
@@ -86,6 +88,11 @@ async def on_device_message(
                 }
             )
         return
+    if msg.t == "exec.output":
+        listener = device.exec_listeners.get(msg.id)
+        if listener is not None:
+            listener(msg.stderr)
+        return
     if msg.t in {"execution.data", "execution.result"}:
         pending = device.executor_pending.get(msg.id)
         if pending is None or pending[0].done():
@@ -119,6 +126,9 @@ async def on_device_message(
                 future.set_result(response["result"])
         except (ValueError, KeyError, RuntimeError) as exc:
             future.set_exception(exc)
+        return
+    if msg.t.startswith("machine."):
+        await machine.on_frame(hub, device_id, msg)
         return
     if msg.t == "screen.data" and screen is not None:
         await _fan_out_screen_data(screen, msg.decoded_data())

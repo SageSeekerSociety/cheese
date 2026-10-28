@@ -36,6 +36,8 @@ const props = withDefaults(
     defaultRoom?: string
     /** 那个定死的频道叫什么（房间里那一格给）：写在「频道」那一行上。 */
     roomName?: string
+    /** 照这条规则开工的队友叫什么（项目可以给它改名）：表上两句话说到它。 */
+    agentName: string
     /** 这个项目里存下来的模板（「项目里存的」那一段）。预置不从这里进。 */
     templates?: RoutineTemplate[]
     saving?: boolean
@@ -249,7 +251,7 @@ function showNew() {
  */
 const localError = computed(() => {
   if (!attempted.value) return ''
-  if (!form.instructions.trim()) return t('routines.form.goalRequired')
+  if (!form.instructions.trim()) return t('routines.form.goalRequired', { agent: props.agentName })
   if (form.trigger === 'schedule' && form.freq === 'weekly' && !form.weekdays.length) {
     return t('routines.form.weekdaysRequired')
   }
@@ -366,7 +368,7 @@ function submit() {
         <span class="compose__room-name">{{ roomName }}</span>
       </div>
 
-      <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint') }}</p>
+      <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint', { agent: agentName }) }}</p>
 
       <v-text-field
         v-model="form.title"

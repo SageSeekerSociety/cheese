@@ -126,6 +126,8 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     topic_id = uuid.uuid4()
     service = object.__new__(AcceptService)
     service._session = _session()
+    # `_render` 折审阅人那句话要问仓库（一卡多人，`reviewer_handles` 是集合）。
+    service._repo = SimpleNamespace(reviewer_handles=AsyncMock(return_value=("alice",)))
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=topic_id,
@@ -178,7 +180,10 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     # _accept_github skips PR publication/merge and settles via real _accept_discussion
     published = AsyncMock()
     service._publish_pr_for_accept = published
-    service._repo = SimpleNamespace(add_approval=AsyncMock())
+    service._repo = SimpleNamespace(
+        add_approval=AsyncMock(),
+        reviewer_handles=AsyncMock(return_value=("alice",)),
+    )
     service._settle_the_card = AsyncMock()
     service._stamp_delivery = AsyncMock()
     service._mark_task_merged = AsyncMock(return_value=True)

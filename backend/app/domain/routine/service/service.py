@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.routine.models import Routine, RoutineRun
 
-from . import archive, rules, settlement
+from . import archive, rules, settlement, spend
 
 #: `create` 的签名里用到 `Topic`，但这里只转发、不碰它（`from __future__ import
 #: annotations` 下标注不求值），所以按本仓的惯例放进 TYPE_CHECKING。
@@ -56,6 +57,18 @@ class RoutineService:
             limit=limit,
             failed_only=failed_only,
         )
+
+    async def credits_by_rule(
+        self, routine_ids: list[uuid.UUID], *, since: datetime, until: datetime
+    ) -> dict[uuid.UUID, float]:
+        return await spend.credits_by_rule(
+            self._session, routine_ids, since=since, until=until
+        )
+
+    async def credits_by_run(
+        self, runs: list[RoutineRun], *, since: datetime, until: datetime
+    ) -> dict[uuid.UUID, float]:
+        return await spend.credits_by_run(self._session, runs, since=since, until=until)
 
     async def latest_run_statuses(
         self, routine_ids: list[uuid.UUID]

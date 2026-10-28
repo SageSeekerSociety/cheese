@@ -71,7 +71,7 @@ async def arm_auto_merge(
     self._forbid_ai(project, decided_by, say("reviewActionAutoMerge"))
     if enabled and not branch_protection_of(project).auto_merge_allowed:
         raise ValidationError(say("autoMergeNotEnabled"))
-    allowed = {card.reviewer_handle}
+    allowed = set(await self._repo.reviewer_handles(card.id))
     if card.auto_merge_armed_by:
         allowed.add(card.auto_merge_armed_by)
     if decided_by not in allowed:
@@ -88,7 +88,7 @@ async def arm_auto_merge(
     return card
 
 
-def _write_merge_mirror(
+async def _write_merge_mirror(
     self: pkg.AcceptService,
     card: AcceptCard,
     verdict: MergeVerdict,
@@ -99,7 +99,16 @@ def _write_merge_mirror(
 
     `since` is when this (state, head) pair started holding, carried over
     from the previous mirror when unchanged: the required-check grace
-    clock reads it."""
+    clock reads it.
+
+    The mirror is read again under the card's row lock before anything is
+    carried over from it. A reading takes seconds of forge calls, and another
+    one (the poller, a click, a snapshot refresh) can write the mirror in
+    between; carrying `since` over from the copy loaded before that would put
+    back a clock the newer write had already ended."""
+    await self._session.refresh(
+        card, attribute_names=["merge_state"], with_for_update=True
+    )
     now_iso = datetime.now(UTC).isoformat()
     prev = card.merge_state if isinstance(card.merge_state, dict) else {}
     since = (
@@ -233,14 +242,14 @@ async def _merge_pr_for_accept(
             topic,
             _capped("acceptStoppedMergeStateUnread", pr=number, error=str(exc)),
         )
-    self._write_merge_mirror(card, verdict, who, seen)
+    await self._write_merge_mirror(card, verdict, who, seen)
     # 冲突先停下，两种项目都一样。这里的 `dirty` 是 GitHub 的话：强制项目那份是
     # 它的 `mergeStateStatus` 原样透传，非强制项目那份也抄自它的 `dirty` /
     # `mergeable=False` —— 冲突不会自己消失，让下面的合并调用去撞它，强制项目
     # 那条路上会被笼统的 `except Exception` 说成「合并结果暂时无法确认」
     # （2026-10-16 采纳 PR #3927 时的样子），把「先解冲突」读成了「重试一次」。
     if verdict.state == "dirty":
-        await self._stop_accept_conflict(card, topic)
+        await self._stop_accept_conflict(card, topic, status)
     # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
     # 译). Platform enforcing → only clean, or unstable whose reds are not
     # on the required roster, may merge; everything else is refused with
@@ -336,7 +345,7 @@ async def _record_queue_entry(
     card.auto_merge_armed_by = None
     card.auto_merge_armed_at = None
     await self._repo.add_approval(card.id, decided_by)
-    self._write_merge_mirror(
+    await self._write_merge_mirror(
         card,
         MergeVerdict(
             state="blocked",
@@ -442,6 +451,7 @@ async def _merge_armed_card(
         await self._session.flush()
         return
     if result.queued:
+        card.decided_by_assistant = False
         await self._record_queue_entry(card, armer)
         return
     if result.sha is None:
@@ -459,6 +469,7 @@ async def _merge_armed_card(
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, armer)
     card.decided_by = armer
+    card.decided_by_assistant = False
     card.decided_at = datetime.now(UTC)
     await self._finish_pr_accept(card=card, topic=topic)
 

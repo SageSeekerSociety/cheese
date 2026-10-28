@@ -9,10 +9,12 @@ import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
 import { Extension, InputRule, Mark, mergeAttributes, Node } from '@tiptap/core'
+import Blockquote from '@tiptap/extension-blockquote'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
+import Document from '@tiptap/extension-document'
 import Image from '@tiptap/extension-image'
-import { ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
-import { Table, TableKit } from '@tiptap/extension-table'
+import { BulletList, ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { Table, TableCell, TableHeader, TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
@@ -22,7 +24,7 @@ import { docBlocks } from './blocks'
 import { Canvas } from './canvas'
 import { CommentAnchor } from './commentAnchors'
 import { docMarked } from './markdown'
-import { suggestionMarks } from './suggestions'
+import { suggestableBlocks, suggestionMarks } from './suggestions'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 export const lowlight = createLowlight(common)
@@ -348,8 +350,13 @@ const DocOrderedList = OrderedList.extend({
 
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
-  return [
+  const extensions: AnyExtension[] = [
     StarterKit.configure({
+      // Added below as they are, so that a shared document can let a whole
+      // block in them be suggested (suggestableBlocks).
+      document: false,
+      blockquote: false,
+      bulletList: false,
       // Replaced by the lowlight-highlighted code block below.
       codeBlock: false,
       // A shared document is edited collaboratively, and the collaboration
@@ -378,8 +385,13 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     DocComment,
-    TableKit.configure({ table: false }),
+    Document,
+    Blockquote,
+    BulletList,
+    TableKit.configure({ table: false, tableCell: false, tableHeader: false }),
     DocTable.configure({ resizable: false }),
+    TableCell,
+    TableHeader,
     DocListItem,
     DocOrderedList,
     TaskList,
@@ -398,4 +410,5 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // A form field has no comments.
     ...(opts.standalone ? [] : [CommentAnchor]),
   ]
+  return opts.standalone ? extensions : extensions.map(suggestableBlocks)
 }

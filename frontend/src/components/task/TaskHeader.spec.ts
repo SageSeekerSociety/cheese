@@ -74,7 +74,8 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
+/** `worksTasks`：此刻看的人的角色有没有「新建任务和审阅」这一项（项目成员默认有，导师没有）。 */
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, worksTasks = true) {
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
@@ -100,6 +101,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
       loadMachine,
       setMachine: vi.fn(async () => ({})),
       setMachineDefault: vi.fn(async () => ({})),
+      worksTasks,
     },
     global: { plugins: [vuetify] },
   })
@@ -148,19 +150,50 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
-  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你审阅」。
-  it('等的是看的人：写「待你审阅」，等的是别人：写「等人审阅」', () => {
+  // 「未连接」只在真的断了的时候说：页面没告诉页头连没连上，就当连着。
+  it('没说断了就不写「未连接」', () => {
+    const view = mount()
+    expect(view.queryByText('未连接')).toBeNull()
+  })
+
+  // 页头那一格和频道里的卡、全部任务、总览说同一件事：标签只说「待审阅」，后面那一行
+  // 说在等谁——是看的人就说「等你」。
+  it('标签只说待审阅；等的是看的人，后面那一行说等你，等的是别人就写出是谁', () => {
     me = 'alice'
-    const mine = mount({ waiting_on: 'alice' })
-    expect(mine.getByTestId('task-phrase').textContent).toBe('待你审阅')
+    const mine = mount({ waiting_on: 'alice', needs_my_action: true })
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(mine.getByTestId('task-progress-note').textContent).toContain('等你')
     mine.unmount()
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
-    expect(theirs.getByTestId('task-phrase').textContent).toBe('等人审阅')
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
+    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等 ')
+    expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
+  })
+
+  it('关注人不被页头写成实际答题人', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: 'bob',
+      awaits_me: true,
+      needs_my_action: false,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).not.toContain('等你')
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等 ')
+  })
+
+  it('多人问题的实际被问者在页头看到等你', () => {
+    const view = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
+      waiting_on: null,
+      awaits_me: true,
+      needs_my_action: true,
+    })
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等你')
   })
 
   // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
-  it('队友说在等结果：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
+  it('队友说在等：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
     const said = {
       presentation: { column: 'building', phrase: 'waiting' },
       progress_state: 'waiting',
@@ -169,15 +202,30 @@ describe('任务页头', () => {
       progress_set_at: '2026-10-05T00:00:00Z',
     } as Partial<RoomTask>
     const here = mount(said)
-    expect(here.getByTestId('task-phrase').textContent).toBe('在等结果')
-    expect(here.getByTestId('task-progress-note').textContent).toBe('等 CI 跑完')
+    expect(here.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(here.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(here.queryByTestId('task-agent-left')).toBeNull()
     here.unmount()
 
     const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
-    expect(gone.getByTestId('task-phrase').textContent).toBe('在等结果')
-    expect(gone.getByTestId('task-progress-note').textContent).toBe('等 CI 跑完')
+    expect(gone.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(gone.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
+  })
+
+  // 名字跟的是报那句话的队友：任务中途换过人时，两处不是同一个，照任务当前的队友
+  // 写就把别人的「离开」栽到了还在干活的那位头上。
+  it('已离开说的是报那一句的队友，不是任务现在的队友', () => {
+    const swapped = mount({
+      agent_handle: 'cheese-02',
+      presentation: { column: 'building', phrase: 'running' },
+      progress_state: 'working',
+      progress_note: '在改页头',
+      progress_set_by: 'cheese-01',
+      progress_set_at: '2026-10-05T00:00:00Z',
+      agent_left_at: '2026-10-05T01:00:00Z',
+    })
+    expect(swapped.getByTestId('task-agent-left').textContent).toBe('小苔已离开')
   })
 
   it('任务关了，就不再摆它报过的状态', () => {
@@ -192,7 +240,7 @@ describe('任务页头', () => {
     expect(queryByTestId('task-agent-left')).toBeNull()
   })
 
-  it('不做这件事的人：没有更多操作', () => {
+  it('开着的任务，不做这件事的人：没有更多操作', () => {
     me = 'bob'
     const { container } = mount()
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
@@ -311,20 +359,29 @@ describe('任务页头', () => {
     expect(setCollaborators).toHaveBeenCalledWith(['carol'])
   })
 
-  it('关了的任务，负责人能重新打开；协作者不能', async () => {
+  it('关了的任务，负责人能重新打开', async () => {
     stubViewport()
     const owner = mount({ status: 'closed' })
     await fireEvent.click(owner.container.querySelector('[data-testid="task-more"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
     await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
     expect(owner.reopen).toHaveBeenCalledOnce()
-    owner.unmount()
+  })
 
+  it('关了的任务，不做这件事的项目成员也能重新打开', async () => {
+    stubViewport()
     me = 'bob'
-    const helper = mount({ status: 'closed', contributor_handles: ['bob'] })
-    await fireEvent.click(helper.container.querySelector('[data-testid="task-more"]')!)
-    await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
-    expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
+    const member = mount({ status: 'closed' })
+    await fireEvent.click(member.container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
+    await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
+    expect(member.reopen).toHaveBeenCalledOnce()
+  })
+
+  it('角色没有「新建任务和审阅」的人（导师）重新打开不了关了的任务', () => {
+    me = 'teacher'
+    const { container } = mount({ status: 'closed' }, PEOPLE, AGENTS, false)
+    expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
   it('「⋯」打开的是一个菜单，每一项是菜单项', async () => {
@@ -340,13 +397,13 @@ describe('任务页头', () => {
     expect(items).toEqual(expect.arrayContaining(['重命名', '关闭任务']))
   })
 
-  it('协作者能改名，不能转交和关闭', async () => {
+  it('协作者能改名、能关闭，不能转交', async () => {
     me = 'bob'
     const { container, rename } = mount({ contributor_handles: ['bob'] })
     stubViewport()
     await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
-    expect(document.body.textContent).not.toContain('关闭任务')
+    expect(document.body.textContent).toContain('关闭任务')
     expect(document.body.textContent).not.toContain('转交')
     await fireEvent.click(document.querySelector('[data-testid="task-rename"]')!)
     const input = await waitFor(() => {
@@ -382,5 +439,40 @@ describe('任务页头', () => {
     await nextTick()
     const helper = container.querySelector('.task-header__helper')!
     expect(helper.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
+  })
+
+  it('手机顶栏里状态区保留完整进度说明与「已离开」，状态文字更新时横向滚动回到开头', async () => {
+    const prevWidth = window.innerWidth
+    window.innerWidth = 390
+    window.dispatchEvent(new Event('resize'))
+    try {
+      const base = {
+        presentation: { column: 'building', phrase: 'running' },
+        progress_state: 'working',
+        progress_note: '已按决定保持现状并更新实况文档，等待负责人确认是否关闭任务或继续讨论',
+        progress_set_by: 'cheese-01',
+        progress_set_at: '2026-10-05T00:00:00Z',
+        agent_left_at: '2026-10-05T01:00:00Z',
+      } as Partial<RoomTask>
+      const { container, getByTestId, rerender } = mount(base)
+      await nextTick()
+      const header = container.querySelector('.task-header')!
+      expect(header.classList.contains('task-header--bar')).toBe(true)
+      expect(getByTestId('task-progress-note').textContent).toContain('已按决定保持现状')
+      expect(getByTestId('task-agent-left').textContent).toBe('小苔已离开')
+      expect(getByTestId('task-details')).not.toBeNull()
+      expect(getByTestId('task-more')).not.toBeNull()
+
+      const meta = container.querySelector<HTMLElement>('.task-header__meta')!
+      meta.scrollLeft = 120
+      expect(meta.scrollLeft).toBe(120)
+
+      await rerender({ task: task({ ...base, progress_note: '正在跑回归测试' }) })
+      await nextTick()
+      expect(meta.scrollLeft).toBe(0)
+    } finally {
+      window.innerWidth = prevWidth
+      window.dispatchEvent(new Event('resize'))
+    }
   })
 })

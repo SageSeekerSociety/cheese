@@ -5,7 +5,6 @@ import { useTeamModels } from '@/composables/useTeamModels'
 
 import ModelsView from './ModelsView.vue'
 
-import { useCommands } from '@/commands'
 import { t } from '@/i18n'
 
 const {
@@ -34,29 +33,7 @@ const {
   refresh,
 } = useTeamModels()
 
-// The page's own actions live in the team page's header, like every AppPage.
 const addingPersonal = ref(false)
-useCommands(() => [
-  {
-    id: 'team-models.refresh',
-    title: t('account.modelConnections.recheck'),
-    icon: 'mdi-refresh',
-    palette: false,
-    loading: loading.value,
-    header: {},
-    run: refresh,
-  },
-  {
-    id: 'team-models.add-personal',
-    title: t('account.modelConnections.addPersonal'),
-    icon: 'mdi-plus',
-    palette: false,
-    header: {},
-    run: () => {
-      addingPersonal.value = true
-    },
-  },
-])
 </script>
 
 <template>

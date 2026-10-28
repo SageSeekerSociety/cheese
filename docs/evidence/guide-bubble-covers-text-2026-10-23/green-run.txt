@@ -1,0 +1,8 @@
+
+Running 3 tests using 1 worker
+
+  ✓  1 tests/guide-bubble-does-not-cover-text.spec.ts:157:1 › the guide bubble covers no line of text when there is room for it (3.1s)
+  ✓  2 tests/guide-bubble-does-not-cover-text.spec.ts:178:1 › with nowhere free it covers the least text, not the spot nearest the target (2.9s)
+  ✓  3 tests/guide-bubble-does-not-cover-text.spec.ts:232:1 › shrinking the window re-places a bubble that would be clipped (3.1s)
+
+  3 passed (10.7s)
