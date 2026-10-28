@@ -47,27 +47,30 @@ export function cssFilter(adjust: ImageAdjust): string | undefined {
 
 type Pt = { x: number; y: number }
 
+/** 换算只用得上这两样：亮度、饱和度、裁剪都不挪点位。`sideways` 也收这一个。 */
+type Orientation = Pick<ImageAdjust, 'rotate' | 'flip'>
+
 /** 原图上的一点（比例坐标）在转好、翻好之后落在哪：先翻，再顺时针转。 */
-function forward(p: Pt, adjust: ImageAdjust): Pt {
+function forward(p: Pt, adjust: Orientation): Pt {
   let q = adjust.flip ? { x: 1 - p.x, y: p.y } : p
   for (let turns = (((adjust.rotate / 90) % 4) + 4) % 4; turns > 0; turns -= 1) q = { x: 1 - q.y, y: q.x }
   return q
 }
 
 /** 反过来：看到的那一点在原图上是哪一点。 */
-function backward(p: Pt, adjust: ImageAdjust): Pt {
+function backward(p: Pt, adjust: Orientation): Pt {
   let q = p
   for (let turns = (((adjust.rotate / 90) % 4) + 4) % 4; turns > 0; turns -= 1) q = { x: q.y, y: 1 - q.x }
   return adjust.flip ? { x: 1 - q.x, y: q.y } : q
 }
 
 /** 原图上的一点（按宽高的比例）落在**转好、翻好之后**看到的哪儿。 */
-export function displayPoint(p: Pt, adjust: Pick<ImageAdjust, 'rotate' | 'flip'>): Pt {
+export function displayPoint(p: Pt, adjust: Orientation): Pt {
   return forward(p, adjust)
 }
 
 /** 看到的这一点在原图上是哪一点——画布上按原图像素记的笔画和框选，都靠它换算。 */
-export function sourcePoint(p: Pt, adjust: Pick<ImageAdjust, 'rotate' | 'flip'>): Pt {
+export function sourcePoint(p: Pt, adjust: Orientation): Pt {
   return backward(p, adjust)
 }
 

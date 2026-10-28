@@ -91,5 +91,7 @@
   "gifPause": "暂停",
   "gifPrev": "上一帧",
   "gifNext": "下一帧",
-  "gifAt": "第 {n} / {total} 帧"
+  "gifAt": "第 {n} / {total} 帧",
+  "minimap": "整张定位条",
+  "minimapHint": "整张图缩成一条：亮的那块是此刻看得到的范围，亮点是图上的批注。拖它跳到别处。"
 }

@@ -4,7 +4,7 @@
 // 多大、滚到哪」有关，跟画了什么无关：测量结果 `geometry` 交给说明卡（region-note 插槽）
 // 定位，缩放与平移只改视图，不动笔画数据。
 import type { Ref } from 'vue'
-import type { ImageAdjust } from '@/lib/imageEdit'
+import type { CropBox, ImageAdjust } from '@/lib/imageEdit'
 import type { RasterRegion } from './designRegion'
 import type { NoteRect, RegionNoteGeometry } from './designRegionNotePosition'
 
@@ -95,9 +95,13 @@ export function useDesignViewport(options: DesignViewportOptions) {
 
   let observer: ResizeObserver | null = null
   let scrollCleanup: (() => void) | null = null
-  /** 滚到哪儿、内容多长。缩放和图尺寸变了不会触发 scroll 事件，所以要主动重读一次。 */
+  /** 滚到哪儿、内容多长。 */
   let readScrollNow: (() => void) | null = null
   let frame = 0
+  // 内容多长变了不会触发 scroll 事件，也不会碰到 ResizeObserver（滚的那个元素自己没变，
+  // 变的是里面的 sheet）。裁一刀、清掉裁剪、换一档缩放都会这样，所以要盯着版面重读一次：
+  // 不重读，定位条那块窗口停在旧比例上，超长图裁短之后那条也还赖着不走。
+  watch([dimensions, scale], () => void nextTick(() => readScrollNow?.()), { flush: 'post' })
   function clippingAncestors(element: HTMLElement) {
     const clips: { element: HTMLElement; horizontal: boolean; vertical: boolean }[] = []
     for (let parent = element.parentElement; parent; parent = parent.parentElement) {

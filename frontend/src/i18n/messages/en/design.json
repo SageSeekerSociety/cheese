@@ -91,5 +91,7 @@
   "gifPause": "Pause",
   "gifPrev": "Previous frame",
   "gifNext": "Next frame",
-  "gifAt": "Frame {n} of {total}"
+  "gifAt": "Frame {n} of {total}",
+  "minimap": "Whole-picture locator",
+  "minimapHint": "The whole picture squeezed into one rail: the bright part is what you can see now, the dots are the comments on it. Drag to jump."
 }

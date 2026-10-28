@@ -5,7 +5,7 @@
 // 缩放过、转过，读出来的仍是文件里的那个数。
 import type { Point } from './designRegion'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 export type InspectMode = 'off' | 'pick' | 'measure'
 
@@ -82,6 +82,10 @@ export function useDesignInspect(image: () => HTMLImageElement | null) {
     mode.value = mode.value === next ? 'off' : next
     clear()
   }
+
+  // 换了一张图（或换了一版）：上一个数是从上一张上读的，原图坐标也是它的，留着就是错的。
+  // 换图时 `<img>` 会整个换掉，这里跟着它清。
+  watch(image, clear)
 
   const active = computed(() => mode.value !== 'off')
 

@@ -105,6 +105,15 @@ const selectedRegion = computed(() => (props.activeRegion === undefined ? standa
 const selecting = computed(() => tool.value === 'select')
 const drawing = computed(() => tool.value !== 'select')
 
+/**
+ * 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。
+ *
+ * 摆在视口那一份**前面**：视口一挂上就现算一次版面（`dimensions`），那次现算要问
+ * `layoutCrop`（读者是不是正在重新裁），问到 `adjust`。后声明就先问到了一块还没建好的
+ * 东西，一挂上就抛。
+ */
+const adjust = useDesignAdjust(() => props.identity)
+
 const {
   viewport,
   pane,
@@ -138,11 +147,9 @@ const {
   selectedRegion,
   beforePanStart: () => rememberFocus(),
   adjust: () => adjust.adjust.value,
-  crop: () => adjust.adjust.value.crop,
+  crop: () => layoutCrop.value,
 })
 
-/** 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。 */
-const adjust = useDesignAdjust(() => props.identity)
 /** 读这张图那两件：取色、量距离。 */
 const inspect = useDesignInspect(() => image.value)
 /** 动图：能翻帧就摆一层画布盖住浏览器自己放的动画。 */
@@ -167,13 +174,23 @@ const shownSize = computed(() =>
 )
 const adjustValues = computed(() => ({ rotate: adjust.adjust.value.rotate, flip: adjust.adjust.value.flip }))
 /**
+ * 版面按哪一块缩：**重新裁的时候不缩**。
+ *
+ * 已经裁过一刀再点「裁剪」，框要铺在整张上——读者这次框的是完整的那张，不是上次裁完剩下
+ * 的那块。这时若还按上次的 crop 缩版面，框和四个把手就落在那块外面，量到的比例也对不上。
+ * 裁剪框自己（`DesignCropBox`）拿到的是整张的宽高，同理。
+ */
+const layoutCrop = computed(() => (adjust.cropping.value ? null : adjust.adjust.value.crop))
+/** 重新裁的时候不剪：框铺在整张上，读者框的就是他看见的那张。 */
+const frameClip = computed(() => (adjust.cropping.value ? undefined : adjust.clip.value))
+/**
  * 转动、调色、裁剪都作用在这一层上；里面的东西跟着一起转。
  *
  * 这一层按**原图的比例**摆（不是 sheet 那个转后的框）：图没被拉过，转过来才是对的形状。
  * 它钉在 sheet 正中，转轴也在正中——90° 之后占的正好是 sheet 那个宽高对调的框。
  */
 const frameStyle = computed(() => {
-  const crop = adjust.adjust.value.crop
+  const crop = layoutCrop.value
   const shownWidth = shownSize.value.width * scale.value
   const shownHeight = shownSize.value.height * scale.value
   // 版面已经缩成裁完的那一块，这一层的中心就要跟着挪：原来的中心落在 (crop.x + w/2) 那一点。
@@ -186,7 +203,7 @@ const frameStyle = computed(() => {
     height: `${natural.value.height * scale.value}px`,
     transform: `translate(-50%, -50%) rotate(${adjust.adjust.value.rotate}deg) scaleX(${adjust.adjust.value.flip ? -1 : 1})`,
     filter: adjust.filter.value,
-    clipPath: adjust.clip.value,
+    clipPath: frameClip.value,
   }
 })
 
@@ -433,6 +450,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       :adjust="adjust.adjust.value"
       :edited="adjust.edited.value"
       :cropping="adjust.cropping.value"
+      :tone-open="tonePanel"
       @zoom="setZoom(scale * $event)"
       @mode="setZoomMode($event)"
       @rotate="adjust.rotate()"
@@ -592,6 +610,26 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
               @edit-text="openTextEditor"
               @text-editing="drawingText = $event"
             />
+            <!-- 量出来的那条线画在图上：两端都在原图坐标里，所以它得挂在**图这一层**上，
+                 跟着图一起转、一起翻、一起裁——挂在外面那层的话，一滚动或一转就指错地方。
+                 坐标原单位是原图像素，viewBox 按原图宽高铺开，正好一一对上。 -->
+            <svg
+              v-if="inspect.measure.value && natural.width"
+              class="design-image__measure"
+              :viewBox="`0 0 ${natural.width} ${natural.height}`"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <line
+                :x1="inspect.measure.value.from.x"
+                :y1="inspect.measure.value.from.y"
+                :x2="inspect.measure.value.to.x"
+                :y2="inspect.measure.value.to.y"
+                stroke="var(--accent)"
+                stroke-width="2"
+                stroke-dasharray="6 4"
+              />
+            </svg>
           </div>
           <!-- 裁剪框铺在转好调好的那张图上（不是 sheet 上）：它框的是「留下哪一块」，量的
                就是读者看到的样子。 -->
@@ -627,7 +665,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       </div>
       <DesignMinimap
         v-if="showMinimap && !adjust.cropping.value"
-        :pane="pane"
+        :scroll-top="scroll.top"
         :viewport-height="scroll.height"
         :content-height="scroll.content"
         :marks="markRatios"
@@ -661,24 +699,6 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
           </span>
         </template>
       </div>
-      <!-- 量出来的那条线画在图上：两端都在原图坐标里，跟着图一起转。 -->
-      <svg
-        v-if="inspect.measure.value && natural.width"
-        class="design-image__measure"
-        viewBox="`0 0 ${natural.width} ${natural.height}`"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <line
-          :x1="inspect.measure.value.from.x"
-          :y1="inspect.measure.value.from.y"
-          :x2="inspect.measure.value.to.x"
-          :y2="inspect.measure.value.to.y"
-          stroke="var(--accent)"
-          stroke-width="2"
-          stroke-dasharray="6 4"
-        />
-      </svg>
       <div class="design-image__overlay">
         <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
       </div>

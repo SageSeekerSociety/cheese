@@ -8,8 +8,13 @@ import { computed, ref } from 'vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
-  /** 这一格滚动的那个元素（`.design-image__pane`）。 */
-  pane: HTMLElement | null
+  /**
+   * 这一格滚到哪儿了（像素，跟着滚动事件走）。
+   *
+   * 不读 `pane.scrollTop`：那是个普通 DOM 属性，不是响应式的，读一次就冻住了，
+   * 拖了半天窗口那块不动。滚动位置由视口那一层算好，这里只管画。
+   */
+  scrollTop: number
   /** 屏幕上这一格的可见高度与内容总高（像素）。 */
   viewportHeight: number
   contentHeight: number
@@ -25,7 +30,7 @@ const window = computed(() => {
   const total = props.contentHeight
   if (!(total > 0)) return { top: 0, height: 1 }
   const height = Math.min(1, props.viewportHeight / total)
-  const top = Math.max(0, Math.min(1 - height, (props.pane?.scrollTop ?? 0) / total))
+  const top = Math.max(0, Math.min(1 - height, props.scrollTop / total))
   return { top, height }
 })
 

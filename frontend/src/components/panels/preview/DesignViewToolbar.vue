@@ -16,6 +16,8 @@ const props = defineProps<{
   adjust: ImageAdjust
   edited: boolean
   cropping: boolean
+  /** 亮度、饱和度那半行摊开着没有。开着与否由上面拿着，按钮只照着画。 */
+  toneOpen: boolean
 }>()
 const emit = defineEmits<{
   zoom: [factor: number]
@@ -27,8 +29,8 @@ const emit = defineEmits<{
   restore: []
 }>()
 
-/** 亮度、饱和度摊开会占掉半行，收在一颗按钮后面，按下才开。 */
-const toneOpen = computed(() => props.adjust.brightness !== 100 || props.adjust.saturation !== 100)
+/** 调过色时按钮一直亮着，摊开着也亮——「改过」和「开着」是两件事，亮的是前面那件。 */
+const toneLit = computed(() => props.toneOpen || props.adjust.brightness !== 100 || props.adjust.saturation !== 100)
 
 const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
 </script>
@@ -93,7 +95,7 @@ const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
       <button
         type="button"
         class="dt-btn dt-btn--text"
-        :class="{ 'is-on': toneOpen }"
+        :class="{ 'is-on': toneLit }"
         :aria-expanded="toneOpen"
         :title="t('design.toneHint')"
         @click="emit('tone', !toneOpen)"

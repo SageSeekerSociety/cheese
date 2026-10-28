@@ -597,6 +597,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewImageStage
       v-else-if="path && previewFile && isImageArtifact"
       :document-name="documentName"
+      :document-suffix="documentSuffix"
       :active="active"
       :preview-full="previewFull"
       :image-region="imageRegion"

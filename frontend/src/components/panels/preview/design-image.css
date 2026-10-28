@@ -227,10 +227,14 @@
   font: inherit;
   padding: 1px 2px;
 }
-/* 丢弃确认：盖住这一格的一小块，不抢整页。 */
+/* 丢弃确认：盖住这一格的一小块，不抢整页。
+   压在最上面：调色滑杆、裁剪条、动图控制条都是 `position: absolute` 的兄弟，
+   它们带着正的 z-index 会画在这一层之上——问「真要走吗」的时候，那几个还浮在
+   遮罩上，看着像没盖住。 */
 .design-image__discard {
   position: absolute;
   inset: 0;
+  z-index: 8;
   display: flex;
   align-items: center;
   justify-content: center;

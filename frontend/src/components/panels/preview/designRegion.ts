@@ -1,6 +1,6 @@
 import type { ImageAdjust } from '@/lib/imageEdit'
 
-import { sourcePoint } from '@/lib/imageEdit'
+import { sideways, sourcePoint } from '@/lib/imageEdit'
 
 export type Point = { x: number; y: number }
 export type RasterRegion = { x: number; y: number; width: number; height: number }
@@ -75,7 +75,10 @@ export function imageRegion(start: Point, end: Point, image: ImageGeometry): Ras
   return { x, y, width: right - x, height: bottom - y }
 }
 export function displayedRegion(region: RasterRegion, image: ImageGeometry): RasterRegion {
-  const k = image.scale ?? image.width / image.naturalWidth
+  // 没给 scale 就现推一个：转过 90° 时 `width` 是转后的宽（≈ naturalHeight × k），
+  // 拿 width/naturalWidth 当比例会整体偏掉，所以按原图那一边推。
+  const base = sideways(image.adjust ?? { rotate: 0 }) ? image.height : image.width
+  const k = image.scale ?? base / image.naturalWidth
   return {
     x: region.x * k,
     y: region.y * k,
