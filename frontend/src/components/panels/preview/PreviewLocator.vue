@@ -246,7 +246,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       <span>{{ t('work.room.preview.addNote') }}</span>
     </button>
     <div
-      v-else-if="(target && !armed) || (queuedCount && !pendingElsewhere && !target)"
+      v-else-if="(target && !armed) || queuedCount"
       ref="card"
       class="locator"
       data-locator-ui
@@ -254,16 +254,27 @@ function send(event: KeyboardEvent | MouseEvent) {
       :data-side="placement?.side"
       :style="style"
     >
+      <!-- 攒着的那几处在这一格底下留一条：计数加一句「还能接着指」，读者在原地就知道
+           自己攒到哪了。待发篮在话题页列着时，那几条例子和两个按钮都在那儿（输入框
+           上方），这里只留计数的提示——同一批批注画两遍按钮，读者会以为有两处。
+           原型里这两条是同时在的（面板底下这一条 + 输入框上方那一篮）。 -->
       <div v-if="queuedCount && !target" class="locator__queue">
         <span class="locator__queue-badge t-meta">{{
-          t('work.room.preview.queuedCount', { count: queuedCount })
+          pendingElsewhere
+            ? t('work.room.preview.pendingCount', { count: queuedCount })
+            : t('work.room.preview.queuedCount', { count: queuedCount })
         }}</span>
-        <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
-          {{ t('work.room.preview.clearQueued') }}
-        </BaseButton>
-        <BaseButton kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
-          {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
-        </BaseButton>
+        <span v-if="pendingElsewhere" class="locator__queue-why t-meta">{{
+          t('work.room.preview.pendingKeepGoing')
+        }}</span>
+        <template v-else>
+          <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('clearQueued')">
+            {{ t('work.room.preview.clearQueued') }}
+          </BaseButton>
+          <BaseButton kind="primary" size="sm" :disabled="busy" @click="emit('sendQueued')">
+            {{ t('work.room.preview.sendQueued', { count: queuedCount }) }}
+          </BaseButton>
+        </template>
       </div>
       <template v-if="target">
         <div class="locator__head">
