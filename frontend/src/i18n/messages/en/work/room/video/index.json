@@ -1,12 +1,21 @@
 {
   "atTime": "Frame at {time}",
+  "backSecond": "Back one second",
+  "forwardSecond": "Forward one second",
   "label": "Video: {name}",
   "loadFailed": "Unable to load this video. Reload or download it",
   "loading": "Loading video",
   "locateNeedsPlayer": "Open the video first, then annotate a moment of it",
-  "locateTime": "Annotate current timestamp",
+  "locateTime": "Annotate this moment",
+  "mute": "Mute",
+  "offline": "You are offline. Reconnect and try again",
   "open": "Open video",
+  "pause": "Pause",
+  "play": "Play",
   "playFailed": "This browser cannot play the video. Download it to watch",
+  "rate": "Playback speed {rate}×",
   "retry": "Reload",
-  "timePoint": "Timestamp {time}"
+  "seek": "Playback position",
+  "timePoint": "Timestamp {time}",
+  "unmute": "Unmute"
 }
