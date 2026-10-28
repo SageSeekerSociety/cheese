@@ -11,7 +11,7 @@ import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -26,6 +26,7 @@ import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import BookmarkRail from './chat/BookmarkRail.vue'
@@ -428,6 +429,18 @@ const submitQuestion = createQuestionSubmit({
   send,
 })
 defineExpose({ send, linkDown, submitQuestion })
+
+// 看图浮层要的三样（lib/chatImages）：这段对话里有哪些图、右侧面板、输入框，都在这一层。
+provide(CHAT_IMAGE_ACTIONS, {
+  gallery: () => imagePaths(rows.value),
+  openInPanel: (path, tool) => {
+    handOffImageTool(path, tool)
+    emit('open-file', path)
+  },
+  attach: (file) => void addFiles([file]),
+  // 输入框此刻在不在、收不收：和上面那条「回到输入框」的判据同一个。
+  canAttach: () => !!props.topic && !!props.showComposer && !props.composerClosed && !!composerRef.value,
+})
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
 useComposerShortcut({

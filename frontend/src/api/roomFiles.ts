@@ -267,53 +267,6 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
 
 // ---- 房间文件：草稿历史与在线编辑 ----
 
-/** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
-export interface RoomFileRevision {
-  id: string
-  path: string
-  seq: number
-  version: string
-  size: number
-  author: string
-  author_kind: 'human' | 'agent' | 'unknown'
-  source: 'baseline' | 'upload' | 'template' | 'ai' | 'editor' | 'restore' | 'scheduled'
-  note: string | null
-  /** 存下这一版的那次编辑会话；和自己打开时的那个相同，就是自己刚存的。 */
-  editor_key: string | null
-  created_at: string
-}
-
-export function roomFileRevisions(
-  topicId: string,
-  path: string
-): Promise<{ data: RoomFileRevision[]; total: number; path: string; version: string | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions?path=${encodeURIComponent(path)}`)
-}
-
-export function restoreRoomFileRevision(topicId: string, revisionId: string): Promise<RoomFileRevision> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/restore`, {
-    method: 'POST',
-  })
-}
-
-export async function downloadRoomFileRevision(topicId: string, revision: RoomFileRevision): Promise<void> {
-  const res = await fetch(
-    `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
-    { headers: authHeaders() }
-  )
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const blob = await res.blob()
-  const leaf = revision.path.split('/').pop() ?? 'file'
-  const dot = leaf.lastIndexOf('.')
-  const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
 export function copyIntoRoom(
   topicId: string,
   source: string,
