@@ -25,6 +25,8 @@ export type NotificationType =
   | 'TASK_NOTICE'
   | 'TASK_DUE_SOON'
   | 'ASSISTANT_NOTICE'
+  // 额度快用完了（`usage.alerts`）：团队方案、项目预算或成员任务上限用到八成。
+  | 'CREDIT_WARNING'
 
 export interface EntityInfo {
   id: string
