@@ -498,19 +498,29 @@ onBeforeUnmount(() => {
           <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
           <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- a mouse selection on the slide is quoted and (while presenting) a click turns the page; the keyboard turns pages on the reader around it, which is why the stage itself is not focusable -->
           <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @click="pointAdvance">
-            <div
-              ref="sheet"
-              class="slides__sheet"
-              :class="{ 'is-dragging': dragX !== 0 }"
-              :data-page="current"
-              :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
-            />
+            <!-- 幻灯片和它下面那条备注是一个整体：一起居中、一起滚。分开摆的话备注会贴在
+                 这一格的下沿，离幻灯片很远——读者看不出它说的是这一页。宽度也跟着幻灯片
+                 走（下面那一列按内容撑开，页宽由 `useSlidesPdf` 写死在页自己身上）。 -->
+            <div class="slides__column">
+              <div
+                ref="sheet"
+                class="slides__sheet"
+                :class="{ 'is-dragging': dragX !== 0 }"
+                :data-page="current"
+                :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
+              />
+              <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
+              <section
+                v-if="showNotes"
+                class="slides__notes"
+                data-testid="slides-notes"
+                :aria-label="t('slides.notes')"
+              >
+                <p v-if="pageNote" class="slides__notes-text">{{ pageNote }}</p>
+                <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
+              </section>
+            </div>
           </div>
-          <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
-          <section v-if="showNotes" class="slides__notes" data-testid="slides-notes" :aria-label="t('slides.notes')">
-            <p v-if="pageNote" class="slides__notes-text t-body">{{ pageNote }}</p>
-            <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
-          </section>
         </div>
       </div>
       <!-- 放映没有工具栏；留一颗看得见的出口，触屏上没有 Esc 也退得出来（原型只有那句提示）。-->
@@ -744,29 +754,39 @@ onBeforeUnmount(() => {
 .slides--narrow .slides__bar {
   padding: 4px 8px 0;
 }
-/* 幻灯片下面那一条：讲稿。高度有上限（一份备注可以很长），再长就在自己里面滚，
-   不让它把幻灯片挤小——读者是来看这一页的。 */
+/* 幻灯片加它下面那条备注：一列，宽由幻灯片定（页宽写死在页自己身上，这一列跟着撑开）。
+   靠上摆，上下多出来的空间留在下面——原型也是这么摆的。 */
+.slides__column {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+/* 幻灯片下面那一行：讲稿。不上边框、不铺底——它和幻灯片之间只隔一点空，读者一眼看得出
+   是同一条；画一条横贯面板的线会把这条绑到面板下沿上，离幻灯片太远。 */
 .slides__notes {
   flex: none;
-  max-height: 34%;
+  min-width: 0;
+  /* 一份备注可以很长，高度有个上限：再长就在自己里面滚，不把幻灯片挤小（读者是来看这一页
+     的）。上限按视口算，不用百分比——百分比要有一个定高祖先才生效，而这一列是内容撑开的。 */
+  max-height: 22vh;
   overflow: auto;
-  padding: 10px 16px 12px;
-  border-top: 1px solid var(--line);
-  background: var(--surface);
+  margin-top: 10px;
 }
 .slides__notes-text {
   margin: 0;
+  /* 13 / --muted：比正文小一档、比装饰色重一档。原型这一行用的是最淡的那个色和 12px，
+     一整段讲稿用那个色读起来吃力；讲的人和屏幕的距离也更远。 */
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--text);
 }
 .slides__notes-empty {
   margin: 0;
   color: var(--faint);
-}
-.slides--narrow .slides__notes {
-  max-height: 40%;
-  padding: 8px;
 }
 .slides__exit {
   position: fixed;
