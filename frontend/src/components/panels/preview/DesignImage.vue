@@ -111,8 +111,16 @@ const drawing = computed(() => tool.value !== 'select')
  * 摆在视口那一份**前面**：视口一挂上就现算一次版面（`dimensions`），那次现算要问
  * `layoutCrop`（读者是不是正在重新裁），问到 `adjust`。后声明就先问到了一块还没建好的
  * 东西，一挂上就抛。
+ *
+ * `layoutCrop` / `frameClip` 也往后挪：`watch([dimensions, scale], …)` 在 setup 里就跑
+ * 一次源取值，那条路今天被 `natural.width === 0` 的早退挡着才没走到，可那是个 `const`，
+ * TDZ 说翻就翻——换成 ref 预置了宽高、或者早退被去掉，挂载时就 ReferenceError。
  */
 const adjust = useDesignAdjust(() => props.identity)
+/** 版面按哪一块缩：**重新裁的时候不缩**。 */
+const layoutCrop = computed(() => (adjust.cropping.value ? null : adjust.adjust.value.crop))
+/** 重新裁的时候不剪：框铺在整张上，读者框的就是他看见的那张。 */
+const frameClip = computed(() => (adjust.cropping.value ? undefined : adjust.clip.value))
 
 const {
   viewport,
@@ -173,16 +181,6 @@ const shownSize = computed(() =>
     : { width: natural.value.width, height: natural.value.height }
 )
 const adjustValues = computed(() => ({ rotate: adjust.adjust.value.rotate, flip: adjust.adjust.value.flip }))
-/**
- * 版面按哪一块缩：**重新裁的时候不缩**。
- *
- * 已经裁过一刀再点「裁剪」，框要铺在整张上——读者这次框的是完整的那张，不是上次裁完剩下
- * 的那块。这时若还按上次的 crop 缩版面，框和四个把手就落在那块外面，量到的比例也对不上。
- * 裁剪框自己（`DesignCropBox`）拿到的是整张的宽高，同理。
- */
-const layoutCrop = computed(() => (adjust.cropping.value ? null : adjust.adjust.value.crop))
-/** 重新裁的时候不剪：框铺在整张上，读者框的就是他看见的那张。 */
-const frameClip = computed(() => (adjust.cropping.value ? undefined : adjust.clip.value))
 /**
  * 转动、调色、裁剪都作用在这一层上；里面的东西跟着一起转。
  *
@@ -628,6 +626,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
                 stroke="var(--accent)"
                 stroke-width="2"
                 stroke-dasharray="6 4"
+                vector-effect="non-scaling-stroke"
               />
             </svg>
           </div>
