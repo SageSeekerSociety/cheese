@@ -68,11 +68,8 @@ it('「批注」只有那一段算数', () => {
     () => true,
     () => 'a.pdf'
   )
-  expect(mode.annotating.value).toBe(false)
   mode.set('note')
-  expect(mode.annotating.value).toBe(true)
   mode.set('edit')
-  expect(mode.annotating.value).toBe(false)
 })
 
 it('快捷键 1/2/3 对着看/批注/改', () => {

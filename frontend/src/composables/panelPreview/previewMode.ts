@@ -31,8 +31,6 @@ export interface PreviewModeApi {
   enabled: (mode: PreviewMode) => boolean
   /** 现在这一段能不能改正文：`edit` 且这一份开得起来。 */
   editing: ComputedRef<boolean>
-  /** 现在能不能指一处写批注：`note` 那一段。 */
-  annotating: ComputedRef<boolean>
 }
 
 export const PREVIEW_MODE: InjectionKey<PreviewModeApi> = Symbol('preview-mode')
@@ -70,6 +68,5 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
     set,
     enabled,
     editing: computed(() => mode.value === 'edit' && canEdit()),
-    annotating: computed(() => mode.value === 'note'),
   }
 }
