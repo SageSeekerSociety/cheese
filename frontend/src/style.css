@@ -1451,8 +1451,14 @@ button:not(.v-btn) {
 .md-content .md-wrap-btn[aria-pressed='true'] {
   color: var(--accent-ink);
 }
+/* 没有悬停的设备上这条工具条一直在，不能按悬停版那样浮在代码上：绝对定位在右上角、
+   24px 高，而代码块只留了 10px 上内边距，头一行尾巴会被两颗按钮盖住、点也点不到。
+   这种设备上让它回正常流、排在代码块上方一行。 */
 @media (hover: none) {
   .md-content .md-pre-bar {
+    position: static;
+    justify-content: flex-end;
+    padding: 0 0 4px;
     opacity: 1;
   }
 }

@@ -217,7 +217,7 @@ const showSource = ref(false)
 // 代码那一档要的正文：读不成文本（二进制、太大）时是 null，就地说明一句，不往下落。
 const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.content ?? null : null))
 
-// markdown 这一档「没东西可读」的两种，各自说一句，别留一个空白面板。
+// markdown 这一档「没东西可读」的三种，各自说一句，别留一个空白面板。
 //
 // 一种是文件本身是空的（或有几个空行）：`MarkdownView` 画出来就是零个块，屏幕上除了
 // 文件条什么都没有，读者分不出是这份文件空着、还是预览坏了。
@@ -225,13 +225,19 @@ const codeSource = computed(() => (props.documentType?.view === 'code' ? props.p
 // 另一种是文件大到后端不把正文交出来（`too_large`，`domain/textfile.py` 的
 // `MAX_TEXT_BYTES`，1 MB）：`content` 也是 null，但那份文件写得回去、也读得回来，
 // 和「不是文本」（`binary`）不是一回事——这里说的是「这份文件的正文这次没取」。
-// 上面那句「不是文本」对 .md 不成立：它明明白白是文本，只是太大。
+//
+// 第三种是 `binary`（非 UTF-8 编码的 .md：`decode_text` 解不出来就归这一档），
+// `content` 同样是 null。上面那句「不是文本」在这一档正好适用，只是它摆得比 markdown
+// 那一支更靠后，落不到——不在这里接住，屏幕上就是一片空白。
 const mdEmpty = computed(() => {
   const content = props.previewFile?.content
   return props.documentType?.view === 'markdown' && typeof content === 'string' && !content.trim()
 })
 const mdTooLarge = computed(
   () => props.documentType?.view === 'markdown' && props.previewFile?.content === null && !!props.previewFile?.too_large
+)
+const mdUnreadable = computed(
+  () => props.documentType?.view === 'markdown' && props.previewFile?.content === null && !props.previewFile?.too_large
 )
 // ---- 目录 ----
 // 一份几百节的 md 没有目录就只剩滚轮。标题从渲染出来的正文里抽（`PreviewMarkdown`
@@ -242,13 +248,20 @@ const mdTooLarge = computed(
 // 可以的，进不去就没有。
 const mdOutline = ref<{ text: string; level: number; id: number }[]>([])
 const mdRef = ref<InstanceType<typeof PreviewMarkdown> | null>(null)
-// 协同编辑开着时这一栏换成编辑器，阅读视图整块下去了，那颗目录就没有正文可跳（抽出来的
-// 章节还是上一次渲染留下的）；「看原文」同理，源码视图的标题和渲染出来的不是同一批。
+// 只在真的摆着这一份的阅读视图时才有一颗可用的目录。下面几种情形里模板走的是别的分支，
+// `ref="mdRef"` 那个实例根本没挂上（`mdRef` 是 null，点了不会有任何反应），而 `mdOutline`
+// 里还留着上一次抽的标题——摆一颗按不动、章节还和正文对不上的目录，比没有更糟：
+//   - 「看原文」：源码视图的标题和渲染出来的不是同一批；
+//   - 协同编辑开着：这一栏换成了编辑器；
+//   - 对比态 / 看旧版：正文换成了 diff 或上一版。
+// 最后两条的判断变量声明在下面（computed 的 getter 惰性求值，引用没问题）。
 const outlineWorthIt = computed(
   () =>
     props.documentType?.view === 'markdown' &&
     !showSource.value &&
     !props.liveEdit?.editingPath.value &&
+    !textCompare.value &&
+    !oldView.value &&
     mdOutline.value.length >= 3
 )
 function jumpToHeading(id: number) {
@@ -567,6 +580,10 @@ defineExpose({ snapshot, clearMark })
       <BaseButton kind="secondary" size="sm" class="mt-3" prepend-icon="mdi-download" @click="emit('download')">
         {{ t('work.room.preview.download') }}
       </BaseButton>
+    </div>
+    <div v-else-if="documentType.view === 'markdown' && mdUnreadable" class="doc__state doc__state--text">
+      <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+      <div>{{ t('work.room.preview.notText') }}</div>
     </div>
     <div v-else-if="documentType.view === 'markdown' && mdEmpty" class="doc__state doc__state--text">
       <v-icon size="28" class="text-disabled mb-2">mdi-file-document-outline</v-icon>

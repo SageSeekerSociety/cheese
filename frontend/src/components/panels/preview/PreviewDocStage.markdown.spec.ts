@@ -85,9 +85,12 @@ it('大到正文没取回来的文件说清原因，并给下载', async () => {
   expect(ui.getAllByText('下载').length).toBeGreaterThan(0)
 })
 
-it('不是文本的 markdown（读成 null 且没超限）仍走原来那句', async () => {
-  const ui = mount({ content: null, too_large: false })
-  await waitFor(() => expect(ui.queryByText('这份文件太大，正文没有取回来')).toBeNull())
+it('不是文本的 markdown（读成 null 且没超限）说「这个文件不是文本」，不是一片空白', async () => {
+  // 非 UTF-8 的 .md 在 `decode_text` 那里归到 binary、content 是 null。这一档要是没人
+  // 接住，屏幕上就是空白——和「文件空着」看上去一模一样。
+  const ui = mount({ content: null, too_large: false, binary: true })
+  await waitFor(() => expect(ui.getByText('这个文件不是文本')).toBeTruthy())
+  expect(ui.queryByText('这份文件太大，正文没有取回来')).toBeNull()
 })
 
 it('长文的目录：三个以上标题才出现，点了滚到那一节', async () => {
@@ -137,6 +140,29 @@ it('光秃秃一行的空标题不进目录，也不占跳转的位子', async (
   // 目录第二条是「二」（空标题没进目录），落到它的 100 减掉 8px 留白。要是跳转没跳过
   // 那个空标题，这里会落在 top 0 上、滚成 0——两种结果分得开。
   expect(md.scrollTop).toBe(92)
+})
+
+it('同一份文件换成了没有标题的正文：目录按钮跟着消失，不是留在那儿按不动', async () => {
+  // 换正文只清本地那一份不够：新正文一个标题都没有时，「没变就不发」比出来两边都是空，
+  // 上一层手里那几条旧的会一直摆着。这一条走的是同一份文件（path 没变）换正文那条路。
+  const ui = mount({ content: '# 一\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n' })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  await ui.rerender({
+    documentType: MARKDOWN,
+    documentName: 'notes.md',
+    documentSuffix: 'md',
+    previewFile: {
+      path: 'output/notes.md',
+      content: '只剩一段正文，一个标题也没有。\n',
+      version: 'v2',
+      bytes: 10,
+      binary: false,
+      too_large: false,
+    },
+  })
+  const md = ui.getByTestId('markdown')
+  await waitFor(() => expect(md.textContent).toContain('只剩一段正文'), { timeout: 5000 })
+  await waitFor(() => expect(ui.queryByTestId('md-outline')).toBeNull())
 })
 
 it('换一份文件，上一份的目录不跟过来', async () => {
