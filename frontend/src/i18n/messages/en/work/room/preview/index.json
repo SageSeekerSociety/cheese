@@ -18,6 +18,7 @@
   "frameTitle": "Channel preview",
   "fullscreen": "Full-screen preview",
   "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
+  "headOnly": "Showing the opening of {path}; download it for the whole file",
   "history": "History",
   "instanceGoneManual": "The original instance was replaced and the new one hasn't come up. Refresh to open the current instance",
   "instanceIdentity": "Instance {id}; live content can change",

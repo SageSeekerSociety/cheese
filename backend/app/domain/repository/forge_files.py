@@ -674,6 +674,9 @@ class ProjectFiles:
             "path": path,
             "bytes": size,
             "content": text,
+            # 读者看的那一份：整份，或者开头（见 `textfile.text_payload`）。这一格
+            # 用的是编辑器，读的是 `content`；`head` 只为同一份契约在别处一致。
+            "head": text if not large else head_text(data[:PREVIEW_TEXT_BYTES]),
             "binary": not large and text is None,
             "too_large": large,
             "version": version,

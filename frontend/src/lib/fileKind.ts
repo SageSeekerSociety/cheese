@@ -270,3 +270,8 @@ export const PREVIEW_MAX_MB = 200
 export function tooLargeToPreview(bytes: number): boolean {
   return bytes > PREVIEW_MAX_MB * 1024 * 1024
 }
+
+/** 一读进来的字节里摆多少给读者：和后端 `app/domain/textfile.py` 的
+ *  `PREVIEW_TEXT_BYTES` 是同一个数。超过就只摆开头、说清底下还有（下载看整份），
+ *  而不是一个字都不摆。这个数是怎么量出来的见后端那个常量的说明。 */
+export const PREVIEW_TEXT_BYTES = 256 * 1024

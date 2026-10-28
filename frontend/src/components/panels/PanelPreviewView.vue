@@ -626,6 +626,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
         @download="emit('download')"
       />
     </div>
+    <!-- 认不出类型、但读得出文字的那些：`head` 有就摆出来（超上限的大文件这一支
+         也有，见 `textfile.text_payload`）。认得出类型的那几档在前面就接走了。 -->
+    <pre
+      v-else-if="previewFile && previewFile.head"
+      class="preview-plain"
+      :class="{ 'preview-plain--cut': previewFile.too_large }"
+      >{{ previewFile.head }}</pre
+    >
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>{{ t('work.room.preview.notText') }}</div>
@@ -743,6 +751,24 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
   justify-content: center;
   min-height: var(--preview-min);
   padding: 16px;
+}
+
+/* 认不出的类型里读得出文字的那些：按原文摆，自己滚。截断的那一份在顶上压一条
+   渐隐，读者一眼看得出底下还有、而且这一格给不到。 */
+.preview-plain {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preview-plain--cut {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
 }
 
 /* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */

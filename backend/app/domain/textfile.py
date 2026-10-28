@@ -29,6 +29,58 @@ from app.core.errors import ValidationError
 # read turned a 52MB executable into a 127MB JSON body that froze the browser.
 MAX_TEXT_BYTES = 1024 * 1024
 
+# How much of a text file the PREVIEW hands a reader, and why it is not
+# `MAX_TEXT_BYTES`:
+#
+# The two numbers answer different questions. An editor needs every byte or
+# refuses — a text editor seeded with a prefix writes that prefix back over the
+# file. A reader wants the top of it. Serving them the same ceiling is what made
+# a 3 MB log report itself as "not text": the only answers available were "the
+# whole thing" and "nothing".
+#
+# The size follows the measured knee rather than a round number. In the preview
+# panel (546 px, 13 px mono) 4,000 lines / ~480 KB still scroll at 24–30 ms a
+# frame; 8,000 lines / ~1 MB is 43–56 ms. A head this size lands around 2,000
+# lines of a typical log, inside the smooth range. Raise it only with a fresh
+# measurement.
+PREVIEW_TEXT_BYTES = 256 * 1024
+
+
+# The longest UTF-8 sequence is 4 bytes, so a prefix cut anywhere inside one
+# leaves at most that many bytes to drop before it decodes.
+_MULTIBYTE = 4
+
+
+def head_text(data: bytes) -> str | None:
+    """The whole of ``data`` as text, or None when it is not text at all.
+
+    ``data`` is a byte prefix of a longer file, so the cut may land inside the
+    last line, and even inside a multi-byte UTF-8 sequence. Two steps keep the
+    head to whole lines:
+
+    - Cut back to the last newline when there is one. A newline byte never
+      occurs inside a multi-byte sequence, so that alone settles the tail.
+    - When the prefix holds no newline at all — a minified JSON, a long first
+      line — drop the trailing bytes of whatever sequence the cut landed in
+      instead. Without this a one-line file reported itself as non-text, which
+      is exactly the answer this ceiling change exists to stop giving.
+    """
+    if b"\x00" in data[:_SNIFF_BYTES]:
+        return None
+    cut = data.rfind(b"\n")
+    if cut >= 0:
+        data = data[: cut + 1]
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    for drop in range(_MULTIBYTE):
+        try:
+            return data[: len(data) - drop].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+    return None
+
 
 def compare_bytes(before: bytes, after: bytes, left: str, right: str) -> dict:
     """Compare retained bytes; an unavailable text diff never means equality."""
@@ -121,8 +173,16 @@ def text_payload(target: Path, path: str) -> dict:
 
     Three answers, and the caller does not get to tell them apart by guessing:
     the text plus its version; binary (`content` is None, and the version is
-    still there so a later write can be rejected); and too large to build a
-    body for at all, which decides on the stat and never holds the bytes.
+    still there so a later write can be rejected); and too large to build an
+    editor body for, which decides on the stat and never holds the whole file.
+
+    `head` is the one field that is not about editing. It is what a READER
+    gets — the whole text when the file fits, the prefix otherwise (see
+    `PREVIEW_TEXT_BYTES`), `None` only when the bytes are not text at all.
+    `content` keeps its single meaning, the WHOLE file or nothing, because a
+    text editor seeded with a prefix writes the prefix back over the file;
+    keeping the reader's copy in a field of its own is what makes that
+    impossible, and it is why a too-large file stopped being unreadable.
 
     The version is a reading of the file, not a by-product of having its text:
     every answer carries one, including the too-large one. A caller that gets
@@ -144,7 +204,9 @@ def text_payload(target: Path, path: str) -> dict:
             version = file_version(target)
         except OSError:
             version = None
-        return {**meta, "content": None, "version": version, "too_large": True}
+        with target.open("rb") as source:
+            head = head_text(source.read(PREVIEW_TEXT_BYTES))
+        return {**meta, "content": None, "head": head, "version": version, "too_large": True}
     return bytes_text_payload(target.read_bytes(), path)
 
 
@@ -156,6 +218,7 @@ def bytes_text_payload(data: bytes, path: str) -> dict:
         return {
             **meta,
             "content": None,
+            "head": head_text(data[:PREVIEW_TEXT_BYTES]),
             "version": content_version(data),
             "too_large": True,
         }
@@ -164,7 +227,8 @@ def bytes_text_payload(data: bytes, path: str) -> dict:
         return {
             **meta,
             "content": None,
+            "head": None,
             "version": content_version(data),
             "binary": True,
         }
-    return {**meta, "content": text, "version": content_version(data)}
+    return {**meta, "content": text, "head": text, "version": content_version(data)}

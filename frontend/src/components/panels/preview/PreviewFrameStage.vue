@@ -185,12 +185,10 @@ function reload() {
 function openTab() {
   openPreviewInNewTab(props.topicId, props.displayedFrame, props.path)
 }
+// 看源码是「读」，所以问的是 `head`：一份超出编辑器上限的网页源码也读得下去
+// （`content` 那时是 null，见 `textfile.text_payload`）。
 const canShowSource = computed(
-  () =>
-    !props.previewAppNote &&
-    !props.displayedFrame?.live &&
-    props.previewFile?.content !== null &&
-    !!props.previewFile?.content
+  () => !props.previewAppNote && !props.displayedFrame?.live && !!props.previewFile?.head
 )
 
 /** 条上那几件动作：宽时平铺成 BaseButton，窄时收进「…」里的一行。一处写、两处画，
@@ -379,7 +377,7 @@ watch(
       v-if="showSource && canShowSource"
       class="preview-source"
       data-testid="frame-source"
-      :source="previewFile?.content ?? ''"
+      :source="previewFile?.head ?? ''"
       language="xml"
       wrap
     />

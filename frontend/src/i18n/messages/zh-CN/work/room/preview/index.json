@@ -18,6 +18,7 @@
   "frameTitle": "频道预览",
   "fullscreen": "全屏预览",
   "fullscreenFailed": "无法进入全屏，请在新标签页打开",
+  "headOnly": "只摆了开头 {path} 已经截断，整份请下载",
   "history": "历史",
   "instanceGoneManual": "原实例已被替换，新的还没就绪。刷新以打开当前实例",
   "instanceIdentity": "实例 {id}；实时内容可变",

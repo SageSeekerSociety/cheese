@@ -214,8 +214,13 @@ const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 
 const pagesRef = ref<InstanceType<typeof PreviewPages> | null>(null)
 const showSource = ref(false)
-// 代码那一档要的正文：读不成文本（二进制、太大）时是 null，就地说明一句，不往下落。
-const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.content ?? null : null))
+// 代码那一档要的正文：读它、看它，所以拿的是 `head`——一份超出编辑器上限的大文件，
+// `content` 是 null 而 `head` 是它的开头（见 `textfile.text_payload`）。只有连开头都
+// 读不成文本（二进制）时才是 null，那就地说明一句，不往下落。
+const codeSource = computed(() => (props.documentType?.view === 'code' ? props.previewFile?.head ?? null : null))
+// 摆的是开头、底下的没读：尾上说明一句，读者才知道这不是整份。判 `too_large` 而不是
+// 「读到的比文件短」——只有超上限那一条会截，正常的文件整份都在。
+const codeTruncated = computed(() => !!props.previewFile?.too_large && codeSource.value !== null)
 // 代码长行默认横向滚：代码的缩进和对齐是意思的一部分，折行会把它打乱。窄面板上读者
 // 可能宁可折行也不想左右拖，所以留一颗开关。
 const codeWrap = ref(false)
@@ -305,7 +310,7 @@ const actions = computed<DocAction[]>(() => {
   if (
     props.documentType?.view === 'markdown' &&
     !props.liveEdit?.editingPath.value &&
-    props.previewFile?.content !== null
+    props.previewFile?.head !== null
   ) {
     list.push({
       key: 'md-source',
@@ -317,7 +322,7 @@ const actions = computed<DocAction[]>(() => {
       },
     })
   }
-  if (props.documentType?.view === 'code' && props.previewFile?.content !== null) {
+  if (props.documentType?.view === 'code' && props.previewFile?.head !== null) {
     list.push({
       key: 'code-wrap',
       icon: codeWrap.value ? 'mdi-arrow-expand-horizontal' : 'mdi-wrap',
@@ -485,13 +490,13 @@ defineExpose({ snapshot, clearMark })
     <PreviewCode
       v-else-if="documentType.view === 'markdown' && showSource"
       data-testid="markdown-source"
-      :source="previewFile?.content ?? ''"
+      :source="previewFile?.head ?? ''"
       language="markdown"
       wrap
     />
     <PreviewMarkdown
       v-else-if="documentType.view === 'markdown'"
-      :source="previewFile?.content ?? null"
+      :source="previewFile?.head ?? null"
       :anchors="anchors"
       :pins="pins"
       :active-id="activeAnchor"
@@ -506,7 +511,13 @@ defineExpose({ snapshot, clearMark })
         :wrap="codeWrap"
         @lines="emit('code-lines', $event)"
       />
-      <div v-else class="doc__state doc__state--text">
+      <!-- 摆了开头、底下没读：说清这一点，再给一条去整份的路（下载）。 -->
+      <div v-if="codeTruncated" class="doc__truncated" role="status">
+        <v-icon size="16">mdi-ellipsis-horizontal</v-icon>
+        <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{ t('work.room.preview.download') }}</BaseButton>
+      </div>
+      <div v-else-if="codeSource === null" class="doc__state doc__state--text">
         <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
         <div>{{ t('work.room.preview.notText') }}</div>
       </div>
@@ -645,5 +656,25 @@ defineExpose({ snapshot, clearMark })
   min-height: 0;
   overflow: auto;
   padding: 12px 16px 24px;
+}
+
+/* 摆了开头、底下没读那一行：钉在这一格底部，正文照常滚（它不占正文的地方）。 */
+.doc__truncated {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+}
+.doc__truncated > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
