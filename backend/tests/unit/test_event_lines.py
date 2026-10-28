@@ -37,3 +37,18 @@ def test_the_change_line_is_reachable_from_the_module():
         ]["commit"]
         is None
     )
+
+
+@pytest.mark.parametrize("separator", ["\r", "\v", "\f", "\x85", "\u2028", "\u2029"])
+def test_change_counts_only_git_line_endings(separator):
+    """Control characters inside a changed line do not create extra changes."""
+    diff = (
+        "diff --git a/a.txt b/a.txt\n"
+        "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n"
+        f"-before{separator}-still the same line\n"
+        f"+after{separator}+still the same line\n"
+    )
+
+    assert event_lines._diff_file_stats(diff) == [
+        {"path": "a.txt", "added": 1, "removed": 1}
+    ]

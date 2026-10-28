@@ -34,12 +34,12 @@ class ModelPrices(BaseModel):
     cache_read / cache_creation 允许缺，是因为不少上游根本没给缓存计价。
     """
 
-    input: float | None = None
-    output: float | None = None
-    cache_read: float | None = None
-    cache_creation: float | None = None
+    input: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    output: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cache_read: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cache_creation: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     # The one-hour cache write (`cache_creation_input_token_cost_above_1hr`).
-    cache_creation_1h: float | None = None
+    cache_creation_1h: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class ModelCapabilities(BaseModel):

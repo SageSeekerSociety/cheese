@@ -1160,6 +1160,28 @@ def test_a_cap_must_be_a_positive_amount(cap):
         SourceUpdate(spend_cap_usd=cap)
 
 
+@pytest.mark.parametrize(
+    "field", ["input", "output", "cache_read", "cache_creation", "cache_creation_1h"]
+)
+@pytest.mark.parametrize("amount", [-1e-6, float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize(
+    "body,required",
+    [
+        (ModelCreate, {"name": "model", "upstream_model": "anthropic/model"}),
+        (ModelUpdate, {}),
+        (SourceCreate, {"upstream_model": "anthropic/model", "order": 2}),
+        (SourceUpdate, {}),
+    ],
+)
+def test_model_and_source_writes_refuse_invalid_token_prices(
+    field, amount, body, required
+):
+    """Token prices cannot subtract spend or make the bill non-finite."""
+    prices = {"input": 1e-6, "output": 2e-6, field: amount}
+    with pytest.raises(ValidationError):
+        body(**required, prices=prices)
+
+
 # --- What config.yaml's check held the file to, held at the write -------------
 
 

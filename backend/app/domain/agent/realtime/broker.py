@@ -116,7 +116,8 @@ class InProcessBroker:
                 for started_frame in self.activity.turn_started(
                     channel, turn_id, agent
                 ):
-                    self._fan_out(channel, started_frame)
+                    for to, extra in self.activity.told(channel, started_frame):
+                        self._fan_out(to, extra)
         return taken
 
     async def publish(self, channel: str, frame: Frame) -> None:
