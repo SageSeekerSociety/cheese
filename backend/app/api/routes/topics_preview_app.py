@@ -253,6 +253,7 @@ async def wake_preview_app(
             seat=seat,
             serve=art.meta["serve"],
             fallback=_submit_turn,
+            dedup_key=key,
         )
         return ok({"started": True})
     try:

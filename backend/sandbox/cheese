@@ -8194,7 +8194,21 @@ def _start_detached_serve_cmd(command: str, cwd: str, port: int) -> None:
         )
 
 
-def _restore_served_app(raw_spec: str, wait_s: float) -> int:
+def _relocate_home_in_command(command: str, old_home: str, new_home: str) -> str:
+    """Replace ``old_home`` with ``new_home`` only on path/token boundaries."""
+    if not command or not old_home or old_home == new_home:
+        return command
+    pattern = re.compile(
+        r"(?<=^)"
+        + re.escape(old_home)
+        + r"(?=/|[\s'\":]|$)|(?<=[\s='\":])"
+        + re.escape(old_home)
+        + r"(?=/|[\s'\":]|$)"
+    )
+    return pattern.sub(new_home, command)
+
+
+def _restore_served_app(raw_spec: str, wait_s: float | None) -> int:
     """Bring a previously declared app and its preview tunnel back up in place.
 
     Called by the platform when waking a sleeping preview without starting an
@@ -8212,20 +8226,26 @@ def _restore_served_app(raw_spec: str, wait_s: float) -> int:
         return 2
     if not (1 <= port <= 65535):
         return 2
-    task_id = spec.get("task_id")
-    if isinstance(task_id, str) and task_id:
+    raw_task_id = spec.get("task_id")
+    task_id: str | None = None
+    if isinstance(raw_task_id, str) and raw_task_id.strip():
+        try:
+            task_id = str(uuid.UUID(raw_task_id.strip()))
+        except ValueError:
+            return 2
+    if task_id is not None:
         task_dir = _task_root() / task_id
         if not (task_dir / ".git").exists():
             try:
                 _task_worktree(task_id)
-            except BaseException:
+            except (Exception, SystemExit):
                 return 1
     elif spec.get("checkout") is True:
         checkout_dir = Path.home() / ".cheese" / "checkout"
         if not (checkout_dir / ".git").exists():
             try:
                 _checkout()
-            except BaseException:
+            except (Exception, SystemExit):
                 return 1
     old_home = str(spec.get("home") or "").strip().rstrip("/")
     new_home = str(Path.home().resolve()).rstrip("/")
@@ -8237,13 +8257,9 @@ def _restore_served_app(raw_spec: str, wait_s: float) -> int:
         elif cwd.startswith(old_home + "/"):
             cwd = new_home + cwd[len(old_home) :]
         if command:
-            command = command.replace(old_home, new_home)
+            command = _relocate_home_in_command(command, old_home, new_home)
     if not os.path.isdir(cwd):
-        fallback = (
-            _task_root() / str(task_id)
-            if isinstance(task_id, str) and task_id
-            else Path(new_home)
-        )
+        fallback = _task_root() / task_id if task_id is not None else Path(new_home)
         cwd = str(fallback) if fallback.is_dir() else new_home
     if subprocess.call(["sh", up, str(port)]) != 0:
         return 1
@@ -8254,8 +8270,8 @@ def _restore_served_app(raw_spec: str, wait_s: float) -> int:
             _start_detached_serve_cmd(command, cwd, port)
         except OSError:
             return 1
-    timeout = wait_s if wait_s and wait_s > 0 else _SERVE_WAIT_DEFAULT_S
-    if _wait_for_app(port, timeout) is None:
+    timeout = _SERVE_WAIT_DEFAULT_S if wait_s is None else wait_s
+    if timeout > 0 and _wait_for_app(port, timeout) is None:
         return 1
     updated = _build_serve_meta(port, command, cwd)
     if updated is not None:
@@ -8741,11 +8757,7 @@ def main() -> None:
         cmd_str, cwd_str = (
             (a.serve_cmd, os.getcwd())
             if a.serve_cmd
-            else (
-                _detect_listening_process(a.port)
-                if probed_status is not None
-                else (None, None)
-            )
+            else _detect_listening_process(a.port)
         )
         serve_meta = _build_serve_meta(a.port, cmd_str, cwd_str)
         if serve_meta is not None:

@@ -449,11 +449,17 @@ class PreviewHostMiddleware:
                 return await self.mcp_app(session, place, request, resource)
             if resource and resource["kind"] == "app":
                 await touch_preview_activity(
-                    session, place.conversation_id, resource["seat"]
+                    session,
+                    place.conversation_id,
+                    resource["seat"],
+                    project_id=place.project_id,
                 )
             elif artifact is not None and artifact.mime_type == APP_MIME:
                 await touch_preview_activity(
-                    session, place.conversation_id, artifact.author
+                    session,
+                    place.conversation_id,
+                    artifact.author,
+                    project_id=place.project_id,
                 )
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
@@ -593,7 +599,12 @@ class PreviewHostMiddleware:
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")
                     seat = artifact.author
-                await touch_preview_activity(session, place.conversation_id, seat)
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    seat,
+                    project_id=place.project_id,
+                )
             # No DB session or read transaction lives for the HMR connection.
             async with asyncio.timeout(max(0, claims["exp"] - time.time())):
                 await relay_ws(

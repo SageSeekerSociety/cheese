@@ -274,7 +274,10 @@ def test_serve_restore_opens_missing_worktree_relocates_home_and_restarts_app(
 
     spec = {
         "port": 5173,
-        "command": f"node {old_home}/.cheese/tasks/{task_id}/web/server.js --port 5173",
+        "command": (
+            f"node {old_home}/.cheese/tasks/{task_id}/web/server.js "
+            f"--static {old_home}-other/keep --port 5173"
+        ),
         "cwd": f"{old_home}/.cheese/tasks/{task_id}/web",
         "home": str(old_home),
         "task_id": task_id,
@@ -286,11 +289,15 @@ def test_serve_restore_opens_missing_worktree_relocates_home_and_restarts_app(
     resolved_new = str(new_home.resolve())
     assert started == [
         (
-            f"node {resolved_new}/.cheese/tasks/{task_id}/web/server.js --port 5173",
+            f"node {resolved_new}/.cheese/tasks/{task_id}/web/server.js "
+            f"--static {old_home}-other/keep --port 5173",
             f"{resolved_new}/.cheese/tasks/{task_id}/web",
             5173,
         )
     ]
+    # A non-UUID task_id (e.g. path traversal) is refused before touching the disk.
+    bad_spec = {**spec, "task_id": "../checkout"}
+    assert cli._restore_served_app(cli.json.dumps(bad_spec), 10.0) == 2
 
 
 @pytest.mark.skipif(

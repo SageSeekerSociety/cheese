@@ -416,10 +416,13 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
     clear_preview_touch_cache()
     stale = datetime.now(UTC) - timedelta(minutes=15)
 
-    async def _seed_home() -> uuid.UUID:
+    async def _seed_home() -> tuple[uuid.UUID, uuid.UUID]:
         async with client.test_request_factory() as db:
             row = await AgentSessionService(db).ensure(
                 topic_id, seat, harness="claude-code"
+            )
+            other_row = await AgentSessionService(db).ensure(
+                topic_id, "other-seat", harness="claude-code"
             )
             host = CloudHost(
                 customer_id=1,
@@ -447,16 +450,27 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
                 spec="standard",
                 active_at=stale,
             )
-            db.add(home)
+            other_home = SandboxHome(
+                host_id=host.id,
+                topic_id=topic_id,
+                room_resource_id=str(topic_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=other_row.id,
+                device_id=None,
+                spec="standard",
+                active_at=stale,
+            )
+            db.add_all([home, other_home])
             await db.commit()
-            return home.id
+            return home.id, other_home.id
 
-    home_id = client.portal.call(_seed_home)
+    home_id, other_home_id = client.portal.call(_seed_home)
 
-    async def _touch_and_read() -> tuple[datetime, datetime]:
+    async def _touch_and_read() -> tuple[datetime, datetime, datetime]:
         async with client.test_request_factory() as db:
             await touch_preview_activity(db, topic_id, seat)
             first = (await db.get(SandboxHome, home_id)).active_at
+            other = (await db.get(SandboxHome, other_home_id)).active_at
             # Move it back in DB without clearing the in-memory throttle: a
             # second call within ACTIVE_STEP must skip the DB write.
             home = await db.get(SandboxHome, home_id)
@@ -464,8 +478,9 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
             await db.commit()
             await touch_preview_activity(db, topic_id, seat)
             second = (await db.get(SandboxHome, home_id)).active_at
-            return first, second
+            return first, second, other
 
-    first, second = client.portal.call(_touch_and_read)
+    first, second, other = client.portal.call(_touch_and_read)
     assert first > stale + timedelta(minutes=10)
     assert second == stale
+    assert other == stale

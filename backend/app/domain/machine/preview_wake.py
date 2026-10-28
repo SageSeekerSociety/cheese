@@ -20,6 +20,7 @@ model turns:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -33,6 +34,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.redis import get_redis_client
 from app.core.sandbox_auth import bind_resource_token, scoped_token_claims
 from app.domain.agent import execution
 from app.domain.agent.device_hub import device_hub
@@ -115,44 +117,78 @@ async def touch_preview_activity(
     db: AsyncSession,
     conversation_id: uuid.UUID,
     seat: str,
+    *,
+    project_id: uuid.UUID | None = None,
 ) -> None:
     """Refresh ``SandboxHome.active_at`` when a reader browses an app preview.
 
     Throttled in-memory and in SQL to ``ACTIVE_STEP`` (1 minute) so bursts of
     asset requests from a dev server cost at most one row update per minute.
+    Best-effort: a transient database failure is logged and never interrupts
+    preview serving.
     """
     key = (conversation_id, seat)
     now_mono = time.monotonic()
     if now_mono - _preview_touched.get(key, -math.inf) < PREVIEW_TOUCH_STEP_S:
         return
+    if len(_preview_touched) >= 256:
+        stale_keys = [
+            k
+            for k, ts in _preview_touched.items()
+            if now_mono - ts >= PREVIEW_TOUCH_STEP_S
+        ]
+        for k in stale_keys:
+            _preview_touched.pop(k, None)
     _preview_touched[key] = now_mono
-    session_ids = list(
-        await db.scalars(
-            select(AgentSession.id).where(
-                AgentSession.conversation_id == conversation_id
+    try:
+        session_row = (
+            await find_seat_session(
+                db,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                seat=seat,
+            )
+            if project_id is not None
+            else await db.scalar(
+                select(AgentSession)
+                .where(
+                    AgentSession.conversation_id == conversation_id,
+                    AgentSession.agent_handle == seat,
+                )
+                .order_by(AgentSession.updated_at.desc())
             )
         )
-    )
-    if not session_ids:
-        return
-    now = datetime.now(UTC)
-    cutoff = now - ACTIVE_STEP
-    updated = list(
-        await db.scalars(
-            update(SandboxHome)
-            .where(
-                SandboxHome.session_id.in_(session_ids),
-                SandboxHome.stopped_at.is_(None),
-                or_(SandboxHome.active_at.is_(None), SandboxHome.active_at <= cutoff),
+        if session_row is None:
+            return
+        now = datetime.now(UTC)
+        cutoff = now - ACTIVE_STEP
+        updated = list(
+            await db.scalars(
+                update(SandboxHome)
+                .where(
+                    SandboxHome.session_id == session_row.id,
+                    SandboxHome.stopped_at.is_(None),
+                    or_(
+                        SandboxHome.active_at.is_(None),
+                        SandboxHome.active_at <= cutoff,
+                    ),
+                )
+                .values(active_at=now)
+                .returning(SandboxHome.id)
             )
-            .values(active_at=now)
-            .returning(SandboxHome.id)
         )
-    )
-    for home_id in updated:
-        lifecycle._asked.pop(home_id, None)
-    if updated:
-        await db.commit()
+        for home_id in updated:
+            lifecycle._asked.pop(home_id, None)
+        if updated:
+            await db.commit()
+    except Exception:
+        logger.warning(
+            "touching preview activity for conversation %s failed",
+            conversation_id,
+            exc_info=True,
+        )
+        with contextlib.suppress(Exception):
+            await db.rollback()
 
 
 def can_wake_on_machine(art_meta: dict | None, session: AgentSession | None) -> bool:
@@ -314,6 +350,7 @@ def schedule_direct_preview_wake(
     seat: str,
     serve: dict,
     fallback: Callable[[], None],
+    dedup_key: str = "",
     hub=None,
 ) -> asyncio.Task[None]:
     """Run ``restore_preview_on_machine`` in the background; call ``fallback`` if it fails."""
@@ -331,7 +368,18 @@ def schedule_direct_preview_wake(
                 hub=hub,
             )
             if not restored:
-                fallback()
+                try:
+                    fallback()
+                except Exception:
+                    logger.warning(
+                        "fallback turn submission for preview wake in %s failed",
+                        conversation_id,
+                        exc_info=True,
+                    )
+                    redis = get_redis_client()
+                    if redis is not None and dedup_key:
+                        with contextlib.suppress(Exception):
+                            await redis.delete(dedup_key)
         finally:
             _waking_conversations.discard(conversation_id)
 
