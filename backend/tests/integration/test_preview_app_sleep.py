@@ -204,3 +204,268 @@ def test_waking_needs_a_member_who_may_ask_the_agent(client, preview_config, run
     )
     assert refused.status_code in (403, 404), refused.text
     assert runner.submitted == []
+
+
+def test_waking_an_app_with_serve_meta_restarts_it_on_machine_without_a_model_turn(
+    client, preview_config, runner, monkeypatch
+):
+    """When `cheese serve` recorded its launch spec (`serve`), waking a sleeping
+    app brings the sandbox and the app back up directly on the machine without
+    spending an agent turn; if direct restore fails, it falls back to a turn."""
+    import time
+
+    from app.domain.agent import execution
+    from app.domain.agent.device_hub import device_hub
+    from app.domain.agent_session.models import LOST_KEY
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import preview_wake
+
+    topic_id, seat = _room(client)
+    task_id = str(uuid.uuid4())
+    serve_spec = {
+        "port": 5173,
+        "command": "python3 -m http.server 5173 --bind 127.0.0.1",
+        "cwd": f"/home/cheese/.cheese/tasks/{task_id}",
+        "home": "/home/cheese",
+        "task_id": task_id,
+    }
+    machine = FakeMachine().attach(topic_id, seat)
+    try:
+        shown = client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "Vue dev server", "as": "app", "serve": serve_spec},
+            headers=ALICE,
+        )
+        assert shown.status_code == 200, shown.text
+        assert shown.json()["data"]["meta"]["serve"] == serve_spec
+    finally:
+        machine.detach()
+
+    # Seed the seat's session with a destroyed sandbox marker (`LOST_KEY`).
+    async def _seed_session() -> uuid.UUID:
+        async with client.test_request_factory() as db:
+            row = await AgentSessionService(db).ensure(
+                topic_id, seat, harness="claude-code"
+            )
+            row.runtime_location = {
+                "device_id": "center",
+                "resource_id": str(topic_id),
+                "channel": "device",
+            }
+            row.work_lease = {
+                "kind": "device",
+                "device_id": "box-1",
+                "status": "ready",
+                "state": "/box-1/state",
+                "workspace": "/box-1/work",
+                "generation": "gen-1",
+            }
+            row.execution_request = {"generation": "gen-1", LOST_KEY: True}
+            await db.commit()
+            return row.id
+
+    session_id = client.portal.call(_seed_session)
+    invoked: list[dict] = []
+    reattached: list[FakeMachine] = []
+
+    async def _fake_ensure(db, **kwargs):
+        return {
+            "target": {
+                "kind": "device",
+                "device_id": "box-1",
+                "status": "ready",
+                "state": "/box-1/state",
+                "workspace": "/box-1/work",
+            },
+            "token": "tok",
+        }
+
+    async def _fake_call(target, method, params, **_kwargs):
+        invoked.append({"target": target, "method": method, "params": params})
+        # Simulate `cheese serve 5173 --restore ...` bringing the tunnel & app up.
+        reattached.append(FakeMachine().attach(topic_id, seat))
+        return {"value": {"stdout": "", "stderr": ""}}
+
+    monkeypatch.setattr(preview_wake.session_work, "ensure", _fake_ensure)
+    monkeypatch.setattr(execution, "call", _fake_call)
+    monkeypatch.setattr(device_hub, "is_online", lambda _dev: True)
+
+    try:
+        woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
+        assert woke.status_code == 200, woke.text
+        assert woke.json()["data"] == {"started": True}
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            status = client.get(
+                f"/topics/{topic_id}/preview/wake-status", headers=ALICE
+            ).json()["data"]
+            if status["app_up"]:
+                break
+            time.sleep(0.05)
+        assert status["app_up"] is True
+        assert status["tunnel_up"] is True
+        # Zero LLM turns started!
+        assert runner.submitted == []
+        assert len(invoked) == 1
+        assert invoked[0]["method"] == "invoke"
+        assert "cheese serve 5173 --restore" in invoked[0]["params"]["args"]["command"]
+
+        # And LOST_KEY was cleared because the task checkout was restored.
+        async def _read_lost() -> bool:
+            async with client.test_request_factory() as db:
+                row = await AgentSessionService(db).by_id(session_id)
+                return bool((row.execution_request or {}).get(LOST_KEY))
+
+        assert client.portal.call(_read_lost) is False
+    finally:
+        for m in reattached:
+            m.detach()
+
+
+def test_waking_falls_back_to_agent_turn_when_direct_restore_fails(
+    client, preview_config, runner, monkeypatch
+):
+    """If the direct machine restore fails (e.g. command exits non-zero), the
+    platform falls back to starting an agent turn so the user is not stuck."""
+    import time
+
+    from app.domain.agent import execution
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import preview_wake
+
+    topic_id, seat = _room(client)
+    serve_spec = {
+        "port": 5173,
+        "command": "npm run dev",
+        "cwd": "/home/cheese/room",
+        "home": "/home/cheese",
+    }
+    machine = FakeMachine().attach(topic_id, seat)
+    try:
+        shown = client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "npm run dev", "as": "app", "serve": serve_spec},
+            headers=ALICE,
+        )
+        assert shown.status_code == 200, shown.text
+    finally:
+        machine.detach()
+
+    async def _seed_session():
+        async with client.test_request_factory() as db:
+            row = await AgentSessionService(db).ensure(
+                topic_id, seat, harness="claude-code"
+            )
+            row.runtime_location = {
+                "device_id": "center",
+                "resource_id": str(topic_id),
+                "channel": "device",
+            }
+            await db.commit()
+
+    client.portal.call(_seed_session)
+
+    async def _fake_ensure(db, **_kwargs):
+        return {
+            "target": {
+                "kind": "device",
+                "device_id": "box-1",
+                "status": "ready",
+                "state": "/box-1/state",
+                "workspace": "/box-1/work",
+            }
+        }
+
+    async def _failing_call(target, method, params, **_kwargs):
+        return {"value": {"stdout": "Exit code 1\n", "stderr": "port failed"}}
+
+    monkeypatch.setattr(preview_wake.session_work, "ensure", _fake_ensure)
+    monkeypatch.setattr(execution, "call", _failing_call)
+
+    woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
+    assert woke.status_code == 200, woke.text
+    assert woke.json()["data"] == {"started": True}
+
+    deadline = time.monotonic() + 5.0
+    while not runner.submitted and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(runner.submitted) == 1
+    assert "cheese serve" in runner.submitted[0]["content"]
+
+
+def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_config):
+    """Browsing a previewed app moves its session's `SandboxHome.active_at`
+    forward (throttled to `ACTIVE_STEP`) so the idle sweeper does not reclaim
+    the sandbox while someone is using the preview."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine.models import (
+        AiStatus,
+        CloudHost,
+        MachineStatus,
+        SandboxHome,
+    )
+    from app.domain.machine.preview_wake import (
+        clear_preview_touch_cache,
+        touch_preview_activity,
+    )
+
+    topic_id, seat = _room(client)
+    clear_preview_touch_cache()
+    stale = datetime.now(UTC) - timedelta(minutes=15)
+
+    async def _seed_home() -> uuid.UUID:
+        async with client.test_request_factory() as db:
+            row = await AgentSessionService(db).ensure(
+                topic_id, seat, harness="claude-code"
+            )
+            host = CloudHost(
+                customer_id=1,
+                account_id=1,
+                offering_id=1,
+                hostname=f"host-{uuid.uuid4().hex[:8]}",
+                login_user="cheese",
+                cores=2,
+                memory_mb=4096,
+                disk_gb=20,
+                status=MachineStatus.running,
+                ai_mode="none",
+                ai_status=AiStatus.disabled,
+                bootstrap_key="k",
+            )
+            db.add(host)
+            await db.flush()
+            home = SandboxHome(
+                host_id=host.id,
+                topic_id=topic_id,
+                room_resource_id=str(topic_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=row.id,
+                device_id=None,
+                spec="standard",
+                active_at=stale,
+            )
+            db.add(home)
+            await db.commit()
+            return home.id
+
+    home_id = client.portal.call(_seed_home)
+
+    async def _touch_and_read() -> tuple[datetime, datetime]:
+        async with client.test_request_factory() as db:
+            await touch_preview_activity(db, topic_id, seat)
+            first = (await db.get(SandboxHome, home_id)).active_at
+            # Move it back in DB without clearing the in-memory throttle: a
+            # second call within ACTIVE_STEP must skip the DB write.
+            home = await db.get(SandboxHome, home_id)
+            home.active_at = stale
+            await db.commit()
+            await touch_preview_activity(db, topic_id, seat)
+            second = (await db.get(SandboxHome, home_id)).active_at
+            return first, second
+
+    first, second = client.portal.call(_touch_and_read)
+    assert first > stale + timedelta(minutes=10)
+    assert second == stale

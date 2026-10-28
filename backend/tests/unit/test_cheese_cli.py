@@ -174,6 +174,167 @@ def test_serve_warns_but_still_declares_when_nothing_answers(monkeypatch, capsys
     assert "5173" in err and "没有应答" in err
 
 
+def test_serve_with_cmd_starts_detached_app_and_records_launch_meta(
+    monkeypatch, tmp_path
+):
+    """`cheese serve --cmd` starts a silent app, records its launch spec locally
+    and sends it with `/shown` so the platform can restart it without an LLM turn."""
+    cli = _load()
+    task_id = "11111111-2222-3333-4444-555555555555"
+    home = tmp_path / "home"
+    task_dir = home / ".cheese" / "tasks" / task_id / "frontend"
+    task_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+    monkeypatch.setattr(cli, "TOPIC", "room")
+    monkeypatch.chdir(task_dir)
+    started: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(cli, "_probe_app", lambda port: None)
+    monkeypatch.setattr(
+        cli,
+        "_start_detached_serve_cmd",
+        lambda cmd, cwd, port: started.append((cmd, cwd, port)),
+    )
+    monkeypatch.setattr(cli, "_wait_for_app", lambda port, timeout: 200)
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: 0)
+    api_calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_call", lambda *args: api_calls.append(args) or {})
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "cheese",
+            "serve",
+            "4173",
+            "Vite preview",
+            "--cmd",
+            "./node_modules/.bin/vite preview --port 4173 --strictPort",
+        ],
+    )
+
+    cli.main()
+
+    assert started == [
+        (
+            "./node_modules/.bin/vite preview --port 4173 --strictPort",
+            str(task_dir.resolve()),
+            4173,
+        )
+    ]
+    assert len(api_calls) == 1
+    method, path, body = api_calls[0]
+    assert (method, path) == ("POST", "/topics/room/shown")
+    assert body["path"] == "Vite preview" and body["as"] == "app"
+    serve = body["serve"]
+    assert serve == {
+        "port": 4173,
+        "command": "./node_modules/.bin/vite preview --port 4173 --strictPort",
+        "cwd": str(task_dir.resolve()),
+        "home": str(home.resolve()),
+        "task_id": task_id,
+    }
+    saved = cli.json.loads((home / ".cheese/cheese-preview.json").read_text())
+    assert saved == serve
+
+
+def test_serve_restore_opens_missing_worktree_relocates_home_and_restarts_app(
+    monkeypatch, tmp_path
+):
+    """`cheese serve --restore` in a fresh sandbox opens the task checkout,
+    relocates paths from the old sandbox home, starts the command and brings
+    the preview tunnel up."""
+    cli = _load()
+    task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    old_home = tmp_path / "old-home"
+    new_home = tmp_path / "new-home"
+    (new_home / ".cheese").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(new_home))
+    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
+
+    opened_tasks: list[str] = []
+
+    def fake_task_worktree(tid: str, *, reinstall: bool = False):
+        opened_tasks.append(tid)
+        tdir = new_home / ".cheese" / "tasks" / tid
+        (tdir / ".git").mkdir(parents=True, exist_ok=True)
+        (tdir / "web").mkdir(parents=True, exist_ok=True)
+        return tdir
+
+    monkeypatch.setattr(cli, "_task_worktree", fake_task_worktree)
+    up_calls: list[list[str]] = []
+    monkeypatch.setattr(cli.subprocess, "call", lambda args: up_calls.append(args) or 0)
+    monkeypatch.setattr(cli, "_probe_app", lambda port: None)
+    started: list[tuple[str, str, int]] = []
+    monkeypatch.setattr(
+        cli,
+        "_start_detached_serve_cmd",
+        lambda cmd, cwd, port: started.append((cmd, cwd, port)),
+    )
+    monkeypatch.setattr(cli, "_wait_for_app", lambda port, timeout: 200)
+
+    spec = {
+        "port": 5173,
+        "command": f"node {old_home}/.cheese/tasks/{task_id}/web/server.js --port 5173",
+        "cwd": f"{old_home}/.cheese/tasks/{task_id}/web",
+        "home": str(old_home),
+        "task_id": task_id,
+    }
+    rc = cli._restore_served_app(cli.json.dumps(spec), 10.0)
+    assert rc == 0
+    assert opened_tasks == [task_id]
+    assert up_calls == [["sh", "/preview-up", "5173"]]
+    resolved_new = str(new_home.resolve())
+    assert started == [
+        (
+            f"node {resolved_new}/.cheese/tasks/{task_id}/web/server.js --port 5173",
+            f"{resolved_new}/.cheese/tasks/{task_id}/web",
+            5173,
+        )
+    ]
+
+
+@pytest.mark.skipif(
+    not Path("/proc/net/tcp").exists(),
+    reason="/proc/net/tcp process inspection is Linux-specific",
+)
+def test_detect_listening_process_finds_real_child_command_and_cwd(tmp_path):
+    """When an agent starts a server in the background and calls `cheese serve`
+    without `--cmd`, `_detect_listening_process` reads its command line and
+    working directory from `/proc`, normalizing paths under `cwd` to `./...`."""
+    import os
+    import socket
+    import subprocess
+    import sys
+    import time
+
+    cli = _load()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    script = tmp_path / "run_srv.py"
+    script.write_text(
+        "import http.server, sys\n"
+        "srv = http.server.HTTPServer(('127.0.0.1', int(sys.argv[1])), http.server.BaseHTTPRequestHandler)\n"
+        "srv.serve_forever()\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, str(script), str(port)],
+        cwd=str(tmp_path),
+    )
+    try:
+        deadline = time.monotonic() + 5.0
+        while cli._probe_app(port) is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        cmd, cwd = cli._detect_listening_process(port)
+        assert cmd is not None and cwd is not None
+        assert "./run_srv.py" in cmd and str(port) in cmd
+        assert os.path.realpath(cwd) == os.path.realpath(tmp_path)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
 def test_wait_for_app_probes_a_real_server_and_a_dead_port():
     """_wait_for_app 走真网络:有人在听返回状态码,没人听就等满超时返回 None。"""
     import http.server
