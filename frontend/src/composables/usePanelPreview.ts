@@ -33,6 +33,7 @@ import { usePanelPreviewLiveEdit } from './panelPreview/liveEdit'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { usePanelPreviewVersions } from './panelPreview/versions'
 import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
 
@@ -169,6 +170,14 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onOpenFile: options.onOpenFile,
     refreshDocument: doc.refreshDocument,
   })
+  // 文档条上的版本：第几版、本版改了几处、两版对比、看旧版。清单就是上面那一栏历史。
+  const versions = usePanelPreviewVersions({
+    props,
+    state,
+    fileHistory: edits.fileHistory,
+    people,
+    editing: edits.editing,
+  })
   // 在预览格里和几个人一起改一份 markdown：正文走协作服务，存回那一份房间文件本身
   // （Office 那几种走 OnlyOffice，文本这一条不经过它）。
   const liveEdit = usePanelPreviewLiveEdit({
@@ -233,6 +242,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     showHistory: edits.showHistory,
     editor: edits.editor,
     fileHistory: edits.fileHistory,
+    versions,
     // 在预览格里直接改一份 markdown（存回房间文件本身）
     liveEdit,
     // 动作

@@ -20,6 +20,15 @@ const props = defineProps<{
   /** 有评论的格子：地址 → 那几条。 */
   marks: Map<string, { id: string }[]>
   activeMark?: string | null
+  /** 这一张表的名字：改过的格子按「表名!地址」记，和表格那边同一个键。 */
+  sheetName?: string
+  /** 这一版改过的那几格（「表名!地址」→ 上一版那里写的什么）：和表格里一样标底色，
+   *  悬停说原来是什么。不给就不画。 */
+  changed?: ReadonlyMap<string, string> | null
+  /** 改了这几格的是谁。 */
+  changedBy?: string
+  /** 对比态：把原来的值也用删除线写出来。 */
+  showBefore?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -33,11 +42,33 @@ function label(col: number): string {
   return head ? props.cellText(head) : props.columnName(col)
 }
 
-/** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方。 */
-function fields(row: string[]): number[] {
+/** 这一行里有内容的那几格（第一格当标题，不在这里）。全是空的格子不占地方 —— 但这一版
+ *  刚被改空的格子、以及挂了评论的空格子要留下：删掉的东西和别人的一条评论都不能因为
+ *  「这一格没有字」就在卡片里凭空消失（表格里这两样照旧在）。 */
+function fields(row: string[], rowIndex: number): number[] {
   const out: number[] = []
-  for (let col = 1; col < props.width; col += 1) if ((row[col] ?? '').trim()) out.push(col)
+  for (let col = 1; col < props.width; col += 1) {
+    const kept =
+      (row[col] ?? '').trim() ||
+      beforeAt(rowIndex, col) !== undefined ||
+      (props.marks.get(props.addressAt(rowIndex, col))?.length ?? 0) > 0
+    if (kept) out.push(col)
+  }
   return out
+}
+
+/** 这一格这一版改过没有；改过就给上一版那里写的什么（原来是空的就是空串）。 */
+function beforeAt(row: number, col: number): string | undefined {
+  return props.changed?.get(`${props.sheetName ?? ''}!${props.addressAt(row, col)}`)
+}
+
+/** 改过的格子悬停时那一句：谁改的、原来是什么。 */
+function changedTitle(row: number, col: number): string | null {
+  const before = beforeAt(row, col)
+  if (before === undefined) return null
+  return before
+    ? t('work.room.versions.cellChanged', { who: props.changedBy, before: props.cellText(before) })
+    : t('work.room.versions.cellChangedFromEmpty', { who: props.changedBy })
 }
 </script>
 
@@ -45,25 +76,45 @@ function fields(row: string[]): number[] {
   <ol class="ps-cards">
     <template v-for="(row, r) in rows" :key="r">
       <li v-if="r > 0" class="ps-card">
-        <button
-          type="button"
-          class="ps-card__title"
-          :class="{ 'is-on': selected === addressAt(r, 0) }"
-          @click="emit('choose', r, 0)"
-        >
-          <span class="ps-card__name">{{ cellText(row[0] ?? '') || label(0) }}</span>
+        <!-- 标题那一格：按钮选这一格，评论点单独排在外面（按钮套按钮不合法）。 -->
+        <div class="ps-card__head">
+          <button
+            type="button"
+            class="ps-card__title"
+            :class="{ 'is-on': selected === addressAt(r, 0), 'is-chg': changedTitle(r, 0) !== null }"
+            :title="changedTitle(r, 0) ?? undefined"
+            @click="emit('choose', r, 0)"
+          >
+            <span class="ps-card__name"
+              ><del v-if="showBefore && beforeAt(r, 0)" class="ps-card__was">{{ cellText(beforeAt(r, 0) ?? '') }}</del
+              >{{ cellText(row[0] ?? '') || label(0) }}</span
+            >
+          </button>
+          <button
+            v-for="mark in marks.get(addressAt(r, 0)) ?? []"
+            :key="mark.id"
+            type="button"
+            class="ps-card__cmt"
+            :class="{ 'is-active': mark.id === activeMark }"
+            :data-comment-mark="mark.id"
+            :aria-label="t('work.room.comments.commentHere')"
+            :title="t('work.room.comments.commentHere')"
+            @click="emit('mark', mark.id)"
+          />
           <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: r + 1 }) }}</span>
-        </button>
+        </div>
         <dl class="ps-card__fields">
           <div
-            v-for="c in fields(row)"
+            v-for="c in fields(row, r)"
             :key="c"
             class="ps-card__field"
-            :class="{ 'is-on': selected === addressAt(r, c) }"
+            :class="{ 'is-on': selected === addressAt(r, c), 'is-chg': changedTitle(r, c) !== null }"
+            :title="changedTitle(r, c) ?? undefined"
           >
             <dt class="ps-card__label">{{ label(c) }}</dt>
             <dd class="ps-card__value">
               <button type="button" class="ps-card__cell" @click="emit('choose', r, c)">
+                <del v-if="showBefore && beforeAt(r, c)" class="ps-card__was">{{ cellText(beforeAt(r, c) ?? '') }}</del>
                 {{ cellText(row[c] ?? '') }}
               </button>
               <button
@@ -107,12 +158,20 @@ function fields(row: string[]): number[] {
   border-radius: var(--radius-sm);
 }
 
-.ps-card__title {
+/* 标题那一行：名字按得开（选这一格），评论点和行号排在右边。 */
+.ps-card__head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  width: 100%;
   padding: 10px 12px 6px;
+}
+
+.ps-card__title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   text-align: left;
 }
 .ps-card__name {
@@ -162,6 +221,19 @@ function fields(row: string[]): number[] {
   color: var(--text);
   overflow-wrap: anywhere;
   border-radius: var(--radius-sm);
+}
+
+/* 这一版改过的那一格：和表格里同一种标法，琥珀浅底加一圈细边。选中的描边排在后面，
+   两种同时成立时选中更显眼。 */
+.ps-card__title.is-chg,
+.ps-card__field.is-chg {
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+.ps-card__was {
+  margin-right: 6px;
+  color: var(--danger-ink);
+  text-decoration: line-through;
 }
 
 /* 选中的那一格：和表格里一样是一圈中性描边，琥珀留给有评论的格子。 */

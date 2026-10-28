@@ -76,6 +76,9 @@ vi.mock('../../api', async () => {
     readFile: (...a: unknown[]) => readFile(...a),
     previewDocumentPdfSnapshot: (...a: unknown[]) => previewDocumentPdfSnapshot(...a),
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
+    // 房间里的文档一打开就读它的保存历史（文档条上的版本行）。这些用例问的是文件落在
+    // 哪一格，不是版本：给一份空清单，不摆版本行。
+    roomFileRevisions: vi.fn().mockResolvedValue({ data: [], total: 0, path: '', version: null }),
     getPreview: vi.fn().mockResolvedValue(null),
     requestPreviewSession: vi.fn().mockResolvedValue({ url: 'https://p.example/s', grant: 'g' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
