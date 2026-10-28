@@ -85,6 +85,8 @@ const props = withDefaults(
     // 打不开它，文件就是项目现在的样子。
     taskHasBranch?: boolean
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力（同 `submitQuestion`）。 */
+    askPersonal?: (message: string) => void
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
     // activityTick.
@@ -136,6 +138,7 @@ const props = withDefaults(
     taskReadOnly: false,
     taskHasBranch: true,
     submitQuestion: undefined,
+    askPersonal: undefined,
     working: false,
     agentControl: null,
     siteTurns: () => ({}),
@@ -848,6 +851,7 @@ defineExpose({
             v-if="mounted.has('preview')"
             v-show="shown('preview')"
             :submit-question="submitQuestion"
+            :ask-personal="askPersonal"
             :class="[enterClass('preview'), sideClass('preview')]"
             :topic-id="conversationId"
             :project-id="projectId"
@@ -915,6 +919,7 @@ defineExpose({
               v-else-if="mounted.has(fileKey(f.path))"
               v-show="shown(fileKey(f.path))"
               :submit-question="submitQuestion"
+              :ask-personal="askPersonal"
               :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic-id="conversationId"
               :project-id="projectId"

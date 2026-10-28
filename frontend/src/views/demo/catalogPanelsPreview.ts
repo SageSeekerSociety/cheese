@@ -498,6 +498,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
           note: '这一处按不到',
           canComment: true,
+          canAskPersonal: true,
         },
         expect: '发给芝士',
       },

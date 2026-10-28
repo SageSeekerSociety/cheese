@@ -27,8 +27,15 @@ import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
 import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
+import {
+  MODE_KEYS,
+  PREVIEW_MODE,
+  shouldResetModeOnSessionEnd,
+  usePreviewMode,
+} from '../../composables/panelPreview/previewMode'
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { videoMimeOf } from '../../lib/fileKind'
@@ -63,6 +70,7 @@ const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEdit
 const props = withDefaults(defineProps<PreviewViewProps>(), {
   agentName: () => t('work.room.defaultAgentName'),
   submitQuestion: undefined,
+  askPersonal: undefined,
   uploadAnnotation: undefined,
   active: true,
   path: null,
@@ -154,6 +162,77 @@ const browsing = computed(() =>
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
 const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
 
+// ---- 看 / 批注 / 改 三段模式（原型里那一段，快捷键 1/2/3）----
+// 三段说的是「现在鼠标按下去算什么」：看什么都不指、批注指一处写一句话、改就地改正文。
+// 这里只做两件与它有关的事：开这一格时给下面一个口（`provide`），以及把「能不能指」
+// 传给定位层——`view` 那一段里拖选只是在读，不弹任何东西。
+//
+// 「改」这一段这一份开不开得起来：markdown 看协同会话、Office 那几种看后缀，**两种都要求
+// 不是手机**（手机上不给编辑器，负责人 2026-10-28 定；理由见 `PreviewDocStage`）。判据和
+// 那边同源，但那边还要等面板量出宽度，这一段不该跟着抖，所以按同样的三条在这里重算。
+const EDITABLE_OFFICE = new Set(['docx', 'xlsx', 'pptx'])
+const { mdAndUp } = useDisplay()
+const modeCanEdit = computed(
+  () =>
+    mdAndUp.value &&
+    (EDITABLE_OFFICE.has(props.documentSuffix) ||
+      (props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value))
+)
+const previewMode = usePreviewMode(
+  () => modeCanEdit.value,
+  () => props.previewFile?.path ?? props.previewUrl ?? ''
+)
+provide(PREVIEW_MODE, previewMode)
+
+// 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
+// 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
+useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (event: KeyboardEvent) => {
+  // 工作区里没被翻开的那几页是 `v-show` 藏着的，组件还挂着；不加这一句，看着预览却按
+  // 一下 2，藏起来的另一格里也悄悄换成了批注，切回去时模式已经不是走开时那一段。
+  if (!props.active) return
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  const mode = MODE_KEYS[event.key]
+  if (!mode) return
+  const target = event.target
+  if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)))
+    return
+  event.preventDefault()
+  previewMode.set(mode)
+})
+
+// 编辑器收起来了，正文又回到只读，模式还停在「改」的话接下来拖选一段什么都不弹
+// （`usePreviewLocator` 按「此刻真在编辑」拦），而屏幕上没有任何东西说明为什么——
+// 跟着关回「看」，让模式说的是眼前这件事。两种编辑各有一条路：
+//
+//  - Office 那几种开的是一个全屏对话框，关掉它 `props.editing` 由路径变回 null。
+//  - markdown 是就地的协同编辑（`liveEdit`），它的会话会自己结束——编辑器上那颗关闭键、
+//    服务端拒了、换了一份文件，都会让 `editingPath` 变回空串。`editing` 那一份只看
+//    「这一份文件改不改得动」，不看会话还在不在，所以会话结束它还是 true；只盯它的话
+//    模式会一直停在「改」，而且「改」那一颗再点也没有反应（值没变，watch 不触发）。
+//
+watch(
+  () => props.editing,
+  (now, before) => {
+    if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
+  }
+)
+// 协同那条要再问一句「收起来的是不是眼前这一份」：读者换一份文件时，`liveEdit` 自己
+// 那个 `watch(state.previewFile)` 也会 `end()`，`editingPath` 同样从有变空——照上面那条
+// 直接收，「换文件」和「会话结束」就分不开，重置会落到哪一份上看 flush 的先后（可能是
+// 刚离开的那一份，把它的记忆抹掉；也可能是刚打开的那一份，顺手把它该开着的编辑会话
+// 也关掉）。会话自己结束时会停留在同一份上，换文件时已经不是了。
+watch(
+  () => props.liveEdit?.editingPath.value ?? '',
+  (now, before) => {
+    // 会话收起来了：把它记在**那一份**上的模式清掉，按路径，不按眼前这一份。眼前这一份
+    // 可能是读者刚换过来的（换文件也会让 `liveEdit` 收会话），它有自己的记忆，不该动；
+    // 而刚离开的那一份会话没了、模式还记着「改」，换回来时会卡在「模式说改、正文只读、
+    // 每次指认都被吞」那一态——清掉它才不会卡。
+    if (!shouldResetModeOnSessionEnd(before, now)) return
+    previewMode.forget(before)
+  }
+)
+
 const {
   locator,
   locatorNote,
@@ -169,6 +248,7 @@ const {
   clearQueued,
   sendQueued,
   sendLocator,
+  sendPersonalLocator,
   onImageRegion,
   onPageContext,
   onQuote,
@@ -179,7 +259,13 @@ const {
   onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
+  // 显式递进去，不走 `inject`：提供它的是上面这个 `provide`，而 `inject` 只往祖先找，
+  // 同一个 setup 里提供的东西自己读不到（`useRevealGate` 那次踩的是同一个坑）。
+  mode: previewMode,
   onLocate: (payload) => emit('locate', payload),
+  // 个人芝士是全站那一条对话（不在项目里），登录了就有；带着这一处的原文和位置问过去，
+  // 面板自己会打开。答不上来的话由面板说，这里不发第二句。
+  onAskPersonal: (message) => props.askPersonal?.(message),
   onPickMode: (on) => emit('pick-mode', on),
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
@@ -251,10 +337,14 @@ watch(locator, (now) => {
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  // 卡一打开焦点就进了输入框，页面上的选区没了：留下这一份副本，写批注的整段时间里
+  // 读者在说的那一段一直亮着（`PreviewPages` 照着它画底色）。
   keptSelection.value = anchorRange
-  // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 「批注」那一段里指一处直接出卡（原型：批注模式不走那颗小按钮）；「看」那一段才先出。
+  // 另外只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
   // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
   locatorFromSelection.value =
+    previewMode.mode.value === 'view' &&
     !!panel &&
     !!anchorRange &&
     !anchorRange.collapsed &&
@@ -695,10 +785,12 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
+      :can-ask-personal="!!props.askPersonal"
       :comment-error="commentError"
       :anchor="locatorAnchor"
       :arm-first="locatorFromSelection"
       @send="sendLocator"
+      @personal="sendPersonalLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"
       @clear-queued="clearQueued"
