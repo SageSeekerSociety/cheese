@@ -39,7 +39,7 @@ function mount(marks: { id: string; sheet: string; address: string }[] = [], ext
 it('窄处 A 列钉住：根上挂着窄的记号，开关在', async () => {
   const ui = mount()
   await waitFor(() => expect(ui.container.querySelector('.ps--narrow')).not.toBeNull())
-  expect(ui.getByTestId('sheet-cards')).toBeTruthy()
+  expect(await ui.findByTestId('sheet-cards')).toBeTruthy()
 })
 
 it('切成卡片：一行一张，第一格当标题，列名取第一行，空格子不占地方', async () => {

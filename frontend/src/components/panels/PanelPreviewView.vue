@@ -199,6 +199,16 @@ const pendingPins = computed(() => {
       : []
   )
 })
+/** 攒着的那几处落在表格上的：格子右上角挂一颗带序号的 pin，编号和待发篮里那一行对得上。
+ *  判据和正文那一档同一条——只认屏幕上这一份文件，序号取它在篮里的位置。 */
+const pendingSheetPins = computed(() => {
+  const here = props.previewFile?.path ?? ''
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'sheet-cell' && note.path === here
+      ? [{ id: note.id, n: index + 1, sheet: note.anchor.sheet, address: note.anchor.address }]
+      : []
+  )
+})
 
 // ---- 定位框弹在哪 ----
 // 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：
@@ -573,6 +583,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :page-anchors="pageAnchors"
       :sheet-anchors="sheetAnchors"
       :pins="pendingPins"
+      :sheet-pins="pendingSheetPins"
       :live-edit="props.liveEdit"
       :active-anchor="focusedThread"
       :named-tab="!!path"
