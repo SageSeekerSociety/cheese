@@ -1,8 +1,9 @@
 """Controlled fault and edge-state verification for scripts/perf-open-page.
 
 Verifies the Phase 1 calibration requirements against a running 知是 stack:
-1. Critical content delay (+450 ms on blocking API) delays `ready_ms` correspondingly.
-2. Non-critical background request delay (+800 ms on post-render / idle API) does NOT delay `ready_ms`.
+1. Critical content delay (+550 ms on blocking API) delays `ready_ms` correspondingly.
+2. Non-critical background request delay (+800 ms on post-render / idle API) is
+   actually intercepted (`bg_hits >= 1`) and does NOT delay `ready_ms`.
 3. Partial failure (1 success, 2 failures) reports `n_attempts=3, n_ok=1, n_failed=2` (`1/3 (2 失败)`),
    and total failure (0 successes, 3 failures) reports `ready_ms=None` (`FAIL`), never `0 ms`.
 4. Cache modes (`cold`, `warm`, `walk`) are genuinely distinct in cache hits, document reload, and latency.
@@ -38,6 +39,15 @@ from measure import (  # noqa: E402
 )
 from pages import PAGES, SKELETON, PageSpec  # noqa: E402
 import report as report_mod  # noqa: E402
+
+CRITICAL_DELAY_S = 0.55
+BACKGROUND_DELAY_S = 0.80
+
+
+def _require(condition: bool, message: str) -> None:
+    """Enforce a verification invariant even when Python runs with -O."""
+    if not condition:
+        raise RuntimeError(message)
 
 
 def _spec_by_name(name: str) -> PageSpec:
@@ -98,11 +108,12 @@ def verify_query_string_dedup() -> dict[str, Any]:
         api_obs=[],
         error=None,
     )
-    assert sample.api_count == 4, f"expected 4 api requests, got {sample.api_count}"
-    assert "GET spaces?pageSize=50" in sample.api_requests
-    assert "GET spaces?pageSize=12" in sample.api_requests
-    assert sample.duplicate_api_requests == ["GET teams/my-teams"], (
-        f"different query strings must not be marked duplicate: {sample.duplicate_api_requests}"
+    _require(sample.api_count == 4, f"expected 4 api requests, got {sample.api_count}")
+    _require("GET spaces?pageSize=50" in sample.api_requests, "missing pageSize=50")
+    _require("GET spaces?pageSize=12" in sample.api_requests, "missing pageSize=12")
+    _require(
+        sample.duplicate_api_requests == ["GET teams/my-teams"],
+        f"different query strings must not be marked duplicate: {sample.duplicate_api_requests}",
     )
     return {
         "passed": True,
@@ -160,16 +171,23 @@ def main() -> None:
         _measure_one(page, channel_spec, args.base_url, "walk", params, run_index=0)
 
         # 2. Critical vs Non-critical delay verification on `project-channels`
-        # (`GET /api/projects/{id}/channels` is blocking; `GET /api/topics/{id}/environment` is background).
+        # (`GET /api/projects/{id}/channels` is blocking for `.browse__row`;
+        #  `GET /api/projects/{id}/private-unread` is a non-blocking sidebar badge query in ProjectShell.vue).
         _measure_one(page, channels_browse_spec, args.base_url, "walk", params, run_index=0)
         base_sample = _measure_one(
             page, channels_browse_spec, args.base_url, "walk", params, run_index=1
         )
-        assert base_sample.status == "ok" and base_sample.ready_ms is not None
+        _require(
+            base_sample.status == "ok" and base_sample.ready_ms is not None,
+            f"baseline project-channels run failed: {base_sample}",
+        )
+
+        crit_hits = {"n": 0}
 
         def delay_critical(route: Route) -> None:
+            crit_hits["n"] += 1
             resp = route.fetch()
-            time.sleep(0.55)
+            time.sleep(CRITICAL_DELAY_S)
             route.fulfill(response=resp)
 
         page.route("**/api/projects/*/channels*", delay_critical)
@@ -180,37 +198,60 @@ def main() -> None:
         finally:
             page.unroute("**/api/projects/*/channels*", delay_critical)
 
-        assert crit_delayed.status == "ok" and crit_delayed.ready_ms is not None
+        _require(crit_hits["n"] >= 1, "critical delay route handler did not fire")
+        _require(
+            crit_delayed.status == "ok" and crit_delayed.ready_ms is not None,
+            f"critical delayed run failed: {crit_delayed}",
+        )
         crit_delta = round(crit_delayed.ready_ms - base_sample.ready_ms, 1)
-        assert crit_delta >= 300.0, (
-            f"Critical content delay (+450ms) did not push ready_ms enough: "
-            f"base={base_sample.ready_ms}ms, delayed={crit_delayed.ready_ms}ms, delta={crit_delta}ms"
+        _require(
+            crit_delta >= 350.0,
+            f"Critical content delay (+{int(CRITICAL_DELAY_S * 1000)}ms) did not push ready_ms enough: "
+            f"base={base_sample.ready_ms}ms, delayed={crit_delayed.ready_ms}ms, delta={crit_delta}ms",
         )
 
-        # Non-critical background request delay (+800ms on /api/credits/beta or /api/topics/*/environment)
-        def delay_background(route: Route) -> None:
-            time.sleep(0.80)
-            route.continue_()
+        # Non-critical background request delay (+800ms on /api/projects/*/private-unread*,
+        # which ProjectShell.vue fetches for sidebar DM badges without blocking .browse__row).
+        bg_hits = {"n": 0}
 
-        page.route("**/api/topics/*/environment*", delay_background)
+        def delay_background(route: Route) -> None:
+            bg_hits["n"] += 1
+            resp = route.fetch()
+            time.sleep(BACKGROUND_DELAY_S)
+            route.fulfill(response=resp)
+
+        page.route("**/api/projects/*/private-unread*", delay_background)
         try:
             bg_delayed = _measure_one(
                 page, channels_browse_spec, args.base_url, "walk", params, run_index=3
             )
+            page.wait_for_timeout(300)
         finally:
-            page.unroute("**/api/topics/*/environment*", delay_background)
+            page.unroute("**/api/projects/*/private-unread*", delay_background)
 
-        assert bg_delayed.status == "ok" and bg_delayed.ready_ms is not None
+        _require(
+            bg_hits["n"] >= 1,
+            "background delay route handler (**/api/projects/*/private-unread*) never fired on project-channels",
+        )
+        _require(
+            bg_delayed.status == "ok" and bg_delayed.ready_ms is not None,
+            f"background delayed run failed: {bg_delayed}",
+        )
         bg_delta = round(bg_delayed.ready_ms - base_sample.ready_ms, 1)
-        assert bg_delta < 300.0, (
-            f"Non-critical background delay (+800ms) unexpectedly delayed ready_ms: "
-            f"base={base_sample.ready_ms}ms, bg_delayed={bg_delayed.ready_ms}ms, delta={bg_delta}ms"
+        _require(
+            bg_delta < 350.0,
+            f"Non-critical background delay (+{int(BACKGROUND_DELAY_S * 1000)}ms) unexpectedly delayed ready_ms: "
+            f"base={base_sample.ready_ms}ms, bg_delayed={bg_delayed.ready_ms}ms, delta={bg_delta}ms",
         )
         checks["critical_vs_background_delay"] = {
             "passed": True,
+            "critical_delay_injected_ms": int(CRITICAL_DELAY_S * 1000),
+            "critical_route_hits": crit_hits["n"],
             "baseline_ready_ms": base_sample.ready_ms,
             "critical_delayed_ready_ms": crit_delayed.ready_ms,
             "critical_delta_ms": crit_delta,
+            "background_delay_injected_ms": int(BACKGROUND_DELAY_S * 1000),
+            "background_route_hits": bg_hits["n"],
             "background_delayed_ready_ms": bg_delayed.ready_ms,
             "background_delta_ms": bg_delta,
         }
@@ -252,11 +293,14 @@ def main() -> None:
             page.unroute("**/api/projects/*/channels*", fail_first_two)
 
         partial_summary = summarize_samples("project-channels", "walk", partial_samples)
-        assert partial_summary["n_attempts"] == 3
-        assert partial_summary["n_ok"] == 1
-        assert partial_summary["n_failed"] == 2
-        assert partial_summary["status"] == "partial_failure"
-        assert partial_summary["ready_ms"] is not None and partial_summary["ready_ms"] > 0
+        _require(partial_summary["n_attempts"] == 3, "expected 3 attempts")
+        _require(partial_summary["n_ok"] == 1, "expected 1 ok")
+        _require(partial_summary["n_failed"] == 2, "expected 2 failed")
+        _require(partial_summary["status"] == "partial_failure", "expected partial_failure")
+        _require(
+            partial_summary["ready_ms"] is not None and partial_summary["ready_ms"] > 0,
+            "expected positive ready_ms for 1/3 partial success",
+        )
 
         # Total failure (3/3 fail): must report ready_ms=None, never 0!
         def fail_all(route: Route) -> None:
@@ -286,11 +330,11 @@ def main() -> None:
         total_fail_summary = summarize_samples(
             "project-channels-fail", "walk", all_fail_samples
         )
-        assert total_fail_summary["n_attempts"] == 3
-        assert total_fail_summary["n_ok"] == 0
-        assert total_fail_summary["n_failed"] == 3
-        assert total_fail_summary["ready_ms"] is None
-        assert total_fail_summary["dom_ready_ms"] is None
+        _require(total_fail_summary["n_attempts"] == 3, "expected 3 attempts")
+        _require(total_fail_summary["n_ok"] == 0, "expected 0 ok")
+        _require(total_fail_summary["n_failed"] == 3, "expected 3 failed")
+        _require(total_fail_summary["ready_ms"] is None, "total failure must have ready_ms=None")
+        _require(total_fail_summary["dom_ready_ms"] is None, "total failure must have dom_ready_ms=None")
 
         md_out = _render_report_markdown(
             {
@@ -300,9 +344,12 @@ def main() -> None:
             "walk",
             Path("/tmp/perf-fault-report-test.json"),
         )
-        assert "1/3 (2 失败)" in md_out, f"missing '1/3 (2 失败)' in report:\n{md_out}"
-        assert "0/3 (3 失败)" in md_out, f"missing '0/3 (3 失败)' in report:\n{md_out}"
-        assert "| project-channels-fail | 0/3 (3 失败) | FAIL | FAIL |" in md_out
+        _require("1/3 (2 失败)" in md_out, f"missing '1/3 (2 失败)' in report:\n{md_out}")
+        _require("0/3 (3 失败)" in md_out, f"missing '0/3 (3 失败)' in report:\n{md_out}")
+        _require(
+            "| project-channels-fail | 0/3 (3 失败) | FAIL | FAIL |" in md_out,
+            f"missing FAIL row in report:\n{md_out}",
+        )
 
         checks["partial_and_total_failure_accounting"] = {
             "passed": True,
@@ -332,9 +379,9 @@ def main() -> None:
         empty_strict_sample = _measure_one(
             page, empty_spec_strict, args.base_url, "walk", params, run_index=1, timeout_ms=2500
         )
-        assert empty_strict_sample.status == "empty", f"got {empty_strict_sample}"
-        assert empty_strict_sample.ready_ms is None
-        assert "empty state" in (empty_strict_sample.error or "")
+        _require(empty_strict_sample.status == "empty", f"got {empty_strict_sample}")
+        _require(empty_strict_sample.ready_ms is None, "strict empty state must have ready_ms=None")
+        _require("empty state" in (empty_strict_sample.error or ""), "missing empty state error text")
 
         empty_spec_allowed = PageSpec(
             "empty-channel-allowed",
@@ -348,9 +395,12 @@ def main() -> None:
         empty_allowed_sample = _measure_one(
             page, empty_spec_allowed, args.base_url, "walk", params, run_index=1, timeout_ms=10000
         )
-        assert empty_allowed_sample.status == "empty"
-        assert empty_allowed_sample.ready_ms is not None and empty_allowed_sample.ready_ms > 0
-        assert empty_allowed_sample.error is None
+        _require(empty_allowed_sample.status == "empty", "expected empty status")
+        _require(
+            empty_allowed_sample.ready_ms is not None and empty_allowed_sample.ready_ms > 0,
+            "allowed empty state must record positive ready_ms",
+        )
+        _require(empty_allowed_sample.error is None, "allowed empty state must have error=None")
 
         def forbid_channels(route: Route) -> None:
             route.fulfill(
@@ -373,9 +423,9 @@ def main() -> None:
         finally:
             page.unroute("**/api/projects/*/channels*", forbid_channels)
 
-        assert forbidden_sample.status == "forbidden"
-        assert forbidden_sample.ready_ms is None
-        assert "403" in (forbidden_sample.error or "")
+        _require(forbidden_sample.status == "forbidden", "expected forbidden status")
+        _require(forbidden_sample.ready_ms is None, "forbidden must have ready_ms=None")
+        _require("403" in (forbidden_sample.error or ""), "forbidden must mention 403")
 
         checks["empty_forbidden_error_states"] = {
             "passed": True,
@@ -426,17 +476,28 @@ def main() -> None:
         warm_ctx.close()
         fault_ctx.close()
 
-        assert walk_sample.status == "ok" and walk_sample.ready_ms is not None
-        assert warm_sample.status == "ok" and warm_sample.ready_ms is not None
-        assert cold_sample.status == "ok" and cold_sample.ready_ms is not None
-        assert walk_sample.dcl_ms is None, "walk mode must be a client-side route push without document DCL"
-        assert warm_sample.dcl_ms is not None, "warm mode must be a document reload with DCL"
-        assert cold_sample.dcl_ms is not None, "cold mode must be a document load with DCL"
-        assert cold_sample.cached_requests == 0, (
-            f"true_cold must have 0 cached requests (CDP cache disabled + SW blocked), got {cold_sample.cached_requests}"
+        _require(walk_sample.status == "ok" and walk_sample.ready_ms is not None, "walk failed")
+        _require(warm_sample.status == "ok" and warm_sample.ready_ms is not None, "warm failed")
+        _require(cold_sample.status == "ok" and cold_sample.ready_ms is not None, "cold failed")
+        _require(
+            walk_sample.dcl_ms is None,
+            "walk mode must be a client-side route push without document DCL",
         )
-        assert warm_sample.cached_requests > 0, (
-            f"warm_reload must serve static assets from cache, got {warm_sample.cached_requests}"
+        _require(
+            warm_sample.dcl_ms is not None,
+            "warm mode must be a document reload with DCL",
+        )
+        _require(
+            cold_sample.dcl_ms is not None,
+            "cold mode must be a document load with DCL",
+        )
+        _require(
+            cold_sample.cached_requests == 0,
+            f"true_cold must have 0 cached requests (CDP cache disabled + SW blocked), got {cold_sample.cached_requests}",
+        )
+        _require(
+            warm_sample.cached_requests > 0,
+            f"warm_reload must serve static assets from cache, got {warm_sample.cached_requests}",
         )
 
         checks["cache_modes_distinct"] = {
@@ -473,10 +534,11 @@ def main() -> None:
         )
 
         # 6. DOM ready vs Paint ready separation check
-        assert (
+        _require(
             walk_sample.dom_ready_ms is not None
             and walk_sample.paint_ms is not None
-            and walk_sample.paint_ms >= walk_sample.dom_ready_ms
+            and walk_sample.paint_ms >= walk_sample.dom_ready_ms,
+            "paint_ms must be >= dom_ready_ms",
         )
         checks["dom_vs_paint_separation"] = {
             "passed": True,
@@ -493,6 +555,7 @@ def main() -> None:
 
         browser.close()
 
+    _require(len(checks) == 6 and all(v.get("passed") is True for v in checks.values()), "not all 6 checks passed")
     Path(args.out).write_text(json.dumps(checks, ensure_ascii=False, indent=2) + "\n")
     print(f"\nALL 6 CALIBRATION CHECKS PASSED -> {args.out}")
 

@@ -579,7 +579,13 @@ def _measure_send_message_inner(
     timeout_ms: int,
     api_obs: list[dict[str, Any]],
 ) -> Sample:
-    page.goto(spec.path(base_url, params), wait_until="domcontentloaded")
+    if mode == "walk":
+        target_route = spec.route_path(params)
+        warm_origin = _distinct_warm_origin(base_url, spec, params)
+        page.goto(warm_origin, wait_until="networkidle")
+        page.evaluate("(p) => window.__nav(p)", target_route)
+    else:
+        page.goto(spec.path(base_url, params), wait_until="domcontentloaded")
     page.wait_for_function(
         """(sel) => {
           const el = document.querySelector(sel);
@@ -676,7 +682,8 @@ def _measure_send_message_inner(
             rs: e.responseStart || e.startTime,
             e: e.responseEnd,
             t: e.initiatorType,
-            sz: e.transferSize
+            sz: e.transferSize,
+            bsz: e.decodedBodySize || 0
           }));
           return {
             t0: p.t0,
