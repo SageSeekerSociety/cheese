@@ -4,7 +4,7 @@ import 'katex/dist/katex.min.css'
 import katex, { type KatexOptions } from 'katex'
 import { MarkedExtension, TokenizerAndRendererExtension } from 'marked'
 
-import { isInlineMath } from '@/lib/docSchema/math'
+import { BLOCK_MATH_RE, INLINE_DOUBLE_MATH_RE, INLINE_SINGLE_MATH_RE, isInlineMath } from '@/lib/docSchema/math'
 
 export default function (options: KatexOptions = {}): MarkedExtension {
   return {
@@ -13,7 +13,7 @@ export default function (options: KatexOptions = {}): MarkedExtension {
 }
 
 function inlineKatex(options: KatexOptions): TokenizerAndRendererExtension {
-  const inlineOptions: KatexOptions = { ...options, displayMode: false }
+  const inlineOptions: KatexOptions = { throwOnError: false, ...options, displayMode: false }
   return {
     name: 'inlineKatex',
     level: 'inline',
@@ -21,15 +21,15 @@ function inlineKatex(options: KatexOptions): TokenizerAndRendererExtension {
       return src.search(/(?<!\\)\$(?!\s)/)
     },
     tokenizer(src: string) {
-      const doubleMatch = src.match(/^\$\$(?!\$)[ \t]*((?:\\.|(?!\$\$)[^\\\n`])+?)[ \t]*\$\$(?!\$)/)
-      if (doubleMatch && doubleMatch[1].trim()) {
+      const doubleMatch = src.match(INLINE_DOUBLE_MATH_RE)
+      if (doubleMatch && isInlineMath(doubleMatch[1].trim())) {
         return {
           type: 'inlineKatex',
           raw: doubleMatch[0],
           text: doubleMatch[1].trim(),
         }
       }
-      const match = src.match(/^\$(?![\s$])((?:\\.|[^$\\\n`])+?)(?<!\s)\$(?!\d)/)
+      const match = src.match(INLINE_SINGLE_MATH_RE)
       if (match && isInlineMath(match[1])) {
         return {
           type: 'inlineKatex',
@@ -45,7 +45,7 @@ function inlineKatex(options: KatexOptions): TokenizerAndRendererExtension {
 }
 
 function blockKatex(options: KatexOptions): TokenizerAndRendererExtension {
-  const blockOptions: KatexOptions = { ...options, displayMode: true }
+  const blockOptions: KatexOptions = { throwOnError: false, ...options, displayMode: true }
   return {
     name: 'blockKatex',
     level: 'block',
@@ -53,7 +53,7 @@ function blockKatex(options: KatexOptions): TokenizerAndRendererExtension {
       return src.indexOf('$$')
     },
     tokenizer(src: string) {
-      const match = src.match(/^ {0,3}\$\$[ \t]*\n?((?:\\.|(?!\$\$)[\s\S])+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/)
+      const match = src.match(BLOCK_MATH_RE)
       if (match) {
         return {
           type: 'blockKatex',

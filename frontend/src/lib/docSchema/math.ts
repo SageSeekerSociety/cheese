@@ -7,51 +7,55 @@
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
-const INLINE_DOUBLE_MATH_RE = /^\$\$(?!\$)[ \t]*((?:\\.|(?!\$\$)[^\\\n`])+?)[ \t]*\$\$(?!\$)/
-const INLINE_SINGLE_MATH_RE = /^\$(?![\s$])((?:\\.|[^$\\\n`])+?)(?<!\s)\$(?!\d)/
-const BLOCK_MATH_RE = /^ {0,3}\$\$[ \t]*\n?((?:\\.|(?!\$\$)[\s\S])+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/
-const BLOCK_MATH_START_RE = /(?:^|\n) {0,3}\$\$[ \t]*\n?(?:\\.|(?!\$\$)[\s\S])+?\n?[ \t]*\$\$[ \t]*(?:\n|$)/
+export const INLINE_DOUBLE_MATH_RE = /^\$\$(?!\$)[ \t]*((?:\\.|[^$\\\n`])+?)[ \t]*\$\$(?!\$)/
+export const INLINE_SINGLE_MATH_RE = /^\$(?![\s$])((?:\\.|[^$\\\n`])+?)(?<!\s)\$(?!\d)/
+export const BLOCK_MATH_RE = /^ {0,3}\$\$[ \t]*\n?((?:\\[\s\S]|(?!\$\$)[^\\])+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/
 
+// Fullwidth prose punctuation and bare CJK ideographs outside `{…}` indicate
+// prose between two unclosed `$` tokens (`$100，其中$x$`, `$HOME和$USER`).
 const PROSE_PUNCT_RE = /[，。；！？（）【】《》“”‘’、]/
 const CJK_RE = /[⺀-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/
+// Currency followed by English prose (`$100 for ($x$)`, `$100k, or$x$`).
+const CURRENCY_PROSE_RE = /^\d[\d,.]*[kmbKMB]?(?:,\s*|\s+)(?:to|or|and|for|in|of|per|with|from|at|by|is|are|the|vs)\b/i
 
-function stripBraced(s: string): string {
-  let prev = ''
-  let cur = s
-  while (prev !== cur) {
-    prev = cur
-    cur = cur.replace(/\{[^{}]*\}/g, '')
-  }
-  return cur
-}
-
-function hasUnclosedOpeners(s: string): boolean {
+function analyzeMath(s: string): { paren: number; bracket: number; brace: number; bare: string } {
+  const clean = s.replace(/\\left[([|.]/g, '').replace(/\\right[)\]|.]/g, '')
   let paren = 0
   let bracket = 0
   let brace = 0
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '\\') {
+  let bare = ''
+  for (let i = 0; i < clean.length; i++) {
+    const ch = clean[i]
+    if (ch === '\\') {
+      if (brace === 0 && i + 1 < clean.length) bare += clean.slice(i, i + 2)
       i++
       continue
     }
-    if (s[i] === '(') paren++
-    else if (s[i] === ')' && paren > 0) paren--
-    else if (s[i] === '[') bracket++
-    else if (s[i] === ']' && bracket > 0) bracket--
-    else if (s[i] === '{') brace++
-    else if (s[i] === '}' && brace > 0) brace--
+    if (ch === '{') {
+      brace++
+      continue
+    }
+    if (ch === '}') {
+      if (brace > 0) brace--
+      continue
+    }
+    if (brace === 0) bare += ch
+    if (ch === '(') paren++
+    else if (ch === ')' && paren > 0) paren--
+    else if (ch === '[') bracket++
+    else if (ch === ']' && bracket > 0) bracket--
   }
-  return paren > 0 || bracket > 0 || brace > 0
+  return { paren, bracket, brace, bare: bare.replace(/[_^][⺀-〿぀-ヿ㐀-䶿一-鿿]/g, '') }
 }
 
 export function isInlineMath(latex: string): boolean {
-  if (/(?<!\\)[([{（【《“‘—]$/.test(latex)) return false
-  const bare = stripBraced(latex)
-  if (PROSE_PUNCT_RE.test(bare)) return false
+  if (!latex || /(?<![\\^_])[-+*/=<>~,:;([{（【《“‘—]$/.test(latex)) return false
+  const { paren, bracket, brace, bare } = analyzeMath(latex)
+  if (brace > 0) return false
+  if (PROSE_PUNCT_RE.test(bare) || CJK_RE.test(bare)) return false
   if (/^\d/.test(latex)) {
-    if (hasUnclosedOpeners(latex)) return false
-    if (CJK_RE.test(bare)) return false
-    if (/^\d[\d,.]*\s+[a-zA-Z]{2,}\b/.test(bare)) return false
+    if (paren > 0 || bracket > 0) return false
+    if (CURRENCY_PROSE_RE.test(bare)) return false
   }
   return true
 }
@@ -80,7 +84,7 @@ export const MathInline = Node.create({
       const doubleMatch = INLINE_DOUBLE_MATH_RE.exec(src)
       if (doubleMatch) {
         const latex = doubleMatch[1].trim()
-        if (latex) return { type: 'mathInline', raw: doubleMatch[0], latex }
+        if (isInlineMath(latex)) return { type: 'mathInline', raw: doubleMatch[0], latex }
       }
       const match = INLINE_SINGLE_MATH_RE.exec(src)
       if (!match || !isInlineMath(match[1])) return undefined
@@ -88,7 +92,7 @@ export const MathInline = Node.create({
     },
   },
   parseMarkdown: (token, helpers) => helpers.createNode('mathInline', { latex: token.latex }),
-  renderMarkdown: (node) => `$${node.attrs?.latex ?? ''}$`,
+  renderMarkdown: (node) => `$${String(node.attrs?.latex ?? '').trim()}$`,
 })
 
 export const MathBlock = Node.create({
@@ -109,9 +113,8 @@ export const MathBlock = Node.create({
     name: 'mathBlock',
     level: 'block',
     start: (src) => {
-      const match = BLOCK_MATH_START_RE.exec(src)
-      if (!match) return -1
-      return match[0].startsWith('\n') ? match.index + 1 : match.index
+      const i = src.search(/\n {0,3}\$\$/)
+      return i === -1 ? -1 : i + 1
     },
     tokenize(src) {
       const match = BLOCK_MATH_RE.exec(src)
