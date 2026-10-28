@@ -26,6 +26,7 @@ import { KEPT_SELECTION } from './keptSelection'
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
 import { pageRatio } from './slidesContext'
+import { type LineNode, linesFrom, rangeOf, type TextLine } from './textLines'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -546,6 +547,165 @@ function onSelect() {
   emit('quote', { text, page })
 }
 
+// ---- 键盘选字：一行一格 ----
+//
+// 鼠标能拖到哪儿选到哪儿，键盘做不到——那就换一个单位：一次走一行。上下键换行，按住
+// Shift 就是扩选，回车把选中的那几行交出去。行是屏幕上看得见的一行（`linesFrom` 按位置
+// 归的），不是 DOM 里的一个节点：pdf.js 的文字层一段段绝对定位，按节点走的话，表格里
+// 一次会跳过半个表。
+//
+// 为什么不给每个字做光标：那要把一页的字排成一条线性的流，跨栏、跨表格时得猜人的读法，
+// 猜错了上下键就不知道跳到哪儿。按屏幕上的行走不需要猜。
+
+/** 键盘此刻停在第几页第几行，`anchor` 是按住 Shift 之前的起点行。 */
+type Caret = { page: number; line: number; anchor: number }
+const caret = ref<Caret | null>(null)
+
+/** 整份文档在 Tab 顺序里只占**一格**：键盘停在那一页，那一页才是可 Tab 到的。
+ *
+ *  每页都给 `tabindex="0"` 的话，一份两百页的文档要按两百下 Tab 才穿得过去。进文档是
+ *  一次 Tab，之后上下键在文档里走（到页尾自动翻页）——列表、多选这类控件走的就是这条。
+ *  还没用键盘进过时留给第一页，好让第一次 Tab 有地方落。 */
+function tabbable(slot: PageSlot): number {
+  if (caret.value) return caret.value.page === slot.number ? 0 : -1
+  return slot.number === pages.value[0]?.number ? 0 : -1
+}
+
+/** 有面积才算数：量不出来时浏览器给的是全零的框，拿它当「这一行在这儿」会把行归错。 */
+function boxed(rect: DOMRect | undefined | null): { left: number; top: number; width: number; height: number } | null {
+  return rect && rect.width >= 0.5 && rect.height >= 0.5
+    ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+    : null
+}
+function firstBoxed(
+  rects: ArrayLike<DOMRect> | undefined
+): { left: number; top: number; width: number; height: number } | null {
+  for (const rect of Array.from(rects ?? [])) {
+    const box = boxed(rect)
+    if (box) return box
+  }
+  return null
+}
+
+/** 这一页现在能读到的行。文字层还没画出来时是空的（这一页还没进视野）。 */
+function linesOf(slot: PageSlot): TextLine[] {
+  const host = slot.host
+  if (!host) return []
+  const nodes: LineNode[] = []
+  // 这一页里每一层文字都算。每个元素自己的文字子节点收一遍就是全部，不会重复也不会漏。
+  // 不用 `TreeWalker`：它在量不出布局的环境里不往嵌套元素里走。
+  for (const layer of host.querySelectorAll<HTMLElement>('.pv-text')) {
+    for (const el of [layer, ...layer.querySelectorAll('*')]) {
+      for (const child of Array.from(el.childNodes)) {
+        if (child.nodeType !== Node.TEXT_NODE) continue
+        const text = child as Text
+        if (!text.data.trim()) continue
+        // 优先问 Range：一个 span 里要是折了行，Range 给的是每一段各自的位置，比问那一段
+        // 的外框准。Range 量不出来时退回它所在的元素——量不出布局的环境（单测的 happy-dom）
+        // 里 Range 全是零，而元素上的框是测试自己摆的。
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        const rect =
+          firstBoxed(range.getClientRects()) ??
+          boxed(range.getBoundingClientRect()) ??
+          boxed(el.getBoundingClientRect())
+        if (!rect) continue
+        nodes.push({ node: text, rect })
+      }
+    }
+  }
+  return linesFrom(nodes)
+}
+
+/** 把浏览器的选区摆到这几行上。底色那一条是跟着选区画的，所以选上就看得见。 */
+function selectLines(slot: PageSlot, lines: readonly TextLine[], from: number, to: number): boolean {
+  const range = rangeOf(lines, from, to)
+  if (!range) return false
+  const selection = window.getSelection()
+  if (!selection) return false
+  selection.removeAllRanges()
+  selection.addRange(range)
+  slot.el?.scrollIntoView({ block: 'nearest' })
+  return true
+}
+
+/** 最近一次动的是键盘还是鼠标。
+ *
+ *  `tabindex` 让鼠标点一下这一页也给它焦点，但那时候读者是在拖选，替他把第一行选上
+ *  就打断了他。`:focus-visible` 是标准答案，可它只在真浏览器的渲染里有，测不出来；
+ *  自己记一下最后是哪样输入的，判断和测都落在同一个地方。 */
+let keyboardNav = false
+function noteInputKind(event: Event) {
+  keyboardNav = event.type === 'keydown'
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('keydown', noteInputKind, true)
+  document.addEventListener('pointerdown', noteInputKind, true)
+}
+
+/** Tab 落到这一页时，把光标放在第一行上——不然读者按了上下键才知道自己在哪儿。 */
+function onPageFocus(_event: FocusEvent, slot: PageSlot) {
+  if (caret.value?.page === slot.number) return
+  if (!keyboardNav) return
+  const lines = linesOf(slot)
+  if (!lines.length) return
+  caret.value = { page: slot.number, line: 0, anchor: 0 }
+  selectLines(slot, lines, 0, 0)
+}
+
+/** 走到隔壁一页的第一行 / 最后一行。翻不过去时返回 false。 */
+function stepPage(slot: PageSlot, down: boolean): boolean {
+  const next = pages.value.find((p) => p.number === slot.number + (down ? 1 : -1))
+  if (!next?.el) return false
+  const lines = linesOf(next)
+  if (!lines.length) return false
+  const line = down ? 0 : lines.length - 1
+  // 先记下光标再给焦点：焦点一落上去，`onPageFocus` 看到光标已经在这一页，就不会把它
+  // 重置成第一行。
+  caret.value = { page: next.number, line, anchor: line }
+  next.el.focus()
+  selectLines(next, lines, line, line)
+  return true
+}
+
+function onPageKey(event: KeyboardEvent, slot: PageSlot) {
+  // 只有键盘进来的才接管方向键：鼠标点一下这一页也会给它焦点（`tabindex`），
+  // 那时候读者是在用鼠标选字，方向键该滚页面就滚页面。
+  if (caret.value?.page !== slot.number) return
+  const lines = linesOf(slot)
+  if (!lines.length) return
+  const here = caret.value
+
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault()
+    const down = event.key === 'ArrowDown'
+    const next = here.line + (down ? 1 : -1)
+    // 已经到了这一页的头/尾：换到隔壁那一页去，否则按到底就没反应了。
+    if (next < 0 || next >= lines.length) {
+      stepPage(slot, down)
+      return
+    }
+    const anchor = event.shiftKey ? here.anchor : next
+    caret.value = { page: slot.number, line: next, anchor }
+    selectLines(slot, lines, anchor, next)
+    return
+  }
+
+  if (event.key === 'Enter') {
+    // 选中的是哪儿就交哪儿，和松鼠标那一刻走同一条出口（那里也管着「至少两个字」的
+    // 门槛和带不带身份）。
+    event.preventDefault()
+    onSelect()
+    return
+  }
+
+  if (event.key === 'Escape' && caret.value) {
+    event.preventDefault()
+    caret.value = null
+    window.getSelection()?.removeAllRanges()
+  }
+}
+
 function setRef(slot: PageSlot, el: unknown) {
   slot.el = (el as HTMLElement) ?? null
 }
@@ -652,6 +812,8 @@ onBeforeUnmount(() => {
   renderGeneration += 1
   observer?.disconnect()
   resizeObserver?.disconnect()
+  document.removeEventListener('keydown', noteInputKind, true)
+  document.removeEventListener('pointerdown', noteInputKind, true)
   window.removeEventListener('resize', onPixelRatio)
   if (relayoutTimer) clearTimeout(relayoutTimer)
   if (redrawTimer) clearTimeout(redrawTimer)
@@ -689,12 +851,20 @@ onBeforeUnmount(() => {
       <div>{{ t('work.room.preview.docCantDisplay') }}</div>
       <div class="t-meta mt-1">{{ failure }}</div>
     </div>
+    <!-- 页框可聚焦、接方向键：键盘从这儿进文档，一行一格地选字。页里没有可点的东西，
+         焦点落在整页上就是它的用途。 -->
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- 焦点与方向键挂在整页上，这就是键盘选字那条路 -->
     <div
       v-for="slot in pages"
       :key="slot.number"
       :ref="(el) => setRef(slot, el)"
       :data-page="slot.number"
       class="pv__page"
+      :tabindex="tabbable(slot)"
+      role="group"
+      :aria-label="t('work.room.preview.page', { page: slot.number })"
+      @keydown="onPageKey($event, slot)"
+      @focus="onPageFocus($event, slot)"
     >
       <div :ref="(el) => setHost(slot, el)" class="pv__canvas" />
       <!-- Comment marks: one per thread whose page-pin lands on this page. Drawn inside
@@ -768,6 +938,13 @@ onBeforeUnmount(() => {
   overflow: hidden;
   flex: none;
   margin-inline: auto;
+}
+
+/* 键盘进到这一页时要看得见自己在哪一页。`--focus-ring` 是全站那一个（全站 `:focus-visible`
+   的规则也是它），不另起一套颜色。环画在纸外面、`outline` 不占版面，页框不会跳一下。 */
+.pv__page:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 /* 指位置的时候点的是纸，不是纸上的字：文字层整个让开，否则读者一点就选中一行字。 */

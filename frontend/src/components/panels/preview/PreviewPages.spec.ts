@@ -84,6 +84,36 @@ function zoomBrowserTo(value: number) {
   window.dispatchEvent(new Event('resize'))
 }
 
+/** 在页里摆几行假字，好让键盘那条路有行可走。
+ *
+ *  pdf.js 的文字层是绝对定位摆上去的，happy-dom 量不出位置；这里给每一行一个自己摆的
+ *  框，行与行错开，`linesFrom` 才分得出是几行。摆进 `.pv__canvas` 里，和真组件建文字层
+ *  的位置一致。 */
+function rows(container: Element, number: number, texts: string[], height = 12, gap = 6) {
+  const page = container.querySelector(`[data-page="${number}"]`) as HTMLElement
+  const host = (page.querySelector('.pv__canvas') as HTMLElement) ?? page
+  const layer = document.createElement('div')
+  layer.className = 'pv-text'
+  for (const [i, text] of texts.entries()) {
+    const span = document.createElement('span')
+    span.textContent = text
+    layer.append(span)
+    const top = 40 + i * (height + gap)
+    span.getBoundingClientRect = () =>
+      ({ left: 20, top, width: 60, height, right: 80, bottom: top + height, x: 20, y: top }) as DOMRect
+  }
+  host.append(layer)
+  page.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800, x: 0, y: 0 }) as DOMRect
+  page.scrollIntoView = () => {}
+  return page
+}
+
+/** 按一次键，走的是组件挂在页框上的那个处理。 */
+async function press(page: HTMLElement, key: string, shift = false) {
+  await fireEvent.keyDown(page, { key, shiftKey: shift })
+}
+
 beforeAll(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -626,6 +656,142 @@ describe('页上已有的评论标记', () => {
     expect(mark.tagName).toBe('BUTTON')
     expect(mark.className).not.toContain('pv__pin')
     expect(mark.getAttribute('aria-label')).toBe('评论这一处')
+  })
+})
+
+describe('键盘选字：一行一格', () => {
+  // 浏览器的选区是跨用例留着的：上一条留下的那一段会让「该是空的」那几条看不出真假。
+  beforeEach(() => window.getSelection()?.removeAllRanges())
+
+  /** 把焦点用键盘的方式给到某一页：先来一下 keydown，再让焦点落上去。
+   *  只 `focus()` 会被当成鼠标点进来的（按设计不对第一行动手），所以要这一步。 */
+  async function tabTo(page: HTMLElement) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    await fireEvent.focus(page)
+  }
+
+  async function ready(texts = ['第一行的字', '第二行的字', '第三行的字', '第四行的字']) {
+    const reached = await opened()
+    // 挂载时那次重排的防抖是 200 毫秒，会把页里的东西整块换掉：等它落定再摆字。
+    await new Promise((r) => setTimeout(r, 300))
+    const page = rows(reached.container, 1, texts)
+    return { ...reached, page }
+  }
+
+  it('Tab 进到页里时，第一行被选上——读者按上下键之前就知道自己在哪', async () => {
+    const { page } = await ready()
+    await tabTo(page)
+    expect(window.getSelection()?.toString()).toBe('第一行的字')
+  })
+
+  it('按一下下是下一行，上就回上一行', async () => {
+    const { page } = await ready()
+    await tabTo(page)
+    await press(page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('第二行的字')
+    await press(page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('第三行的字')
+    await press(page, 'ArrowUp')
+    expect(window.getSelection()?.toString()).toBe('第二行的字')
+  })
+
+  it('Shift 加下键是从起点扩到这儿，不是一行一行地换', async () => {
+    const { page } = await ready()
+    await tabTo(page)
+    await press(page, 'ArrowDown', true)
+    expect(window.getSelection()?.toString()).toBe('第一行的字第二行的字')
+    await press(page, 'ArrowDown', true)
+    expect(window.getSelection()?.toString()).toBe('第一行的字第二行的字第三行的字')
+    // 松开 Shift 再按：起点挪到当前这一行，选区收成一行。
+    await press(page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('第四行的字')
+  })
+
+  it('Shift 往上缩也是同一段：方向只是从哪头量', async () => {
+    const { page } = await ready()
+    await tabTo(page)
+    await press(page, 'ArrowDown')
+    await press(page, 'ArrowDown')
+    await press(page, 'ArrowUp', true)
+    expect(window.getSelection()?.toString()).toBe('第二行的字第三行的字')
+  })
+
+  it('回车把选中的那几行交出去，和鼠标松手走同一条出口', async () => {
+    const ui = await ready(['前文重试三次后文', '第二行的字'])
+    await tabTo(ui.page)
+    await press(ui.page, 'ArrowDown', true)
+    await press(ui.page, 'Enter')
+    const emitted = (ui.emitted('quote') ?? []) as unknown[][]
+    expect(emitted).toHaveLength(1)
+    expect(emitted[0]).toEqual([{ text: '前文重试三次后文第二行的字', page: 1 }])
+  })
+
+  it('鼠标点进来的焦点不选第一行：那一下读者正要拖选', async () => {
+    const { page } = await ready()
+    // 不先按键盘，直接把焦点给它——真实浏览器里这是鼠标点上去的样子。
+    await fireEvent.focus(page)
+    expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('还没用键盘进过这一页时，方向键不管（鼠标选字后按方向键该滚页面）', async () => {
+    const { page } = await ready()
+    await press(page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('走到这一页的最后一行，再往下就翻到下一页的第一行', async () => {
+    const ui = await ready()
+    rows(ui.container, 2, ['第二页的头一行', '第二页的第二行'])
+    await tabTo(ui.page)
+    await press(ui.page, 'ArrowDown')
+    await press(ui.page, 'ArrowDown')
+    await press(ui.page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('第四行的字')
+    await press(ui.page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('第二页的头一行')
+  })
+
+  it('页里还没有文字层时按上下键不动作，也不报错', async () => {
+    const ui = await opened()
+    await new Promise((r) => setTimeout(r, 300))
+    const page = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    page.scrollIntoView = () => {}
+    await tabTo(page)
+    await press(page, 'ArrowDown')
+    expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('Escape 放下选中的那一段', async () => {
+    const { page } = await ready()
+    await tabTo(page)
+    await press(page, 'ArrowDown')
+    await press(page, 'Escape')
+    expect(window.getSelection()?.toString()).toBe('')
+  })
+
+  it('页框是可聚焦的、说得出这是第几页', async () => {
+    const { container } = await opened()
+    const page = container.querySelector('[data-page="1"]') as HTMLElement
+    expect(page.getAttribute('tabindex')).toBe('0')
+    expect(page.getAttribute('aria-label')).toBe('第 1 页')
+  })
+
+  it('整份文档在 Tab 顺序里只占一格：两百页不用按两百下 Tab', async () => {
+    const { container } = await opened()
+    const stops = [...container.querySelectorAll('[data-page]')].map((el) => el.getAttribute('tabindex'))
+    expect(stops.filter((t) => t === '0')).toHaveLength(1)
+    expect(stops.filter((t) => t === '-1')).toHaveLength(1)
+  })
+
+  it('键盘走到第二页后，Tab 的那一格跟着挪过去', async () => {
+    const ui = await ready(['一', '二'])
+    rows(ui.container, 2, ['三', '四'])
+    await tabTo(ui.page)
+    await press(ui.page, 'ArrowDown', true)
+    await press(ui.page, 'ArrowDown')
+    await press(ui.page, 'ArrowDown')
+    const stops = [...ui.container.querySelectorAll('[data-page]')].map((el) => el.getAttribute('tabindex'))
+    expect(stops).toEqual(['-1', '0'])
   })
 })
 
