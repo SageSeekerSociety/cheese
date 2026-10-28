@@ -5,8 +5,14 @@
   "loading": "Loading video",
   "locateNeedsPlayer": "Open the video first, then annotate a moment of it",
   "locateTime": "Annotate current timestamp",
+  "mute": "Mute",
   "open": "Open video",
+  "pause": "Pause",
+  "play": "Play",
   "playFailed": "This browser cannot play the video. Download it to watch",
+  "rate": "Playback speed {rate}×",
   "retry": "Reload",
-  "timePoint": "Timestamp {time}"
+  "seek": "Playback position",
+  "timePoint": "Timestamp {time}",
+  "unmute": "Unmute"
 }
