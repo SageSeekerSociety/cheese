@@ -135,11 +135,18 @@ const MAX_ZOOM = 4
  *  四倍的一页在三倍屏上会越过它，所以位图精度在这里封顶，宁可略糊。 */
 const MAX_CANVAS_PIXELS = 16_000_000
 
-/** 一页按面板宽度铺满，上限 2 倍是为了不在宽屏上把一页放得比纸还大；再乘上读者捏出来的倍数。 */
+/** 一页按面板宽度铺满，但**不放到 100% 以上**；再乘上读者捏出来的倍数。
+ *
+ *  原来这里封在 2 倍：面板拉到 1200 宽时一页铺到 1168px，量出来的正文 33px 一个
+ *  字——那是把「看大图」当成了默认，不是读文档。封在 100% 是照 96dpi 算的：PDF 的
+ *  点是 1/72 英寸，屏幕一像素是 1/96 英寸，所以 100% 缩放是 96/72 ≈ 1.33 倍。
+ *  宽出来的地方留给纸两边的空白；这块空白在预览格本来就是这个颜色，不花。 */
+const HUNDRED_PERCENT = 96 / 72
+
 function scaleOf(base: { width: number }): number {
   const width = container.value?.clientWidth ?? 0
   if (!width || !base.width) return zoom.value
-  return Math.min((width - 2 * gutter.value) / base.width, 2) * zoom.value
+  return Math.min((width - 2 * gutter.value) / base.width, HUNDRED_PERCENT) * zoom.value
 }
 
 /** 按现在的比例摆好这一页的框。已经画好的画布和文字层跟着拉伸（画布铺满页框，文字层的
