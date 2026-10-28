@@ -48,6 +48,9 @@ const SURFACES = [
   { file: 'components/room/RoomNotice.vue', selector: '.room-happening' },
   { file: 'views/ProjectDocsView.vue', selector: '.memory-card' },
   { file: 'views/ProjectDocsView.vue', selector: '.weekly-card' },
+  // 现场的一页：一条记录里可能摊着一整段命令输出或思考正文，一页一百多条，屏幕外的
+  // 那些不该排版也不该绘制。
+  { file: 'components/panels/SiteRecordRow.vue', selector: '.record-row' },
 ]
 
 describe('离屏跳过的块都带 auto 估计和测量帧后门', () => {
