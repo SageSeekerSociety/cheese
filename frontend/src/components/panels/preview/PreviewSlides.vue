@@ -116,7 +116,9 @@ function presentStops(): HTMLElement[] {
   if (root.value) stops.push(root.value)
   const bar = root.value?.querySelector('.slides__bar--present')
   if (bar) {
-    for (const el of bar.querySelectorAll<HTMLElement>('button, input')) if (!el.disabled) stops.push(el)
+    for (const el of bar.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')) {
+      if (!el.disabled) stops.push(el)
+    }
   }
   if (exitButton.value) stops.push(exitButton.value)
   return stops
