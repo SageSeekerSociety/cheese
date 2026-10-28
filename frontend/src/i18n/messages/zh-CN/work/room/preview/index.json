@@ -113,5 +113,9 @@
   "pendingSummaryPlaceholder": "可选：补充总体修改说明，或直接发送",
   "sendWithNotes": "发送（含 {count} 条批注）",
   "pendingKeepGoing": "可继续在画布中选择多处，合并为一条消息提交修改",
-  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次"
+  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次",
+  "pageErrors": "{count} 个错误",
+  "pageErrorAt": "脚本执行处",
+  "annotateErrors": "将 {count} 条报错附入批注",
+  "errorsIntro": "页面报了这几个错，看看是不是它们："
 }

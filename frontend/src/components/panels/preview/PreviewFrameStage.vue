@@ -28,13 +28,8 @@ import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
-import {
-  defaultViewport,
-  fitScale,
-  type PreviewViewport,
-  VIEWPORT_WIDTH,
-} from '@/lib/previewViewport'
 import { previewStage } from '@/lib/previewStage'
+import { defaultViewport, fitScale, type PreviewViewport, VIEWPORT_WIDTH } from '@/lib/previewViewport'
 
 const props = defineProps<{
   topicId: string | null
@@ -85,6 +80,8 @@ const emit = defineEmits<{
   /** 地址栏里敲了一个地址。 */
   navigate: [path: string]
   wake: []
+  /** 把页面抛的这几条错附进一处批注：宿主开定位条并预填这几行。 */
+  'annotate-errors': [text: string]
 }>()
 
 // 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
@@ -197,6 +194,17 @@ const framesClass = computed(() => ({
   'preview-frames--asleep': !!sleepKind.value && !props.appSnapshot,
   'preview-frames--covered': !!sleepKind.value && !!props.appSnapshot,
 }))
+
+/** 页面自己抛的错（帧的桥收着报回来）。 */
+const pageErrors = computed(() => props.displayedFrame?.pageErrors ?? [])
+
+/** 「将这几条附入批注」：拼成一段给芝士的话，交给宿主开定位条。 */
+function annotateErrors() {
+  const lines = pageErrors.value.map(
+    (item) => `${item.source ? `${item.source}${item.line ? ':' + item.line : ''} ` : ''}${item.message}`
+  )
+  emit('annotate-errors', [t('work.room.preview.errorsIntro'), ...lines].join('\n'))
+}
 
 /** 链点开后最下面那几行：资源、实例、读到的版本、就绪与否。平时不读，要查时还在。 */
 const details = computed(() => {
@@ -326,6 +334,32 @@ watch(
         @reload="reload"
         @navigate="emit('navigate', $event)"
       />
+      <!-- 页面自己抛的错：那颗「N 个错误」和条上别的按钮并排。以前这一档只认「应用说它
+           ready / failed」，页面抛了异常而应用仍报就绪时，读者看到的是照常显示的页面加
+           三个绿勾，点提交却没反应。 -->
+      <v-menu v-if="pageErrors.length && !showSource" location="bottom end" :close-on-content-click="false">
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="preview-errors"
+            data-testid="preview-errors"
+            :title="t('work.room.preview.pageErrors', { count: pageErrors.length })"
+          >
+            <v-icon size="14" aria-hidden="true">mdi-alert-circle-outline</v-icon>
+            {{ t('work.room.preview.pageErrors', { count: pageErrors.length }) }}
+          </button>
+        </template>
+        <div class="preview-errors__panel" role="status" data-testid="preview-errors-detail">
+          <div v-for="(item, index) in pageErrors" :key="index" class="preview-errors__row">
+            {{ item.source ? `${item.source}${item.line ? ':' + item.line : ''}` : t('work.room.preview.pageErrorAt') }}
+            <div class="preview-errors__message">{{ item.message }}</div>
+          </div>
+          <BaseButton kind="primary" size="sm" data-testid="preview-errors-annotate" @click="annotateErrors">
+            {{ t('work.room.preview.annotateErrors', { count: pageErrors.length }) }}
+          </BaseButton>
+        </div>
+      </v-menu>
       <template v-if="compact">
         <v-menu v-if="actions.length" location="bottom end">
           <template #activator="{ props: menuProps }">
@@ -423,7 +457,7 @@ watch(
       language="xml"
       wrap
     />
-    <div ref="framesRef" v-show="!(showSource && canShowSource)" class="preview-slot">
+    <div v-show="!(showSource && canShowSource)" ref="framesRef" class="preview-slot">
       <div
         :data-viewport="viewport"
         :data-scale="scale"
@@ -435,46 +469,46 @@ watch(
           { 'preview-frames--fixed': !!tierWidth, 'preview-frames--scaled': scale < 1 },
         ]"
       >
-      <template v-if="frames">
+        <template v-if="frames">
+          <iframe
+            v-for="frame in frames"
+            :key="frame.id"
+            :name="frame.name"
+            class="preview-frame"
+            :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
+            :inert="!!sleepKind || frame.id !== displayedFrame?.id"
+            :aria-hidden="frame.id !== displayedFrame?.id"
+            :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
+            :title="t('work.room.preview.frameTitle')"
+            :sandbox="sandboxFor(frame.mime)"
+            @load="emit('frame-load', frame.id, $event)"
+            @error="emit('frame-error', frame.id, $event)"
+          />
+        </template>
         <iframe
-          v-for="frame in frames"
-          :key="frame.id"
-          :name="frame.name"
+          v-else
+          :name="frameName"
           class="preview-frame"
-          :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
-          :inert="!!sleepKind || frame.id !== displayedFrame?.id"
-          :aria-hidden="frame.id !== displayedFrame?.id"
-          :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
           :title="t('work.room.preview.frameTitle')"
-          :sandbox="sandboxFor(frame.mime)"
-          @load="emit('frame-load', frame.id, $event)"
-          @error="emit('frame-error', frame.id, $event)"
+          :sandbox="DEFAULT_SANDBOX"
         />
-      </template>
-      <iframe
-        v-else
-        :name="frameName"
-        class="preview-frame"
-        :title="t('work.room.preview.frameTitle')"
-        :sandbox="DEFAULT_SANDBOX"
-      />
-      <PreviewAppSleep
-        v-if="sleepKind"
-        :kind="sleepKind"
-        :snapshot-html="appSnapshot?.html ?? null"
-        :snapshot-age="appSnapshot?.age ?? ''"
-        :bare="!appSnapshot && !displayedFrame"
-        :steps="wakeSteps ?? null"
-        :wake-error="wakeError ?? ''"
-        :picking="pickOn"
-        :agent-name="agentName"
-        @wake="emit('wake')"
-      />
-      <PreviewRegionPick
-        v-if="pickTarget === 'region' && pickOn"
-        :scale="scale"
-        @pick="emit('pick-region', $event)"
-      />
+        <PreviewAppSleep
+          v-if="sleepKind"
+          :kind="sleepKind"
+          :snapshot-html="appSnapshot?.html ?? null"
+          :snapshot-age="appSnapshot?.age ?? ''"
+          :bare="!appSnapshot && !displayedFrame"
+          :steps="wakeSteps ?? null"
+          :wake-error="wakeError ?? ''"
+          :picking="pickOn"
+          :agent-name="agentName"
+          @wake="emit('wake')"
+        />
+        <PreviewRegionPick
+          v-if="pickTarget === 'region' && pickOn"
+          :scale="scale"
+          @pick="emit('pick-region', $event)"
+        />
       </div>
     </div>
   </div>
@@ -576,6 +610,40 @@ button.preview-viewport__btn.preview-viewport__btn--active {
 .preview-frames--fixed {
   position: absolute;
   top: 0;
+}
+/* 页面报错那颗：条上唯一一颗会变红的按钮，和「更新/失败」那几段的颜色同一档。 */
+button.preview-errors {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--danger-ink);
+  background: var(--danger-wash);
+  border-radius: var(--radius-md);
+}
+.preview-errors__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, 90vw);
+  padding: 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.preview-errors__row {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.preview-errors__message {
+  color: var(--text);
 }
 /* 缩小的是**页面**，不是盖在页面上那几句话：休眠卡、唤醒进度、圈选遮罩都按原尺寸画，
    否则手机上点「唤醒」的是一颗缩到一半的按钮。卡自己也别按缩放比重排位置。 */
