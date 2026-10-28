@@ -97,5 +97,10 @@
   "webRegion": "Boxed a region",
   "webView": "Web view",
   "webViewTitle": "Laid out for the screen; elements carry addressable numbers",
-  "imageRegionWhere": "Original pixels x={x}, y={y}, w={w}, h={h}"
+  "imageRegionWhere": "Original pixels x={x}, y={y}, w={w}, h={h}",
+  "codeLine": "line {line}",
+  "codeLines": "lines {start}–{end}",
+  "codeWrap": "Wrap lines",
+  "codeNoWrap": "Don't wrap",
+  "codeView": "Code"
 }

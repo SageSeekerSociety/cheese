@@ -9,7 +9,7 @@
   "bashStart": "启动后台任务",
   "bashWrite": "向任务输入",
   "chatEdit": "修改消息",
-  "chatSend": "发布消息",
+  "chatSend": "发送消息",
   "cheeseAcceptRequest": "提交审阅",
   "cheeseApp": "处理小程序",
   "cheeseAppGet": "读小程序",

@@ -151,6 +151,7 @@ const {
   onCell,
   onSheetRange,
   onMarkdownQuote,
+  onCodeLines,
   onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
@@ -519,6 +520,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @cell="onCell"
       @sheet-range="onSheetRange"
       @markdown-quote="onMarkdownQuote"
+      @code-lines="onCodeLines"
       @pin="pageLocator.onPin"
       @dropped="clearLocator"
     />

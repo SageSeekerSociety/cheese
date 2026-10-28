@@ -1,6 +1,7 @@
-/** 读某一版的字节不走 `request()`，所以它自己要先把快过期的 token 换掉：打开一份文档就会
- *  自动去比两版，标签页放了一阵再打开，旧 token 已经不认了（这里回答 401），提示条就会说
- *  「比对失败」——读者没做错什么。下载那一版也一样，锚点还得挂进文档才点得动。 */
+/** 取某一版的字节、下载某一版都不走 `request()`，所以它们自己要先把快过期的 token
+ *  换掉：页面放了一阵再滚到一张表格卡，旧 token 已经不认了，卡片会静默地少掉
+ *  「改了 N 格」；预览旁的提示条会说「比对失败」，读者没做错什么。下载那一步同理，
+ *  版本列表是打开面板时取的；锚点还得挂进文档才点得动。 */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./http', async (importOriginal) => {
@@ -14,23 +15,29 @@ vi.mock('./http', async (importOriginal) => {
   }
 })
 
-import { downloadRoomFileRevision, roomFileRevisionBytes } from './roomFileRevisions'
+import { downloadRoomFileRevision, type RoomFileRevision, roomFileRevisionBytes } from './roomFileRevisions'
 
 function jwtExpiringIn(seconds: number): string {
   const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + seconds }))
   return `h.${payload}.s`
 }
 
-beforeEach(() => {
+/** 换成新令牌的那一次才答应；拿着旧令牌的请求一律 401。 */
+function respondToFreshOnly(body: () => BodyInit): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (_url: string, init?: RequestInit) =>
       (init?.headers as Record<string, string>).Authorization === 'Bearer fresh'
-        ? new Response(new Blob(['旧正文']), { status: 200 })
+        ? new Response(body(), { status: 200 })
         : new Response('{}', { status: 401 })
     )
   )
+}
+
+beforeEach(() => {
+  respondToFreshOnly(() => new Blob(['旧正文']))
 })
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -43,9 +50,29 @@ describe('roomFileRevisionBytes', () => {
     const bytes = await roomFileRevisionBytes('room', 'r1')
     expect(new TextDecoder().decode(bytes)).toBe('旧正文')
   })
+
+  it('renews a token about to expire before it asks for a revision', async () => {
+    localStorage.setItem('accessToken', jwtExpiringIn(10))
+    respondToFreshOnly(() => new Uint8Array([1, 2, 3]))
+
+    await expect(roomFileRevisionBytes('room', 'rev-1')).resolves.toBeInstanceOf(ArrayBuffer)
+  })
 })
 
 describe('downloadRoomFileRevision', () => {
+  it('renews a token about to expire before it downloads a revision', async () => {
+    localStorage.setItem('accessToken', jwtExpiringIn(10))
+    respondToFreshOnly(() => new Blob(['v2']))
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:revision')
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+
+    const revision = { id: 'rev-1', path: 'docs/a.docx', seq: 2 } as RoomFileRevision
+    await downloadRoomFileRevision('room', revision)
+
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1)
+    expect(click).toHaveBeenCalled()
+  })
+
   it('attaches the anchor to the document before clicking it', async () => {
     localStorage.setItem('accessToken', jwtExpiringIn(10))
     const clicked: { attached: boolean; download: string }[] = []

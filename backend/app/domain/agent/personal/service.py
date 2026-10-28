@@ -451,8 +451,10 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             step["args"] = step["args"][: int(data.get("at") or 0)] + str(
                 data.get("text") or ""
             )
-        elif event == "tool_done" and data.get("call") in by_call and data.get("shown"):
-            by_call[data["call"]]["shown"] = str(data["shown"])
+        elif event == "tool_done" and data.get("call") in by_call:
+            for named in ("shown", "effect"):
+                if data.get(named):
+                    by_call[data["call"]][named] = str(data[named])
         elif event == "tool_failed" and data.get("call") in by_call:
             by_call[data["call"]]["failed"] = str(data.get("text") or "")
         elif event == "change":
@@ -592,7 +594,11 @@ class Answers:
             await self._consumptions.publish(
                 consumption,
                 "tool_done",
-                {"call": item.call, **({"shown": item.shown} if item.shown else {})},
+                {
+                    "call": item.call,
+                    **({"shown": item.shown} if item.shown else {}),
+                    **({"effect": item.effect} if item.effect else {}),
+                },
             )
         elif isinstance(item, Thinking):
             # That it reasons, never what: the page shows 思考中.

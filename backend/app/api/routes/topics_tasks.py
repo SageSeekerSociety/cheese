@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
@@ -60,7 +59,7 @@ from app.api.topics_deps import (
     BlockRepository,
     ProjectRepository,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core.errors import (
     ConflictError,
@@ -436,26 +435,18 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/tasks")
 async def create_task(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.tasks, at="topic_id")],
     body: TaskCreateIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """新建任务：a task owned by whoever creates it, empty until they say what
     it is for. Its agent starts on the owner's first message; its owner
     reviews its changes (`TaskService.default_reviewer`)."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    place, actor = at.place, at.actor
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    await require_role(db, actor, place.project_id, Permission.tasks)
     task = await task_dispatch.create_task(
         db,
         room_id=place.room_id,
