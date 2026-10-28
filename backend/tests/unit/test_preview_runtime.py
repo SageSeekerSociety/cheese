@@ -735,7 +735,6 @@ assert.equal(picked.selector.indexOf('body'), 0,
     assert result.returncode == 0, result.stderr
 
 
-
 def test_bridge_collects_page_errors_and_reports_them():
     """页面自己抛的错报回宿主。以前宿主只认「应用说它 ready / failed」：页面里一个未捕获的
     异常它看不见，读者看到的是照常显示的页面加三个绿勾，点提交却没反应。

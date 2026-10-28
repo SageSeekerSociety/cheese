@@ -89,7 +89,12 @@ function tunnelSegment(input: ChainInput, reachable: boolean): ChainSegment {
 function appSegment(input: ChainInput, reachable: boolean): ChainSegment {
   const { frame } = input
   if (!reachable) return { key: 'app', state: 'wait', reason: UNKNOWN }
-  if (input.live && !input.appAnswering) return { key: 'app', state: 'down', reason: APP_SILENT }
+  if (input.live && !input.appAnswering) {
+    // 这一句里有 `{agent}`：通道那一段说的是谁的电脑，应用这一段也要说同一个人的电脑
+    // （「电脑连着，但应用没有应答」里那个「电脑」是哪一台）。漏传就渲染成一个光秃秃的
+    // 「的电脑」，所以两边一起给。
+    return { key: 'app', state: 'down', reason: APP_SILENT, params: { agent: input.agentName } }
+  }
   if (frame?.connection === 'gone') return { key: 'app', state: 'wait', reason: 'work.room.preview.chain.appRestarted' }
   if (frame?.runtime === 'failed' || frame?.runtimeError) {
     return { key: 'app', state: 'down', reason: PAGE_ERROR, params: { error: frame.runtimeError || '' } }

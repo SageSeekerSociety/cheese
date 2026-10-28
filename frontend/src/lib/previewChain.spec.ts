@@ -72,3 +72,15 @@ it('a page error and a restart are told apart from a dead app', () => {
     reason: 'work.room.preview.chain.appReconnecting',
   })
 })
+
+it('every reason that carries {agent} gets one, so no sentence renders a bare 的', () => {
+  // `chain.json` 里带 `{agent}` 的几句：造这一段的时候必须一起给，不然渲染出来是
+  // 一个光秃秃的「的电脑」。这条钉的是「给了占位符就得给参数」，不是某一句的字面。
+  const agentKeys = ['tunnelDown', 'appSilent']
+  const silent = previewChain({ ...base, appAnswering: false })[2]
+  expect(silent.reason).toBe('work.room.preview.chain.appSilent')
+  expect(silent.params?.agent).toBe('小 C')
+  const down = previewChain({ ...base, tunnelUp: false, appAnswering: false })
+  expect(down[1].params?.agent).toBe('小 C')
+  expect(agentKeys).toContain(silent.reason.split('.').pop())
+})

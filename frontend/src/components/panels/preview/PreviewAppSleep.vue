@@ -195,9 +195,11 @@ watch([() => props.steps, where, () => props.snapshotHtml], () => void nextTick(
 }
 /* 放不下、正在滚的时候，底部淡出一小道：读起来像「下面还有」，而不是字被切了。用 `mask`
    走颜色本身，不铺一层假白——卡底下的快照是压暗的，白色会露馅。是不是放不下由
-   `overflowing` 量出来（CSS 自己判不出来），放得下就一点痕迹都不留。 */
+   `overflowing` 量出来（CSS 自己判不出来），放得下就一点痕迹都不留。
+   mask 里那一段要的是**不透明**，不是某个具体颜色：照仓库其他几处写 `var(--ink)`
+   （见 `landing.css`、`FileBytesPreview.vue`），不写字面色，写死一个值就跟不上深色主题。 */
 .app-sleep__scroll--overflowing {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 14px), transparent);
 }
 .app-sleep__where {
   max-width: 100%;
