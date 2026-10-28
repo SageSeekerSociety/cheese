@@ -62,14 +62,41 @@ function plain(format: string): string {
   return out
 }
 
+/** 格式串里「真的是格式码」的那些字符：引号字面量、转义和方括号段都剔掉。判是不是日期
+ *  要在这一份上判——`"USD"` 里的 `d` 是币种名，不是「日」。 */
+function codesOnly(format: string): string {
+  let out = ''
+  for (let i = 0; i < format.length; i += 1) {
+    const ch = format[i]
+    if (ch === '"') {
+      const end = format.indexOf('"', i + 1)
+      i = end === -1 ? format.length : end
+      continue
+    }
+    if (ch === '\\') {
+      i += 1
+      continue
+    }
+    if (ch === '[') {
+      const end = format.indexOf(']', i)
+      i = end === -1 ? format.length : end
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+
 /** 格式串 → 要的那几件；不是我们认得的数字格式就给 null。 */
 function shapeOf(format: string): Shape | null {
   const text = plain(format)
   if (!text) return null
   const sections = text.split(';')
   const body = sections[0] ?? ''
-  // 日期、时间、文本、通用（`General`）都不是这里管的事。
-  if (/[ymdhs]/i.test(body.replace(/\[[^\]]*\]/g, ''))) return null
+  // 日期、时间、文本、通用（`General`）都不是这里管的事。判「是不是日期」要在没有引号
+  // 字面量的那一份上判：`#,##0.00 "USD"` 的 `D` 是币种名里的一个字母，不是「日」——
+  // 拿带字面量的串去判，一整类带货币名的格式会被当成日期退回裸数。
+  if (/[ymdhs]/i.test(codesOnly(format))) return null
   if (body.includes('@')) return null
   // 科学计数法（`0.00E+00`）和分数（`# ?/?`）：我们排不出它们真正的样子，
   // 按普通小数排会把 1.2E+05 写成「1.20E+05」这种既不是原样也不是科学计数的东西。
