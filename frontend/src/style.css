@@ -210,6 +210,18 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  /* ---- Transparency checker ----
+     Behind a picture whose format can carry an alpha channel. A white ground makes
+     an empty area read as white paint, so the two squares say "nothing here".
+     These do follow the theme: on a light page the checker is light grey on white,
+     on a dark one it is two greys. */
+  --checker-a: #e9eaec;
+  --checker-b: #fff;
+  /* The crop marquee: white on the dimmed-out surround, in both themes — it sits on top
+     of the picture itself, not on a themed surface. */
+  --crop-ink: #fff;
+  --crop-dim: rgba(25, 26, 28, 0.55);
+
   /* ---- Presentation ground ----
      A deck shown full-screen takes the whole screen: unlike the picture viewer,
      nothing behind it should read through. Same dark in both themes for the same
@@ -565,6 +577,10 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  --checker-a: #2a2d33;
+  --checker-b: #1b1d20;
+  --crop-ink: #fff;
+  --crop-dim: rgba(25, 26, 28, 0.55);
   --present-ground: #0d0e10;
   --present-ink: #fff;
   --present-muted: rgba(255, 255, 255, 0.72);

@@ -169,6 +169,15 @@ export function imageMimeOf(suffix: string): string {
   return IMAGE_MIME[suffix] ?? 'image/jpeg'
 }
 
+/** 这个格式允许带透明通道没有。PNG / WebP / GIF 都可能，JPEG 不会。
+ *
+ *  允许不等于这一张真有透明——PNG 也能整张不透明。所以只用来铺棋盘格：底下的图要是
+ *  实的，格纹被盖住看不见；真有透明的地方才露出来。 */
+const MAY_HAVE_ALPHA = new Set(['png', 'webp', 'gif'])
+export function imageMayHaveAlpha(suffix: string): boolean {
+  return MAY_HAVE_ALPHA.has(suffix.toLowerCase())
+}
+
 /** 预览面板自己显示得出这个文件吗。
  *
  *  一枚 `<&路径>` chip 只是一个路径，不带它在哪个库；要决定把它开在哪一格，先得

@@ -139,5 +139,8 @@
   "modeEditBlocked": "这一份不能就地改；改用批注交给芝士",
   "pageNoText": "这一页是图片，选不中文字；指位置可以",
   "zoomIn": "放大",
-  "zoomOut": "缩小"
+  "zoomOut": "缩小",
+  "imageFailed": "这张图没能打开",
+  "imageReading": "正在读取这张图",
+  "retry": "重试"
 }
