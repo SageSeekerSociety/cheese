@@ -29,6 +29,7 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
+import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
@@ -128,6 +129,11 @@ provide(
       : null
   )
 )
+// 「待发批注」：右栏预览往里攒，对话输入框上方逐条列出来，一起发。整个话题共一份。
+// 没有对话栏的场合（资料库、产物页那些面）预览退回自己面板底下那条。
+const pendingNotes = usePendingNotes((content) => chatColumn.value?.say(content) ?? false)
+provide(PENDING_NOTES, pendingNotes)
+
 const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
 const { freezeChatWidth, startPaneDrag } = panes
 

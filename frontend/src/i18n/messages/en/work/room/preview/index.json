@@ -104,4 +104,14 @@
   "codeLines": "lines {start}–{end}",
   "codeWrap": "Wrap lines",
   "codeNoWrap": "Don't wrap",
-  "codeView": "Code"}
+  "codeView": "Code",
+  "pendingCount": "{count} queued note(s)",
+  "pendingWhy": "Send them together so Cheese edits once, not once per note",
+  "pendingToCheese": "For Cheese",
+  "pendingRemove": "Remove this note",
+  "pendingCollapsedHint": "Open to see where each one points and what it asks",
+  "pendingSummaryPlaceholder": "Optional: an overall instruction, or just send",
+  "sendWithNotes": "Send ({count} note(s))",
+  "pendingKeepGoing": "Keep pointing at more spots; they go out as one message",
+  "sendQueuedFailed": "That did not send; the notes are still waiting — try again in a moment"
+}

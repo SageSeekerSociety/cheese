@@ -104,4 +104,14 @@
   "codeLines": "第 {start}–{end} 行",
   "codeWrap": "自动换行",
   "codeNoWrap": "不换行",
-  "codeView": "代码"}
+  "codeView": "代码",
+  "pendingCount": "{count} 条待发批注",
+  "pendingWhy": "合并多处一次交由芝士修改，避免逐条打断产生多个版本",
+  "pendingToCheese": "待发给任务芝士",
+  "pendingRemove": "移除此条批注",
+  "pendingCollapsedHint": "点开看这几条分别指在哪、要改什么",
+  "pendingSummaryPlaceholder": "可选：补充总体修改说明，或直接发送",
+  "sendWithNotes": "发送（含 {count} 条批注）",
+  "pendingKeepGoing": "可继续在画布中选择多处，合并为一条消息提交修改",
+  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次"
+}

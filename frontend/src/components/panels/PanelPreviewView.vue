@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -53,6 +53,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { PENDING_NOTES } from '@/lib/pendingNotes'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -155,7 +156,8 @@ const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(prop
 const {
   locator,
   locatorNote,
-  queued,
+  queuedCount,
+  pendingElsewhere,
   annotateError,
   imageRegion,
   pageLocator,
@@ -180,6 +182,22 @@ const {
   onPickMode: (on) => emit('pick-mode', on),
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
+})
+
+/** 攒在待发篮里、还没发出去的那几处：正文里在那一句话末尾挂一颗序号，和篮里那一行
+ *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
+ *  顺序数，和 tray 上的编号同一个来源。 */
+const sharedPending = inject(PENDING_NOTES, null)
+/** 只取**这一份文件**上攒着的那几条：篮是整间房一份，换一份文件时它不清空（读者很可能
+ *  在几份文件上各指几处再一起发），而按字找位置只在这一份正文里找——拿着别的文件上的
+ *  一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧相同的那句话上。 */
+const pendingPins = computed(() => {
+  const here = props.previewFile?.path ?? ''
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'text-range' && note.path === here
+      ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
+      : []
+  )
 })
 
 // ---- 定位框弹在哪 ----
@@ -555,6 +573,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :anchors="threadAnchors"
       :page-anchors="pageAnchors"
       :sheet-anchors="sheetAnchors"
+      :pins="pendingPins"
       :live-edit="props.liveEdit"
       :active-anchor="focusedThread"
       :named-tab="!!path"
@@ -663,7 +682,8 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :queued-count="queued.length"
+      :queued-count="queuedCount"
+      :pending-elsewhere="pendingElsewhere"
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"

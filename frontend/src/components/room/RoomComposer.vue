@@ -21,7 +21,7 @@ import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { RefNames } from '../../lib/refChip'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
@@ -38,6 +38,7 @@ import {
 } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
+import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -48,6 +49,7 @@ import ComposerSummon from './ComposerSummon.vue'
 import ComposerViewing from './ComposerViewing.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import MentionMenu from './MentionMenu.vue'
+import PendingNotesTray from './PendingNotesTray.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -111,6 +113,20 @@ const emit = defineEmits<{
 
 /** 正文。存在哪、谁清它、怎么跨刷新，全在房间那一层。 */
 const draft = defineModel<string>({ required: true })
+
+// 攒着的那几处批注（话题页注入的，见 `lib/pendingNotes`）。有它时输入框上方逐条列出来，
+// 发送键写清这一下带几条；没有这个（私聊、别处的输入框）就照旧。
+const pending = inject(PENDING_NOTES, null)
+/** 篮里攒着几条（含只留评论的那种，托盘上要列）。 */
+const pendingCount = computed(() => pending?.notes.value.length ?? 0)
+/** 这一下按发送键真的会带走几条批注：要满足两条——去处是交给芝士的（只留评论的不经
+ *  对话发），且没带附件（带附件时走的是附件 + 正文那条路，不含这一批）。不满足时发送
+ *  键就不写「含 N 条批注」，写了就是承诺它做不到的事。
+ *
+ *  「带附件时不带这一批」这条规矩**只**写在下面这一行；旁边 `sendDraft` 判批量时用的
+ *  就是它，不再另判一次附件——两处各写一遍的话，改一处漏一处就会一边说带得走、一边
+ *  又不带。 */
+const sendableCount = computed(() => (props.atts.length ? 0 : countSendable(pending?.notes.value ?? [])))
 /** 光标在正文里的位置（第几个字符前面）。 */
 const caret = ref(draft.value.length)
 
@@ -495,6 +511,24 @@ function onComposerKey(e: KeyboardEvent) {
 // 是一条谁也没 @ 的消息，芝士却动了。
 function sendDraft(opts?: { summon?: boolean }) {
   if (props.attsUploading) return
+  // 攒着待发批注时，这一下发的就是那一批：输入框里的字当作「总体说明」并进同一条消息，
+  // 而不是先发一条空话再发那批（原型里发送键写的就是「发送（含 N 条批注）」）。
+  if (sendableCount.value > 0) {
+    const summary = expandMentions(draft.value)
+    if (pending?.send(summary)) {
+      draft.value = ''
+      // 引用条和正文一样，是这一条消息带着的东西：这一批发出去就算用掉了。走
+      // `emit('send')` 那条老路时由 `useChatComposer` 清（它调 `clearDraftQuote`），
+      // 这条捷径绕过了它——不清的话，选着的那一处会搭在下一条消息上。
+      emit('clear-quote')
+      return
+    }
+    // 没发出去（对话栏那一刻收不下）：这一批留着，输入框里的字也留着，按原样退回去。
+    // 不往下走老路——那颗键写的是「发送（含 N 条批注）」，只把正文发出去、把这一批留在
+    // 原地，读者会以为整批都发走了。失败那句话说在托盘上（`pending.failed`，三个发送入口
+    // 共用一条），所以这里不必再报一次。
+    return
+  }
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
   emit('send', { content, summon: summons(content) })
@@ -535,8 +569,8 @@ function onReminderSet(at: Date) {
   toast.success(t('work.room.reminder.set', { when }))
 }
 
-// 发送键亮不亮：有字，或者有东西跟着走。
-const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0)
+// 发送键亮不亮：有字、有东西跟着走，或者攒着待发批注（那一下发的是那一批）。
+const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0 || pendingCount.value > 0)
 
 defineExpose({
   /** @ 完人、点完按钮、起手草稿写完之后要把光标还回来——这是最烦人的一处。 */
@@ -619,6 +653,9 @@ defineExpose({
         <slot name="strip" />
       </div>
     </Transition>
+    <!-- 攒着的待发批注逐条列在输入框上方：加了几处、分别是哪一处、要改什么，一眼看得全；
+         一次发出去，芝士一轮改完。 -->
+    <PendingNotesTray class="composer-pending" />
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
@@ -642,7 +679,7 @@ defineExpose({
         v-model:caret="caret"
         class="composer-input"
         :names="chipNames"
-        :placeholder="hint"
+        :placeholder="sendableCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : hint"
         :label="hint"
         :title="keysTitle"
         @keydown="onComposerKey"
@@ -654,6 +691,7 @@ defineExpose({
         :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
+        :pending-count="sendableCount"
         :show-image-picker="!mdAndUp"
         :enter-sends="enterSends"
         :can-checklist="!!postChecklist"
@@ -718,6 +756,12 @@ defineExpose({
      12px 就是那两个类本来给的值。
      手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+/* 待发篮和输入框之间那一道缝：`.composer` 是纯块级（没有 gap），不加这一条两块的
+   描边会贴在一起，看着像一个盒子里挤了两块东西。只给篮子加，别动 `.composer`——
+   上面那条提示条是贴着输入框圆角顶的，拉开缝那对圆角就不成立了。 */
+.composer-pending {
+  margin-bottom: 8px;
 }
 /* 输入框上方的提示条：贴在盒子顶上的一片，安静的底。同一时刻只有一条（模板里是
    v-if 链），所以它们用同一种样子——语音没成、长文转附件、@ 了频道外的人。 */
