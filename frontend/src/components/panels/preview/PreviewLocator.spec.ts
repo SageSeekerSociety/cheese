@@ -67,6 +67,30 @@ it('去处里有「问个人芝士」：选中它以后发送走私聊那一路�
   expect(ui.emitted().comment).toBeUndefined()
 })
 
+it('篮里有待发批注时切到私聊：主按钮不再写「全部发送」，那一下只发当前这一处', async () => {
+  const props = {
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: true,
+    queuedCount: 2,
+  }
+  const ui = render(PreviewLocator, { props, global: { stubs } })
+  const primary = () => [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.includes('发送'))!
+  // 去处是芝士时，主按钮把篮里那几条也算上。
+  expect(primary().textContent).toContain('全部发送（3）')
+
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  // 私下问只发当前这一处、篮里那两条原地不动——还写「全部发送（3）」就是骗人。
+  expect(primary().textContent?.trim()).toBe('发送')
+  expect(primary().textContent).not.toContain('全部发送')
+  // 切回芝士又算上了。
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-agent'))
+  expect(primary().textContent).toContain('全部发送（3）')
+})
+
 it('问不了个人芝士时那一项不列出来：留着一条按下去没反应的项比不摆更糟', async () => {
   const ui = render(PreviewLocator, {
     props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },

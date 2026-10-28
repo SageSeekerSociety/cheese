@@ -9,6 +9,7 @@
  * （`usePreviewImageRegion` 要一份核过字节的快照），而这一条要证明的只是「框完之后
  * 定位器把这一块交给了 `quote` 出口」——只喂 props 的叶子测试对没接线的代码同样绿。
  */
+import type { PreviewModeApi } from '@/composables/panelPreview/previewMode'
 import type { RasterSelection } from './designRegion'
 
 import { ref } from 'vue'
@@ -41,7 +42,7 @@ const identity = {
   version: 'v8',
 }
 
-function mount(submitQuestion?: (request: unknown) => boolean) {
+function mount(submitQuestion?: (request: unknown) => boolean, mode?: PreviewModeApi | null) {
   const onLocate = vi.fn()
   const locator = usePreviewLocator(
     {
@@ -65,7 +66,14 @@ function mount(submitQuestion?: (request: unknown) => boolean) {
       docRendererMissing: false,
       isImageArtifact: true,
     } as never,
-    { onLocate, onAskPersonal: vi.fn(), onPickMode: vi.fn(), snapshot: async () => null, clearMark: vi.fn() }
+    {
+      mode: mode ?? null,
+      onLocate,
+      onAskPersonal: vi.fn(),
+      onPickMode: vi.fn(),
+      snapshot: async () => null,
+      clearMark: vi.fn(),
+    }
   )
   return { locator, onLocate }
 }
@@ -133,4 +141,23 @@ it('评论栏里留一条评论时也给得出锚点，不是让它挂成「这�
     task_id: 'task',
     natural_width: 1024,
   })
+})
+
+it('「改」那一段里框选什么都不出：宿主递进来的模式真的管到了这一层', async () => {
+  // 宿主是在同一个 setup 里 `provide` 的，`inject` 只往祖先找——照那样写这一层永远读到
+  // null，档位形同虚设（独立评审报出的那条）。所以模式是显式递进来的，这一条守着它
+  // 真的到了：切成「改」以后框一块，定位框不该出来。
+  const { usePreviewMode } = await import('@/composables/panelPreview/previewMode')
+  const mode = usePreviewMode(
+    () => true,
+    () => '示意图.png'
+  )
+  const { locator } = mount(undefined, mode)
+  mode.set('edit')
+  locator.onImageRegion(selection)
+  expect(locator.locator.value).toBeNull()
+
+  mode.set('note')
+  locator.onImageRegion(selection)
+  expect(locator.locator.value).not.toBeNull()
 })

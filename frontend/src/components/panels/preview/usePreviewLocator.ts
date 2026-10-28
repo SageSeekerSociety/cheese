@@ -9,6 +9,7 @@
 //
 // 换了一份文件就把上一处的指认撤掉：那句话说的是文件 A 里的位置，发出去时标题上写的
 // 却是文件 B 的名字（下面的 `watch`）。
+import type { PreviewModeApi } from '@/composables/panelPreview/previewMode'
 import type { AnnotateDraft } from '@/composables/usePanelPreview'
 import type { ChatAttachment } from '@/cx_types'
 import type { PreviewLocate } from '@/lib/previewQuestion'
@@ -18,8 +19,6 @@ import type { PreviewViewProps } from './previewViewProps'
 import type { SlidePageContext } from './slidesContext'
 
 import { computed, inject, ref, watch } from 'vue'
-
-import { PREVIEW_MODE } from '@/composables/panelPreview/previewMode'
 
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
@@ -32,6 +31,12 @@ import { PENDING_NOTES, type PendingAnchor, type PendingNote } from '@/lib/pendi
 import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
+  /** 看 / 批注 / 改 三段模式（原型里那一段）。由宿主**显式传进来**，不靠 `inject`：
+   *  `PanelPreviewView` 是在同一个 setup 里 `provide` 的，而 `inject` 只往祖先找——
+   *  同一层提供的东西自己读不到（这条坑 `useRevealGate` 已经记过一次），照那样写
+   *  「改」那一段挡指认的闸永远不生效。宿主没给（资料库、产物页那几处没有话题页）
+   *  时按过去的行为走。 */
+  mode: PreviewModeApi | null
   /** 指了一处，交给房间的对话。 */
   onLocate: (payload: PreviewLocate) => void
   /** 指了一处，私下问个人芝士：这句话只进自己和芝士那一条对话，不进这间房。 */
@@ -54,7 +59,9 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
    *  - 「改」：读者在打字，指一处什么都不做。
    *  没有这个口（资料库、产物页那几处）时按过去的行为走：指一处出卡，拖着选的那一段
    *  仍先出小按钮（`armFirst` 由外面给）。 */
-  const previewMode = inject(PREVIEW_MODE, null)
+  // 宿主那一份 `provide` 出去的和递给这里的是同一个对象（它在 `usePreviewLocator` 之前
+  // 就建好了），所以直接拿着用；不包一层 getter——那会让下面的 `computed` 少一层依赖。
+  const previewMode = deps.mode
   /** 这一段指不指得动。判据是「正文此刻真在编辑」而不是「模式停在改」：协同会话断了、
    *  编辑器自己关掉时，模式还停在「改」而正文已经回到只读——那时还按模式拦，读者会发现
    *  选中一段什么都不出，而屏幕上明明是可以读的正文。`annotating` 之外的两段都指得动，

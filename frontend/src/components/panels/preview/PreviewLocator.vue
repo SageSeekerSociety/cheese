@@ -108,6 +108,28 @@ const offered = computed(() =>
   )
 )
 const current = computed(() => RECIPIENTS.find((r) => r.value === recipient.value) ?? RECIPIENTS[0])
+
+/** 主按钮写什么。切到评论时它也叫「评论」，而面板上还有一颗开评论栏的「评论」——下面
+ *  那颗按钮的 aria-label 就是为这一对写的。 */
+const sendLabel = computed(() => {
+  if (props.canComment && recipient.value === 'comment') return 'work.room.comments.comment'
+  // 「全部发送（N+1）」只在去处是「发给芝士」时说得通：那一下确实把篮里的一起发了。
+  // 私下问个人芝士只发当前这一处、篮里那几条原地不动，这时还写「全部发送（3）」就是骗人。
+  if (props.canQueue && recipient.value === 'agent' && props.queuedCount) {
+    return 'work.room.preview.sendQueued'
+  }
+  return 'work.room.preview.send'
+})
+
+/** 主按钮上的计数参数：只有「全部发送」那一句带它。 */
+const sendCount = computed(() => props.queuedCount + 1)
+
+/** 底下那行提示：这一下按下去会发生什么。 */
+const hintLabel = computed(() => {
+  if (recipient.value === 'personal') return 'work.room.preview.locatorHintPersonal'
+  if (props.canQueue && recipient.value === 'agent') return 'work.room.preview.locatorHintQueue'
+  return 'work.room.preview.locatorHintSend'
+})
 const menuOpen = ref(false)
 const picker = ref<HTMLElement | null>(null)
 const trigger = ref<HTMLButtonElement | null>(null)
@@ -408,23 +430,11 @@ function send(event: KeyboardEvent | MouseEvent) {
             :disabled="!note.trim() || busy"
             @click="send"
           >
-            {{
-              canComment && recipient === 'comment'
-                ? t('work.room.comments.comment')
-                : canQueue && queuedCount
-                  ? t('work.room.preview.sendQueued', { count: queuedCount + 1 })
-                  : t('work.room.preview.send')
-            }}
+            {{ t(sendLabel, { count: sendCount }) }}
           </BaseButton>
         </div>
         <p class="locator__hint">
-          {{
-            canQueue && recipient === 'agent'
-              ? t('work.room.preview.locatorHintQueue')
-              : recipient === 'personal'
-                ? t('work.room.preview.locatorHintPersonal')
-                : t('work.room.preview.locatorHintSend')
-          }}
+          {{ t(hintLabel) }}
         </p>
       </template>
       <p v-if="commentError" class="locator__error" role="alert">{{ commentError }}</p>

@@ -83,7 +83,12 @@ vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
   default: {
     name: 'PreviewMarkdownLive',
     props: ['live'],
-    template: '<div data-testid="markdown-live" :data-path="live.editingPath.value" />',
+    emits: ['close'],
+    // 编辑器上那颗关闭键（真组件上也发这一个事件）：会话自己结束的那条路，走的
+    // 就是它——`editing` 那一份只看文件改不改得动，会话没了它还是 true。
+    template:
+      '<div data-testid="markdown-live" :data-path="live.editingPath.value">' +
+      '<button data-testid="live-close" @click="$emit(\'close\')">关闭</button></div>',
   },
 }))
 
@@ -198,6 +203,20 @@ it('切回「看」把协同编辑那一栏收掉：正文不再是编辑态', a
   await ui.findByTestId('markdown-live')
   await fireEvent.click(ui.getByTestId('preview-mode-view'))
   await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+})
+
+it('协同会话自己结束之后模式回到「看」：不然拖选什么都不弹，还没人知道为什么', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+
+  // 编辑器上那颗关闭键：会话收起来了，正文回到只读。
+  await fireEvent.click(ui.getByTestId('live-close'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+  // 模式跟着回到「看」——停在「改」的话，`usePreviewLocator` 会把每一次指认都吞掉，
+  // 而屏幕上没有任何东西说明为什么。
+  await waitFor(() => expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
 })
 
 it('手机上「改」那一段是灰的：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {

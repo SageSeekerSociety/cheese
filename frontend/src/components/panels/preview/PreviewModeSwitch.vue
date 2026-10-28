@@ -5,6 +5,9 @@
 // 「改」那一颗跟着这一份能不能改：不能改时是灰的，点它不生效，title 换一句话说清为什么
 // （原型里那句「运行中应用请通过批注交由芝士修改源码」同一条道理）。灰的键留在原处——
 // 一会儿摆一会儿藏，读者会以为这一段不可靠。
+//
+// 整份模式没有时不摆：那几处（资料库、产物页）没有话题页，按下去什么都不做的三颗键
+// 比不摆更糟。
 import type { PreviewMode } from '@/composables/panelPreview/previewMode'
 
 import { computed, inject } from 'vue'
@@ -20,8 +23,8 @@ const props = defineProps<{
 
 const modes = inject(PREVIEW_MODE, null)
 
-/** 现在选中的那一段。没有这个口（资料库、产物页那几处没有话题页）时按「看」。 */
-const active = computed<PreviewMode>(() => modes?.mode.value ?? 'view')
+/** 现在选中的那一段。没有这一份模式时整个控件不摆（见模板第一行）。 */
+const active = computed<PreviewMode>(() => modes!.mode.value)
 
 const items = computed(() => [
   {
@@ -45,12 +48,14 @@ const items = computed(() => [
 ])
 
 function usable(key: PreviewMode): boolean {
-  return modes?.enabled(key) ?? key !== 'edit'
+  return modes!.enabled(key)
 }
 </script>
 
 <template>
-  <div class="mode-switch" role="group" :aria-label="t('work.room.preview.modeGroup')">
+  <!-- 没有这一份模式时整个不摆：三颗键按下去什么都不做的控件，比不摆更糟（资料库、
+       产物页那些没有话题页的地方挂的就是这一档）。 -->
+  <div v-if="modes" class="mode-switch" role="group" :aria-label="t('work.room.preview.modeGroup')">
     <button
       v-for="item in items"
       :key="item.key"
@@ -61,7 +66,7 @@ function usable(key: PreviewMode): boolean {
       :title="usable(item.key) ? item.title : t('work.room.preview.modeEditBlocked')"
       :aria-pressed="active === item.key"
       :data-testid="`preview-mode-${item.key}`"
-      @click="modes?.set(item.key)"
+      @click="modes!.set(item.key)"
     >
       <v-icon size="15">{{ item.icon }}</v-icon>
       <span v-if="!props.compact" class="mode-switch__label">{{ item.label }}</span>

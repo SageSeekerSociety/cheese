@@ -194,12 +194,26 @@ useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (even
   previewMode.set(mode)
 })
 
-// Office 那几种的「改」开的是一个全屏对话框，读者一关它，正文又回到只读。模式还停在
-// 「改」的话，接下来拖选一段什么都不弹（`usePreviewLocator` 按「此刻真在编辑」拦），
-// 而屏幕上没有任何东西说明为什么——跟着关回「看」，让模式说的是眼前这件事。
-// markdown 那条是就地的协同编辑，没有可以关的对话框，`editing` 一直是 null，碰不着这里。
+// 编辑器收起来了，正文又回到只读，模式还停在「改」的话接下来拖选一段什么都不弹
+// （`usePreviewLocator` 按「此刻真在编辑」拦），而屏幕上没有任何东西说明为什么——
+// 跟着关回「看」，让模式说的是眼前这件事。两种编辑各有一条路：
+//
+//  - Office 那几种开的是一个全屏对话框，关掉它 `props.editing` 由路径变回 null。
+//  - markdown 是就地的协同编辑（`liveEdit`），它的会话会自己结束——编辑器上那颗关闭键、
+//    服务端拒了、换了一份文件，都会让 `editingPath` 变回空串。`editing` 那一份只看
+//    「这一份文件改不改得动」，不看会话还在不在，所以会话结束它还是 true；只盯它的话
+//    模式会一直停在「改」，而且「改」那一颗再点也没有反应（值没变，watch 不触发）。
+//
+// 只在这两份从「有」变「没有」的那一刻收：换一份文件时它们本来就是空串，不该顺手
+// 把新的那一份切到「看」（新的那一份有自己的记忆）。
 watch(
   () => props.editing,
+  (now, before) => {
+    if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
+  }
+)
+watch(
+  () => props.liveEdit?.editingPath.value ?? '',
   (now, before) => {
     if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
   }
@@ -231,6 +245,9 @@ const {
   onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
+  // 显式递进去，不走 `inject`：提供它的是上面这个 `provide`，而 `inject` 只往祖先找，
+  // 同一个 setup 里提供的东西自己读不到（`useRevealGate` 那次踩的是同一个坑）。
+  mode: previewMode,
   onLocate: (payload) => emit('locate', payload),
   // 个人芝士是全站那一条对话（不在项目里），登录了就有；带着这一处的原文和位置问过去，
   // 面板自己会打开。答不上来的话由面板说，这里不发第二句。
