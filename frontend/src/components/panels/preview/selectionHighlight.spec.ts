@@ -30,19 +30,19 @@ function rect(left: number, top: number, width: number, height: number): Selecti
   return { left, top, width, height }
 }
 
-/** 一条带子：上下各放 `(h × 0.4) / 2`，所以总高是 `h × 1.4`，上沿比字盒高 0.2 倍。 */
+/** 一条带子：上下各放 `(h × 0.65) / 2`，所以总高是 `h × 1.65`。 */
 function band(left: number, top: number, width: number, height: number): string {
-  const pad = (height * 0.4) / 2
+  const pad = (height * 0.65) / 2
   const x = Math.round(left * 100) / 100
   const y = Math.round((top - pad) * 100) / 100
-  const h = Math.round(height * 1.4 * 100) / 100
+  const h = Math.round(height * 1.65 * 100) / 100
   const w = Math.round(width * 100) / 100
   return `M${x} ${y}h${w}v${h}h${-w}Z`
 }
 
 describe('选中底色的那条 path', () => {
   it('一块选区画成一条带，比字盒上下各多一点', () => {
-    // 一行 12px 高的字：带子 16.8px 高、上沿比字盒的 10 高 2.4。
+    // 一行 12px 高的字：带子 19.8px 高、上沿比字盒的 10 高 3.9。
     expect(selectionPath([rect(110, 60, 50, 12)], box)).toBe(band(10, 10, 50, 12))
   })
 
@@ -96,8 +96,8 @@ describe('选中底色的那条 path', () => {
   })
 
   describe('给了这一页的文字行表时，上下留白收着放', () => {
-    it('行距宽时照常放 1.4 倍', () => {
-      // 这一行 10–22，上一行到 0、下一行从 32 起：上下各放得下 10 和 10，够 1.4 倍。
+    it('行距宽时照常放 1.65 倍', () => {
+      // 这一行 10–22，上一行到 0、下一行从 32 起：上下各放得下 10 和 10，够 1.65 倍。
       const roomy: [number, number][] = [
         [-10, 0],
         [10, 22],
@@ -115,7 +115,7 @@ describe('选中底色的那条 path', () => {
       expect(selectionPath([rect(110, 60, 50, 12)], box, tight)).toBe('M10 10h50v12h-50Z')
     })
 
-    it('没给行表时按 1.4 倍放，不受影响', () => {
+    it('没给行表时按 1.65 倍放，不受影响', () => {
       expect(selectionPath([rect(110, 60, 50, 12)], box)).toBe(band(10, 10, 50, 12))
     })
   })
