@@ -18,6 +18,7 @@
   "folderEmpty": "暂无文件",
   "folderField": "文件夹",
   "folderMeta": "{n} 份文件 · {when}",
+  "headOnly": "只摆了 {path} 的开头，整份请下载",
   "from": "来自",
   "intro": "项目里的文档和文件，每个对话都能引用。文档大家都能改，上传的文件只读",
   "kindsLabel": "按类型筛选",

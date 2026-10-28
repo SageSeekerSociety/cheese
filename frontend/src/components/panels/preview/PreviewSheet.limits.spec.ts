@@ -39,19 +39,27 @@ function grid(container: Element): string[][] {
   )
 }
 
+/** 底部那一行说的「这张表多大」：页签旁边的那句。 */
 function note(container: Element): string {
-  return container.querySelector('.ps__note')?.textContent?.trim() ?? ''
+  return container.querySelector('.ps__summary')?.textContent?.trim() ?? ''
 }
 
-it('超过 500 行的表只画前 500 行，并说清只画了一部分', async () => {
+it('几千行的表读得进 5000 行，屏幕上只铺看得见的那一段，滚得到底', async () => {
   const lines = ['序号,值']
-  for (let i = 1; i <= 600; i += 1) lines.push(`${i},v${i}`)
+  for (let i = 1; i <= 5004; i += 1) lines.push(`${i},v${i}`)
   const { container } = mount(utf8(`${lines.join('\n')}\n`))
 
-  await waitFor(() => expect(grid(container).length).toBe(500))
-  // 画出来的是表头加前 499 行数据 —— 上限数的是画出来的行，不是数据行。
-  expect(grid(container)[499][0]).toBe('499')
-  expect(note(container)).toContain('只显示了前 500 行')
+  // 读了 5000 行（表头 + 4999 行数据），但 DOM 里只有一屏：几千行全铺进去，
+  // 滚一下就是一次几万格的重排。
+  await waitFor(() => expect(grid(container).length).toBeGreaterThan(0))
+  expect(grid(container).length).toBeLessThan(200)
+  expect(note(container)).toContain('只显示了前 5000 行')
+
+  // 往下滚到底，最后那几行就该在屏幕上 —— 「只画一屏」不该变成「翻不到底」。
+  const scroll = container.querySelector('.ps__grid') as HTMLElement
+  scroll.scrollTop = 5000 * 29
+  await fireEvent.scroll(scroll)
+  await waitFor(() => expect(container.textContent).toContain('4999'), { timeout: 3000 })
 })
 
 it('超过 64 列的表只画前 64 列，并说清列也被截了', async () => {
@@ -126,7 +134,7 @@ it('换一份文件就回到表格视图', async () => {
 
   // 留在原文视图会看见上一个文件的内容，而读者以为自己在看新文件的原文。
   await waitFor(() => expect(container.querySelector('.ps__source')).toBeNull())
-  expect(grid(container)[1]).toEqual(['上海', '2487'])
+  await waitFor(() => expect(grid(container)[1]).toEqual(['上海', '2487']))
 })
 
 it('tsv 按制表符切，不再去猜分隔符', async () => {
@@ -149,4 +157,15 @@ it('老版 .xls（OLE2 容器）也说清打不开', async () => {
   mount(ole2, 'workbook')
 
   expect(await screen.findByText(/老版 Excel 表格/)).toBeTruthy()
+})
+
+it('读不完的表：地址栏报的行数不会报出到不了的行', async () => {
+  const lines = ['序号,值']
+  for (let i = 1; i <= 5004; i += 1) lines.push(`${i},v${i}`)
+  const { container } = mount(utf8(`${lines.join('\n')}\n`))
+
+  await waitFor(() => expect(container.querySelector('table[role=grid]')).not.toBeNull())
+  // 读了 5000 行、表头算一行：读屏听到的行数要和滚得到的底一致——报 5001（整张表
+  // 有 5004 行）会让读屏说出几个滚不到、也点不到的行。
+  expect(container.querySelector('table[role=grid]')?.getAttribute('aria-rowcount')).toBe('5001')
 })

@@ -4,9 +4,16 @@
 // 读同一份表：「改了哪几格」只能拿同一套读法读出来的两版来比，两处各读各的，同一格在两边
 // 显示成不同的字，就会被数成改过。
 
-import { cellDisplay } from './sheetCells'
+import type { RawChart } from './sheetChart'
+
+import { cellDisplay, cellFormula } from './sheetCells'
+import { readChartParts } from './sheetChart'
+import { alignmentOf } from './sheetNumberFormat'
 
 import { t } from '@/i18n'
+
+/** 一格怎么摆：文件自己说了就照它，没说时数靠右、别的靠左（`alignmentOf`）。 */
+export type CellAlign = 'left' | 'center' | 'right'
 
 export type Sheet = {
   name: string
@@ -20,6 +27,17 @@ export type Sheet = {
   /** 这一张表里有格子被截短了。按表记，不按文件记：多表工作簿里切到没有长格的那张
    *  表，不该还挂着「较长的单元格被截短了」。 */
   shortened: boolean
+  /** 每一格怎么摆，和 `rows` 一一对应；这一格没读到对齐就是 `undefined`。分隔文本按
+   *  内容判（像数就靠右），工作簿按文件里那一格自己写的来。 */
+  aligns?: (CellAlign | undefined)[][]
+  /** 文件自己加粗的那几格（`A1` 形式）：表头、合计行常常是靠这一层认出来的，
+   *  不靠「第几行想必是表头」去猜。 */
+  bold?: Set<string>
+  /** 写了公式的格子（`A1` → `=SUM(数据!B2:B6)`）：地址栏照着写出来。 */
+  formulas?: Map<string, string>
+  /** 工作簿里带的图表引用的那几格里，原始的数（`A1` → 数）。图上画的是数，不是
+   *  「4.1%」这几个字——带上格式的字符串再解析回来会变成 4.1。只留图引用到的那几格。 */
+  numbers?: Map<string, number>
 }
 
 /** 读一份表格的结果。`failure` 非空时 `sheets` 是空的，那句话就是给读者看的原因。 */
@@ -30,12 +48,20 @@ export interface SheetRead {
   /** 字节在解析之前就被切了，表尾可能缺。 */
   endClipped: boolean
   failure: string
+  /** 工作簿里带的图表（还没取数，取数靠 `resolveCharts`）。分隔文本没有图。 */
+  charts?: RawChart[]
+  /** 读到了、我们画不出来的图有几张，按工作表名记。 */
+  chartsSkipped?: Map<string, number>
 }
 
-/** 画出来的上限。一张几十万行的 CSV 整份铺进 DOM 会把面板拖死，而人要找的那几格
- *  总在开头。超出的部分不是丢了，是没画出来 —— 所以下面那条提示必须说清「只显示了
- *  前 N 行 M 列」，并且文件条上照旧有「下载原文件」这条路。 */
-export const MAX_ROWS = 500
+/** 读进来的上限。一张几十万行的 CSV 整份读进内存会把面板拖死，而人要找的那几格
+ *  总在开头；几千行（这个数）是读者真会翻到底的那一档，所以读到那里。超出的部分不是
+ *  丢了，是没读出来 —— 所以下面那条提示必须说清「只显示了前 N 行 M 列」，并且文件条
+ *  上照旧有「下载原文件」这条路。
+ *
+ *  画出来的行数比这个少：几千行铺进 DOM 一样会卡，视图只画看得见的那一屏
+ *  （`PreviewSheet` 的窗口）。读进来多少和画出来多少是两件事。 */
+export const MAX_ROWS = 5000
 export const MAX_COLS = 64
 export const MAX_CELL = 300
 /** 解析之前先切字节的上限：一份 200 MB 的 CSV 光解码成字符串就先占掉几百 MB。 */
@@ -143,6 +169,27 @@ function sliceAtCharBoundary(bytes: Uint8Array, limit: number): Uint8Array {
   return bytes.subarray(0, end)
 }
 
+/** 这一格的文字看着是不是一个数：一串数字，可以带正负号、千分位、小数点和百分号。
+ *  分隔文本没有样式，只能这么判；判错了最多是这一列没靠右，不会把字改掉。 */
+function looksNumeric(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed || trimmed.length > 32) return false
+  return /^[-+]?[\d,]*\.?\d+%?$/.test(trimmed) || /^[-+]?[\d,]+$/.test(trimmed)
+}
+
+/** 这一格在文件里存的是不是数（公式的结果也算）：`alignmentOf` 靠它决定默认靠哪边。 */
+function isNumericValue(value: unknown): boolean {
+  return numberValue(value) !== undefined
+}
+
+/** 这一格里的那个数：直接存的数，或者公式算出来的数。别的（日期、文本、富文本）没有。 */
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return value
+  if (!value || typeof value !== 'object') return undefined
+  const result = (value as Record<string, unknown>).result
+  return typeof result === 'number' ? result : undefined
+}
+
 /** CSV / TSV 只有一张表，而且它没有名字 —— 没有名字就不该编一个：地址栏里写 `B7`，
  *  和一个真有工作表名的 `Sheet1!B7` 是两种不同的坐标，编出来的名字会让读者以为
  *  这份文件里还有别的表。 */
@@ -166,6 +213,7 @@ function readText(data: ArrayBuffer, kind: 'csv' | 'tsv'): SheetRead {
       totalRows: rows.length,
       totalCols,
       shortened: kept.some((r) => r.some((c) => c.length > MAX_CELL)),
+      aligns: kept.map((row) => row.map((text) => (looksNumeric(text) ? 'right' : undefined))),
     },
   ]
   return { sheets, sourceText: text, endClipped, failure: '' }
@@ -175,9 +223,16 @@ async function readWorkbook(data: ArrayBuffer): Promise<SheetRead> {
   const ExcelJS = await import('exceljs')
   const book = new ExcelJS.Workbook()
   await book.xlsx.load(data.slice(0))
+  // 图只引用到几格，先问出来是哪些 —— 底下读格子的那一段顺手留下它们的原始数。
+  const chartParts = await readChartParts(data)
+  const wanted = (name: string) => chartParts.needed.get(name)
   const read: Sheet[] = []
   book.eachSheet((worksheet) => {
     const rows: string[][] = []
+    const aligns: (CellAlign | undefined)[][] = []
+    const bold = new Set<string>()
+    const formulas = new Map<string, string>()
+    const numbers = new Map<string, number>()
     let width = 0
     // 一张表里有没有超长的格子，是这张表自己的事：一本表里既有小台账又有长备注，
     // 用同一个标记说「被截短了」，切到没有长格子的那页也会顶着这句提示。
@@ -185,16 +240,29 @@ async function readWorkbook(data: ArrayBuffer): Promise<SheetRead> {
     worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
       if (rowNumber > MAX_ROWS) return
       const cells: string[] = []
+      const line: (CellAlign | undefined)[] = []
+      const charted = wanted(worksheet.name)
       row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
         if (colNumber > MAX_COLS) return
-        const text = cellDisplay(cell.value)
+        const text = cellDisplay(cell.value, cell.numFmt)
         if (text.length > MAX_CELL) shortened = true
         cells[colNumber - 1] = text
+        line[colNumber - 1] = alignmentOf(cell.alignment?.horizontal, isNumericValue(cell.value))
+        const address = `${columnName(colNumber - 1)}${rowNumber}`
+        if (cell.font?.bold) bold.add(address)
+        const formula = cellFormula(cell.value)
+        if (formula) formulas.set(address, formula)
+        const raw = numberValue(cell.value)
+        if (charted?.has(address) && raw !== undefined) numbers.set(address, raw)
       })
       width = Math.max(width, cells.length)
       rows[rowNumber - 1] = cells
+      aligns[rowNumber - 1] = line
     })
-    for (let i = 0; i < rows.length; i += 1) if (!rows[i]) rows[i] = []
+    for (let i = 0; i < rows.length; i += 1) {
+      if (!rows[i]) rows[i] = []
+      if (!aligns[i]) aligns[i] = []
+    }
     read.push({
       name: worksheet.name,
       rows,
@@ -202,10 +270,47 @@ async function readWorkbook(data: ArrayBuffer): Promise<SheetRead> {
       totalRows: worksheet.rowCount,
       totalCols: worksheet.columnCount,
       shortened,
+      aligns,
+      bold,
+      formulas,
+      numbers: numbers.size ? numbers : undefined,
     })
   })
   if (!read.length) return { sheets: [], sourceText: '', endClipped: false, failure: t('work.room.preview.noSheets') }
-  return { sheets: read, sourceText: '', endClipped: false, failure: '' }
+  return {
+    sheets: read,
+    sourceText: '',
+    endClipped: false,
+    failure: '',
+    charts: chartParts.raw,
+    chartsSkipped: chartParts.skipped,
+  }
+}
+
+/** 刚读过的表：同一份字节再打开时不重读一遍。
+ *
+ *  这是「热启动」那一半：一份几千行的工作簿 exceljs 要读几百毫秒到几秒，而读者做的
+ *  常常是关掉、又点开同一份文件（换一版看、退出去比一下）。字节相同，读出来的就是同一
+ *  张表，没有理由再排一遍。键是内容的摘要，不是路径——路径相同而字节换了（文件出了新
+ *  版），读出来的必须是新的那一份。
+ *
+ *  上限按份数记：一份几千行的表读出来有几十万个字符串，留着太多份会把面板的内存吃满。
+ *  存的是整份 `SheetRead`，谁都不会去改它（视图只读）。 */
+const READ_CACHE_LIMIT = 4
+const readCache = new Map<string, Promise<SheetRead>>()
+
+/** 内容的摘要。优先用 `crypto.subtle`（同一个文件每次算出来都一样）；拿不到它时退回
+ *  一个不看内容的键——那等于不缓存，比按错的键返回别的文件强。 */
+async function contentKey(data: ArrayBuffer, kind: string): Promise<string | null> {
+  try {
+    const digest = await crypto.subtle.digest('SHA-256', data)
+    const bytes = new Uint8Array(digest)
+    let hex = ''
+    for (const byte of bytes) hex += byte.toString(16).padStart(2, '0')
+    return `${kind}:${hex}`
+  } catch {
+    return null
+  }
 }
 
 /** 把一份表格的字节读成表。`kind` 只有调用方知道（`lib/fileKind.sheetKindOf`）：字节本身
@@ -215,11 +320,43 @@ export async function readSheets(data: ArrayBuffer, kind: 'workbook' | 'csv' | '
   // OpenDocument 表格和 OOXML 不是一个格式，exceljs 读不了它。与其让它抛一句
   // 读不懂的错，不如说清这条路走不通、以及可以怎么拿到内容。
   if (kind === 'ods') return failed(t('work.room.preview.sheetFormatUnsupported'))
-  if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
-  if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
-  try {
-    return await readWorkbook(data)
-  } catch (e) {
-    return failed(e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed'))
+  const key = await contentKey(data, kind)
+  const hit = key === null ? undefined : readCache.get(key)
+  if (hit) {
+    // 命中就把它挪到队尾：这一份刚用过，最不该被挤掉。
+    readCache.delete(key!)
+    readCache.set(key!, hit)
+    return hit
   }
+  /** 真读一遍。分支之间差在有没有 `await`：分隔文本和 OLE2 判定是同步的，走完之后
+   *  `readCache.set` 还没跑过——所以「失败不进缓存」这条判断只能放在**放进去之前**，
+   *  不能靠事后删（那时键还不存在，删了个空）。 */
+  async function read(): Promise<SheetRead> {
+    try {
+      if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
+      if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
+      return await readWorkbook(data)
+    } catch (e) {
+      // 抛出来的任何一条也当失败：换一份字节重试是读者会做的事，而这条路的结果不该被
+      // 记成「这份文件就是读不出来」。
+      return failed(e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed'))
+    }
+  }
+  const started = read()
+  const result =
+    key === null
+      ? started
+      : started.then((value) => {
+          // 读失败不进缓存。判断在「放进去」之前：同步那几路在这一次 `.then` 跑起来之前
+          // 就已经读完了，事后删是删不掉的。
+          if (value.failure) return value
+          readCache.set(key, Promise.resolve(value))
+          while (readCache.size > READ_CACHE_LIMIT) {
+            const oldest = readCache.keys().next().value
+            if (oldest === undefined) break
+            readCache.delete(oldest)
+          }
+          return value
+        })
+  return result
 }
