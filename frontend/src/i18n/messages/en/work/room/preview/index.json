@@ -20,8 +20,6 @@
   "fullscreen": "Full-screen preview",
   "fullscreenFailed": "Couldn't go full screen. Open it in a new tab",
   "history": "History",
-  "instanceDisconnected": "Disconnected; still showing the loaded page. The app may be restarting",
-  "instanceGone": "Original instance replaced; old requests stopped",
   "instanceGoneManual": "The original instance was replaced and the new one hasn't come up. Refresh to open the current instance",
   "instanceIdentity": "Instance {id}; live content can change",
   "liveConnecting": "Connecting…",
@@ -71,7 +69,6 @@
   "resourceIdentity": "Resource {id}",
   "retainedPage": "New content hasn't loaded. Still showing the previously opened page.",
   "retryTarget": "Retry new content",
-  "runningApp": "Running app",
   "runtimeAlert": "The app has a problem. Open for details",
   "runtimeFailed": "App reported failure",
   "runtimeReady": "App confirmed ready",
@@ -107,4 +104,14 @@
   "codeLines": "lines {start}–{end}",
   "codeWrap": "Wrap lines",
   "codeNoWrap": "Don't wrap",
-  "codeView": "Code"}
+  "codeView": "Code",
+  "pendingCount": "{count} queued note(s)",
+  "pendingWhy": "Send them together so Cheese edits once, not once per note",
+  "pendingToCheese": "For Cheese",
+  "pendingRemove": "Remove this note",
+  "pendingCollapsedHint": "Open to see where each one points and what it asks",
+  "pendingSummaryPlaceholder": "Optional: an overall instruction, or just send",
+  "sendWithNotes": "Send ({count} note(s))",
+  "pendingKeepGoing": "Keep pointing at more spots; they go out as one message",
+  "sendQueuedFailed": "That did not send; the notes are still waiting — try again in a moment"
+}

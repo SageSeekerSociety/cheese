@@ -293,10 +293,10 @@
     }
   },
   "previewPanelFrameStage": {
-    "about": "The web/app stage: an app bar (which file, which version), a runtime status line, the frames below, and region picking laid over the app.",
+    "about": "The web/app tier: a little browser row (back, forward, reload, address bar, the platform › tunnel › app chain) over a layer of frames; when the app sleeps, a static snapshot and a wake card cover it, and a region can still be picked on the page.",
     "s1": {
-      "name": "An app that is running",
-      "note": "The bar says what this frame is called, the 'running app' chip says it answers; the line below reports resource, instance and readiness."
+      "name": "A running app",
+      "note": "The address bar shows where this frame is now and all three links of the chain are green; resource, instance and readiness are inside the chain's details."
     },
     "s2": {
       "name": "Two frames both running",
@@ -309,6 +309,14 @@
     "s4": {
       "name": "Picking a region on an app",
       "note": "While picking is on, a transparent overlay covers the app; drag out a rectangle."
+    },
+    "s5": {
+      "name": "The app is asleep",
+      "note": "The teammate's computer sleeps: the platform link stays green, the tunnel and app links turn amber (waiting), the page becomes the last static snapshot, dimmed, with a card offering to wake and restart the app."
+    },
+    "s6": {
+      "name": "Waking",
+      "note": "After pressing wake the card becomes steps — start the computer, connect the tunnel, the teammate restarts the app, wait for the port — each ticked in turn; the ones after the current step stay empty."
     }
   },
   "previewPanelDocStage": {
