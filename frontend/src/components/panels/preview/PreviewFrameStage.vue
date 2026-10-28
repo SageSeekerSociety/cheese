@@ -626,6 +626,8 @@ button.preview-errors {
 .preview-errors__panel {
   display: flex;
   flex-direction: column;
+  /* 按钮不拉满宽：这里是几行报错加一个动作，拉满看着像一块面板。 */
+  align-items: flex-start;
   gap: 8px;
   width: min(420px, 90vw);
   padding: 12px;

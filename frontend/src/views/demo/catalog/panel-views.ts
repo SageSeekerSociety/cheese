@@ -27,6 +27,24 @@ import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 
+/** 一个跑着、页面里抛过两个错的帧：给「页面自己抛了错」那一格用。 */
+const DEMO_APP_FRAME = {
+  id: 1,
+  name: 'cheese-preview-demo',
+  url: 'https://preview.example.test/',
+  label: '课程网站',
+  mime: 'text/html',
+  version: null,
+  live: true,
+  posted: true,
+  bridged: true,
+  runtime: 'ready' as const,
+  pageErrors: [
+    { message: 'Cannot read properties of undefined (reading "phone")', source: 'signup.ts', line: 41 },
+    { message: 'POST /api/signup 422 字段 grade 不能为空', source: '', line: 0 },
+  ],
+}
+
 export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-changes',
@@ -137,6 +155,27 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
           previewTunnelUp: false,
         }),
         expect: '运行环境已休眠',
+      },
+      {
+        name: '页面自己抛了错',
+        note: '应用照常显示、连通链三个绿勾，但页面里的脚本抛了异常：条上出一颗红的「2 个错误」，点开是报错清单，能把这几行一次附进批注。以前这一档只认「应用说它 ready / failed」，这种页面读者只能干瞪眼。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: 'https://preview.example.test/',
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: true,
+          previewAppUp: true,
+          previewError: null,
+          previewReadError: null,
+          frames: [DEMO_APP_FRAME],
+          displayedFrame: DEMO_APP_FRAME,
+        }),
+        expect: '2 个错误',
       },
       {
         name: '取预览失败',
