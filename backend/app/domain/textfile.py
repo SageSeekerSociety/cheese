@@ -237,7 +237,13 @@ def text_payload(target: Path, path: str) -> dict:
             version = None
         with target.open("rb") as source:
             head = head_text(source.read(PREVIEW_TEXT_BYTES))
-        return {**meta, "content": None, "head": head, "version": version, "too_large": True}
+        return {
+            **meta,
+            "content": None,
+            "head": head,
+            "version": version,
+            "too_large": True,
+        }
     return bytes_text_payload(target.read_bytes(), path)
 
 

@@ -170,7 +170,11 @@ async def test_a_large_committed_file_has_no_head_and_a_large_live_one_has_an_op
     monkeypatch.setattr(files, "source", source)
     monkeypatch.setattr(files, "_entry", AsyncMock(return_value=entry))
     monkeypatch.setattr(files, "revision", AsyncMock(return_value="head"))
-    monkeypatch.setattr(files, "_blob", AsyncMock(side_effect=AssertionError("must not read the whole blob")))
+    monkeypatch.setattr(
+        files,
+        "_blob",
+        AsyncMock(side_effect=AssertionError("must not read the whole blob")),
+    )
 
     committed = await files.text("big.log", "committed")
     assert committed["too_large"] is True

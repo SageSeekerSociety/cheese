@@ -629,7 +629,7 @@ defineExpose({ snapshot, clearMark })
       />
       <!-- 摆的是开头、底下的没读：和代码那一档同一条话，别让读者以为这份就到这里。 -->
       <div v-if="mdTruncated" class="doc__truncated" role="status">
-        <v-icon size="16">mdi-ellipsis-horizontal</v-icon>
+        <v-icon size="16">mdi-dots-horizontal</v-icon>
         <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
         <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
           t('work.room.preview.download')
@@ -646,7 +646,7 @@ defineExpose({ snapshot, clearMark })
       />
       <!-- 摆了开头、底下没读：说清这一点，再给一条去整份的路（下载）。 -->
       <div v-if="codeTruncated" class="doc__truncated" role="status">
-        <v-icon size="16">mdi-ellipsis-horizontal</v-icon>
+        <v-icon size="16">mdi-dots-horizontal</v-icon>
         <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
         <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
           t('work.room.preview.download')

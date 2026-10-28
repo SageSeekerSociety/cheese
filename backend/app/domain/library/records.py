@@ -640,14 +640,18 @@ def _too_large_text(row: LibraryFileRecord, path: str, head: str | None = None) 
     }
 
 
-async def read_head(row: LibraryFileRecord, limit: int = PREVIEW_TEXT_BYTES) -> str | None:
+async def read_head(
+    row: LibraryFileRecord, limit: int = PREVIEW_TEXT_BYTES
+) -> str | None:
     """这一行前面 ``limit`` 个字节读成的文本；只读那一段，不整份进内存。
 
     太大的文本从此不是「什么都给不了」——读者要的是开头。字节按段从存储里取，
     `chunks` 收两端闭区间，所以要 ``limit - 1``。"""
     pieces: list[bytes] = []
     got = 0
-    async for piece in blob_store.store(row.location).chunks(row.blob_key, 0, limit - 1):
+    async for piece in blob_store.store(row.location).chunks(
+        row.blob_key, 0, limit - 1
+    ):
         pieces.append(piece)
         got += len(piece)
         if got >= limit:

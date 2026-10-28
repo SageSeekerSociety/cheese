@@ -206,6 +206,9 @@ def test_preview_reads_the_same_bytes(client):
         "binary": False,
         "bytes": 8,
         "content": "<b>x</b>",
+        # 读的人看的那一份：装得下的时候和 `content` 是同一段
+        # （见 `domain/textfile.py` 的 `text_payload`）。
+        "head": "<b>x</b>",
         "path": "site/报告.html",
         "too_large": False,
         "version": content_version(b"<b>x</b>"),

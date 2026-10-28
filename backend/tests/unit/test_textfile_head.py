@@ -48,7 +48,9 @@ def test_the_whole_file_stays_absent_so_it_can_never_be_saved_back(tmp_path):
 
 
 def test_a_large_binary_gives_the_reader_nothing_to_read(tmp_path):
-    payload = text_payload(write(tmp_path, "blob.bin", b"\x00" * (MAX_TEXT_BYTES + 1)), "blob.bin")
+    payload = text_payload(
+        write(tmp_path, "blob.bin", b"\x00" * (MAX_TEXT_BYTES + 1)), "blob.bin"
+    )
 
     # `binary` stays False for anything over the ceiling: the older answer never
     # looked at the bytes either, and `too_large` already carries the reason.
