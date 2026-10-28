@@ -539,8 +539,10 @@ _SESSION = "55555555-5555-4555-8555-555555555555"
 
 
 def _own_credential() -> str:
-    claims = json.dumps({"session": _SESSION}).encode()
-    return "cxss_" + base64.urlsafe_b64encode(claims).decode().rstrip("=") + ".sig"
+    def part(value: dict) -> str:
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
+
+    return f"{part({'typ': 'agent+jwt'})}.{part({'session': _SESSION})}.sig"
 
 
 def _moved(keeps_nothing):

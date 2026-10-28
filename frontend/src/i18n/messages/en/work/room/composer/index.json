@@ -24,5 +24,9 @@
   "summonPicker": "Hand to which teammate",
   "summonPickerBusy": "Busy",
   "summonPickerOff": "Don't hand to a teammate",
-  "summonRule": "In a task, everything you say goes to {name}"
+  "summonRule": "In a task, everything you say goes to {name}",
+  "viewingShared": "Shared: you are viewing {name}",
+  "viewingOff": "Not sharing the open file",
+  "viewingTurnOff": "Click to stop sharing the file you are viewing",
+  "viewingTurnOn": "Click to let the agent know you are viewing {name}"
 }

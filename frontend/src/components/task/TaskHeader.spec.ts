@@ -440,4 +440,39 @@ describe('任务页头', () => {
     const helper = container.querySelector('.task-header__helper')!
     expect(helper.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
   })
+
+  it('手机顶栏里状态区保留完整进度说明与「已离开」，状态文字更新时横向滚动回到开头', async () => {
+    const prevWidth = window.innerWidth
+    window.innerWidth = 390
+    window.dispatchEvent(new Event('resize'))
+    try {
+      const base = {
+        presentation: { column: 'building', phrase: 'running' },
+        progress_state: 'working',
+        progress_note: '已按决定保持现状并更新实况文档，等待负责人确认是否关闭任务或继续讨论',
+        progress_set_by: 'cheese-01',
+        progress_set_at: '2026-10-05T00:00:00Z',
+        agent_left_at: '2026-10-05T01:00:00Z',
+      } as Partial<RoomTask>
+      const { container, getByTestId, rerender } = mount(base)
+      await nextTick()
+      const header = container.querySelector('.task-header')!
+      expect(header.classList.contains('task-header--bar')).toBe(true)
+      expect(getByTestId('task-progress-note').textContent).toContain('已按决定保持现状')
+      expect(getByTestId('task-agent-left').textContent).toBe('小苔已离开')
+      expect(getByTestId('task-details')).not.toBeNull()
+      expect(getByTestId('task-more')).not.toBeNull()
+
+      const meta = container.querySelector<HTMLElement>('.task-header__meta')!
+      meta.scrollLeft = 120
+      expect(meta.scrollLeft).toBe(120)
+
+      await rerender({ task: task({ ...base, progress_note: '正在跑回归测试' }) })
+      await nextTick()
+      expect(meta.scrollLeft).toBe(0)
+    } finally {
+      window.innerWidth = prevWidth
+      window.dispatchEvent(new Event('resize'))
+    }
+  })
 })

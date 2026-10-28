@@ -1,9 +1,10 @@
 """Who a request is, whichever credential it carries, on the routes that ask
 for a signed-in person: a team's own page, and someone's invitations.
 
-Only a person's own sign-in acts as that person. An AI teammate's room
-credential, a person's 芝士 on a route it was not given, the development
-override and a token that does not verify are no one here, and change nothing.
+Only a person's own sign-in, or their 芝士 acting for them, acts as that
+person; their 芝士 does not reach their own hold on it. An AI teammate's room
+credential, the development override and a token that does not verify are no
+one here, and change nothing.
 """
 
 import uuid
@@ -41,7 +42,7 @@ def team(client):
 
 def _as(client, headers: dict[str, str]):
     """Requests carrying these headers and nothing the test client adds."""
-    client.headers.pop("X-Cheese-Token", None)
+    client.headers.pop("Authorization", None)
     return headers
 
 
@@ -70,11 +71,13 @@ def test_an_ai_teammates_room_credential_is_no_person(client, team):
         headers=team["bearer"],
     ).json()["data"]["id"]
     teammate = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project_id,
-            topic_id=room,
-            agent_handle=room_agent_seat(client, room),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id,
+                topic_id=room,
+                agent_handle=room_agent_seat(client, room),
+            )
+        }"
     }
 
     assert _rename(client, team, teammate) >= 400
@@ -84,21 +87,33 @@ def test_an_ai_teammates_room_credential_is_no_person(client, team):
     assert _name(client, team) == "原名"
 
 
-def test_a_persons_assistant_reaches_only_the_routes_it_was_given(client, team):
-    """芝士 acts for the person on the routes listed for it; a team's own
-    settings are not among them, so it changes nothing there."""
+def test_a_persons_cheese_acts_as_them_but_does_not_change_what_it_asks_first(
+    client, team
+):
+    """What 芝士 does for the person is judged as theirs; what it asks them
+    first is theirs to set, not something 芝士 resets for them."""
     assistant = {
-        "X-Cheese-Token": mint_delegated_credential(
-            user_id=team["user_id"],
-            handle=team["handle"],
-            work=uuid.uuid4().hex,
-            ttl_s=600,
-            read_only=False,
-        )
+        "Authorization": f"Bearer {
+            mint_delegated_credential(
+                user_id=team['user_id'],
+                handle=team['handle'],
+                work=uuid.uuid4().hex,
+                ttl_s=600,
+                read_only=False,
+            )
+        }"
     }
+    rules = {"ask": [], "askItems": [], "allowItems": ["什么都直接做"]}
 
-    assert _rename(client, team, assistant) >= 400
-    assert _name(client, team) == "原名"
+    assert _rename(client, team, assistant) == 200
+    set_by_it = client.put(
+        "/assistant/rules", json=rules, headers=_as(client, assistant)
+    )
+    kept = client.get("/assistant/rules", headers=team["bearer"])
+
+    assert _name(client, team) == "改了"
+    assert set_by_it.status_code == 403
+    assert kept.json()["data"]["allowItems"] == []
 
 
 @pytest.mark.parametrize(
@@ -106,7 +121,9 @@ def test_a_persons_assistant_reaches_only_the_routes_it_was_given(client, team):
     [
         pytest.param({}, id="nothing"),
         pytest.param({"Authorization": "Bearer not-a-token"}, id="garbage"),
-        pytest.param({"X-Cheese-Token": SANDBOX_TOKEN}, id="development override"),
+        pytest.param(
+            {"Authorization": f"Bearer {SANDBOX_TOKEN}"}, id="development override"
+        ),
     ],
 )
 def test_without_a_persons_sign_in_it_is_no_one(client, team, headers):

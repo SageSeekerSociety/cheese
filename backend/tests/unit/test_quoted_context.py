@@ -355,6 +355,41 @@ class QuotedContextTest(unittest.TestCase):
             with self.subTest(quote=quote), self.assertRaises(ValidationError):
                 ChatMessageIn.model_validate({**body, "quoted_context": quote})
 
+    def test_what_the_reader_is_looking_at_is_a_quote_with_a_file_and_no_place(self):
+        """读者发消息时右侧开着的那一份：只有文件（和它所在的任务），没有位置和版本。
+
+        它让「这里不对」有个落点；位置和版本它不假装知道，要就去读文件的当前版。
+        """
+        import uuid
+
+        viewing = {"kind": "viewing", "path": "output/招募方案.docx", "task_id": None}
+        body = {
+            "content": "这一页太挤了",
+            "request_id": str(uuid.uuid4()),
+            "quoted_context": viewing,
+        }
+        parsed = ChatMessageIn.model_validate(body)
+        self.assertEqual(parsed.quoted_context.model_dump(mode="json"), viewing)
+        for quote in (
+            {**viewing, "path": ""},
+            {**viewing, "path": "x" * 1001},
+            # 它不带位置、不带版本：夹带别的形状的字段会被拒。
+            {**viewing, "page": 2},
+            {**viewing, "version": "v1"},
+            {k: v for k, v in viewing.items() if k != "path"},
+        ):
+            with self.subTest(quote=quote), self.assertRaises(ValidationError):
+                ChatMessageIn.model_validate({**body, "quoted_context": quote})
+        block = SimpleNamespace(
+            kind=BlockKind.message,
+            author="alice",
+            content="这一页太挤了",
+            meta={"quoted_context": viewing},
+        )
+        prompt = prompt_line(block, embeds_images=False)
+        decoded, _ = json.JSONDecoder().raw_decode(prompt[prompt.index("{") :])
+        self.assertEqual(decoded, viewing)
+
     def test_an_image_region_reaches_the_model_as_the_same_data(self):
         block = SimpleNamespace(
             kind=BlockKind.message,

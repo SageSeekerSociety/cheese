@@ -8,7 +8,7 @@ reads as "No such file" there. The executor's own read-only view of that path
 this session's own transcript.
 
 The caller is the executor, with the session's own execution credential
-(``cxss_…``). The session id in that credential is what picks the transcript —
+(one bound to its session). The session id in that credential is what picks the transcript —
 never a path from the caller — so nothing but this session's own file can be
 reached through this route.
 """
@@ -22,13 +22,14 @@ from pydantic import BaseModel
 from app.api.deps import get_session_host
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.core import credentials
 from app.core.db import release_read_session
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
     NotFoundError,
 )
-from app.core.sandbox_auth import scoped_token_claims
+from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.device import owner_reads
 
@@ -83,8 +84,8 @@ async def session_transcript(
     carries the session host's own spelling of the path, which is the name the
     executor mounts its read-only view at.
     """
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
-    if not claims or claims.get("t") != str(topic_id):
+    claims = scoped_token_claims(credentials.presented(request.headers))
+    if not claims or held_by_a_machine(claims) or claims.get("t") != str(topic_id):
         # i18n-exempt: the caller is the executor, not a person's screen
         raise AuthenticationRequiredError("A credential for this room is required")
     session_claim = claims.get("session")

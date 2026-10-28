@@ -6,7 +6,7 @@ import pytest
 
 from app.api import deps as session_turn_deps
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import SANDBOX_TOKEN, mint_scoped_token
 from app.domain.agent import gateway_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_provider import DeviceChannel
@@ -395,9 +395,13 @@ async def test_a_subagent_naming_the_parents_model_runs_on_it(client):
         json={"model": "deepseek-flash", "subagent_model": "sonnet"},
     )
     assert response.status_code == 200, response.text
+    # Asked by the metering proxy, as itself, for the session's subagent.
+    asked = _subagent_headers(pid, project["root_topic_id"], "deepseek-flash")
+    session = asked["Authorization"].removeprefix("Bearer ")
     body = client.post(
         "/llm/admission",
-        headers=_subagent_headers(pid, project["root_topic_id"], "deepseek-flash"),
+        headers=asked | {"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": session},
     ).json()["data"]
     assert body["allow"] is True
     assert body["supply"] == {

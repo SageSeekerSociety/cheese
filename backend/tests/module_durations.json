@@ -654,7 +654,7 @@
     "tests/integration/test_chat_realtime.py": [18.96, 27],
     "tests/integration/test_chat_socket_backpressure.py": [0.61, 1],
     "tests/integration/test_chat_ws_auth.py": [7.74, 12],
-    "tests/integration/test_cheese_only_routes_refuse_people.py": [0.88, 1],
+    "tests/integration/test_only_ai_teammates_do_what_no_role_holds.py": [0.88, 1],
     "tests/integration/test_cheese_question_notice.py": [29.46, 17],
     "tests/integration/test_claims_and_locks.py": [0.65, 2],
     "tests/integration/test_claude_session_records.py": [14.55, 10],

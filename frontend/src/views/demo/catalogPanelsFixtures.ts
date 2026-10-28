@@ -21,6 +21,7 @@
  */
 import type { MaybeRef, Ref } from 'vue'
 import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
 import type { DocSession } from '@/composables/useDocCollab'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
@@ -315,10 +316,39 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
 }
 
 /** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
-type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
+type PreviewDerived =
+  | 'documentSuffix'
+  | 'documentType'
+  | 'documentName'
+  | 'isImageArtifact'
+  | 'docIdentity'
+  | 'canPage'
+  | 'previewAppUp'
 
 /** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
 type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
+
+/** 「文档条上的版本」那一包（`usePanelPreviewVersions` 的返回）。预览站不连后端、也没有
+ *  保存历史，所以给一份空的：`PreviewDocStage` 只在 `current` 有值时才摆版本行。 */
+export function versionsBundle(): PreviewVersionsBundle {
+  return {
+    list: computed(() => []),
+    changedCells: computed(() => null),
+    changedBy: computed(() => ''),
+    current: computed(() => null),
+    canCompare: computed(() => false),
+    canView: computed(() => false),
+    hint: computed(() => null),
+    compare: computed(() => null),
+    oldView: computed(() => null),
+    oldError: ref(''),
+    openCompare: noop,
+    exitCompare: noop,
+    dismissHint: noop,
+    choose: noop,
+    backToLatest: noop,
+  }
+}
 
 /** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、网页
  *  那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。后缀、类型、名字、
@@ -347,6 +377,7 @@ export function previewBundle(
     previewUrl: ref(v.previewUrl),
     previewAppNote: ref(v.previewAppNote),
     previewTunnelUp: ref(v.previewTunnelUp),
+    previewAppUp: ref(v.previewTunnelUp && !!v.previewUrl),
     previewNamedPath: ref(v.previewNamedPath),
     autoReloaded: ref(false),
     previewError: ref(v.previewError),
@@ -355,7 +386,6 @@ export function previewBundle(
     documentType: computed(() => DOCUMENT_TYPES[suffix] ?? null),
     documentName: computed(() => file?.path.split('/').pop() ?? ''),
     isImageArtifact: computed(() => IMAGE_SUFFIXES.has(suffix)),
-    downloadError: ref(v.downloadError),
     docBytes: computed(() => v.docBytes),
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),
@@ -386,6 +416,7 @@ export function previewBundle(
     showHistory: ref(v.showHistory),
     editor: v.editor,
     fileHistory: v.fileHistory,
+    versions: versionsBundle(),
     load: noopAsync,
     downloadArtifact: noopAsync,
     refreshDocument: noop,
@@ -394,7 +425,14 @@ export function previewBundle(
     closeEditor: noop,
     toggleHistory: noop,
     toggleDocPage: noop,
+    setDocNarrow: noop,
     setPickMode: noop,
+    stepHistory: () => false,
+    goTo: () => false,
+    appSnapshot: computed(() => null),
+    wakeSteps: computed(() => null),
+    wakeError: ref(''),
+    wakeApp: noopAsync,
   }
 }
 
@@ -570,7 +608,10 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    errorForbidden: ref(false),
     arrived: reactive(new Set<string>()),
+    load: async () => {},
+    retry: () => {},
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {

@@ -548,7 +548,7 @@ def test_the_agent_cannot_change_the_list(client):
     client.headers.pop("Authorization", None)
     client.cookies.clear()
     agent = {
-        "X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=rid, ttl_s=3600)
+        "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=rid, ttl_s=3600)}"
     }
 
     assert (

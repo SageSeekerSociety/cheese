@@ -149,7 +149,8 @@ def test_device_can_connect_after_an_unrelated_column_is_dropped(
     _portal.call(prepare)
     monkeypatch.setattr(settings, "device_connection_owner", True)
     with api_client.websocket_connect(
-        "/connector/agent?token=tok-connect-after-migration"
+        "/connector/agent",
+        headers={"Authorization": "Bearer tok-connect-after-migration"},
     ) as ws:
         assert ws.receive_json()["t"] == "welcome"
 

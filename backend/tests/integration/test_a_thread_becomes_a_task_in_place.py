@@ -207,7 +207,7 @@ def test_its_teammate_turns_the_thread_on_someones_word(client, stub_hooks):
         made = client.post(
             f"/topics/{thread}/teammate-tasks",
             json={"title": "登录验证码", "here": True},
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
     finally:
         if bearer is not None:
@@ -235,7 +235,7 @@ def test_asking_to_open_here_inside_a_task_hands_that_task_back(client, stub_hoo
         again = client.post(
             f"/topics/{thread}/teammate-tasks",
             json={"title": "再做一遍", "here": True},
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
         listed = client.get(
             f"/topics/{room}/tasks", headers=session_auth_headers("alice")

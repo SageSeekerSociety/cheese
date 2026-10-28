@@ -36,7 +36,7 @@ def _recording(seen):
                 {
                     "method": self.command,
                     "path": self.path,
-                    "token": self.headers.get("x-cheese-token"),
+                    "token": self.headers.get("authorization"),
                     "bytes": len(body),
                 }
             )
@@ -130,11 +130,6 @@ def test_a_large_body_goes_down_the_socket_without_a_credential(
     assert on_socket[-1]["token"] is None
     assert on_socket[-1]["bytes"] > 30 * 1024 * 1024
     assert direct == []
-
-
-def test_gits_relay_password_is_a_handed_credential(machine):
-    cheese, _, _ = machine
-    assert cheese._handed_token() == "handed-for-a-minute"
 
 
 def test_loading_the_cli_leaves_the_processs_urllib_as_it_was(machine):

@@ -91,9 +91,8 @@ class DigestCadence(str, Enum):
 
 #: 类别 → 它替哪些通知类别码做决定。矩阵一行一类。
 #:
-#: 有的类别今天还没有生产者：`BILLING` 的额度/计费提醒还没接进来（`models` 里没有
-#: 对应的类别码）。它照样留在模型与界面里 —— 少一行默认值等于以后接上时没有地方
-#: 让人调。
+#: 每一行今天都有生产者：`BILLING` 那一行是「额度与计费提醒」，额度快用完的提醒
+#: （`usage.alerts`）是它的第一个。
 CATEGORY_TYPES: Final[dict[PreferenceCategory, frozenset[NotificationType]]] = {
     PreferenceCategory.MENTION: frozenset({NotificationType.MENTION}),
     # 我参与的支线有人回复，和我的消息被回复是同一件事。
@@ -113,7 +112,9 @@ CATEGORY_TYPES: Final[dict[PreferenceCategory, frozenset[NotificationType]]] = {
         }
     ),
     PreferenceCategory.ANNOUNCEMENT: frozenset({NotificationType.SPACE_ANNOUNCEMENT}),
-    PreferenceCategory.BILLING: frozenset(),
+    # 额度快用完的提醒（`usage.alerts`）。设置页里这一行一直叫「额度与计费提醒」，
+    # 此前没有任何通知归到它；这条提醒是它的第一个生产者。
+    PreferenceCategory.BILLING: frozenset({NotificationType.CREDIT_WARNING}),
     PreferenceCategory.ASSISTANT: frozenset({NotificationType.ASSISTANT_NOTICE}),
 }
 

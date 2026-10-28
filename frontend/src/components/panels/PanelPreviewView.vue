@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -35,7 +35,13 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
-import { type LocatorAnchor, markPointer, measureAnchor, selectionIn } from './preview/locatorAnchor'
+import {
+  FLOATING_MIN_WIDTH,
+  type LocatorAnchor,
+  markPointer,
+  measureAnchor,
+  selectionIn,
+} from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
@@ -47,6 +53,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { PENDING_NOTES } from '@/lib/pendingNotes'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -59,6 +66,8 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   active: true,
   path: null,
   autoReloaded: false,
+  // 链上「应用」那一段：没给就按「还没答」算，和刚打开面板时一样。
+  previewAppUp: false,
   frames: undefined,
   displayedFrame: null,
   navigation: 'idle',
@@ -77,6 +86,12 @@ const emit = defineEmits<{
   refresh: []
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
   download: []
+  /** 小浏览器：后退、前进、重载帧里那一页（帧里的桥执行）。 */
+  history: [action: 'back' | 'forward' | 'reload']
+  /** 地址栏里敲了一个地址。 */
+  navigate: [path: string]
+  /** 按了「唤醒并重启应用」。 */
+  wake: []
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   'document-changed': []
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
@@ -93,6 +108,8 @@ const emit = defineEmits<{
   'toggle-history': []
   /** 文档条上换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
   'toggle-doc-page': []
+  /** 文档这一格窄下来了 / 宽回去了（`PreviewDocStage` 量的）。 */
+  'doc-narrow': [narrow: boolean]
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
   'mention-click': [handle: string]
 }>()
@@ -125,6 +142,13 @@ async function fullscreen() {
   }
 }
 
+// 网页/应用那一档在不在屏幕上。两个地方要它，而它们必须给出同一个答案：决定挂不挂
+// `PreviewFrameStage`（它自带一条地址栏、一颗刷新钮），和告诉顶栏「这一格已经在自己
+// 刷新了，别再出一颗」。各写一份的话，改一边漏一边就会同时出现两颗刷新钮。
+const browsing = computed(() =>
+  props.frames ? props.frames.length > 0 || !!props.previewAppNote : !!props.previewUrl || !!props.previewAppNote
+)
+
 // 文档那一档的实例：钉在页上的一处要它当时那张图，换文件时又要它把那个钉撤掉。
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
 const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
@@ -132,7 +156,8 @@ const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(prop
 const {
   locator,
   locatorNote,
-  queued,
+  queuedCount,
+  pendingElsewhere,
   annotateError,
   imageRegion,
   pageLocator,
@@ -149,6 +174,7 @@ const {
   onCell,
   onSheetRange,
   onMarkdownQuote,
+  onCodeLines,
   onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
@@ -158,19 +184,41 @@ const {
   clearMark: () => docStage.value?.clearMark(),
 })
 
+/** 攒在待发篮里、还没发出去的那几处：正文里在那一句话末尾挂一颗序号，和篮里那一行
+ *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
+ *  顺序数，和 tray 上的编号同一个来源。 */
+const sharedPending = inject(PENDING_NOTES, null)
+/** 只取**这一份文件**上攒着的那几条：篮是整间房一份，换一份文件时它不清空（读者很可能
+ *  在几份文件上各指几处再一起发），而按字找位置只在这一份正文里找——拿着别的文件上的
+ *  一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧相同的那句话上。 */
+const pendingPins = computed(() => {
+  const here = props.previewFile?.path ?? ''
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'text-range' && note.path === here
+      ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
+      : []
+  )
+})
+
 // ---- 定位框弹在哪 ----
 // 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：
 // 眼睛在哪写字就在哪，指好几处时也看得出哪句话对着哪处。位置在打开那一刻记下：选中的
 // 一段记成一个 Range，点出来的一处记下松手的那一点；滚动和改尺寸时重算一次。
 // 记下的点只认刚刚那一下（键盘选中时没有点，框贴底），见 `preview/locatorAnchor.ts`。
 const POINTER_FRESH_MS = 1500
+const nodeElement = (node: Node) => (node instanceof Element ? node : node.parentElement)
 let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
 const locatorAnchor = ref<LocatorAnchor | null>(null)
+/** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
+const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   const panel = panelElement.value
-  if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
+  // 定位框自己的部件（那颗「添加批注」和整张卡）都标着 `data-locator-ui`：点它们不是在
+  // 指正文里的一处，别记成下一次指认的那一点。按标记找，不按类名——定位框以后再多一个
+  // 部件时，外面的守卫不用跟着改。
+  if (!panel || (event.target instanceof Element && event.target.closest('[data-locator-ui]'))) return
   lastPointer = { ...markPointer(event, panel), at: performance.now() }
 })
 let placing = 0
@@ -181,21 +229,35 @@ function placeLocator() {
     placing = 0
     const panel = panelElement.value
     locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+    // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
+    // 不能两样都不画。
+    if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
+      locatorFromSelection.value = false
   })
 }
 watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
+    locatorFromSelection.value = false
     return
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
+  locatorFromSelection.value =
+    !!panel &&
+    !!anchorRange &&
+    !anchorRange.collapsed &&
+    panel.clientWidth >= FLOATING_MIN_WIDTH &&
+    !nodeElement(anchorRange.commonAncestorContainer)?.closest('[data-locator-points]')
   anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
   lastPointer = null
   void nextTick(placeLocator)
 })
 useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+
 useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
 
 // ---- 这一份文件上的评论 ----
@@ -382,7 +444,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview" tabindex="-1">
+  <!-- 预览里选中一段有自己的「添加批注」，全局划词的「问芝士」在这里不出，免得一段选区上
+       同时冒出两颗按钮（见 AgentSelectionAsk 的 data-agent-select）。 -->
+  <div ref="panelElement" class="panel-preview" tabindex="-1" data-agent-select="off">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见 PreviewFrameStage）。 -->
@@ -397,6 +461,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
+      :browsing="browsing"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />
@@ -408,7 +473,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
     <PreviewFrameStage
-      v-else-if="frames ? frames.length > 0 : previewUrl"
+      v-else-if="browsing"
       :topic-id="topicId"
       :path="path"
       :frame-name="frameName"
@@ -421,6 +486,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-url="previewUrl"
       :preview-app-note="previewAppNote"
       :preview-tunnel-up="previewTunnelUp"
+      :preview-app-up="previewAppUp"
+      :app-snapshot="appSnapshot"
+      :wake-steps="wakeSteps"
+      :wake-error="wakeError"
       :preview-error="previewError"
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
@@ -432,6 +501,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @toggle-pick="pick.toggle"
       @pick-region="pick.fromRegion"
       @download="emit('download')"
+      @history="emit('history', $event)"
+      @navigate="emit('navigate', $event)"
+      @wake="emit('wake')"
     />
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
@@ -492,21 +564,24 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-loading="docLoading"
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
-      :download-error="downloadError"
       :slide-context="slideContext"
       :revs="revs"
       :file-history="fileHistory"
+      :versions="props.versions"
       :show-history="showHistory"
       :anchors="threadAnchors"
       :page-anchors="pageAnchors"
       :sheet-anchors="sheetAnchors"
+      :pins="pendingPins"
       :live-edit="props.liveEdit"
       :active-anchor="focusedThread"
+      :named-tab="!!path"
       @anchor="openAnchor"
       @close-live-edit="props.liveEdit?.end()"
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
+      @narrow="emit('doc-narrow', $event)"
       @download="emit('download')"
       @mention-click="emit('mention-click', $event)"
       @quote="onQuote"
@@ -514,6 +589,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @cell="onCell"
       @sheet-range="onSheetRange"
       @markdown-quote="onMarkdownQuote"
+      @code-lines="onCodeLines"
       @pin="pageLocator.onPin"
       @dropped="clearLocator"
     />
@@ -605,12 +681,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :queued-count="queued.length"
+      :queued-count="queuedCount"
+      :pending-elsewhere="pendingElsewhere"
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :comment-error="commentError"
       :anchor="locatorAnchor"
+      :arm-first="locatorFromSelection"
       @send="sendLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"

@@ -4,15 +4,14 @@
 // run from the live spec so it never goes stale and never needs a client
 // update. The client carries zero business logic.
 //
-// The base URL and credential come from this machine's config (written by
-// `cheese auth login`); the environment overrides them when set:
+// The base URL comes from this machine's config (written by `cheese auth
+// login`) and the credential from the session it runs in; the environment
+// sets them:
 //
 //	CHEESE_API     base URL of the server (env override)
-//	CHEESE_TOKEN   credential, sent as `Authorization: Bearer <token>` (env override)
-//	CHEESE_SCREEN  when set, sent as `X-Cheese-Screen: <token>` so the server can
-//	               tell which screen a call originated from. The host injects this
-//	               into every screen it opens, so any process inside a screen that
-//	               runs `cheese api` is automatically attributed to that screen.
+//	CHEESE_TOKEN   the session's credential, sent as `Authorization: Bearer
+//	               <token>`. The machine's own device token is not one: it
+//	               opens the connector's channel and nothing of the API.
 package apicli
 
 import (
@@ -46,15 +45,14 @@ func Setup(version string) *cobra.Command {
 	base := APIBase()
 	selfConfigure(base)
 
-	// Inject the credential (and, if we are inside a screen, the screen token)
-	// into every server-bound request, at the bottom of Restish's transport
-	// stack so it covers both the spec fetch and the actual calls.
+	// Inject the credential into every server-bound request, at the bottom of
+	// Restish's transport stack so it covers both the spec fetch and the
+	// actual calls.
 	if u, err := url.Parse(base); err == nil {
 		http.DefaultTransport = &bearerInjector{
-			base:   http.DefaultTransport,
-			host:   u.Host,
-			token:  resolveToken(),
-			screen: os.Getenv("CHEESE_SCREEN"),
+			base:  http.DefaultTransport,
+			host:  u.Host,
+			token: os.Getenv("CHEESE_TOKEN"),
 		}
 	}
 
@@ -152,18 +150,6 @@ func APIBase() string {
 	return "http://localhost:8080"
 }
 
-// resolveToken returns the credential: CHEESE_TOKEN if set, else the one stored
-// by `cheese auth login`.
-func resolveToken() string {
-	if tok := os.Getenv("CHEESE_TOKEN"); tok != "" {
-		return tok
-	}
-	if cfg, err := config.Load(config.CommandPath()); err == nil {
-		return cfg.Token
-	}
-	return ""
-}
-
 // selfConfigure writes an apis.json pointing Restish at the backend, derived
 // entirely from env — regenerated every run so a changed CHEESE_API takes
 // effect with no manual step.
@@ -196,10 +182,9 @@ func selfConfigure(base string) string {
 }
 
 type bearerInjector struct {
-	base   http.RoundTripper
-	host   string
-	token  string
-	screen string
+	base  http.RoundTripper
+	host  string
+	token string
 }
 
 func (b *bearerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -207,10 +192,6 @@ func (b *bearerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 		if b.token != "" && req.Header.Get("Authorization") == "" {
 			req = req.Clone(req.Context())
 			req.Header.Set("Authorization", "Bearer "+b.token)
-		}
-		if b.screen != "" && req.Header.Get("X-Cheese-Screen") == "" {
-			req = req.Clone(req.Context())
-			req.Header.Set("X-Cheese-Screen", b.screen)
 		}
 	}
 	resp, err := b.base.RoundTrip(req)

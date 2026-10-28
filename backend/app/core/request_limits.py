@@ -18,8 +18,6 @@ draft-ietf-httpapi-ratelimit-headers-11. WebSockets are not limited.
 """
 
 import asyncio
-import base64
-import binascii
 import math
 import time
 from collections import deque
@@ -32,6 +30,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
 from app.core.errors import format_error_response
@@ -98,32 +97,17 @@ def principal_of(scope: Scope) -> tuple[str, str] | None:
     a forged or expired token included — is counted by the address it came
     from, or a made-up token would be a fresh quota.
     """
-    headers = Headers(scope=scope)
-    authorization = headers.get("authorization", "")
-    scheme, _, value = authorization.partition(" ")
-    bearer = value.strip() if scheme.lower() == "bearer" else ""
-    claims = verify_access_token(bearer) if bearer else None
+    token = credentials.presented(Headers(scope=scope))
+    claims = verify_access_token(token) if token else None
     if claims is not None:
         return "user", f"user:{claims.handle}"
-    # A sandbox credential arrives wherever its client puts it: the `cheese`
-    # CLI as X-Cheese-Token, Claude Code through the LLM proxy as a bearer or
-    # x-api-key, git through the forge relay as the Basic password.
-    candidates = [
-        headers.get("x-cheese-token", ""),
-        bearer,
-        headers.get("x-api-key", ""),
-    ]
-    if scheme.lower() == "basic":
-        candidates.append(_basic_password(value.strip()))
-    tokens = [token.strip() for token in candidates if token.strip()]
-    for token in tokens:
-        key = _agent_key(token)
-        if key is not None:
-            return "agent", key
+    key = _agent_key(token) if token else None
+    if key is not None:
+        return "agent", key
     # The signing secret, used directly by the host's own timers and by dev
     # tooling. It cannot be forged, so it is one principal of its own rather
     # than whoever shares its address.
-    if any(is_global_sandbox_token(token) for token in tokens):
+    if is_global_sandbox_token(token):
         return "infra", "infra:sandbox-secret"
     address = resolved_client_address(Request(scope))
     if address is None:
@@ -149,13 +133,6 @@ def _agent_key(token: str) -> str | None:
     if credential is not None:
         return f"agent:{credential.project_id}:credential"
     return None
-
-
-def _basic_password(value: str) -> str:
-    try:
-        return base64.b64decode(value, validate=True).decode().partition(":")[2]
-    except (ValueError, UnicodeError, binascii.Error):
-        return ""
 
 
 class _RedisWarning:

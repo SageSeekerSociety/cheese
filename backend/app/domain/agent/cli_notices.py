@@ -3,6 +3,7 @@ them, turned into the platform's own notices."""
 
 from app.core.sentences import say
 from app.domain.agent.platform_failures import (
+    CONTROL_PLANE_UNAVAILABLE_CODE,
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
@@ -49,6 +50,14 @@ _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
         WHO_PLATFORM,
         "cliSubscriptionEgressOfflineHint",
     ),
+    # 平台自己没能确认这次调用记给哪个项目/哪份活，于是没去调模型。它自己的临时
+    # 故障，和「账户没钱」是两回事：后者要管理员充值，前者等一会儿就好。
+    CONTROL_PLANE_UNAVAILABLE_CODE: (
+        "cliControlPlaneUnavailable",
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        "cliControlPlaneUnavailableHint",
+    ),
     SUBSCRIPTION_ACCOUNTS_COOLING_CODE: (
         "cliSubscriptionAccountsCooling",
         SEVERITY_ERROR,
@@ -81,6 +90,7 @@ _CLI_RETRYABLE = frozenset(
     {
         PROVIDER_UNREACHABLE_CODE,
         PROVIDER_OVERLOADED_CODE,
+        CONTROL_PLANE_UNAVAILABLE_CODE,
         RESPONSE_TRUNCATED_CODE,
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
         SUBSCRIPTION_ACCOUNTS_COOLING_CODE,

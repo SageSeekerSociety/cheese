@@ -1,0 +1,17 @@
+{
+  "platform": "平台",
+  "tunnel": "通道",
+  "app": "应用",
+  "page": "页面",
+  "platformOk": "预览信息读得到。",
+  "platformDown": "读不到预览信息：{error}",
+  "tunnelOk": "{agent}的电脑连着平台。",
+  "tunnelDown": "{agent}的电脑没连上平台：多半是休眠了，或者还没开机。",
+  "appOk": "应用有应答，页面已加载。",
+  "appReady": "应用有应答，页面确认就绪。",
+  "appSilent": "电脑连着，但应用没有应答，可能已经退出。",
+  "appRestarted": "应用刚重启过，正在跟到新的那一个。",
+  "appReconnecting": "连接断了一下，正在重连；屏幕上还是已加载的页面。",
+  "pageError": "页面报错：{error}",
+  "unknown": "前面那一段不通，这一段暂时判断不了。"
+}

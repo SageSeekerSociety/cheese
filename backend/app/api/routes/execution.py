@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -18,7 +19,11 @@ from app.core.errors import (
     GatewayTimeoutError,
     NotFoundError,
 )
-from app.core.sandbox_auth import personal_execution_claims, scoped_token_claims
+from app.core.sandbox_auth import (
+    held_by_a_machine,
+    personal_execution_claims,
+    scoped_token_claims,
+)
 from app.core.sentences import say
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
@@ -127,8 +132,10 @@ async def execute(
         payload.method,
         payload.params.get("id", ""),
     )
-    token = request.headers.get("x-cheese-token", "")
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
+    if claims and held_by_a_machine(claims):
+        claims = None
     # A person's own 芝士 works its sandbox with a credential of its own kind
     # (``machine.holder.Personal``): the conversation is theirs, in no project
     # and no room.

@@ -23,7 +23,6 @@ import type {
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -31,6 +30,7 @@ import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
 import { settledStage } from '@/lib/taskStages'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
 export interface TaskFormProps {
@@ -102,35 +102,26 @@ export function useTaskForm(
           name: props.parametersOnly
             ? z.string().optional()
             : z
-                .string({ required_error: t('tasks.form.validation.nameRequired') })
+                .string({ error: t('tasks.form.validation.nameRequired') })
                 .trim()
                 .min(1, t('tasks.form.validation.nameRequired'))
                 .max(100),
-          submitterType: z.enum(['USER', 'TEAM'], { required_error: t('tasks.form.validation.submitterTypeRequired') }),
+          submitterType: z.enum(['USER', 'TEAM'], { error: t('tasks.form.validation.submitterTypeRequired') }),
           registrationStartAt: z.date().optional().nullable(),
           deadline: z.date().nullable(),
           startMode: z.enum(['DIRECT', 'APPLY']),
           defaultDeadline: z
-            .number({
-              required_error: t('tasks.form.validation.completionRequired'),
-              invalid_type_error: t('tasks.form.validation.completionRequired'),
-            })
+            .number({ error: t('tasks.form.validation.completionRequired') })
             .int()
             .min(1, t('tasks.form.validation.completionRequired')),
           rank: z
-            .number({
-              required_error: t('tasks.form.validation.rankRequired'),
-              invalid_type_error: t('tasks.form.validation.rankRequired'),
-            })
+            .number({ error: t('tasks.form.validation.rankRequired') })
             .int()
             .min(1, t('tasks.form.validation.rankRequired'))
             .max(3),
           topics: z.array(z.number()).optional(),
           categoryId: z
-            .number({
-              required_error: t('tasks.form.validation.categoryRequired'),
-              invalid_type_error: t('tasks.form.validation.categoryRequired'),
-            })
+            .number({ error: t('tasks.form.validation.categoryRequired') })
             .int()
             .min(1, t('tasks.form.validation.categoryRequired')),
           minTeamSize: z.number().int().min(1).optional(),

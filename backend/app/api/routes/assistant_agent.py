@@ -24,8 +24,6 @@ from pydantic import BaseModel, Field
 
 from app.api.assistant_acts import (
     ASK,
-    DOORS,
-    MESSAGE,
     RANK,
     ROLE,
     ActIn,
@@ -64,7 +62,7 @@ from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFou
 from app.core.sentences import say
 from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
-from app.domain.assistant import changes, gate, passes, proposals, refs
+from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
 from app.domain.fetch.preapproved import preapproved
 from app.domain.library import listing as library_listing
@@ -93,6 +91,8 @@ router = APIRouter(
 
 #: The most items the inbox lists at once; it says how many more there are.
 INBOX_LIMIT = 30
+#: What the inbox is, named as a step that read it.
+INBOX = "你的待办"
 
 #: Why a thing waits on the person, as their inbox page says it
 #: (``home.inbox.reason``).
@@ -246,7 +246,7 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
             and i.project_id == str(wanted)
         ]
     if not items:
-        return ok({"text": "现在没有等你处理的事。"})
+        return ok({"text": "现在没有等你处理的事。", "subject": INBOX})
     names = _Names(db)
     lines = []
     for item in items[:INBOX_LIMIT]:
@@ -265,7 +265,13 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
         if more > 0
         else ""
     )
-    return ok({"text": head + "\n" + "\n".join(lines) + tail})
+    return ok({"text": head + "\n" + "\n".join(lines) + tail, "subject": INBOX})
+
+
+def _read(found: reading.Read) -> dict:
+    """What a read hands 芝士: the text, and what it read by name, which its
+    step shows."""
+    return ok({"text": found.text, "subject": found.subject})
 
 
 class ReadIn(BaseModel):
@@ -280,15 +286,15 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
     me = await _person(resolver, db)
     text = body.ref.strip().strip("/")
     if text == "teams":
-        return ok({"text": await rosters.my_teams(db, me.user_id)})
+        return _read(await rosters.my_teams(db, me.user_id))
     if text == "spaces":
-        return ok({"text": await rosters.my_spaces(db, me.user_id)})
+        return _read(await rosters.my_spaces(db, me.user_id))
     people = _SPACE_PEOPLE.fullmatch(text)
     if people:
-        return ok({"text": await rosters.space(db, me.user_id, int(people[1]))})
+        return _read(await rosters.space(db, me.user_id, int(people[1])))
     desk = _SPACE_DESK.fullmatch(text)
     if desk:
-        return ok({"text": await space_desk.desk(db, me.user_id, int(desk[1]))})
+        return _read(await space_desk.desk(db, me.user_id, int(desk[1])))
     if text.endswith("/settings") and (
         found := refs.parse(text.removesuffix("/settings"))
     ):
@@ -298,17 +304,16 @@ async def agent_read(body: ReadIn, resolver: ActorResolverDep, db: DbSession) ->
                 raise NotFoundError.for_resource("project", found.slug or "")
             channels = await ProjectPages(db, resolver).channels(project.id)
             said = await project_desk.settings(db, project, channels)
-            return ok({"text": said})
+            return _read(reading.Read(f"项目「{project.name}」的设置", said))
     ref = refs.parse(body.ref)
     if ref is not None and ref.kind == "team" and (ref.id or "").isdigit():
-        return ok({"text": await rosters.team(db, me.user_id, int(ref.id or 0))})
+        return _read(await rosters.team(db, me.user_id, int(ref.id or 0)))
     if ref is not None and ref.kind in _WAITING_KINDS:
-        return ok({"text": await _waiting_one(db, me, ref)})
+        return _read(reading.Read(INBOX, await _waiting_one(db, me, ref)))
     if ref is None or ref.kind not in reading.KINDS:
         raise BadRequestError(say("assistantRefUnknown", ref=body.ref))
     reader = reading.Reader(session=db, user_id=me.user_id, timezone=me.timezone)
-    text = await reading.read(reader, ProjectPages(db, resolver), ref, body.page)
-    return ok({"text": text})
+    return _read(await reading.read(reader, ProjectPages(db, resolver), ref, body.page))
 
 
 #: Who is in a space: its managers and members (`rosters.space`).
@@ -387,7 +392,6 @@ async def _message(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"content": text, "request_id": str(uuid.uuid4())},
             }
         ],
-        [(MESSAGE, str(place.conversation_id))],
         card=(
             "message",
             {
@@ -398,6 +402,7 @@ async def _message(db, access, body: ActIn, me: Person) -> Plan:
             },
         ),
         done=f"已在「{name}」发出。",
+        subject=f"{'任务' if place.task else '频道'}「{name}」",
     )
 
 
@@ -423,7 +428,6 @@ async def _task(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"content": text, "request_id": str(uuid.uuid4())},
             },
         ],
-        [(DOORS["task"], str(room.id)), (MESSAGE, None)],
         card=(
             "task",
             {
@@ -435,6 +439,7 @@ async def _task(db, access, body: ActIn, me: Person) -> Plan:
             },
         ),
         done=f"已在频道「{room.title}」开了任务「{title}」，AI 队友会接着做。",
+        subject=f"任务「{title}」",
     )
 
 
@@ -474,7 +479,6 @@ async def _review(db, access, body: ActIn, me: Person) -> Plan:
         )
     else:
         raise BadRequestError(say("assistantActNeeds", what="choice: accept / reject"))
-    door = DOORS["accept" if body.choice == "accept" else "reject"]
     return Plan(
         gate.Action(
             "review",
@@ -484,9 +488,9 @@ async def _review(db, access, body: ActIn, me: Person) -> Plan:
             + (f"，{verb.split('，', 1)[1]}" if "，" in verb else ""),
         ),
         [call],
-        [(door, None)],
         card=("act", {}),
         done=f"已{verb.split('，')[0]}任务「{place.task.title}」。",
+        subject=f"任务「{place.task.title}」",
     )
 
 
@@ -509,7 +513,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     ("remove_member",),
                 ),
                 [{"method": "DELETE", "path": f"/topics/{room.id}/members/{who}"}],
-                [(DOORS["channel_remove"], str(room.id))],
                 card=("act", {}),
                 done=f"已把 {shown} 移出频道「{room.title}」。",
             )
@@ -529,7 +532,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     "body": {"handle": who},
                 }
             ],
-            [(DOORS["channel_add"], str(room.id))],
             card=("act", {}),
             done=f"已把 {shown} 加进频道「{room.title}」。",
         )
@@ -550,7 +552,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                 ("remove_member",),
             ),
             [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
-            [(DOORS["project_remove"], pid)],
             card=("act", {}),
             done=f"已把 {shown} 移出项目「{project.name}」。",
         )
@@ -574,7 +575,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                     "body": {"user_handle": who, "role": role},
                 }
             ],
-            [(DOORS["project_invite"], pid)],
             card=("act", {}),
             done=f"已邀请 {shown} 加入项目「{project.name}」，等对方接受。",
         )
@@ -592,7 +592,6 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
                 "body": {"role": role},
             }
         ],
-        [(DOORS["project_role"], pid)],
         card=("act", {}),
         done=f"已把 {shown} 改成{ROLE[role]}。",
     )
@@ -629,9 +628,9 @@ async def _channel(db, access, body: ActIn, me: Person) -> Plan:
                 },
             }
         ],
-        [(DOORS["channel"], str(project.id))],
         card=("act", {}),
         done=f"已在项目「{project.name}」建好频道「{title}」。",
+        subject=f"频道「{title}」",
     )
 
 
@@ -652,7 +651,6 @@ def _fetch(body: ActIn) -> Plan:
                 },
             }
         ],
-        [(DOORS["fetch"], None)],
         card=None,
     )
 
@@ -667,23 +665,9 @@ _SPACE_ACTS = {
 }
 
 
-@router.post("/act", include_in_schema=False)
-async def agent_act(
-    body: ActIn,
-    resolver: ActorResolverDep,
-    db: DbSession,
-    questions: Questions,
-) -> dict:
-    """An action 芝士 is about to take for the person, through its gate: let
-    through (``done``, with the pass and the calls that do it), handed back to
-    芝士 with the reason (``returned``), or turned into a card the person
-    confirms (``card``). A look's stop goes back to 芝士 the first few times in
-    an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
-    (``confirm``) or nobody is there to ask."""
-    started = time.monotonic()
-    claims = resolver.delegation()
-    if claims is None or claims.user_id is None or not claims.work:
-        raise AuthenticationRequiredError(say("invalidToken"))
+async def _planned(db, resolver, body: ActIn) -> tuple[Plan, Person]:
+    """The action ``body`` names, written out for the person the credential
+    acts for (``assistant_acts``)."""
     me = await _person(resolver, db)
     access = ProjectPages(db, resolver)
     if body.kind == "message":
@@ -704,6 +688,27 @@ async def agent_act(
         plan = await _SPACE_ACTS[body.kind](db, me, body)
     else:
         plan = _fetch(body)
+    return plan, me
+
+
+@router.post("/review", include_in_schema=False)
+async def agent_review(
+    body: ActIn,
+    resolver: ActorResolverDep,
+    db: DbSession,
+    questions: Questions,
+) -> dict:
+    """Whether 芝士 takes an action others will see, asked by its harness
+    before the tool runs (``run_platform_tool``): take it (``allowed``), hand it
+    back to 芝士 with the reason (``returned``), or turn it into a card the
+    person confirms (``card``). A look's stop goes back to 芝士 the first few
+    times in an answer (``gate.RETURNS_PER_ANSWER``) unless it asks for a card
+    (``confirm``) or nobody is there to ask."""
+    started = time.monotonic()
+    claims = resolver.delegation()
+    if claims is None or claims.user_id is None or not claims.work:
+        raise AuthenticationRequiredError(say("invalidToken"))
+    plan, me = await _planned(db, resolver, body)
     conversation = uuid.UUID(claims.conversation) if claims.conversation else None
     verdict = await gate.judge(
         db, user_id=me.user_id, conversation_id=conversation, action=plan.action
@@ -730,20 +735,16 @@ async def agent_act(
     if returned:
         return ok(
             {
-                "done": False,
+                "allowed": False,
                 "returned": True,
                 "reason": verdict.reason,
                 "said": say("assistantActReturned", reason=verdict.reason),
             }
         )
     if verdict.allowed:
-        token = await passes.issue(claims.work, plan.doors)
-        if token is not None:
-            return ok(
-                {"done": True, "pass": token, "calls": plan.calls, "said": plan.done}
-            )
+        return ok({"allowed": True})
     if plan.card is None:
-        return ok({"done": False, "reason": verdict.reason, "card": None})
+        return ok({"allowed": False, "reason": verdict.reason, "card": None})
     kind, payload = plan.card
     if kind == "act":
         payload = {
@@ -753,7 +754,16 @@ async def agent_act(
             "said": plan.done,
         }
     card = await show_proposal(db, questions, claims, kind, payload)
-    return ok({"done": False, "reason": verdict.reason, "card": card})
+    return ok({"allowed": False, "reason": verdict.reason, "card": card})
+
+
+@router.post("/plan", include_in_schema=False)
+async def agent_plan(body: ActIn, resolver: ActorResolverDep, db: DbSession) -> dict:
+    """How an action is carried out: the calls the person's own pages make
+    for it, which 芝士's tool makes as the person once its harness has taken
+    the action, and what 芝士 is told when they are made."""
+    plan, _ = await _planned(db, resolver, body)
+    return ok({"calls": plan.calls, "said": plan.done, "subject": plan.subject})
 
 
 #: How long one wait on a card holds its request open; 芝士's tool asks again

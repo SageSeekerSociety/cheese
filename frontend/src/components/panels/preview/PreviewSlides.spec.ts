@@ -38,6 +38,25 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
     }
   },
 }))
+/**
+ * 一页的文字：pdf.js 给的是那条流，「一页的文字」就是自己按段读它（见 useSlidesPdf）。
+ * 这里给一条真的 ReadableStream，读法和产品里一样；`hold` 时不喂内容，读的人就一直等
+ * ——用来演「取文字比换文档慢」。
+ */
+function textStream(hold = false) {
+  let deliver!: (chunk: { items: { str: string; hasEOL: boolean }[] }) => void
+  const stream = new ReadableStream<{ items: { str: string; hasEOL: boolean }[] }>({
+    start(controller) {
+      deliver = (chunk) => {
+        controller.enqueue(chunk)
+        controller.close()
+      }
+      if (!hold) deliver({ items: [{ str: pdf.text, hasEOL: true }] })
+    },
+  })
+  return { stream, deliver }
+}
+
 function documentFixture(count = 20) {
   return {
     numPages: count,
@@ -53,8 +72,7 @@ function documentFixture(count = 20) {
         if (!pdf.holdRender) finish()
         return { promise, cancel }
       },
-      streamTextContent: () => ({}),
-      getTextContent: async () => ({ items: [{ str: pdf.text, hasEOL: true }] }),
+      streamTextContent: () => textStream().stream,
     }),
   }
 }
@@ -134,10 +152,13 @@ describe('slide reader contract (PDF.js substituted)', () => {
     const reader = ui.getByRole('region', { name: '幻灯片阅读' })
     expect(document.activeElement).toBe(reader)
     expect(ui.queryByRole('navigation', { name: '缩略图' })).toBeNull()
+    // 放映时挪到 body 下，不受面板外层绘制层级的限制（否则左边被侧栏盖住）。
+    expect(reader.parentElement).toBe(document.body)
     await fireEvent.keyDown(reader, { key: 'ArrowRight' })
     expect(pageInput(ui).value).toBe('3')
     await fireEvent.keyDown(reader, { key: 'Escape' })
     await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '演示' })))
+    expect(ui.getByRole('region', { name: '幻灯片阅读' }).parentElement).not.toBe(document.body)
     expect(pageInput(ui).value).toBe('3')
     expect(pdf.requests).toHaveLength(1)
   })
@@ -161,13 +182,10 @@ describe('slide reader contract (PDF.js substituted)', () => {
       const context = reactive({ ...identity })
       const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context } })
       await waitFor(() => expect(pdf.requests).toHaveLength(1))
-      let finish!: (content: { items: { str: string; hasEOL: boolean }[] }) => void
-      const pending = new Promise<{ items: { str: string; hasEOL: boolean }[] }>((resolve) => {
-        finish = resolve
-      })
+      const { stream, deliver } = textStream(true)
       const doc = documentFixture()
       const getPage = doc.getPage
-      doc.getPage = async (number: number) => ({ ...(await getPage(number)), getTextContent: () => pending })
+      doc.getPage = async (number: number) => ({ ...(await getPage(number)), streamTextContent: () => stream })
       pdf.requests[0]!.resolve(doc)
       await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
       await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
@@ -177,7 +195,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
         context.version = 'v8'
         await nextTick()
       }
-      finish({ items: [{ str: 'retired v7 text', hasEOL: true }] })
+      deliver({ items: [{ str: 'retired v7 text', hasEOL: true }] })
       await new Promise((resolve) => setTimeout(resolve, 0))
       await nextTick()
       expect(ui.emitted().pageContext).toBeUndefined()
@@ -369,18 +387,15 @@ describe('slide reader contract (PDF.js substituted)', () => {
   it('retires pending whole-page text when refreshing makes its action unavailable', async () => {
     const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context: identity } })
     await waitFor(() => expect(pdf.requests).toHaveLength(1))
-    let finish!: (content: { items: { str: string; hasEOL: boolean }[] }) => void
-    const pending = new Promise<{ items: { str: string; hasEOL: boolean }[] }>((resolve) => {
-      finish = resolve
-    })
+    const { stream, deliver } = textStream(true)
     const doc = documentFixture(3)
     const getPage = doc.getPage
-    doc.getPage = async (number: number) => ({ ...(await getPage(number)), getTextContent: () => pending })
+    doc.getPage = async (number: number) => ({ ...(await getPage(number)), streamTextContent: () => stream })
     pdf.requests[0]!.resolve(doc)
     await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
     await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
     await ui.rerender({ pending: true })
-    finish({ items: [{ str: 'text captured before refreshing', hasEOL: true }] })
+    deliver({ items: [{ str: 'text captured before refreshing', hasEOL: true }] })
     await new Promise((resolve) => setTimeout(resolve, 0))
     await nextTick()
     expect(ui.emitted().pageContext).toBeUndefined()

@@ -28,7 +28,7 @@ def seated(client):
     ).json()["data"]["id"]
     seat = room_agent_seat(client, tid)
     task = delivery_task(client, tid, commit=False)
-    headers = {"X-Cheese-Token": mint_session_token(pid, tid, seat)}
+    headers = {"Authorization": f"Bearer {mint_session_token(pid, tid, seat)}"}
     return pid, tid, seat, task, headers
 
 

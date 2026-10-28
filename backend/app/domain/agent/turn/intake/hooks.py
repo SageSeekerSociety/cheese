@@ -6,6 +6,7 @@ Neither layer receives ChatService or a many-method private Host protocol.
 """
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,12 +14,14 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core import alerting
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
+    is_provider_out_of_credit,
 )
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.room_events import post_system_event
@@ -332,6 +335,20 @@ class HookEvents:
                         own=state is not None and state.route == OWN_ROUTE,
                     )
                     resumable = True
+                    if is_provider_out_of_credit(event.text):
+                        # 上游服务的余额用完了：项目里的人补团队额度也没有用，只有
+                        # 平台管理员能处理。房间里那句已经说了，这里再叫一次管平台
+                        # 的人（`alerting` 自带重复窗口，同一个上游不会每小时刷）。
+                        alerting.send(
+                            "AI 中继余额已用完",
+                            [
+                                f"项目 {project_id}",
+                                "上游原文：" + (event.text or "").strip()[:400],
+                                "重试没有作用；补团队额度也没有用。",
+                            ],
+                            key="ai-relay-out-of-credit",
+                            when=time.time(),
+                        )
                 error_line, error_code = line, meta.get("code")
                 if resumable:
                     recovering = await self._resume_later(

@@ -157,12 +157,14 @@ def _agent_headers(client, project_id: str) -> dict:
     assert room.status_code == 200, room.text
     topic_id = room.json()["data"]["id"]
     return {
-        "x-cheese-token": mint_scoped_token(
-            project_id=project_id,
-            topic_id=topic_id,
-            agent_handle=room_agent_seat(client, topic_id),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id,
+                topic_id=topic_id,
+                agent_handle=room_agent_seat(client, topic_id),
+                access_scope='project',
+            )
+        }"
     }
 
 

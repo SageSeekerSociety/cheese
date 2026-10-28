@@ -25,7 +25,6 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.device_hub import HubScreen, device_hub
 from app.domain.feedback import repositories as feedback_repo
 from app.domain.feedback.models import (
     Feedback,
@@ -157,35 +156,6 @@ def _mine(client, handle: str) -> list[dict]:
     return r.json()["data"]["data"]
 
 
-def _register_screen(*, project_id=None, topic_id=None, handle: str) -> HubScreen:
-    """A device screen registered straight on the singleton hub.
-
-    Copied from `test_connector_viewer.py`: no live device is needed — the
-    resolver attributes a call carrying this token to its agent-user, and that is
-    the only thing these tests want from it.
-    """
-    screen = HubScreen(
-        sid="s" + uuid.uuid4().hex[:8],
-        device_id="d" + uuid.uuid4().hex[:6],
-        command=["claude"],
-        token=uuid.uuid4().hex,
-        agent_user_id=uuid.uuid4(),
-        agent_handle=handle,
-        project_id=project_id,
-        topic_id=topic_id,
-    )
-    device_hub._screens[screen.sid] = screen
-    device_hub._by_screen_token[screen.token] = screen
-    device_hub._device(screen.device_id).screens[screen.sid] = screen
-    return screen
-
-
-def _unregister(screen: HubScreen) -> None:
-    device_hub._screens.pop(screen.sid, None)
-    device_hub._by_screen_token.pop(screen.token, None)
-    device_hub._devices.pop(screen.device_id, None)
-
-
 def _propose(client, topic: str, token: str, **body) -> dict:
     payload = {
         "title": "沙箱里 make 装不上依赖",
@@ -196,7 +166,7 @@ def _propose(client, topic: str, token: str, **body) -> dict:
     return client.post(
         f"/topics/{topic}/feedback-proposals",
         json=payload,
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
 
 
@@ -304,8 +274,12 @@ def test_admin_patch_is_visible_when_its_response_arrives(client, as_admin):
                 await app(scope, receive, observed_send)
 
         app.dependency_overrides[get_db] = gated_get_db
-        headers = dict(client.headers)
-        headers.update(session_auth_headers(as_admin))
+        # The admin's own credential, in place of the client's default one.
+        headers = {
+            name: value
+            for name, value in client.headers.items()
+            if name.lower() != "authorization"
+        } | session_auth_headers(as_admin)
         try:
             async with (
                 httpx.AsyncClient(
@@ -1503,7 +1477,7 @@ def test_an_agent_credential_cannot_file_a_report_on_the_direct_route(client):
     r = client.post(
         "/feedback",
         json={"title": "agent 想直接发一条"},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 403, r.text
     assert [
@@ -1568,7 +1542,7 @@ def test_a_proposal_must_say_exactly_one_thing_about_what_the_user_said(client, 
     r = client.post(
         f"/topics/{topic}/feedback-proposals",
         json={"title": "沙箱里 make 装不上依赖", **said},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 400, r.text
     assert "exactly one of user_said" in r.text
@@ -1653,7 +1627,7 @@ def test_an_agent_cannot_accept_its_own_proposal(client):
     r = client.post(
         f"/topics/{topic}/feedback-proposals/{block_id}/accept",
         json={"title": "沙箱里 make 装不上依赖"},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert r.status_code == 403, r.text
     assert "propose" in r.json()["message"], r.text
@@ -2397,46 +2371,31 @@ def test_the_public_route_still_forgives_an_unknown_sort(client, as_admin):
 # --- agent 与提案卡 ---------------------------------------------------------
 
 
-def test_a_screen_credential_on_the_admin_list_is_refused(client, monkeypatch):
-    """§4.3's second gate, and why it has to be in the route body.
-
-    The write-access declarations (`app/api/write_access.py`) only ever admit
-    芝士 exclusively, never keep it out, so the refusal has to be written here
-    or it does not exist. The handle below is **on the platform
-    admin list**, so the allow-list is not what refuses it.
-
-    What refuses it here is the credential. The same handle arrives twice: once
-    on its own session token and once on a device screen's token, a per-screen
-    capability that resolves on any path (unlike a per-turn `cheese` credential,
-    which the resolver refuses when there is no project to scope it to). One
-    handle, two credentials, two answers — 「管理动作由本人在自己的会话里做」.
-    The handle itself carries no agent-binding, which is what makes this half
-    about the credential alone; the binding half is the test below.
-    """
+def test_an_agents_credential_on_the_admin_list_is_refused(client, monkeypatch):
+    """§4.3's second gate: a credential handed to an agent running unattended
+    manages nothing, even when its handle is **on the platform admin list** —
+    the allow-list is not what refuses it. The same handle on its own session
+    token is let in. One handle, two credentials, two answers —
+    「管理动作由本人在自己的会话里做」."""
     agent = "agent-on-the-list"
     monkeypatch.setattr(settings, "feedback_triage_handles", [agent])
-    screen = _register_screen(handle=agent)
-    try:
-        allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
-        assert allowed.status_code == 200, allowed.text
+    project = _project(client, REPORTER)
+    unattended = {
+        "Authorization": "Bearer "
+        + mint_scoped_token(project_id=project, agent_handle=agent)
+    }
 
-        refused = client.get(
-            "/admin/feedback", headers={"X-Cheese-Screen": screen.token}
-        )
-        assert refused.status_code == 403, refused.text
-        # 拒的是这个授权，说出口的也得是授权——写「AI 队友不能」会把「按种类拒」重新钉回来。
-        assert "授权" in refused.json()["message"]
+    allowed = client.get("/admin/feedback", headers=session_auth_headers(agent))
+    assert allowed.status_code == 200, allowed.text
 
-        # A write route too: every handler in the module goes through one helper,
-        # and this is what says the helper is actually on them.
-        wrote = client.post(
-            f"/admin/feedback/{_report(client, REPORTER)['id']}/status",
-            json={"status": "in_progress"},
-            headers={"X-Cheese-Screen": screen.token},
-        )
-        assert wrote.status_code == 403, wrote.text
-    finally:
-        _unregister(screen)
+    refused = client.get("/admin/feedback", headers=unattended)
+    assert refused.status_code == 403, refused.text
+    wrote = client.post(
+        f"/admin/feedback/{_report(client, REPORTER)['id']}/status",
+        json={"status": "in_progress"},
+        headers=unattended,
+    )
+    assert wrote.status_code == 403, wrote.text
 
 
 def test_an_agent_on_the_admin_list_is_refused_on_its_own_session(client, monkeypatch):
@@ -3412,60 +3371,10 @@ def test_the_cap_counts_a_rolling_day_not_a_calendar_one(client, monkeypatch):
 # 两条要在真并发下才出得来，一条要在两个面上对同一条 handle 提问才看得见差异。
 
 
-def test_the_public_surface_does_not_grant_what_the_admin_surface_refuses(
-    client, monkeypatch
-):
-    """同一条 handle 在两个面上必须是同一个答案。
-
-    `/admin/*` 的每个 handler 都过 `require_platform_admin` → `refuse_management_
-    action`，它在名单之前拒两种调用者：作用域凭证（`via == "cheese"`）和带 agent
-    绑定的 handle。公共 `/feedback/*` 以前只问名单（`service.is_admin(handle)`），
-    于是同一条 handle 在 `/admin/feedback` 上是 403，在 `/feedback/{id}` 上却拿到了
-    管理员的那一支 —— 能读别人的私密条目、拿到内部管理备注、删掉任何人的反馈。
-    而全仓库唯一的「删整条反馈」路由恰好长在公共面上（`admin_feedback.py` 没有
-    DELETE），所以这个管理动作从来没有被那道拒绝看过一眼。
-
-    这里问的是**同一条 handle、同一张凭证**在两个面上的答案。公共面不该整个 403
-    （一个 agent 是来读它自己提过的那条的合法读者），要的只是「别把管理员那一支给它」。
-    """
-    agent = "agent-on-the-list"
-    monkeypatch.setattr(settings, "feedback_triage_handles", [agent])
-    screen = _register_screen(handle=agent)
-    try:
-        headers = {"X-Cheese-Screen": screen.token}
-        private = _report(client, REPORTER, title="私密的那条", visibility="private")
-        public = _report(client, STRANGER, title="别人的公开那条")
-
-        # 管理面：这张凭证被拒。
-        refused = client.get("/admin/feedback", headers=headers)
-        assert refused.status_code == 403, refused.text
-
-        # 公共面：同一个请求者的答案必须不是「管理员」。
-        meta = client.get("/feedback/meta", headers=headers)
-        assert meta.status_code == 200, meta.text
-        assert meta.json()["data"]["is_admin"] is False
-
-        # 别人的私密条目看不见 —— 404 而不是 403（见 `visible_row`）。
-        hidden = client.get(f"/feedback/{private['id']}", headers=headers)
-        assert hidden.status_code == 404, hidden.text
-
-        # 看得见的别人的反馈也删不掉：403（看得见，但不是他的）。
-        gone = client.delete(f"/feedback/{public['id']}", headers=headers)
-        assert gone.status_code == 403, gone.text
-        assert (
-            client.get(
-                f"/feedback/{public['id']}", headers=session_auth_headers(STRANGER)
-            ).status_code
-            == 200
-        )
-    finally:
-        _unregister(screen)
-
-
 def test_an_agent_on_the_admin_list_is_no_admin_on_the_public_surface(
     client, monkeypatch
 ):
-    """上一条的另一半：拒的理由是**参与者**（handle 带 agent 绑定），不是凭证。
+    """拒的另一半：拒的理由是**参与者**（handle 带 agent 绑定），不是凭证。
 
     这条 handle 拿的是自己的会话 token，没有任何「无人值守」的样子 —— 挡住它的是
     绑定。控制组是同一个名单上的真人：他照旧是管理员，所以上面那个 False 不是
@@ -3619,7 +3528,7 @@ async def test_two_sends_of_one_card_at_once_file_one_report(
             "what_happened": "make 停在 could not resolve host",
             "user_said_absent": True,
         },
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert proposed.status_code == 200, proposed.text
     block_id = proposed.json()["data"]["block_id"]

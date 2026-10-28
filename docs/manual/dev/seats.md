@@ -77,7 +77,7 @@ async def patch_team(team: Annotated[TeamView, Can(TeamPermission.edit_settings)
 
 ## AI 队友 {#agents}
 
-AI 队友以席位的身份参与房间，和人走同一套判定。平台管理类的操作要求平台管理员身份，AI 队友不在管理员名单里，所以做不了，见[平台管理员](/dev/admins)。
+AI 队友以席位的身份参与房间，和人走同一套判定。有几项权限只有 AI 队友有（`project_permissions.AGENT_ONLY`：给自己别的线程留便条、签频道的 webhook 凭据、记机器状态），任何人的角色都没有，也授予不了，角色表里不列。平台管理类的操作要求平台管理员身份，AI 队友不在管理员名单里，所以做不了，见[平台管理员](/dev/admins)。
 
 ## 团队模型连接和成员归属 {#own-agent}
 

@@ -197,6 +197,19 @@
      to --ink. */
   --avatar-ink: #fff;
 
+  /* ---- Picture viewer ----
+     The full-screen picture viewer (ImageLightbox) is dark in both themes: a
+     picture is judged against a dark surround, and a light scrim lets the page
+     behind compete with it. The ground does not change with the theme, so the
+     ink and fills on it do not either (same exception as --avatar-ink). The
+     dark block repeats these values deliberately. */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -521,6 +534,12 @@
   --inverse-fill: rgba(255, 255, 255, 0.1);
 
   --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
+  --lightbox-ground: rgba(12, 13, 15, 0.92);
+  --lightbox-ink: #fff;
+  --lightbox-muted: rgba(255, 255, 255, 0.72);
+  --lightbox-fill: rgba(255, 255, 255, 0.1);
+  --lightbox-fill-2: rgba(255, 255, 255, 0.2);
+  --lightbox-dim: rgba(0, 0, 0, 0.55);
 
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
@@ -1418,6 +1437,32 @@ button:not(.v-btn) {
 .file-comment-mark.is-active {
   background: var(--accent-wash);
   border-bottom-color: var(--accent);
+}
+
+/* 攒在待发篮里、还没发出去的那几处：那句话末尾一颗序号，和篮里那一行的编号对得上
+   （原型里的 ②③）。和评论标记的区别要看得出来——那几处还没交给谁，所以是实心琥珀
+   圆点，不是底色。 */
+.pending-pin {
+  display: inline-flex;
+  /* 不参与选字：浏览器把 `user-select: none` 的东西排除在 `Selection.toString()` 之外，
+     所以读者选中一段正好含着这颗序号时，取出来的原文里不会多一个数字。这只挡得住
+     `Selection.toString()` 这一条——`Range.toString()` 和 `cloneContents()` 不管 CSS，
+     所以按字找位置（`collectText`）和前后文（`markdownQuote` 的 `rangeText`）另按
+     `ANCHOR_IGNORE_ATTR` 跳过它。 */
+  user-select: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin: 0 2px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent-on);
+  vertical-align: text-top;
+  background: var(--accent);
+  border-radius: 8px;
 }
 
 /* 引用 chip：`<@handle>` `<&path>` `<#话题id>` 展开出来的可点小方块。

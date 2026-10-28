@@ -1,7 +1,7 @@
 """知道一个 id 不等于持有凭据：这三条路由过去只要 id 就办事。
 
 一次在飞分支之外的审计扫出这一族。调用者是 ``off_the_street`` 造出来的 ——
-同一套 integration fixture 的 ``client``，把 ``X-Cheese-Token`` 摘掉，于是真的是
+同一套 integration fixture 的 ``client``，把默认带上的平台密钥摘掉，于是真的是
 「什么凭据都没有」。改动前，这些请求各自拿到了 200：
 
     POST  /blocks/{id}/reactions   以任意 handle 给任意一条消息加/删表情

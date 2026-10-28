@@ -105,7 +105,7 @@ def _relay(client) -> ThreadingHTTPServer:
             headers = {
                 name: value
                 for name, value in self.headers.items()
-                if name.lower() in ("content-type", "x-cheese-token", "x-cheese-turn")
+                if name.lower() in ("content-type", "authorization", "x-cheese-turn")
             }
             response = client.request(
                 self.command, self.path, content=body, headers=headers

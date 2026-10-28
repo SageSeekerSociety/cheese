@@ -163,7 +163,7 @@ async def test_a_forged_credential_is_counted_by_its_address(
         for attempt in (
             {"Authorization": f"Bearer {forged}"},
             {"Authorization": f"Bearer {uuid.uuid4().hex}"},
-            {"X-Cheese-Token": f"{uuid.uuid4().hex}.{uuid.uuid4().hex}"},
+            {"Authorization": f"Bearer {f'{uuid.uuid4().hex}.{uuid.uuid4().hex}'}"},
         ):
             assert (await client.get("/version", headers=attempt)).status_code == 429
         # A credential that does verify is its own principal.
@@ -176,10 +176,10 @@ async def test_each_agent_has_its_own_quota_however_it_presents_it(limits) -> No
     first = mint_scoped_token(project_id=project, agent_handle="agent-one")
     second = mint_scoped_token(project_id=project, agent_handle="agent-two")
     async with _client() as client:
-        # The cheese CLI sends X-Cheese-Token; Claude Code through the LLM
-        # proxy sends the same credential as a bearer. One agent, one quota.
+        # The cheese CLI sends a bearer; Claude Code through the LLM proxy
+        # may send the same credential as x-api-key. One agent, one quota.
         assert (
-            await client.get("/version", headers={"X-Cheese-Token": first})
+            await client.get("/version", headers={"Authorization": f"Bearer {first}"})
         ).status_code == 200
         assert (
             await client.get("/version", headers={"Authorization": f"Bearer {first}"})
@@ -188,7 +188,7 @@ async def test_each_agent_has_its_own_quota_however_it_presents_it(limits) -> No
             await client.get("/version", headers={"x-api-key": first})
         ).status_code == 429
         assert (
-            await client.get("/version", headers={"X-Cheese-Token": second})
+            await client.get("/version", headers={"Authorization": f"Bearer {second}"})
         ).status_code == 200
 
 
@@ -196,7 +196,7 @@ async def test_the_signing_secret_is_one_principal_of_its_own(limits) -> None:
     limits(rate_per_s=0.2, rate_burst=1)
     address = _address()
     async with _client(address=address) as client:
-        secret = {"X-Cheese-Token": SANDBOX_TOKEN}
+        secret = {"Authorization": f"Bearer {SANDBOX_TOKEN}"}
         assert (await client.get("/version", headers=secret)).status_code == 200
         assert (await client.get("/version", headers=secret)).status_code == 429
         assert (await client.get("/version", headers=_user())).status_code == 200

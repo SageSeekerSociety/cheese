@@ -242,7 +242,7 @@ def tool_call(case, seat, timeout=5, *, tells_agent=False):
     the agent called does."""
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": timeout, "tells_agent": tells_agent},
     ).json()["data"]
 

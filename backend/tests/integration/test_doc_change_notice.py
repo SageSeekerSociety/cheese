@@ -52,7 +52,7 @@ def _sandbox(project_id: str, topic_id: str) -> dict[str, str]:
     """芝士's own credentials: what it writes is never news to it, so a doc it
     created leaves nothing waiting."""
     return {
-        "X-Cheese-Token": mint_scoped_token(project_id=project_id, topic_id=topic_id)
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project_id, topic_id=topic_id)}"
     }
 
 
@@ -315,7 +315,9 @@ def test_the_version_it_was_told_is_the_one_it_must_write_against(client):
     pid, tid = _project_topic(client)
     _put(client, tid, DOC, 0)
     screen = _running_turn(client, tid)
-    sandbox = {"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)}
+    sandbox = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+    }
 
     _put(client, tid, DOC + "\n人补的：先做召回\n", 1)
     assert "第 2 版" in screen.pushed[0]

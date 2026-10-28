@@ -128,7 +128,7 @@ def test_a_room_asked_for_the_sandbox_it_has_is_moved_to_another_machine(
 
     moved = cloud.client.put(
         f"/topics/{seat.room}/sessions/{seat.session}/environment",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"environment": STANDARD},
     )
 

@@ -2,14 +2,15 @@
 
 The sandbox container reaches the backend over the network (host.docker.internal),
 so the cheese write-endpoints must NOT be open like the browser-facing ones. Each
-`cheese` call carries X-Cheese-Token; the routes only 芝士 may call declare the
-gate (CHEESE_ONLY_IN_ROOM / CHEESE_ONLY_IN_PROJECT in app/api/write_access.py).
+`cheese` call carries its credential as ``Authorization: Bearer``; a route only
+芝士 may call declares a permission only an AI teammate holds
+(``project_permissions.AGENT_ONLY``, through ``Can`` in app/api/write_access.py).
 
 Three token kinds (review R5), and a fourth outside rooms altogether — the
 **personal credential** a person's 芝士 holds (below), which opens nothing the
 other three open:
 - **Scoped per-turn token** (the default, minted by the compute provider for each
-  turn): an HMAC over {project, topic, exp, acting agent}. The gate verifies the
+  turn): an ``agent+jwt`` over {project, topic, exp, acting agent}. The gate verifies the
   signature AND
   that the project/topic in the request URL matches the token's claims — so a
   container for project A literally cannot write project B, and the grant expires.
@@ -24,25 +25,22 @@ other three open:
   competition) nodes exist — see design v2 R5/R6.
 """
 
-import base64
-import hmac
-import json
-import secrets
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
+from app.core import credentials
 from app.core.config import settings
-from app.core.hmac_token import sign_body
+from app.core.credentials import Kind
 
 # Signing secret. Stable across restarts by construction — pinned via
 # SANDBOX_TOKEN, else derived from jwt_secret; see
 # `Settings.sandbox_signing_secret` for why a per-process random was a live
 # outage rather than a hardening measure. Never sent to a container as-is when
-# scoped tokens are used; it only signs them.
+# scoped tokens are used; the keys that sign them are derived from it
+# (`app.core.credentials`).
 SANDBOX_TOKEN: str = settings.sandbox_signing_secret
-_SECRET = SANDBOX_TOKEN
 
 # Default scoped-token lifetime — a turn is minutes; this is a safe ceiling.
 _SCOPED_TTL_S = 3600
@@ -58,7 +56,7 @@ def mint_scoped_token(
     resource_id: str | None = None,
     document_id: str | None = None,
 ) -> str:
-    """Mint an HMAC token scoped to a project (+ optional conversation), expiring
+    """Mint an agent credential scoped to a project (+ optional conversation), expiring
     in ttl_s.
 
     ``topic_id`` (claim ``t``) names the conversation: a room, or one of its
@@ -85,16 +83,10 @@ def mint_scoped_token(
     transcript drain mints one of these, and the endpoints it posts to verify
     the token directly rather than resolving an actor at all.
     """
-    now = int(time.time())
-    payload: dict[str, str | int | None] = {
-        "p": project_id,
-        "t": topic_id,
-        # When it was issued, so two credentials for the same agent in the same
-        # room can be told apart by age: the newer one is the launch that is
-        # current (the preview tunnel keeps the helper holding it).
-        "iat": now,
-        "exp": now + ttl_s,
-    }
+    # ``iat`` (set by `credentials.mint`) tells two credentials for the same
+    # agent in the same room apart by age: the newer one is the launch that is
+    # current (the preview tunnel keeps the helper holding it).
+    payload: dict[str, str | int | None] = {"p": project_id, "t": topic_id}
     actor = agent_handle
     if access_scope == "project":
         if not actor:
@@ -110,9 +102,7 @@ def mint_scoped_token(
     # room it does not sit in (`llm_proxy`).
     if document_id is not None:
         payload["d"] = document_id
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    return f"{body}.{sign_body(_SECRET, body)}"
+    return credentials.mint(Kind.AGENT, payload, ttl_s=ttl_s)
 
 
 def bind_resource_token(
@@ -150,13 +140,7 @@ def bind_resource_token(
         claims["ro"] = True
     if scratch:
         claims["scratch"] = True
-    raw = json.dumps(claims, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    if "session" in claims:
-        # Old owners must reject this capability, even at their legacy URL.
-        # The signed prefix cannot be stripped to obtain an older credential.
-        body = "cxss_" + body
-    return f"{body}.{sign_body(_SECRET, body)}"
+    return credentials.mint(Kind.AGENT, claims)
 
 
 def token_agent_handle(token: str) -> str | None:
@@ -174,12 +158,19 @@ def token_agent_handle(token: str) -> str | None:
 
 
 def verify_scoped_token(
-    token: str, *, project_id: str | None = None, topic_id: str | None = None
+    token: str,
+    *,
+    project_id: str | None = None,
+    topic_id: str | None = None,
+    allow_machine: bool = False,
 ) -> bool:
-    """True iff `token` is a valid scoped token (good signature, unexpired) whose
-    claims match the given project_id / topic_id (whichever are provided)."""
+    """True iff `token` is a valid scoped token (good signature, unexpired, and
+    not held by a machine unless `allow_machine`) whose claims match the given
+    project_id / topic_id (whichever are provided)."""
     payload = scoped_token_claims(token)
     if payload is None:
+        return False
+    if not allow_machine and held_by_a_machine(payload):
         return False
     if project_id is not None and payload.get("p") != project_id:
         return False
@@ -204,11 +195,7 @@ def for_a_machine(token: str) -> str:
             "A valid scoped credential is required"  # i18n-exempt: platform bug
         )
     claims[_MACHINE_CLAIM] = "machine"
-    raw = json.dumps(claims, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    if "session" in claims:
-        body = "cxss_" + body
-    return f"{body}.{sign_body(_SECRET, body)}"
+    return credentials.mint(Kind.AGENT, claims)
 
 
 def held_by_a_machine(claims: dict) -> bool:
@@ -226,22 +213,7 @@ def scoped_token_claims(token: str) -> dict | None:
     """The {p, t, exp} claims of a VALID scoped token, else None. Lets a route
     resolve the token's project without a DB lookup (signature + expiry are
     verified; resource matching stays the caller's job)."""
-    try:
-        body, sig = token.split(".", 1)
-    except ValueError:
-        return None
-    if not hmac.compare_digest(sig, sign_body(_SECRET, body)):
-        return None
-    if body.startswith("cxss_"):
-        body = body.removeprefix("cxss_")
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict) or payload.get("exp", 0) < time.time():
-        return None
-    return payload
+    return credentials.read(token, Kind.AGENT)
 
 
 # --- Project agent credential -------------------------------------------------
@@ -252,19 +224,11 @@ def scoped_token_claims(token: str) -> dict | None:
 # outlives the process that minted it — a per-turn scoped token dies with the
 # turn, so an agent running off-box had nothing to hold.
 #
-# So: same HMAC construction as above, widened on both axes it was too narrow on.
+# So: a kind of its own, widened on both axes the per-turn one is too narrow on.
 # One project instead of one topic; days instead of one turn. Revocation stays
 # stateless — the credential names the project's credential *generation* (epoch),
 # the project stores the current one, and bumping it retires every credential
 # issued so far without a row to delete or a table to add.
-#
-# The ``cxpa_`` prefix is a hard separator, not decoration. The signature covers a
-# different domain string, so a project credential can never verify as a scoped
-# token nor a scoped token as a project credential — every existing scoped-token
-# path sees one of these as "no credential at all", which is what keeps this
-# purely additive.
-AGENT_CREDENTIAL_PREFIX = "cxpa_"
-_AGENT_CREDENTIAL_DOMAIN = "cxpa1"
 
 # Days, not minutes: the point of this credential is that a person can paste it
 # into an agent's environment and forget about it for a while.
@@ -285,9 +249,10 @@ class ProjectAgentClaims:
 
 
 def looks_like_project_agent_credential(token: str) -> bool:
-    """Cheap syntactic test, so ordinary traffic never pays for a verification
-    (or, downstream, for the database read that checking the epoch costs)."""
-    return token.startswith(AGENT_CREDENTIAL_PREFIX)
+    """Cheap test of the kind a token says it is, so ordinary traffic never
+    pays for a verification (or, downstream, for the database read that
+    checking the epoch costs)."""
+    return credentials.kind_of(token) is Kind.PROJECT_AGENT
 
 
 def mint_project_agent_credential(
@@ -302,51 +267,26 @@ def mint_project_agent_credential(
     that tests must be able to land on the far side of; the issuing service is
     what speaks in days.
     """
-    payload: dict[str, str | int] = {
-        "p": project_id,
-        "e": epoch,
-        "exp": int(time.time()) + ttl_s,
-    }
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
-    return f"{AGENT_CREDENTIAL_PREFIX}{body}.{signature}"
+    return credentials.mint(
+        Kind.PROJECT_AGENT, {"p": project_id, "e": epoch}, ttl_s=ttl_s
+    )
 
 
 def project_agent_claims(token: str) -> ProjectAgentClaims | None:
     """The claims of a well-formed, correctly-signed, unexpired credential — else
-    ``None``. Every malformed shape returns ``None`` rather than raising: this
-    runs on attacker-controlled input on every request that carries the header."""
-    if not looks_like_project_agent_credential(token):
+    ``None``."""
+    payload = credentials.read(token, Kind.PROJECT_AGENT)
+    if payload is None:
         return None
-    try:
-        body, signature = token[len(AGENT_CREDENTIAL_PREFIX) :].split(".", 1)
-    except ValueError:
-        return None
-    if not hmac.compare_digest(
-        signature, sign_body(_SECRET, f"{_AGENT_CREDENTIAL_DOMAIN}.{body}")
-    ):
-        return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    project_id = payload.get("p")
-    epoch = payload.get("e")
-    expires = payload.get("exp")
+    project_id, epoch = payload.get("p"), payload.get("e")
     if not isinstance(project_id, str) or not project_id:
         return None
     if not isinstance(epoch, int) or isinstance(epoch, bool):
         return None
-    if not isinstance(expires, int) or expires < time.time():
-        return None
     return ProjectAgentClaims(
         project_id=project_id,
         epoch=epoch,
-        expires_at=datetime.fromtimestamp(expires, UTC),
+        expires_at=datetime.fromtimestamp(payload["exp"], UTC),
     )
 
 
@@ -356,11 +296,9 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
 # platform for two things: the model, and the few tools that read what that
 # person may see. What it holds for that names a person and one of their
 # conversations, and nothing of any project: no project, room or agent claim that
-# a room's endpoint could match. Its own prefix and signing domain, as the
-# project credential's, make it no credential at all to every path that reads
-# the other kinds, and the paths that take it take nothing else.
-PERSONAL_CREDENTIAL_PREFIX = "cxpu_"
-_PERSONAL_CREDENTIAL_DOMAIN = "cxpu1"
+# a room's endpoint could match. Being a kind of its own makes it no credential
+# at all to every path that reads the other kinds, and the paths that take it
+# take nothing else.
 #: A session holds its credential for as long as it runs, and one idle for a few
 #: minutes exits; a week is far past any session's life.
 PERSONAL_CREDENTIAL_TTL_S = 7 * _DAY_S
@@ -376,59 +314,36 @@ class PersonalClaims:
     conversation_id: str
 
 
+def _person_id(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 def mint_personal_credential(
     *, user_id: int, conversation_id: str, ttl_s: int = PERSONAL_CREDENTIAL_TTL_S
 ) -> str:
-    now = int(time.time())
-    payload = {"u": user_id, "c": conversation_id, "iat": now, "exp": now + ttl_s}
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
-    return f"{PERSONAL_CREDENTIAL_PREFIX}{body}.{signature}"
+    return credentials.mint(
+        Kind.PERSONAL, {"u": user_id, "c": conversation_id}, ttl_s=ttl_s
+    )
 
 
 def personal_claims(token: str) -> PersonalClaims | None:
     """The claims of a well-formed, correctly-signed, unexpired personal
-    credential, else ``None`` — never an exception, for the same reason as
-    ``project_agent_claims``."""
-    if not token.startswith(PERSONAL_CREDENTIAL_PREFIX):
+    credential, else ``None``."""
+    payload = credentials.read(token, Kind.PERSONAL)
+    if payload is None:
         return None
-    try:
-        body, signature = token[len(PERSONAL_CREDENTIAL_PREFIX) :].split(".", 1)
-    except ValueError:
-        return None
-    expected = sign_body(_SECRET, f"{_PERSONAL_CREDENTIAL_DOMAIN}.{body}")
-    if not hmac.compare_digest(signature, expected):
-        return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    user_id, conversation, expires = (
-        payload.get("u"),
-        payload.get("c"),
-        payload.get("exp"),
-    )
-    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
+    user_id, conversation = payload.get("u"), payload.get("c")
+    if not _person_id(user_id):
         return None
     if not isinstance(conversation, str) or not conversation:
         return None
-    if not isinstance(expires, int) or expires < time.time():
-        return None
-    return PersonalClaims(user_id=user_id, conversation_id=conversation)
+    return PersonalClaims(user_id=user_id, conversation_id=conversation)  # type: ignore[arg-type]
 
 
 # What a person's 芝士 carries into its own sandbox (``routes/execution.py``):
 # whose 芝士, which conversation's sandbox, which session and which of its
 # leases, as ``bind_resource_token`` says them for a room's. It opens that
-# sandbox and nothing else: its prefix and signing domain make it no credential
-# to every route that reads another kind, an execution route of an older
-# release included.
-PERSONAL_EXECUTION_PREFIX = "cxpx_"
-_PERSONAL_EXECUTION_DOMAIN = "cxpx1"
+# sandbox and nothing else.
 
 
 def mint_personal_execution_credential(
@@ -439,45 +354,24 @@ def mint_personal_execution_credential(
     lease_generation: str,
     ttl_s: int = PERSONAL_CREDENTIAL_TTL_S,
 ) -> str:
-    now = int(time.time())
-    payload = {
-        "u": user_id,
-        "t": conversation_id,
-        "r": conversation_id,
-        "session": session_id,
-        "lease": lease_generation,
-        "iat": now,
-        "exp": now + ttl_s,
-    }
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
-    return f"{PERSONAL_EXECUTION_PREFIX}{body}.{signature}"
+    return credentials.mint(
+        Kind.PERSONAL_EXECUTION,
+        {
+            "u": user_id,
+            "t": conversation_id,
+            "r": conversation_id,
+            "session": session_id,
+            "lease": lease_generation,
+        },
+        ttl_s=ttl_s,
+    )
 
 
 def personal_execution_claims(token: str) -> dict | None:
     """The claims of a well-formed, correctly-signed, unexpired personal
     execution credential, else ``None``."""
-    if not token.startswith(PERSONAL_EXECUTION_PREFIX):
-        return None
-    try:
-        body, signature = token[len(PERSONAL_EXECUTION_PREFIX) :].split(".", 1)
-    except ValueError:
-        return None
-    expected = sign_body(_SECRET, f"{_PERSONAL_EXECUTION_DOMAIN}.{body}")
-    if not hmac.compare_digest(signature, expected):
-        return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    user_id, expires = payload.get("u"), payload.get("exp")
-    if not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0:
-        return None
-    if not isinstance(expires, int) or expires < time.time():
+    payload = credentials.read(token, Kind.PERSONAL_EXECUTION)
+    if payload is None or not _person_id(payload.get("u")):
         return None
     if not all(isinstance(payload.get(k), str) for k in ("t", "r", "session", "lease")):
         return None
@@ -487,12 +381,9 @@ def personal_execution_claims(token: str) -> dict | None:
 # A 芝士 answering someone's question acts for that person: what it reads is
 # judged by what the asker may read, and what it changes is recorded as done by
 # the agent at the asker's request. The credential is minted for one question
-# and lives no longer than the answer may, and it opens only the routes that
-# declare they accept it (`api.auth.DELEGATED_ROUTES`). Its own prefix and
-# signing domain make it no credential at all to every path that reads the
-# other kinds.
-DELEGATED_CREDENTIAL_PREFIX = "cxdg_"
-_DELEGATED_CREDENTIAL_DOMAIN = "cxdg1"
+# and lives no longer than the answer may. It is held by the session's harness
+# alone, which decides which of the asker's actions its tools take and asks
+# about first (`run_platform_tool`); routes judge it as the asker.
 
 
 @dataclass(frozen=True)
@@ -522,6 +413,20 @@ class DelegatedClaims:
     conversation: str | None = None
 
 
+def _delegated_payload(claims: DelegatedClaims) -> dict:
+    return {
+        **({"c": claims.conversation} if claims.conversation else {}),
+        "u": claims.user_id,
+        "h": claims.handle,
+        "a": claims.agent,
+        "p": claims.project_id,
+        "t": claims.topic_id,
+        "w": claims.work,
+        "ro": claims.read_only,
+        "sh": claims.shown_to_readers,
+    }
+
+
 def mint_delegated_credential(
     *,
     user_id: int | None,
@@ -535,60 +440,33 @@ def mint_delegated_credential(
     shown_to_readers: bool = False,
     conversation: str | None = None,
 ) -> str:
-    now = int(time.time())
-    payload = {
-        **({"c": conversation} if conversation else {}),
-        "u": user_id,
-        "h": handle,
-        "a": agent,
-        "p": project_id,
-        "t": topic_id,
-        "w": work,
-        "ro": read_only,
-        "sh": shown_to_readers,
-        "iat": now,
-        "exp": now + ttl_s,
-    }
-    raw = json.dumps(payload, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    signature = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
-    return f"{DELEGATED_CREDENTIAL_PREFIX}{body}.{signature}"
+    claims = DelegatedClaims(
+        user_id=user_id,
+        handle=handle,
+        agent=agent,
+        project_id=project_id,
+        topic_id=topic_id,
+        work=work,
+        read_only=read_only,
+        shown_to_readers=shown_to_readers,
+        conversation=conversation,
+    )
+    return credentials.mint(Kind.DELEGATED, _delegated_payload(claims), ttl_s=ttl_s)
 
 
 def looks_like_delegated_credential(token: str) -> bool:
-    return token.startswith(DELEGATED_CREDENTIAL_PREFIX)
+    return credentials.kind_of(token) is Kind.DELEGATED
 
 
-def delegated_claims(token: str) -> DelegatedClaims | None:
-    """The claims of a well-formed, correctly-signed, unexpired delegated
-    credential, else ``None`` — never an exception."""
-    if not looks_like_delegated_credential(token):
+def _delegated(payload: dict | None) -> DelegatedClaims | None:
+    if payload is None:
         return None
-    try:
-        body, signature = token[len(DELEGATED_CREDENTIAL_PREFIX) :].split(".", 1)
-    except ValueError:
-        return None
-    expected = sign_body(_SECRET, f"{_DELEGATED_CREDENTIAL_DOMAIN}.{body}")
-    if not hmac.compare_digest(signature, expected):
-        return None
-    try:
-        padded = body + "=" * (-len(body) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    user_id, handle = payload.get("u"), payload.get("h")
-    expires, work = payload.get("exp"), payload.get("w")
-    if user_id is not None and (
-        not isinstance(user_id, int) or isinstance(user_id, bool) or user_id <= 0
-    ):
+    user_id, handle, work = payload.get("u"), payload.get("h"), payload.get("w")
+    if user_id is not None and not _person_id(user_id):
         return None
     if not isinstance(handle, str) or not handle:
         return None
     if not isinstance(work, str) or not work:
-        return None
-    if not isinstance(expires, int) or expires < time.time():
         return None
     project, topic, agent = payload.get("p"), payload.get("t"), payload.get("a")
     if not all(
@@ -598,11 +476,11 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
     if topic is not None and project is None:
         return None
     return DelegatedClaims(
-        user_id=user_id,
+        user_id=user_id,  # type: ignore[arg-type]
         handle=handle,
-        agent=agent,
-        project_id=project,
-        topic_id=topic,
+        agent=agent,  # type: ignore[arg-type]
+        project_id=project,  # type: ignore[arg-type]
+        topic_id=topic,  # type: ignore[arg-type]
         work=work,
         read_only=payload.get("ro") is not False,
         shown_to_readers=payload.get("sh") is True,
@@ -610,20 +488,14 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
     )
 
 
+def delegated_claims(token: str) -> DelegatedClaims | None:
+    """The claims of a well-formed, correctly-signed, unexpired delegated
+    credential, else ``None`` — never an exception."""
+    return _delegated(credentials.read(token, Kind.DELEGATED))
+
+
 def is_global_sandbox_token(token: str) -> bool:
     """True for the signing secret used directly (dev / trusted-single-host
     override). It carries NO project scope, so a caller accepting it must get the
-    room from somewhere else — see the note on `is_valid_cheese_token`."""
-    return bool(token) and secrets.compare_digest(token, SANDBOX_TOKEN)
-
-
-def is_valid_cheese_token(
-    token: str, *, project_id: str | None = None, topic_id: str | None = None
-) -> bool:
-    """Gate check: a scoped token matching the request's resource, or the global
-    secret (dev / trusted-single-host override)."""
-    if project_id is None and topic_id is None:
-        return False
-    if verify_scoped_token(token, project_id=project_id, topic_id=topic_id):
-        return True
-    return secrets.compare_digest(token, SANDBOX_TOKEN)
+    room from somewhere else."""
+    return credentials.is_platform_secret(token)

@@ -15,6 +15,7 @@ import { useDesignShortcuts } from './useDesignShortcuts'
 import { useDesignViewport } from './useDesignViewport'
 
 import { t } from '@/i18n'
+import { takeImageTool } from '@/lib/chatImages'
 
 const props = withDefaults(
   defineProps<{
@@ -99,9 +100,13 @@ const {
   geometry,
   spaceHeld,
   panning,
+  narrow,
   setZoom,
   fit,
   wheel,
+  touchDown,
+  touchMove,
+  touchEnd,
   panStart,
   panMove,
   panEnd,
@@ -283,6 +288,15 @@ watch(
   },
   { flush: 'sync' }
 )
+// 从对话的看图浮层点「写字」「打码」「框选批注」交过来的：打开就是那件工具。
+watch(
+  () => props.identity,
+  (identity) => {
+    const handed = takeImageTool(identity)
+    if (handed) tool.value = handed
+  },
+  { immediate: true }
+)
 // 收起来的那一刻把手里的东西放下：按着的空格、（真在拖的话）正在进行的平移。
 watch(
   () => props.active,
@@ -342,7 +356,16 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       @pointerup.capture="panEnd"
       @pointercancel.capture="panEnd"
     >
-      <div ref="pane" class="design-image__pane" @wheel="wheel">
+      <div
+        ref="pane"
+        class="design-image__pane"
+        :class="{ 'is-narrow': narrow }"
+        @wheel="wheel"
+        @pointerdown.capture="touchDown"
+        @pointermove.capture="touchMove"
+        @pointerup.capture="touchEnd"
+        @pointercancel.capture="touchEnd"
+      >
         <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- double-clicking a text mark reopens it for editing, part of drawing with the pointer; the image has no keyboard drawing mode -->
         <div
           class="design-image__sheet"

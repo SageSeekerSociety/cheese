@@ -55,7 +55,10 @@ TOOLS = ("cheese_read", "cheese_help")
 ANSWERS = {
     "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
     "/topics/": {"content": "文档正文", "doc_version": 3},
-    "/assistant/agent/read": {"text": "任务「报名说明」（ml/tasks/12），进行中\n正文"},
+    "/assistant/agent/read": {
+        "text": "任务「报名说明」（ml/tasks/12），进行中\n正文",
+        "subject": "任务「报名说明」",
+    },
 }
 
 
@@ -100,7 +103,7 @@ class Platform:
                 outer.tool_calls.append(
                     (
                         f"{self.command} {self.path.split('?')[0]}",
-                        self.headers.get("X-Cheese-Token", ""),
+                        self.headers.get("Authorization", "").removeprefix("Bearer "),
                     )
                 )
                 data = next(
@@ -422,6 +425,8 @@ async def test_a_read_comes_back_with_the_name_of_what_it_read_and_its_whole_arg
 
     returned = next(e for e in events if isinstance(e, ToolDone))
     assert returned.shown == "任务「报名说明」"
+    # And what it does: a read, which a reader groups with the others.
+    assert returned.effect == "reads"
     args = ""
     for e in events:
         if isinstance(e, ToolArgs) and e.call == returned.call:

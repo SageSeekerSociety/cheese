@@ -150,7 +150,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
             new_device=new_device,
             lease=dict(session.work_lease),
             person=person,
-            agent={"X-Cheese-Token": agent_token},
+            agent={"Authorization": f"Bearer {agent_token}"},
             lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
             agent_handle=agent.username,
             path=f"/topics/{conversation_id}/sessions/{session.id}/environment",
@@ -426,12 +426,12 @@ async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch
 
 class _PushingMachine(_IdleMachine):
     """An idle session's machine whose push does what ``cheese sync`` does for
-    a task with commits not yet on its branch: ask the platform for that task's
-    branch, with the credential its executor was started with."""
+    a task with commits not yet on its branch: ask the platform on its
+    platform socket (`/machine/api/...`) for that task's branch."""
 
     def __init__(self, project_id, task_id):
         super().__init__()
-        self.path = f"/projects/{project_id}/git/tasks/{task_id}"
+        self.path = f"/machine/api/projects/{project_id}/git/tasks/{task_id}"
         self.task_id = task_id
         self.finishes = False
         self.answered = None
@@ -442,10 +442,16 @@ class _PushingMachine(_IdleMachine):
                 device_id, state, method, params, **kwargs
             )
         self.calls.append((device_id, method, params))
-        [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', self.installs[-1][1])
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
-            asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+            asked = await api.get(
+                self.path,
+                headers={
+                    "x-device-connection-secret": settings.device_connection_secret,
+                    "x-machine-device": device_id,
+                    "x-machine-state": state,
+                },
+            )
         self.answered = asked.status_code
         if asked.status_code != 200:
             said = (
@@ -465,6 +471,7 @@ async def test_an_executor_started_for_a_checkpoint_pushes_with_its_own_credenti
     """A switch starts an idle session's executor to checkpoint; the git routes
     let its push through as they would a push of a session started by a turn,
     and the switch does not wait for more than one."""
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
     room = await _room(client)
     task = delivery_task(client, room.topic_id, commit=False)
     machine = _PushingMachine(room.project_id, task.id)

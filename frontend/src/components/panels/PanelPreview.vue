@@ -72,6 +72,7 @@ const {
   previewUrl,
   previewAppNote,
   previewTunnelUp,
+  previewAppUp,
   previewNamedPath,
   autoReloaded,
   previewError,
@@ -80,7 +81,6 @@ const {
   documentType,
   documentName,
   isImageArtifact,
-  downloadError,
   docBytes,
   docIdentity,
   docSnapshot,
@@ -98,6 +98,7 @@ const {
   showHistory,
   editor,
   fileHistory,
+  versions,
   // 动作
   load,
   downloadArtifact,
@@ -107,7 +108,14 @@ const {
   closeEditor,
   toggleHistory,
   toggleDocPage,
+  setDocNarrow,
   setPickMode,
+  stepHistory,
+  goTo,
+  appSnapshot,
+  wakeSteps,
+  wakeError,
+  wakeApp,
 } = props.preview
 
 // 帧里的 ESC 要在展示组件里处理（标注条和全屏都是它那一格的状态），所以这里留一个
@@ -124,6 +132,11 @@ defineExpose({
 // 「还是不是同一件」。
 function refresh() {
   void load({ silent: true, reload: true })
+}
+
+// 小浏览器的后退、前进、重载交给帧里的桥；没有桥（或桥没接住）时重载退回整帧重来。
+function history(action: 'back' | 'forward' | 'reload') {
+  if (!stepHistory(action) && action === 'reload') refresh()
 }
 </script>
 
@@ -152,6 +165,10 @@ function refresh() {
     :preview-url="previewUrl"
     :preview-app-note="previewAppNote"
     :preview-tunnel-up="previewTunnelUp"
+    :preview-app-up="previewAppUp"
+    :app-snapshot="appSnapshot"
+    :wake-steps="wakeSteps"
+    :wake-error="wakeError"
     :preview-named-path="previewNamedPath"
     :auto-reloaded="autoReloaded"
     :preview-error="previewError"
@@ -160,7 +177,6 @@ function refresh() {
     :document-type="documentType"
     :document-name="documentName"
     :is-image-artifact="isImageArtifact"
-    :download-error="downloadError"
     :doc-bytes="docBytes"
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"
@@ -178,11 +194,15 @@ function refresh() {
     :show-history="showHistory"
     :editor="editor"
     :file-history="fileHistory"
+    :versions="versions"
     @frame-load="frameLoaded"
     @frame-error="frameFailed"
     @pick-mode="setPickMode"
     @refresh="refresh"
     @download="downloadArtifact"
+    @history="history"
+    @navigate="goTo"
+    @wake="wakeApp"
     @document-changed="refreshDocument"
     @locate="emit('locate', $event)"
     @open-file="emit('open-file', $event)"
@@ -190,6 +210,7 @@ function refresh() {
     @close-editor="closeEditor"
     @toggle-history="toggleHistory"
     @toggle-doc-page="toggleDocPage"
+    @doc-narrow="setDocNarrow"
     @mention-click="emit('mention-click', $event)"
   />
 </template>

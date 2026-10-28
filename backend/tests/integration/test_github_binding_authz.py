@@ -297,12 +297,14 @@ def test_github_management_follows_participant_role_and_own_account(
     user_id = verify_access_token(seed_user(client, handle)).user_id
     auth = (
         {
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=pid,
-                topic_id=origin,
-                access_scope="project",
-                agent_handle=handle,
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=pid,
+                    topic_id=origin,
+                    access_scope='project',
+                    agent_handle=handle,
+                )
+            }"
         }
         if is_agent
         else session_auth_headers(handle)

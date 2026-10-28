@@ -17,7 +17,7 @@ import type { MarkdownQuote, QuoteContext } from './markdownQuote'
 import type { PreviewViewProps } from './previewViewProps'
 import type { SlidePageContext } from './slidesContext'
 
-import { ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
@@ -26,6 +26,8 @@ import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
 import { firstCodePoints } from '@/lib/codePoints'
+import { PENDING_NOTES, type PendingAnchor, type PendingNote } from '@/lib/pendingNotes'
+import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
   /** 指了一处，交给房间的对话。 */
@@ -42,6 +44,14 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
   const queued = ref<string[]>([])
+  /** 话题页提供的那一份待发篮。有它时逐条列在输入框上方、一起发；没有（资料库、产物页
+   *  这些没有对话栏的地方）就退回本格自己面板底下那条老样式。 */
+  const sharedPending = inject(PENDING_NOTES, null)
+  /** 卡上「加入待发」旁边那颗键写几条：共享篮优先。 */
+  const queuedCount = computed(() => (sharedPending ? sharedPending.notes.value.length : queued.value.length))
+  /** 待发篮是否另有地方列出来（话题页那一份）。有它时本格不再自己画那条 sticky 条——
+   *  同一批批注画两处，读者会以为进了两个地方。 */
+  const pendingElsewhere = computed(() => !!sharedPending)
   /** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
   const annotateError = ref('')
 
@@ -165,6 +175,13 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     quoted.range(payload)
   }
 
+  /** 代码里指的几行：位置就写行号。源码不重排，行号就是芝士改它时找的那个地址——和
+   *  markdown 按「哪一节」说位置正好相反（见上面那一支）。 */
+  function onCodeLines(payload: { start: number; end: number; text: string }) {
+    const where = codeLinesLabel(payload.start, payload.end)
+    openLocator(where, firstCodePoints(payload.text, 200), where)
+  }
+
   function onVideoLocate(payload: { seconds: number; timestamp: string }) {
     const where = t('work.room.video.timePoint', { time: payload.timestamp })
     openLocator(where, t('work.room.video.atTime', { time: payload.timestamp }), where)
@@ -192,19 +209,106 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     return context ? `${message}\n${context}` : message
   }
 
+  /** 攒着的这一批批注说的都是屏幕上这一版，行上写「第 N 版」。版本核不出来（清单里没有
+   *  这一份、或这一版是清单之外改的）就不写——说错哪一版比不说更坏（同 `versions.ts`）。 */
+  const pendingVersion = computed(() => {
+    const seq = props.versions?.current.value?.seq
+    if (!seq) return ''
+    return t('work.room.versions.label', { seq })
+  })
+
+  /** 这一处指着文件里的哪儿——正文里那颗序号 pin 靠它找回来（见 `lib/pendingNotes`）。
+   *
+   *  能不能找回来各档不一样：markdown 存「原文 + 前后文」按字找；页上那一处存页码和
+   *  比例；表里存单元格地址。哪一样都拿不到时（网页圈选、图上框选、代码行）就不画
+   *  pin——那些地方本来也没有能长期成立的坐标，宁可不画。 */
+  function pendingAnchor(): PendingAnchor | undefined {
+    const page = quoted.page.value
+    if (page) {
+      if (page.scope !== 'selection') return undefined
+      // 有比例位置就按点画（缩放、重排都跟着页走），没有才退回按字找。
+      if (typeof page.x === 'number' && typeof page.y === 'number') {
+        return { kind: 'page-pin', page: page.page, x: page.x, y: page.y }
+      }
+      return { kind: 'page-text', page: page.page, text: page.text, prefix: page.prefix, suffix: page.suffix }
+    }
+    const pickPayload = quoted.pick.value
+    if (!pickPayload) return undefined
+    if (pickPayload.kind === 'text-range') {
+      return {
+        kind: 'text-range',
+        text: pickPayload.text,
+        heading: pickPayload.heading,
+        prefix: pickPayload.prefix,
+        suffix: pickPayload.suffix,
+      }
+    }
+    if (pickPayload.kind === 'sheet-cell') {
+      return { kind: 'sheet-cell', sheet: pickPayload.sheet, address: pickPayload.address }
+    }
+    if (pickPayload.kind === 'sheet-range') {
+      return { kind: 'sheet-cell', sheet: pickPayload.sheet, address: pickPayload.start }
+    }
+    return undefined
+  }
+
   function queueLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note || pageLocator.pin.value) return
-    queued.value = [...queued.value, formatLocateMessage(target, note)]
+    const message = formatLocateMessage(target, note)
+    if (sharedPending) {
+      // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
+      //（卡上的「加入待发」也只在去处是芝士时出现）。
+      sharedPending.add(pendingNoteFor(target, note, message))
+      clearLocator()
+      return
+    }
+    queued.value = [...queued.value, message]
     clearLocator()
   }
 
+  /** 一条待发批注里与「是哪一份文件」有关的那几样。
+   *
+   *  收进篮里有两个入口（`queueLocator` 单条加、`sendQueued` 发之前先把当前这一处并进去），
+   *  两处写的字段必须一样——只写一处、漏一处，新加的字段就会静默地一边有一边没有。 */
+  function pendingNoteBase() {
+    const path = props.previewFile?.path ?? ''
+    return { file: fileName(path), path, version: pendingVersion.value, audience: 'cheese' as const }
+  }
+
+  function pendingNoteFor(
+    target: { label: string; quote: string },
+    note: string,
+    message: string
+  ): Omit<PendingNote, 'id'> {
+    return {
+      ...pendingNoteBase(),
+      where: target.label,
+      quote: target.quote,
+      text: note,
+      message,
+      anchor: pendingAnchor(),
+    }
+  }
+
   function clearQueued() {
+    if (sharedPending) sharedPending.clear()
     queued.value = []
   }
 
   function sendQueued() {
+    if (sharedPending) {
+      // 共享篮：还没收进篮里的这一处先并进去，再整批发。
+      const target = locator.value
+      const note = locatorNote.value.trim()
+      if (target && note && !pageLocator.pin.value) {
+        sharedPending.add(pendingNoteFor(target, note, formatLocateMessage(target, note)))
+        clearLocator()
+      }
+      sharedPending.send('')
+      return
+    }
     const target = locator.value
     const note = locatorNote.value.trim()
     const pending = [...queued.value]
@@ -225,7 +329,14 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       void pageLocator.send(note)
       return
     }
-    if (queued.value.length > 0) {
+    // 卡片主按钮写着「全部发送（N+1）」时，这一下发的必须是整批：判据要和那颗键写字的
+    // 判据同一条（`queuedCount`，共享篮优先），不是本格自己那一条——共享篮时
+    // `queued.value` 永远是空的，用它会只发当前这一处、把篮里那几条留成没发出去。
+    //
+    // 图上框的那一块是例外：它的卡（`DesignRegionNote`）写的是「发送」，从来不带批注
+    // 计数，也不进待发篮（那一处要连同合成图走附件）。它这一下有自己的路（下面那一支），
+    // 篮里有几条与它无关——不分这一下，读者按「发送」会被换成一整批。
+    if (!imageRegion.target.value && queuedCount.value > 0) {
       sendQueued()
       return
     }
@@ -289,6 +400,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     locator,
     locatorNote,
     queued,
+    /** 待发篮里现在有几条：共享篮优先（话题页那一份），没有就是本格自己攒的。 */
+    queuedCount,
+    /** 待发篮在别处列着（话题页输入框上方）：本格不再自己画那条。 */
+    pendingElsewhere,
     annotateError,
     imageRegion,
     pageLocator,
@@ -306,7 +421,15 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onCell,
     onSheetRange,
     onMarkdownQuote,
+    onCodeLines,
     onVideoLocate,
     onAnnotate,
   }
+}
+
+/** 「第 12 行」「第 12–18 行」：定位框上和发出去的那句话里都是它。 */
+export function codeLinesLabel(start: number, end: number): string {
+  return start === end
+    ? t('work.room.preview.codeLine', { line: start })
+    : t('work.room.preview.codeLines', { start, end })
 }

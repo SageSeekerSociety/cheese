@@ -193,7 +193,7 @@ class DeviceService:
         return token
 
     async def verify_token(self, token: str) -> Device | None:
-        """Identify the device behind a token (``X-Cheese-Session`` / bearer). Never
+        """Identify the device behind a token (its connector's bearer). Never
         sufficient on its own — the caller authorizes the resolved actor."""
         if not token:
             return None

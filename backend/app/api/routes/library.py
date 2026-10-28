@@ -470,7 +470,8 @@ async def move_library_file(
 #
 # 一个团队自己的资料库，一个人自己的就是他名下那个团队的。和项目的资料库一样读写，
 # 只是没有房间：没有哪条消息引用它，清单上也就没有来源房间和引用数。团队的成员都能
-# 读、能放、能删；平台替人跑的芝士不走这里（`api.auth.DELEGATED_ROUTES` 没有它们）。
+# 读、能放、能删。个人芝士碰用户自己的资料库用它自己的工具（`/assistant/agent/library`），
+# 没有哪样工具调这里。
 
 teams = APIRouter(prefix="/teams", tags=["library"])
 

@@ -76,6 +76,9 @@ vi.mock('../../api', async () => {
     readFile: (...a: unknown[]) => readFile(...a),
     previewDocumentPdfSnapshot: (...a: unknown[]) => previewDocumentPdfSnapshot(...a),
     documentRevisions: (...a: unknown[]) => documentRevisions(...a),
+    // 房间里的文档一打开就读它的保存历史（文档条上的版本行）。这些用例问的是文件落在
+    // 哪一格，不是版本：给一份空清单，不摆版本行。
+    roomFileRevisions: vi.fn().mockResolvedValue({ data: [], total: 0, path: '', version: null }),
     getPreview: vi.fn().mockResolvedValue(null),
     requestPreviewSession: vi.fn().mockResolvedValue({ url: 'https://p.example/s', grant: 'g' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -259,8 +262,9 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(visible(container, '.panel-changes')).toBe(true)
     // 任务页上，文件就是这件任务工作树上的那一份。
     expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', 'task-1', 'live')
-    // 不是文档也不是图片，预览显示不了它，所以连问都不问。
-    expect(readPreviewFile).not.toHaveBeenCalled()
+    // 预览现在也画得出源码，所以先问一次房间里有没有这一份（替身按「没有」答），
+    // 没有才照旧落在改动那一格。
+    expect(readPreviewFile).toHaveBeenCalledWith('topic-A', 'src/b.ts')
   })
 
   it('这件任务的工作副本里没有它 → 退到「项目当前版本」那一格开它', async () => {

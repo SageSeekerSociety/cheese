@@ -10,14 +10,37 @@
  */
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
 
+import { ref } from 'vue'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PreviewFrameStage from './PreviewFrameStage.vue'
 
 import { setLocale } from '@/i18n'
 
-beforeEach(() => setLocale('zh-CN'))
+// 这一格的「窄」是按它自己的宽度判的（`useElementSize`）。happy-dom 没有布局，量出来
+// 是 0，默认就按宽处画；窄面板那几条用例自己把宽度压下去。
+const panelWidth = ref(1200)
+vi.mock('@vueuse/core', async (orig) => ({
+  ...(await orig<typeof import('@vueuse/core')>()),
+  useElementSize: () => ({ width: panelWidth, height: ref(800), stop: () => {} }),
+}))
+
+// 菜单只验「窄的时候那几件东西还在不在菜单里」，脚本里那几样原样摆出来即可：
+// 真 v-menu 要布局才开得了，而这里问的不是它开不开。
+const menuStubs = {
+  VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+  VSpacer: true,
+  VMenu: { template: '<div><slot name="activator" :props="{}" /><slot /></div>' },
+  VList: { template: '<div><slot /></div>' },
+  VListItem: { template: '<button type="button" v-bind="$attrs"><slot /></button>' },
+  VListItemTitle: { template: '<span><slot /></span>' },
+}
+
+beforeEach(() => {
+  setLocale('zh-CN')
+  panelWidth.value = 1200
+})
 
 afterEach(cleanup)
 
@@ -50,15 +73,168 @@ function mount(
       previewUrl: 'https://example.test/',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
       pickOn: false,
       agentName: '芝士',
     },
-    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' } } },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
   })
 }
+
+function staticFrame(): PreviewFrame {
+  return { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+}
+
+/** 一帧正常的、指定文件的网页：条上该有「在新标签页打开」「下载」「刷新」。 */
+function staticFileMount() {
+  const shown = staticFrame()
+  return render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      path: 'index.html',
+      frameName: 'frame',
+      frames: [shown],
+      displayedFrame: shown,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'index.html',
+        content: '<h1>Hello</h1>',
+        version: 'v1',
+        bytes: 14,
+        binary: false,
+        too_large: false,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: {
+      stubs: {
+        VIcon: true,
+        VChip: { template: '<span><slot /></span>' },
+        ...menuStubs,
+      },
+    },
+  })
+}
+
+it('正常状态不另占一行：连通链三段都是绿勾，资源和实例标识收在链点开之后', () => {
+  const okay = {
+    ...frame(),
+    resourceId: 'resource-abcdef123456',
+    instance: 'instance-abcdef123456',
+    runtime: 'ready' as const,
+    connection: 'online' as const,
+  }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [okay],
+      displayedFrame: okay,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: 'npm run dev',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, ...menuStubs } },
+  })
+  expect(ui.queryByTestId('preview-runtime-alert')).toBeNull()
+  const chain = ui.getByTestId('preview-chain')
+  expect(chain.textContent?.replace(/\s+/g, '')).toBe('平台✓通道✓应用✓')
+  // 标识没丢：链点开之后最下面那一行。
+  const detail = ui.getByTestId('preview-chain-detail')
+  expect(detail.textContent).toContain('资源 resource-abc')
+  expect(detail.textContent).toContain('应用已确认就绪')
+})
+
+it('页面报错时链上「应用」那段变红，点开看得到原因', () => {
+  const bad = {
+    ...frame(),
+    runtime: 'failed' as const,
+    connection: 'online' as const,
+    runtimeError: '端口没起来',
+  }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [bad],
+      displayedFrame: bad,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: 'npm run dev',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, ...menuStubs } },
+  })
+  const alert = ui.getByTestId('preview-runtime-alert')
+  expect(alert.querySelector('[data-state="down"]')?.textContent).toContain('应用')
+  const detail = ui.getByTestId('preview-chain-detail')
+  expect(detail.textContent).toContain('页面报错：端口没起来')
+  expect(detail.textContent).toContain('应用报告失败')
+})
+
+it('宽面板平铺：视口三键在，「…」菜单不在，刷新是一颗条上的图标按钮', () => {
+  const ui = staticFileMount()
+  expect(ui.queryByTestId('preview-more')).toBeNull()
+  expect(ui.queryByTestId('viewport-desktop')).not.toBeNull()
+  expect(ui.queryByTestId('refresh-preview')).not.toBeNull()
+  // 指定了文件的那一格：条上不再重复文件名（页签上已经写着）。
+  expect(ui.container.querySelector('.preview-bar__name')).toBeNull()
+})
+
+it('窄面板把「在新标签页打开」「下载」收进「…」菜单；刷新留在地址栏旁边', async () => {
+  panelWidth.value = 390
+  const ui = staticFileMount()
+  // 视口三键在窄面板上藏起来。
+  expect(ui.queryByTestId('viewport-desktop')).toBeNull()
+  const more = ui.getByTestId('preview-more')
+  expect(ui.container.textContent).toContain('下载')
+  expect(ui.getByTestId('refresh-preview')).not.toBeNull()
+  // 连通链收成一颗点。
+  expect(ui.container.querySelector('.browser-chain--dot')).not.toBeNull()
+  await fireEvent.click(more)
+  expect(ui.container.textContent).toContain('在新标签页打开')
+})
+
+it('窄面板上视口三档进了「…」菜单，照样能切', async () => {
+  panelWidth.value = 390
+  const ui = staticFileMount()
+  const text = ui.container.textContent ?? ''
+  expect(text).toContain('桌面')
+  expect(text).toContain('手机')
+  const items = ui.getAllByRole('menuitemradio')
+  const mobile = items.find((el) => (el.textContent ?? '').includes('手机'))!
+  await fireEvent.click(mobile)
+  expect(ui.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+})
 
 it('换一页时上一帧还摆着：加载那一句照样说得出口', () => {
   const ui = mount('navigating', frame())
@@ -98,6 +274,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
       previewUrl: 'https://example.test/diagram.svg',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
@@ -108,7 +285,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
       stubs: {
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+        ...menuStubs,
       },
     },
   })
@@ -116,6 +293,9 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
   expect(ui.queryByTestId('frame-source')).toBeNull()
   await fireEvent.click(ui.getByTestId('toggle-frame-source'))
   expect(ui.getByTestId('frame-source').textContent).toContain('<circle r="4" />')
+  // 网页源码折行（原来是 `<pre>` 的 `pre-wrap`）：生成的 HTML 常常整页一两行，
+  // 横着滚等于看不见。代码文件那一档才默认横滚。
+  expect(ui.getByTestId('frame-source').querySelector('.code-view__scroll--wrap')).toBeTruthy()
 
   await ui.rerender({
     previewFile: {
@@ -151,6 +331,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
       previewUrl: 'https://example.test/index.html',
       previewAppNote: '',
       previewTunnelUp: true,
+      previewAppUp: true,
       previewError: null,
       previewReadError: null,
       pickTarget: null,
@@ -161,7 +342,7 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
       stubs: {
         VIcon: true,
         VChip: { template: '<span><slot /></span>' },
-        VBtn: { template: '<button v-bind="$attrs"><slot /></button>' },
+        ...menuStubs,
       },
     },
   })
@@ -188,4 +369,165 @@ it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢�
     },
   })
   expect(stage.getAttribute('data-viewport')).toBe('desktop')
+})
+
+function appMount(over: Record<string, unknown> = {}, shown: Partial<PreviewFrame> = {}) {
+  const live = { ...frame(), connection: 'online' as const, ...shown }
+  return render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [live],
+      displayedFrame: live,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: 'npm run dev',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: 'region',
+      pickOn: false,
+      agentName: '芝士',
+      ...over,
+    },
+    global: { stubs: { VIcon: true, ...menuStubs } },
+  })
+}
+
+it('地址栏跟着帧报来的地址走（只显示路径），回车跳到敲的那一个', async () => {
+  const ui = appMount({}, { href: 'https://preview-x.example/signup?step=2', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/signup?step=2')
+  expect(address.readOnly).toBe(false)
+  await fireEvent.update(address, '/faq')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/faq']])
+})
+
+it('房间文件的地址栏剥掉平台前缀显示，回车再补回去', async () => {
+  // 房间文件挂在 `/_cheese/room/` 下。读了显示的是剥过的房间路径，但桥那边
+  // `new URL(path, location.href)` 是相对内容域解析的——不补回前缀，敲 `/pages/b.html`
+  // 会跳到内容域的根下而不是房间里的那一份。
+  const ui = appMount({}, { href: 'https://preview-x.example/_cheese/room/pages/a.html', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/pages/a.html')
+  await fireEvent.update(address, '/pages/b.html')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/_cheese/room/pages/b.html']])
+})
+
+it('地址栏里带着房间前缀的那串原样提交，不再补一层', async () => {
+  // 地址栏的提示里写的是完整地址，照抄一份下来再按回车不该跳到 `/_cheese/room/_cheese/
+  // room/…` 那个 404 上。
+  const ui = appMount({}, { href: 'https://preview-x.example/_cheese/room/pages/a.html', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  await fireEvent.update(address, '/_cheese/room/pages/b.html')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/_cheese/room/pages/b.html']])
+})
+
+it('地址里解不出正确回路的转义照原样显示原样提交', async () => {
+  // `%2F` 解出来是真分隔符，解了就写不回去：显示和提交都照原样，看到什么就跳什么。
+  const ui = appMount({}, { href: 'https://preview-x.example/a%2Fb?q=1', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('/a%2Fb?q=1')
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toBeUndefined()
+})
+
+it('输入法拼字时那一下回车不算跳转', async () => {
+  const ui = appMount({}, { href: 'https://preview-x.example/signup', bridged: true })
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  await fireEvent.update(address, '/成品')
+  await fireEvent.keyDown(address, { key: 'Enter', isComposing: true })
+  expect(ui.emitted('navigate')).toBeUndefined()
+  await fireEvent.keyDown(address, { key: 'Enter' })
+  expect(ui.emitted('navigate')).toEqual([['/成品']])
+})
+
+it('没装桥的页面地址栏只读，显示入口名字；刷新退回整帧重来', async () => {
+  const ui = appMount()
+  const address = ui.getByTestId('browser-address') as HTMLInputElement
+  expect(address.value).toBe('week-1.html')
+  expect(address.readOnly).toBe(true)
+  await fireEvent.click(ui.getByTestId('refresh-preview'))
+  expect(ui.emitted('refresh')).toHaveLength(1)
+  expect(ui.emitted('history')).toBeUndefined()
+})
+
+it('后退、前进按帧说的亮灭；有桥时刷新交给帧里那一页自己重载', async () => {
+  const ui = appMount({}, { href: 'https://p.example/a', bridged: true, canBack: true, canForward: false })
+  expect((ui.getByTestId('browser-forward') as HTMLButtonElement).disabled).toBe(true)
+  await fireEvent.click(ui.getByTestId('browser-back'))
+  await fireEvent.click(ui.getByTestId('refresh-preview'))
+  expect(ui.emitted('history')).toEqual([['back'], ['reload']])
+  expect(ui.emitted('refresh')).toBeUndefined()
+})
+
+it('电脑睡了：显示压暗的静态快照和唤醒卡，快照不跑脚本；按钮发唤醒', async () => {
+  const ui = appMount({
+    previewTunnelUp: false,
+    previewAppUp: false,
+    navigationError: '应用预览暂不可用',
+    appSnapshot: { html: '<!DOCTYPE html><p>报名</p>', age: '4 分钟前' },
+  })
+  const card = ui.getByTestId('preview-app-sleep')
+  expect(card.getAttribute('data-kind')).toBe('machine')
+  expect(card.textContent).toContain('运行环境已休眠（当前为静态快照）')
+  expect(card.textContent).toContain('4 分钟前')
+  const shot = ui.getByTestId('preview-snapshot') as HTMLIFrameElement
+  expect(shot.getAttribute('sandbox')).toBe('')
+  expect(shot.getAttribute('srcdoc')).toContain('报名')
+  // 那句报错不再另起一行：卡上已经说清了。
+  expect(ui.queryByRole('alert')).toBeNull()
+  // 链上通道、应用两段变灰。
+  const down = [...ui.container.querySelectorAll('.browser-chain__seg')].map((el) => el.getAttribute('data-state'))
+  expect(down).toEqual(['ok', 'down', 'wait'])
+  // 快照盖着的时候，底下那一帧不接点击也不接键盘：读者看到的、能点的是快照，旧页面
+  // 被点一下会走进错误页，从半透明的快照底下透出来。
+  const oldFrame = ui.container.querySelector('iframe.preview-frame') as HTMLIFrameElement
+  expect(oldFrame.hasAttribute('inert')).toBe(true)
+  expect(ui.container.querySelector('.preview-frames--covered')).not.toBeNull()
+  // 睡着时后退前进不亮，地址栏不能敲。
+  expect((ui.getByTestId('browser-back') as HTMLButtonElement).disabled).toBe(true)
+  await fireEvent.click(ui.getByTestId('preview-wake'))
+  expect(ui.emitted('wake')).toHaveLength(1)
+})
+
+it('电脑在、应用没答：卡请队友重启；还没留过快照时说清楚，旧页面压暗留着', () => {
+  const ui = appMount({ previewAppUp: false })
+  const card = ui.getByTestId('preview-app-sleep')
+  expect(card.getAttribute('data-kind')).toBe('app')
+  expect(card.textContent).toContain('应用没有应答')
+  expect(card.textContent).not.toContain('静态快照）')
+  expect(card.textContent).toContain('还没有留下快照')
+  expect(card.textContent).toContain('请芝士重启应用')
+  expect(ui.container.querySelector('.preview-frames--asleep')).not.toBeNull()
+})
+
+it('唤醒中：卡变成分步进度，按钮收起；圈选打开时卡让开', async () => {
+  const steps = [
+    { key: 'machine', label: 'work.room.preview.sleep.stepMachine', state: 'done' },
+    { key: 'tunnel', label: 'work.room.preview.sleep.stepTunnel', state: 'done' },
+    { key: 'agent', label: 'work.room.preview.sleep.stepAgent', state: 'now' },
+    { key: 'port', label: 'work.room.preview.sleep.stepPort', state: 'todo' },
+  ]
+  const ui = appMount({ previewTunnelUp: true, previewAppUp: false, wakeSteps: steps })
+  const rows = [...ui.getByTestId('preview-wake-steps').children].map((el) => [
+    el.textContent?.trim(),
+    el.getAttribute('data-state'),
+  ])
+  expect(rows).toEqual([
+    ['开机', 'done'],
+    ['连上通道', 'done'],
+    ['芝士重启应用', 'now'],
+    ['等端口应答', 'todo'],
+  ])
+  expect(ui.queryByTestId('preview-wake')).toBeNull()
+  await ui.rerender({ pickOn: true })
+  expect((ui.container.querySelector('.app-sleep__card') as HTMLElement).style.display).toBe('none')
+  expect(ui.getByTestId('preview-region-pick')).toBeTruthy()
 })
