@@ -45,6 +45,86 @@ it('指出一处以后去处由一个下拉定：默认发进对话，切到「�
   expect(ui.emitted().send).toHaveLength(1)
 })
 
+it('去处里有「问个人芝士」：选中它以后发送走私聊那一路，不进这间房', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  const personal = ui.getByTestId('locator-recipient-personal')
+  expect(personal.textContent).toContain('问个人芝士（私聊）')
+  await fireEvent.click(personal)
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().personal).toHaveLength(1)
+  // 私聊的那一句不能同时发进房间、也不能被当成评论。
+  expect(ui.emitted().send).toBeUndefined()
+  expect(ui.emitted().comment).toBeUndefined()
+})
+
+it('篮里有待发批注时切到私聊：主按钮不再写「全部发送」，那一下只发当前这一处', async () => {
+  const props = {
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: true,
+    queuedCount: 2,
+  }
+  const ui = render(PreviewLocator, { props, global: { stubs } })
+  const primary = () => [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.includes('发送'))!
+  // 去处是芝士时，主按钮把篮里那几条也算上。
+  expect(primary().textContent).toContain('全部发送（3）')
+
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  // 私下问只发当前这一处、篮里那两条原地不动——还写「全部发送（3）」就是骗人。
+  expect(primary().textContent?.trim()).toBe('发送')
+  expect(primary().textContent).not.toContain('全部发送')
+  // 切回芝士又算上了。
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-agent'))
+  expect(primary().textContent).toContain('全部发送（3）')
+})
+
+it('问不了个人芝士时那一项不列出来：留着一条按下去没反应的项比不摆更糟', async () => {
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', canComment: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
+})
+
+it('停在个人芝士上、这一项又没了（换了人）：切回发给芝士，不能让发送键按下去悄没声', async () => {
+  const ui = render(PreviewLocator, {
+    props: {
+      target: { label: 'week-1.md', quote: '第一段' },
+      note: '这里数字不对',
+      canComment: true,
+      canAskPersonal: true,
+    },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-recipient'))
+  await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
+  await ui.rerender({
+    target: { label: 'week-1.md', quote: '第一段' },
+    note: '这里数字不对',
+    canComment: true,
+    canAskPersonal: false,
+  })
+  expect(ui.getByTestId('locator-recipient').textContent).toContain('发给芝士')
+  const send = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '发送')!
+  send.click()
+  expect(ui.emitted().send).toHaveLength(1)
+  expect(ui.emitted().personal).toBeUndefined()
+})
+
 it('给了位置就弹在那一处下面；下面放不下就翻到上面；左右夹在面板里', async () => {
   const anchor = { top: 100, bottom: 120, left: 600, panelWidth: 700, viewTop: 0, viewBottom: 800 }
   const ui = render(PreviewLocator, {
