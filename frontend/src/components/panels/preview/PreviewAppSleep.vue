@@ -142,6 +142,11 @@ const where = computed(() => (props.snapshotHtml ? props.snapshotWhere ?? '' : '
   align-items: center;
   gap: 8px;
   width: min(340px, calc(100% - 32px));
+  /* 画面矮的时候（半屏的右栏、笔记本上拉高的对话栏、手机横屏）卡会比看得见的那块还高，
+     底下的「唤醒」按钮就被裁掉了——读者看着一张说要唤醒的卡，却按不到那颗按钮。按可用
+     高度封顶，放不下就在卡里滚；那颗按钮始终够得着。 */
+  max-height: calc(100% - min(120px, 18%) - 12px);
+  overflow-y: auto;
   padding: 18px;
   text-align: center;
   color: var(--text);

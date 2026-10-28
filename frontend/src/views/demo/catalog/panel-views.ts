@@ -157,6 +157,26 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '运行环境已休眠',
       },
       {
+        name: '断着，但有一份快照',
+        note: '最常见的那一种：应用睡着，卡下面压着最近一次加载成功的页面（0 沙箱开销），唤醒按钮就在卡上。底下那行写的是快照**停在哪一页**——一份应用只留一张快照，几个读者同开时后写的盖掉先写的，不说清就会让人以为自己那一页被冻住了。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: true,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: false,
+          appSnapshot: {
+            html: '<!doctype html><html><body><p>快照</p></body></html>',
+            age: '4 分钟前',
+            where: '提交确认',
+          },
+        }),
+        expect: '停在「提交确认」',
+      },
+      {
         name: '页面自己抛了错',
         note: '应用照常显示、连通链三个绿勾，但页面里的脚本抛了异常：条上出一颗红的「2 个错误」，点开是报错清单，能把这几行一次附进批注。以前这一档只认「应用说它 ready / failed」，这种页面读者只能干瞪眼。',
         props: previewPanelProps({
