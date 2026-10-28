@@ -23,7 +23,8 @@ const props = defineProps<{
 
 const modes = inject(PREVIEW_MODE, null)
 
-/** 现在选中的那一段。没有这一份模式时整个控件不摆（见模板第一行）。 */
+/** 现在选中的那一段。没有这一份模式时整个控件不摆（见模板第一行），所以这下面几处
+ *  对 `modes` 都用「一定在」的写法。 */
 const active = computed<PreviewMode>(() => modes!.mode.value)
 
 const items = computed(() => [
