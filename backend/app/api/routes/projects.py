@@ -15,7 +15,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.member_settings import change_project_settings, member_setting_actor
+from app.api.member_settings import change_project_settings
 from app.api.place import (
     channels_unseen,
     live_rooms_seen,
@@ -24,7 +24,11 @@ from app.api.place import (
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import incomplete_tasks, project_task_rows
-from app.api.write_access import CHEESE_ONLY_IN_PROJECT, ROUTE_DECIDES
+from app.api.write_access import (
+    ROUTE_DECIDES,
+    Can,
+    InProject,
+)
 from app.auth.project_access import may_read_project
 from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
 from app.core.config import settings
@@ -665,29 +669,6 @@ async def project_start_steps(
     return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
 
 
-@router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])
-async def add_memory(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """写记忆的旧入口 —— 已关闭，而且明说。
-
-    这条端点是 `cheese_remember` 的后端。它写的是旧的条目池（`memory_entries`，
-    按 agent 分池）；记忆换成「一条记忆一个 markdown 文件」之后（`MemoryFileStore`），
-    那一份不再注入任何地方——它的索引不进提示词、它的正文没有读点。再往后端写只会
-    得到一句「已记入」，而这条记忆以后谁都读不到：**静默丢失**。
-
-    所以这里一律拒绝，并在这句话里说清该写哪儿。旧会话（上下文里还留着
-    `cheese_remember` 那张工具表）里还在调它的调用方，读到的就是这句。
-
-    参数一个都不看：这条路的授权、作用域、layer 现在都没有意义——它不是
-    「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
-    """
-    raise ValidationError(say("rememberRetired"))
-
-
 @router.get("/{project_id}/private-chat")
 async def get_private_chat(
     project_id: uuid.UUID,
@@ -761,23 +742,17 @@ async def get_commit_credit(
     return ok({"mode": credit_mode(project.settings or {})})
 
 
-@router.put(
-    "/{project_id}/commit-credit",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(CommitCredit),
-)
+@router.put("/{project_id}/commit-credit", **typed_response(CommitCredit))
 async def save_commit_credit(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.edit_settings)],
     body: CommitCreditUpdate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await member_setting_actor(resolver, project_id)
-    project = await ProjectService(db).get_or_404(project_id)
     await change_project_settings(
-        db, project, {CREDIT_SETTING: body.mode}, by=actor.handle
+        db, at.project, {CREDIT_SETTING: body.mode}, by=at.actor.handle
     )
-    return await get_commit_credit(project_id, db, resolver)
+    return await get_commit_credit(at.project.id, db, resolver)
 
 
 @router.get("/{project_id}/task-naming")
@@ -798,22 +773,22 @@ async def get_task_naming(
     )
 
 
-@router.put("/{project_id}/task-naming", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/task-naming")
 async def set_task_naming(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Switch the project's tasks between automatic and manual naming. Tasks a
-    person named keep their names either way. Anyone in the project may
-    (``member_settings``)."""
-    actor = await member_setting_actor(resolver, project_id)
+    person named keep their names either way (``member_settings``)."""
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    project = await ProjectService(db).get_or_404(project_id)
     await change_project_settings(
-        db, project, {naming.SETTINGS_KEY: mode}, by=actor.handle
+        db, at.project, {naming.SETTINGS_KEY: mode}, by=at.actor.handle
     )
-    return await get_task_naming(project_id, db, resolver)
+    return await get_task_naming(at.project.id, db, resolver)
 
 
 # --- Project stewardship: who answers for a project ---------------------------
@@ -1037,19 +1012,20 @@ async def get_project_upstream(
     return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
-@router.put("/{project_id}/upstream", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Select a GitHub repository before binding its installation."""
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    project_id = at.project.id
+    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
     service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    project = at.project
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":

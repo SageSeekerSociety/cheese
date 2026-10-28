@@ -91,6 +91,20 @@ def test_a_channel_reads_by_its_address_with_its_latest_messages(client):
     assert copied.json()["data"]["text"] == text
 
 
+def test_a_read_names_what_it_read_the_way_the_person_knows_it(client):
+    """芝士's step shows what it read by name, never by the reference it was
+    given: a channel, the spaces the person is in."""
+    room, _ = _room(client)
+    slug, number = _names(client, room)
+    token = _personal(client, "alice")
+
+    channel = _read(client, token, f"{slug}/channels/{number}")
+    spaces = _read(client, token, "spaces")
+
+    assert channel.json()["data"]["subject"] == "频道「话题」"
+    assert spaces.json()["data"]["subject"] == "你加入的空间"
+
+
 def test_a_project_lists_its_channels_by_the_refs_that_read_them(client):
     room, _ = _room(client)
     slug, number = _names(client, room)

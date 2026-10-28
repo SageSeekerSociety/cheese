@@ -17,12 +17,22 @@
   "silent": "Cheese gave no answer",
   "today": "Today",
   "steps": {
-    "folded": "{first} and {n} steps",
     "thinking": "Thinking",
     "thought": "Thought for {s}s",
     "notFound": "Not found",
     "denied": "Not permitted",
-    "failed": "Call failed"
+    "failed": "Call failed",
+    "count": "Steps done: {n}",
+    "sent": "Messages sent: {n}",
+    "acted": "Actions taken: {n}",
+    "readCount": "Items looked at: {n}",
+    "reading": "{what}…",
+    "and": ", ",
+    "verbs": {
+      "read": "Read",
+      "find": "Find",
+      "search": "Search"
+    }
   },
   "changes": {
     "memory": {

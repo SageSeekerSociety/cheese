@@ -438,6 +438,10 @@ ARTIFACT_MIME = {
     "jpg": "image/jpeg",
     "gif": "image/gif",
     "webp": "image/webp",
+    # Source code and plain text. The preview draws them with line numbers and
+    # highlighting from the extension (frontend `lib/fileKind.ts`); what the
+    # content domain sends is the bytes as text, never as a page to run.
+    "text": "text/plain",
     # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
     # lives on, reached over the preview tunnel that machine dialled out. HOW to
     # run it — and on which port — is the agent's judgment; the platform only
@@ -474,6 +478,54 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".jpeg": "jpg",
     ".gif": "gif",
     ".webp": "webp",
+    # Source code and plain text: the same suffixes the frontend draws with its
+    # code viewer (`lib/fileKind.ts`, CODE_TYPES). Before this they fell through
+    # to html and a `.py` reached the content domain as a page.
+    ".py": "text",
+    ".pyi": "text",
+    ".js": "text",
+    ".mjs": "text",
+    ".cjs": "text",
+    ".jsx": "text",
+    ".ts": "text",
+    ".mts": "text",
+    ".cts": "text",
+    ".tsx": "text",
+    ".vue": "text",
+    ".java": "text",
+    ".kt": "text",
+    ".c": "text",
+    ".h": "text",
+    ".cpp": "text",
+    ".cc": "text",
+    ".cxx": "text",
+    ".hpp": "text",
+    ".hh": "text",
+    ".cs": "text",
+    ".go": "text",
+    ".rs": "text",
+    ".rb": "text",
+    ".php": "text",
+    ".swift": "text",
+    ".lua": "text",
+    ".r": "text",
+    ".sh": "text",
+    ".bash": "text",
+    ".zsh": "text",
+    ".json": "text",
+    ".yaml": "text",
+    ".yml": "text",
+    ".toml": "text",
+    ".ini": "text",
+    ".sql": "text",
+    ".css": "text",
+    ".scss": "text",
+    ".less": "text",
+    ".xml": "text",
+    ".diff": "text",
+    ".patch": "text",
+    ".txt": "text",
+    ".log": "text",
 }
 
 

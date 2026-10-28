@@ -1,8 +1,18 @@
 import type { AssistantEdit } from '@/stores/agentThread'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { checklistOf, interleave, type PanelStep, stepError, stepView, withSubagents } from './assistantView'
+import {
+  checklistOf,
+  foldedLine,
+  interleave,
+  type PanelStep,
+  readsLine,
+  stepError,
+  stepRows,
+  stepView,
+  withSubagents,
+} from './assistantView'
 import { writesView } from './draftChangeView'
 
 import { setLocale, t } from '@/i18n'
@@ -19,6 +29,97 @@ describe('stepError', () => {
   it('平台拒绝时说的那句原样留着', () => {
     const said = '这份草稿已经发布，不能再改'
     expect(stepError(said)).toBe(said)
+  })
+})
+
+describe('一轮做过的几步怎么读', () => {
+  beforeEach(() => setLocale('zh-CN'))
+  afterEach(() => setLocale('en'))
+
+  type Done = { name: string; args?: object; effect?: 'reads' | 'changes' | 'reaches others'; shown?: string }
+  const known = (d: Done) => ({ ...(d.effect ? { effect: d.effect } : {}), ...(d.shown ? { shown: d.shown } : {}) })
+  const steps = (...done: (Done | 'run' | ['think', number] | ['failed', Done, string])[]): PanelStep[] =>
+    done.map((d, i) => {
+      if (d === 'run')
+        return stepView({
+          call: `c${i}`,
+          name: 'cheese_read',
+          args: '{}',
+          state: 'run',
+          effect: 'reads',
+          shown: '空间「数据结构」',
+        })
+      if (Array.isArray(d) && d[0] === 'think')
+        return stepView({ call: `c${i}`, name: 'thinking', args: '', state: 'done', ms: d[1] * 1000 })
+      if (Array.isArray(d)) {
+        const [, failed, error] = d
+        return stepView({
+          call: `c${i}`,
+          name: failed.name,
+          args: JSON.stringify(failed.args ?? {}),
+          state: 'failed',
+          error,
+          ...known(failed),
+        })
+      }
+      return stepView({ call: `c${i}`, name: d.name, args: JSON.stringify(d.args ?? {}), state: 'done', ...known(d) })
+    })
+  const read = (shown: string): Done => ({ name: 'cheese_read', args: { ref: 'x' }, effect: 'reads', shown })
+
+  it('只查阅时，收起的一句写查阅了几项，展开后并成一组，每项写读了什么', () => {
+    const turn = steps(
+      ['think', 1],
+      read('你加入的空间'),
+      read('空间「操作系统」'),
+      { name: 'cheese_find', args: { where: 'spaces/3' }, effect: 'reads', shown: '空间「操作系统」的题目' },
+      { name: 'cheese_help', args: { query: '删除题目' }, effect: 'reads', shown: '帮助文档：删除题目' }
+    )
+    expect(foldedLine(turn)).toBe('查阅 4 项资料')
+    const [group, ...rest] = stepRows(turn)
+    expect(rest).toEqual([])
+    expect(group.kind === 'reads' && group.steps.map((s) => `${s.verb} ${s.arg}`)).toEqual([
+      '读取 你加入的空间',
+      '读取 空间「操作系统」',
+      '查找 空间「操作系统」的题目',
+      '搜索 帮助文档：删除题目',
+    ])
+    expect(group.kind === 'reads' && readsLine(group.steps)).toBe('查阅 4 项资料')
+  })
+
+  it('做了事时先写做了什么，再写查阅了几项；做的事单列一行', () => {
+    const turn = steps(read('项目「机器学习」'), {
+      name: 'chat_send',
+      args: { where: 'ml/channels/2', content: '改到三点' },
+      effect: 'reaches others',
+      shown: '频道「实验」',
+    })
+    expect(foldedLine(turn)).toBe('发送 1 条消息，查阅 1 项资料')
+    const rows = stepRows(turn)
+    expect(rows.map((r) => r.kind)).toEqual(['reads', 'step'])
+    const sent = rows[1].kind === 'step' ? rows[1].step : null
+    expect(sent && `${sent.verb} ${sent.arg}`).toBe('发送消息 频道「实验」')
+  })
+
+  it('还在读时，那一组写正在读的那一项', () => {
+    const [group] = stepRows(steps(read('你加入的空间'), 'run'))
+    expect(group.kind === 'reads' && readsLine(group.steps)).toBe('正在读取空间「数据结构」…')
+  })
+
+  it('没读成的一项单列，写出原因', () => {
+    const rows = stepRows(steps(read('你加入的空间'), ['failed', read('题目「TEST」'), 'Platform HTTP 403: {}']))
+    const failed = rows[1].kind === 'step' ? rows[1].step : null
+    expect(failed?.error).toBe('没有权限')
+  })
+
+  it('想得短的一段不列，想了十秒以上的列出来', () => {
+    expect(stepRows(steps(['think', 3], read('你的待办'))).map((r) => r.kind)).toEqual(['reads'])
+    expect(stepRows(steps(['think', 12], read('你的待办'))).map((r) => r.kind)).toEqual(['step', 'reads'])
+  })
+
+  it('从前的回答没记每步做的是哪类事：收起时只说完成了几步', () => {
+    expect(
+      foldedLine(steps({ name: 'cheese_read', args: { ref: 'x' } }, { name: 'cheese_find', args: { query: 'a' } }))
+    ).toBe('完成 2 步')
   })
 })
 

@@ -102,5 +102,9 @@
   "recipientAgentHint": "Post in this conversation so Cheese edits the file here",
   "recipientCommentHint": "Pin a comment here for people to discuss; Cheese will not edit",
   "locatorHintQueue": "↵ send now · “Add to queue” to send several spots together",
-  "locatorHintSend": "↵ send now · Shift+↵ new line"
-}
+  "locatorHintSend": "↵ send now · Shift+↵ new line",
+  "codeLine": "line {line}",
+  "codeLines": "lines {start}–{end}",
+  "codeWrap": "Wrap lines",
+  "codeNoWrap": "Don't wrap",
+  "codeView": "Code"}

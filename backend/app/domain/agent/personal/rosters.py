@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.agent.personal.reading import Read
 from app.domain.space import permissions as space_seats
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.team.services import team_service
@@ -47,7 +48,7 @@ def _more(total: int) -> list[str]:
     )
 
 
-async def my_teams(session: AsyncSession, user_id: int) -> str:
+async def my_teams(session: AsyncSession, user_id: int) -> Read:
     """The teams the person is in, and their role in each."""
     service = team_service(session)
     lines: list[str] = []
@@ -62,10 +63,10 @@ async def my_teams(session: AsyncSession, user_id: int) -> str:
         )
         role = _TEAM_ROLE.get(held.role, "成员") if held is not None else "成员"
         lines.append(f"- 团队「{team.name}」（teams/{team.id}），你是{role}")
-    return "\n".join(lines) if lines else "你不在任何团队里。"
+    return Read("你所在的团队", "\n".join(lines) if lines else "你不在任何团队里。")
 
 
-async def my_spaces(session: AsyncSession, user_id: int) -> str:
+async def my_spaces(session: AsyncSession, user_id: int) -> Read:
     """The spaces the person is in or runs, and whether they run each."""
     spaces = SpaceService.for_routes(session)
     lines: list[str] = []
@@ -75,10 +76,10 @@ async def my_spaces(session: AsyncSession, user_id: int) -> str:
             f"- 空间「{found.name}」（spaces/{found.id}），"
             + ("你是管理员" if runs else "你是成员")
         )
-    return "\n".join(lines) if lines else "你不在任何空间里。"
+    return Read("你加入的空间", "\n".join(lines) if lines else "你不在任何空间里。")
 
 
-async def team(session: AsyncSession, user_id: int, team_id: int) -> str:
+async def team(session: AsyncSession, user_id: int, team_id: int) -> Read:
     """A team the person is in: its members and their roles."""
     service = team_service(session)
     found = await service.get_team(team_id)
@@ -91,10 +92,10 @@ async def team(session: AsyncSession, user_id: int, team_id: int) -> str:
         f"- {named.get(m.user_id, m.user_id)}，{_TEAM_ROLE.get(m.role, '成员')}"
         for m in members[:LISTED]
     ]
-    return "\n".join(lines + _more(len(members)))
+    return Read(f"团队「{found.name}」", "\n".join(lines + _more(len(members))))
 
 
-async def space(session: AsyncSession, user_id: int, space_id: int) -> str:
+async def space(session: AsyncSession, user_id: int, space_id: int) -> Read:
     """A space the person is in or runs: its managers and its members."""
     runs = await space_seats.runs(session, space_id, user_id)
     spaces = SpaceService.for_routes(session)
@@ -109,4 +110,4 @@ async def space(session: AsyncSession, user_id: int, space_id: int) -> str:
     lines.append("管理员：" + "、".join(named.get(i, str(i)) for i in managers))
     lines.append(f"成员（{len(members)} 人）：")
     lines += [f"- {named.get(i, str(i))}" for i in members[:LISTED]]
-    return "\n".join(lines + _more(len(members)))
+    return Read(f"空间「{name}」的成员", "\n".join(lines + _more(len(members))))

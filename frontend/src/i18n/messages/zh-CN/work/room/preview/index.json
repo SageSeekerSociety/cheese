@@ -102,5 +102,9 @@
   "recipientAgentHint": "发到当前对话，由芝士按这一处修改文件",
   "recipientCommentHint": "挂在文件这一处供团队讨论，不触发芝士修改",
   "locatorHintQueue": "↵ 立即发送 · 「加入待发」可合并多处一起发",
-  "locatorHintSend": "↵ 立即发送 · Shift+↵ 换行"
-}
+  "locatorHintSend": "↵ 立即发送 · Shift+↵ 换行",
+  "codeLine": "第 {line} 行",
+  "codeLines": "第 {start}–{end} 行",
+  "codeWrap": "自动换行",
+  "codeNoWrap": "不换行",
+  "codeView": "代码"}

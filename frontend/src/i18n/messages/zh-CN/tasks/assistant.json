@@ -17,12 +17,22 @@
   "silent": "芝士没有给出回答",
   "today": "今天",
   "steps": {
-    "folded": "{first}等 {n} 步",
     "thinking": "思考中",
     "thought": "思考了 {s} 秒",
     "notFound": "内容不存在",
     "denied": "没有权限",
-    "failed": "调用失败"
+    "failed": "调用失败",
+    "count": "完成 {n} 步",
+    "sent": "发送 {n} 条消息",
+    "acted": "执行 {n} 项操作",
+    "readCount": "查阅 {n} 项资料",
+    "reading": "正在{what}…",
+    "and": "，",
+    "verbs": {
+      "read": "读取",
+      "find": "查找",
+      "search": "搜索"
+    }
   },
   "changes": {
     "memory": {

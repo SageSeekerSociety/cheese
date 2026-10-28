@@ -106,7 +106,6 @@
   "protectionNotList": "{what} must be a list",
   "protectionOverrideList": "The override list",
   "protectionTooManyHandles": "{what} can have at most {max} people",
-  "rememberRetired": "Memories are now written directly as files under `~/.cheese/memory/`: one markdown file per memory (with name/description/type frontmatter), plus a one-line pointer in `MEMORY.md`. See the “Memory” section of the system prompt. `cheese_remember` is retired — it wrote to the old entry pool, which is no longer injected anywhere, so facts written there would never be read again.",
   "removeSelfByLeaving": "You cannot remove yourself; leave the project instead",
   "repoAlreadyConnected": "This project is already connected to a code repository, and changing it isn't supported yet",
   "requiredCheckShape": "Write each required check as {shape}",

@@ -4,16 +4,22 @@ Every POST / PUT / PATCH / DELETE route carries exactly one ``WriteAccess`` in
 its dependencies. The instance is both the declaration (``seal`` finds it by
 walking the route's dependency tree) and the check (FastAPI runs it):
 
-- ``CHEESE_ONLY_IN_ROOM`` / ``CHEESE_ONLY_IN_PROJECT``: only a 芝士 credential
-  for the room (``topic_id``) or project (``project_id``) in the path. A
-  person's browser session is refused. Used for the write surface the ``cheese``
-  CLI alone calls.
-- ``Can(permission)``: the person may do ``permission`` to the object the
+- ``Can(permission)``: the caller may do ``permission`` to the object the
   path names (``app.auth.can``); the parameter it annotates receives that
   object. Checked before the handler runs; reads use it too, though only
-  writes must carry a declaration.
+  writes must carry a declaration. A team, a space, a problem or a question
+  is acted on by a person (or their 芝士, as them); a project by whoever
+  works in it — a person, their 芝士, or one of its AI teammates — and the
+  parameter receives the project with who acts (``InProject``); asked at a
+  conversation (``at="topic_id"``), by whoever may be in that channel, and the
+  parameter receives the conversation's place with who acts (``InChannel``).
+  What only an AI teammate does there — the write surface the ``cheese`` CLI
+  alone calls — is a permission no person's role holds
+  (``project_permissions.AGENT_ONLY``).
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
-  itself (``ActorResolver`` and friends). Most routes are this.
+  itself (``ActorResolver`` and friends). The routes written before ``Can``
+  judged every caller still declare it and move onto ``Can`` a batch at a
+  time; a route added now may not (``scripts/check_route_decides.py``).
 
 A router may declare for all its routes
 (``APIRouter(dependencies=[ROUTE_DECIDES])``); a route may not declare twice.
@@ -27,8 +33,8 @@ another prefix shares its route objects, and so stays admitted.)
 
 A route that is renamed or moved carries its declaration along. The gate this
 replaced was a table of path regexes kept apart from the routes; #370 flattened
-a prefix, every regex stopped matching, and the 芝士-only surface opened without
-a single failure.
+a prefix, every regex stopped matching, and the surface only 芝士 may call
+opened without a single failure.
 """
 
 from __future__ import annotations
@@ -46,21 +52,19 @@ from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolver
+from app.api.auth import ActorResolver, get_actor_resolver
 from app.auth import can
 from app.auth.checker import get_auth_user
 from app.auth.core import AuthUserInfo
-from app.core import credentials
+from app.auth.project_roles import AGENT_PERMISSIONS, may
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
-from app.core.sandbox_auth import (
-    is_global_sandbox_token,
-    is_valid_cheese_token,
-    looks_like_project_agent_credential,
-    scoped_token_claims,
-)
+from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.sentences import say
-from app.domain.agent_credential.services import ProjectAgentCredentialService
+from app.domain.identity.actor import Actor
+from app.domain.project.models import Project
+from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission as ProjectPermission
+from app.domain.room_task.place import Place, place_or_404
 
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -69,15 +73,11 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["cheese_only", "route_decides", "can"]
-    #: For ``cheese_only``: the path parameter ``<scope>_id`` names the room or
-    #: project the credential must be for.
-    scope: Literal["topic", "project", None] = None
+    kind: Literal["route_decides", "can"]
 
     @property
     def name(self) -> str:
-        where = {"topic": "_in_room", "project": "_in_project", None: ""}
-        return self.kind + where[self.scope]
+        return self.kind
 
     async def __call__(self, connection: HTTPConnection) -> None:
         """``route_decides``: nothing to check here; the handler does.
@@ -85,72 +85,6 @@ class WriteAccess:
         Typed as the connection, not the request, so a router that declares
         for all its routes keeps its WebSocket routes working.
         """
-
-
-@dataclass(frozen=True, eq=False)
-class _CheeseOnly(WriteAccess):
-    kind: Literal["cheese_only"] = "cheese_only"
-
-    async def __call__(  # type: ignore[override]
-        self,
-        connection: HTTPConnection,
-        db: Annotated[AsyncSession, Depends(get_db)],
-    ) -> None:
-        # Write access is about HTTP writes: a WebSocket or a read under a
-        # router that declares 芝士-only is not this check's to refuse.
-        if connection.scope.get("method") not in WRITE_METHODS:
-            return
-        raw = connection.path_params.get(f"{self.scope}_id")
-        project_id = str(raw) if self.scope == "project" and raw else None
-        topic_id = str(raw) if self.scope == "topic" and raw else None
-        token = credentials.presented(connection.headers)
-        opened = is_valid_cheese_token(token, project_id=project_id, topic_id=topic_id)
-        # A project agent credential can address topics in its project, so it
-        # can't be matched against the URL by string compare the way a per-turn
-        # token is — a topic path names its project only through the topic.
-        if not is_global_sandbox_token(token) and (
-            opened or looks_like_project_agent_credential(token)
-        ):
-            opened = await _credential_opens(
-                db,
-                token,
-                project_id=project_id,
-                topic_id=topic_id,
-            )
-        if not opened:
-            raise AuthenticationRequiredError("invalid sandbox token")
-
-
-async def _credential_opens(
-    db: AsyncSession,
-    token: str,
-    *,
-    project_id: str | None,
-    topic_id: str | None,
-) -> bool:
-    """Whether the credential's participant may act in this room or project:
-    the project match and the revocation check, which a signature alone does
-    not answer. Reads only."""
-    try:
-        target = await ProjectAgentCredentialService(db).project_of_request(
-            project_id=project_id, topic_id=topic_id
-        )
-        if target is None:
-            return False
-        claims = scoped_token_claims(token)
-        origin = claims.get("t") if claims else None
-        topic = uuid.UUID(topic_id or origin) if topic_id or origin else None
-        resolver = ActorResolver(session=db, bearer=None, cheese_token=token)
-        actor = await resolver.resolve(project_id=target, topic_id=topic)
-        if not actor.authenticated:
-            return False
-        if topic is not None:
-            await resolver.authorize_topic(actor, project_id=target, topic_id=topic)
-        else:
-            await resolver.authorize_project(actor, project_id=target)
-        return True
-    except (BaseError, ValueError):
-        return False
 
 
 @dataclass(frozen=True, eq=False)
@@ -203,18 +137,168 @@ class _Can(WriteAccess):
         return await can.authorize(db, person.user_id, self.permission, object_id)
 
 
+@dataclass(frozen=True)
+class InProject:
+    """A project a route acts in, and who acts there: a person, their 芝士 as
+    them, or one of the project's AI teammates."""
+
+    project: Project
+    actor: Actor
+
+
+@dataclass(frozen=True, eq=False)
+class _CanInProject(WriteAccess):
+    """``Can`` for a project's permission (``project_permissions``): whoever
+    the request's credential names — a person, their 芝士, an AI teammate's
+    room or project credential — judged by where they sit in the project
+    (``ActorResolver.authorize_project``, ``project_roles.standing``)."""
+
+    kind: Literal["can"] = "can"
+    permission: ProjectPermission | None = None
+    at: str = "project_id"
+
+    def __post_init__(self) -> None:
+        # The project's id is a path parameter of this dependency, under the
+        # path's own name, as `_Can` declares its object's.
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "project_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[uuid.UUID, Path(alias=self.at)],
+                    ),
+                    inspect.Parameter(
+                        "db",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AsyncSession, Depends(get_db)],
+                    ),
+                    inspect.Parameter(
+                        "resolver",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[
+                            ActorResolver, Depends(get_actor_resolver)
+                        ],
+                    ),
+                ]
+            ),
+        )
+
+    @property
+    def name(self) -> str:
+        return f"can {self.permission}"
+
+    async def __call__(  # type: ignore[override]
+        self, *, project_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
+    ) -> InProject:
+        assert self.permission is not None
+        actor = await resolver.resolve(project_id=project_id)
+        await resolver.authorize_project(
+            actor, project_id=project_id, permission=self.permission
+        )
+        return InProject(await ProjectService(db).get_or_404(project_id), actor)
+
+
+@dataclass(frozen=True)
+class InChannel:
+    """A conversation a route acts in — a channel, or one of its tasks or 支线
+    (``Place``) — and who acts there."""
+
+    place: Place
+    actor: Actor
+
+
+@dataclass(frozen=True, eq=False)
+class _CanInChannel(WriteAccess):
+    """``Can`` for a project's permission asked in one conversation: whoever
+    may be in its channel (``ActorResolver.authorize_topic``: a private
+    channel is not there for anyone outside it), and may do the permission
+    where they sit in the project — an AI teammate by what its role grants
+    (``project_roles.AGENT_PERMISSIONS``), as everyone else by theirs."""
+
+    kind: Literal["can"] = "can"
+    permission: ProjectPermission | None = None
+    at: str = "topic_id"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "__signature__",
+            inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "topic_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[uuid.UUID, Path(alias=self.at)],
+                    ),
+                    inspect.Parameter(
+                        "db",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[AsyncSession, Depends(get_db)],
+                    ),
+                    inspect.Parameter(
+                        "resolver",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        annotation=Annotated[
+                            ActorResolver, Depends(get_actor_resolver)
+                        ],
+                    ),
+                ]
+            ),
+        )
+
+    @property
+    def name(self) -> str:
+        return f"can {self.permission}"
+
+    async def __call__(  # type: ignore[override]
+        self, *, topic_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
+    ) -> InChannel:
+        assert self.permission is not None
+        place = await place_or_404(db, topic_id)
+        actor = await resolver.resolve(
+            topic_id=place.conversation_id, project_id=place.project_id
+        )
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id
+        )
+        if not await self._may(db, place, actor):
+            raise ForbiddenError(say("projectPermissionDenied"))
+        return InChannel(place, actor)
+
+    async def _may(self, db: AsyncSession, place: Place, actor: Actor) -> bool:
+        assert self.permission is not None
+        # Nobody signed in gets past the room only on the development override,
+        # which sits nowhere and is asked nothing more.
+        if not actor.authenticated:
+            return True
+        # An AI teammate the room just let in sits in it by its seat there, not
+        # by a row on the project's roster, which a project's own teammates do
+        # not have: what it may do is what its role grants.
+        if actor.via == "cheese":
+            return self.permission in AGENT_PERMISSIONS
+        return await may(db, place.project_id, actor.handle, self.permission)
+
+
 def Can(permission: enum.StrEnum, *, at: str | None = None) -> Any:
     """What a route needs, on the object its path names: the parameter it
     annotates receives that object, loaded and authorized
-    (``team: Annotated[Team, Can(TeamPermission.edit_settings)]``). It is the
-    route's write-access declaration too. ``at`` names the path parameter only
-    where a route spells it otherwise than the object's policy does."""
+    (``team: Annotated[Team, Can(TeamPermission.edit_settings)]``), or for a
+    project the project and who acts in it
+    (``at: Annotated[InProject, Can(ProjectPermission.configure_agents)]``).
+    It is the route's write-access declaration too. ``at`` names the path
+    parameter only where a route spells it otherwise than the object's policy
+    does."""
+    if isinstance(permission, ProjectPermission):
+        if at is not None and at != "project_id":
+            return Depends(_CanInChannel(permission=permission, at=at))
+        return Depends(_CanInProject(permission=permission, at="project_id"))
     param = at or can.policy_of(permission).path_param
     return Depends(_Can(permission=permission, at=param))
 
 
-CHEESE_ONLY_IN_ROOM = Depends(_CheeseOnly(scope="topic"))
-CHEESE_ONLY_IN_PROJECT = Depends(_CheeseOnly(scope="project"))
 ROUTE_DECIDES = Depends(WriteAccess("route_decides"))
 
 
@@ -279,8 +363,8 @@ def violations(app: FastAPI) -> list[str]:
         elif not route.declared:
             found.append(
                 f"{route.method} {route.path} ({route.endpoint}) declares no write "
-                "access; add Can(...), CHEESE_ONLY_IN_ROOM, CHEESE_ONLY_IN_PROJECT "
-                "or ROUTE_DECIDES (app/api/write_access.py) to its dependencies"
+                "access; add Can(...) or ROUTE_DECIDES (app/api/write_access.py) "
+                "to its dependencies"
             )
     return found
 
