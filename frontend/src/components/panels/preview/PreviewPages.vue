@@ -731,6 +731,22 @@ function onPageKey(event: KeyboardEvent, slot: PageSlot) {
   }
 }
 
+/** 放大 / 缩小一级，围绕这一格正中间那一处。
+ *
+ *  和捏合、双击走同一条路（`zoomTo`）：倍数、位图精度、底色的坐标都由它一处管。
+ *  一级一格半，按到边界就停在边界（`zoomTo` 自己夹）。 */
+const ZOOM_STEP = 1.5
+function zoomByStep(direction: 1 | -1) {
+  const host = container.value
+  if (!host) return
+  const box = host.getBoundingClientRect()
+  const at = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+  zoomTo(direction === 1 ? zoom.value * ZOOM_STEP : zoom.value / ZOOM_STEP, at)
+}
+
+/** 放大了才给「缩小」：比例回到 1 时那颗按钮不该还亮着。 */
+const canZoomOut = computed(() => zoom.value > MIN_ZOOM + 0.01)
+
 function setRef(slot: PageSlot, el: unknown) {
   slot.el = (el as HTMLElement) ?? null
 }
@@ -856,6 +872,28 @@ onBeforeUnmount(() => {
     @click="onPoint"
   >
     <div class="pv__tools">
+      <!-- 放大的第二条路。手机上捏合和双击都在，桌面上一条都没有——鼠标没有「两指」，
+           双击在页上是选一个词。面板被对话挤窄时（拉到 80% 只剩 284px、正文 5.4px）
+           没有它就是读不了，所以一直在，不按宽窄藏。 -->
+      <BaseButton
+        size="sm"
+        kind="ghost"
+        prepend-icon="mdi-magnify-minus-outline"
+        :disabled="!canZoomOut"
+        :title="t('work.room.preview.zoomOut')"
+        :aria-label="t('work.room.preview.zoomOut')"
+        data-testid="pv-zoom-out"
+        @click.stop="zoomByStep(-1)"
+      />
+      <BaseButton
+        size="sm"
+        kind="ghost"
+        prepend-icon="mdi-magnify-plus-outline"
+        :title="t('work.room.preview.zoomIn')"
+        :aria-label="t('work.room.preview.zoomIn')"
+        data-testid="pv-zoom-in"
+        @click.stop="zoomByStep(1)"
+      />
       <BaseButton
         size="sm"
         :kind="pointing ? 'primary' : 'ghost'"

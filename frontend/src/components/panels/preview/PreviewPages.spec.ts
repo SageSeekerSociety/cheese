@@ -985,6 +985,56 @@ describe('键盘选字：一行一格', () => {
   })
 })
 
+describe('面板被挤窄时用按钮放大', () => {
+  /** 摆好这一格、量到宽度，页框的大小才算得出来（happy-dom 量不出布局，宽度自己给）。 */
+  async function sized(widthPx = 600) {
+    const ui = await opened()
+    await new Promise((r) => setTimeout(r, 300))
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: widthPx, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    return ui
+  }
+  const boxWidth = (ui: ReturnType<typeof mount>) =>
+    Number.parseFloat((ui.container.querySelector('[data-page]') as HTMLElement).style.width)
+  const button = (ui: ReturnType<typeof mount>, id: string) => ui.getByTestId(id) as HTMLButtonElement
+
+  it('按一下放大一级：一次一格半，和捏合、双击共用同一条缩放路径', async () => {
+    const ui = await sized()
+    const before = boxWidth(ui)
+    await fireEvent.click(button(ui, 'pv-zoom-in'))
+    const after = boxWidth(ui)
+    expect(after).toBeGreaterThan(before)
+    expect(after / before).toBeCloseTo(1.5, 1)
+  })
+
+  it('缩小回到整页就禁用，不会缩得比纸还小', async () => {
+    const ui = await sized()
+    const whole = boxWidth(ui)
+    expect(button(ui, 'pv-zoom-out').disabled).toBe(true)
+
+    await fireEvent.click(button(ui, 'pv-zoom-in'))
+    expect(button(ui, 'pv-zoom-out').disabled).toBe(false)
+
+    await fireEvent.click(button(ui, 'pv-zoom-out'))
+    expect(boxWidth(ui)).toBe(whole)
+    expect(button(ui, 'pv-zoom-out').disabled).toBe(true)
+  })
+
+  it('放大时画布不清空：拉大的旧图留着，等手停了再重画', async () => {
+    const ui = await sized()
+    await fireEvent.click(button(ui, 'pv-zoom-in'))
+    expect(ui.container.querySelectorAll('canvas')).toHaveLength(2)
+  })
+
+  it('两个按钮各有名字，读屏和悬停都说得清', async () => {
+    const ui = await sized()
+    expect(ui.getByTestId('pv-zoom-in').getAttribute('aria-label')).toBe('放大')
+    expect(ui.getByTestId('pv-zoom-out').getAttribute('aria-label')).toBe('缩小')
+  })
+})
+
 describe('手指放大', () => {
   /** 点两下：两次抬起隔 150 毫秒、落在同一处。happy-dom 的触摸事件没有构造参数，自己挂。 */
   function doubleTap(el: HTMLElement) {
