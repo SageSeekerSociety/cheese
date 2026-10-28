@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import yaml
 
@@ -42,13 +41,19 @@ def _on(doc: dict) -> dict:
 
 def test_the_template_is_valid_yaml_and_the_job_is_named_lean():
     job = _workflow()["jobs"]["lean"]
-    assert job["name"] == "lean", "check run 名就是它，平台的 required_checks 按这个名字找"
+    assert job["name"] == "lean", (
+        "check run 名就是它，平台的 required_checks 按这个名字找"
+    )
 
 
 def test_the_action_is_pinned_to_a_commit():
     """标签可变：@v1 能被指到别的提交，review 过的东西第二天就不是那份了。"""
     uses = [s["uses"] for s in _workflow()["jobs"]["lean"]["steps"] if "uses" in s]
-    pinned = [u for u in uses if re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", u.split(" #")[0].strip())]
+    pinned = [
+        u
+        for u in uses
+        if re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", u.split(" #")[0].strip())
+    ]
     assert pinned, f"没有钉到 40 位提交的 action：{uses}"
     assert any("lean-action" in u for u in pinned)
 
