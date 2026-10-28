@@ -22,22 +22,6 @@ import PanelPreviewView from './PanelPreviewView.vue'
 import { setLocale } from '@/i18n'
 import { previewBundles } from '@/test/panelBundles'
 
-const agent = vi.hoisted(() => ({
-  available: { value: false },
-  open: vi.fn(),
-  ask: vi.fn(),
-}))
-
-vi.mock('@/stores/agent', async () => {
-  const { ref: makeRef } = await import('vue')
-  agent.available = makeRef(false)
-  return {
-    agentAvailable: agent.available,
-    openAgent: agent.open,
-    askAgent: agent.ask,
-  }
-})
-
 vi.mock('./preview/PreviewSheet.vue', () => ({
   default: {
     props: ['data', 'kind', 'marks', 'activeMark'],
@@ -113,17 +97,12 @@ function props(overrides: Record<string, unknown> = {}) {
   }
 }
 
-beforeEach(() => {
-  setLocale('zh-CN')
-  agent.available.value = false
-  agent.open.mockClear()
-  agent.ask.mockClear()
-})
+beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
-function mount(submitQuestion?: SubmitPreviewQuestion) {
+function mount(submitQuestion?: SubmitPreviewQuestion, askPersonal?: (message: string) => void) {
   return render(PanelPreviewView, {
-    props: { ...props(), submitQuestion },
+    props: { ...props(), submitQuestion, askPersonal },
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: {
@@ -138,18 +117,17 @@ function mount(submitQuestion?: SubmitPreviewQuestion) {
 }
 
 it('选「问个人芝士」发出去：带着位置进私聊，房间的对话和提问出口都不动', async () => {
-  agent.available.value = true
   const submit = vi.fn().mockReturnValue(true)
-  const ui = mount(submit as unknown as SubmitPreviewQuestion)
+  const askPersonal = vi.fn()
+  const ui = mount(submit as unknown as SubmitPreviewQuestion, askPersonal)
   await fireEvent.click(ui.getByText('cell'))
   await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这个数字按季度摊')
   await fireEvent.click(ui.getByTestId('locator-recipient'))
   await fireEvent.click(ui.getByTestId('locator-recipient-personal'))
   await fireEvent.click(ui.getByText('发送'))
 
-  expect(agent.open).toHaveBeenCalled()
-  expect(agent.ask).toHaveBeenCalledTimes(1)
-  const message = agent.ask.mock.calls[0]?.[0] as string
+  expect(askPersonal).toHaveBeenCalledTimes(1)
+  const message = askPersonal.mock.calls[0]?.[0] as string
   expect(message).toContain('这个数字按季度摊')
   expect(message).toContain('budget.xlsx')
   expect(message).toContain('B7')
@@ -161,7 +139,7 @@ it('选「问个人芝士」发出去：带着位置进私聊，房间的对话�
   expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
 })
 
-it('没登录时那一项不列出来，主按钮照旧发进房间', async () => {
+it('页面没给这个能力（没登录）时那一项不列出来，主按钮照旧发进房间', async () => {
   const submit = vi.fn().mockReturnValue(true)
   const ui = mount(submit as unknown as SubmitPreviewQuestion)
   await fireEvent.click(ui.getByText('cell'))
@@ -170,6 +148,5 @@ it('没登录时那一项不列出来，主按钮照旧发进房间', async () =
   expect(ui.queryByTestId('locator-recipient-personal')).toBeNull()
   await fireEvent.click(ui.getByText('发送'))
 
-  expect(agent.ask).not.toHaveBeenCalled()
   expect(submit).toHaveBeenCalledTimes(1)
 })

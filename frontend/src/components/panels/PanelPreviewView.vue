@@ -61,7 +61,6 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { PENDING_NOTES } from '@/lib/pendingNotes'
-import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -70,6 +69,7 @@ const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEdit
 const props = withDefaults(defineProps<PreviewViewProps>(), {
   agentName: () => t('work.room.defaultAgentName'),
   submitQuestion: undefined,
+  askPersonal: undefined,
   uploadAnnotation: undefined,
   active: true,
   path: null,
@@ -260,10 +260,7 @@ const {
   onLocate: (payload) => emit('locate', payload),
   // 个人芝士是全站那一条对话（不在项目里），登录了就有；带着这一处的原文和位置问过去，
   // 面板自己会打开。答不上来的话由面板说，这里不发第二句。
-  onAskPersonal: (message) => {
-    openAgent()
-    void askAgent(message)
-  },
+  onAskPersonal: (message) => props.askPersonal?.(message),
   onPickMode: (on) => emit('pick-mode', on),
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
@@ -773,7 +770,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
-      :can-ask-personal="agentAvailable"
+      :can-ask-personal="!!props.askPersonal"
       :comment-error="commentError"
       :anchor="locatorAnchor"
       :arm-first="locatorFromSelection"
