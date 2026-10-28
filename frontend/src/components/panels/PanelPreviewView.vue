@@ -223,8 +223,12 @@ watch(
 watch(
   () => props.liveEdit?.editingPath.value ?? '',
   (now, before) => {
-    if (!shouldResetModeOnSessionEnd(before, now, props.previewFile?.path)) return
-    if (previewMode.mode.value === 'edit') previewMode.set('view')
+    // 会话收起来了：把它记在**那一份**上的模式清掉，按路径，不按眼前这一份。眼前这一份
+    // 可能是读者刚换过来的（换文件也会让 `liveEdit` 收会话），它有自己的记忆，不该动；
+    // 而刚离开的那一份会话没了、模式还记着「改」，换回来时会卡在「模式说改、正文只读、
+    // 每次指认都被吞」那一态——清掉它才不会卡。
+    if (!shouldResetModeOnSessionEnd(before, now)) return
+    previewMode.forget(before)
   }
 )
 

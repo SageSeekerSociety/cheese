@@ -21,6 +21,7 @@ import type { ChatColumnHandle, TopicPlace, WorkPanelHandle } from './shared'
 import { computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { personalAsker } from '@/lib/personalAsker'
 import { userRefRoute } from '@/lib/userRef'
 import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
@@ -67,12 +68,7 @@ export function useTopicActions(opts: {
    *  没有这一条（没登录）时面板不摆那一项——摆一条按下去没反应的比不摆更糟。
    *  「有没有」由这里说了算，面板只认「给了还是没给」。 */
   const askPersonal = computed(() =>
-    agentAvailable.value
-      ? (message: string) => {
-          openAgent()
-          void askAgent(message)
-        }
-      : undefined
+    personalAsker(agentAvailable.value, openAgent, (message) => void askAgent(message))
   )
 
   function handleMentionClick(handle: string) {

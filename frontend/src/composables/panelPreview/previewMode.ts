@@ -31,21 +31,24 @@ export interface PreviewModeApi {
   enabled: (mode: PreviewMode) => boolean
   /** 现在这一段能不能改正文：`edit` 且这一份开得起来。 */
   editing: ComputedRef<boolean>
+  /** 把记在某一份上的模式清掉（回到「看」）。协同会话收起来时用：会话已经没了，那
+   *  一份还记着「改」的话，换回来时正文是只读的、模式却是「改」——每一次指认都会被
+   *  吞掉，而且「改」那一颗再点也救不回来（值没变，watcher 不触发）。 */
+  forget: (path: string) => void
 }
 
 export const PREVIEW_MODE: InjectionKey<PreviewModeApi> = Symbol('preview-mode')
 
-/** 协同会话收起时该不该把模式收回「看」。
+/** 协同会话收起来了（`editingPath` 从有变空）——那一份记着的模式该清掉。
  *
- *  两条路都会让 `editingPath` 从有变空：会话自己结束（编辑器上那颗关闭键、服务端拒了），
- *  和读者换了一份文件（`liveEdit` 自己那个 `watch` 也会 `end()`）。前者正文回到只读、
- *  模式还停在「改」，下面每一次指认都会被吞掉，得收；后者是另一份文件的事，那份文件
- *  有自己的记忆，不能拿这一下把它切走。
- *
- *  分得开的判据：会话自己结束时，它收的正是眼前这一份；换文件时收的是刚离开的那一份。
- *  由 `PanelPreviewView` 和它的用例共用，免得那一条判断只在组件里说不清。 */
-export function shouldResetModeOnSessionEnd(ended: string, now: string, opened: string | null | undefined): boolean {
-  return !!ended && !now && ended === (opened ?? '')
+ *  两条路都会走到这里：会话自己结束（编辑器上那颗关闭键、服务端拒了），和读者换了一份
+ *  文件（`liveEdit` 自己那个 `watch` 也会 `end()`）。两种情况都该把**收起来的那一份**
+ *  的记忆清掉（`PreviewModeApi.forget` 按路径清）：会话没了，那一份再记着「改」，换回来
+ *  时正文是只读的、每一次指认都会被吞掉，而「改」那一颗也救不回来（值没变，watcher 不
+ *  触发）。清的是那一份的，不是眼前这一份的——换文件时眼前那一份是刚打开的、有自己的
+ *  记忆，不该被这一次顺手改掉。 */
+export function shouldResetModeOnSessionEnd(ended: string, now: string): boolean {
+  return !!ended && !now
 }
 
 /** 快捷键 1 / 2 / 3 对应的三段。原型里也是这三个数。 */
@@ -76,10 +79,15 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
     if (!enabled(candidate)) return
     mode.value = candidate
   }
+
+  function forget(path: string) {
+    delete byPath[path]
+  }
   return {
     mode,
     set,
     enabled,
     editing: computed(() => mode.value === 'edit' && canEdit()),
+    forget,
   }
 }

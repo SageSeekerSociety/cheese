@@ -78,16 +78,25 @@ it('快捷键 1/2/3 对着看/批注/改', () => {
 
 // 协同会话收起时该不该把模式收回「看」：这条判断分得开「会话自己结束」和「换文件」
 // （后者 `liveEdit` 也会 end()），两种都验。
-it('会话收的正是眼前这一份：该收', () => {
-  expect(shouldResetModeOnSessionEnd('a.md', '', 'a.md')).toBe(true)
+it('会话收起来了（从有变空）：那一份该清', () => {
+  expect(shouldResetModeOnSessionEnd('a.md', '')).toBe(true)
 })
 
-it('换了一份文件（收的是刚离开的那一份）：不收', () => {
-  expect(shouldResetModeOnSessionEnd('a.md', '', 'b.md')).toBe(false)
+it('会话还开着、或者本来就没会话：不清', () => {
+  expect(shouldResetModeOnSessionEnd('a.md', 'a.md')).toBe(false)
+  expect(shouldResetModeOnSessionEnd('', '')).toBe(false)
 })
 
-it('没有变空（会话还开着）、或者本来就没会话：不收', () => {
-  expect(shouldResetModeOnSessionEnd('a.md', 'a.md', 'a.md')).toBe(false)
-  expect(shouldResetModeOnSessionEnd('', '', 'a.md')).toBe(false)
-  expect(shouldResetModeOnSessionEnd('', '', null)).toBe(false)
+it('清的是收起来的那一份，不是眼前这一份：换个文件回来不会卡在「模式说改、正文只读」', () => {
+  const mode = usePreviewMode(
+    () => true,
+    () => 'a.md'
+  )
+  mode.set('edit')
+  expect(mode.mode.value).toBe('edit')
+  // 离开这一份：它的会话收起来，按路径清掉它自己的记忆。
+  mode.forget('a.md')
+  expect(mode.mode.value).toBe('view')
+  // 回到这一份：是「看」，不是那一次卡住时记住的「改」。
+  expect(mode.mode.value).toBe('view')
 })
