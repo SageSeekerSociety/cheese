@@ -716,6 +716,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewImageStage
       v-else-if="path && previewFile && isImageArtifact"
       :document-name="documentName"
+      :document-suffix="documentSuffix"
       :active="active"
       :preview-full="previewFull"
       :image-region="imageRegion"
@@ -723,6 +724,8 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :annotate-error="annotateError"
       :marks="imageAnchors"
       :active-mark="focusedThread"
+      @retry="emit('refresh')"
+      @download="emit('download')"
       @region="onImageRegion"
       @annotate="onAnnotate"
       @mark="openAnchor"

@@ -136,5 +136,8 @@
   "modeViewTitle": "View mode (shortcut 1)",
   "modeNoteTitle": "Annotate mode (shortcut 2): select something and write a note on it",
   "modeEditTitle": "Edit mode (shortcut 3)",
-  "modeEditBlocked": "This file cannot be edited in place; use an annotation instead"
+  "modeEditBlocked": "This file cannot be edited in place; use an annotation instead",
+  "imageFailed": "This picture would not open",
+  "imageReading": "Reading the picture",
+  "retry": "Retry"
 }
