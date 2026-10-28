@@ -1445,8 +1445,10 @@ button:not(.v-btn) {
 .pending-pin {
   display: inline-flex;
   /* 不参与选字：浏览器把 `user-select: none` 的东西排除在 `Selection.toString()` 之外，
-     所以读者选一句正好跨过这颗序号时，取出来的原文和前（后）文里不会多一个数字。
-     查那一边由 `markdownAnchors` 的 `ANCHOR_IGNORE_ATTR` 挡（`collectText` 认它）。 */
+     所以读者选中一段正好含着这颗序号时，取出来的原文里不会多一个数字。这只挡得住
+     `Selection.toString()` 这一条——`Range.toString()` 和 `cloneContents()` 不管 CSS，
+     所以按字找位置（`collectText`）和前后文（`markdownQuote` 的 `rangeText`）另按
+     `ANCHOR_IGNORE_ATTR` 跳过它。 */
   user-select: none;
   align-items: center;
   justify-content: center;

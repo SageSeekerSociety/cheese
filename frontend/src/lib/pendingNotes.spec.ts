@@ -73,3 +73,28 @@ it('只清掉发出去的那几条：只留评论的不经对话发，不能跟�
   expect(left[0].audience).toBe('comment')
   expect(left[0].message).toBe('乙')
 })
+
+it('发送失败那句话不会跟到新的一批上', () => {
+  // 托盘只在有货时出现：上一次失败的那句留着，读者清空篮、再攒一条时它会跟着这一条
+  // 一起冒出来，可这一批压根没按过发送。
+  const api = usePendingNotes(() => false)
+  api.add(note())
+  expect(api.send('')).toBe(false)
+  expect(api.failed.value).toBe(true)
+  // 逐条删空（托盘上每行的 ✕），再攒一条新的。
+  api.remove(api.notes.value[0].id)
+  api.add(note({ message: '新的' }))
+  expect(api.failed.value).toBe(false)
+})
+
+it('发送成功之后那句失败话也清了', () => {
+  let ok = false
+  const api = usePendingNotes(() => ok)
+  api.add(note())
+  expect(api.send('')).toBe(false)
+  expect(api.failed.value).toBe(true)
+  api.add(note())
+  ok = true
+  expect(api.send('')).toBe(true)
+  expect(api.failed.value).toBe(false)
+})

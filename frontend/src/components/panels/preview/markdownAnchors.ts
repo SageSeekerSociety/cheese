@@ -12,7 +12,7 @@
  *   一样像的时候宁可不画，也别把标记钉到另一句话上。
  */
 
-import { headingPath, normaliseText } from './markdownQuote'
+import { ANCHOR_IGNORE_ATTR, headingPath, normaliseText } from './markdownQuote'
 
 export type AnchorQuote = Readonly<{
   /** 选中的原文（取的时候已经归过空白）。 */
@@ -37,7 +37,7 @@ function collectText(root: HTMLElement): Text[] {
       const text = node as Text
       if (!text.data) return
       const parent = text.parentElement
-      if (parent && (SKIP.has(parent.tagName) || parent.closest('[data-anchor-ignore]'))) return
+      if (parent && (SKIP.has(parent.tagName) || parent.closest(`[${ANCHOR_IGNORE_ATTR}]`))) return
       out.push(text)
       return
     }
@@ -169,15 +169,6 @@ export function clearMarks(root: HTMLElement | null): void {
 /** 攒着的那几处挂在正文上的序号（原型里的 ②③）：它是**另一种**元素，不是评论的
  *  `mark`——点它不开评论栏，按字找位置时也不该把它当正文。 */
 export const PIN_ATTR = 'data-pending-pin'
-
-/** 正文里不参与「按字找位置」和「取原文/前后文」的东西挂这个属性。
- *
- *  正文是 `MarkdownView` 渲染出来的，而标记和序号是我们从外面插进去的。挂了这个属性的
- *  元素，`collectText` 按字找位置时跳过（查那一边）。取那一边（`quoteFromSelection`
- *  的 `Selection.toString()`、`contextAround` 的 `Range.toString()`）挡不了 DOM：
- *  那是浏览器给的字符串，所以序号另用 `user-select: none`（见 `style.css` 的
- *  `.pending-pin`）排除。两边各管一头，缺哪一头都会让读者选中的原文里多一个数字。 */
-export const ANCHOR_IGNORE_ATTR = 'data-anchor-ignore'
 
 /** 把上一轮挂上去的序号拆掉。和 `clearMarks` 分开：两种标记谁先画谁后画都要拆干净，
  *  而 `clearMarks` 只认 `MARK_ATTR`，挂了序号不拆就会越积越多。 */

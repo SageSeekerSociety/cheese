@@ -26,7 +26,7 @@ import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
 import { firstCodePoints } from '@/lib/codePoints'
-import { PENDING_NOTES, type PendingAnchor } from '@/lib/pendingNotes'
+import { PENDING_NOTES, type PendingAnchor, type PendingNote } from '@/lib/pendingNotes'
 import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
@@ -260,22 +260,36 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     if (sharedPending) {
       // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
       //（卡上的「加入待发」也只在去处是芝士时出现）。
-      sharedPending.add({
-        file: fileName(props.previewFile?.path ?? ''),
-        path: props.previewFile?.path ?? '',
-        version: pendingVersion.value,
-        where: target.label,
-        quote: target.quote,
-        text: note,
-        audience: 'cheese',
-        message,
-        anchor: pendingAnchor(),
-      })
+      sharedPending.add(pendingNoteFor(target, note, message))
       clearLocator()
       return
     }
     queued.value = [...queued.value, message]
     clearLocator()
+  }
+
+  /** 一条待发批注里与「是哪一份文件」有关的那几样。
+   *
+   *  收进篮里有两个入口（`queueLocator` 单条加、`sendQueued` 发之前先把当前这一处并进去），
+   *  两处写的字段必须一样——只写一处、漏一处，新加的字段就会静默地一边有一边没有。 */
+  function pendingNoteBase() {
+    const path = props.previewFile?.path ?? ''
+    return { file: fileName(path), path, version: pendingVersion.value, audience: 'cheese' as const }
+  }
+
+  function pendingNoteFor(
+    target: { label: string; quote: string },
+    note: string,
+    message: string
+  ): Omit<PendingNote, 'id'> {
+    return {
+      ...pendingNoteBase(),
+      where: target.label,
+      quote: target.quote,
+      text: note,
+      message,
+      anchor: pendingAnchor(),
+    }
   }
 
   function clearQueued() {
@@ -289,17 +303,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       const target = locator.value
       const note = locatorNote.value.trim()
       if (target && note && !pageLocator.pin.value) {
-        sharedPending.add({
-          file: fileName(props.previewFile?.path ?? ''),
-          path: props.previewFile?.path ?? '',
-          version: pendingVersion.value,
-          where: target.label,
-          quote: target.quote,
-          text: note,
-          audience: 'cheese',
-          message: formatLocateMessage(target, note),
-          anchor: pendingAnchor(),
-        })
+        sharedPending.add(pendingNoteFor(target, note, formatLocateMessage(target, note)))
         clearLocator()
       }
       sharedPending.send('')

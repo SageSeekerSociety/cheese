@@ -17,16 +17,8 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import MarkdownView from '../../common/MarkdownView.vue'
 
-import {
-  ANCHOR_IGNORE_ATTR,
-  type AnchorQuote,
-  clearMarks,
-  clearPins,
-  locateQuote,
-  PIN_ATTR,
-  wrapRange,
-} from './markdownAnchors'
-import { type MarkdownQuote, quoteFromSelection } from './markdownQuote'
+import { type AnchorQuote, clearMarks, clearPins, locateQuote, PIN_ATTR, wrapRange } from './markdownAnchors'
+import { ANCHOR_IGNORE_ATTR, type MarkdownQuote, quoteFromSelection } from './markdownQuote'
 
 const props = defineProps<{
   /** 文件正文。不是 markdown 的那几种文件不会走到这里。 */

@@ -509,7 +509,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (props.attsUploading) return
   // 攒着待发批注时，这一下发的就是那一批：输入框里的字当作「总体说明」并进同一条消息，
   // 而不是先发一条空话再发那批（原型里发送键写的就是「发送（含 N 条批注）」）。
-  if (sendableCount.value > 0 && !props.atts.length) {
+  if (sendableCount.value > 0) {
     const summary = expandMentions(draft.value)
     if (pending?.send(summary)) {
       draft.value = ''

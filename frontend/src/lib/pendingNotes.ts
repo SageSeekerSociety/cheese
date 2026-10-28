@@ -61,7 +61,7 @@ export interface PendingNotesApi {
   send: (summary: string) => boolean
   /** 上一次 `send` 没成功（对话栏没收下）。发送的入口不止一个（托盘的「全部发送」、
    *  输入框的发送键、卡片上的「全部发送（N）」），失败的样子要一处说，所以失败这件事
-   *  记在篮上、由托盘读；下一次成功就清掉。 */
+   *  记在篮上、由托盘读。这一批被清空时它自己会清掉，下一次发送成功也清。 */
   failed: Ref<boolean>
 }
 
@@ -84,8 +84,12 @@ export function pendingWhere(note: Pick<PendingNote, 'file' | 'version' | 'where
  *
  *  「全部发送（N）」几颗按钮、发送键上的「含 N 条批注」，说的都该是这一批真带得走的
  *  条数；今天篮里只有交给芝士的这一种，两个数相同，但去处菜单加一项之后就不是了。 */
+export function sendableNotes(notes: readonly PendingNote[]): readonly PendingNote[] {
+  return notes.filter((note) => note.audience === 'cheese')
+}
+
 export function sendableCount(notes: readonly PendingNote[]): number {
-  return notes.filter((note) => note.audience === 'cheese').length
+  return sendableNotes(notes).length
 }
 
 /** 攒着的这一批加上可选的总体说明，拼成一条要发出去的消息。
@@ -95,8 +99,7 @@ export function sendableCount(notes: readonly PendingNote[]): number {
  *
  *  只有「交给芝士」的那些才并进这一条消息；只留评论的那些不走这条（评论不经对话发）。 */
 export function composePending(notes: readonly PendingNote[], summary: string): string {
-  const body = notes
-    .filter((note) => note.audience === 'cheese')
+  const body = sendableNotes(notes)
     .map((note) => note.message)
     .join('\n\n')
   const head = summary.trim()
@@ -116,7 +119,13 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
     notes.value = [...notes.value, { ...note, id: pendingNoteId() }]
   }
   function remove(id: string) {
-    notes.value = notes.value.filter((note) => note.id !== id)
+    const left = notes.value.filter((note) => note.id !== id)
+    // 逐条删空和 `clear` 是同一种「这一批没了」：那句「上次没发出去」跟着它一起清。
+    // 不清的话，托盘在删空时消失、再攒一条时又出现，冒出来的却是上一批的失败话——
+    // 而这一条压根没按过发送。删到还剩几条时**不**清：那几条正是没发出去的那一批，
+    // 这句话说的还是它们。
+    if (!left.length) failed.value = false
+    notes.value = left
   }
   function clear() {
     notes.value = []
@@ -134,7 +143,7 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
     // 种，整批清掉等于清掉发出去的那几条；真攒进只挂评论的（去处菜单加「问个人芝士」
     // 之后）时，那几条**不能**跟着清——它们没经对话发出去，清掉就是无声地丢。所以
     // 按发出去的那几条逐个删，不整批清。
-    const sent = new Set(notes.value.filter((note) => note.audience === 'cheese').map((note) => note.id))
+    const sent = new Set(sendableNotes(notes.value).map((note) => note.id))
     notes.value = notes.value.filter((note) => !sent.has(note.id))
     return true
   }
