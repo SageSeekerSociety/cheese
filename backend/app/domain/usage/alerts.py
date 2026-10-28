@@ -78,8 +78,10 @@ _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "cheese.credit-warning")
 #: crossing, so a new month or a raised limit is news again and nothing has to
 #: be pruned.
 _NOTE_PREFIX = "cheese:credit-note:"
-#: Longer than any cap lives before it resets, so a crossing is said once in
-#: its whole life; a month is the longest.
+#: Six months: longer than any plan period, so a crossing that resets on its
+#: own is never said twice in a conversation. A project budget never resets,
+#: so one that stays crossed that long is said once more — rare, and the
+#: alternative is a key per conversation per window round kept forever.
 _NOTE_TTL_S = 60 * 60 * 24 * 180
 
 logger = logging.getLogger(__name__)
