@@ -40,9 +40,12 @@ export interface SheetChart {
 export interface ChartParts {
   raw: RawChart[]
   needed: Map<string, Set<string>>
+  /** 读到了、但我们画不出来的图有几张，按工作表名记（组合图、透视图、画不出形状的）。
+   *  在表里说一句「这张表上还有一张图看不了」，比它悄悄消失强。 */
+  skipped: Map<string, number>
 }
 
-const EMPTY: ChartParts = { raw: [], needed: new Map() }
+const EMPTY: ChartParts = { raw: [], needed: new Map(), skipped: new Map() }
 
 /** 一张图最多取多少格。读表那一步按它记原始数、取数那一步按它展开，两处必须是同一个数：
  *  只改一处，另一处就会把「记了数的格子」读成空档。 */
@@ -66,6 +69,7 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
   if (!workbook || !workbookRels) return EMPTY
   const sheetTargets = relationships(workbookRels)
   const needed = new Map<string, Set<string>>()
+  const skipped = new Map<string, number>()
   const raw: RawChart[] = []
 
   // 工作表名 → 它的 xml（`xl/worksheets/sheet1.xml`）。
@@ -92,7 +96,10 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
       const xml = await readZipText(bytes, chartPath)
       if (!xml) continue
       const chart = parseChart(xml, name)
-      if (!chart) continue
+      if (!chart) {
+        skipped.set(name, (skipped.get(name) ?? 0) + 1)
+        continue
+      }
       raw.push(chart)
       // 图上的数来自它引用的那张表，不一定是挂着它的那张（这张图挂在「汇总」上、数在
       // 「数据」里）。所以要留原始数的也是被引用的那张表。
@@ -106,7 +113,7 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
       }
     }
   }
-  return { raw, needed }
+  return { raw, needed, skipped }
 }
 
 /** OOXML 的图形元素 → 我们画得出来的那几种。表里没有的（组合图里的自定义图形、

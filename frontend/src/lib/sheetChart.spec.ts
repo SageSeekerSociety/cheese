@@ -63,3 +63,9 @@ it('格子引用展开成地址：单格、一片、带工作表名和 `$` 的�
   expect(expandRef('A:A', 100)).toEqual([])
   expect(expandRef("[1]'数据'!A1", 100)).toEqual([])
 })
+
+it('画不出来的图（组合图等）记账，不静默丢掉', async () => {
+  const parts = await readChartParts(analysisWorkbookBytes())
+  // 这份工作簿只有一张柱状图，没有跳过的。
+  expect([...parts.skipped.values()]).toEqual([])
+})

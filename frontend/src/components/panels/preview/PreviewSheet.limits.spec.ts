@@ -158,3 +158,14 @@ it('老版 .xls（OLE2 容器）也说清打不开', async () => {
 
   expect(await screen.findByText(/老版 Excel 表格/)).toBeTruthy()
 })
+
+it('读不完的表：地址栏报的行数不会报出到不了的行', async () => {
+  const lines = ['序号,值']
+  for (let i = 1; i <= 5004; i += 1) lines.push(`${i},v${i}`)
+  const { container } = mount(utf8(`${lines.join('\n')}\n`))
+
+  await waitFor(() => expect(container.querySelector('table[role=grid]')).not.toBeNull())
+  // 读了 5000 行、表头算一行：读屏听到的行数要和滚得到的底一致——报 5001（整张表
+  // 有 5004 行）会让读屏说出几个滚不到、也点不到的行。
+  expect(container.querySelector('table[role=grid]')?.getAttribute('aria-rowcount')).toBe('5001')
+})

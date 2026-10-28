@@ -79,6 +79,7 @@
   "sheetCellsShortened": "Long cells are shortened",
   "sheetChartCount": "{count} chart(s)",
   "sheetChartLabel": "Chart",
+  "sheetChartsSkipped": "{count} chart(s) can't be shown yet",
   "sheetChartSeries": "Series {n}",
   "sheetClipped": "Showing the first {rows} rows and {cols} columns",
   "sheetEndMissing": "The file is large; only its beginning was read, so the end may be missing",

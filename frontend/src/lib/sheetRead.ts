@@ -50,6 +50,8 @@ export interface SheetRead {
   failure: string
   /** 工作簿里带的图表（还没取数，取数靠 `resolveCharts`）。分隔文本没有图。 */
   charts?: RawChart[]
+  /** 读到了、我们画不出来的图有几张，按工作表名记。 */
+  chartsSkipped?: Map<string, number>
 }
 
 /** 读进来的上限。一张几十万行的 CSV 整份读进内存会把面板拖死，而人要找的那几格
@@ -275,7 +277,14 @@ async function readWorkbook(data: ArrayBuffer): Promise<SheetRead> {
     })
   })
   if (!read.length) return { sheets: [], sourceText: '', endClipped: false, failure: t('work.room.preview.noSheets') }
-  return { sheets: read, sourceText: '', endClipped: false, failure: '', charts: chartParts.raw }
+  return {
+    sheets: read,
+    sourceText: '',
+    endClipped: false,
+    failure: '',
+    charts: chartParts.raw,
+    chartsSkipped: chartParts.skipped,
+  }
 }
 
 /** 刚读过的表：同一份字节再打开时不重读一遍。
@@ -321,13 +330,17 @@ export async function readSheets(data: ArrayBuffer, kind: 'workbook' | 'csv' | '
   }
   const read = (async (): Promise<SheetRead> => {
     try {
-      if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
-      if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
-      return await readWorkbook(data)
-    } catch (e) {
+      let result: SheetRead
+      if (kind === 'csv' || kind === 'tsv') result = readText(data, kind)
+      else if (isOle2(new Uint8Array(data))) result = failed(t('work.room.preview.sheetLegacyUnsupported'))
+      else result = await readWorkbook(data)
       // 读失败不进缓存：换一份字节重试是读者会做的事，而这条路的结果不该被记成「这份文件
-      // 就是读不出来」。整个身体都在 try 里——分隔文本那一路也会抛，抛出去就是一条被
-      // 缓存住、又没人接的拒绝承诺，下一次打开同一份字节只会再撞一次。
+      // 就是读不出来」。`.ods`、老版 `.xls` 那两句也是失败，走同一条。
+      if (result.failure && key !== null) readCache.delete(key)
+      return result
+    } catch (e) {
+      // 抛出来的任何一条也当失败：分隔文本那一路是同步的，`isOle2` 也会抛，抛出去就是
+      // 一条被缓存住、又没人接的拒绝承诺，下一次打开同一份字节只会再撞一次。
       if (key !== null) readCache.delete(key)
       return failed(e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed'))
     }

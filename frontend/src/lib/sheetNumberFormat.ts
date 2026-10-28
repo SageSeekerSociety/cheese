@@ -87,15 +87,25 @@ function codesOnly(format: string): string {
   return out
 }
 
-/** 一段格式拆成「数字占位之前的前缀、数字占位、之后的后缀」。没有数字占位的那一段
- *  （`General`、纯文本）给 null。 */
-function splitSection(section: string): { prefix: string; digits: string; suffix: string } | null {
+/** 一段数字格式拆出来的东西，加上它是哪一段的。 */
+interface Section {
+  prefix: string
+  digits: string
+  suffix: string
+  /** 这一段把数当百分数（`%` 是没被引号引起来的格式码）。 */
+  percent: boolean
+}
+
+/** 一段格式：数字占位、前后的字面量、以及这一段的 `%` 是不是运算符。没有数字占位
+ *  （`General`、纯文本）给 null。`codes` 是同一段去掉引号字面量之后的形态。 */
+function readSection(section: string, codes: string): Section | null {
   const match = /[0#.,]+/.exec(section)
   if (!match) return null
   return {
     prefix: section.slice(0, match.index),
     digits: match[0],
     suffix: section.slice(match.index + match[0].length),
+    percent: codes.includes('%'),
   }
 }
 
@@ -103,34 +113,31 @@ function splitSection(section: string): { prefix: string; digits: string; suffix
 function shapeOf(format: string): Shape | null {
   const text = plain(format)
   if (!text) return null
-  const sections = text.split(';')
-  const body = sections[0] ?? ''
-  // 日期、时间、文本、通用（`General`）都不是这里管的事。判「是不是日期」要在没有引号
-  // 字面量的那一份上判：`#,##0.00 "USD"` 的 `D` 是币种名里的一个字母，不是「日」——
-  // 拿带字面量的串去判，一整类带货币名的格式会被当成日期退回裸数。
   const codes = codesOnly(format)
+  // 日期、时间、文本、通用（`General`）都不是这里管的事——判这些要在**去掉引号字面量**
+  // 的那一份上判：`#,##0.00 "USD"` 的 `D` 是币种名里的一个字母，不是「日」；
+  // `#,##0.00"/kg"` 的 `/` 是单位、`" @m"` 的 `@` 是字面量，都不是这里的运算符。
   if (/[ymdhs]/i.test(codes)) return null
-  if (body.includes('@')) return null
-  // 科学计数法（`0.00E+00`）和分数（`# ?/?`）：我们排不出它们真正的样子，
-  // 按普通小数排会把 1.2E+05 写成「1.20E+05」这种既不是原样也不是科学计数的东西。
-  if (/[eE][+-]/.test(body) || body.includes('/')) return null
-  const first = splitSection(body)
+  if (codes.includes('@')) return null
+  // 科学计数法（`0.00E+00`）和分数（`# ?/?`）：我们排不出它们真正的样子，按普通小数排
+  // 会把 1.2E+05 写成「1.20E+05」这种既不是原样也不是科学计数的东西。
+  if (/[eE][+-]/.test(codes) || codes.includes('/')) return null
+  const [positive = '', negative] = text.split(';')
+  const first = readSection(positive, codes.split(';')[0] ?? '')
   if (!first) return null
   // 数字占位末尾的逗号在 Excel 里是「按千缩」运算符（`#,##0,` 把 12345 显示成 12），
   // 不是分组。排不出来就退回数本身，不能把数放大一千倍给人看。
   if (first.digits.endsWith(',')) return null
+  const second = negative === undefined ? null : readSection(negative, codes.split(';')[1] ?? '')
+  // `%` 是逐段说的：`#,##0.00;(#,##0.00%)` 里正数那一段不是百分数，负数那一段是——
+  // 而我们只乘一次（`formatNumber` 里 `scaled` 只有一份）。两段说法不一致时退回数本身，
+  // 宁可少一层排场，也不能让正数凭空放大一百倍。
+  if (second && second.percent !== first.percent) return null
   const point = first.digits.indexOf('.')
-  const decimals = point === -1 ? 0 : first.digits.length - point - 1
-  // `%` 是不是运算符要看没被引号包住的那一份：`0.0"%"` 是在数后面加一个百分号，
-  // 数本身不乘一百；`0.0%` 才是百分数。运算符那一颗从字面量里去掉，剩下的照旧留着
-  // （`0.0%;(0.0%)` 的后缀是 `)`）。
-  const percent = codes.includes('%')
-  const negative = sections[1]
-  const second = negative === undefined ? null : splitSection(negative)
   return {
-    decimals,
+    decimals: point === -1 ? 0 : first.digits.length - point - 1,
     grouping: first.digits.includes(','),
-    percent,
+    percent: first.percent,
     prefix: first.prefix,
     // `%` 留在它原来那个位置上（`0.0%` 的后缀就是 `%`，`0.0%;(0.0%)` 的负数后缀是
     // `%)`）：它既是运算符、也是屏幕上那几个字的一部分，从中间挪到最后会把右括号挤错地方。

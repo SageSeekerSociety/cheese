@@ -22,7 +22,7 @@
 import type { RawChart, SheetChart } from '@/lib/sheetChart'
 import type { CellAlign, Sheet } from '@/lib/sheetRead'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import PreviewSheetCards from './PreviewSheetCards.vue'
 import PreviewSheetChart from './PreviewSheetChart.vue'
@@ -156,8 +156,10 @@ const sourceText = ref('')
 /** 看图还是看表。工作簿里带图时，底部多一颗「图表」：图是文件的一部分，读者打不开它
  *  就只能下载原件。 */
 const showCharts = ref(false)
-/** 这份工作簿里的图，取过数了（按工作表分组）。分隔文本没有图。 */
+/** 这份工作簿里的图（还没取数）。分隔文本没有图。 */
 const charts = ref<RawChart[]>([])
+/** 读到了、我们画不出来的图有几张，按工作表名记。 */
+const chartsSkipped = ref<Map<string, number>>(new Map())
 
 let generation = 0
 
@@ -269,6 +271,9 @@ function scrollToRow(row: number) {
 }
 
 let observer: ResizeObserver | null = null
+/** 观察器当前盯着的那一个滚动区。换一个就先把旧的摘掉：滚动区每次换表、切卡片/图表
+ *  都是新元素，旧的留在观察器上会被一直量着。 */
+let observed: HTMLElement | null = null
 
 // ---- 定位 ----
 
@@ -308,7 +313,15 @@ function moveTo(row: number, col: number) {
   selected.value = ''
   dragStart.value = null
   dragEnd.value = null
+  revealRow(at.row)
   scrollToRow(at.row)
+}
+
+/** 卡片那一档只铺前 `cardRows` 行，而它没有滚动区可 scrollTo。跳到铺出来的那一段之外
+ *  （输地址、找内容）时把这一段拉长到那个行号，读者才看得到落点。 */
+function revealRow(row: number) {
+  if (!showCards.value) return
+  if (row + 1 > cardRows.value) cardRows.value = row + 1
 }
 
 /** 回车/空格：把键盘指着的这一格说出去（和点一下那一格是同一件事）。 */
@@ -339,7 +352,8 @@ function runLocate() {
     const sheet = active.value
     const start = splitAddress(at.start)
     const end = splitAddress(at.end)
-    if (!sheet || !start || !end || start.row >= sheet.rows.length || start.col >= sheet.width) {
+    const inside = (at: { row: number; col: number }) => at.row < sheet.rows.length && at.col < sheet.width
+    if (!sheet || !start || !end || !inside(start) || !inside(end)) {
       locateMiss.value = true
       return
     }
@@ -347,19 +361,15 @@ function runLocate() {
       moveTo(start.row, start.col)
       return
     }
-    // 一片：和拖出来的一样看待，两个角都摆上，地址栏写回 `C3:E8`。两个角都夹回表内：
-    // 读者输了个超出范围的下角（`A1:Z9999`）时，地址栏该说这张表真有的那一片。
-    const clamp = (at: { row: number; col: number }) => ({
-      row: Math.min(at.row, sheet.rows.length - 1),
-      col: Math.min(at.col, sheet.width - 1),
-    })
-    const from = clamp(start)
-    const to = clamp(end)
-    focus.value = to
+    // 一片：和拖出来的一样看待，两个角都摆上，地址栏写回 `C3:E8`。两个角都先夹过了——
+    // 越界的角不进这一支，否则地址栏会写出 `A1:Z999` 这种表里没有的坐标，回车交出去的
+    // 也是一格不存在的格子。
+    focus.value = end
     selected.value = ''
-    dragStart.value = from
-    dragEnd.value = to
-    scrollToRow(from.row)
+    dragStart.value = start
+    dragEnd.value = end
+    revealRow(start.row)
+    scrollToRow(start.row)
     return
   }
   // 内容：当前这张表里第一个包含它的格子。找的是「显示出来的那几个字」，所以读者拿
@@ -508,6 +518,7 @@ async function open(data: ArrayBuffer) {
   if (mine !== generation) return
   sheets.value = read.sheets
   charts.value = read.charts ?? []
+  chartsSkipped.value = read.chartsSkipped ?? new Map()
   sourceText.value = read.sourceText
   endClipped.value = read.endClipped
   failure.value = read.failure
@@ -539,12 +550,21 @@ function chartsFor(sheet: Sheet | undefined): SheetChart[] {
   return resolveCharts(charts.value, sheets.value).get(sheet.name) ?? []
 }
 const activeCharts = computed<SheetChart[]>(() => chartsFor(active.value))
+/** 这一张表上有几张图我们画不出来：底部说一句，别让它悄悄消失。 */
+const skippedCharts = computed(() => (active.value ? chartsSkipped.value.get(active.value.name) ?? 0 : 0))
 
 /** 看图 / 回到表。卡片那一档在窄处替掉表格，所以点「图表」时先把卡片关掉——不然
  *  按钮按下去什么都不会变（卡片那一支排在前面，赢的是它）。 */
 function toggleCharts() {
   showCharts.value = !showCharts.value
   if (showCharts.value) cards.value = false
+}
+
+/** 反过来也一样：卡片开着时「图表」那颗开关的按下状态要跟着落下，不然它亮着而屏幕上
+ *  是卡片，再点一下只是把那颗灯关掉、什么都没变。 */
+function toggleCards() {
+  cards.value = !cards.value
+  if (cards.value) showCharts.value = false
 }
 
 /** 哪几张表里有改过的格子：页签上点一颗点，读者知道该切过去看哪张。 */
@@ -687,18 +707,24 @@ onMounted(() => {
   // 老一点的浏览器（和测试环境）可能没有 ResizeObserver：没有它也要能用，只是面板
   // 改尺寸之后要等下一次重新渲染才重新量。
   if (typeof ResizeObserver !== 'undefined') observer = new ResizeObserver(() => measure())
-  observeScroller()
 })
 
-/** 观察滚动区：它是读完之后才渲染出来的，所以 `onMounted` 那一刻还没有这个元素；
- *  等它出现再挂（换一份文件、退出卡片档时也会换一个新的）。 */
-function observeScroller() {
-  const grid = scroller.value
-  if (!grid) return
-  observer?.observe(grid)
-  measure()
-}
-onUpdated(observeScroller)
+/** 观察滚动区：它是读完之后才渲染出来的，所以 `onMounted` 那一刻还没有这个元素；等它
+ *  出现再挂。`watch` 而不是 `onUpdated`——后者每次滚动（窗口跟着换行、DOM 重排）都会
+ *  跑一次，`measure()` 里的 `clientHeight` 就变成每帧一次强制重排，正好是窗口化要省掉的。
+ *  只在元素真的换了的时候量：同一个元素不重挂、也不重量。 */
+watch(
+  scroller,
+  (grid) => {
+    if (grid === observed) return
+    if (observed) observer?.unobserve(observed)
+    observed = grid
+    if (!grid) return
+    observer?.observe(grid)
+    measure()
+  },
+  { flush: 'post' }
+)
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', endDrag)
   observer?.disconnect()
@@ -765,7 +791,7 @@ watch(showSource, async () => {
           class="ps__toggle"
           :aria-pressed="cards"
           data-testid="sheet-cards"
-          @click="cards = !cards"
+          @click="toggleCards"
         >
           <v-icon size="16">{{ cards ? 'mdi-table' : 'mdi-card-text-outline' }}</v-icon>
           {{ cards ? t('work.room.preview.showTable') : t('work.room.preview.sheetCards') }}
@@ -824,7 +850,7 @@ watch(showSource, async () => {
         <table
           class="ps__table"
           role="grid"
-          :aria-rowcount="active.totalRows + 1"
+          :aria-rowcount="totalRows + 1"
           :aria-colcount="active.width"
           :aria-label="t('work.room.preview.sheetRegion')"
           tabindex="0"
@@ -936,6 +962,9 @@ watch(showSource, async () => {
           <v-icon size="14">mdi-chart-bar</v-icon>
           {{ t('work.room.preview.sheetChartCount', { count: activeCharts.length }) }}
         </button>
+        <span v-if="skippedCharts" class="ps__skipped" data-testid="sheet-charts-skipped">{{
+          t('work.room.preview.sheetChartsSkipped', { count: skippedCharts })
+        }}</span>
         <span class="ps__summary" :class="{ 'ps__summary--miss': locateMiss }">{{
           locateMiss ? t('work.room.preview.sheetLocateMiss') : summary
         }}</span>

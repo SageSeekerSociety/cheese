@@ -414,6 +414,12 @@
   gap: 4px;
   margin-left: 8px;
 }
+.ps__skipped {
+  flex: none;
+  margin-left: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+}
 .ps__summary {
   margin-left: auto;
   color: var(--faint);
