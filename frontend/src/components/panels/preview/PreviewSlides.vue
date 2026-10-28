@@ -495,8 +495,10 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   /* 放映是一整层黑场：幻灯片之外什么都不留，和原型一样。 */
-  /* 整屏黑场用图片浮层同一族的令牌：两套主题下都是暗底、浅字。 */
-  background: var(--lightbox-ground);
+  /* 整屏黑场：不透明的暗底，两套主题下一致。放映要独占整屏——图片浮层那层是 92% 透明
+     的（它要让底下的页面若隐若现），放一张幻灯片时那个「隐约」就是别人家的界面。 */
+  background: var(--present-ground);
+  color: var(--present-ink);
   /* 挪到 body 下以后它和弹窗同在一层比高低：放在 Vuetify 弹窗下面一档，放映中按 ? 打开的
      快捷键帮助、确认框这些照样盖在放映上面，而侧栏、分隔线都在它下面。 */
   z-index: var(--z-overlay-below-vuetify);
@@ -691,8 +693,8 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--lightbox-fill);
-  color: var(--lightbox-ink);
+  background: var(--present-fill);
+  color: var(--present-ink);
 }
 .slides__exit svg {
   width: 18px;
@@ -700,10 +702,10 @@ onBeforeUnmount(() => {
   fill: currentColor;
 }
 .slides__exit:hover {
-  background: var(--lightbox-fill-2);
+  background: var(--present-fill-2);
 }
 .slides__exit:focus-visible {
-  outline: 2px solid var(--lightbox-ink);
+  outline: 2px solid var(--present-ink);
   outline-offset: 2px;
 }
 .slides--presenting .slides__hint {
@@ -712,7 +714,7 @@ onBeforeUnmount(() => {
   bottom: 16px;
   left: 0;
   margin: 0;
-  color: var(--lightbox-muted);
+  color: var(--present-muted);
   font-size: 12px;
   text-align: center;
   pointer-events: none;
