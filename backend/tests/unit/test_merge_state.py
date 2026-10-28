@@ -664,6 +664,39 @@ class TestWhoseMove:
         assert whose_move(local_merge_state(conflicts_with_trunk=False)) == "human"
 
 
+@pytest.mark.parametrize(
+    ("runs", "passed"),
+    [
+        ([], False),
+        ([_green("test")], True),
+        (
+            [
+                _green("test"),
+                CheckRun(name="docs", status="completed", conclusion="skipped"),
+            ],
+            True,
+        ),
+        ([CheckRun(name="lint", status="completed", conclusion="neutral")], True),
+        ([CheckRun(name="docs", status="completed", conclusion="skipped")], False),
+        ([_green("test"), _running("lint")], False),
+        ([_green("test"), _red("lint")], False),
+        (
+            [
+                _green("test"),
+                CheckRun(name="e2e", status="completed", conclusion="cancelled"),
+            ],
+            False,
+        ),
+    ],
+)
+def test_all_checks_passed_needs_every_run_done_and_one_real_pass(runs, passed):
+    """「检查全绿」要每个检查都跑完、没有红也没有取消，并且至少一个真的通过 ——
+    全是 skipped 等于什么都没跑。"""
+    from app.domain.review.merge_state import all_checks_passed
+
+    assert all_checks_passed(runs) is passed
+
+
 # ---- 读镜像：还在等 CI 吗（`checks_running`，环境释放判据读它）----------------
 
 _LOOKED = datetime(2026, 10, 12, 0, 0, tzinfo=UTC)

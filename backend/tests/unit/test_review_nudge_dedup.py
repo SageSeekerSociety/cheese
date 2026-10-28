@@ -223,3 +223,54 @@ async def test_leaving_the_merge_queue_wakes_cheese_and_says_what_to_do():
     assert "合并队列" in call["headline"]
     assert "cheese push-fix" in call["content"]
     assert "重新入队" in call["content"]
+
+
+async def _dispatch_passed(service, card, topic, *, task_status: str) -> None:
+    from app.domain.review.nudges import _ci_passed_nudge
+
+    nudge = _ci_passed_nudge(card=card)
+    assert nudge is not None
+    with patch(
+        "app.domain.review.services.TaskService.get",
+        new=AsyncMock(return_value=SimpleNamespace(status=task_status)),
+    ):
+        await service._dispatch_nudges(
+            card=card,
+            topic=topic,
+            pending=[nudge],
+            chat_service=MagicMock(),
+            runner=MagicMock(),
+        )
+
+
+@pytest.mark.anyio
+async def test_green_checks_reach_the_agent_once_per_head_without_touching_the_card():
+    """检查全绿回去找做活的芝士：同一个 head 只说一次，是 info 不是 error，不带
+    进工作区的命令，也不写卡面（不要谁动手）。换了 head 绿了再说一次。"""
+    service, card, topic = _service_and_card()
+
+    await _dispatch_passed(service, card, topic, task_status="open")
+    await _dispatch_passed(service, card, topic, task_status="open")
+
+    assert service._record_task_nudge.await_count == 1
+    call = service._record_task_nudge.call_args.kwargs
+    assert call["meta"]["event_type"] == "ci_passed"
+    assert call["meta"]["severity"] == "info"
+    assert "cheese worktree" not in call["content"]
+    assert "#7" in call["content"]
+    assert card.note == ""
+    assert card.note_code is None
+
+    card.pr_head_sha = "def456"
+    await _dispatch_passed(service, card, topic, task_status="open")
+    assert service._record_task_nudge.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_green_checks_on_a_closed_task_say_nothing():
+    """活已经关了，绿了也没有下一步：不发，不留一句「原任务已关闭」。"""
+    service, card, topic = _service_and_card()
+
+    await _dispatch_passed(service, card, topic, task_status="closed")
+
+    service._record_task_nudge.assert_not_called()

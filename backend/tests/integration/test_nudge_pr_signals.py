@@ -550,3 +550,38 @@ def test_a_red_that_is_still_there_keeps_its_note(client, app_world):
     wait_work_idle()
 
     assert _card_row(client, cid)["note_code"] is NoteCode.checks_failed
+
+
+def test_green_checks_tell_the_agent_once(client, app_world):
+    """检查全绿也回去找做活的芝士，它就不用自己轮询 CI；同一个 head 只说一次。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全部 9 项检查通过")
+
+    _poll(client)
+    _poll(client)
+    wait_work_idle()
+
+    assert len(_nudges(client, tid, "ci_passed")) == 1
+    assert _nudges(client, tid, "ci_failed") == []
+    assert _card_row(client, cid)["note_code"] is None
+
+
+def test_running_or_red_checks_never_say_green(client, app_world):
+    """还在跑、或者有红的，都不许说「全部通过」。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_runs_by_sha[head_sha] = [
+        {"name": "test", "status": "completed", "conclusion": "success"},
+        {"name": "lint", "status": "in_progress", "conclusion": None},
+    ]
+    _poll(client)
+    wait_work_idle()
+    assert _nudges(client, tid, "ci_passed") == []
+
+    fake.check_runs_by_sha.pop(head_sha)
+    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
+    _poll(client)
+    wait_work_idle()
+    assert _nudges(client, tid, "ci_passed") == []
+    assert len(_nudges(client, tid, "ci_failed")) == 1

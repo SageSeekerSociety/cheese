@@ -75,6 +75,9 @@ class NudgeKind(enum.StrEnum):
     #: 成员名不叫 `title`：`str.title` 是 `str` 上的方法，成员盖掉它，pyright
     #: 会报「Literal['title'] 不能赋给 str.title 的重载」；值仍是 `"title"`。
     pr_title = "title"
+    #: PR 当前 head 的检查全绿了 —— 发给做活的芝士，同一个 head 只说一次。它
+    #: 不是要它动手的事，所以不进卡面（`NOTE_PRIORITY` 里排最低、`note` 留空）。
+    ci_passed = "ci_passed"
     #: PR 满足合并规则了（CLEAN）—— 发给验收人的那条，同一个 head 只说一次。
     #: （「采纳被作废」不占一类：批准被清掉这件事一个 head 只会发生一次，
     #: 事件天然不重复。）
@@ -195,6 +198,9 @@ class PendingNudge:
     event_type: str = ""
     #: 这一类到顶了没有；到顶的那条只写卡面、不叫芝士。
     capped: bool = False
+    #: 平台提示的轻重（`platform_notices.SEVERITY_*` 的值）。除了「检查通过」，
+    #: 每一类都是要芝士动手修的事。
+    severity: str = "error"
 
 
 #: 一轮里同时排了好几条待发时，卡面只留优先级最高的那一句 —— 卡面是**一行**，
@@ -208,6 +214,7 @@ NOTE_PRIORITY: Final[dict[NudgeKind, int]] = {
     # 要接着做的事，这两件是先决条件。
     NudgeKind.pr_title: 2,
     NudgeKind.review: 1,
+    NudgeKind.ci_passed: 0,
 }
 
 

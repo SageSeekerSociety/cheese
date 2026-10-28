@@ -65,6 +65,7 @@ const CARD_EVENTS = new Set([
   'card_voided',
   'card_redescribed',
   'ci_failed',
+  'ci_passed',
   'gate_failed',
   'gate_blocked',
   'gate_abandoned',

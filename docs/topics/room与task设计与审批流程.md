@@ -93,7 +93,7 @@
      清单上那一项，清单上还没有的东西用 `--new-artifact <真名> --about <一句话>`
      → GitHub Actions 按 .github/workflows 跑真 CI
         → 轮询器每 60 秒把合并态镜像到卡上（CLEAN/UNSTABLE/BLOCKED/BEHIND/DIRTY），
-          按「谁的活」表发事件（红了叫芝士、落后平台自己换基、绿了通知验收人）
+          按「谁的活」表发事件（红了叫芝士、检查全绿也告诉芝士、落后平台自己换基、可合了通知验收人）
            → 人在卡上点「采纳」＝ 当场调合并 API，合的是卡面显示的那个 commit
              （merge API 带 sha；head 变了 GitHub 409 → 卡刷新、票作废，人重看）
               → 合并成功 → 卡进 accepted，本地 base 同步下来，给房间和这条支线各盖交付戳

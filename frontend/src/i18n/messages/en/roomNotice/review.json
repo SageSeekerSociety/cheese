@@ -44,6 +44,7 @@
   "checksPassed": "Checks on PR #{pr} are all green; it can be submitted for review now",
   "checksPassedAwaitingReview": "Checks on PR #{pr} are all green; waiting for review",
   "ciFailed": "{stage} checks failed on PR #{pr}",
+  "ciPassed": "All checks passed on PR #{pr}",
   "dependencyActionDelivered": "The target branch is now {branch}. Fetch the remote branch, rebase this task's commits onto it, resolve conflicts, rerun the checks and push. The parent may have been squash-merged, so check the patches and replay only this task's own changes; do not bring back ancestor changes the parent dropped and that have not been approved again. A clean rebase does not prove the commit range is right; check that the final diff contains only this task's delivery.",
   "dependencyActionUndelivered": "Keep the existing work and check which undelivered changes this task depends on. Following the task's requirements, decide whether to drop the dependency, implement it independently, or report why you cannot continue; do not treat a rejection or a close as merged code, and do not close the subtask automatically. To drop the dependency, rebuild this task's own commits on its branch with the project's default branch as the base, verify the diff contains none of the rejected changes, then run cheese push-fix --drop-dependency. It retargets the existing PR, clears the task dependency and old approvals; do not file the card again or merge it yourself.",
   "dependencyHeadline": "The parent task {outcome}; this subtask needs to recheck its dependencies",

@@ -45,6 +45,10 @@ WHO_HUMAN: Final = "human"
 # --- event_type: 类别码 ------------------------------------------------------
 #: PR 的 CI 没过。
 EVENT_CI_FAILED: Final = "ci_failed"
+#: PR 当前 head 上的检查全部跑完、全部通过 —— 告诉做活的芝士，它不用再自己轮询
+#: CI。跟 `accept_ready` 分开：那条是给验收人的「可以合了」，要等评审等别的合并
+#: 规则；这条只说检查，按 head 只说一次。
+EVENT_CI_PASSED: Final = "ci_passed"
 #: 质量闸门跑了，没通过 —— 芝士要去改代码。
 EVENT_GATE_FAILED: Final = "gate_failed"
 #: 质量闸门**没跑起来** —— 对代码没有任何结论，芝士要去弄环境。跟上面一条分开是
@@ -211,6 +215,7 @@ EVENT_EXECUTOR_INSTALL: Final = "executor_install"
 EVENT_TYPES: Final = frozenset(
     {
         EVENT_CI_FAILED,
+        EVENT_CI_PASSED,
         EVENT_GATE_FAILED,
         EVENT_GATE_BLOCKED,
         EVENT_GATE_ABANDONED,
