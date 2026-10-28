@@ -31,9 +31,12 @@ export interface PreviewModeApi {
   enabled: (mode: PreviewMode) => boolean
   /** 现在这一段能不能改正文：`edit` 且这一份开得起来。 */
   editing: ComputedRef<boolean>
-  /** 把记在某一份上的模式清掉（回到「看」）。协同会话收起来时用：会话已经没了，那
+  /** 把记在某一份上的「改」清掉（回到「看」）。协同会话收起来时用：会话已经没了，那
    *  一份还记着「改」的话，换回来时正文是只读的、模式却是「改」——每一次指认都会被
-   *  吞掉，而且「改」那一颗再点也救不回来（值没变，watcher 不触发）。 */
+   *  吞掉，而且「改」那一颗再点也救不回来（值没变，watcher 不触发）。
+   *
+   *  只清「改」：读者从「改」切到「批注」时，编辑器同样会把会话收起来，这时他选的是
+   *  「批注」，不能连它一起抹掉。 */
   forget: (path: string) => void
 }
 
@@ -81,7 +84,9 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
   }
 
   function forget(path: string) {
-    delete byPath[path]
+    // 只清「改」：收会话的不只是「读者走开了」，还有「读者从改切到批注」——
+    // 那一下他明确选了批注，抹掉就是把他刚做的选择静默撤销。
+    if (byPath[path] === 'edit') delete byPath[path]
   }
   return {
     mode,
