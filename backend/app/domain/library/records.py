@@ -34,7 +34,12 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.library import mount, service
 from app.domain.library.models import LibraryFileRecord
 from app.domain.library.shelf import Shelf
-from app.domain.textfile import MAX_TEXT_BYTES, bytes_text_payload
+from app.domain.textfile import (
+    MAX_TEXT_BYTES,
+    PREVIEW_TEXT_BYTES,
+    bytes_text_payload,
+    head_text,
+)
 
 
 @dataclass(frozen=True)
@@ -613,21 +618,45 @@ async def read_attachment_text(
         # 地址没错，是东西不在了。
         raise UnprocessableEntityError(say("libraryFileGone"))
     if row.bytes > MAX_TEXT_BYTES:
-        return _too_large_text(row, path)
+        return _too_large_text(row, path, await read_head(row))
     return bytes_text_payload(await _bytes_of(row), path)
 
 
-def _too_large_text(row: LibraryFileRecord, path: str) -> dict:
-    """`bytes_text_payload` 对一份太大的文件的那种回答，不读它的字节：版本就是
-    这一行记着的哈希（`content_version` 取的也是 SHA-256 的前 16 位）。"""
+def _too_large_text(row: LibraryFileRecord, path: str, head: str | None = None) -> dict:
+    """`bytes_text_payload` 对一份太大的文件的那种回答：版本就是这一行记着的哈希
+    （`content_version` 取的也是 SHA-256 的前 16 位）。
+
+    ``head`` 是给读者看的前一段（`textfile.PREVIEW_TEXT_BYTES`），调用方取到了才给。
+    见 `textfile.text_payload`：``content`` 是「整份、可以写回去」的那一份，不能拿头
+    一段冒充它；头一段单放一个字段，特大文件才因此读得下去。"""
     return {
         "path": path,
         "bytes": row.bytes,
         "binary": False,
         "too_large": True,
         "content": None,
+        "head": head,
         "version": row.sha256[:16],
     }
+
+
+async def read_head(
+    row: LibraryFileRecord, limit: int = PREVIEW_TEXT_BYTES
+) -> str | None:
+    """这一行前面 ``limit`` 个字节读成的文本；只读那一段，不整份进内存。
+
+    太大的文本从此不是「什么都给不了」——读者要的是开头。字节按段从存储里取，
+    `chunks` 收两端闭区间，所以要 ``limit - 1``。"""
+    pieces: list[bytes] = []
+    got = 0
+    async for piece in blob_store.store(row.location).chunks(
+        row.blob_key, 0, limit - 1
+    ):
+        pieces.append(piece)
+        got += len(piece)
+        if got >= limit:
+            break
+    return head_text(b"".join(pieces)[:limit])
 
 
 #: 一份 PDF 读成文字时最多读多少页、留多少字：读的是芝士，它要的是要求和要点，

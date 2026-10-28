@@ -13,8 +13,9 @@
 // 会跟着焦点走掉，那几行不留个记号就看不出这句话对着哪儿。
 //
 // 长行默认横向滚，行号那一列钉在左边；「自动换行」由外面那条文件条切（`wrap`）。
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { columnsOf, type VisibleColumns, visibleColumns } from './codeColumns'
 import { type LineRange, lineRangeIn, selectLines } from './codeSelection'
 
 import { t } from '@/i18n'
@@ -44,6 +45,79 @@ const digits = computed(() => String(lines.value.length).length)
 const root = ref<HTMLElement | null>(null)
 const picked = ref<LineRange | null>(null)
 let anchorLine: number | null = null
+
+// 横滚时读者在哪一段：见 `codeColumns`。只在真有横滚时露出。
+const columns = ref<VisibleColumns | null>(null)
+
+/** 这一份里最长的那一行有多少列。缓存住，滚动时不必每帧重算整份正文。 */
+const widest = computed(() => {
+  let widest = 0
+  for (const line of props.source.split('\n')) widest = Math.max(widest, columnsOf(line, 4))
+  return widest
+})
+
+function charWidth(): number {
+  const scroll = root.value
+  if (!scroll) return 0
+  const sample = document.createElement('span')
+  sample.textContent = '0'.repeat(20)
+  sample.style.cssText = 'position:absolute;visibility:hidden;white-space:pre'
+  scroll.appendChild(sample)
+  const width = sample.getBoundingClientRect().width / 20
+  sample.remove()
+  return width
+}
+
+function measureColumns() {
+  const scroll = root.value
+  if (!scroll || props.wrap) {
+    columns.value = null
+    return
+  }
+  // 只有滚得动才说：一行装得下的时候「第 1–N 列」是废话。
+  if (scroll.scrollWidth <= scroll.clientWidth) {
+    columns.value = null
+    return
+  }
+  const gutter = scroll.querySelector<HTMLElement>('[data-gutter]')
+  columns.value = visibleColumns({
+    scrollLeft: scroll.scrollLeft,
+    viewWidth: scroll.clientWidth,
+    gutterWidth: gutter?.getBoundingClientRect().width ?? 0,
+    charWidth: charWidth(),
+    total: widest.value,
+  })
+}
+
+function onScroll() {
+  measureColumns()
+}
+
+let columnFrame = 0
+function scheduleColumns() {
+  if (columnFrame) return
+  columnFrame = requestAnimationFrame(() => {
+    columnFrame = 0
+    measureColumns()
+  })
+}
+
+// 换了正文（或换了折行）就重量一次：列号条说的是「这一份的第几列」，上一份的数留着
+// 就是错的。
+watch([() => props.source, () => props.wrap], () => scheduleColumns(), { flush: 'post' })
+
+let resize: ResizeObserver | undefined
+onMounted(() => {
+  scheduleColumns()
+  if (typeof ResizeObserver !== 'undefined' && root.value) {
+    resize = new ResizeObserver(scheduleColumns)
+    resize.observe(root.value)
+  }
+})
+onBeforeUnmount(() => {
+  resize?.disconnect()
+  if (columnFrame) cancelAnimationFrame(columnFrame)
+})
 
 watch(
   () => props.source,
@@ -98,6 +172,7 @@ function isPicked(line: number): boolean {
       @mousedown="onPress"
       @mouseup="onRelease"
       @keyup="onRelease"
+      @scroll.passive="onScroll"
     >
       <div class="code-view__lines">
         <div
@@ -115,6 +190,11 @@ function isPicked(line: number): boolean {
         </div>
       </div>
     </div>
+    <!-- 横滚时读者在哪一段：长行的文件里屏幕上的样子滚到哪儿都一样，没有这个没法说
+         出「我在看第几列」。窄面板里字小，它跟着那一档的字号走。 -->
+    <div v-if="columns" class="code-view__columns" data-testid="code-columns" aria-live="off">
+      {{ t('work.room.preview.columns', { start: columns.start, end: columns.end, total: columns.total }) }}
+    </div>
   </div>
 </template>
 
@@ -127,6 +207,21 @@ function isPicked(line: number): boolean {
   display: flex;
   flex-direction: column;
   container-type: inline-size;
+}
+/* 横滚时那一行坐标：钉在底边，不占正文的地方（它只说明现在看的是哪一段）。 */
+.code-view__columns {
+  flex: none;
+  padding: 2px 10px 3px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .code-view__scroll {
   flex: 1 1 auto;

@@ -192,6 +192,10 @@ def test_oversized_file_reports_the_version_its_session_check_uses(
     assert read.status_code == 200, read.text
     data = read.json()["data"]
     assert data["too_large"] is True and data["content"] is None
+    # `content` stays absent (an editor would write a prefix back), but a READER
+    # still gets the opening — which is what stops a big text file from
+    # announcing itself as "not text".
+    assert data["head"] is not None and data["head"].startswith("<html>")
     assert data["version"] == content_version(body)
     assert data["version"] == library.preview_file_version(
         project, topic, "web/huge.html"
