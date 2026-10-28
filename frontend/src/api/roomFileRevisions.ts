@@ -4,9 +4,9 @@
 // 管它们存过的每一版。预览顶上的版本行、两版对比、卡片上的「改了 N 格」都只读这一份。
 
 import { t } from '../i18n'
-import { announceDownload, announceDownloadFailure, downloadBytes, saveBlob } from '../lib/download'
+import { announceDownload, announceDownloadFailure, saveBlob } from '../lib/download'
 
-import { authHeaders, BASE, ensureFreshToken, request } from './http'
+import { authHeaders, BASE, downloadBytes, ensureFreshToken, request } from './http'
 
 /** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
 export interface RoomFileRevision {

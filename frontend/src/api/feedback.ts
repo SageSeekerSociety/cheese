@@ -16,11 +16,11 @@ import type {
 } from '../cx_types'
 
 import { t } from '../i18n'
-import { announceDownload, announceDownloadFailure, downloadBytes, saveBlob } from '../lib/download'
+import { announceDownload, announceDownloadFailure, saveBlob } from '../lib/download'
 import { refusalWords } from '../lib/noticeText'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, request } from './http'
+import { authHeaders, BASE, downloadBytes, request } from './http'
 import { feedbackQuery } from './query'
 
 // ---- 反馈 (feedback) ----

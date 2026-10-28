@@ -377,3 +377,28 @@ export function readSince<T extends object>(path: string, previous: T | undefine
     outer
   )
 }
+
+/** 取一次下载的字节。
+ *
+ *  说话的顺序和别处一样：服务器给了话就用它那句（它知道为什么拒绝），没有才退回
+ *  「下载失败（HTTP 403）」；请求根本没发出去时 fetch 抛的是浏览器自己那句英文
+ *  （"Failed to fetch"），换成平台那句话——那种串端给人看等于什么都没说。
+ *
+ *  放在这一层而不是 `lib/download.ts`：那一层管存盘和提示，组件会 import 它，而给
+ *  组件打分的 `frontend_grade.py` 把带 `fetch(` 的模块算作 API 层——组件引了它，独立
+ *  可挂载那一级就掉了（`pnpm run lint:scenes`）。取字节本来就属于 `api/**`。 */
+export async function downloadBytes(url: string, headers: Record<string, string>): Promise<Blob> {
+  let res: Response
+  try {
+    res = await fetch(url, { headers })
+  } catch {
+    throw new Error(t('global.request.downloadUnreachable'))
+  }
+  if (!res.ok) {
+    // `refusalWords` 认得出服务器那句话（含 `error.i18n`，会渲染成读者这一门语言）；
+    // 读不动正文（错误页、空体）不算错，那时退回平台那句。
+    const body = await res.json().catch(() => null)
+    throw new Error(refusalWords(body) || t('global.request.downloadFailed', { status: res.status }))
+  }
+  return res.blob()
+}

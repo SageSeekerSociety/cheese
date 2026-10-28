@@ -2,12 +2,12 @@ import type { ApiEnvelope, ChatAttachment, DocumentRevision, FileSource, ListPay
 import type { DocumentTemplate, RoomOutput } from '../types/roomOutput'
 
 import { t } from '../i18n'
-import { announceDownload, announceDownloadFailure, downloadBytes, saveBlob } from '../lib/download'
+import { announceDownload, announceDownloadFailure, saveBlob } from '../lib/download'
 import { refusalWords } from '../lib/noticeText'
 import { createPreviewPdfReader } from '../lib/previewPdf'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, ensureFreshToken, request } from './http'
+import { authHeaders, BASE, downloadBytes, ensureFreshToken, request } from './http'
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
