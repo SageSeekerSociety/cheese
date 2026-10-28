@@ -347,12 +347,19 @@ function runLocate() {
       moveTo(start.row, start.col)
       return
     }
-    // 一片：和拖出来的一样看待，两个角都摆上，地址栏写回 `C3:E8`。
-    focus.value = { row: end.row, col: end.col }
+    // 一片：和拖出来的一样看待，两个角都摆上，地址栏写回 `C3:E8`。两个角都夹回表内：
+    // 读者输了个超出范围的下角（`A1:Z9999`）时，地址栏该说这张表真有的那一片。
+    const clamp = (at: { row: number; col: number }) => ({
+      row: Math.min(at.row, sheet.rows.length - 1),
+      col: Math.min(at.col, sheet.width - 1),
+    })
+    const from = clamp(start)
+    const to = clamp(end)
+    focus.value = to
     selected.value = ''
-    dragStart.value = start
-    dragEnd.value = end
-    scrollToRow(start.row)
+    dragStart.value = from
+    dragEnd.value = to
+    scrollToRow(from.row)
     return
   }
   // 内容：当前这张表里第一个包含它的格子。找的是「显示出来的那几个字」，所以读者拿
