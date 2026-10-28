@@ -13,7 +13,7 @@ import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFr
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
 
 import PreviewAppSleep from './PreviewAppSleep.vue'
@@ -27,6 +27,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
+import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 import { defaultViewport, fitScale, type PreviewViewport, VIEWPORT_WIDTH } from '@/lib/previewViewport'
@@ -117,6 +118,50 @@ const step = computed(() => {
   const now = stage.value
   if (now.stage === 'shown') return now.loading
   return now.stage === 'waiting' ? now.step : null
+})
+
+/** 这一轮「在取」从什么时候开始的：换了一步就重新数。
+ *
+ *  冷启动（第一次连上、机器还在起）能等一两分钟，热启动几秒就完。两处原来只有一句
+ *  「正在加载新页面…」，读者等四十秒之后分不出「快好了」和「卡住了」，也不知道等了多久。
+ *  秒数从「开始取」那一刻数：`step` 从 null 变成有值、或者换了一步，就重来一次。 */
+const loadingStartedAt = ref(0)
+const nowTick = ref(0)
+let ticker: ReturnType<typeof setInterval> | null = null
+watch(
+  step,
+  (value) => {
+    loadingStartedAt.value = value ? Date.now() : 0
+    nowTick.value = Date.now()
+    if (ticker) clearInterval(ticker)
+    ticker = null
+    if (!value) return
+    // 两秒一跳：这一行说的是「等了几十秒」，不必每秒重排一次。
+    ticker = setInterval(() => {
+      nowTick.value = Date.now()
+    }, 2_000)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (ticker) clearInterval(ticker)
+})
+const elapsedSeconds = computed(() =>
+  loadingStartedAt.value ? Math.max(0, Math.floor((nowTick.value - loadingStartedAt.value) / 1000)) : 0
+)
+const tone = computed(() => loadingTone(elapsedSeconds.value))
+const waited = computed(() => elapsedLabel(elapsedSeconds.value))
+/** 那一行说成什么：正常只报在做什么，慢了就带上等了多少，卡住了还要给下一步。 */
+const stepLine = computed(() => {
+  if (!step.value) return ''
+  const doing = t(step.value === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating')
+  if (tone.value === 'normal') return doing
+  const waitedText = t(
+    waited.value.unit === 'minute' ? 'work.room.preview.waitedMinutes' : 'work.room.preview.waitedSeconds',
+    { n: waited.value.n }
+  )
+  if (tone.value === 'slow') return t('work.room.preview.loadingSlow', { doing, waited: waitedText })
+  return t('work.room.preview.loadingStuck', { waited: waitedText, agent: props.agentName })
 })
 
 const showSource = ref(false)
@@ -425,7 +470,7 @@ watch(
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
     <div v-if="step" role="status" class="px-3 py-2 text-caption">
-      {{ t(step === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
+      {{ stepLine }}
     </div>
     <div
       v-if="!sleepKind && (navigationError || previewError || previewReadError)"

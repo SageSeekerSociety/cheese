@@ -117,5 +117,9 @@
   "pageErrors": "{count} errors",
   "pageErrorAt": "in a script",
   "annotateErrors": "Attach {count} errors to a note",
-  "errorsIntro": "The page threw these; see if they are the cause:"
+  "errorsIntro": "The page threw these; see if they are the cause:",
+  "loadingSlow": "{doing} — {waited}; the machine behind the app may be starting",
+  "loadingStuck": "{waited} and still not up. Ask {agent} if it is a cold start; a sleeping app offers a wake button",
+  "waitedSeconds": "waiting {n}s",
+  "waitedMinutes": "waiting {n} min"
 }

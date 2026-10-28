@@ -117,5 +117,9 @@
   "pageErrors": "{count} 个错误",
   "pageErrorAt": "脚本执行处",
   "annotateErrors": "将 {count} 条报错附入批注",
-  "errorsIntro": "页面报了这几个错，看看是不是它们："
+  "errorsIntro": "页面报了这几个错，看看是不是它们：",
+  "loadingSlow": "{doing}{waited}——应用那边的机器可能正在起",
+  "loadingStuck": "{waited}还没好。如果它在冷启动，可以在对话里问问{agent}；应用睡着时面板上会有唤醒按钮",
+  "waitedSeconds": "已等 {n} 秒",
+  "waitedMinutes": "已等 {n} 分钟"
 }
