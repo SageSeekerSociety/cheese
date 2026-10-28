@@ -174,7 +174,7 @@ it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡�
 })
 
 it('「加入待发」把这一处加进话题页那一份待发篮，不是本格自己那一条', async () => {
-  const send = vi.fn(() => true)
+  const send = vi.fn<(content: string) => boolean>(() => true)
   const pending = usePendingNotes(send)
   const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
   const ui = mount(pending)
@@ -212,7 +212,7 @@ it('篮里已经有几条时，卡片主按钮那一下发的是整批，不是�
   // 那颗键写着「全部发送（N+1）」，点下去必须整批发：按 `queuedCount` 分流。用本格
   // 自己那条 `queued` 判的话（共享篮时它永远是空的），只会发当前这一处，篮里那几条
   // 留着没发，而读者看到的是「已经整批发完了」。
-  const send = vi.fn(() => true)
+  const send = vi.fn<(content: string) => boolean>(() => true)
   const pending = usePendingNotes(send)
   pending.add({
     file: '说明.md',
@@ -242,7 +242,8 @@ it('篮里已经有几条时，卡片主按钮那一下发的是整批，不是�
   await fireEvent.click(sendAll)
   await waitFor(() => expect(send).toHaveBeenCalled())
   // 发出去的那一条同时含先攒的那句和当前这一处，说明走的是整批那条路。
-  const sent = send.mock.calls[0][0] as string
+  const [firstCall] = send.mock.calls
+  const sent = String(firstCall?.[0] ?? '')
   expect(sent).toContain('先攒的那条消息')
   expect(sent).toContain('这一处也要改')
   expect(pending.notes.value).toHaveLength(0)

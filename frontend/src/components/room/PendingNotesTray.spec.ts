@@ -97,7 +97,7 @@ it('单条能删掉，删完不再列它', async () => {
 })
 
 it('「全部发送」把攒着的这一批合成一条发出去，发完篮清空', async () => {
-  const send = vi.fn(() => true)
+  const send = vi.fn<(content: string) => boolean>(() => true)
   const api = usePendingNotes(send)
   const { ui } = mount(api)
   api.add(note({ message: '甲' }))
@@ -105,7 +105,8 @@ it('「全部发送」把攒着的这一批合成一条发出去，发完篮清�
   await ui.rerender({})
   await fireEvent.click(ui.getByTestId('pending-notes-send-all'))
   expect(send).toHaveBeenCalledTimes(1)
-  expect(send.mock.calls[0][0]).toBe('甲\n\n乙')
+  const [firstCall] = send.mock.calls
+  expect(firstCall?.[0]).toBe('甲\n\n乙')
   await ui.rerender({})
   expect(ui.queryByTestId('pending-notes-list')).toBeNull()
 })
