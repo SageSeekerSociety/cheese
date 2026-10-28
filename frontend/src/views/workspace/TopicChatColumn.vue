@@ -9,7 +9,6 @@ import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -224,13 +223,11 @@ function avatarOf(handle: string): string {
   return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
 }
 
-/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。 */
+/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。
+ *
+ *  成功和失败的话都在 `downloadFile` 那一层说（`lib/download`），这里不再补一句。 */
 async function downloadRootFile(block: Block) {
-  try {
-    await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
-  } catch {
-    toast.error(t('work.room.chat.downloadFailed'))
-  }
+  await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
 }
 
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。

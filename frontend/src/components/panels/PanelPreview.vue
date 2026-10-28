@@ -81,7 +81,6 @@ const {
   documentType,
   documentName,
   isImageArtifact,
-  downloadError,
   docBytes,
   docIdentity,
   docSnapshot,
@@ -178,7 +177,6 @@ function history(action: 'back' | 'forward' | 'reload') {
     :document-type="documentType"
     :document-name="documentName"
     :is-image-artifact="isImageArtifact"
-    :download-error="downloadError"
     :doc-bytes="docBytes"
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"
