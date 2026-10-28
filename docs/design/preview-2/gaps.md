@@ -57,20 +57,21 @@
 
 留这一节是为了让后来的人知道这些曾经差过、现在在哪。逐条都能在主干代码里找到落点。
 
-| 10-27 那条                                 | 现在在哪                                                           |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| 选中先出「添加批注」小按钮的两步式         | `PreviewModeSwitch` 的「看」段 + `usePreviewLocator` 的 `armFirst` |
-| 看 / 批注 / 改 三段 + 快捷键 1/2/3         | `PreviewModeSwitch.vue`（#4965）                                   |
-| 「本版共修改 N 处」提示条                  | `PreviewVersionStrip.vue`（#4937）                                 |
-| 版本行（第 N 版 · 作者 · 时间）+ 对比      | `PreviewVersionPicker.vue`（#4937）                                |
-| 去处三选项（含「问个人芝士（私聊）」）     | `PreviewLocator.vue` 的 `RECIPIENTS`（#4965）                      |
-| 待发篮逐条列在输入框上方 + 正文序号        | `PendingNotesTray.vue`（#4954）                                    |
-| 批注卡提示行                               | `work.room.preview.locatorHintQueue` 等三句（#4965）               |
-| 多行批注输入                               | `PreviewLocator.vue` 用 `<textarea>`                               |
-| 看图浮层七件套                             | `ImageLightbox.vue` + `lightbox/LightboxCrop.vue`（#4936）         |
-| 网页小浏览器（地址栏 / 前进后退 / 连通链） | #4935                                                              |
-| 应用离线三态 + 唤醒分步进度                | #4935                                                              |
-| 对话内富卡片（「改了 N 格」等）            | `room/fileCard/`（#4936）                                          |
+| 10-27 那条                                 | 现在在哪                                                                |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| 选中先出「添加批注」小按钮的两步式         | #4933（`usePreviewLocator` 的 `armFirst`）；「看」那一段沿用同一条      |
+| 看 / 批注 / 改 三段 + 快捷键 1/2/3         | `PreviewModeSwitch.vue`（#4965）                                        |
+| 「本版共修改 N 处」提示条                  | `PreviewVersionStrip.vue`（#4937）                                      |
+| 版本行（第 N 版 · 作者 · 时间）+ 对比      | `PreviewVersionPicker.vue`（#4937）                                     |
+| 去处三选项（含「问个人芝士（私聊）」）     | `PreviewLocator.vue` 的 `RECIPIENTS`（两项 #4933、「问个人芝士」#4965） |
+| 待发篮逐条列在输入框上方 + 正文序号        | `PendingNotesTray.vue`（#4954）                                         |
+| 批注卡提示行                               | `work.room.preview.locatorHintQueue` 等（#4933；私聊那一句 #4965）      |
+| 多行批注输入                               | `PreviewLocator.vue` 用 `<textarea>`（#4933）                           |
+| 卡内地图针图标、「」括起的原文             | #4933                                                                   |
+| 看图浮层七件套                             | `ImageLightbox.vue` + `lightbox/LightboxCrop.vue`（#4936）              |
+| 网页小浏览器（地址栏 / 前进后退 / 连通链） | #4935                                                                   |
+| 应用离线三态 + 唤醒分步进度                | #4935                                                                   |
+| 对话内富卡片（「改了 N 格」等）            | `room/fileCard/`（#4936）                                               |
 
 ## 原型有、产品没有（历史单列，已清空）
 
