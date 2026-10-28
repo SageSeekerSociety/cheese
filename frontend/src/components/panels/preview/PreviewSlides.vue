@@ -887,14 +887,16 @@ onBeforeUnmount(() => {
   background: transparent;
   color: transparent;
 }
-/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。 */
+/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。`--selection-bg`——和
+   `PreviewPages` 里那一段同一套写法，改一处时两处一起改：同一个动作在两档里该是同一个
+   颜色，这两处一度一个用 `--selection-bg`、一个用 `--accent-wash`。 */
 .slides__sheet :deep(.slide-hl) {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 .slides__sheet :deep(.slide-hl path) {
-  fill: var(--accent-wash);
+  fill: var(--selection-bg);
 }
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;
