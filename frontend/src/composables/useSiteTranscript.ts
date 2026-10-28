@@ -356,9 +356,7 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
       const resident = forward === null && !refill
       const tx = await getTranscript(
         tid,
-        forward
-          ? { limit: SITE_PAGE_SIZE, after: forward, author }
-          : { limit: SITE_PAGE_SIZE, author, resident }
+        forward ? { limit: SITE_PAGE_SIZE, after: forward, author } : { limit: SITE_PAGE_SIZE, author, resident }
       )
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。

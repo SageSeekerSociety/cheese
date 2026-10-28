@@ -517,9 +517,7 @@ async def _sealed_bodies_within(
     remainder, and reading on names it again.
     """
     deadline = asyncio.get_running_loop().time() + budget_s
-    tasks = {
-        key: asyncio.ensure_future(sealed_body(storage, key)) for key in keys
-    }
+    tasks = {key: asyncio.ensure_future(sealed_body(storage, key)) for key in keys}
     done, pending = await asyncio.wait(
         tasks.values(),
         timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
