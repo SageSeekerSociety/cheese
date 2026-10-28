@@ -7,8 +7,8 @@
   "goPage": "跳转到第 {page} 页",
   "fit": "适合页面",
   "fitWidth": "适合宽度",
-  "present": "演示",
-  "exit": "退出演示",
+  "present": "放映",
+  "exit": "退出放映",
   "askPage": "对整页提问",
   "wholePageHint": "使用当前 PDF 页的全部文字作为上下文",
   "download": "下载原文件",
@@ -35,5 +35,9 @@
   "removeQuote": "移除引用",
   "draftQuoteConflict": "输入框中已有另一份引用，请先发送或移除它。",
   "quotedImageRegion": "圈出了图片上的一块区域",
-  "quotedViewing": "发这条消息时在看这份文件"
+  "quotedViewing": "发这条消息时在看这份文件",
+  "jumpTo": "跳到某一页",
+  "pageOf": "第 {page} 页，共 {count} 页",
+  "presenting": "放映中",
+  "presentHint": "← → 翻页 · Esc 退出"
 }
