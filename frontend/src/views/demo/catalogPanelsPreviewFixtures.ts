@@ -192,7 +192,6 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     previewUrl: 'http://127.0.0.1:4173/',
     previewAppNote: '',
     previewTunnelUp: true,
-    previewAppUp: true,
     previewError: null,
     previewReadError: null,
     pickTarget: null,
@@ -200,11 +199,10 @@ export function frameStageProps(over: Record<string, unknown> = {}): Record<stri
     agentName: AGENT_NAME,
     ...over,
   }
-  // 没明说的按产品那套算：通道在、地址也在，应用才算有应答。要摆睡着那几档，把
-  // `previewTunnelUp` 或 `previewUrl` 说成假的就够了，不用另给一个和它们对不上的值。
-  if (over.previewAppUp === undefined) {
-    merged.previewAppUp = !!merged.previewTunnelUp && !!merged.previewUrl
-  }
+  // 应用有没有应答一律按产品那套算，不给它留一个能单独覆盖的口子：通道在、地址也
+  // 在，才算有应答。要摆睡着那几档，把 `previewTunnelUp` 或 `previewUrl` 说成假的就够
+  // 了——「通道在、有地址、应用却不答」是产品到不了的状态。
+  merged.previewAppUp = !!merged.previewTunnelUp && !!merged.previewUrl
   return merged
 }
 

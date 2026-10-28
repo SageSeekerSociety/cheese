@@ -1,12 +1,15 @@
 name: Warm dependency caches
 
 # Required CI's suites run on pull requests and main pushes, and in both they
-# only restore caches. A cache saved from a pull-request ref is visible to that
-# ref alone, while one saved
-# on main is visible to every ref, so this workflow is the one place their
-# dependency caches are saved. Each
+# restore caches rather than save them. A cache saved from a pull-request ref
+# is visible to that ref alone, while one saved
+# on main is visible to every ref, so this workflow is where their dependency
+# caches are saved. Each
 # job installs dependencies the way its suite does, under the suite's exact
 # key, and runs no tests. A key that already exists is left as it is.
+#
+# The one suite key that saves itself is test.yml's `jsdom-npm-v1-*`; see the
+# note under the key list below.
 #
 # Keys, and the suites that restore them:
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml

@@ -135,6 +135,13 @@ async function fullscreen() {
   }
 }
 
+// 网页/应用那一档在不在屏幕上。两个地方要它，而它们必须给出同一个答案：决定挂不挂
+// `PreviewFrameStage`（它自带一条地址栏、一颗刷新钮），和告诉顶栏「这一格已经在自己
+// 刷新了，别再出一颗」。各写一份的话，改一边漏一边就会同时出现两颗刷新钮。
+const browsing = computed(() =>
+  props.frames ? props.frames.length > 0 || !!props.previewAppNote : !!props.previewUrl || !!props.previewAppNote
+)
+
 // 文档那一档的实例：钉在页上的一处要它当时那张图，换文件时又要它把那个钉撤掉。
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
 const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
@@ -407,7 +414,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
-      :browsing="frames ? frames.length > 0 || !!previewAppNote : !!previewUrl || !!previewAppNote"
+      :browsing="browsing"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />
@@ -419,7 +426,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
     <PreviewFrameStage
-      v-else-if="frames ? frames.length > 0 || !!previewAppNote : previewUrl || previewAppNote"
+      v-else-if="browsing"
       :topic-id="topicId"
       :path="path"
       :frame-name="frameName"

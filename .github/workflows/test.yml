@@ -546,18 +546,27 @@ jobs:
         id: jsdom
         if: matrix.layer == 'pure'
         run: |
-          awk '
+          # The value is read from a file the pull request controls, so it is
+          # checked against what a version may look like before it goes
+          # anywhere: an empty value would install `jsdom@` (npm reads that as
+          # `*`) under a cache key ending in `-`, and anything else in it would
+          # be shell. `${{ }}` would interpolate it into this script; it leaves
+          # through $GITHUB_OUTPUT and comes back to the install step as
+          # `$JSDOM_VERSION` instead.
+          version="$(awk '
             /^importers:$/ {in_imp=1; next}
             in_imp && /^  \.:$/ {in_root=1; next}
             in_imp && /^  [^ ]/ {in_root=0}
             in_root && /^      jsdom:$/ {want=1; next}
-            want && /^ {8}version: / {sub(/^ {8}version: */, ""); print "version=" $0; exit}
-          ' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml" > "$RUNNER_TEMP/jsdom-version"
-          test -s "$RUNNER_TEMP/jsdom-version" || {
-            echo "the root importer in frontend/pnpm-lock.yaml names no jsdom version" >&2
-            exit 1
-          }
-          cat "$RUNNER_TEMP/jsdom-version" >> "$GITHUB_OUTPUT"
+            want && /^ {8}version: / {sub(/^ {8}version: */, ""); print; exit}
+          ' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml")"
+          case "$version" in
+            '' | *[!0-9A-Za-z.+-]*)
+              echo "frontend/pnpm-lock.yaml names no usable jsdom version (got '$version')" >&2
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: jsdom-cache
         if: matrix.layer == 'pure'
@@ -566,9 +575,11 @@ jobs:
           key: jsdom-npm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.jsdom.outputs.version }}
       - name: Install jsdom for the preview bridge's snapshot test
         if: matrix.layer == 'pure' && steps.jsdom-cache.outputs.cache-hit != 'true'
+        env:
+          JSDOM_VERSION: ${{ steps.jsdom.outputs.version }}
         run: |
           npm install --prefix "$HOME/.cache/cheese-jsdom" --no-audit --no-fund --prefer-offline \
-            "jsdom@${{ steps.jsdom.outputs.version }}"
+            "jsdom@$JSDOM_VERSION"
       - name: Point the snapshot test at the installed jsdom
         if: matrix.layer == 'pure'
         run: echo "CHEESE_TEST_JSDOM=$HOME/.cache/cheese-jsdom/node_modules/jsdom" >> "$GITHUB_ENV"
