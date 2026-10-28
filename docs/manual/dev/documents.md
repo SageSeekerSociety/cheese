@@ -43,6 +43,19 @@ covers:
 
 `documents/editor.py` 对着 OnlyOffice Document Server。选它而不是一个富文本编辑器，理由写在模块开头：编辑器直接改 Office 文件本身，没有内部格式需要导入导出，人保存的就是芝士下一次读到的；而一份报告粘进 HTML 编辑器再写成 Word，样式、编号和图表是**无声地**丢掉的。
 
+跑的是 9.4（`deploy/compose/docker-compose.base.yml` 的 `office-editor`，按 digest 钉住，不写浮动 tag）。下面这些是在本任务的机器上、同一份 compose 配置、同一份 4 GiB / 2 CPU 配额下量的（不是主干发布数）：
+
+| | 8.3 | 9.4 |
+|---|---|---|
+| 冷启动到健康 | 26–51 秒 | 9–14 秒 |
+| 空转常驻内存 | 约 600 MiB | 约 350 MiB |
+| 容器内进程 | 28 | 13 |
+| 随容器启动的组件 | nginx、docservice、converter、RabbitMQ（5672/4369/25672）、PostgreSQL（5432） | nginx、docservice、converter |
+
+社区版同时打开文档数的上限也去掉了，判据是服务端自己的计数：干净启动的 8.3 一次开 25 个文档，日志里记了 6 次「reached 70% of the connections limit」和 5 次「reached 100%」；同样干净启动的 9.4 开 25 个，一次也没有。两边都把 25 份文档全开了出来——8.3 到上限只是告警、没有拒绝——所以用「第 21 个能不能开」判不出来，要读它有没有在数。
+
+它是 AGPLv3 的独立服务，我们原样使用、不做修改，所以 §13 要求的源码就是上游那一版：<https://github.com/ONLYOFFICE/DocumentServer/tree/v9.4.0>（tag `v9.4.0`，对应镜像 `onlyoffice/documentserver:9.4`）。许可证全文在镜像的 `/var/www/onlyoffice/documentserver/LICENSE.txt`；9.4 起在 AGPLv3 之外附了若干 §7 附加条款（保留版权与署名声明、改动版须显著标注、界面须给出法律声明入口、不授予商标权），我们不改它，因此只需照原样展示它的品牌与界面。
+
 三方、两种令牌，边界靠令牌划：
 
 - 浏览器向后端要配置（`editor_config`）。配置用与编辑器共享的密钥签名（`settings.office_editor_jwt_secret`），编辑器据此决定要不要打开。
