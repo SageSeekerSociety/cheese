@@ -40,6 +40,7 @@ import { searchLibraryFiles } from '../../lib/libraryApi'
 import RoomComposer from './RoomComposer.vue'
 
 import { setLocale } from '@/i18n'
+import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { fillComposer, placeCaret, typeInComposer } from '@/test/composerInput'
 
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
@@ -77,6 +78,8 @@ function file(path: string) {
 
 interface Options {
   draft?: string
+  /** 注入一份待发篮（有它时输入框上方逐条列出来，发送键带字）。 */
+  pending?: ReturnType<typeof usePendingNotes>
   atts?: ChatAttachment[]
   attsUploading?: boolean
   replyLabel?: string | null
@@ -101,6 +104,7 @@ function mount(opts: Options = {}) {
   const onPaste = vi.fn()
   const onRemoveAtt = vi.fn()
   const onClearReply = vi.fn()
+  const onClearQuote = vi.fn()
   const onAddLibraryFile = vi.fn()
 
   const Wrapper = defineComponent({
@@ -127,13 +131,31 @@ function mount(opts: Options = {}) {
         onPaste,
         onRemoveAtt,
         onClearReply,
+        onClearQuote,
         onAddLibraryFile,
       }),
   })
 
-  const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
+  const utils = render(Wrapper, {
+    global: {
+      plugins: [createVuetify({ components, directives })],
+      ...(opts.pending ? { provide: { [PENDING_NOTES as symbol]: opts.pending } } : {}),
+    },
+  })
   const box = () => utils.container.querySelector<HTMLElement>('.ProseMirror')!
-  return { ...utils, draft, box, onSend, onFiles, onDropFiles, onPaste, onRemoveAtt, onClearReply, onAddLibraryFile }
+  return {
+    ...utils,
+    draft,
+    box,
+    onSend,
+    onFiles,
+    onDropFiles,
+    onPaste,
+    onRemoveAtt,
+    onClearReply,
+    onClearQuote,
+    onAddLibraryFile,
+  }
 }
 
 function menuItems(container: Element): HTMLElement[] {
@@ -919,5 +941,52 @@ describe('交给谁', () => {
     await fireEvent.contextMenu(summon(container))
     await flush()
     expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
+  })
+})
+
+// 攒着待发批注时，发送键发的是那一批：正文里的字当作总体说明并进同一条消息。
+describe('攒着待发批注时的发送键', () => {
+  function noteMsg(message: string) {
+    return {
+      file: 'a.md',
+      version: '',
+      where: '开头',
+      quote: 'q',
+      text: 't',
+      audience: 'cheese' as const,
+      message,
+    }
+  }
+
+  it('按发送键发的是那一批：正文里的字并进同一条，乱序那条不发', async () => {
+    const send = vi.fn(() => true)
+    const pending = usePendingNotes(send)
+    pending.add(noteMsg('甲'))
+    const { box, draft, onSend } = mount({ draft: '都按这个来', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(send).toHaveBeenCalledWith('都按这个来\n\n甲')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(draft.value).toBe('')
+  })
+
+  it('这一批发出去之后引用条也清掉：它是那条消息带着的东西', async () => {
+    const pending = usePendingNotes(() => true)
+    pending.add(noteMsg('甲'))
+    const { box, onClearQuote } = mount({ draft: '说明', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onClearQuote).toHaveBeenCalled()
+  })
+
+  it('对话栏没收下时走老路：正文照发，这一批留着', async () => {
+    const pending = usePendingNotes(() => false)
+    pending.add(noteMsg('甲'))
+    const { box, onSend, draft } = mount({ draft: '说明', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith({ content: '说明', summon: false })
+    expect(pending.notes.value).toHaveLength(1)
+    expect(draft.value).toBe('说明')
   })
 })
