@@ -217,9 +217,8 @@ async def wake_preview_app(
         conversation_id=place.conversation_id,
         seat=seat,
     )
-    direct = can_wake_on_machine(
-        art.meta if isinstance(art.meta, dict) else None, session_row
-    )
+    art_meta = art.meta if isinstance(art.meta, dict) else None
+    direct = can_wake_on_machine(art_meta, session_row)
     redis = get_redis_client()
     key = f"preview-wake:{_snapshot_key(place, art)}"
     if redis is not None:
@@ -245,13 +244,13 @@ async def wake_preview_app(
             ),
         )
 
-    if direct and session_row is not None:
+    if direct and session_row is not None and art_meta is not None:
         schedule_direct_preview_wake(
             db.bind,
             place=place,
             session_id=session_row.id,
             seat=seat,
-            serve=art.meta["serve"],
+            serve=art_meta["serve"],
             fallback=_submit_turn,
             dedup_key=key,
         )
