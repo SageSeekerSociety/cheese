@@ -54,6 +54,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { PENDING_NOTES } from '@/lib/pendingNotes'
+import { fileName } from '@/lib/viewingContext'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -173,13 +174,17 @@ const {
  *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
  *  顺序数，和 tray 上的编号同一个来源。 */
 const sharedPending = inject(PENDING_NOTES, null)
-const pendingPins = computed(() =>
-  (sharedPending?.notes.value ?? []).flatMap((note, index) =>
-    note.anchor?.kind === 'text-range'
+/** 只取**这一份文件**上攒着的那几条：篮是整间房一份，换一份文件时它不清空（读者很可能
+ *  在几份文件上各指几处再一起发），而按字找位置只在这一份正文里找——拿着别的文件上的
+ *  一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧相同的那句话上。 */
+const pendingPins = computed(() => {
+  const here = fileName(props.previewFile?.path ?? '')
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'text-range' && note.file === here
       ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
       : []
   )
-)
+})
 
 // ---- 定位框弹在哪 ----
 // 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：

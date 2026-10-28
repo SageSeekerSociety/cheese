@@ -59,3 +59,16 @@ it('对话栏没收下时这一批留着，不能悄悄丢掉', () => {
   expect(api.send('')).toBe(false)
   expect(api.notes.value).toHaveLength(1)
 })
+
+it('只清掉发出去的那几条：只留评论的不经对话发，不能跟着清', () => {
+  // 今天篮里只有交给芝士的，所以这一条守的是「去处菜单加了一项之后」那种情形：
+  // 整批清掉就是把没发出去的那几条无声地丢了。
+  const api = usePendingNotes(() => true)
+  api.add(note({ message: '甲' }))
+  api.add(note({ message: '乙', audience: 'comment' }))
+  expect(api.send('')).toBe(true)
+  const left = api.notes.value
+  expect(left).toHaveLength(1)
+  expect(left[0].audience).toBe('comment')
+  expect(left[0].message).toBe('乙')
+})

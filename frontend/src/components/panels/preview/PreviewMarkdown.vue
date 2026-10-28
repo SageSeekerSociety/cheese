@@ -17,7 +17,15 @@ import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import MarkdownView from '../../common/MarkdownView.vue'
 
-import { type AnchorQuote, clearMarks, clearPins, locateQuote, PIN_ATTR, wrapRange } from './markdownAnchors'
+import {
+  ANCHOR_IGNORE_ATTR,
+  type AnchorQuote,
+  clearMarks,
+  clearPins,
+  locateQuote,
+  PIN_ATTR,
+  wrapRange,
+} from './markdownAnchors'
 import { type MarkdownQuote, quoteFromSelection } from './markdownQuote'
 
 const props = defineProps<{
@@ -93,6 +101,12 @@ function paint() {
       const badge = document.createElement('span')
       badge.className = 'pending-pin'
       badge.setAttribute(PIN_ATTR, pin.id)
+      // 这颗序号插在正文文字流里，读屏念这一句时会平白多念一个数字；tray 里同一颗号
+      // 是 `aria-hidden` 的，两边得一致。而且它不该被当成正文：读者选一句正好含着它时，
+      // 交给芝士的原文和前（后）文里会多一个凭空的数字，之后按字找更难对上
+      //（`markdownAnchors` 的 `ANCHOR_IGNORE_ATTR`）。
+      badge.setAttribute('aria-hidden', 'true')
+      badge.setAttribute(ANCHOR_IGNORE_ATTR, '')
       badge.textContent = String(pin.n)
       const end = document.createRange()
       end.setStart(range.endContainer, range.endOffset)

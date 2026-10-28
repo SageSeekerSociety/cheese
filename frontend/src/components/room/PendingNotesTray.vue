@@ -26,9 +26,14 @@ function audienceLabel(note: PendingNote): string {
   return note.audience === 'comment' ? t('work.room.preview.recipientComment') : t('work.room.preview.pendingToCheese')
 }
 
+/** 上一次发送没成的那一句：对话栏那一刻还没准备好（`say` 收不下）时，这一批留着，
+ *  得让人看得出「按了没反应」是没发出去，不是发出去没显示。下一回重试成功就抹掉。 */
+const sendError = ref('')
+
 function sendAll() {
   if (!sendable.value) return
-  pending?.send('')
+  if (pending?.send('')) sendError.value = ''
+  else sendError.value = t('work.room.preview.sendQueuedFailed')
 }
 </script>
 
@@ -80,6 +85,7 @@ function sendAll() {
       </li>
     </ul>
     <p v-else class="pending__hint t-meta">{{ t('work.room.preview.pendingCollapsedHint') }}</p>
+    <p v-if="sendError" class="pending__error" role="alert">{{ sendError }}</p>
   </div>
 </template>
 
@@ -232,5 +238,12 @@ function sendAll() {
 }
 .pending__hint {
   padding: 0 12px 8px;
+}
+.pending__error {
+  margin: 0;
+  padding: 0 12px 8px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--danger-ink);
 }
 </style>

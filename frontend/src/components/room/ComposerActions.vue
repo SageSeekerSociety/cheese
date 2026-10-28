@@ -177,6 +177,7 @@ function onSend() {
   if (props.voice === 'recording') emit('voice-done')
   else if (!voiceOpen.value) emit('send')
 }
+/** 这一颗键上写什么字。只有攒着待发批注时才带字（其余时候是图标，见模板）。 */
 const sendLabel = computed(() => {
   if (props.voice === 'recording') return t('work.room.composer.voice.done')
   if (props.voice === 'thinking') return t('work.room.composer.voice.thinking')
@@ -185,17 +186,14 @@ const sendLabel = computed(() => {
     return t('work.room.preview.sendWithNotes', { count: props.pendingCount })
   return t('work.room.composer.send')
 })
-/** 只在这一颗键要带字的时候给（攒着待发批注）：录音、整理、上传那几步仍然只显示图标，
- *  否则「说完了 ✓」和「发送（含 2 条批注）」会在同一颗键上抢位置。 */
+/** 这一颗键此刻显示文字还是图标：对着「键上那句话此刻是不是真话说得出口的」——只有
+ *  攒着待发批注、且没有别的状态在用它的时候才带字。录音时它是「✓ 说完了」、整理中转
+ *  圈、上传时按不动，那几步各说各的，带上「发送（含 N 条批注）」会和它们抢同一块地方。
+ *
+ *  判据从 `sendLabel` 反推（键上那句话此刻是不是 `sendWithNotes` 那一句），不另写一遍
+ *  那几个状态——两处各写一遍迟早会漂。 */
 const pendingLabel = computed(() =>
-  !voiceOpen.value &&
-  !props.uploading &&
-  props.voice !== 'recording' &&
-  props.voice !== 'thinking' &&
-  props.pendingCount &&
-  props.pendingCount > 0
-    ? sendLabel.value
-    : ''
+  !voiceOpen.value && !props.uploading && !!props.pendingCount && props.pendingCount > 0 ? sendLabel.value : ''
 )
 // 整理中不禁用：禁用的键会褪成灰色，而这一刻它是唯一在说「机器正在做」的地方，要保持琥珀色
 // 转圈。点它什么也不做（onSend 里拦着），读屏由 aria-disabled 说明。

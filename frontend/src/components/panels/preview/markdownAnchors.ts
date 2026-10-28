@@ -170,6 +170,13 @@ export function clearMarks(root: HTMLElement | null): void {
  *  `mark`——点它不开评论栏，按字找位置时也不该把它当正文。 */
 export const PIN_ATTR = 'data-pending-pin'
 
+/** 正文里不参与「按字找位置」和「取原文/前后文」的东西挂这个属性。
+ *
+ *  正文是 `MarkdownView` 渲染出来的，而标记和序号是我们从外面插进去的：`collectText`
+ *  跳过挂了这个属性的元素，`quoteFromSelection`/`contextAround` 取出的原文也不含它们。
+ *  没有它的话，读者选一句正好跨过一颗序号时，交给芝士的原文里会多一个数字。 */
+export const ANCHOR_IGNORE_ATTR = 'data-anchor-ignore'
+
 /** 把上一轮挂上去的序号拆掉。和 `clearMarks` 分开：两种标记谁先画谁后画都要拆干净，
  *  而 `clearMarks` 只认 `MARK_ATTR`，挂了序号不拆就会越积越多。 */
 export function clearPins(root: HTMLElement | null): void {

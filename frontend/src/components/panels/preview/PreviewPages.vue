@@ -472,8 +472,8 @@ function onSelect() {
   const spot =
     canvasBox && canvasBox.width > 0 && canvasBox.height > 0
       ? {
-          x: Math.min(1, Math.max(0, (rect.left - canvasBox.left) / canvasBox.width)),
-          y: Math.min(1, Math.max(0, (rect.top - canvasBox.top) / canvasBox.height)),
+          x: ratio((rect.left - canvasBox.left) / canvasBox.width),
+          y: ratio((rect.top - canvasBox.top) / canvasBox.height),
         }
       : {}
   // 有身份就走幻灯片那条结构化出口：同一个锚点、同一份版本，两侧文字帮受话人分辨同

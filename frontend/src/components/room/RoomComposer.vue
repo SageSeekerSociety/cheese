@@ -118,6 +118,10 @@ const draft = defineModel<string>({ required: true })
 // 发送键写清这一下带几条；没有这个（私聊、别处的输入框）就照旧。
 const pending = inject(PENDING_NOTES, null)
 const pendingCount = computed(() => pending?.notes.value.length ?? 0)
+/** 这一下按发送键真的会带走几条批注：带着附件时走的是另一条路（附件 + 正文），那一下
+ *  不包含这一批，所以发送键不能写「含 N 条批注」——写了就是承诺它做不到的事。带附件
+ *  时那批仍旧攒着，由托盘上的「全部发送」发。 */
+const sendableCount = computed(() => (props.atts.length ? 0 : pendingCount.value))
 /** 光标在正文里的位置（第几个字符前面）。 */
 const caret = ref(draft.value.length)
 
@@ -508,8 +512,14 @@ function sendDraft(opts?: { summon?: boolean }) {
     const summary = expandMentions(draft.value)
     if (pending?.send(summary)) {
       draft.value = ''
+      // 引用条和正文一样，是这一条消息带着的东西：这一批发出去就算用掉了。走
+      // `emit('send')` 那条老路时由 `useChatComposer` 清（它调 `clearDraftQuote`），
+      // 这条捷径绕过了它——不清的话，选着的那一处会搭在下一条消息上。
+      emit('clear-quote')
       return
     }
+    // 没发出去（对话栏那一刻收不下）就往下走老路：正文里的字照发，这一批留着。
+    // 不让人以为按了没反应。
   }
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
@@ -661,7 +671,7 @@ defineExpose({
         v-model:caret="caret"
         class="composer-input"
         :names="chipNames"
-        :placeholder="pendingCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : hint"
+        :placeholder="sendableCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : hint"
         :label="hint"
         :title="keysTitle"
         @keydown="onComposerKey"
@@ -673,7 +683,7 @@ defineExpose({
         :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
-        :pending-count="pendingCount"
+        :pending-count="sendableCount"
         :show-image-picker="!mdAndUp"
         :enter-sends="enterSends"
         :can-checklist="!!postChecklist"
@@ -738,6 +748,12 @@ defineExpose({
      12px 就是那两个类本来给的值。
      手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+/* 待发篮和输入框之间那一道缝：`.composer` 是纯块级（没有 gap），不加这一条两块的
+   描边会贴在一起，看着像一个盒子里挤了两块东西。只给篮子加，别动 `.composer`——
+   上面那条提示条是贴着输入框圆角顶的，拉开缝那对圆角就不成立了。 */
+.composer-pending {
+  margin-bottom: 8px;
 }
 /* 输入框上方的提示条：贴在盒子顶上的一片，安静的底。同一时刻只有一条（模板里是
    v-if 链），所以它们用同一种样子——语音没成、长文转附件、@ 了频道外的人。 */

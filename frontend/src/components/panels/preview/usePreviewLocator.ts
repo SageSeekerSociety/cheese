@@ -323,7 +323,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       void pageLocator.send(note)
       return
     }
-    if (queued.value.length > 0) {
+    // 卡片主按钮写着「全部发送（N+1）」时，这一下发的必须是整批：判据要和那颗键写字的
+    // 判据同一条（`queuedCount`，共享篮优先），不是本格自己那一条——共享篮时
+    // `queued.value` 永远是空的，用它会只发当前这一处、把篮里那几条留成没发出去。
+    if (queuedCount.value > 0) {
       sendQueued()
       return
     }

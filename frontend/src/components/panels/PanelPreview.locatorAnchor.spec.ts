@@ -207,3 +207,81 @@ it('「加入待发」把这一处加进话题页那一份待发篮，不是本�
   expect([...strip!.querySelectorAll('button')].map((b) => b.textContent?.trim())).not.toContain('全部发送（1）')
   width.mockRestore()
 })
+
+it('篮里已经有几条时，卡片主按钮那一下发的是整批，不是当前这一处', async () => {
+  // 那颗键写着「全部发送（N+1）」，点下去必须整批发：按 `queuedCount` 分流。用本格
+  // 自己那条 `queued` 判的话（共享篮时它永远是空的），只会发当前这一处，篮里那几条
+  // 留着没发，而读者看到的是「已经整批发完了」。
+  const send = vi.fn(() => true)
+  const pending = usePendingNotes(send)
+  pending.add({
+    file: '说明.md',
+    version: '',
+    where: '开头',
+    quote: '甲',
+    text: '先攒的一条',
+    audience: 'cheese',
+    message: '先攒的那条消息',
+  })
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  const md = ui.getByTestId('markdown')
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  await fireEvent.mouseUp(md)
+  await fireEvent.click(await waitFor(() => ui.getByTestId('locator-arm')))
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.update(field, '这一处也要改')
+  // 主按钮这时写的就是「全部发送（2）」。
+  const sendAll = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '全部发送（2）')!
+  expect(sendAll).toBeTruthy()
+  await fireEvent.click(sendAll)
+  await waitFor(() => expect(send).toHaveBeenCalled())
+  // 发出去的那一条同时含先攒的那句和当前这一处，说明走的是整批那条路。
+  const sent = send.mock.calls[0][0] as string
+  expect(sent).toContain('先攒的那条消息')
+  expect(sent).toContain('这一处也要改')
+  expect(pending.notes.value).toHaveLength(0)
+  width.mockRestore()
+})
+
+it('篮里别的文件上的那几处不在这份正文里找序号', async () => {
+  // 篮是整间房一份，换文件时不清空。按字找位置只在这一份正文里找——拿着别的文件上的
+  // 一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧同文的那句话上。
+  const pending = usePendingNotes(() => true)
+  // 同一句原文，但说的是另一份文件。
+  pending.add({
+    file: '别的.md',
+    version: '',
+    where: '开头',
+    quote: '失败以后重试 3 次。',
+    text: '改一下',
+    audience: 'cheese',
+    message: 'm',
+    anchor: { kind: 'text-range', text: '失败以后重试 3 次。', heading: null, prefix: '', suffix: '' },
+  })
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  await waitFor(() => ui.getByTestId('markdown'))
+  // 等正文画出来（序号要等它渲染完才有地方挂）。
+  await waitFor(() => expect(ui.getByTestId('markdown').querySelector('p')).toBeTruthy(), { timeout: 5000 })
+  await new Promise((r) => setTimeout(r, 50))
+  expect(ui.container.querySelector('.pending-pin')).toBeNull()
+  // 而这一份文件自己那一条是挂得上去的：换一个文件名就画。
+  pending.add({
+    file: '说明.md',
+    version: '',
+    where: '开头',
+    quote: '失败以后重试 3 次。',
+    text: '改一下',
+    audience: 'cheese',
+    message: 'm',
+    anchor: { kind: 'text-range', text: '失败以后重试 3 次。', heading: null, prefix: '', suffix: '' },
+  })
+  await waitFor(() => expect(ui.container.querySelector('.pending-pin')).toBeTruthy())
+  width.mockRestore()
+})

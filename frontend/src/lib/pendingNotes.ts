@@ -9,11 +9,14 @@
 // 内容按「看得见就够」存：位置、原文、批注文字、去处，加上已经拼好的那条消息文本
 // （发出去的那句话就是它，预览那边怎么拼的、这里原样存着，不重拼）。
 import type { InjectionKey, Ref } from 'vue'
-import type { ChatAttachment } from '@/cx_types'
 
 import { ref } from 'vue'
 
-/** 攒着的这一条要去哪：交给芝士改，还是只挂成评论。 */
+/** 攒着的这一条要去哪：交给芝士改，还是只挂成评论。
+ *
+ *  今天 `queueLocator` 只往里放 `'cheese'`——「加入待发」那颗键只在去处是芝士时出现，
+ *  只留评论的当场就挂上去了（见 `usePreviewLocator`）。这一档留着是因为去处菜单马上要
+ *  多一项「问个人芝士（私聊）」，那时攒着的就不止交给房间芝士这一种了。 */
 export type PendingAudience = 'cheese' | 'comment'
 
 /** 这一条指着文件里的哪儿——正文里那颗序号 pin 靠它找回来。
@@ -44,8 +47,6 @@ export interface PendingNote {
   message: string
   /** 文件里的位置：正文里按它画序号 pin。拿不到就是 undefined，那一处不画 pin。 */
   anchor?: PendingAnchor
-  /** 图上圈过东西时随行带的那张合成图。 */
-  attachments?: ChatAttachment[]
 }
 
 export interface PendingNotesApi {
@@ -108,7 +109,12 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
     const message = composePending(notes.value, summary)
     if (!message.trim()) return false
     if (!sendMessage(message)) return false
-    notes.value = []
+    // 发出去的只是 `composePending` 收进去的那几条（交给芝士的）。今天篮里只有这一
+    // 种，整批清掉等于清掉发出去的那几条；真攒进只挂评论的（去处菜单加「问个人芝士」
+    // 之后）时，那几条**不能**跟着清——它们没经对话发出去，清掉就是无声地丢。所以
+    // 按发出去的那几条逐个删，不整批清。
+    const sent = new Set(notes.value.filter((note) => note.audience === 'cheese').map((note) => note.id))
+    notes.value = notes.value.filter((note) => !sent.has(note.id))
     return true
   }
   return { notes, add, remove, clear, send }

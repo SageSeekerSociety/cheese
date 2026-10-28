@@ -109,3 +109,15 @@ it('「全部发送」把攒着的这一批合成一条发出去，发完篮清�
   await ui.rerender({})
   expect(ui.queryByTestId('pending-notes-list')).toBeNull()
 })
+
+it('对话栏没收下时说一句，别让人以为按了没反应', async () => {
+  const api = usePendingNotes(() => false)
+  const { ui } = mount(api)
+  api.add(note())
+  await ui.rerender({})
+  await fireEvent.click(ui.getByTestId('pending-notes-send-all'))
+  await ui.rerender({})
+  expect(ui.getByRole('alert').textContent).toContain('还留着')
+  // 这一批留着，没被悄悄丢掉。
+  expect(ui.getAllByTestId('pending-note')).toHaveLength(1)
+})

@@ -246,7 +246,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       <span>{{ t('work.room.preview.addNote') }}</span>
     </button>
     <div
-      v-else-if="(target && !armed) || queuedCount"
+      v-else-if="(target && !armed) || (queuedCount && !target)"
       ref="card"
       class="locator"
       data-locator-ui
