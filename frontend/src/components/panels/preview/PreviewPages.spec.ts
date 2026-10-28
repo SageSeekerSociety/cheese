@@ -38,8 +38,32 @@ vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
       destroy: () => {},
     }
   }
+  /** 假的文字层：这一页有没有字由 `streamTextContent` 说了算，有就往容器里写一点。
+   *  真的 pdf.js 也是这样——扫描件的页照样建出一层，只是里面一个字都没有。
+   *
+   *  写的是「这一页的正文」这五个字，测试要另摆自己的字时把这一层清掉（组件不认得
+   *  这些字，它只数有没有）。 */
   class TextLayer {
-    async render() {}
+    private container: HTMLElement
+    private source: { hasText?: boolean }
+    constructor({
+      container,
+      textContentSource,
+    }: {
+      container: HTMLElement
+      textContentSource: { hasText?: boolean }
+    }) {
+      this.container = container
+      this.source = textContentSource
+    }
+    async render() {
+      if (!this.source?.hasText) return
+      this.container.textContent = '这一页的正文'
+      // happy-dom 量不出布局：这一层的框由测试摆出来，键盘那条路才有「一行」可走。
+      // 真 pdf.js 里是它按每一段算好位置写进样式，量到的是同一件事。
+      this.container.getBoundingClientRect = () =>
+        ({ left: 20, top: 40, width: 300, height: 12, right: 320, bottom: 52, x: 20, y: 40 }) as DOMRect
+    }
   }
   return { GlobalWorkerOptions: {}, getDocument, TextLayer, version: 'test' }
 })
@@ -53,8 +77,14 @@ vi.mock('@/lib/previewNarrow', async () => {
   return { usePreviewNarrow: () => ({ narrow: computed(() => false), measured: computed(() => true) }) }
 })
 
-/** 一页假的：viewport 与 render 都够组件把画布造出来。 */
-function page(number: number) {
+/** 一页假的：viewport 与 render 都够组件把画布造出来。
+ *
+ *  `hasText` 说这一页有没有可选的文字——假的那一层按它写不写。真 pdf.js 里扫描件的
+ *  页照样有一层文字层，里面一个字也没有。
+ *
+ *  这些用例都当有文字：没写这一项时 `hasText` 是 `undefined`，假文字层就不写东西，
+ *  「有没有字」的判据便落到「没有」。 */
+function page(number: number, hasText = true) {
   return {
     number,
     getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }),
@@ -62,7 +92,7 @@ function page(number: number) {
       pdf.renders += 1
       return { promise: Promise.resolve() }
     },
-    streamTextContent: () => ({}),
+    streamTextContent: () => ({ hasText }),
   }
 }
 
@@ -72,6 +102,24 @@ const DOCUMENT = { numPages: 2, getPage: (n: number) => Promise.resolve(page(n))
 const ONE_BAD_PAGE = {
   numPages: 2,
   getPage: (n: number) => (n === 2 ? Promise.reject(new Error('页流损坏')) : Promise.resolve(page(n))),
+}
+
+/** 第一页是扫描件（整页一张图，没有文字层），第二页有文字。 */
+const SCANNED_FIRST = {
+  numPages: 2,
+  getPage: (n: number) => Promise.resolve(page(n, n !== 1)),
+}
+
+/** 第二页是扫描件：一份文档里夹一两页扫描件是常事。 */
+const SCANNED_MIDDLE = {
+  numPages: 3,
+  getPage: (n: number) => Promise.resolve(page(n, n !== 2)),
+}
+
+/** 整份都是扫描件。 */
+const ALL_SCANNED = {
+  numPages: 2,
+  getPage: (n: number) => Promise.resolve(page(n, false)),
 }
 
 /** 浏览器的 ResizeObserver 在 observe() 时会立刻回调一次 —— 这一条就是被它绊倒的。 */
@@ -92,6 +140,9 @@ function zoomBrowserTo(value: number) {
 function rows(container: Element, number: number, texts: string[], height = 12, gap = 6) {
   const page = container.querySelector(`[data-page="${number}"]`) as HTMLElement
   const host = (page.querySelector('.pv__canvas') as HTMLElement) ?? page
+  // 假的文字层自己写过一句「这一页的正文」，这一条要的是这里摆的那几行：先清掉，
+  // 不然两边的字会一起被选中。
+  host.replaceChildren()
   const layer = document.createElement('div')
   layer.className = 'pv-text'
   for (const [i, text] of texts.entries()) {
@@ -659,6 +710,155 @@ describe('页上已有的评论标记', () => {
   })
 })
 
+describe('扫描件：一页是一张图，没有文字可选', () => {
+  // 选区是跨用例留着的：上一条留下的那一段会让「该是空的」那几条看不出真假。
+  beforeEach(() => window.getSelection()?.removeAllRanges())
+
+  /** 打开一份文档，等页都画出来。 */
+  async function shown(doc = SCANNED_FIRST) {
+    const ui = mount()
+    await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+    pdf.resolveDoc?.(doc)
+    await waitFor(() => expect(ui.container.querySelectorAll('canvas')).toHaveLength(doc.numPages))
+    return ui
+  }
+
+  /** 键盘要走到这一页，得给它一个框和一句「滚到这儿」（happy-dom 两样都量不出来）。 */
+  function reachable(container: Element, number: number) {
+    const page = container.querySelector(`[data-page="${number}"]`) as HTMLElement
+    page.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 400, height: 800, right: 400, bottom: 800, x: 0, y: 0 }) as DOMRect
+    page.scrollIntoView = () => {}
+    return page
+  }
+
+  /** 用键盘把焦点给到某一页。 */
+  async function tabTo(page: HTMLElement) {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+    await fireEvent.focus(page)
+  }
+
+  /** 选中的那一段落在第几页。
+   *
+   *  happy-dom 里 `activeElement` 不跟着 `focus()` 走，所以不用它判「走到哪一页了」——
+   *  选区落在哪个页框里，是同一件事更靠得住的说法。 */
+  function pageOfSelection(): string | null {
+    const node = window.getSelection()?.anchorNode
+    let el: Element | null = node?.nodeType === 1 ? (node as Element) : node?.parentElement ?? null
+    while (el && !el.hasAttribute('data-page')) el = el.parentElement
+    return el?.getAttribute('data-page') ?? null
+  }
+
+  it('没有文字的页说清为什么选不中，并指出还能指位置', async () => {
+    const ui = await shown()
+    const page = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    await waitFor(() => expect(page.querySelector('.pv__notext')).toBeTruthy())
+    expect(page.querySelector('.pv__notext')?.textContent).toContain('选不中文字')
+    expect(page.textContent).toContain('指位置可以')
+  })
+
+  it('读屏也听得到这一句：挂在页框的说明上，不只是画在屏幕上', async () => {
+    const ui = await shown()
+    const page = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    await waitFor(() => expect(page.getAttribute('aria-description')).toBeTruthy())
+    expect(page.getAttribute('aria-description')).toContain('选不中文字')
+  })
+
+  it('有文字的页不挂这一句：这一句只对说得出「这里没字」的页成立', async () => {
+    const ui = await shown()
+    const page = ui.container.querySelector('[data-page="2"]') as HTMLElement
+    await new Promise((r) => setTimeout(r, 300))
+    expect(page.querySelector('.pv__notext')).toBeNull()
+    expect(page.getAttribute('aria-description')).toBeNull()
+  })
+
+  it('还没画出来的页不下结论：画完之前不挂这一句', async () => {
+    const ui = mount()
+    await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+    pdf.resolveDoc?.(SCANNED_FIRST)
+    // 页框先建出来（照第一页的大小占位），文字层还要等一会儿。
+    await waitFor(() => expect(ui.container.querySelector('[data-page="1"]')).toBeTruthy())
+    const page = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    expect(page.querySelector('.pv-text')).toBeNull()
+    expect(page.querySelector('.pv__notext')).toBeNull()
+    await waitFor(() => expect(page.querySelector('.pv__notext')).toBeTruthy())
+  })
+
+  it('重排之后这一句跟着撤掉，再按新的文字层重新判一次', async () => {
+    // 宽度一变就整份重画，文字层全换掉。不把上一轮的结论作废，屏上会留着一句
+    // 「这一页是图片」——而那时纸上的字已经能选了。
+    const flip = { text: false }
+    const ui = mount()
+    await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))
+    pdf.resolveDoc?.({
+      numPages: 1,
+      getPage: (n: number) => Promise.resolve(page(n, flip.text)),
+    })
+    await waitFor(() => expect(ui.container.querySelector('.pv__notext')).toBeTruthy())
+
+    // 这一页后来有了文字层（同一份文件重画、或者读者换了这一页的来源）。重排会把
+    // 文字层整个换掉，这一句得跟着重新判一次。
+    flip.text = true
+    resize?.()
+    await new Promise((r) => setTimeout(r, 320))
+
+    await waitFor(() => expect(ui.container.querySelector('.pv__notext')).toBeNull())
+  })
+
+  it('键盘落到扫描件那一页时，走到后面第一页有文字的', async () => {
+    const ui = await shown()
+    await new Promise((r) => setTimeout(r, 300))
+    const first = reachable(ui.container, 1)
+    reachable(ui.container, 2)
+    await tabTo(first)
+    // 扫描件那一页没有行可选；焦点和光标应该落在第 2 页那一行上。
+    await waitFor(() => expect(window.getSelection()?.toString()).toBe('这一页的正文'))
+    expect(document.activeElement).toBe(ui.container.querySelector('[data-page="2"]'))
+  })
+
+  it('整份都是扫描件时停在原地，不来回跳', async () => {
+    const ui = await shown(ALL_SCANNED)
+    await new Promise((r) => setTimeout(r, 300))
+    reachable(ui.container, 1)
+    reachable(ui.container, 2)
+    await tabTo(ui.container.querySelector('[data-page="1"]') as HTMLElement)
+    // 前后都没有有文字的页：不选任何东西，也不把焦点甩到别处。
+    expect(window.getSelection()?.toString()).toBe('')
+    // 键盘那条路只认「Tab 出来之后焦点落在哪一页」——`keyboardNav` 已经记成键盘；
+    // 这里确认第 2 页没有被当成本该去的地方（`onPageFocus` 只往有文字的页走）。
+    expect(ui.container.querySelector('[data-page="2"] .pv-text')?.textContent ?? '').toBe('')
+  })
+
+  it('下一页是扫描件时，上下键跳过它走到再下一页', async () => {
+    const ui = await shown(SCANNED_MIDDLE)
+    await new Promise((r) => setTimeout(r, 300))
+    for (const n of [1, 2, 3]) reachable(ui.container, n)
+
+    const first = ui.container.querySelector('[data-page="1"]') as HTMLElement
+    await tabTo(first)
+    expect(window.getSelection()?.toString()).toBe('这一页的正文')
+
+    // 下：第 2 页是扫描件，没有行可选，直接落到第 3 页——看选中的落点在哪一页
+    // （`activeElement` 在 happy-dom 里不跟着 `focus()` 走，只看选区的锚点在哪一页）。
+    await fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(pageOfSelection()).toBe('3')
+  })
+
+  it('往回走时上面没有有文字的页，就留在原地不动', async () => {
+    const ui = await shown()
+    await new Promise((r) => setTimeout(r, 300))
+    reachable(ui.container, 1)
+    const second = reachable(ui.container, 2)
+    await tabTo(second)
+    expect(pageOfSelection()).toBe('2')
+
+    // 往上：第 1 页是扫描件，再上面没有了，选中的那一行留着不动。
+    await fireEvent.keyDown(second, { key: 'ArrowUp' })
+    expect(pageOfSelection()).toBe('2')
+    expect(window.getSelection()?.toString()).toBe('这一页的正文')
+  })
+})
+
 describe('键盘选字：一行一格', () => {
   // 浏览器的选区是跨用例留着的：上一条留下的那一段会让「该是空的」那几条看不出真假。
   beforeEach(() => window.getSelection()?.removeAllRanges())
@@ -749,16 +949,6 @@ describe('键盘选字：一行一格', () => {
     expect(window.getSelection()?.toString()).toBe('第四行的字')
     await press(ui.page, 'ArrowDown')
     expect(window.getSelection()?.toString()).toBe('第二页的头一行')
-  })
-
-  it('页里还没有文字层时按上下键不动作，也不报错', async () => {
-    const ui = await opened()
-    await new Promise((r) => setTimeout(r, 300))
-    const page = ui.container.querySelector('[data-page="1"]') as HTMLElement
-    page.scrollIntoView = () => {}
-    await tabTo(page)
-    await press(page, 'ArrowDown')
-    expect(window.getSelection()?.toString()).toBe('')
   })
 
   it('Escape 放下选中的那一段', async () => {

@@ -124,5 +124,6 @@
   "modeViewTitle": "浏览模式（快捷键 1）",
   "modeNoteTitle": "批注模式（快捷键 2）：选择内容就地添加批注",
   "modeEditTitle": "编辑模式（快捷键 3）",
-  "modeEditBlocked": "这一份不能就地改；改用批注交给芝士"
+  "modeEditBlocked": "这一份不能就地改；改用批注交给芝士",
+  "pageNoText": "这一页是图片，选不中文字；指位置可以"
 }

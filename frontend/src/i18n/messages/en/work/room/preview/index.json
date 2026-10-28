@@ -124,5 +124,6 @@
   "modeViewTitle": "View mode (shortcut 1)",
   "modeNoteTitle": "Annotate mode (shortcut 2): select something and write a note on it",
   "modeEditTitle": "Edit mode (shortcut 3)",
-  "modeEditBlocked": "This file cannot be edited in place; use an annotation instead"
+  "modeEditBlocked": "This file cannot be edited in place; use an annotation instead",
+  "pageNoText": "This page is an image, so there's no text to select. You can still point at a spot."
 }
