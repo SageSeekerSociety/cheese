@@ -26,7 +26,43 @@ export interface PreviewFrame {
   runtimeError?: string
   /** 这一份资源允许等多久，见 `navigationBudget()`。不填＝默认那档。 */
   budgetMs?: number
+  /** 帧里的运行时桥报来的此刻地址：应用里点链接、SPA 改路由都跟着变。没装桥的页面
+   *  一直不给，地址栏退回显示入口。 */
+  href?: string
+  title?: string
+  /** 能不能后退、前进：帧说得出（Navigation API）就照它，说不出由这一层自己数。 */
+  canBack?: boolean
+  canForward?: boolean
+  /** 这一份文档里有运行时桥在应答：地址栏、后退前进、快照都要它。 */
+  bridged?: boolean
 }
+
+/** 帧里那一页的静态快照：渲染后的 DOM，样式内联、脚本和外链拿掉（见运行时桥的
+ *  `snapshotHtml`）。应用睡着时右栏拿它顶上。 */
+export interface FrameSnapshot {
+  html: string
+  href: string
+  title: string
+  viewport: { w: number; h: number }
+}
+
+/** 这一帧是为哪一件产物授权的：身份串的第 3 项（见 `currentPreview` 里怎么拼的）。
+ *
+ *  换件时状态里那个「现在这一件」的指针先动、新文档才在路上，这中间旧帧仍然在台前、
+ *  报上来的快照还是旧件的页面——存快照的人拿这个来确认「这张确实是那一件拍的」。
+ *  读不出来（还没授权、串坏了）就没有答案。 */
+export function frameArtifactId(frame: Pick<PreviewFrame, 'identity'> | null | undefined): string | null {
+  if (!frame?.identity) return null
+  try {
+    const parts = JSON.parse(frame.identity)
+    return Array.isArray(parts) && typeof parts[2] === 'string' ? parts[2] : null
+  } catch {
+    return null
+  }
+}
+
+/** 地址换了以后等多久再取快照：页面多半还在补数据，等它安静一点。 */
+const SNAPSHOT_SETTLE_MS = 2_000
 
 export type PreviewNavigation = 'idle' | 'authorizing' | 'navigating' | 'loaded' | 'failed'
 
@@ -82,6 +118,11 @@ export interface PreviewFrameOptions {
    * 报上来，画不画标注条、发不发引用由画的那一半决定。
    */
   onPick?: (pick: FramePick) => void
+  /**
+   * 应用那一帧留了一份静态快照时叫一次（装上、确认就绪、换了地址之后各取一次）。存哪儿
+   * 由取数那一层定；只有实时的应用才取——静态文件不会睡着。
+   */
+  onSnapshot?: (frame: PreviewFrame, snapshot: FrameSnapshot) => void
   /**
    * 第三方 View 里的表单点提交（`ui/message`）时叫一次。这一层只把解出来的文本报上来，
    * 拼成哪一条消息、发去哪儿是取数那一层和宿主的事。
@@ -155,6 +196,10 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
   // The bridge for a third-party View, when the displayed frame is one. Null for
   // the room's own documents, which use the injected `cheese-preview-runtime`.
   let mcpApp: McpAppBridge | null = null
+  // 帧说不出能不能后退时自己数的那一摞：这一份文档装上以后走过的地址，和此刻在第几个。
+  let trail: string[] = []
+  let trailAt = -1
+  let snapshotTimer: ReturnType<typeof setTimeout> | null = null
 
   function sendRuntimeHello(frame: PreviewFrame) {
     try {
@@ -205,9 +250,24 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
       // 帧里圈选了一处。形状不对的丢掉，别让另一份文档塞进来的怪东西走到标注条。
       const pick = framePick(data)
       if (pick) options.onPick?.(pick)
+    } else if (data.type === 'location' && typeof data.href === 'string') {
+      located(frame, data)
+    } else if (data.type === 'snapshot' && typeof data.html === 'string') {
+      if (data.html && frame.live) {
+        options.onSnapshot?.(frame, {
+          html: data.html,
+          href: frameText(data.href, 2048),
+          title: frameText(data.title, 200),
+          viewport: {
+            w: frameNumber((data.viewport ?? {}).w),
+            h: frameNumber((data.viewport ?? {}).h),
+          },
+        })
+      }
     } else if (data.type === 'ready') {
       frame.runtime = 'ready'
       frame.runtimeError = ''
+      scheduleSnapshot(frame)
     } else if (data.type === 'error' && typeof data.message === 'string') {
       frame.runtime = 'failed'
       frame.runtimeError = data.message.slice(0, 1000)
@@ -215,25 +275,66 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
   }
   window.addEventListener('message', runtimeMessage)
 
-  /** 让帧进/出圈选。帧那边的桥收到才描边收鼠标；没有注入桥的页面（应用）根本收不到，
-   *  那一档由宿主自己在 iframe 上盖一层。 */
-  function setPickMode(on: boolean) {
+  /** 帧报来一次地址。后退前进按钮亮不亮先听帧的（Navigation API），帧说不出就看自己数
+   *  的那一摞：走到上一格算后退、下一格算前进，别的都是新走一步、截掉前面的分叉。 */
+  function located(frame: PreviewFrame, data: Record<string, unknown>) {
+    const href = frameText(data.href, 2048)
+    frame.bridged = true
+    frame.href = href
+    frame.title = frameText(data.title, 200)
+    if (trail[trailAt] !== href) {
+      if (trail[trailAt - 1] === href) trailAt -= 1
+      else if (trail[trailAt + 1] === href) trailAt += 1
+      else {
+        trail = [...trail.slice(0, trailAt + 1), href]
+        trailAt = trail.length - 1
+      }
+    }
+    frame.canBack = typeof data.canBack === 'boolean' ? data.canBack : trailAt > 0
+    frame.canForward = typeof data.canForward === 'boolean' ? data.canForward : trailAt < trail.length - 1
+    scheduleSnapshot(frame)
+  }
+
+  function scheduleSnapshot(frame: PreviewFrame) {
+    if (!frame.live || !options.onSnapshot) return
+    if (snapshotTimer) clearTimeout(snapshotTimer)
+    snapshotTimer = setTimeout(() => {
+      snapshotTimer = null
+      if (displayed.value?.id === frame.id) command({ type: 'snapshot' })
+    }, SNAPSHOT_SETTLE_MS)
+  }
+
+  /** 发给屏幕上这一帧的一条命令，只认当前会话（帧那边也只认）。发不出去答 false。 */
+  function command(payload: Record<string, unknown>): boolean {
     const frame = displayed.value
-    if (!frame || !runtimeWindow) return
+    if (!frame || !runtimeWindow) return false
     try {
       runtimeWindow.postMessage(
-        {
-          channel: 'cheese-preview-runtime',
-          version: 1,
-          sessionId: runtimeSession,
-          type: 'pick-mode',
-          on: on === true,
-        },
+        { channel: 'cheese-preview-runtime', version: 1, sessionId: runtimeSession, ...payload },
         new URL(frame.url).origin
       )
+      return true
     } catch {
-      // A replaced or opaque document cannot receive it; nothing to turn on.
+      // A replaced or opaque document cannot receive it.
+      return false
     }
+  }
+
+  /** 让帧进/出圈选。帧那边的桥收到才描边收鼠标；没有注入桥的页面根本收不到，那一档由
+   *  宿主自己在 iframe 上盖一层。 */
+  function setPickMode(on: boolean) {
+    command({ type: 'pick-mode', on: on === true })
+  }
+
+  /** 后退、前进、重载帧里那一页：只对装了桥的文档有效，没装的答 false，由调用方退回
+   *  整帧重新加载。 */
+  function stepHistory(action: 'back' | 'forward' | 'reload'): boolean {
+    return !!displayed.value?.bridged && command({ type: 'history', action })
+  }
+
+  /** 让帧跳到同一个源里的另一个地址（地址栏里敲的那一个）。别的源帧那边会拒。 */
+  function goTo(path: string): boolean {
+    return !!displayed.value?.bridged && command({ type: 'navigate', path })
   }
 
   function observeConnection(instance: string | null | undefined, online: boolean): ConnectionChange {
@@ -355,10 +456,24 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
       incoming.value = null
       failedIdentity.value = null
       navigation.value = 'loaded'
+      // 换上的是另一帧：上一帧走过的那一摞不归它。
+      trail = []
+      trailAt = -1
     }
     // A document reload keeps its frame but must establish a fresh runtime session.
     frame.runtime = 'unconfirmed'
     frame.runtimeError = ''
+    // 新的文档要重新证明自己有桥；地址留着上一次的，等新文档报上来再换，免得地址栏一闪。
+    // 后退前进的亮不亮一起清掉：新文档还没报过来之前它是「不知道」，留着上一份文档的
+    // 值会让按钮亮着而按下去什么也不发生（命令要桥，没桥就答 false）。
+    frame.bridged = false
+    frame.canBack = false
+    frame.canForward = false
+    // 旧文档排下的那次「拍张快照」不算数了：帧 id 没变，光看 id 它照样会命中，拿新会话
+    // 向刚装上的文档要一张——那时的页面还在补数据，取到的半成品会被当成「最近一次成功
+    // 加载」存下来。新文档自己会按新的地址重排一次（`scheduleSnapshot`）。
+    if (snapshotTimer) clearTimeout(snapshotTimer)
+    snapshotTimer = null
     // 装成了：这一帧上一次的失败（如果有）到此为止。
     frame.navigationFailed = false
     runtimeWindow = event.target.contentWindow
@@ -391,6 +506,10 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     runtimeSession = ''
     mcpApp = null
     stopTimer()
+    if (snapshotTimer) clearTimeout(snapshotTimer)
+    snapshotTimer = null
+    trail = []
+    trailAt = -1
     displayed.value = null
     incoming.value = null
     failedIdentity.value = null
@@ -419,5 +538,7 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     pause,
     reset,
     setPickMode,
+    stepHistory,
+    goTo,
   }
 }

@@ -83,6 +83,28 @@ it('文件开头的那一段，前面没有字就是空的', () => {
   expect(quote.heading).toBe('')
 })
 
+it('攒着的那颗序号不进前后文：以后按字找位置才对得上', () => {
+  // 正文里那颗序号是我们插进去的（`PreviewMarkdown` 的 `pending-pin`）。`user-select: none`
+  // 挡得住 `Selection.toString()`，但前后文走的是 `Range.toString()`/`cloneContents()`，
+  // CSS 管不着——不挡住的话，存下来的前后文里会多一个凭空的数字，下一版按字找位置时
+  // 这一处就对不上了（`markdownAnchors` 的 `likeness`）。
+  const root = rootFrom('<p>失败以后重试 3 次，间隔一秒。</p>')
+  const node = root.querySelector('p')!.firstChild! as Text
+  // 在「重试」之后插一颗序号，就像预览里攒着一处时那样。
+  node.splitText(6)
+  const badge = document.createElement('span')
+  badge.setAttribute('data-anchor-ignore', '')
+  badge.textContent = '3'
+  node.parentNode!.insertBefore(badge, node.nextSibling)
+  // 在序号**之后**的那一段里选一句：序号正好落在它的前文里。
+  const after = badge.nextSibling as Text
+  // 这一段是「 3 次，间隔一秒。」——选中末尾那四个字。
+  const quote = quoteFromSelection(root, select(after, 5, 9))!
+  expect(quote.text).toBe('间隔一秒')
+  // 前文就是正文本身那一句：漏进序号的话它会变成「失败以后重试3 3 次，」。
+  expect(quote.prefix.endsWith('失败以后重试 3 次，')).toBe(true)
+})
+
 it('指不成的一律不出去：太短、没选、或者选到了这块正文以外', () => {
   const root = rootFrom('<p>失败以后重试 3 次。</p>')
   const node = root.querySelector('p')!.firstChild!

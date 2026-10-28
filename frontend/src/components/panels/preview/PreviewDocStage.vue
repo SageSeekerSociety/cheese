@@ -87,6 +87,13 @@ const props = defineProps<{
     id: string
     quote: { text: string; heading: string | null; prefix: string; suffix: string }
   }[]
+  /** 攒在待发篮里、还没发出去的那几处（Markdown 里在那一句话末尾挂一颗序号）。
+   *  `n` 是它在篮里的编号，和 tray 上那一行对得上。 */
+  pins?: readonly {
+    id: string
+    n: number
+    quote: { text: string; heading: string | null; prefix: string; suffix: string }
+  }[]
   /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
   pageAnchors?: readonly { id: string; page: number; x: number; y: number }[]
   /** 表格上已有的评论指着的那几格：工作表名 + A1 地址（`sheet-cell` 的形状）。 */
@@ -490,6 +497,7 @@ defineExpose({ snapshot, clearMark })
       v-else-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
       :anchors="anchors"
+      :pins="pins"
       :active-id="activeAnchor"
       @quote="emit('markdown-quote', $event)"
       @anchor="emit('anchor', $event)"

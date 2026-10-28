@@ -24,6 +24,7 @@ import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
+import { pageRatio } from './slidesContext'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -464,6 +465,18 @@ function onSelect() {
   const startEl = node.nodeType === 1 ? (node as Element) : node.parentElement
   const textLayer = startEl?.closest<HTMLElement>('.pv-text') ?? null
   const inOneLayer = !!textLayer && textLayer.contains(range.endContainer)
+  // 这一段的左上角在页上的比例位置：攒着一起发的那几处要靠它在页上画序号。
+  // 量画布不量页框（理由同 `onPoint`：1px 描边不算纸面）；量不到就不带。
+  const canvas = (host as HTMLElement).querySelector('canvas')
+  const canvasBox = canvas?.getBoundingClientRect()
+  const rect = range.getBoundingClientRect()
+  const spot =
+    canvasBox && canvasBox.width > 0 && canvasBox.height > 0
+      ? {
+          x: pageRatio((rect.left - canvasBox.left) / canvasBox.width),
+          y: pageRatio((rect.top - canvasBox.top) / canvasBox.height),
+        }
+      : {}
   // 有身份就走幻灯片那条结构化出口：同一个锚点、同一份版本，两侧文字帮受话人分辨同
   // 一句话在这一页的哪一处。没有身份（这一份还没核过）才退回那句不带版本的拼话——
   // 它指不回哪一版，但也不撒谎。
@@ -474,6 +487,7 @@ function onSelect() {
       scope: 'selection',
       context: { ...props.context },
       ...(inOneLayer && textLayer ? contextAround(textLayer, range) : {}),
+      ...spot,
     })
     return
   }
@@ -491,10 +505,6 @@ function setHost(slot: PageSlot, el: unknown) {
 function togglePointing() {
   pointing.value = !pointing.value
   if (!pointing.value) marked.value = null
-}
-
-function ratio(value: number): number {
-  return Math.min(1, Math.max(0, value))
 }
 
 /** 点了一下：算出它在那一页的哪个比例位置。
@@ -515,8 +525,8 @@ function onPoint(event: MouseEvent) {
   // 百分比定位在内边距框里，也就是画布那一块，两边量的得是同一个框。
   const box = canvas.getBoundingClientRect()
   if (!box.width || !box.height) return
-  const x = ratio((event.clientX - box.left) / box.width)
-  const y = ratio((event.clientY - box.top) / box.height)
+  const x = pageRatio((event.clientX - box.left) / box.width)
+  const y = pageRatio((event.clientY - box.top) / box.height)
   marked.value = { page: slot.number, x, y }
   emit('pin', { page: slot.number, x, y, context: props.context })
 }

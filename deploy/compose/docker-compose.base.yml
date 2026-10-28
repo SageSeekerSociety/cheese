@@ -498,7 +498,7 @@ services:
   # backend over this network. Optional like the renderers above: without it the
   # room still previews files, and says editing is unavailable.
   office-editor:
-    image: ${OFFICE_EDITOR_IMAGE:-onlyoffice/documentserver:8.3@sha256:0daa2d1d414d49286bfa9495fc0c936e7e73edaf8944a61102a7a6353a952297}
+    image: ${OFFICE_EDITOR_IMAGE:-onlyoffice/documentserver:9.4@sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b}
     container_name: cheese-office-editor
     environment:
       - JWT_ENABLED=true
