@@ -26,7 +26,7 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
@@ -35,6 +35,7 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
+import { KEPT_SELECTION } from './preview/keptSelection'
 import {
   FLOATING_MIN_WIDTH,
   type LocatorAnchor,
@@ -235,15 +236,22 @@ function placeLocator() {
       locatorFromSelection.value = false
   })
 }
+/** 底下的分页文档照这一份画底色：卡一打开，光标进输入框、页面上的选区就没了，
+ *  但读者还在看那一段。卡关掉（或者换了文件）就跟着清掉。 */
+const keptSelection = ref<Range | null>(null)
+provide(KEPT_SELECTION, keptSelection)
+
 watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
     locatorFromSelection.value = false
+    keptSelection.value = null
     return
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  keptSelection.value = anchorRange
   // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
   // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
   locatorFromSelection.value =

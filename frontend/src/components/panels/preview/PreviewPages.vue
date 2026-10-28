@@ -18,10 +18,11 @@
 import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
 import { usePinchZoom } from '@/composables/usePinchZoom'
 
+import { KEPT_SELECTION } from './keptSelection'
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
 import { pageRatio } from './slidesContext'
@@ -450,11 +451,17 @@ function onResize() {
 
 // 选中那段文字的底色自己画。浏览器给每一段文字各画一层，而文字层里相邻两段是搭着
 // 的，叠出来的那块比别处深——读者看到的就是「字旁边多出来一个框」。见那个文件。
+const keptSelection = inject(KEPT_SELECTION, null)
 const highlight = useSelectionHighlight({
   sheets: () => pages.value.map((slot) => slot.el).filter((el): el is HTMLElement => !!el),
   layerClass: 'pv-text',
   paintClass: 'pv-hl',
+  // 批注卡开着时页面上的选区已经收了：照定位条留下的那份副本接着画。
+  kept: () => keptSelection?.value ?? null,
 })
+// 卡一开一关，选区从「浏览器给的」换成「留下的副本」、再换回来：这两下都不一定有
+// selectionchange，得自己叫一次重画。
+watch(keptSelection ?? (() => null), () => nextTick(highlight.refresh))
 
 /** 这一页现在能不能带身份地指出去：画出来了、这一份是屏幕上那一版、也没有转不动。
  *

@@ -69,18 +69,43 @@ export function selectionPath(
     if (y + rect.height / 2 < -1 || y + rect.height / 2 > box.height + 1) continue
     kept.push({ top: y, bottom: y + rect.height, left: x, right: x + rect.width })
   }
-  return lineBands(kept)
-    .map((band) => {
+  const bands = lineBands(kept)
+  // 每行上下各放一点：底色是「划过去的一道」，不是贴着字画的一个框。放多少先看这一行
+  // 上下离隔壁行有多近（紧行距的 PDF 里宁可窄一点），再看两条带子之间还剩多少。
+  const pads = bands.map((band) => {
+    const h = band.bottom - band.top
+    return Math.max(0, Math.min((h * (BAND - 1)) / 2, roomAround(band, rows)))
+  })
+  // 相邻两行都在选区里时，两条带子各自放出去的那一截是加起来的。只按「离隔壁行多远」
+  // 算还是会叠上（量到过 1.5px 的重叠，看上去连成一块），所以再按带子之间剩下的空隙
+  // 收一次，保证中间至少留 1px。
+  for (let i = 1; i < bands.length; i++) {
+    const above = bands[i - 1]
+    const below = bands[i]
+    // 同一行上分左右两团的（两栏、两个格子）上下沿是一样的，`gap` 会是负的：那不是
+    // 上下相邻，跳过。
+    const gap = below.top - above.bottom
+    const shared = pads[i - 1] + pads[i]
+    if (gap > 0 && shared > gap - 1) {
+      const scale = Math.max(0, (gap - 1) / shared)
+      pads[i - 1] *= scale
+      pads[i] *= scale
+    }
+  }
+  return bands
+    .map((band, i) => {
       const h = band.bottom - band.top
-      // 上下各放一点：底色是「划过去的一道」，不是贴着字画的一个框。放多少还要看
-      // 上下两行离得多近：紧的行距里宁可窄一点，也不能把隔壁行的字一起涂了。
-      const pad = Math.max(0, Math.min((h * (BAND - 1)) / 2, roomAround(band, rows)))
+      const pad = pads[i]
       return `M${round(band.left)} ${round(band.top - pad)}h${round(band.right - band.left)}v${round(h + 2 * pad)}h${round(band.left - band.right)}Z`
     })
     .join(' ')
 }
 
-/** 这一行上下各能放出去多少还不碰着隔壁行。没有别的行（或者没给行表）时不限。 */
+/** 这一行上下各能放出去多少还不碰着隔壁行。没有别的行（或者没给行表）时不限。
+ *
+ *  **取一半**：紧挨着的两行常常都在选区里，两边的带子各往上/下放一截，加起来才是这条
+ *  行距。只看自己这一侧的话，两条带子会在中间叠上——量到过相邻两行的带子上下叠 1.5px，
+ *  看上去就连成了一块。各放一半、两头各留半像素，才是一行一条。 */
 function roomAround(band: Band, rows: readonly [number, number][] | undefined): number {
   if (!rows?.length) return Infinity
   let above = Infinity
@@ -89,8 +114,8 @@ function roomAround(band: Band, rows: readonly [number, number][] | undefined): 
     if (bottom <= band.top + 0.5) above = Math.min(above, band.top - bottom)
     else if (top >= band.bottom - 0.5) below = Math.min(below, top - band.bottom)
   }
-  // 两头都留 1px：挨着也不粘成一块。
-  return Math.max(0, Math.min(above, below) - 1)
+  const room = Math.min(above, below)
+  return room === Infinity ? Infinity : Math.max(0, (room - 1) / 2)
 }
 
 /** 按视觉行归并，再把同一行上挨着的块接成一条。 */
@@ -136,6 +161,10 @@ export type SelectionHighlightOptions = {
   layerClass: string
   /** 画出来的那一层用的类名，位置和颜色由各自的样式给。 */
   paintClass: string
+  /** 浏览器已经把选区收了、但读者还在写这一处批注时，按这一份（打开批注时留下的
+   *  副本）继续画。点开批注卡会把光标交给输入框，浏览器随即把页面上的选区收起来——
+   *  底色跟着灭掉的话，读者看不见自己在说哪一段。 */
+  kept?: () => Range | null
 }
 
 type Paint = { box: HTMLDivElement; path: SVGPathElement }
@@ -163,18 +192,9 @@ function rectsIn(range: Range, layer: HTMLElement): SelectionRect[] {
         // 这一段落在选区里的哪一截：两头各自和「选区的那一头」比文档顺序。
         // 这一段排在选区起点之后 → 从这一段的头开始收；排在起点之前 → 整段都在选区外。
         const from =
-          range.startContainer === node
-            ? range.startOffset
-            : follows(range.startContainer, node)
-              ? 0
-              : text.length
+          range.startContainer === node ? range.startOffset : follows(range.startContainer, node) ? 0 : text.length
         // 这一段排在终点之前 → 收到这一段的尾；排在终点之后 → 整段都在选区外。
-        const to =
-          range.endContainer === node
-            ? range.endOffset
-            : follows(range.endContainer, node)
-              ? 0
-              : text.length
+        const to = range.endContainer === node ? range.endOffset : follows(range.endContainer, node) ? 0 : text.length
         if (to > from) {
           sub.setStart(node, from)
           sub.setEnd(node, to)
@@ -208,7 +228,9 @@ function pageRows(layer: HTMLElement, box: DOMRect): [number, number][] {
     if (rect.width < MIN_SIDE || rect.height < MIN_SIDE) continue
     const top = rect.top - box.top
     const bottom = rect.bottom - box.top
-    const row = rows.find(([t, b]) => Math.min(b, bottom) - Math.max(t, top) > SAME_LINE * Math.min(b - t, bottom - top))
+    const row = rows.find(
+      ([t, b]) => Math.min(b, bottom) - Math.max(t, top) > SAME_LINE * Math.min(b - t, bottom - top)
+    )
     if (!row) rows.push([top, bottom])
     else {
       row[0] = Math.min(row[0], top)
@@ -250,7 +272,11 @@ export function useSelectionHighlight(options: SelectionHighlightOptions) {
    *  只认落在这些纸上的选区——外面的输入框里选字不该在纸上留一块橙。 */
   function refresh() {
     const selection = window.getSelection()
-    const range = selection && !selection.isCollapsed && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+    const live = selection && !selection.isCollapsed && selection.rangeCount > 0 ? selection.getRangeAt(0) : null
+    // 卡一打开光标就进了输入框，页面上的选区没了：这时按打开时留下的那份副本画，
+    // 读者写批注的整段时间里，他在说哪一段一直亮着。
+    const kept = live ? null : options.kept?.() ?? null
+    const range = live ?? (kept && !kept.collapsed ? kept : null)
     for (const sheet of options.sheets()) {
       const layer = sheet.querySelector<HTMLElement>(`.${options.layerClass}`)
       const paint = paints.get(sheet)
