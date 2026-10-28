@@ -17,6 +17,11 @@ import type { SlideSource } from './slidesContext'
 export interface PreviewViewProps {
   topicId: string | null
   submitQuestion?: SubmitPreviewQuestion
+  /** 私下问个人芝士：那一句只进读者和芝士那一条对话，不进这间房。
+   *
+   *  和 `submitQuestion` 同一条道理，能力由页面递下来——面板自己不碰那个全局 store，
+   *  它只发这一次意图。不给就是这一处没有这一项（没登录、或房东没有个人芝士）。 */
+  askPersonal?: (message: string) => void
   /** 标注图的上传：取数那一层给的能力。这一格只调它，自己不碰 fetch。 */
   uploadAnnotation?: UploadAnnotation
   /** 这一格是不是正显示着的那一页：收起来的那几页不接全局键（见 DesignImage）。 */
@@ -59,7 +64,6 @@ export interface PreviewViewProps {
   documentType: FileKind | null
   documentName: string
   isImageArtifact: boolean
-  downloadError: string
   docBytes: ArrayBuffer | null
   docIdentity?: DocumentIdentity | null
   docSnapshot?: DocumentSnapshot | null

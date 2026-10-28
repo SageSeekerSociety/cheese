@@ -83,7 +83,12 @@ vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
   default: {
     name: 'PreviewMarkdownLive',
     props: ['live'],
-    template: '<div data-testid="markdown-live" :data-path="live.editingPath.value" />',
+    emits: ['close'],
+    // 编辑器上那颗关闭键（真组件上也发这一个事件）：会话自己结束的那条路，走的
+    // 就是它——`editing` 那一份只看文件改不改得动，会话没了它还是 true。
+    template:
+      '<div data-testid="markdown-live" :data-path="live.editingPath.value">' +
+      '<button data-testid="live-close" @click="$emit(\'close\')">关闭</button></div>',
   },
 }))
 
@@ -177,27 +182,55 @@ function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n')
 
 it('offers edit on a markdown file, and hands the panel its live session', async () => {
   // 这一条盯的是「这一格真的把协同编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
-  // `live-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
+  // `live-edit`，这两条都会看不见——组件自己的单测直接挂 `PanelPreviewView`，看不到。
   editableMarkdown()
-  mount()
+  const ui = mount()
 
-  const button = await screen.findByTestId('edit-file')
-  await fireEvent.click(button)
+  // 编辑入口是文档条上的「改」那一段（原型里没有另一颗「编辑」键）。
+  const edit = await ui.findByTestId('preview-mode-edit')
+  expect((edit as HTMLButtonElement).disabled).toBe(false)
+  await fireEvent.click(edit)
 
-  // 点下去是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
-  const editor = await screen.findByTestId('markdown-live')
+  // 点了是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await ui.findByTestId('markdown-live')
   expect(editor.getAttribute('data-path')).toBe('output/说明.md')
 })
 
-it('手机上不摆这个按钮：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+it('切回「看」把协同编辑那一栏收掉：正文不再是编辑态', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+  await fireEvent.click(ui.getByTestId('preview-mode-view'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+})
+
+it('协同会话自己结束之后模式回到「看」：不然拖选什么都不弹，还没人知道为什么', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+
+  // 编辑器上那颗关闭键：会话收起来了，正文回到只读。
+  await fireEvent.click(ui.getByTestId('live-close'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+  // 模式跟着回到「看」——停在「改」的话，`usePreviewLocator` 会把每一次指认都吞掉，
+  // 而屏幕上没有任何东西说明为什么。
+  await waitFor(() => expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
+})
+
+it('手机上「改」那一段是灰的：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
   editableMarkdown()
   const width = window.innerWidth
   window.innerWidth = 400
   try {
-    mount()
-    // 正文画出来了，说明这一档确实上了屏；只是没有「编辑」。
+    const ui = mount()
+    // 正文画出来了，说明这一档确实上了屏；只是进不去「改」。
     await screen.findByTestId('markdown')
-    expect(screen.queryByTestId('edit-file')).toBeNull()
+    const edit = screen.getByTestId('preview-mode-edit') as HTMLButtonElement
+    expect(edit.disabled).toBe(true)
+    await fireEvent.click(edit)
+    expect(ui.queryByTestId('markdown-live')).toBeNull()
   } finally {
     window.innerWidth = width
   }
@@ -463,12 +496,14 @@ it('关掉编辑器之后这一页按新版本重取，期间把这份文件交�
   expect(await screen.findByTestId('pages')).toBeTruthy()
   expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
-  await fireEvent.click(screen.getByTestId('edit-file'))
+  await fireEvent.click(screen.getByTestId('preview-mode-edit'))
   // 编辑器里改的是房间里那一份，所以这一格之外也得有一份它的页签。
   expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
 
   await fireEvent.click(await screen.findByTestId('editor-close'))
   await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
+  // 对话框关了就回到只读：模式跟着关回「看」，否则接下来拖选什么都不弹。
+  await waitFor(() => expect(screen.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
 })
 
 it('恢复了一版之后这一页按新版本重取', async () => {

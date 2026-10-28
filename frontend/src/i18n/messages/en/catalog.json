@@ -407,7 +407,7 @@
     "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+      "note": "On top, what it points at (label + that sentence); below, an input and three exits: send to Cheese / ask your personal Cheese in private / comment only."
     },
     "s2": {
       "name": "This file takes no comments",

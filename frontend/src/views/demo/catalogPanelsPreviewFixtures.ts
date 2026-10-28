@@ -220,7 +220,6 @@ export function docStageProps(over: Record<string, unknown> = {}): Record<string
     docLoading: false,
     docError: '',
     docRendererMissing: false,
-    downloadError: '',
     revs: revisionsWith(),
     fileHistory: fileHistoryWith(),
     showHistory: false,
@@ -233,14 +232,18 @@ export function docStageProps(over: Record<string, unknown> = {}): Record<string
  *  真去调那个 composable 得在组件里（它要一份 props，还要一个卸载钩子），所以这里照
  *  它的形状搭一个：写成 `satisfies ImageRegionHandle`，它的形状一变得这里当场红。 */
 export function imageRegionWith(over: { src?: string; identity?: string } = {}): ImageRegionHandle {
+  const version = over.identity ?? '设计稿.png'
+  const identity = { topicId: DEMO_TOPIC, path: '设计稿.png', taskId: null, source: 'live' as const, version }
   return {
     imageSrc: ref(over.src ?? PREVIEW_IMAGE_SRC),
-    imageIdentity: computed(() => over.identity ?? '设计稿.png'),
+    imageIdentity: computed(() => version),
     selectionEnabled: computed(() => true),
     target: shallowRef<ImageRegionTarget | null>(null),
     capture: () => null,
     message: () => null,
     clear: () => {},
+    // 摆出来的这一份字节：真预览里它和屏上那张图是同一份快照，动图逐帧和框选都读它。
+    snapshot: shallowRef({ bytes: new ArrayBuffer(8), identity, sourceVersion: version }),
   } satisfies ImageRegionHandle
 }
 

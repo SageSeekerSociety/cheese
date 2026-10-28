@@ -4,6 +4,7 @@
 // 多大、滚到哪」有关，跟画了什么无关：测量结果 `geometry` 交给说明卡（region-note 插槽）
 // 定位，缩放与平移只改视图，不动笔画数据。
 import type { Ref } from 'vue'
+import type { CropBox, ImageAdjust } from '@/lib/imageEdit'
 import type { RasterRegion } from './designRegion'
 import type { NoteRect, RegionNoteGeometry } from './designRegionNotePosition'
 
@@ -11,6 +12,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { usePinchZoom } from '@/composables/usePinchZoom'
 
+import { displayPoint, ORIGINAL, sideways, sourcePoint } from '@/lib/imageEdit'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 export interface DesignViewportOptions {
@@ -24,6 +26,10 @@ export interface DesignViewportOptions {
   selectedRegion: Ref<RasterRegion | null>
   /** 按下的那一瞬：手上可能还挑着一笔，`.design-image__viewport` 的 pointerdown 先记焦点。 */
   beforePanStart: () => void
+  /** 屏幕上的图转过、翻过没有：转了 90° 时「适合视口」要按转完的宽度算。 */
+  adjust?: () => Pick<ImageAdjust, 'rotate' | 'flip'>
+  /** 裁掉了哪一块（按转好之后那张图的宽高比例）。版面只留裁完的那一块。 */
+  crop?: () => CropBox | null
 }
 
 export function useDesignViewport(options: DesignViewportOptions) {
@@ -33,33 +39,69 @@ export function useDesignViewport(options: DesignViewportOptions) {
   /** 里面那一层：真的滚的是它，clientWidth 决定「适合视口」的比例。 */
   const pane = ref<HTMLElement | null>(null)
   const available = ref(0)
+  const availableHeight = ref(0)
   const zoom = ref(1)
-  const fitted = ref(true)
+  /**
+   * 缩放是按哪一档算的。
+   *
+   * `fitv` 整张都看得见，`fitw` 按宽度铺满（超长截图要的就是这一档：按 `fitv` 会被压成
+   * 一条线），`actual` 一比一原图像素，`custom` 是按钮和捏合调出来的比例。
+   */
+  const zoomMode = ref<'fitv' | 'fitw' | 'actual' | 'custom'>('fitv')
+  const fitted = computed(() => zoomMode.value === 'fitv' || zoomMode.value === 'fitw')
   const geometry = ref<RegionNoteGeometry | null>(null)
   const spaceHeld = ref(false)
   const panning = ref(false)
+  /** 这一格滚到哪儿了、内容有多长——超长图右边那条定位用它。 */
+  const scroll = ref({ top: 0, height: 0, content: 0 })
   /** 窄处（手机）四周只留 8px，图铺满宽度。和样式里 `.is-narrow` 的内边距是同一个数。 */
   const { narrow } = usePreviewNarrow(pane)
   const gutter = computed(() => (narrow.value ? 8 : 16))
 
-  const scale = computed(() => {
-    if (!fitted.value) return zoom.value
-    const width = natural.value.width
-    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
-    return Math.min(1, Math.max(0, (available.value - 2 * gutter.value) / width))
-  })
-
-  const dimensions = computed(() =>
-    natural.value.width
-      ? {
-          width: `${natural.value.width * scale.value}px`,
-          height: `${natural.value.height * scale.value}px`,
-        }
-      : {}
+  /** 转 90°/270° 时，屏幕上那张图的宽高和原图对调。 */
+  const turned = computed(() => sideways(options.adjust?.() ?? ORIGINAL))
+  /** 屏幕上看到的那张图（没缩放前）的宽高。 */
+  const shown = computed(() =>
+    turned.value
+      ? { width: natural.value.height, height: natural.value.width }
+      : { width: natural.value.width, height: natural.value.height }
   )
 
+  const scale = computed(() => {
+    if (zoomMode.value === 'actual') return 1
+    if (zoomMode.value === 'custom') return zoom.value
+    const width = shown.value.width
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
+    const fitWidth = Math.min(1, Math.max(0, (available.value - 2 * gutter.value) / width))
+    // 「适应视口」还要装得下高度；没量到高度时退回按宽度装。
+    if (zoomMode.value === 'fitv' && availableHeight.value > 0) {
+      const room = availableHeight.value - 2 * gutter.value
+      return Math.min(fitWidth, Math.max(0.01, room / shown.value.height))
+    }
+    return fitWidth
+  })
+
+  /** 裁掉的那一块：版面只留这一块，剩下的不占地方。 */
+  const cropBox = computed(() => options.crop?.() ?? null)
+
+  const dimensions = computed(() => {
+    if (!natural.value.width) return {}
+    const crop = cropBox.value
+    return {
+      width: `${shown.value.width * scale.value * (crop?.w ?? 1)}px`,
+      height: `${shown.value.height * scale.value * (crop?.h ?? 1)}px`,
+    }
+  })
+
   let observer: ResizeObserver | null = null
+  let scrollCleanup: (() => void) | null = null
+  /** 滚到哪儿、内容多长。 */
+  let readScrollNow: (() => void) | null = null
   let frame = 0
+  // 内容多长变了不会触发 scroll 事件，也不会碰到 ResizeObserver（滚的那个元素自己没变，
+  // 变的是里面的 sheet）。裁一刀、清掉裁剪、换一档缩放都会这样，所以要盯着版面重读一次：
+  // 不重读，定位条那块窗口停在旧比例上，超长图裁短之后那条也还赖着不走。
+  watch([dimensions, scale], () => void nextTick(() => readScrollNow?.()), { flush: 'post' })
   function clippingAncestors(element: HTMLElement) {
     const clips: { element: HTMLElement; horizontal: boolean; vertical: boolean }[] = []
     for (let parent = element.parentElement; parent; parent = parent.parentElement) {
@@ -72,6 +114,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
   }
   function measure() {
     frame = 0
+    readScrollNow?.()
     const host = viewport.value
     const element = pane.value
     const selected = selectedBox.value
@@ -127,10 +170,22 @@ export function useDesignViewport(options: DesignViewportOptions) {
   }
   function setZoom(value: number) {
     zoom.value = Math.max(0.1, Math.min(3, value))
-    fitted.value = false
+    zoomMode.value = 'custom'
   }
   function fit() {
-    fitted.value = true
+    zoomMode.value = 'fitv'
+  }
+  /** 滚到整张的某一比例（0–1），定位条拖到哪儿就用它。 */
+  function scrollToRatio(ratio: number) {
+    const element = pane.value
+    if (!element) return
+    const travel = Math.max(0, element.scrollHeight - element.clientHeight)
+    element.scrollTop = Math.max(0, Math.min(travel, ratio * element.scrollHeight - element.clientHeight / 2))
+  }
+  /** 换一档：`fitv` 装得下整张、`fitw` 铺满宽度、`actual` 一比一、`custom` 用当前比例。 */
+  function setZoomMode(mode: 'fitv' | 'fitw' | 'actual' | 'custom') {
+    if (mode === 'custom') zoom.value = scale.value
+    zoomMode.value = mode
   }
   /** 缩放时钉住的那一点：原图上的哪个像素，要留在屏幕上的哪儿。 */
   let anchor: { clientX: number; clientY: number; naturalX: number; naturalY: number } | null = null
@@ -138,9 +193,21 @@ export function useDesignViewport(options: DesignViewportOptions) {
   function naturalAt(clientX: number, clientY: number) {
     const current = image.value
     const bounds = current?.getBoundingClientRect()
-    if (!current || !bounds?.width || !natural.value.width) return null
-    const before = bounds.width / natural.value.width
-    return { naturalX: (clientX - bounds.left) / before, naturalY: (clientY - bounds.top) / before }
+    if (!current || !bounds?.width || !bounds?.height || !natural.value.width) return null
+    const shownPoint = { x: (clientX - bounds.left) / bounds.width, y: (clientY - bounds.top) / bounds.height }
+    const source = sourcePoint(shownPoint, options.adjust?.() ?? ORIGINAL)
+    return { naturalX: source.x * natural.value.width, naturalY: source.y * natural.value.height }
+  }
+  /** 反过来：原图上的这个像素此刻在屏幕哪儿。 */
+  function screenOf(naturalX: number, naturalY: number) {
+    const current = image.value
+    const bounds = current?.getBoundingClientRect()
+    if (!bounds?.width || !bounds?.height || !natural.value.width || !natural.value.height) return null
+    const shownPoint = displayPoint(
+      { x: naturalX / natural.value.width, y: naturalY / natural.value.height },
+      options.adjust?.() ?? ORIGINAL
+    )
+    return { x: bounds.left + shownPoint.x * bounds.width, y: bounds.top + shownPoint.y * bounds.height }
   }
   /** 缩放到 `value`，原图上 `at` 那一点留在屏幕上 `to` 这一处。 */
   function zoomAt(value: number, at: { naturalX: number; naturalY: number }, to: { x: number; y: number }) {
@@ -212,13 +279,11 @@ export function useDesignViewport(options: DesignViewportOptions) {
     const pending = anchor
     anchor = null
     const host = pane.value
-    const current = image.value
-    if (!pending || !host || !current || !natural.value.width) return
-    const bounds = current.getBoundingClientRect()
-    const after = bounds.width / natural.value.width
-    if (!after) return
-    host.scrollLeft += bounds.left + pending.naturalX * after - pending.clientX
-    host.scrollTop += bounds.top + pending.naturalY * after - pending.clientY
+    if (!pending || !host) return
+    const at = screenOf(pending.naturalX, pending.naturalY)
+    if (!at) return
+    host.scrollLeft += at.x - pending.clientX
+    host.scrollTop += at.y - pending.clientY
   }
   /** 空格或中键按住拖动＝平移，和画布类应用一套手感。 */
   let pan: { x: number; y: number; left: number; top: number } | null = null
@@ -254,13 +319,26 @@ export function useDesignViewport(options: DesignViewportOptions) {
     pane,
     (element) => {
       observer?.disconnect()
+      scrollCleanup?.()
+      scrollCleanup = null
       if (!element) return
+      const readScroll = () => {
+        scroll.value = { top: element.scrollTop, height: element.clientHeight, content: element.scrollHeight }
+      }
       observer = new ResizeObserver(() => {
         available.value = element.clientWidth
+        availableHeight.value = element.clientHeight
+        readScroll()
         scheduleMeasure()
       })
+      element.addEventListener('scroll', readScroll, { passive: true })
+      scrollCleanup = () => element.removeEventListener('scroll', readScroll)
+      readScrollNow = readScroll
+      readScroll()
       observer.observe(element)
       for (const clip of clippingAncestors(element)) observer.observe(clip.element)
+      available.value = element.clientWidth
+      availableHeight.value = element.clientHeight
     },
     { flush: 'post' }
   )
@@ -274,6 +352,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
   })
   onBeforeUnmount(() => {
     observer?.disconnect()
+    scrollCleanup?.()
     if (frame) cancelAnimationFrame(frame)
     document.removeEventListener('scroll', scheduleMeasure, true)
     window.removeEventListener('resize', scheduleMeasure)
@@ -290,12 +369,18 @@ export function useDesignViewport(options: DesignViewportOptions) {
     zoom,
     fitted,
     dimensions,
+    cropBox,
     geometry,
     spaceHeld,
     panning,
     narrow,
     pinching,
     setZoom,
+    setZoomMode,
+    scrollToRatio,
+    scroll,
+    zoomMode,
+    availableHeight,
     fit,
     wheel,
     touchDown,

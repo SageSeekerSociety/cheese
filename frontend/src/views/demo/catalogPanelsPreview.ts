@@ -498,6 +498,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
           note: '这一处按不到',
           canComment: true,
+          canAskPersonal: true,
         },
         expect: '发给芝士',
       },
@@ -756,7 +757,8 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelDesignImage.s1.note')
         },
         props: { src: PREVIEW_IMAGE_SRC, alt: '示例图', identity: 'demo.png' },
-        expect: '适合视口',
+        // 缩放档位那一栏在第一行：认它最左那一档的名字。
+        expect: '适应视口',
       },
     ],
   },

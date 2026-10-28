@@ -35,6 +35,9 @@ export interface UsagePeriod {
 export interface UsageWindow {
   hours: number | null
   calendar: 'week' | 'month' | null
+  /** 这个窗口一共多少点、用了多少点。 */
+  credits_total: number
+  credits_used: number
   used_ratio: number
   /** 什么时候清零；按小时的窗口还没开始时为 `null`。 */
   resets_at: string | null

@@ -12,6 +12,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { FLOATING_MIN_WIDTH } from './preview/locatorAnchor'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
@@ -62,7 +63,6 @@ function props(path = 'output/说明.md', content = SOURCE) {
     documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' as const },
     documentName: '说明.md',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docLoading: false,
     docError: '',
@@ -81,9 +81,9 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges()
 })
 
-function mount(pending?: ReturnType<typeof usePendingNotes>) {
+function mount(pending?: ReturnType<typeof usePendingNotes>, over: Record<string, unknown> = {}) {
   return render(PanelPreviewView, {
-    props: props(),
+    props: { ...props(), ...over },
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: { VBtn: { template: '<button><slot /></button>' }, VIcon: true, VSpacer: true, VAlert: true },
@@ -143,7 +143,7 @@ async function selectFirstLine(ui: ReturnType<typeof mount>) {
 }
 
 it('面板窄到框只能贴底时，选中一段直接出卡，不先出按钮', async () => {
-  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(FLOATING_MIN_WIDTH - 1)
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
@@ -167,7 +167,7 @@ it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡�
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => ui.getByTestId('locator-arm'))
-  w = 400
+  w = FLOATING_MIN_WIDTH - 1
   window.dispatchEvent(new Event('resize'))
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
   width.mockRestore()
@@ -287,5 +287,75 @@ it('篮里别的文件上的那几处不在这份正文里找序号', async () =
     anchor: { kind: 'text-range', text: '失败以后重试 3 次。', heading: null, prefix: '', suffix: '' },
   })
   await waitFor(() => expect(ui.container.querySelector('.pending-pin')).toBeTruthy())
+  width.mockRestore()
+})
+
+// ---- 看 / 批注 / 改 三段（原型里那一段）----
+//
+// 三段说的是「现在鼠标按下去算什么」：看那一段里选中先在选区下浮一颗「添加批注」、点了
+// 才展开整张卡（两步，原型读模式）；批注那一段里选中直接出卡（一步，原型批注模式）。
+// 把 `locatorFromSelection` 那一句里的模式判断删掉，下面第一条会红。
+
+it('默认是「看」：选中先在选区下浮一颗「添加批注」，不直接弹卡', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  // 刚打开一份就是「看」，不用点任何东西。
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  await selectFirstLine(ui)
+  await waitFor(() => ui.getByTestId('locator-arm'))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  width.mockRestore()
+})
+
+it('切到「批注」：同一段选中直接出卡，不走那颗小按钮', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
+  await selectFirstLine(ui)
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  expect(ui.queryByTestId('locator-arm')).toBeNull()
+  width.mockRestore()
+})
+
+it('这一份改不了时「改」是灰的，点了不切过去', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  // markdown 只有在协同会话连上时才可改；这里没给 liveEdit，所以「改」不给。
+  const ui = mount()
+  const edit = ui.getByTestId('preview-mode-edit') as HTMLButtonElement
+  expect(edit.disabled).toBe(true)
+  await fireEvent.click(edit)
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('没翻开的那一格不吃快捷键：藏着的预览不该跟着换模式', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  // 工作区里没翻开的页是 `v-show` 藏着的，组件还挂着。看着别的页按时，这一格不该变。
+  const ui = mount(undefined, { active: false })
+  await fireEvent.keyDown(window, { key: '2' })
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('快捷键 2 切到批注，1 切回看', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.keyDown(window, { key: '2' })
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(window, { key: '1' })
+  expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
+  width.mockRestore()
+})
+
+it('在输入框里打字时，1/2/3 是那句话里的字，不切模式', async () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
+  await selectFirstLine(ui)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.keyDown(field, { key: '1' })
+  // 还停在「批注」：读者在写那句话，「1」是那句话里的字符。
+  expect(ui.getByTestId('preview-mode-note').getAttribute('aria-pressed')).toBe('true')
   width.mockRestore()
 })

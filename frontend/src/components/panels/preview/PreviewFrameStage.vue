@@ -25,6 +25,7 @@ import PreviewRegionPick from './PreviewRegionPick.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { readerText } from '@/lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
 import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
@@ -290,12 +291,11 @@ function reload() {
 function openTab() {
   openPreviewInNewTab(props.topicId, props.displayedFrame, props.path)
 }
+// 看源码是「读」，所以问的是 `head`：一份超出编辑器上限的网页源码也读得下去
+// （`content` 那时是 null，见 `textfile.text_payload`）。取法走 `readerText`，
+// 整份装得下、调用方只给了 `content` 时也读得出来。
 const canShowSource = computed(
-  () =>
-    !props.previewAppNote &&
-    !props.displayedFrame?.live &&
-    props.previewFile?.content !== null &&
-    !!props.previewFile?.content
+  () => !props.previewAppNote && !props.displayedFrame?.live && !!readerText(props.previewFile)
 )
 
 /** 条上那几件动作：宽时平铺成 BaseButton，窄时收进「…」里的一行。一处写、两处画，
@@ -502,7 +502,7 @@ watch(
       v-if="showSource && canShowSource"
       class="preview-source"
       data-testid="frame-source"
-      :source="previewFile?.content ?? ''"
+      :source="readerText(previewFile) ?? ''"
       language="xml"
       wrap
     />

@@ -39,19 +39,24 @@ function readPayload(event) {
       // 空间里的一道题目（后端 `task_notices`）：落到题目页。它的号叫 `spaceTaskId`，
       // `taskId` 说的是项目里的任务。
       // 个人芝士自己做的事（后端 `routine.personal`）：在待办页打开那段对话。
+      // 额度快用完了（后端 `usage.alerts`）：这一条没有房间，落到能处理它的那一页。
       url: data.assistantConversation
         ? `/inbox?assistant=${data.assistantConversation}`
         : data.spaceId && data.spaceTaskId
           ? `/spaces/${data.spaceId}/tasks/${data.spaceTaskId}`
-          : projectId && topicId && taskId
-            ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
-            : projectId && topicId && threadId
-              ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
-              : projectId && topicId
-                ? `/projects/${projectId}/topics/${topicId}`
-                : projectId && data.documentId
-                  ? `/projects/${projectId}/docs/${data.documentId}`
-                  : '/inbox',
+          : data.teamHandle
+            ? `/teams/${data.teamHandle}/credits`
+            : data.event === 'credit_warning' && projectId
+              ? `/projects/${projectId}/settings/environment`
+              : projectId && topicId && taskId
+                ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
+                : projectId && topicId && threadId
+                  ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
+                  : projectId && topicId
+                    ? `/projects/${projectId}/topics/${topicId}`
+                    : projectId && data.documentId
+                      ? `/projects/${projectId}/docs/${data.documentId}`
+                      : '/inbox',
     }
   } catch {
     return fallback

@@ -28,6 +28,8 @@ const props = withDefaults(
   defineProps<{
     topicId: string | null
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力，面板自己不碰那个全局 store。 */
+    askPersonal?: (message: string) => void
     projectId: string | null
     // This tab is the one on screen. Loads happen on the rising edge.
     active?: boolean
@@ -43,7 +45,14 @@ const props = withDefaults(
     /** 这间房的队友叫什么，见 `PreviewViewProps`。 */
     agentName?: string
   }>(),
-  { active: false, refreshTick: 0, path: null, submitQuestion: undefined, agentName: undefined }
+  {
+    active: false,
+    refreshTick: 0,
+    path: null,
+    submitQuestion: undefined,
+    askPersonal: undefined,
+    agentName: undefined,
+  }
 )
 const emit = defineEmits<{
   (e: 'loaded', artifactId: string | null): void
@@ -81,7 +90,6 @@ const {
   documentType,
   documentName,
   isImageArtifact,
-  downloadError,
   docBytes,
   docIdentity,
   docSnapshot,
@@ -148,6 +156,7 @@ function history(action: 'back' | 'forward' | 'reload') {
     ref="previewView"
     :topic-id="props.topicId"
     :submit-question="props.submitQuestion"
+    :ask-personal="props.askPersonal"
     :upload-annotation="uploadAnnotation"
     :active="props.active"
     :project-id="props.projectId"
@@ -178,7 +187,6 @@ function history(action: 'back' | 'forward' | 'reload') {
     :document-type="documentType"
     :document-name="documentName"
     :is-image-artifact="isImageArtifact"
-    :download-error="downloadError"
     :doc-bytes="docBytes"
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"

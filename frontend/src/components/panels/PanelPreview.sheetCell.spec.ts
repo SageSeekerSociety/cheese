@@ -135,7 +135,6 @@ function props(overrides: Record<string, unknown> = {}) {
     },
     documentName: 'budget.xlsx',
     isImageArtifact: false,
-    downloadError: '',
     docBytes,
     docLoading: false,
     docError: '',
@@ -398,4 +397,18 @@ it('点了格子上某一颗标记，把评论栏开在那一条上', async () =
   await waitFor(() => expect(comments.open.value).toBe(true))
   const el = ui.container.querySelector('[data-testid="marks"]') as HTMLElement
   await waitFor(() => expect(el.dataset.active).toBe('c1'))
+})
+
+it('「改」那一段里点一格不出卡：模式真的递到了定位那一层', async () => {
+  // 宿主 `provide` 和自己 `inject` 读不到同一层的东西（独立评审报出的那条），照那样写
+  // 「改」挡指认的闸永远不生效。这一条守着宿主真的把模式递下去了：切到「改」再点一格，
+  // 定位框不该出来；切回「批注」就照常出。
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await fireEvent.click(ui.getByText('cell'))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
+  await fireEvent.click(ui.getByText('cell'))
+  await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
 })
