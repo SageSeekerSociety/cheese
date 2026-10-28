@@ -597,7 +597,9 @@ button.locator__recipient:focus-visible {
   bottom: calc(100% + 6px);
   left: 0;
   z-index: var(--z-raised-2);
-  width: 260px;
+  /* 够一行放下最长的那句说明（「带当前位置私下问你的个人芝士，不发到群里」）：窄了
+     三项的说明都折成两行，菜单比原型高出一截（原型 276×172；260 宽时 260×229）。 */
+  width: 292px;
   margin: 0;
   padding: 4px;
   list-style: none;
