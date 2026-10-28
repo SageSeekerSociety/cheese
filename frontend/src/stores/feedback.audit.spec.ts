@@ -51,7 +51,7 @@ function page(items: FeedbackCard[], total = items.length) {
   return {
     data: items,
     total,
-    counts: { all: total, hot: 0, active: 0, resolved: 0, unread: 0 },
+    counts: { all: total, hot: 0, resolved: 0, unread: 0 },
   }
 }
 

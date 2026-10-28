@@ -11,7 +11,7 @@ import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PreviewDocStage from './PreviewDocStage.vue'
@@ -33,13 +33,16 @@ const vuetify = createVuetify({ components, directives })
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
-function mount(previewFile: Record<string, unknown>) {
+function mount(
+  previewFile: Record<string, unknown>,
+  kind: Record<string, unknown> = { label: 'Python', icon: 'mdi-language-python', view: 'code', language: 'python' }
+) {
   const bundles = previewBundles()
   return render(PreviewDocStage as unknown as Component, {
     props: {
       topicId: 't1',
       projectId: 'p1',
-      documentType: { label: 'Python', icon: 'mdi-language-python', view: 'code', language: 'python' },
+      documentType: kind,
       documentName: 'run.py',
       documentSuffix: '.py',
       previewFile,
@@ -87,4 +90,40 @@ it('连开头都读不成文本时，才说它不是文本', async () => {
 
   expect(ui.getByText('这个文件不是文本')).toBeTruthy()
   expect(ui.queryByText(/只摆了开头/)).toBeNull()
+})
+
+it('大 markdown 也摆开头，并且说清底下还有', async () => {
+  // 同一份契约的另一档：markdown 读不出来时说「不是文本」、空的说「文件是空的」，
+  // 但超大的一份有开头就该照常画出来——不能因为它是 markdown 就退回「太大」。
+  const ui = mount(
+    {
+      path: 'notes.md',
+      content: null,
+      head: '# 标题\n\n正文第一段\n',
+      version: 'v1',
+      bytes: 3_000_000,
+      binary: false,
+      too_large: true,
+    },
+    { label: 'Markdown', icon: 'mdi-language-markdown', view: 'markdown' }
+  )
+
+  // markdown 那一档的正文是异步画出来的，等它落下来。
+  await waitFor(() => expect(ui.getByTestId('markdown').textContent).toContain('标题'))
+  expect(ui.getByText(/只摆了开头/)).toBeTruthy()
+})
+
+it('只带 content 的调用方照样画得出来', async () => {
+  // `head` 是可选的：整份装得下时后端两个字段给的是同一段。只要 `content` 的调用方
+  // （和夹具）不能被渲染成空白。
+  const ui = mount({
+    path: 'run.py',
+    content: 'print("hi")\n',
+    version: 'v1',
+    bytes: 12,
+    binary: false,
+    too_large: false,
+  })
+
+  expect(ui.getByTestId('code-view').textContent).toContain('print')
 })

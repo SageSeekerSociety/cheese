@@ -223,6 +223,77 @@ const codeSource = computed(() => (props.documentType?.view === 'code' ? readerT
 // 摆的是开头、底下的没读：尾上说明一句，读者才知道这不是整份。判 `too_large` 而不是
 // 「读到的比文件短」——只有超上限那一条会截，正常的文件整份都在。
 const codeTruncated = computed(() => !!props.previewFile?.too_large && codeSource.value !== null)
+
+// markdown 这一档读到的正文。和代码那一档同一条规矩：读者看的是 `head`，
+// 整份装得下时它和 `content` 是同一段（`readerText` 收的口）。
+const mdSource = computed(() => (props.documentType?.view === 'markdown' ? readerText(props.previewFile) : null))
+
+// markdown 这一档「没东西可读」的三种，各自说一句，别留一个空白面板。
+//
+// 一种是文件本身是空的（或有几个空行）：`MarkdownView` 画出来就是零个块，屏幕上除了
+// 文件条什么都没有，读者分不出是这份文件空着、还是预览坏了。
+//
+// 另一种是文件大到连开头都没给（`too_large`，`domain/textfile.py` 的 `MAX_TEXT_BYTES`，
+// 1 MB）。一般的超大文本仍会带着开头（`head`）过来、照常画出来；只有取不到字节的那一支
+// ——任务仓库里已提交的大文件，见 `repository/forge_files.py` 的 `text`——才是这一档，
+// 它和「不是文本」（`binary`）不是一回事：这里说的是「这份文件的正文这次没取」。
+//
+// 第三种是 `binary`（非 UTF-8 编码的 .md：`decode_text` 解不出来就归这一档），
+// 正文同样是 null。上面那句「不是文本」在这一档正好适用，只是它摆得比 markdown
+// 那一支更靠后，落不到——不在这里接住，屏幕上就是一片空白。
+const mdEmpty = computed(
+  () => props.documentType?.view === 'markdown' && typeof mdSource.value === 'string' && !mdSource.value.trim()
+)
+const mdTooLarge = computed(
+  () =>
+    props.documentType?.view === 'markdown' &&
+    !!props.previewFile &&
+    mdSource.value === null &&
+    !!props.previewFile.too_large
+)
+const mdUnreadable = computed(
+  () =>
+    props.documentType?.view === 'markdown' &&
+    !!props.previewFile &&
+    mdSource.value === null &&
+    !props.previewFile.too_large
+)
+// 摆的是开头、底下的没读：和代码那一档同一条提示，别让读者以为这份 markdown 就这么长。
+const mdTruncated = computed(
+  () => props.documentType?.view === 'markdown' && mdSource.value !== null && !!props.previewFile?.too_large
+)
+// ---- 目录 ----
+// 一份几百节的 md 没有目录就只剩滚轮。标题从渲染出来的正文里抽（`PreviewMarkdown`
+// 抽好发上来），这里只管摆成一条下拉。
+//
+// 门槛是**三个标题**：两个标题（「背景」「结论」）摆一颗目录纯属占位；三个以上才真的
+// 有人想跳。窄面板里它也占一颗按钮的位置，所以门槛再高一点更稳妥——它进「…」菜单是
+// 可以的，进不去就没有。
+const mdOutline = ref<{ text: string; level: number; id: number }[]>([])
+const mdRef = ref<InstanceType<typeof PreviewMarkdown> | null>(null)
+// 只在真的摆着这一份的阅读视图时才有一颗可用的目录。模板里凡是从 markdown 那一支分出去
+// 的分支（下面这一串），`ref="mdRef"` 那个实例都没挂上，`mdRef` 是 null、点了不会有任何
+// 反应；而 `mdOutline` 里可能还留着上一次抽的标题——摆一颗按不动、章节还和正文对不上的
+// 目录，比没有更糟。所以这里的判据要和模板的分支一一对上：
+//   - 「看原文」「对比态 / 看旧版」「协同编辑开着」：正文换成了源码、diff、上一版或编辑器；
+//   - 三种「没有正文」（空 / 太大 / 不是文本）：模板画的是状态面板，没有正文可跳。
+// 前两条和最后一条的判断变量声明在下面（computed 的 getter 惰性求值，引用没问题）。
+const outlineWorthIt = computed(
+  () =>
+    props.documentType?.view === 'markdown' &&
+    !showSource.value &&
+    !props.liveEdit?.editingPath.value &&
+    !textCompare.value &&
+    !oldView.value &&
+    !mdEmpty.value &&
+    !mdTooLarge.value &&
+    !mdUnreadable.value &&
+    mdOutline.value.length >= 3
+)
+function jumpToHeading(id: number) {
+  mdRef.value?.goToHeading(id)
+}
+
 // 代码长行默认横向滚：代码的缩进和对齐是意思的一部分，折行会把它打乱。窄面板上读者
 // 可能宁可折行也不想左右拖，所以留一颗开关。
 const codeWrap = ref(false)
@@ -230,6 +301,8 @@ watch(
   () => props.previewFile?.path,
   () => {
     showSource.value = false
+    // 上一份的目录不跟到这一份上：新正文画出来之前那颗按钮不该按着旧的章节跳。
+    mdOutline.value = []
   }
 )
 
@@ -363,6 +436,36 @@ defineExpose({ snapshot, clearMark })
       <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
       <span v-if="!namedTab" class="doc__name">{{ documentName }}</span>
       <span class="doc__type t-meta">{{ documentType.label }}</span>
+      <!-- 目录：长 md 的跳转。摆了三个以上标题才出现——两个标题的文档摆一颗目录
+           只是占位。窄面板只露图标。 -->
+      <v-menu v-if="outlineWorthIt" location="bottom start" :close-on-content-click="true">
+        <template #activator="{ props: menuProps }">
+          <BaseButton
+            v-bind="menuProps"
+            kind="ghost"
+            size="sm"
+            :icon="compact ? 'mdi-format-list-bulleted' : undefined"
+            :prepend-icon="compact ? undefined : 'mdi-format-list-bulleted'"
+            density="comfortable"
+            data-testid="md-outline"
+            :title="t('work.room.doc.outline')"
+            :aria-label="t('work.room.doc.outline')"
+          >
+            <template v-if="!compact">{{ t('work.room.doc.outline') }}</template>
+          </BaseButton>
+        </template>
+        <v-list density="compact" role="menu" class="md-outline" data-testid="md-outline-list">
+          <v-list-item
+            v-for="heading in mdOutline"
+            :key="heading.id"
+            role="menuitem"
+            :style="{ paddingInlineStart: `${16 + (heading.level - 1) * 14}px` }"
+            @click="jumpToHeading(heading.id)"
+          >
+            <v-list-item-title>{{ heading.text }}</v-list-item-title>
+          </v-list-item>
+        </v-list>
+      </v-menu>
       <PreviewVersionPicker
         v-if="version && versions"
         :list="versions.list.value"
@@ -496,15 +599,43 @@ defineExpose({ snapshot, clearMark })
       language="markdown"
       wrap
     />
-    <PreviewMarkdown
-      v-else-if="documentType.view === 'markdown'"
-      :source="readerText(previewFile)"
-      :anchors="anchors"
-      :pins="pins"
-      :active-id="activeAnchor"
-      @quote="emit('markdown-quote', $event)"
-      @anchor="emit('anchor', $event)"
-    />
+    <div v-else-if="documentType.view === 'markdown' && mdTooLarge" class="doc__state doc__state--text">
+      <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+      <div>{{ t('work.room.preview.mdTooLarge') }}</div>
+      <div class="t-meta mt-1">{{ t('work.room.preview.mdTooLargeDetail') }}</div>
+      <BaseButton kind="secondary" size="sm" class="mt-3" prepend-icon="mdi-download" @click="emit('download')">
+        {{ t('work.room.preview.download') }}
+      </BaseButton>
+    </div>
+    <div v-else-if="documentType.view === 'markdown' && mdUnreadable" class="doc__state doc__state--text">
+      <v-icon size="28" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
+      <div>{{ t('work.room.preview.notText') }}</div>
+    </div>
+    <div v-else-if="documentType.view === 'markdown' && mdEmpty" class="doc__state doc__state--text">
+      <v-icon size="28" class="text-disabled mb-2">mdi-file-document-outline</v-icon>
+      <div>{{ t('work.room.preview.fileEmpty') }}</div>
+    </div>
+    <template v-else-if="documentType.view === 'markdown'">
+      <PreviewMarkdown
+        ref="mdRef"
+        :source="mdSource"
+        :anchors="anchors"
+        :pins="pins"
+        :active-id="activeAnchor"
+        copy-code
+        @quote="emit('markdown-quote', $event)"
+        @anchor="emit('anchor', $event)"
+        @outline="mdOutline = $event"
+      />
+      <!-- 摆的是开头、底下的没读：和代码那一档同一条话，别让读者以为这份就到这里。 -->
+      <div v-if="mdTruncated" class="doc__truncated" role="status">
+        <v-icon size="16">mdi-ellipsis-horizontal</v-icon>
+        <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+        <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+          t('work.room.preview.download')
+        }}</BaseButton>
+      </div>
+    </template>
     <template v-else-if="documentType.view === 'code'">
       <PreviewCode
         v-if="codeSource !== null"
@@ -659,7 +790,28 @@ defineExpose({ snapshot, clearMark })
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px 24px;
+  /* 正文列不随面板无限拉宽：面板铺开（全屏、拖宽右栏、并排）时，一行一百多个字没有
+     人读得下去，眼睛每一行都要重新找行首。720px 和「文档」那一格正文的上限同值
+     （`DocProse` 的 `.doc-prose`）——两处是同一套渲染，读者以为是同一个东西，宽度
+     也该一样。`max()` 让窄面板退回 16px 内边距，两侧的空白因此始终对称。 */
+  padding: 12px max(16px, calc((100% - 720px) / 2)) 24px;
+}
+/* 点目录跳过来时，标题不要贴着面板顶边：留一线，读者一眼看出「到这一节了」。 */
+.doc__md :deep(:is(h1, h2, h3, h4, h5, h6)) {
+  scroll-margin-top: 8px;
+}
+/* 目录下拉：一百多节的长文一列排下来比屏幕还高（实测 874px 顶到屏幕上下两头），
+   给它自己的滚动条，宽度跟文档条那一截相称，标题长了省略。 */
+.md-outline {
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-width: min(320px, calc(100vw - 32px));
+}
+.md-outline :deep(.v-list-item-title) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 摆了开头、底下没读那一行：钉在这一格底部，正文照常滚（它不占正文的地方）。 */

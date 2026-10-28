@@ -814,47 +814,8 @@ const told = computed(() => toldByMessage(props.refs))
   border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
-/* 代码块和它右上角的两颗：自动换行、复制。悬停时才出现，没有悬停的设备上一直在。 */
-.md-content :deep(.md-pre) {
-  position: relative;
-}
-.md-content :deep(.md-pre-bar) {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity var(--dur-quick) var(--ease-standard);
-}
-.md-content :deep(.md-pre:hover .md-pre-bar),
-.md-content :deep(.md-pre-bar:focus-within) {
-  opacity: 1;
-}
-.md-content :deep(.md-code-btn) {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  cursor: pointer;
-  transition: color var(--dur-quick) var(--ease-standard);
-}
-.md-content :deep(.md-code-btn:hover) {
-  color: var(--ink);
-}
-/* 换行开着时那颗按钮换个色，看得出这是个「现在生效」的开态（同 .rx-chip--mine）。 */
-.md-content :deep(.md-wrap-btn[aria-pressed='true']) {
-  color: var(--accent-ink);
-}
-@media (hover: none) {
-  .md-content :deep(.md-pre-bar) {
-    opacity: 1;
-  }
-}
+/* 代码块和它右上角的两颗：自动换行、复制。样式住在 `style.css` 的 `.md-content`
+   一段里——预览面板用的是同一个渲染器，只写在这一处的话那边就画不出样子。 */
 .md-content :deep(pre) {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -862,13 +823,6 @@ const told = computed(() => toldByMessage(props.refs))
   border-radius: var(--radius-md);
   max-width: 100%;
   overflow-x: auto;
-}
-/* 换行开着（那颗「自动换行」）：长行折进框里，横向滚动让位。默认不换行——一条命令、
-   一段长 URL 站在一行上比折成几截更好读。 */
-.md-content :deep(pre.md-wrap) {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow-x: hidden;
 }
 /* 代码块里的 <code> 是行内元素：它身上的边框会在每一行上各画一个框。 */
 .md-content :deep(pre code) {
