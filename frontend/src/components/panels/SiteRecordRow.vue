@@ -163,6 +163,18 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
   padding: 8px 0;
   font-size: 13px;
   color: var(--text);
+  /* 一页可能是一百多条记录，每条里都可能摊着一整段命令输出或思考正文。屏幕外的
+     那些不排版也不绘制（`lib/contentVisibility` 说的「离屏跳过」），滚动因此不用
+     等它们——这一栏一直没跟上对话栏和别处长清单的那一步。内容照旧留在 DOM 里：
+     Ctrl+F、读屏、选中都找得到（`offScreenSkipping.spec.ts` 钉的就是这条）。
+     `auto 40px` 先拿一个估计高度占位，渲染过一次之后记住真实高度。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
+}
+/* 测量帧（向上翻页补偿等「必须按真实高度量」的地方，见 lib/contentVisibility）：这一窗
+   里的行按真实高度铺开。选择器带 .cv-measure 前缀，胜过上面没带的那条。 */
+.cv-measure .record-row {
+  content-visibility: visible;
 }
 /* 此刻才到的一行：淡入并从下面 4px 升到位（见 `arriving`），和对话栏的新消息同一个
    动作。只动透明度和位置——高度不变，底部那个「钉住」就看不见它，读者不会被推走。 */
