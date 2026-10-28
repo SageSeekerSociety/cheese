@@ -466,7 +466,7 @@ async def attachment_notes(
     resolver: ActorResolverDep,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
-) -> Response:
+) -> dict:
     """A deck's speaker notes, one entry per slide.
 
     A slide's notes are not on the slide, and the preview panel is handed the
