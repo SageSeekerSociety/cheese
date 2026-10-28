@@ -9,6 +9,9 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 画出来的这些行，第一行当列名。 */
   rows: string[][]
+  /** 这一批的第一行在整张表里是第几行（0 起）。跳到最后一段时卡片从中间开始，
+   *  地址要按整张表算，不能从这一批的第一行重新数。 */
+  rowOffset?: number
   /** 画出来的列数。 */
   width: number
   /** 每格的地址、显示文字由表格那边给，两种读法说同一套话。 */
@@ -37,6 +40,11 @@ const emit = defineEmits<{
   choose: [row: number, col: number]
   mark: [id: string]
 }>()
+
+/** 这一批里第 `r` 行在整张表里的行号。 */
+function rowOf(r: number): number {
+  return r + (props.rowOffset ?? 0)
+}
 
 /** 第一行里这一列写的是什么；空着就退回列名（A、B……），总得有个名字。 */
 function label(col: number): string {
@@ -85,17 +93,19 @@ function changedTitle(row: number, col: number): string | null {
           <button
             type="button"
             class="ps-card__title"
-            :class="{ 'is-on': selected === addressAt(r, 0), 'is-chg': changedTitle(r, 0) !== null }"
-            :title="changedTitle(r, 0) ?? undefined"
-            @click="emit('choose', r, 0)"
+            :class="{ 'is-on': selected === addressAt(rowOf(r), 0), 'is-chg': changedTitle(rowOf(r), 0) !== null }"
+            :title="changedTitle(rowOf(r), 0) ?? undefined"
+            @click="emit('choose', rowOf(r), 0)"
           >
             <span class="ps-card__name"
-              ><del v-if="showBefore && beforeAt(r, 0)" class="ps-card__was">{{ cellText(beforeAt(r, 0) ?? '') }}</del
+              ><del v-if="showBefore && beforeAt(rowOf(r), 0)" class="ps-card__was">{{
+                cellText(beforeAt(rowOf(r), 0) ?? '')
+              }}</del
               >{{ cellText(row[0] ?? '') || label(0) }}</span
             >
           </button>
           <button
-            v-for="mark in marks.get(addressAt(r, 0)) ?? []"
+            v-for="mark in marks.get(addressAt(rowOf(r), 0)) ?? []"
             :key="mark.id"
             type="button"
             class="ps-card__cmt"
@@ -106,7 +116,7 @@ function changedTitle(row: number, col: number): string | null {
             @click="emit('mark', mark.id)"
           />
           <span
-            v-for="pin in pins?.get(addressAt(r, 0)) ?? []"
+            v-for="pin in pins?.get(addressAt(rowOf(r), 0)) ?? []"
             :key="`pin-${pin.id}`"
             class="ps-card__pin"
             :data-pending-pin="pin.id"
@@ -114,24 +124,26 @@ function changedTitle(row: number, col: number): string | null {
             aria-hidden="true"
             >{{ pin.n }}</span
           >
-          <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: r + 1 }) }}</span>
+          <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: rowOf(r) + 1 }) }}</span>
         </div>
         <dl class="ps-card__fields">
           <div
-            v-for="c in fields(row, r)"
+            v-for="c in fields(row, rowOf(r))"
             :key="c"
             class="ps-card__field"
-            :class="{ 'is-on': selected === addressAt(r, c), 'is-chg': changedTitle(r, c) !== null }"
-            :title="changedTitle(r, c) ?? undefined"
+            :class="{ 'is-on': selected === addressAt(rowOf(r), c), 'is-chg': changedTitle(rowOf(r), c) !== null }"
+            :title="changedTitle(rowOf(r), c) ?? undefined"
           >
             <dt class="ps-card__label">{{ label(c) }}</dt>
             <dd class="ps-card__value">
-              <button type="button" class="ps-card__cell" @click="emit('choose', r, c)">
-                <del v-if="showBefore && beforeAt(r, c)" class="ps-card__was">{{ cellText(beforeAt(r, c) ?? '') }}</del>
+              <button type="button" class="ps-card__cell" @click="emit('choose', rowOf(r), c)">
+                <del v-if="showBefore && beforeAt(rowOf(r), c)" class="ps-card__was">{{
+                  cellText(beforeAt(rowOf(r), c) ?? '')
+                }}</del>
                 {{ cellText(row[c] ?? '') }}
               </button>
               <button
-                v-for="mark in marks.get(addressAt(r, c)) ?? []"
+                v-for="mark in marks.get(addressAt(rowOf(r), c)) ?? []"
                 :key="mark.id"
                 type="button"
                 class="ps-card__cmt"
@@ -142,7 +154,7 @@ function changedTitle(row: number, col: number): string | null {
                 @click.stop="emit('mark', mark.id)"
               />
               <span
-                v-for="pin in pins?.get(addressAt(r, c)) ?? []"
+                v-for="pin in pins?.get(addressAt(rowOf(r), c)) ?? []"
                 :key="`pin-${pin.id}`"
                 class="ps-card__pin"
                 :data-pending-pin="pin.id"

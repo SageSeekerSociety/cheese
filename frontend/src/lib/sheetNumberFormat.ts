@@ -87,6 +87,35 @@ function codesOnly(format: string): string {
   return out
 }
 
+/** 按 `;` 拆格式段。引号里的分号不是分隔符——按原文拆，拆完每一段各自过 `plain()` /
+ *  `codesOnly()`，两半才对得上同一段。 */
+function splitSections(format: string): string[] {
+  const out: string[] = []
+  let current = ''
+  let quoted = false
+  for (let i = 0; i < format.length; i += 1) {
+    const ch = format[i]
+    if (ch === '"') {
+      quoted = !quoted
+      current += ch
+      continue
+    }
+    if (ch === '\\' && !quoted) {
+      current += ch + (format[i + 1] ?? '')
+      i += 1
+      continue
+    }
+    if (ch === ';' && !quoted) {
+      out.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  out.push(current)
+  return out
+}
+
 /** 一段数字格式拆出来的东西，加上它是哪一段的。 */
 interface Section {
   prefix: string
@@ -111,9 +140,15 @@ function readSection(section: string, codes: string): Section | null {
 
 /** 格式串 → 要的那几件；不是我们认得的数字格式就给 null。 */
 function shapeOf(format: string): Shape | null {
-  const text = plain(format)
-  if (!text) return null
-  const codes = codesOnly(format)
+  // 每一段各自过一遍：字面量那份（`plain`）和格式码那份（`codesOnly`）按段成对，
+  // 不再拼回一个串去 `split(';')`——拼回去的话，引号里那个分号又会被当成段边界。
+  const sections = splitSections(format).map((section) => ({
+    text: plain(section),
+    codes: codesOnly(section),
+  }))
+  const firstSection = sections[0]
+  if (!firstSection?.text) return null
+  const codes = sections.map((section) => section.codes).join('\u0000')
   // 日期、时间、文本、通用（`General`）都不是这里管的事——判这些要在**去掉引号字面量**
   // 的那一份上判：`#,##0.00 "USD"` 的 `D` 是币种名里的一个字母，不是「日」；
   // `#,##0.00"/kg"` 的 `/` 是单位、`" @m"` 的 `@` 是字面量，都不是这里的运算符。
@@ -122,13 +157,13 @@ function shapeOf(format: string): Shape | null {
   // 科学计数法（`0.00E+00`）和分数（`# ?/?`）：我们排不出它们真正的样子，按普通小数排
   // 会把 1.2E+05 写成「1.20E+05」这种既不是原样也不是科学计数的东西。
   if (/[eE][+-]/.test(codes) || codes.includes('/')) return null
-  const [positive = '', negative] = text.split(';')
-  const first = readSection(positive, codes.split(';')[0] ?? '')
+  const first = readSection(firstSection.text, firstSection.codes)
   if (!first) return null
   // 数字占位末尾的逗号在 Excel 里是「按千缩」运算符（`#,##0,` 把 12345 显示成 12），
   // 不是分组。排不出来就退回数本身，不能把数放大一千倍给人看。
   if (first.digits.endsWith(',')) return null
-  const second = negative === undefined ? null : readSection(negative, codes.split(';')[1] ?? '')
+  const negativeSection = sections[1]
+  const second = negativeSection ? readSection(negativeSection.text, negativeSection.codes) : null
   // `%` 是逐段说的：`#,##0.00;(#,##0.00%)` 里正数那一段不是百分数，负数那一段是——
   // 而我们只乘一次（`formatNumber` 里 `scaled` 只有一份）。两段说法不一致时退回数本身，
   // 宁可少一层排场，也不能让正数凭空放大一百倍。

@@ -328,30 +328,35 @@ export async function readSheets(data: ArrayBuffer, kind: 'workbook' | 'csv' | '
     readCache.set(key!, hit)
     return hit
   }
-  const read = (async (): Promise<SheetRead> => {
+  /** 真读一遍。分支之间差在有没有 `await`：分隔文本和 OLE2 判定是同步的，走完之后
+   *  `readCache.set` 还没跑过——所以「失败不进缓存」这条判断只能放在**放进去之前**，
+   *  不能靠事后删（那时键还不存在，删了个空）。 */
+  async function read(): Promise<SheetRead> {
     try {
-      let result: SheetRead
-      if (kind === 'csv' || kind === 'tsv') result = readText(data, kind)
-      else if (isOle2(new Uint8Array(data))) result = failed(t('work.room.preview.sheetLegacyUnsupported'))
-      else result = await readWorkbook(data)
-      // 读失败不进缓存：换一份字节重试是读者会做的事，而这条路的结果不该被记成「这份文件
-      // 就是读不出来」。`.ods`、老版 `.xls` 那两句也是失败，走同一条。
-      if (result.failure && key !== null) readCache.delete(key)
-      return result
+      if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
+      if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
+      return await readWorkbook(data)
     } catch (e) {
-      // 抛出来的任何一条也当失败：分隔文本那一路是同步的，`isOle2` 也会抛，抛出去就是
-      // 一条被缓存住、又没人接的拒绝承诺，下一次打开同一份字节只会再撞一次。
-      if (key !== null) readCache.delete(key)
+      // 抛出来的任何一条也当失败：换一份字节重试是读者会做的事，而这条路的结果不该被
+      // 记成「这份文件就是读不出来」。
       return failed(e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed'))
     }
-  })()
-  if (key !== null) {
-    readCache.set(key, read)
-    while (readCache.size > READ_CACHE_LIMIT) {
-      const oldest = readCache.keys().next().value
-      if (oldest === undefined) break
-      readCache.delete(oldest)
-    }
   }
-  return read
+  const started = read()
+  const result =
+    key === null
+      ? started
+      : started.then((value) => {
+          // 读失败不进缓存。判断在「放进去」之前：同步那几路在这一次 `.then` 跑起来之前
+          // 就已经读完了，事后删是删不掉的。
+          if (value.failure) return value
+          readCache.set(key, Promise.resolve(value))
+          while (readCache.size > READ_CACHE_LIMIT) {
+            const oldest = readCache.keys().next().value
+            if (oldest === undefined) break
+            readCache.delete(oldest)
+          }
+          return value
+        })
+  return result
 }

@@ -66,3 +66,10 @@ it('看着图表时切到一张没图的表，退回表格，不会把表锁在�
   await waitFor(() => expect(container.querySelector('.ps__charts')).toBeNull())
   expect(container.querySelector('table[role=grid]')).not.toBeNull()
 })
+
+it('这一张表上没有图时不画那句「图看不了」', async () => {
+  const { container } = mountWorkbook()
+  await waitFor(() => expect(container.querySelector('table[role=grid]')).not.toBeNull())
+  // 第一张表「数据」上没有图，也就没有跳过的图。
+  expect(container.querySelector('[data-testid=sheet-charts-skipped]')).toBeNull()
+})

@@ -232,8 +232,11 @@ const padBottom = computed(() => Math.max(0, (totalRows.value - windowEnd.value)
  *  不比表格省；和表格那一档同一个做法——先铺一段，到底了再往后接。 */
 const CARD_CHUNK = 60
 const cardRows = ref(CARD_CHUNK)
-const cardRowsShown = computed(() => active.value?.rows.slice(0, cardRows.value) ?? [])
-const moreCards = computed(() => (active.value?.rows.length ?? 0) > cardRows.value)
+/** 这一批从第几行起。平常是 0；跳到很后面时才把窗口挪过去（见 `revealRow`），
+ *  这样既看得到目标，又不会为了一次跳转把几千张卡片铺进 DOM。 */
+const cardStart = ref(0)
+const cardRowsShown = computed(() => active.value?.rows.slice(cardStart.value, cardStart.value + cardRows.value) ?? [])
+const moreCards = computed(() => cardStart.value + cardRows.value < (active.value?.rows.length ?? 0))
 
 /** 行高、表头高在第一次画出来之后量一次；换了字号、缩放了页面时要再量。 */
 function measure() {
@@ -317,11 +320,15 @@ function moveTo(row: number, col: number) {
   scrollToRow(at.row)
 }
 
-/** 卡片那一档只铺前 `cardRows` 行，而它没有滚动区可 scrollTo。跳到铺出来的那一段之外
- *  （输地址、找内容）时把这一段拉长到那个行号，读者才看得到落点。 */
+/** 卡片那一档只有一个窗口，没有滚动区可 scrollTo。跳到窗口之外（输地址、找内容）时
+ *  把窗口挪到那一行附近；不是把窗口一路拉长到那一行——`A4999` 会因此一次铺出五千张
+ *  卡片，正是分块要避免的。 */
 function revealRow(row: number) {
   if (!showCards.value) return
-  if (row + 1 > cardRows.value) cardRows.value = row + 1
+  const from = cardStart.value
+  if (row >= from && row < from + cardRows.value) return
+  cardStart.value = Math.max(0, row - Math.floor(CARD_CHUNK / 2))
+  cardRows.value = CARD_CHUNK
 }
 
 /** 回车/空格：把键盘指着的这一格说出去（和点一下那一格是同一件事）。 */
@@ -501,6 +508,7 @@ async function open(data: ArrayBuffer) {
   selected.value = ''
   focus.value = null
   cardRows.value = CARD_CHUNK
+  cardStart.value = 0
   // 换了一份文件，上一份上圈的那一片不该跟着过来：坐标在另一张表里另有意义。
   dragging.value = false
   dragStart.value = null
@@ -628,6 +636,7 @@ function choose(rowIndex: number, colIndex: number) {
 function switchSheet(index: number) {
   activeIndex.value = index
   cardRows.value = CARD_CHUNK
+  cardStart.value = 0
   // 换到一张没有图的表：图表那一支要退出去。不退的话它照旧赢，而「图表 N」那颗开关
   // 因为这张表没图已经不画了，读者就再也回不到表格。
   if (!chartsFor(sheets.value[index]).length) showCharts.value = false
@@ -812,6 +821,7 @@ watch(showSource, async () => {
       <template v-else-if="showCards">
         <PreviewSheetCards
           :rows="cardRowsShown"
+          :row-offset="cardStart"
           :width="active.width"
           :address-at="addressAt"
           :cell-text="cellText"
@@ -835,7 +845,7 @@ watch(showSource, async () => {
           data-testid="sheet-more"
           @click="cardRows += CARD_CHUNK"
         >
-          {{ t('work.room.preview.sheetMore', { shown: cardRowsShown.length, total: active.rows.length }) }}
+          {{ t('work.room.preview.sheetMore', { shown: cardStart + cardRowsShown.length, total: active.rows.length }) }}
         </button>
       </template>
       <div v-else-if="showCharts" class="ps__charts">

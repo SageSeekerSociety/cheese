@@ -136,3 +136,16 @@ it('定位：地址栏写的一片（`A2:B3`）也认，抄回来落到同一片
   await fireEvent.keyDown(input, { key: 'Enter' })
   expect(address(container)).toBe('A2:B3')
 })
+
+it('一片的下角越界算没找到，不会给出表里没有的坐标', async () => {
+  const { container, emitted } = mount()
+  await waitFor(() => expect(container.querySelector('[data-testid=sheet-locate]')).not.toBeNull())
+  const input = container.querySelector('[data-testid=sheet-locate]') as HTMLInputElement
+  await fireEvent.update(input, 'A1:Z999')
+  await fireEvent.keyDown(input, { key: 'Enter' })
+
+  // 地址栏不写 `A1:Z999` 这种这张表没有的坐标，也不交出一格不存在的格子。
+  expect(address(container)).toBe('—')
+  expect(container.querySelector('.ps__summary')?.textContent).toContain('没找到')
+  expect(emitted('cell')).toBeUndefined()
+})

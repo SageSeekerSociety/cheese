@@ -149,3 +149,32 @@ it('几千行的表在窄处也一屏一屏读，到底了接下一段', async (
   await fireEvent.click(more)
   expect(ui.container.querySelectorAll('.ps-card').length).toBeGreaterThan(60)
 })
+
+it('卡片档里定位到窗口之外的行：卡片挪到那一行附近，不一次铺几千张', async () => {
+  const lines = ['姓名,学号']
+  for (let i = 1; i <= 500; i += 1) lines.push(`人${i},${2026000 + i}`)
+  const many = new TextEncoder().encode(lines.join('\n') + '\n').buffer as ArrayBuffer
+  const ui = render(PreviewSheet, {
+    props: { data: many, kind: 'csv' as const, marks: [] },
+    global: { plugins: [vuetify] },
+  })
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  const before = ui.container.querySelectorAll('.ps-card').length
+
+  // 找第 400 行那一格：窗口挪过去，铺出来的卡片数还是那一段那么多。
+  const input = ui.container.querySelector('[data-testid=sheet-locate]') as HTMLInputElement
+  await fireEvent.update(input, 'A400')
+  await fireEvent.keyDown(input, { key: 'Enter' })
+
+  const after = ui.container.querySelectorAll('.ps-card').length
+  expect(after).toBeLessThan(before + 400)
+  expect(ui.container.textContent).toContain('人400')
+})
+
+it('开着卡片时点「图表」，卡片让位；再点卡片，图表让位', async () => {
+  // 这一条用带图的工作簿太重；这里只钉两颗开关互相清掉对方这条规矩。
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('sheet-cards'))
+  const cards = ui.container.querySelector('[data-testid=sheet-cards]') as HTMLElement
+  expect(cards.getAttribute('aria-pressed')).toBe('true')
+})

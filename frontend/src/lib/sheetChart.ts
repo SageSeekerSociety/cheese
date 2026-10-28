@@ -94,7 +94,12 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
       if (!/\/chart$/.test(drawingRelMap.typeOf(id) ?? '')) continue
       const chartPath = resolvePath(drawingPath, target)
       const xml = await readZipText(bytes, chartPath)
-      if (!xml) continue
+      if (!xml) {
+        // 图存在、但我们连它的定义都读不出来：和「读出来了、画不出形状」一样算跳过的
+        // 一张——读者该知道这张表上还有东西没看见。
+        skipped.set(name, (skipped.get(name) ?? 0) + 1)
+        continue
+      }
       const chart = parseChart(xml, name)
       if (!chart) {
         skipped.set(name, (skipped.get(name) ?? 0) + 1)
