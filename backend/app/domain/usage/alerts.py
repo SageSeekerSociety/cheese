@@ -21,21 +21,33 @@ it does not come back on its own and an administrator has to raise it. It
 stops just below 100% — there the ledger's own refusal already speaks, and the
 same fact is not said twice.
 
-This module only reads. Who a team's and a project's people are, and how a
-notification is delivered, are handed in by ``app.periodic_jobs``, because
-those live above this package.
+What a turn is told is said once per crossing too, but that "already said" is
+kept per conversation rather than per person: a crossing that stops a project
+is told to the first turn each of its conversations starts after it, and not
+again in that conversation until the next crossing. The work in one task or
+one channel reads it once, which is what its first turn start after the
+crossing is; the task that starts later has not read it and is told. That
+marker lives in Redis, the same place the model spend caps keep theirs, so
+nothing here has to be pruned and a crossing said once stays said.
+
+The rest of this module only reads. Who a team's and a project's people are,
+and how a notification is delivered, are handed in by ``app.periodic_jobs``,
+because those live above this package.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+from redis.asyncio import Redis
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import get_redis_client
 from app.core.sentences import NoticeText, notice_keys, notice_message, say
 from app.domain.team.models import Team
 from app.domain.usage.budgets import CreditBudgets
@@ -59,6 +71,18 @@ THRESHOLD = 0.8
 #: Where a warning's identity is minted. A crossing is one event: the id is
 #: derived from what was crossed, so recomputing it never says it twice.
 _NAMESPACE = uuid.uuid5(uuid.NAMESPACE_DNS, "cheese.credit-warning")
+
+#: Where each conversation keeps "a turn here has already been told about this
+#: crossing". The same shape the model spend caps use for their own
+#: once-per-crossing state (`agent.spend_cap_alerts`): Redis, keyed by the
+#: crossing, so a new month or a raised limit is news again and nothing has to
+#: be pruned.
+_NOTE_PREFIX = "cheese:credit-note:"
+#: Longer than any cap lives before it resets, so a crossing is said once in
+#: its whole life; a month is the longest.
+_NOTE_TTL_S = 60 * 60 * 24 * 180
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -376,8 +400,30 @@ async def collect(session: AsyncSession) -> list[Warning]:
     return [s.warning for s in scoped]
 
 
-async def agent_note(session: AsyncSession, project_id: uuid.UUID) -> str | None:
-    """What 芝士 is told on the way into a turn, or None while there is room.
+async def _first_say(redis: Redis | None, key: str) -> bool:
+    """True for the first caller to claim ``key``, False after.
+
+    Without Redis nothing is remembered and the note is said again: saying it
+    twice is the harmless direction, and a missing cache must not lose the
+    fact. A broken Redis is the same case — it is not this turn's business.
+    """
+    if redis is None:
+        return True
+    try:
+        return bool(await redis.set(key, "1", nx=True, ex=_NOTE_TTL_S))
+    except Exception:
+        logger.warning("credit note state unavailable", exc_info=True)
+        return True
+
+
+async def agent_note(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    conversation_id: uuid.UUID,
+    redis: Redis | None = None,
+) -> str | None:
+    """What 芝士 is told on the way into a turn, or None.
 
     The figures are read with the same functions the inbox uses, so a crossing
     says the same sentence in both places. Only the fact and its consequence —
@@ -388,11 +434,20 @@ async def agent_note(session: AsyncSession, project_id: uuid.UUID) -> str | None
     the one that stops the call first. Each keeps its own sentence: the project
     budget does not come back on its own. A member's task cap is not read: it
     stops that person's tasks, not the calls this turn starts.
+
+    One crossing is said to one conversation once — the first turn it starts
+    after the crossing, wherever the work is being done. A task resuming an
+    hour later reads nothing: the crossing has not changed and the sentence
+    was already read there. Keyed by the conversation and not by the project
+    because each conversation is a separate piece of work: the task that
+    starts next is told even though the channel already was, and it can pass
+    the word on to whoever pays.
     """
     from app.domain.usage.ledger import payer_for_project
 
     payer = await payer_for_project(session, project_id)
-    said: list[tuple[float, str]] = []
+    # ratio, the crossing's stable marker, the sentence.
+    said: list[tuple[float, str, str]] = []
     if not payer.terms.unlimited:
         month = month_of(datetime.now(UTC))
         ledger = Ledger(session)
@@ -411,6 +466,7 @@ async def agent_note(session: AsyncSession, project_id: uuid.UUID) -> str | None
             said.append(
                 (
                     _ratio(team.used, team.total),
+                    f"team:{team.marker}",
                     str(say("creditWarningAgent", remaining=_points(team.remaining))),
                 )
             )
@@ -420,10 +476,18 @@ async def agent_note(session: AsyncSession, project_id: uuid.UUID) -> str | None
         said.append(
             (
                 _ratio(spent, cap),
+                f"budget:{cap:g}",
                 str(say("creditWarningAgentBudget", remaining=_points(cap - spent))),
             )
         )
-    return max(said, key=lambda pair: pair[0])[1] if said else None
+    if not said:
+        return None
+    _, marker, sentence = max(said, key=lambda entry: entry[0])
+    if not await _first_say(
+        redis or get_redis_client(), f"{_NOTE_PREFIX}{conversation_id}:{marker}"
+    ):
+        return None
+    return sentence
 
 
 async def sweep(

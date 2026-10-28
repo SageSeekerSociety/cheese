@@ -388,10 +388,13 @@ async def prepare(
         if bail is not None:
             return bail
         phases_ms["provider"] = (time.monotonic() - started) * 1000
-        # 额度快用完了就告诉这一轮一句（`usage.alerts.agent_note`）。读不出来
-        # 不是这一轮的事：算额度的错不该让一轮活开不了。
+        # 额度快用完了就告诉这一轮一句（`usage.alerts.agent_note`）。一个越界
+        # 在一条对话里只说一次——这条活第一次开工的那一轮。读不出来不是这一轮
+        # 的事：算额度的错不该让一轮活开不了。
         try:
-            credits_note = await agent_note(session, topic.project_id)
+            credits_note = await agent_note(
+                session, topic.project_id, conversation_id=place.conversation_id
+            )
         except Exception:
             logger.exception(
                 "could not read the credit warning for %s", topic.project_id

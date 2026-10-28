@@ -41,6 +41,20 @@ async def _notify(session, event_id, payload, handles) -> None:
         )
 
 
+class _Redis:
+    """The "already said to a turn" marker, as a dict: SET NX is a membership
+    test, which is all `agent_note` asks of it."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+
+    async def set(self, key: str, value: str, *, nx: bool = False, ex=None):
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
+
+
 async def _said(factory) -> list[Notification]:
     """Every credit warning written, oldest first."""
     async with factory() as session:
@@ -213,9 +227,11 @@ async def test_the_agent_hears_the_layer_that_stops_it_first(business_db_factory
 
     # 80 spent: the project budget is at 80% and the team's plan (500 a month)
     # is nowhere near it.
+    redis = _Redis()
+    room = uuid.uuid4()
     await _spend(business_db_factory, pid, 80)
     async with business_db_factory() as session:
-        note = await alerts.agent_note(session, pid)
+        note = await alerts.agent_note(session, pid, conversation_id=room, redis=redis)
     assert note is not None
     assert "这个项目的预算" in note
 
@@ -226,10 +242,61 @@ async def test_the_agent_hears_the_layer_that_stops_it_first(business_db_factory
         )
         await session.commit()
     await _spend(business_db_factory, pid, 320)
+    # A different piece of work: its own first turn is told, whatever the room
+    # above already read.
     async with business_db_factory() as session:
-        note = await alerts.agent_note(session, pid)
+        note = await alerts.agent_note(
+            session, pid, conversation_id=uuid.uuid4(), redis=redis
+        )
     assert note is not None
     assert "团队额度" in note
+
+
+@pytest.mark.anyio
+async def test_the_agent_hears_a_crossing_once_not_every_turn(business_db_factory):
+    """同一条对话一百次开工只有第一次读到：这个越界不变，就不再念。
+
+    换一个月、换一个窗口轮次、或者上限被调高，才算新的一次；项目里另一条
+    对话的第一轮是它自己的第一次开工，也读得到。
+    """
+    pid = await _seed(business_db_factory)
+    redis = _Redis()
+    work = uuid.uuid4()
+    await _spend(business_db_factory, pid, 400)  # 80% of the Free team's 500
+
+    async with business_db_factory() as session:
+        first = await alerts.agent_note(session, pid, conversation_id=work, redis=redis)
+    assert first is not None
+    # The turns after it read nothing, however many of them there are.
+    for _ in range(5):
+        async with business_db_factory() as session:
+            assert (
+                await alerts.agent_note(session, pid, conversation_id=work, redis=redis)
+                is None
+            )
+
+    # Another task's first turn is its own first turn.
+    async with business_db_factory() as session:
+        assert (
+            await alerts.agent_note(
+                session, pid, conversation_id=uuid.uuid4(), redis=redis
+            )
+            is not None
+        )
+
+    # A project budget that is now crossed is a different line: that is news
+    # again in the same conversation, even though the team's crossing was
+    # already read there.
+    async with business_db_factory() as session:
+        await CreditBudgets(session).save(
+            pid, credits_limit=450.0, set_project_limit=True, member_limits={}
+        )
+        await session.commit()
+    async with business_db_factory() as session:
+        assert (
+            await alerts.agent_note(session, pid, conversation_id=work, redis=redis)
+            is not None
+        )
 
 
 @pytest.mark.anyio
@@ -237,4 +304,9 @@ async def test_the_agent_is_told_nothing_while_there_is_room(business_db_factory
     pid = await _seed(business_db_factory)
     await _spend(business_db_factory, pid, 100)
     async with business_db_factory() as session:
-        assert await alerts.agent_note(session, pid) is None
+        assert (
+            await alerts.agent_note(
+                session, pid, conversation_id=uuid.uuid4(), redis=_Redis()
+            )
+            is None
+        )
