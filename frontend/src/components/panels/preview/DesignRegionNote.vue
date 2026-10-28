@@ -208,6 +208,7 @@ onBeforeUnmount(() => observer?.disconnect())
   flex: none;
   align-items: center;
   gap: 4px;
+  min-width: 0;
 }
 .design-region-note input {
   width: 0;
@@ -239,9 +240,18 @@ onBeforeUnmount(() => observer?.disconnect())
 .design-region-note button:disabled {
   color: var(--faint);
 }
-.design-region-note__expand {
+/* 选择器带 `.design-region-note` 两层，是为了盖过上面 `.design-region-note button`
+   的 `flex: none`——那条是全组按钮的默认，这一颗要能缩。原来写的 `flex: 1` 单类名
+   权重不够，一直没生效，只是当时的字短、看不出来。
+   这一格是面板窄到放不下整张卡时那一颗占位键（「输入修改要求或批注内容…」）。不缩的话
+   操作行会被它撑得比卡片宽，右边的「×」被挤出卡片、被卡片的 `overflow: hidden` 裁掉，
+   够不到它的读者就撤不掉这一处。 */
+.design-region-note .design-region-note__expand {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .design-region-note--compact {
   gap: 0;
