@@ -50,5 +50,33 @@
   "sketchLayer": "图片标注画布",
   "textPlaceholder": "输入文字，回车确认",
   "notePlaceholder": "说一句要改什么，回车发送",
-  "sketchMessage": "标注图：{path}\ntopic={topicId} source={source} task={task} version={version}\n原图：{naturalWidth} × {naturalHeight}\n标注 {count} 处\n说明：{note}"
+  "sketchMessage": "标注图：{path}\ntopic={topicId} source={source} task={task} version={version}\n原图：{naturalWidth} × {naturalHeight}\n标注 {count} 处\n说明：{note}",
+  "viewTools": "看这张图",
+  "zoomMode": "缩放档位",
+  "zoomModeOption": {
+    "fitv": "适应视口",
+    "fitw": "适应宽度",
+    "actual": "100% 实际像素",
+    "custom": "自定义"
+  },
+  "rotate": "旋转",
+  "rotateHint": "顺时针转 90°（R）",
+  "flip": "翻转",
+  "flipHint": "左右翻转（F）",
+  "crop": "裁剪",
+  "cropHint": "裁剪（C）",
+  "toneLabel": "调色",
+  "toneHint": "亮度和饱和度（L）",
+  "tone": {
+    "brightness": "亮度",
+    "saturation": "饱和度"
+  },
+  "toneReset": "回到 100%",
+  "restore": "还原",
+  "restoreHint": "还原成原图",
+  "cropBox": "裁剪范围",
+  "cropHintPanel": "拖动框选要留下的部分",
+  "cropApply": "裁剪",
+  "cancel": "取消",
+  "edited": "已调整 · 原图没动"
 }

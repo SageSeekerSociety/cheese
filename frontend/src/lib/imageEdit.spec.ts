@@ -2,7 +2,16 @@
 // 亮度饱和度都是 100% 时像素一个不动。
 import { describe, expect, it } from 'vitest'
 
-import { carryCrop, cropOnSource, displayPoint, type ImageAdjust, isEdited, ORIGINAL, sourcePoint, tone } from './imageEdit'
+import {
+  carryCrop,
+  cropOnSource,
+  displayPoint,
+  type ImageAdjust,
+  isEdited,
+  ORIGINAL,
+  sourcePoint,
+  tone,
+} from './imageEdit'
 
 const at = (over: Partial<ImageAdjust>): ImageAdjust => ({ ...ORIGINAL, ...over })
 const close = (a: object, b: object) => {

@@ -29,6 +29,9 @@ export type ImageGeometry = {
    * 会整体错开。
    */
   adjust?: Pick<ImageAdjust, 'rotate' | 'flip'>
+  /** 原图像素 → 屏幕像素的比例。转过 90° 时 `width` 是转后的宽，和原图宽对不上，所以
+   *  叠在图上那些（选中框、评论点）要用它，不能拿 width/naturalWidth 现推。 */
+  scale?: number
 }
 
 /** client pixels → natural image pixels. Geometry must describe the displayed image, not the pane. */
@@ -72,10 +75,11 @@ export function imageRegion(start: Point, end: Point, image: ImageGeometry): Ras
   return { x, y, width: right - x, height: bottom - y }
 }
 export function displayedRegion(region: RasterRegion, image: ImageGeometry): RasterRegion {
+  const k = image.scale ?? image.width / image.naturalWidth
   return {
-    x: (region.x * image.width) / image.naturalWidth,
-    y: (region.y * image.height) / image.naturalHeight,
-    width: (region.width * image.width) / image.naturalWidth,
-    height: (region.height * image.height) / image.naturalHeight,
+    x: region.x * k,
+    y: region.y * k,
+    width: region.width * k,
+    height: region.height * k,
   }
 }

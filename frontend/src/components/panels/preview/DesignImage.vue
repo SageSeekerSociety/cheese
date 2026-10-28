@@ -4,11 +4,14 @@ import type { SketchTool } from './designSketch'
 
 import { computed, ref, watch } from 'vue'
 
+import DesignCropBox from './DesignCropBox.vue'
 import DesignRasterRegion from './DesignRasterRegion.vue'
 import { SKETCH_COLORS } from './designSketch'
 import DesignSketchCanvas from './DesignSketchCanvas.vue'
 import DesignSketchOverlay from './DesignSketchOverlay.vue'
 import DesignSketchToolbar from './DesignSketchToolbar.vue'
+import DesignViewToolbar from './DesignViewToolbar.vue'
+import { useDesignAdjust } from './useDesignAdjust'
 import { useDesignAnnotations } from './useDesignAnnotations'
 import { useDesignDiscardGuard } from './useDesignDiscardGuard'
 import { useDesignShortcuts } from './useDesignShortcuts'
@@ -84,6 +87,8 @@ const selectedBox = ref<HTMLElement | null>(null)
 
 const tool = ref<SketchTool>('select')
 const color = ref<string>(SKETCH_COLORS[0])
+/** 亮度和饱和度那两根滑杆摊开着没有。 */
+const tonePanel = ref(false)
 
 const selectedRegion = computed(() => (props.activeRegion === undefined ? standaloneRegion.value : props.activeRegion))
 /** 框选是默认工具：打开就能拖，不用先点一下按钮。 */
@@ -95,13 +100,14 @@ const {
   pane,
   available,
   scale,
-  fitted,
   dimensions,
   geometry,
   spaceHeld,
   panning,
   narrow,
   setZoom,
+  setZoomMode,
+  zoomMode,
   fit,
   wheel,
   touchDown,
@@ -119,17 +125,44 @@ const {
   selectedBox,
   selectedRegion,
   beforePanStart: () => rememberFocus(),
+  adjust: () => adjust.adjust.value,
 })
 
+/** 看这张图那几件：旋转、翻转、裁剪、亮度和饱和度。 */
+const adjust = useDesignAdjust(() => props.identity)
+/** 转 90°/270° 时屏幕上那张图的宽高和原图对调。 */
+const shownSize = computed(() =>
+  adjust.turned.value
+    ? { width: natural.value.height, height: natural.value.width }
+    : { width: natural.value.width, height: natural.value.height }
+)
+const adjustValues = computed(() => ({ rotate: adjust.adjust.value.rotate, flip: adjust.adjust.value.flip }))
+/**
+ * 转动、调色、裁剪都作用在这一层上；里面的东西跟着一起转。
+ *
+ * 这一层按**原图的比例**摆（不是 sheet 那个转后的框）：图没被拉过，转过来才是对的形状。
+ * 它钉在 sheet 正中，转轴也在正中——90° 之后占的正好是 sheet 那个宽高对调的框。
+ */
+const frameStyle = computed(() => ({
+  width: `${natural.value.width * scale.value}px`,
+  height: `${natural.value.height * scale.value}px`,
+  transform: `translate(-50%, -50%) rotate(${adjust.adjust.value.rotate}deg) scaleX(${adjust.adjust.value.flip ? -1 : 1})`,
+  filter: adjust.filter.value,
+  clipPath: adjust.clip.value,
+}))
+
 const regionIdentity = computed(() => `${props.identity}:${scale.value}:${available.value}`)
+/** 原图像素 → 屏幕像素的比例：叠在图上那些（选中框、评论点）都按它换算。转过 90° 时
+ *  `natural.width` 和屏幕上的宽对不上，所以不现推。 */
+const pixelScale = computed(() => scale.value)
 const selectedStyle = computed(() => {
   const region = selectedRegion.value
   return region
     ? {
-        left: `${region.x * scale.value}px`,
-        top: `${region.y * scale.value}px`,
-        width: `${region.width * scale.value}px`,
-        height: `${region.height * scale.value}px`,
+        left: `${region.x * pixelScale.value}px`,
+        top: `${region.y * pixelScale.value}px`,
+        width: `${region.width * pixelScale.value}px`,
+        height: `${region.height * pixelScale.value}px`,
       }
     : {}
 })
@@ -140,8 +173,8 @@ const markDots = computed(() =>
   (props.marks ?? []).map((mark) => ({
     id: mark.id,
     style: {
-      left: `${mark.region.x * scale.value}px`,
-      top: `${mark.region.y * scale.value}px`,
+      left: `${mark.region.x * pixelScale.value}px`,
+      top: `${mark.region.y * pixelScale.value}px`,
     },
   }))
 )
@@ -198,6 +231,7 @@ const {
   color,
   canvasBusy: () => canvas.value?.busy === true,
   alt: () => props.alt,
+  adjust: () => adjust.adjust.value,
   emitAnnotate: (payload) => emit('annotate', payload),
 })
 
@@ -309,17 +343,22 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
 
 <template>
   <section class="design-image">
-    <div class="design-image__tools" role="group" :aria-label="t('design.viewportTools')">
-      <button type="button" :aria-label="t('design.zoomOut')" :disabled="scale <= 0.1" @click="setZoom(scale / 1.25)">
-        −
-      </button>
-      <output class="t-meta" :aria-label="t('design.scale')">{{ Math.round(scale * 100) }}%</output>
-      <button type="button" :aria-label="t('design.zoomIn')" :disabled="scale >= 3" @click="setZoom(scale * 1.25)">
-        +
-      </button>
-      <button type="button" :aria-pressed="fitted" @click="fit()">{{ t('design.fit') }}</button>
-      <slot name="actions" />
-    </div>
+    <DesignViewToolbar
+      :scale="scale"
+      :mode="zoomMode"
+      :adjust="adjust.adjust.value"
+      :edited="adjust.edited.value"
+      :cropping="adjust.cropping.value"
+      @zoom="setZoom(scale * $event)"
+      @mode="setZoomMode($event)"
+      @rotate="adjust.rotate()"
+      @flip="adjust.flip()"
+      @crop="adjust.startCrop()"
+      @tone="tonePanel = $event"
+      @restore="adjust.restore()"
+    >
+      <template #actions><slot name="actions" /></template>
+    </DesignViewToolbar>
     <DesignSketchToolbar
       ref="toolbar"
       v-model:note="note"
@@ -377,92 +416,133 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
           @lostpointercapture.capture="sheetCancel"
           @dblclick.capture="sheetDoubleClick"
         >
-          <img
-            :key="`${identity}:${src}`"
-            ref="image"
-            :src="src"
-            :alt="alt"
-            decoding="async"
-            draggable="false"
-            @load="loaded"
-          />
-          <DesignSketchOverlay
-            v-if="strokes.length"
-            :strokes="strokes"
-            :scale="scale"
-            :natural-width="natural.width"
-            :selected="selectedStroke"
-            :editing="editingText ? editingText.index : null"
-          />
-          <div
-            v-if="selectedRegion"
-            ref="selectedBox"
-            class="design-image__selection"
-            :style="selectedStyle"
-            aria-hidden="true"
-          />
-          <DesignRasterRegion
-            :image="image"
-            :enabled="selecting && selectionEnabled && !textEditing"
-            :identity="regionIdentity"
-            :profile="profile"
-            @select="selected"
-            @cancel="cancelSelection"
-          />
-          <!-- 图上框出来的那几处评论：一块一个点，点开就是那一串。和选中框一样按原图像素
+          <!-- 转动、调色、裁剪都作用在这一层上，里面的东西（画好的笔画、选中的那块、评论点、
+               正在画的画布）跟着一起转——它们在数据里都是原图像素，谁也不需要各自再转一次。 -->
+          <div class="design-image__frame" :style="frameStyle">
+            <img
+              :key="`${identity}:${src}`"
+              ref="image"
+              :src="src"
+              :alt="alt"
+              decoding="async"
+              draggable="false"
+              @load="loaded"
+            />
+            <DesignSketchOverlay
+              v-if="strokes.length"
+              :strokes="strokes"
+              :scale="scale"
+              :natural-width="natural.width"
+              :selected="selectedStroke"
+              :editing="editingText ? editingText.index : null"
+            />
+            <div
+              v-if="selectedRegion"
+              ref="selectedBox"
+              class="design-image__selection"
+              :style="selectedStyle"
+              aria-hidden="true"
+            />
+            <DesignRasterRegion
+              :image="image"
+              :enabled="selecting && selectionEnabled && !textEditing && !adjust.cropping.value"
+              :identity="regionIdentity"
+              :profile="profile"
+              :adjust="adjustValues"
+              @select="selected"
+              @cancel="cancelSelection"
+            />
+            <!-- 图上框出来的那几处评论：一块一个点，点开就是那一串。和选中框一样按原图像素
                定位，所以缩放和改窗口大小之后仍然落在那一块上。
                必须排在框选层**之后**：几层都是 `position: absolute` 的兄弟，靠后的画在上面
                也先接到指针。排在前面时，框选层那一整张（`inset: 0`）压在点上、还带着自己的
                按下处理，真鼠标就点在框选层上，点事件到不了这颗按钮——单测把点击直接打在
                元素上，正好绕过这一点。改文字那个输入框仍在更后面，编辑时它在上层。 -->
-          <button
-            v-for="dot in markDots"
-            :key="dot.id"
-            type="button"
-            class="design-image__mark"
-            :class="{ 'is-active': dot.id === activeMark }"
-            :style="dot.style"
-            :data-comment-mark="dot.id"
-            :aria-label="t('work.room.comments.commentHere')"
-            :title="t('work.room.comments.commentHere')"
-            @click.stop="emit('mark', dot.id)"
-          />
-          <!-- 对象级编辑的命中判定在 sheet 的 capture 这一层做（见 sheetDown）：
+            <button
+              v-for="dot in markDots"
+              :key="dot.id"
+              type="button"
+              class="design-image__mark"
+              :class="{ 'is-active': dot.id === activeMark }"
+              :style="dot.style"
+              :data-comment-mark="dot.id"
+              :aria-label="t('work.room.comments.commentHere')"
+              :title="t('work.room.comments.commentHere')"
+              @click.stop="emit('mark', dot.id)"
+            />
+            <!-- 对象级编辑的命中判定在 sheet 的 capture 这一层做（见 sheetDown）：
                点中笔画就进入编辑，点在空白处就把指针让给下面的区域选择器。 -->
-          <input
-            v-if="editingText"
-            ref="editField"
-            v-model="editingText.value"
-            class="design-image__text"
-            autocomplete="off"
-            :style="editStyle"
-            :placeholder="t('design.textPlaceholder')"
-            @keydown.enter="onEditEnter"
-            @keydown.esc="onEditEscape"
-            @blur="commitTextEdit"
-            @pointerdown.stop
-          />
-          <DesignSketchCanvas
-            v-if="drawing"
-            ref="canvas"
-            :image="image"
-            :identity="regionIdentity"
-            :tool="tool"
-            :color="color"
-            :width="penWidth"
-            :redact-style="redactStyle"
-            :profile="profile"
-            :strokes="strokes"
-            @stroke="addStroke"
-            @pick-block="pickBlock"
-            @edit-text="openTextEditor"
-            @text-editing="drawingText = $event"
+            <input
+              v-if="editingText"
+              ref="editField"
+              v-model="editingText.value"
+              class="design-image__text"
+              autocomplete="off"
+              :style="editStyle"
+              :placeholder="t('design.textPlaceholder')"
+              @keydown.enter="onEditEnter"
+              @keydown.esc="onEditEscape"
+              @blur="commitTextEdit"
+              @pointerdown.stop
+            />
+            <DesignSketchCanvas
+              v-if="drawing"
+              ref="canvas"
+              :image="image"
+              :identity="regionIdentity"
+              :tool="tool"
+              :color="color"
+              :width="penWidth"
+              :redact-style="redactStyle"
+              :profile="profile"
+              :strokes="strokes"
+              :adjust="adjustValues"
+              @stroke="addStroke"
+              @pick-block="pickBlock"
+              @edit-text="openTextEditor"
+              @text-editing="drawingText = $event"
+            />
+          </div>
+          <!-- 裁剪框铺在转好调好的那张图上（不是 sheet 上）：它框的是「留下哪一块」，量的
+               就是读者看到的样子。 -->
+          <DesignCropBox
+            v-if="adjust.cropping.value"
+            v-model="adjust.draftCrop.value"
+            :width="shownSize.width * scale"
+            :height="shownSize.height * scale"
           />
         </div>
       </div>
       <div class="design-image__overlay">
         <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
       </div>
+    </div>
+    <!-- 亮度饱和度两根滑杆：收在「调色」后面，摊开时浮在这一格右上。 -->
+    <div v-if="tonePanel" class="design-image__tone">
+      <label v-for="key in ['brightness', 'saturation'] as const" :key="key" class="design-image__tone-row">
+        <span>{{ t(`design.tone.${key}`) }}</span>
+        <input
+          type="range"
+          :min="key === 'brightness' ? 50 : 0"
+          :max="key === 'brightness' ? 150 : 200"
+          :value="adjust.adjust.value[key]"
+          @input="adjust.change({ [key]: Number(($event.target as HTMLInputElement).value) })"
+        />
+        <span class="design-image__tone-value">{{ adjust.adjust.value[key] }}%</span>
+      </label>
+      <button
+        type="button"
+        class="design-image__tone-reset"
+        @click="adjust.change({ brightness: 100, saturation: 100 })"
+      >
+        {{ t('design.toneReset') }}
+      </button>
+    </div>
+    <!-- 裁剪中，底下一条确定/取消；回车也确定。 -->
+    <div v-if="adjust.cropping.value" class="design-image__cropbar" role="group" :aria-label="t('design.crop')">
+      <span class="design-image__cropbar-hint">{{ t('design.cropHintPanel') }}</span>
+      <button type="button" @click="adjust.finishCrop(false)">{{ t('design.cancel') }}</button>
+      <button type="button" class="is-primary" @click="adjust.finishCrop(true)">{{ t('design.cropApply') }}</button>
     </div>
     <!-- 要丢没发出去的标注之前先问一句；参考物的文案是「Discard your annotations?」。 -->
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the ARIA modal dialog pattern: Escape answers Keep and Tab stays inside, caught as they bubble from its two buttons -->
