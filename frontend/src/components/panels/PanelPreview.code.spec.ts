@@ -91,7 +91,7 @@ it('拖选落在哪几行，定位条上就写第几行到第几行；发出去�
   await fireEvent.mouseUp(code(ui, 6))
 
   expect(ui.getByText('第 4–6 行')).toBeTruthy()
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里换成 pathlib')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里换成 pathlib')
   await fireEvent.click(ui.getByText('发送'))
 
   await waitFor(() => expect(ui.emitted().locate).toBeTruthy())

@@ -487,7 +487,8 @@ watch(
 </script>
 
 <template>
-  <div ref="root" class="ps" :class="{ 'ps--narrow': narrow }">
+  <!-- 表格里拖出一片、点一格都是在「指」：批注框直接出卡，不先出「添加批注」（PanelPreviewView 认这个标记）。 -->
+  <div ref="root" class="ps" :class="{ 'ps--narrow': narrow }" data-locator-points>
     <div v-if="loading" class="ps__state">
       <v-progress-circular indeterminate color="primary" size="24" />
     </div>

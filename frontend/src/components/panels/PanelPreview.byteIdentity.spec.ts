@@ -65,7 +65,7 @@ it('wires the real PanelPreview reader to whole-page context only after matching
   await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(false))
   expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledWith('room', 'deck.pptx', null, 'committed')
   await fireEvent.click(ui.getByText('page'))
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), 'explain')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), 'explain')
   await fireEvent.click(ui.getByText('发送'))
   const request = submitQuestion.mock.calls[0]?.[0]
   expect(request).toMatchObject({ topicId: 'room', intent: 'ask-agent' })
@@ -88,7 +88,7 @@ it.each([null, 'bbbbbbbbbbbbbbbb'])(
     await waitFor(() => expect(api.previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(true))
     await fireEvent.click(ui.getByText('page'))
-    expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeNull()
+    expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
     expect(submitQuestion).not.toHaveBeenCalled()
   }
 )
@@ -109,7 +109,7 @@ it('does not bind a late A conversion to B metadata in the real owning container
   await waitFor(() => expect(ui.getByText('page').hasAttribute('disabled')).toBe(false))
   old.resolve({ bytes: new ArrayBuffer(8), sourceVersion: 'aaaaaaaaaaaaaaaa' })
   await fireEvent.click(ui.getByText('page'))
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), 'explain')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), 'explain')
   await fireEvent.click(ui.getByText('发送'))
   const request = submitQuestion.mock.calls[0]?.[0]
   expect(request).toMatchObject({ topicId: 'room', intent: 'ask-agent' })

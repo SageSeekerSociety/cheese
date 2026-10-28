@@ -192,7 +192,7 @@ it('指的一点连同那一页的截图发出去，带的是已确认的文件�
   const ui = mount(submit as unknown as SubmitPreviewQuestion, upload as unknown as UploadAnnotation)
 
   await fireEvent.click(ui.getByText('pin'))
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里不对')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里不对')
   await fireEvent.click(ui.getByText('发送'))
 
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
@@ -218,7 +218,7 @@ it('截图没传上去也照发：位置那句话自己站得住', async () => {
   const ui = mount(submit as unknown as SubmitPreviewQuestion, upload as unknown as UploadAnnotation)
 
   await fireEvent.click(ui.getByText('pin'))
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里不对')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里不对')
   await fireEvent.click(ui.getByText('发送'))
 
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
@@ -233,7 +233,7 @@ it('指的那一版跟屏上这一份对不上时，连输入框都不给开', a
 
   await fireEvent.click(ui.getByText('pin'))
 
-  expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeNull()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
   expect(submit).not.toHaveBeenCalled()
 })
 
@@ -244,7 +244,7 @@ it('发出去之后让页面查看器把记号撤掉，屏上不留已经交出�
 
   const before = page.cleared
   await fireEvent.click(ui.getByText('pin'))
-  await fireEvent.update(ui.getByPlaceholderText('就这一处说点什么'), '这里不对')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里不对')
   await fireEvent.click(ui.getByText('发送'))
 
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
@@ -256,11 +256,11 @@ it('页面重排把记号撤了，正在编的那句话也跟着收起来', asyn
   const ui = mount(submit as unknown as SubmitPreviewQuestion)
 
   await fireEvent.click(ui.getByText('pin'))
-  expect(ui.queryByPlaceholderText('就这一处说点什么')).not.toBeNull()
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).not.toBeNull()
 
   page.drop?.()
 
-  await waitFor(() => expect(ui.queryByPlaceholderText('就这一处说点什么')).toBeNull())
+  await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull())
   expect(submit).not.toHaveBeenCalled()
 })
 

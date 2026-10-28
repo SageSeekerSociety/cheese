@@ -255,7 +255,7 @@ it('turns a pointed-at cell into a message naming the file and the address', asy
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这个数字应该按季度摊')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这个数字应该按季度摊')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -270,7 +270,7 @@ it('a CSV has no sheet, so its address is the cell alone', async () => {
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这一行重复了')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一行重复了')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -283,7 +283,7 @@ it('turns a selected sentence into a message naming the page it came from', asyn
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('pages'))
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这句话和摘要对不上')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话和摘要对不上')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -316,7 +316,7 @@ it('turns a selected markdown sentence into a message naming its section', async
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这里也要写清楚')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这里也要写清楚')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -352,7 +352,7 @@ it('writes only the near side when the quote runs to the end of the document', a
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这一整段都要重写')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一整段都要重写')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -385,7 +385,7 @@ it('says the quote is at the top of the file when nothing precedes it', async ()
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('就这一处说点什么'), '这句话要改')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话要改')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())

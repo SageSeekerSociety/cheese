@@ -35,7 +35,13 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
-import { type LocatorAnchor, markPointer, measureAnchor, selectionIn } from './preview/locatorAnchor'
+import {
+  FLOATING_MIN_WIDTH,
+  type LocatorAnchor,
+  markPointer,
+  measureAnchor,
+  selectionIn,
+} from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
@@ -182,13 +188,19 @@ const {
 // 一段记成一个 Range，点出来的一处记下松手的那一点；滚动和改尺寸时重算一次。
 // 记下的点只认刚刚那一下（键盘选中时没有点，框贴底），见 `preview/locatorAnchor.ts`。
 const POINTER_FRESH_MS = 1500
+const nodeElement = (node: Node) => (node instanceof Element ? node : node.parentElement)
 let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
 const locatorAnchor = ref<LocatorAnchor | null>(null)
+/** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
+const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
   const panel = panelElement.value
-  if (!panel || (event.target instanceof Element && event.target.closest('.locator'))) return
+  // 定位框自己的部件（那颗「添加批注」和整张卡）都标着 `data-locator-ui`：点它们不是在
+  // 指正文里的一处，别记成下一次指认的那一点。按标记找，不按类名——定位框以后再多一个
+  // 部件时，外面的守卫不用跟着改。
+  if (!panel || (event.target instanceof Element && event.target.closest('[data-locator-ui]'))) return
   lastPointer = { ...markPointer(event, panel), at: performance.now() }
 })
 let placing = 0
@@ -199,21 +211,35 @@ function placeLocator() {
     placing = 0
     const panel = panelElement.value
     locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+    // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
+    // 不能两样都不画。
+    if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
+      locatorFromSelection.value = false
   })
 }
 watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
+    locatorFromSelection.value = false
     return
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
+  locatorFromSelection.value =
+    !!panel &&
+    !!anchorRange &&
+    !anchorRange.collapsed &&
+    panel.clientWidth >= FLOATING_MIN_WIDTH &&
+    !nodeElement(anchorRange.commonAncestorContainer)?.closest('[data-locator-points]')
   anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
   lastPointer = null
   void nextTick(placeLocator)
 })
 useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+
 useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
 
 // ---- 这一份文件上的评论 ----
@@ -400,7 +426,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview" tabindex="-1">
+  <!-- 预览里选中一段有自己的「添加批注」，全局划词的「问芝士」在这里不出，免得一段选区上
+       同时冒出两颗按钮（见 AgentSelectionAsk 的 data-agent-select）。 -->
+  <div ref="panelElement" class="panel-preview" tabindex="-1" data-agent-select="off">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见 PreviewFrameStage）。 -->
@@ -640,6 +668,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-comment="!!commentTarget"
       :comment-error="commentError"
       :anchor="locatorAnchor"
+      :arm-first="locatorFromSelection"
       @send="sendLocator"
       @queue="queueLocator"
       @send-queued="sendQueued"
