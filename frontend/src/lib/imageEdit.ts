@@ -61,6 +61,16 @@ function backward(p: Pt, adjust: ImageAdjust): Pt {
   return adjust.flip ? { x: 1 - q.x, y: q.y } : q
 }
 
+/** 原图上的一点（按宽高的比例）落在**转好、翻好之后**看到的哪儿。 */
+export function displayPoint(p: Pt, adjust: Pick<ImageAdjust, 'rotate' | 'flip'>): Pt {
+  return forward(p, adjust)
+}
+
+/** 看到的这一点在原图上是哪一点——画布上按原图像素记的笔画和框选，都靠它换算。 */
+export function sourcePoint(p: Pt, adjust: Pick<ImageAdjust, 'rotate' | 'flip'>): Pt {
+  return backward(p, adjust)
+}
+
 /** 裁剪框换到原图（没转没翻的那张）上：clip-path 量的是元素自己，不是转过之后的样子。 */
 export function cropOnSource(crop: CropBox, adjust: ImageAdjust): CropBox {
   const a = backward({ x: crop.x, y: crop.y }, adjust)

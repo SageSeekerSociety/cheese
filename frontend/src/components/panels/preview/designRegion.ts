@@ -1,3 +1,7 @@
+import type { ImageAdjust } from '@/lib/imageEdit'
+
+import { sourcePoint } from '@/lib/imageEdit'
+
 export type Point = { x: number; y: number }
 export type RasterRegion = { x: number; y: number; width: number; height: number }
 /** 图上框出来的一处评论：id 用来打开那一串，矩形是**原图像素**——和框选发出去的那份
@@ -17,6 +21,14 @@ export type ImageGeometry = {
   height: number
   naturalWidth: number
   naturalHeight: number
+  /**
+   * 屏幕上的这张图转过、翻过没有。
+   *
+   * 转了的话 `left/top/width/height` 是**转完看到**的那个框，而框选、笔画、评论标记
+   * 一律按原图像素记；换算时先按它把看到的点折回原图，否则转 90° 之后框出来的位置
+   * 会整体错开。
+   */
+  adjust?: Pick<ImageAdjust, 'rotate' | 'flip'>
 }
 
 /** client pixels → natural image pixels. Geometry must describe the displayed image, not the pane. */
@@ -38,9 +50,14 @@ export function imagePoint(point: Point, image: ImageGeometry): Point | null {
     image.naturalHeight <= 0
   )
     return null
+  const shown = {
+    x: Math.max(0, Math.min(1, (point.x - image.left) / image.width)),
+    y: Math.max(0, Math.min(1, (point.y - image.top) / image.height)),
+  }
+  const at = image.adjust ? sourcePoint(shown, image.adjust) : shown
   return {
-    x: Math.max(0, Math.min(image.naturalWidth, ((point.x - image.left) * image.naturalWidth) / image.width)),
-    y: Math.max(0, Math.min(image.naturalHeight, ((point.y - image.top) * image.naturalHeight) / image.height)),
+    x: Math.max(0, Math.min(image.naturalWidth, at.x * image.naturalWidth)),
+    y: Math.max(0, Math.min(image.naturalHeight, at.y * image.naturalHeight)),
   }
 }
 export function imageRegion(start: Point, end: Point, image: ImageGeometry): RasterRegion | null {

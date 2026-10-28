@@ -11,6 +11,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { usePinchZoom } from '@/composables/usePinchZoom'
 
+import { ORIGINAL, sideways, displayPoint, sourcePoint } from '@/lib/imageEdit'
+import type { ImageAdjust } from '@/lib/imageEdit'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 export interface DesignViewportOptions {
@@ -24,6 +26,8 @@ export interface DesignViewportOptions {
   selectedRegion: Ref<RasterRegion | null>
   /** 按下的那一瞬：手上可能还挑着一笔，`.design-image__viewport` 的 pointerdown 先记焦点。 */
   beforePanStart: () => void
+  /** 屏幕上的图转过、翻过没有：转了 90° 时「适合视口」要按转完的宽度算。 */
+  adjust?: () => Pick<ImageAdjust, 'rotate' | 'flip'>
 }
 
 export function useDesignViewport(options: DesignViewportOptions) {
@@ -42,9 +46,18 @@ export function useDesignViewport(options: DesignViewportOptions) {
   const { narrow } = usePreviewNarrow(pane)
   const gutter = computed(() => (narrow.value ? 8 : 16))
 
+  /** 转 90°/270° 时，屏幕上那张图的宽高和原图对调。 */
+  const turned = computed(() => sideways(options.adjust?.() ?? ORIGINAL))
+  /** 屏幕上看到的那张图（没缩放前）的宽高。 */
+  const shown = computed(() =>
+    turned.value
+      ? { width: natural.value.height, height: natural.value.width }
+      : { width: natural.value.width, height: natural.value.height }
+  )
+
   const scale = computed(() => {
     if (!fitted.value) return zoom.value
-    const width = natural.value.width
+    const width = shown.value.width
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
     return Math.min(1, Math.max(0, (available.value - 2 * gutter.value) / width))
   })
@@ -52,8 +65,8 @@ export function useDesignViewport(options: DesignViewportOptions) {
   const dimensions = computed(() =>
     natural.value.width
       ? {
-          width: `${natural.value.width * scale.value}px`,
-          height: `${natural.value.height * scale.value}px`,
+          width: `${shown.value.width * scale.value}px`,
+          height: `${shown.value.height * scale.value}px`,
         }
       : {}
   )
@@ -138,9 +151,21 @@ export function useDesignViewport(options: DesignViewportOptions) {
   function naturalAt(clientX: number, clientY: number) {
     const current = image.value
     const bounds = current?.getBoundingClientRect()
-    if (!current || !bounds?.width || !natural.value.width) return null
-    const before = bounds.width / natural.value.width
-    return { naturalX: (clientX - bounds.left) / before, naturalY: (clientY - bounds.top) / before }
+    if (!current || !bounds?.width || !bounds?.height || !natural.value.width) return null
+    const shownPoint = { x: (clientX - bounds.left) / bounds.width, y: (clientY - bounds.top) / bounds.height }
+    const source = sourcePoint(shownPoint, options.adjust?.() ?? ORIGINAL)
+    return { naturalX: source.x * natural.value.width, naturalY: source.y * natural.value.height }
+  }
+  /** 反过来：原图上的这个像素此刻在屏幕哪儿。 */
+  function screenOf(naturalX: number, naturalY: number) {
+    const current = image.value
+    const bounds = current?.getBoundingClientRect()
+    if (!bounds?.width || !bounds?.height || !natural.value.width || !natural.value.height) return null
+    const shownPoint = displayPoint(
+      { x: naturalX / natural.value.width, y: naturalY / natural.value.height },
+      options.adjust?.() ?? ORIGINAL
+    )
+    return { x: bounds.left + shownPoint.x * bounds.width, y: bounds.top + shownPoint.y * bounds.height }
   }
   /** 缩放到 `value`，原图上 `at` 那一点留在屏幕上 `to` 这一处。 */
   function zoomAt(value: number, at: { naturalX: number; naturalY: number }, to: { x: number; y: number }) {
@@ -212,13 +237,11 @@ export function useDesignViewport(options: DesignViewportOptions) {
     const pending = anchor
     anchor = null
     const host = pane.value
-    const current = image.value
-    if (!pending || !host || !current || !natural.value.width) return
-    const bounds = current.getBoundingClientRect()
-    const after = bounds.width / natural.value.width
-    if (!after) return
-    host.scrollLeft += bounds.left + pending.naturalX * after - pending.clientX
-    host.scrollTop += bounds.top + pending.naturalY * after - pending.clientY
+    if (!pending || !host) return
+    const at = screenOf(pending.naturalX, pending.naturalY)
+    if (!at) return
+    host.scrollLeft += at.x - pending.clientX
+    host.scrollTop += at.y - pending.clientY
   }
   /** 空格或中键按住拖动＝平移，和画布类应用一套手感。 */
   let pan: { x: number; y: number; left: number; top: number } | null = null
