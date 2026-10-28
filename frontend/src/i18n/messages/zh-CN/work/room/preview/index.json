@@ -31,6 +31,8 @@
   "locateMessage": "在 {path} 的 {address}（「{quote}」）：{note}",
   "locatorPlaceholder": "输入修改要求或批注内容…",
   "mdHeading": "标题「{heading}」",
+  "mdTooLarge": "这份文件太大，正文没有取回来",
+  "mdTooLargeDetail": "超过 1 MB 的文本不再读进预览；下载原文件看全文",
   "mdTop": "文件开头",
   "mutableFile": "文件依赖可变，非完整快照",
   "mutableLive": "实时页面，未绑定固定实例",

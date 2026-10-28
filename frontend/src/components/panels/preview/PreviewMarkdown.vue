@@ -23,6 +23,11 @@ import { ANCHOR_IGNORE_ATTR, type MarkdownQuote, quoteFromSelection } from './ma
 const props = defineProps<{
   /** 文件正文。不是 markdown 的那几种文件不会走到这里。 */
   source: string | null
+  /** 代码块右上角放「自动换行」和「复制」两颗（`MarkdownView` 的 `copyCode`）。
+   *
+   *  对话栏那一条渲染器一直带着它们；预览里这个参数漏了，于是同一段命令在对话里
+   *  能折行、能复制，在预览里只能左右拖——面板本来就窄，窄处更该有这颗开关。 */
+  copyCode?: boolean
   /** 这一份文件上已有的评论指着的那几处（`text`/`heading`/前后文，形状见
    *  `markdownQuote`）。这一版正文里已经找不到的那一处就不画。 */
   anchors?: readonly { id: string; quote: AnchorQuote }[]
@@ -38,6 +43,8 @@ const emit = defineEmits<{
   (e: 'quote', payload: MarkdownQuote): void
   /** 读者点了正文上的某一颗标记：把那一串评论打开。 */
   (e: 'anchor', id: string): void
+  /** 正文里有哪几个标题（目录）。换了一份、读法加载完都会重发一次。 */
+  (e: 'outline', headings: { text: string; level: number; id: number }[]): void
 }>()
 
 const view = ref<InstanceType<typeof MarkdownView> | null>(null)
@@ -46,6 +53,70 @@ function onSelect() {
   const quote = quoteFromSelection(view.value?.el ?? null, window.getSelection())
   if (quote) emit('quote', quote)
 }
+
+// ---- 目录 ----
+//
+// 一份几百节的 md 没有目录就只有一个滚轮：读者想跳到「2.10」只能一路翻。标题本来就在
+// 正文里（`h1`–`h6`），这里只把它们抽出来交给文档条上的那颗「目录」，点了滚过去。
+// 抽的是**渲染出来的 DOM**，不是原文：原文里的 `#` 可能藏在代码块里、可能在引用里，
+// 只有渲染结果知道哪几个 `#` 真的成了标题。
+//
+// 正文是 `MarkdownView` 画的，换一份、读法加载完、正文重画都会换一批节点，所以跟着
+// 重画一起重抽（同 `paint`，都在下一拍）。
+type OutlineEntry = { text: string; level: number; id: number }
+const outline = ref<OutlineEntry[]>([])
+
+function collectOutline() {
+  const root = view.value?.el ?? null
+  const next: OutlineEntry[] = []
+  if (root) {
+    for (const heading of Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'))) {
+      const text = (heading.textContent ?? '').trim()
+      if (!text) continue
+      next.push({ text, level: Number(heading.tagName.slice(1)), id: next.length })
+    }
+  }
+  // 抽的这一趟由正文的每次 DOM 变化触发（标标记也改 DOM），所以先比一比再往外发：
+  // 内容没变就不发，否则每画一次标记都要让上面那一层重排一次目录。
+  if (sameOutline(outline.value, next)) return
+  outline.value = next
+  emit('outline', next)
+}
+
+function sameOutline(a: readonly OutlineEntry[], b: readonly OutlineEntry[]): boolean {
+  return a.length === b.length && a.every((entry, i) => entry.text === b[i].text && entry.level === b[i].level)
+}
+
+/** 滚到目录里第几个标题。找不到（正文刚换过）就不动。
+ *
+ *  为什么不是 `scrollIntoView`：长文的离屏块是 `content-visibility: auto`，没画过的
+ *  块按 28px 占位（见 `styles/docBlocks.css`）。一次跳几千像素时，中间那些块还没渲染，
+ *  位置是按估计值算的；跳过去之后它们陆续画出来，目标标题又被顶走（实测跳到 3.60
+ *  那一节，落点差 2700–5000px）。
+ *
+ *  做法是**量了再滚、滚了再量**：设完 scrollTop 的这一帧，视口附近的块从估计高度变成
+ *  真实高度，目标离正文顶的距离跟着变，于是再量一次、再补一次；差值小于 1px 就是稳定
+ *  了，停下。收敛的这几拍只动视口附近，比「把整篇铺开一帧」便宜得多——后者对一千多
+ *  行的文档要 48ms，而且撤掉之后没渲染过的块又回到估计值，标题当场被顶回去。
+ */
+function goToHeading(index: number) {
+  const root = view.value?.el ?? null
+  const heading = root?.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')[index]
+  if (!root || !heading) return
+  const GAP = 8
+  const distance = () => heading.getBoundingClientRect().top - root.getBoundingClientRect().top
+  let passes = 0
+  const settle = () => {
+    if (!root.isConnected) return
+    const drift = distance() - GAP
+    if (Math.abs(drift) > 1) root.scrollTop = Math.max(0, root.scrollTop + drift)
+    passes += 1
+    if (passes < 10) requestAnimationFrame(settle)
+  }
+  settle()
+}
+
+defineExpose({ goToHeading })
 
 // ---- 把已有的评论画到正文上 ----
 //
@@ -108,6 +179,7 @@ function paint() {
   } finally {
     observer?.observe(root, { childList: true, subtree: true })
   }
+  collectOutline()
 }
 
 const repaint = () => void nextTick(paint)
@@ -115,6 +187,15 @@ watch([() => props.source, () => props.anchors, () => props.pins, () => props.ac
   immediate: true,
   deep: true,
 })
+// 换了一份正文：上一份的目录先作废。上面那一层在换文件时也会清掉它自己那份，这一句是
+// 给「对比旧版」这类换正文不换文件的路径用的；顺手让 `collectOutline` 的「没变就不发」
+// 在这时一定发得出去（新正文的标题和旧的正巧一样时，不比对就永远不再发）。
+watch(
+  () => props.source,
+  () => {
+    outline.value = []
+  }
+)
 // 读法是第一次画的时候才加载的：加载完它会把自己整块重画，上一轮包的壳跟着没了。
 // 盯住正文本身的 DOM 变化，重画一次（画的时候不听自己的，见 `paint`）。
 watch(
@@ -124,6 +205,8 @@ watch(
     observer = null
     if (!root) return
     observer = new MutationObserver(() => {
+      // 目录跟着正文重画：读法加载完把整块换掉时也要重抽，而那一刻未必挂着评论。
+      void nextTick(collectOutline)
       if (props.anchors?.length || props.pins?.length) repaint()
     })
     observer.observe(root, { childList: true, subtree: true })
@@ -145,6 +228,7 @@ onBeforeUnmount(() => {
     class="doc__md md-content"
     data-testid="markdown"
     :source="source ?? ''"
+    :copy-code="copyCode"
     @mouseup="onSelect"
   />
 </template>
