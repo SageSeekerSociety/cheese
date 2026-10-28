@@ -2,7 +2,16 @@
 // 亮度饱和度都是 100% 时像素一个不动。
 import { describe, expect, it } from 'vitest'
 
-import { carryCrop, cropOnSource, type ImageAdjust, isEdited, ORIGINAL, tone } from './imageEdit'
+import {
+  carryCrop,
+  cropOnSource,
+  displayPoint,
+  type ImageAdjust,
+  isEdited,
+  ORIGINAL,
+  sourcePoint,
+  tone,
+} from './imageEdit'
 
 const at = (over: Partial<ImageAdjust>): ImageAdjust => ({ ...ORIGINAL, ...over })
 const close = (a: object, b: object) => {
@@ -48,4 +57,34 @@ it('only counts as edited once something differs from the original', () => {
   expect(isEdited(ORIGINAL)).toBe(false)
   expect(isEdited(at({ rotate: 360 }))).toBe(false)
   expect(isEdited(at({ brightness: 110 }))).toBe(true)
+})
+
+// 面板里框选、画笔、评论标记一律按**原图像素**记；图上转过翻过之后，屏幕上的一点要先折回
+// 原图才是那个坐标。这两下互为反操作——只对一边，转 90° 之后框出来的位置会整体错开。
+describe('view point ↔ source point', () => {
+  const p = { x: 0.3, y: 0.8 }
+
+  it('leaves a point where it is when nothing is turned', () => {
+    close(sourcePoint(p, ORIGINAL), p)
+    close(displayPoint(p, ORIGINAL), p)
+  })
+
+  it('round-trips through every turn, flip and their combination', () => {
+    for (const adjust of [
+      at({ rotate: 90 }),
+      at({ rotate: 180 }),
+      at({ rotate: 270 }),
+      at({ flip: true }),
+      at({ rotate: 90, flip: true }),
+      at({ rotate: 270, flip: true }),
+    ]) {
+      close(sourcePoint(displayPoint(p, adjust), adjust), p)
+      close(displayPoint(sourcePoint(p, adjust), adjust), p)
+    }
+  })
+
+  it('names the same corner that cropOnSource names, after a quarter turn', () => {
+    // 转 90° 之后看到的左上角，是原图的左下角——和裁剪那条用同一套坐标（见上面的 crop box 组）。
+    close(sourcePoint({ x: 0, y: 0 }, at({ rotate: 90 })), { x: 0, y: 1 })
+  })
 })
