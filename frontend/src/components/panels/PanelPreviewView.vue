@@ -42,6 +42,7 @@ import { videoMimeOf } from '../../lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import AttachmentVideo from '../AttachmentVideo.vue'
 
+import { KEPT_SELECTION } from './preview/keptSelection'
 import {
   FLOATING_MIN_WIDTH,
   type LocatorAnchor,
@@ -321,15 +322,24 @@ function placeLocator() {
       locatorFromSelection.value = false
   })
 }
+/** 底下的分页文档照这一份画底色：卡一打开，光标进输入框、页面上的选区就没了，
+ *  但读者还在看那一段。卡关掉（或者换了文件）就跟着清掉。 */
+const keptSelection = ref<Range | null>(null)
+provide(KEPT_SELECTION, keptSelection)
+
 watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
     locatorFromSelection.value = false
+    keptSelection.value = null
     return
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
+  // 卡一打开焦点就进了输入框，页面上的选区没了：留下这一份副本，写批注的整段时间里
+  // 读者在说的那一段一直亮着（`PreviewPages` 照着它画底色）。
+  keptSelection.value = anchorRange
   // 「批注」那一段里指一处直接出卡（原型：批注模式不走那颗小按钮）；「看」那一段才先出。
   // 另外只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
   // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。

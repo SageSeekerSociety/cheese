@@ -12,8 +12,13 @@ export interface LocatorAnchor {
   viewBottom: number
 }
 
-/** 面板窄到放不下一张弹出的卡片时就贴底：这么窄的时候弹出来也只是把正文整个盖住。 */
-export const FLOATING_MIN_WIDTH = 440
+/** 面板窄到放不下一张弹出的卡片时就贴底：这么窄的时候弹出来也只是把正文整个盖住。
+ *
+ *  这个数是「卡片真放得下」的那条线，不是「宽不宽」的感觉：卡片最宽 348、左右各留
+ *  12，一共 372。原来定在 440，比卡片实际需要的宽出一截，结果手机（390）上明明放得下，
+ *  卡片却被推到底边——读者刚选中的那一行在上面，卡片跑到屏幕另一头，中间隔着一屏正文，
+ *  指认和框对不上。 */
+export const FLOATING_MIN_WIDTH = 372
 
 interface PointerMark {
   x: number

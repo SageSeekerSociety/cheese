@@ -12,6 +12,7 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
+import { FLOATING_MIN_WIDTH } from './preview/locatorAnchor'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
@@ -142,7 +143,7 @@ async function selectFirstLine(ui: ReturnType<typeof mount>) {
 }
 
 it('面板窄到框只能贴底时，选中一段直接出卡，不先出按钮', async () => {
-  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(FLOATING_MIN_WIDTH - 1)
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
@@ -166,7 +167,7 @@ it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡�
   const ui = mount()
   await selectFirstLine(ui)
   await waitFor(() => ui.getByTestId('locator-arm'))
-  w = 400
+  w = FLOATING_MIN_WIDTH - 1
   window.dispatchEvent(new Event('resize'))
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
   width.mockRestore()
