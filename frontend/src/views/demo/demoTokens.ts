@@ -273,6 +273,7 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
       '--selection-',
       '--scrollbar-',
       '--lightbox-',
+      '--video-',
       '--inverse-',
       '--logo-',
       '--category-',

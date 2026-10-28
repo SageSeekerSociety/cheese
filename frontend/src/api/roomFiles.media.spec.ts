@@ -15,9 +15,10 @@ afterEach(() => {
 
 describe('attachmentMediaUrl', () => {
   it('reads the whole size off the same response it signs the address with', async () => {
-    const fetchMock = vi.fn(
-      async () => new Response(null, { status: 206, headers: { 'Content-Range': 'bytes 0-0/15519744' } })
-    )
+    // 声明签名，`mock.calls` 才是 (url, init) 的二元组，读得到 Range 头。
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async () => {
+      return new Response(null, { status: 206, headers: { 'Content-Range': 'bytes 0-0/15519744' } })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     const got = await attachmentMediaUrl('topic-a', 'library/screen.mp4')
@@ -25,7 +26,8 @@ describe('attachmentMediaUrl', () => {
     expect(got.bytes).toBe(15_519_744)
     expect(got.url).toContain('/topics/topic-a/attachments/raw')
     // 只要一个字节：地址签下来就够了，整段录屏由播放器自己按 range 流式读。
-    expect(fetchMock.mock.calls[0][1]?.headers?.Range).toBe('bytes=0-0')
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect((init.headers as Record<string, string>).Range).toBe('bytes=0-0')
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 

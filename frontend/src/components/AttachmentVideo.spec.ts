@@ -271,8 +271,10 @@ describe('AttachmentVideo', () => {
   })
 
   it('does not fetch the opening frame when the reader is on a metered link', async () => {
-    const original = navigator.connection
-    Object.defineProperty(navigator, 'connection', { value: { saveData: true }, configurable: true })
+    // `connection` 不是标准字段，TS 的 Navigator 上没有；这就是那个替身本身。
+    const nav = navigator as Navigator & { connection?: { saveData?: boolean } }
+    const original = nav.connection
+    nav.connection = { saveData: true }
     try {
       render(AttachmentVideo, {
         props: { topicId: 'topic-a', path: 'library/screen.mp4' },
@@ -302,7 +304,8 @@ describe('AttachmentVideo', () => {
       await fireEvent(video, new Event('loadeddata'))
       expect(touched).toBe(false)
     } finally {
-      Object.defineProperty(navigator, 'connection', { value: original, configurable: true })
+      if (original) nav.connection = original
+      else delete nav.connection
     }
   })
 })
