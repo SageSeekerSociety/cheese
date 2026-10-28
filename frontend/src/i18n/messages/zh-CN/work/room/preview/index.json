@@ -113,5 +113,13 @@
   "pendingSummaryPlaceholder": "可选：补充总体修改说明，或直接发送",
   "sendWithNotes": "发送（含 {count} 条批注）",
   "pendingKeepGoing": "可继续在画布中选择多处，合并为一条消息提交修改",
-  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次"
+  "sendQueuedFailed": "这条没发出去，待发批注还留着——稍后再按一次",
+  "modeView": "看",
+  "modeNote": "批注",
+  "modeEdit": "改",
+  "modeGroup": "预览模式",
+  "modeViewTitle": "浏览模式（快捷键 1）",
+  "modeNoteTitle": "批注模式（快捷键 2）：选择内容就地添加批注",
+  "modeEditTitle": "编辑模式（快捷键 3）",
+  "modeEditBlocked": "这一份不能就地改；改用批注交给芝士"
 }

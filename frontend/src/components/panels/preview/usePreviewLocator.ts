@@ -19,6 +19,8 @@ import type { SlidePageContext } from './slidesContext'
 
 import { computed, inject, ref, watch } from 'vue'
 
+import { PREVIEW_MODE } from '@/composables/panelPreview/previewMode'
+
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
 import { usePreviewPick } from './usePreviewPick'
@@ -44,6 +46,19 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
   const queued = ref<string[]>([])
+  /** 看 / 批注 / 改 三段模式（原型里那一段）。有它时：
+   *  - 「看」：拖选一段先在选区下浮一颗「添加批注」，点了才展开整张卡（两步，原型读模式）。
+   *  - 「批注」：指一处直接出卡（一步，原型批注模式）。
+   *  - 「改」：读者在打字，指一处什么都不做。
+   *  没有这个口（资料库、产物页那几处）时按过去的行为走：指一处出卡，拖着选的那一段
+   *  仍先出小按钮（`armFirst` 由外面给）。 */
+  const previewMode = inject(PREVIEW_MODE, null)
+  /** 这一段指不指得动。判据是「正文此刻真在编辑」而不是「模式停在改」：协同会话断了、
+   *  编辑器自己关掉时，模式还停在「改」而正文已经回到只读——那时还按模式拦，读者会发现
+   *  选中一段什么都不出，而屏幕上明明是可以读的正文。`annotating` 之外的两段都指得动，
+   *  区别只在摆什么（看是先一颗小按钮、批注是直接出卡）。 */
+  const pointing = computed(() => !previewMode || !previewMode.editing.value)
+
   /** 话题页提供的那一份待发篮。有它时逐条列在输入框上方、一起发；没有（资料库、产物页
    *  这些没有对话栏的地方）就退回本格自己面板底下那条老样式。 */
   const sharedPending = inject(PENDING_NOTES, null)
@@ -60,6 +75,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     snapshot: async (page) => (await deps.snapshot(page)) ?? null,
     open: openLocator,
     clear: clearLocator,
+    pointing: () => pointing.value,
   })
   const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
@@ -70,9 +86,15 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onRuntime: deps.onPickMode,
     open: (label, quote, address) => openLocator(label, quote, address),
     quote: quoted,
+    allowed: () => pointing.value,
   })
 
   function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
+    // 「改」那一段里指一处什么都不弹：读者在正文里打字，拖选是选字，不是在批注。
+    // 全部指法都收口到这里（选段、点格、框一块、钉一页、指一行、圈选），所以闸门只设
+    // 这一处；页上那个钉和网页圈选是两个例外，它们会先动别的东西（截图、给帧发消息），
+    // 各自另拦一道。
+    if (!pointing.value) return
     imageRegion.clear()
     quoted.clear()
     pageLocator.pin.value = null

@@ -26,9 +26,11 @@ import type { PreviewLocate } from '../../lib/previewQuestion'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
+import { MODE_KEYS, PREVIEW_MODE, usePreviewMode } from '../../composables/panelPreview/previewMode'
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { videoMimeOf } from '../../lib/fileKind'
@@ -153,6 +155,41 @@ const browsing = computed(() =>
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
 const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
 
+// ---- 看 / 批注 / 改 三段模式（原型里那一段，快捷键 1/2/3）----
+// 三段说的是「现在鼠标按下去算什么」：看什么都不指、批注指一处写一句话、改就地改正文。
+// 这里只做两件与它有关的事：开这一格时给下面一个口（`provide`），以及把「能不能指」
+// 传给定位层——`view` 那一段里拖选只是在读，不弹任何东西。
+//
+// 「改」这一段这一份开不开得起来：markdown 看协同会话、Office 那几种看后缀，**两种都要求
+// 不是手机**（手机上不给编辑器，负责人 2026-10-28 定；理由见 `PreviewDocStage`）。判据和
+// 那边同源，但那边还要等面板量出宽度，这一段不该跟着抖，所以按同样的三条在这里重算。
+const EDITABLE_OFFICE = new Set(['docx', 'xlsx', 'pptx'])
+const { mdAndUp } = useDisplay()
+const modeCanEdit = computed(
+  () =>
+    mdAndUp.value &&
+    (EDITABLE_OFFICE.has(props.documentSuffix) ||
+      (props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value))
+)
+const previewMode = usePreviewMode(
+  () => modeCanEdit.value,
+  () => props.previewFile?.path ?? props.previewUrl ?? ''
+)
+provide(PREVIEW_MODE, previewMode)
+
+// 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
+// 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
+useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (event: KeyboardEvent) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  const mode = MODE_KEYS[event.key]
+  if (!mode) return
+  const target = event.target
+  if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)))
+    return
+  event.preventDefault()
+  previewMode.set(mode)
+})
+
 const {
   locator,
   locatorNote,
@@ -244,9 +281,11 @@ watch(locator, (now) => {
   }
   const panel = panelElement.value
   anchorRange = panel ? selectionIn(panel) : null
-  // 只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 「批注」那一段里指一处直接出卡（原型：批注模式不走那颗小按钮）；「看」那一段才先出。
+  // 另外只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
   // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
   locatorFromSelection.value =
+    previewMode.mode.value === 'view' &&
     !!panel &&
     !!anchorRange &&
     !anchorRange.collapsed &&

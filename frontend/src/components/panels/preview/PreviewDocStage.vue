@@ -28,12 +28,15 @@ import type { FileKind } from '@/lib/fileKind'
 import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
-import { computed, defineAsyncComponent, nextTick, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
+
+import { PREVIEW_MODE } from '@/composables/panelPreview/previewMode'
 
 import PreviewCode from './PreviewCode.vue'
 import PreviewMarkdown from './PreviewMarkdown.vue'
 import PreviewMarkdownLive from './PreviewMarkdownLive.vue'
+import PreviewModeSwitch from './PreviewModeSwitch.vue'
 import PreviewPage from './PreviewPage.vue'
 import PreviewPages from './PreviewPages.vue'
 import PreviewSheet from './PreviewSheet.vue'
@@ -141,13 +144,14 @@ const emit = defineEmits<{
 // 在线编辑：Word、表格、幻灯片在房间里直接改，改完存回同一份文件。markdown 走另一条
 // 路（预览格里和几个人一起改正文，`liveEdit`），两种都收在「编辑」这一个按钮上。
 //
-// markdown 那一条在手机上不开：软键盘配 Monaco 不是一件值得存下去的事，编辑器在那边
-// 是只读的。让按钮露着、点开一个存不下去的只读编辑器，比不露更糟——和「改动」那一格
-// 同一条（那里手机上把「编辑」换成「全文」）。Office 那几个不受影响：它们开的是全屏
-// 对话框，手机上本来就是那一套。
+// **手机上两种都不开**（负责人 2026-10-28 定）：手机上没有值得用的编辑体验。markdown
+// 那条是软键盘配 Monaco，编辑器在那边本来就是只读；Office 那条更糟——OnlyOffice 把
+// 桌面版那一套塞进 390px 的宽度里，还会卡在「正在载入」里。让入口露着、点开一个改不动
+// 或根本打不开的编辑器，比不露更糟：读者花时间点进去，得到的是一次白等。和「改动」那一
+// 格同一条（那里手机上把「编辑」换成「全文」）。
 const EDITABLE_SUFFIXES = new Set(['docx', 'xlsx', 'pptx'])
 const { mdAndUp } = useDisplay()
-const officeEditable = computed(() => EDITABLE_SUFFIXES.has(props.documentSuffix))
+const officeEditable = computed(() => mdAndUp.value && EDITABLE_SUFFIXES.has(props.documentSuffix))
 const liveEditable = computed(
   () => mdAndUp.value && props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value
 )
@@ -157,6 +161,16 @@ function startEdit() {
   if (liveEditable.value) void props.liveEdit?.begin()
   else if (props.previewFile) emit('open-editor', props.previewFile.path)
 }
+
+// 「改」那一段就是编辑入口（原型里没有另摆一颗「编辑」键，那一段本身就切换 `contenteditable`）。
+// 切到「改」就开这一份的编辑会话——markdown 走协同、Office 走全屏对话框，和原来那颗
+// 「编辑」键同一个出口；离开「改」就把协同那一栏收掉，免得停在「看」而正文还在改。
+const modes = inject(PREVIEW_MODE, null)
+const editingNow = computed(() => modes?.editing.value ?? false)
+watch(editingNow, (editing) => {
+  if (editing) startEdit()
+  else if (liveEditable.value) props.liveEdit?.end()
+})
 
 // 下面那几句「转圈 / 缺服务 / 转不了」问的是「屏幕上现在有没有东西可看」，而东西
 // 有两种：印刷版（PDF 的字节）和网页版（渲染好的那一页）。两种视图一次只取一种，
@@ -357,6 +371,9 @@ defineExpose({ snapshot, clearMark })
       <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
       <span v-if="!namedTab" class="doc__name">{{ documentName }}</span>
       <span class="doc__type t-meta">{{ documentType.label }}</span>
+      <!-- 看 / 批注 / 改 三段（原型里那一段，快捷键 1/2/3）。摆在这一条右边，和版本
+           行同一行——原型里也是这一行。窄面板收成图标。 -->
+      <PreviewModeSwitch class="doc__modes" :compact="compact" />
       <PreviewVersionPicker
         v-if="version && versions"
         :list="versions.list.value"

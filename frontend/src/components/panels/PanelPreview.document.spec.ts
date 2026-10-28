@@ -177,16 +177,27 @@ function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n')
 
 it('offers edit on a markdown file, and hands the panel its live session', async () => {
   // 这一条盯的是「这一格真的把协同编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
-  // `live-edit`，按钮就永远不出现——组件自己的单测直接挂 `PanelPreviewView`，看不见。
+  // `live-edit`，这两条都会看不见——组件自己的单测直接挂 `PanelPreviewView`，看不到。
   editableMarkdown()
-  mount()
+  const ui = mount()
 
-  const button = await screen.findByTestId('edit-file')
-  await fireEvent.click(button)
+  // 编辑入口是文档条上的「改」那一段（原型里没有另一颗「编辑」键）。
+  const edit = await ui.findByTestId('preview-mode-edit')
+  expect((edit as HTMLButtonElement).disabled).toBe(false)
+  await fireEvent.click(edit)
 
-  // 点下去是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
-  const editor = await screen.findByTestId('markdown-live')
+  // 点了是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await ui.findByTestId('markdown-live')
   expect(editor.getAttribute('data-path')).toBe('output/说明.md')
+})
+
+it('切回「看」把协同编辑那一栏收掉：正文不再是编辑态', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+  await fireEvent.click(ui.getByTestId('preview-mode-view'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
 })
 
 it('手机上不摆这个按钮：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
