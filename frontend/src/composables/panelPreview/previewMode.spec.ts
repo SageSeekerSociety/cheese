@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { expect, it } from 'vitest'
 
-import { MODE_KEYS, usePreviewMode } from './previewMode'
+import { MODE_KEYS, shouldResetModeOnSessionEnd, usePreviewMode } from './previewMode'
 
 it('刚打开一份是「看」，三段都能切', () => {
   const mode = usePreviewMode(
@@ -74,4 +74,20 @@ it('「批注」只有那一段算数', () => {
 
 it('快捷键 1/2/3 对着看/批注/改', () => {
   expect(MODE_KEYS).toEqual({ '1': 'view', '2': 'note', '3': 'edit' })
+})
+
+// 协同会话收起时该不该把模式收回「看」：这条判断分得开「会话自己结束」和「换文件」
+// （后者 `liveEdit` 也会 end()），两种都验。
+it('会话收的正是眼前这一份：该收', () => {
+  expect(shouldResetModeOnSessionEnd('a.md', '', 'a.md')).toBe(true)
+})
+
+it('换了一份文件（收的是刚离开的那一份）：不收', () => {
+  expect(shouldResetModeOnSessionEnd('a.md', '', 'b.md')).toBe(false)
+})
+
+it('没有变空（会话还开着）、或者本来就没会话：不收', () => {
+  expect(shouldResetModeOnSessionEnd('a.md', 'a.md', 'a.md')).toBe(false)
+  expect(shouldResetModeOnSessionEnd('', '', 'a.md')).toBe(false)
+  expect(shouldResetModeOnSessionEnd('', '', null)).toBe(false)
 })

@@ -35,6 +35,19 @@ export interface PreviewModeApi {
 
 export const PREVIEW_MODE: InjectionKey<PreviewModeApi> = Symbol('preview-mode')
 
+/** 协同会话收起时该不该把模式收回「看」。
+ *
+ *  两条路都会让 `editingPath` 从有变空：会话自己结束（编辑器上那颗关闭键、服务端拒了），
+ *  和读者换了一份文件（`liveEdit` 自己那个 `watch` 也会 `end()`）。前者正文回到只读、
+ *  模式还停在「改」，下面每一次指认都会被吞掉，得收；后者是另一份文件的事，那份文件
+ *  有自己的记忆，不能拿这一下把它切走。
+ *
+ *  分得开的判据：会话自己结束时，它收的正是眼前这一份；换文件时收的是刚离开的那一份。
+ *  由 `PanelPreviewView` 和它的用例共用，免得那一条判断只在组件里说不清。 */
+export function shouldResetModeOnSessionEnd(ended: string, now: string, opened: string | null | undefined): boolean {
+  return !!ended && !now && ended === (opened ?? '')
+}
+
 /** 快捷键 1 / 2 / 3 对应的三段。原型里也是这三个数。 */
 export const MODE_KEYS: Readonly<Record<string, PreviewMode>> = { '1': 'view', '2': 'note', '3': 'edit' }
 

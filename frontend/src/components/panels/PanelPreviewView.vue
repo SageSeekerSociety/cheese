@@ -30,7 +30,12 @@ import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch }
 import { useDisplay } from 'vuetify'
 import { useEventListener, useFullscreen } from '@vueuse/core'
 
-import { MODE_KEYS, PREVIEW_MODE, usePreviewMode } from '../../composables/panelPreview/previewMode'
+import {
+  MODE_KEYS,
+  PREVIEW_MODE,
+  shouldResetModeOnSessionEnd,
+  usePreviewMode,
+} from '../../composables/panelPreview/previewMode'
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
 import { videoMimeOf } from '../../lib/fileKind'
@@ -204,18 +209,22 @@ useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (even
 //    「这一份文件改不改得动」，不看会话还在不在，所以会话结束它还是 true；只盯它的话
 //    模式会一直停在「改」，而且「改」那一颗再点也没有反应（值没变，watch 不触发）。
 //
-// 只在这两份从「有」变「没有」的那一刻收：换一份文件时它们本来就是空串，不该顺手
-// 把新的那一份切到「看」（新的那一份有自己的记忆）。
 watch(
   () => props.editing,
   (now, before) => {
     if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
   }
 )
+// 协同那条要再问一句「收起来的是不是眼前这一份」：读者换一份文件时，`liveEdit` 自己
+// 那个 `watch(state.previewFile)` 也会 `end()`，`editingPath` 同样从有变空——照上面那条
+// 直接收，「换文件」和「会话结束」就分不开，重置会落到哪一份上看 flush 的先后（可能是
+// 刚离开的那一份，把它的记忆抹掉；也可能是刚打开的那一份，顺手把它该开着的编辑会话
+// 也关掉）。会话自己结束时会停留在同一份上，换文件时已经不是了。
 watch(
   () => props.liveEdit?.editingPath.value ?? '',
   (now, before) => {
-    if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
+    if (!shouldResetModeOnSessionEnd(before, now, props.previewFile?.path)) return
+    if (previewMode.mode.value === 'edit') previewMode.set('view')
   }
 )
 
