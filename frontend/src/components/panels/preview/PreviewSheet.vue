@@ -359,8 +359,13 @@ function runLocate() {
     const sheet = active.value
     const start = splitAddress(at.start)
     const end = splitAddress(at.end)
-    const inside = (at: { row: number; col: number }) => at.row < sheet.rows.length && at.col < sheet.width
-    if (!sheet || !start || !end || !inside(start) || !inside(end)) {
+    // `inside` 要等 `sheet` 判完非空才用得上，所以先判空再定义它。
+    if (!sheet || !start || !end) {
+      locateMiss.value = true
+      return
+    }
+    const inside = (corner: { row: number; col: number }) => corner.row < sheet.rows.length && corner.col < sheet.width
+    if (!inside(start) || !inside(end)) {
       locateMiss.value = true
       return
     }
@@ -553,7 +558,7 @@ function changedTitle(rowIndex: number, colIndex: number): string | null {
 }
 
 /** 正在看的这张表上的图。图挂在它自己那张表上（Excel 里就是浮在那张表的画布上）。 */
-function chartsFor(sheet: Sheet | undefined): SheetChart[] {
+function chartsFor(sheet: Sheet | null | undefined): SheetChart[] {
   if (!sheet || !charts.value.length) return []
   return resolveCharts(charts.value, sheets.value).get(sheet.name) ?? []
 }
