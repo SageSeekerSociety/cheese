@@ -210,6 +210,17 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  /* ---- Presentation ground ----
+     A deck shown full-screen takes the whole screen: unlike the picture viewer,
+     nothing behind it should read through. Same dark in both themes for the same
+     reason (a slide is judged against a neutral surround), but opaque. The dark
+     block repeats these values deliberately. */
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -553,6 +564,12 @@
   --lightbox-fill: rgba(255, 255, 255, 0.1);
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
+
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
 
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
