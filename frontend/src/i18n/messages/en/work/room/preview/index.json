@@ -114,5 +114,6 @@
   "pendingRemove": "Remove this note",
   "pendingCollapsedHint": "Open to see where each one points and what it asks",
   "pendingSummaryPlaceholder": "Optional: an overall instruction, or just send",
-  "sendWithNotes": "Send ({count} note(s))"
+  "sendWithNotes": "Send ({count} note(s))",
+  "pendingKeepGoing": "Keep pointing at more spots; they go out as one message"
 }
