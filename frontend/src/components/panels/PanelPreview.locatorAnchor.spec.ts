@@ -15,6 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
+import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { previewBundles } from '@/test/panelBundles'
 
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
@@ -80,12 +81,13 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges()
 })
 
-function mount() {
+function mount(pending?: ReturnType<typeof usePendingNotes>) {
   return render(PanelPreviewView, {
     props: props(),
     global: {
       plugins: [createVuetify({ components, directives })],
       stubs: { VBtn: { template: '<button><slot /></button>' }, VIcon: true, VSpacer: true, VAlert: true },
+      ...(pending ? { provide: { [PENDING_NOTES as symbol]: pending } } : {}),
     },
   })
 }
@@ -168,5 +170,35 @@ it('先出了按钮后面板被拖窄：按钮无处可贴，改成直接出卡�
   w = 400
   window.dispatchEvent(new Event('resize'))
   await waitFor(() => expect(ui.getByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  width.mockRestore()
+})
+
+it('「加入待发」把这一处加进话题页那一份待发篮，不是本格自己那一条', async () => {
+  const send = vi.fn(() => true)
+  const pending = usePendingNotes(send)
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
+  const ui = mount(pending)
+  const md = ui.getByTestId('markdown')
+  const node = await waitFor(() => md.querySelector('p')!.firstChild!, { timeout: 5000 })
+  const range = document.createRange()
+  range.setStart(node, 4)
+  range.setEnd(node, 10)
+  window.getSelection()!.removeAllRanges()
+  window.getSelection()!.addRange(range)
+  await fireEvent.mouseUp(md)
+
+  const arm = await waitFor(() => ui.getByTestId('locator-arm'))
+  await fireEvent.click(arm)
+  const field = await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+  await fireEvent.update(field, '这里改成三段')
+  const queue = [...ui.container.querySelectorAll('button')].find((b) => b.textContent?.trim() === '加入待发')!
+  expect(queue).toBeTruthy()
+  await fireEvent.click(queue)
+  await waitFor(() => expect(pending.notes.value).toHaveLength(1))
+  const note = pending.notes.value[0]
+  expect(note.where).toBeTruthy()
+  expect(note.text).toBe('这里改成三段')
+  expect(note.message).toContain('这里改成三段')
+  expect(ui.container.querySelector('.locator__queue')).toBeNull()
   width.mockRestore()
 })

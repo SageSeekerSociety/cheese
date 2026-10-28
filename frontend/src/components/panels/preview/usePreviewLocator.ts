@@ -17,7 +17,7 @@ import type { MarkdownQuote, QuoteContext } from './markdownQuote'
 import type { PreviewViewProps } from './previewViewProps'
 import type { SlidePageContext } from './slidesContext'
 
-import { ref, watch } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
@@ -26,6 +26,8 @@ import { usePreviewQuote } from './usePreviewQuote'
 
 import { t } from '@/i18n'
 import { firstCodePoints } from '@/lib/codePoints'
+import { PENDING_NOTES } from '@/lib/pendingNotes'
+import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
   /** 指了一处，交给房间的对话。 */
@@ -42,6 +44,14 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
   const queued = ref<string[]>([])
+  /** 话题页提供的那一份待发篮。有它时逐条列在输入框上方、一起发；没有（资料库、产物页
+   *  这些没有对话栏的地方）就退回本格自己面板底下那条老样式。 */
+  const sharedPending = inject(PENDING_NOTES, null)
+  /** 卡上「加入待发」旁边那颗键写几条：共享篮优先。 */
+  const queuedCount = computed(() => (sharedPending ? sharedPending.notes.value.length : queued.value.length))
+  /** 待发篮是否另有地方列出来（话题页那一份）。有它时本格不再自己画那条 sticky 条——
+   *  同一批批注画两处，读者会以为进了两个地方。 */
+  const pendingElsewhere = computed(() => !!sharedPending)
   /** 标注图传不上去时的那一句：不说的话，画完按了按钮看起来像什么都没发生。 */
   const annotateError = ref('')
 
@@ -203,15 +213,51 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note || pageLocator.pin.value) return
-    queued.value = [...queued.value, formatLocateMessage(target, note)]
+    const message = formatLocateMessage(target, note)
+    if (sharedPending) {
+      // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
+      //（卡上的「加入待发」也只在去处是芝士时出现）。
+      sharedPending.add({
+        file: fileName(props.previewFile?.path ?? ''),
+        version: '',
+        where: target.label,
+        quote: target.quote,
+        text: note,
+        audience: 'cheese',
+        message,
+      })
+      clearLocator()
+      return
+    }
+    queued.value = [...queued.value, message]
     clearLocator()
   }
 
   function clearQueued() {
+    if (sharedPending) sharedPending.clear()
     queued.value = []
   }
 
   function sendQueued() {
+    if (sharedPending) {
+      // 共享篮：还没收进篮里的这一处先并进去，再整批发。
+      const target = locator.value
+      const note = locatorNote.value.trim()
+      if (target && note && !pageLocator.pin.value) {
+        sharedPending.add({
+          file: fileName(props.previewFile?.path ?? ''),
+          version: '',
+          where: target.label,
+          quote: target.quote,
+          text: note,
+          audience: 'cheese',
+          message: formatLocateMessage(target, note),
+        })
+        clearLocator()
+      }
+      sharedPending.send('')
+      return
+    }
     const target = locator.value
     const note = locatorNote.value.trim()
     const pending = [...queued.value]
@@ -296,6 +342,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     locator,
     locatorNote,
     queued,
+    /** 待发篮里现在有几条：共享篮优先（话题页那一份），没有就是本格自己攒的。 */
+    queuedCount,
+    /** 待发篮在别处列着（话题页输入框上方）：本格不再自己画那条。 */
+    pendingElsewhere,
     annotateError,
     imageRegion,
     pageLocator,

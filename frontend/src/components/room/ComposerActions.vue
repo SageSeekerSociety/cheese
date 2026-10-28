@@ -26,8 +26,10 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 附件还在上传：那一刻发不出去，灰着而不是把字吞掉。 */
   uploading: boolean
-  /** 现在能不能发（有字或者有附件）。 */
+  /** 现在能不能发（有字、有附件，或者攒着待发批注）。 */
   canSend: boolean
+  /** 攒着几条待发批注：发送键上写清这一下带几条。 */
+  pendingCount?: number
   /** 「+」里有没有「照片或视频」——桌面上贴一张截图或者拖进来就完事了。 */
   showImagePicker: boolean
   /** 回车是发送（触摸屏上是换行），这一行的间距跟着它走。 */
@@ -178,7 +180,10 @@ function onSend() {
 const sendLabel = computed(() => {
   if (props.voice === 'recording') return t('work.room.composer.voice.done')
   if (props.voice === 'thinking') return t('work.room.composer.voice.thinking')
-  return props.uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')
+  if (props.uploading) return t('work.room.composer.sendUploading')
+  if (props.pendingCount && props.pendingCount > 0)
+    return t('work.room.preview.sendWithNotes', { count: props.pendingCount })
+  return t('work.room.composer.send')
 })
 // 整理中不禁用：禁用的键会褪成灰色，而这一刻它是唯一在说「机器正在做」的地方，要保持琥珀色
 // 转圈。点它什么也不做（onSend 里拦着），读屏由 aria-disabled 说明。

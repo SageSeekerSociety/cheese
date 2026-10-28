@@ -140,7 +140,8 @@ const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(prop
 const {
   locator,
   locatorNote,
-  queued,
+  queuedCount,
+  pendingElsewhere,
   annotateError,
   imageRegion,
   pageLocator,
@@ -639,7 +640,8 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewLocator
       v-model:note="locatorNote"
       :target="imageRegion.target.value ? null : locator"
-      :queued-count="queued.length"
+      :queued-count="queuedCount"
+      :pending-elsewhere="pendingElsewhere"
       :can-queue="!pageLocator.pin.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"

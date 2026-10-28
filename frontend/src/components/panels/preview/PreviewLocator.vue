@@ -13,6 +13,9 @@ const props = withDefaults(
     note: string
     /** 待发批注篮里已攒的条数：一次指认多处后合并成一条消息发给芝士。 */
     queuedCount?: number
+    /** 待发篮在别处列着（话题页输入框上方）：本格不再自己画那条 sticky 条，
+     *  同一批批注画两处读者会以为进了两个地方。 */
+    pendingElsewhere?: boolean
     /** 这一处指认能不能先加入待发（钉在页上的一处要当场带截图发，不进纯文本待发篮）。 */
     canQueue?: boolean
     /** 上一次发送还没回来。发送要等一会儿，这期间再点一次会发出两条消息。 */
@@ -31,6 +34,7 @@ const props = withDefaults(
   }>(),
   {
     queuedCount: 0,
+    pendingElsewhere: false,
     canQueue: true,
     busy: false,
     canComment: false,
@@ -242,7 +246,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       <span>{{ t('work.room.preview.addNote') }}</span>
     </button>
     <div
-      v-else-if="(target && !armed) || (queuedCount && !target)"
+      v-else-if="(target && !armed) || (queuedCount && !pendingElsewhere && !target)"
       ref="card"
       class="locator"
       data-locator-ui
