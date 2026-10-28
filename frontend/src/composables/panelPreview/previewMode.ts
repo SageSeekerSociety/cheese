@@ -12,17 +12,16 @@
 // 才展开整张卡；批注模式里选中直接出卡。所以这个模式必须传进定位那几支，由它们决定
 // 选中之后摆什么。见 `usePreviewLocator` 的 `armFirst` 和 `PreviewLocator`。
 //
-// 模式是这一格自己的事（和全屏、评论栏一样），不跨文件、不落盘：换一份文件、重开这一格
-// 都回到看（原型打开时也是看）。谁读它：`PanelPreviewView` 把 `view` 之外的两段接上定位层，
-// 宿主按它禁不禁用「改」那一段。
+// 模式是这一格自己的事（和全屏、评论栏一样），不跨格、不落盘；**按文件各记一份**：
+// 一份上切到「批注」，换去看另一份时是「看」（刚打开一份东西先是在读它），再换回来还是
+// 离开时那一段（原型里也是 `Z.modes[fileId]`）。谁读它：`PanelPreviewView` 把 `view` 之外
+// 的两段接上定位层，宿主按它禁不禁用「改」那一段。
 import type { ComputedRef, InjectionKey } from 'vue'
 
 import { computed, reactive } from 'vue'
 
 /** 三段模式。名字照原型里的 `view / note / edit`。 */
 export type PreviewMode = 'view' | 'note' | 'edit'
-
-export const PREVIEW_MODES: readonly PreviewMode[] = ['view', 'note', 'edit']
 
 export interface PreviewModeApi {
   /** 现在这一段（按文件记，换文件跟着走）。 */
