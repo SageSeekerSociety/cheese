@@ -248,13 +248,13 @@ const mdUnreadable = computed(
 // 可以的，进不去就没有。
 const mdOutline = ref<{ text: string; level: number; id: number }[]>([])
 const mdRef = ref<InstanceType<typeof PreviewMarkdown> | null>(null)
-// 只在真的摆着这一份的阅读视图时才有一颗可用的目录。下面几种情形里模板走的是别的分支，
-// `ref="mdRef"` 那个实例根本没挂上（`mdRef` 是 null，点了不会有任何反应），而 `mdOutline`
-// 里还留着上一次抽的标题——摆一颗按不动、章节还和正文对不上的目录，比没有更糟：
-//   - 「看原文」：源码视图的标题和渲染出来的不是同一批；
-//   - 协同编辑开着：这一栏换成了编辑器；
-//   - 对比态 / 看旧版：正文换成了 diff 或上一版。
-// 最后两条的判断变量声明在下面（computed 的 getter 惰性求值，引用没问题）。
+// 只在真的摆着这一份的阅读视图时才有一颗可用的目录。模板里凡是从 markdown 那一支分出去
+// 的分支（下面这一串），`ref="mdRef"` 那个实例都没挂上，`mdRef` 是 null、点了不会有任何
+// 反应；而 `mdOutline` 里可能还留着上一次抽的标题——摆一颗按不动、章节还和正文对不上的
+// 目录，比没有更糟。所以这里的判据要和模板的分支一一对上：
+//   - 「看原文」「对比态 / 看旧版」「协同编辑开着」：正文换成了源码、diff、上一版或编辑器；
+//   - 三种「没有正文」（空 / 太大 / 不是文本）：模板画的是状态面板，没有正文可跳。
+// 前两条和最后一条的判断变量声明在下面（computed 的 getter 惰性求值，引用没问题）。
 const outlineWorthIt = computed(
   () =>
     props.documentType?.view === 'markdown' &&
@@ -262,6 +262,9 @@ const outlineWorthIt = computed(
     !props.liveEdit?.editingPath.value &&
     !textCompare.value &&
     !oldView.value &&
+    !mdEmpty.value &&
+    !mdTooLarge.value &&
+    !mdUnreadable.value &&
     mdOutline.value.length >= 3
 )
 function jumpToHeading(id: number) {

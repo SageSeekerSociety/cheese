@@ -165,6 +165,28 @@ it('同一份文件换成了没有标题的正文：目录按钮跟着消失，�
   await waitFor(() => expect(ui.queryByTestId('md-outline')).toBeNull())
 })
 
+it('同一份文件被轮询改成空文件：目录按钮跟着消失', async () => {
+  // 面板每 20 秒重读一次；文件在别处被清空时走的是「同一个 path、新 content」这条路。
+  // 三种「没有正文」的态画的都是状态面板，`mdRef` 没挂上——目录留着就是按不动的。
+  const ui = mount({ content: '# 一\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n' })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  await ui.rerender({
+    documentType: MARKDOWN,
+    documentName: 'notes.md',
+    documentSuffix: 'md',
+    previewFile: {
+      path: 'output/notes.md',
+      content: '   \n',
+      version: 'v2',
+      bytes: 4,
+      binary: false,
+      too_large: false,
+    },
+  })
+  await waitFor(() => expect(ui.getByText('这个文件是空的')).toBeTruthy())
+  expect(ui.queryByTestId('md-outline')).toBeNull()
+})
+
 it('换一份文件，上一份的目录不跟过来', async () => {
   const ui = mount({ content: '# 甲\n\n正文。\n\n## 乙\n\n正文。\n\n## 丙\n\n正文。\n' })
   await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
