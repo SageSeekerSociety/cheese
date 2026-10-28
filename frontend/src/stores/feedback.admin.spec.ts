@@ -35,7 +35,7 @@ function page(ids: string[]) {
   return {
     data: ids.map((id) => ({ id, title: `反馈 ${id}` })),
     total: ids.length,
-    counts: { all: ids.length, hot: 0, active: 0, resolved: 0, unread: 0 },
+    counts: { all: ids.length, hot: 0, resolved: 0, unread: 0 },
   }
 }
 

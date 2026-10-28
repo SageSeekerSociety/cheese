@@ -17,7 +17,7 @@ import { kindLabel, statusLabel } from '@/components/feedback/feedbackLabels'
 import FeedbackList from '@/components/feedback/FeedbackList.vue'
 import FeedbackPageShell from '@/components/feedback/FeedbackPageShell.vue'
 import { t } from '@/i18n'
-import { allStatuses } from '@/lib/feedbackMeta'
+import { statusesForTab } from '@/lib/feedbackMeta'
 
 // 反馈中心首页 (/feedback) 的**画面那一半**。
 //
@@ -159,10 +159,24 @@ const kindOptions = computed(() => [
     title: kindLabel(value),
   })),
 ])
+/** 状态药丸只列**当前栏位里真能出现**的状态：已完成那一栏只装三种结局，收起的
+ *  那两颗（已收录、处理中）选中必然空。判据与栏位规则的同一份在 `statusesForTab`。 */
 const statusOptions = computed(() => [
   { value: null as FeedbackStatus | null, title: t('feedback.center.filter.any') },
-  ...allStatuses(props.meta?.statuses).map((value) => ({ value, title: statusLabel(value) })),
+  ...statusesForTab(props.tab, props.meta?.statuses).map((value) => ({ value, title: statusLabel(value) })),
 ])
+
+/** 换栏位时，原先选中的状态如果在新栏位里不可能出现，就回到「不限」。
+ *
+ *  发请求那一份由容器清（`store.setTab` 同一次请求里清掉，不然会先拉一次空页）；
+ *  这里只负责把控件那一格跟上 —— 否则药丸已经不在选项里，`status` 却还记着它，
+ *  切回别的栏位时它会凭空亮起来。 */
+watch(
+  () => props.filterStatus,
+  (value) => {
+    if (value !== status.value) status.value = value
+  }
+)
 const dayOptions = computed(() => [
   { value: null as number | null, title: t('feedback.center.filter.any') },
   { value: 1, title: t('feedback.center.filter.days24') },
@@ -210,7 +224,9 @@ watch(author, (value) => {
  *  摘要、正文、提交人四个字段，用户在标签里找一条查不到时，缺的正是「我搜的东西本来就
  *  不在里面」这句话；而按类型筛空的人需要的是「换一个筛选条件」，不是「换一个关键词」。 */
 const hasQuery = computed(() => !!props.query.trim())
-const hasNarrowing = computed(() => props.tab !== 'all' || props.hasFilters)
+/** 「那一排筛选」在收窄。**栏位本身不算**：点进一个空栏位时人一个筛选都没加，
+ *  说成「没有符合条件的反馈」等于替他编了一句他没做过的筛选（见下面第三句）。 */
+const isFiltered = computed(() => props.hasFilters)
 
 type EmptyState = {
   icon: string
@@ -241,12 +257,24 @@ const emptyState = computed<EmptyState>(() => {
       desc: t('feedback.center.search.desc'),
     }
   }
-  if (hasNarrowing.value) {
+  if (isFiltered.value) {
     return {
       icon: 'mdi-filter-variant-remove',
       title: t('feedback.center.filtered.title'),
       desc: t('feedback.center.filtered.desc'),
       action: t('feedback.center.filtered.clear'),
+      act: 'clear',
+    }
+  }
+  // 这一栏自己没有东西，而人一个筛选都没加。这一句和最后那句必须分开：这一句能做的
+  // 事是「换一栏」，最后那句说的是「平台一条都没有」—— 点进「已完成」遇到前者的次数
+  // 远多于后者。把它们合成「没有符合条件的反馈」，人会去找一个他从没加过的筛选。
+  if (props.tab !== 'all') {
+    return {
+      icon: 'mdi-filter-variant-remove',
+      title: t('feedback.center.tabEmpty.title'),
+      desc: t('feedback.center.tabEmpty.desc'),
+      action: t('feedback.center.tabEmpty.action'),
       act: 'clear',
     }
   }
