@@ -13,13 +13,14 @@
 // 字节仍然只在读者要的时候取：一条长对话里几十段录屏，谁也不该为它们先下一遍。
 // 打开之后也只要元数据（`preload="metadata"`），播放器自己按 range 请求流式读。
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { useMediaQuery } from '@vueuse/core'
 
 import BaseButton from './base/BaseButton.vue'
 
 import { t } from '@/i18n'
 import { ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE } from '@/lib/attachmentSource'
-import { connectionInfo, formatVideoTime, nextVideoRate, prefersLightVideo } from '@/lib/videoPlayback'
 import { fmtFileSize } from '@/lib/usageFormat'
+import { connectionInfo, formatVideoTime, nextVideoRate, prefersLightVideo } from '@/lib/videoPlayback'
 
 const props = defineProps<{
   topicId: string | null
@@ -50,10 +51,14 @@ const loading = ref(false)
 const starting = ref(false)
 /** 起播帧：真实的第一帧，画不出来就退回类型图标（见 `capture`）。 */
 const poster = ref('')
-const failure = ref<'load' | 'play' | null>(null)
+const failure = ref<'load' | 'play' | 'offline' | null>(null)
 let generation = 0
 
 const panel = computed(() => props.variant === 'panel')
+// 触屏上把控制权交还给系统播放器：全屏、画中画、AirPlay、手势拖动进度都是它给的，
+// 自绘一条做不到这些。桌面（精确指针）才用自绘那一条——那里有键盘，也才挂得住
+// 之后要接的批注 pin。这是「手机原生还是自绘」的取舍落点。
+const coarse = useMediaQuery('(pointer: coarse)')
 
 function reset() {
   generation += 1
@@ -83,6 +88,12 @@ async function load() {
   const mine = generation
   if (!props.topicId) {
     failure.value = 'load'
+    return
+  }
+  // 没网就别发那条注定失败的请求，直接说清是哪种「打不开」：读不到和放不了
+  // 是两回事，没网又是第三回事，三种要读者做的事各不相同。
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    failure.value = 'offline'
     return
   }
   loading.value = true
@@ -146,9 +157,13 @@ function drawFrame(video: HTMLVideoElement) {
     const context = canvas.getContext('2d')
     if (!context) return
     context.drawImage(video, 0, 0)
-    canvas.toBlob((blob) => {
-      if (blob) poster.value = URL.createObjectURL(blob)
-    }, 'image/jpeg', 0.8)
+    canvas.toBlob(
+      (blob) => {
+        if (blob) poster.value = URL.createObjectURL(blob)
+      },
+      'image/jpeg',
+      0.8
+    )
   } catch {
     // 画不出来就算了：卡上那一块退回类型图标，播放本身不受影响。
   }
@@ -173,6 +188,7 @@ function toggle() {
   else video.pause()
 }
 
+/** 进度条上那一下：范围输入给的是秒数，直接落到播放位置上。 */
 function seek(seconds: number) {
   const video = videoRef.value
   if (!video || !Number.isFinite(seconds)) return
@@ -225,10 +241,12 @@ function onKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target?.tagName === 'INPUT') return
   if (event.key === ' ' && target?.tagName === 'BUTTON') return
+  // 以播放器此刻真的位置为准，不用那个要等 timeupdate 才追上来的影子值。
+  const at = () => videoRef.value?.currentTime ?? current.value
   const keys: Record<string, () => void> = {
     ' ': toggle,
-    ArrowLeft: () => seek(current.value - 5),
-    ArrowRight: () => seek(current.value + 5),
+    ArrowLeft: () => seek(at() - 5),
+    ArrowRight: () => seek(at() + 5),
     ArrowUp: () => nudgeVolume(0.1),
     ArrowDown: () => nudgeVolume(-0.1),
   }
@@ -246,15 +264,16 @@ function locateCurrentTime() {
   emit('locate', { seconds, timestamp: formatVideoTime(seconds) })
 }
 
-// 入口灰着时为什么灰：还没打开，或者打开了但放不了（那时下面那行已经说了怎么办）。
+// 打不开是哪一种：读不到、放不了、没网，三种要读者做的事各不相同。
+const failureText = computed(() => {
+  if (failure.value === 'load') return t('work.room.video.loadFailed')
+  if (failure.value === 'offline') return t('work.room.video.offline')
+  if (failure.value === 'play') return t('work.room.video.playFailed')
+  return ''
+})
+
 const locateHint = computed(() =>
-  !url.value && !failure.value
-    ? t('work.room.video.locateNeedsPlayer')
-    : failure.value
-      ? failure.value === 'load'
-        ? t('work.room.video.loadFailed')
-        : t('work.room.video.playFailed')
-      : undefined
+  !url.value && !failure.value ? t('work.room.video.locateNeedsPlayer') : failure.value ? failureText.value : undefined
 )
 
 const meta = computed(() => {
@@ -269,10 +288,12 @@ onBeforeUnmount(() => {
   generation += 1
   releasePoster()
 })
-
 </script>
 
 <template>
+  <!-- 快捷键挂在这一张卡上（不是 window 上）：焦点在卡片里的某颗键或画面上时，空格播放/
+       暂停、左右 ±5 秒、上下调音量才生效。焦点在输入框或页面别处时一个键都不碰。 -->
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the card is the keyboard scope itself: keydown here is the shortcut layer for the player inside, and every control in it is a real button or range with its own handlers -->
   <div class="video-card" :class="{ 'video-card--panel': panel }" tabindex="-1" @keydown="onKeydown">
     <div class="video-card__stage">
       <!-- 读者按过打开之后才挂播放器：一条长对话里几十段录屏，谁也不该为它们先下一遍。
@@ -285,6 +306,7 @@ onBeforeUnmount(() => {
         :src="url"
         playsinline
         preload="metadata"
+        :controls="coarse || undefined"
         :poster="poster || undefined"
         :style="ratio ? { '--video-ratio': ratio } : undefined"
         :aria-label="t('work.room.video.label', { name })"
@@ -300,7 +322,7 @@ onBeforeUnmount(() => {
            它同时是这一格的焦点入口：按下去之后方向键、空格才落到这段视频上。
            播放器还没挂（还没打开）时它不出现，那时卡上那一块是打开入口本身。 -->
       <button
-        v-if="url && failure !== 'play'"
+        v-if="url && failure !== 'play' && !coarse"
         type="button"
         class="video-card__hit"
         :aria-label="playing ? t('work.room.video.pause') : t('work.room.video.play')"
@@ -333,9 +355,7 @@ onBeforeUnmount(() => {
 
       <!-- 打不开就说一句、给一条路：一块空白和「这条视频本来就是空的」长得一样。 -->
       <div v-if="failure" class="video-card__fallback">
-        <p class="video-card__fail" role="status">
-          {{ failure === 'load' ? t('work.room.video.loadFailed') : t('work.room.video.playFailed') }}
-        </p>
+        <p class="video-card__fail" role="status">{{ failureText }}</p>
         <BaseButton kind="ghost" :disabled="loading" prepend-icon="mdi-refresh" @click="load">
           {{ loading ? t('work.room.video.loading') : t('work.room.video.retry') }}
         </BaseButton>
@@ -343,7 +363,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 控制条：只有播放器在时才有意义。进度条用真的 range，键盘走得动、读屏念得出。 -->
-    <div v-if="url && failure !== 'play'" class="video-card__ctl">
+    <div v-if="url && failure !== 'play' && !coarse" class="video-card__ctl">
       <button
         type="button"
         class="video-card__key"
@@ -354,6 +374,30 @@ onBeforeUnmount(() => {
       >
         <v-icon size="20">{{ playing ? 'mdi-pause' : 'mdi-play' }}</v-icon>
       </button>
+      <!-- 面板那一档多两颗一秒钟的步进：长录屏里要停在某一帧上说话，拖进度条
+           到不了那么准，原生控件里也没有这一步。 -->
+      <template v-if="panel">
+        <button
+          type="button"
+          class="video-card__key"
+          :title="t('work.room.video.backSecond')"
+          :aria-label="t('work.room.video.backSecond')"
+          data-testid="video-back"
+          @click="seek(current - 1)"
+        >
+          <v-icon size="18">mdi-step-backward</v-icon>
+        </button>
+        <button
+          type="button"
+          class="video-card__key"
+          :title="t('work.room.video.forwardSecond')"
+          :aria-label="t('work.room.video.forwardSecond')"
+          data-testid="video-forward"
+          @click="seek(current + 1)"
+        >
+          <v-icon size="18">mdi-step-forward</v-icon>
+        </button>
+      </template>
       <button
         type="button"
         class="video-card__key"
@@ -491,8 +535,12 @@ onBeforeUnmount(() => {
   opacity: 0.88;
 }
 .video-card__play {
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.45));
-  opacity: 0.92;
+  /* 画面可能是浅色的（白底录屏）：白图标直接放上去就看不见了。垫一层半透明深底，
+     和原型里那颗浮在画面上的播放键同一个意思。 */
+  padding: 6px;
+  background: var(--video-scrim);
+  border-radius: 50%;
+  box-shadow: var(--shadow-2);
 }
 .video-card__hit:hover .video-card__play,
 .video-card__hit:focus-visible .video-card__play {

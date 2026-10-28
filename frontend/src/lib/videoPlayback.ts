@@ -50,8 +50,10 @@ export function prefersLightVideo(
 /** `navigator.connection` 的最小形状：免得在组件里到处断言这个非标准字段。 */
 export function connectionInfo(): { saveData?: boolean; effectiveType?: string } | null {
   if (typeof navigator === 'undefined') return null
-  const connection = (navigator as Navigator & {
-    connection?: { saveData?: boolean; effectiveType?: string }
-  }).connection
+  const connection = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string }
+    }
+  ).connection
   return connection ?? null
 }

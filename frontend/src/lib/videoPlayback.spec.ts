@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { VIDEO_RATES, connectionInfo, formatVideoTime, nextVideoRate, prefersLightVideo } from './videoPlayback'
+import { connectionInfo, formatVideoTime, nextVideoRate, prefersLightVideo, VIDEO_RATES } from './videoPlayback'
 
 describe('formatVideoTime', () => {
   it('pads the seconds and only grows an hours field when there is one', () => {
@@ -50,12 +50,16 @@ describe('prefersLightVideo', () => {
 
 describe('connectionInfo', () => {
   it('hands back the browser connection object, or null when there is none', () => {
-    const original = navigator.connection
-    Object.defineProperty(navigator, 'connection', { value: { effectiveType: '4g' }, configurable: true })
+    // `connection` 不是标准字段，TS 的 Navigator 上也没有；这里就是替身本身。
+    const nav = navigator as Navigator & { connection?: { effectiveType?: string } }
+    const original = nav.connection
     try {
+      nav.connection = { effectiveType: '4g' }
       expect(connectionInfo()).toEqual({ effectiveType: '4g' })
+      delete nav.connection
+      expect(connectionInfo()).toBeNull()
     } finally {
-      Object.defineProperty(navigator, 'connection', { value: original, configurable: true })
+      if (original) nav.connection = original
     }
   })
 })

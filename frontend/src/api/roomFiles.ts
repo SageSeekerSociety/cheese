@@ -163,7 +163,6 @@ export async function rawImageUrl(rawUrl: string): Promise<string> {
   return URL.createObjectURL(await res.blob())
 }
 
-/** A video object URL fetched with Authorization; the browser can then seek it. */
 /** The address a `<video>` plays a video attachment from, streaming it, and how
  *  many bytes the whole recording is (from the one range request below).
  *

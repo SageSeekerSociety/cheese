@@ -35,7 +35,10 @@ describe('AttachmentVideo', () => {
   it('loads only after a click and leaves playback to the person', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
 
     expect(mediaUrl).not.toHaveBeenCalled()
@@ -53,7 +56,10 @@ describe('AttachmentVideo', () => {
   it('annotates the moment on screen, and only once the player is there', async () => {
     const ui = render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4', canLocate: true },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     // Not opened yet: there is no "now" to point at, so the entry is off instead of handing over 00:00.
     const locate = screen.getByTestId('video-locate') as HTMLButtonElement
@@ -70,14 +76,17 @@ describe('AttachmentVideo', () => {
     Object.defineProperty(video, 'currentTime', { value: 90.7, configurable: true })
     expect((screen.getByTestId('video-locate') as HTMLButtonElement).disabled).toBe(false)
     await fireEvent.click(screen.getByTestId('video-locate'))
-    expect(ui.emitted().locate).toEqual([[{ seconds: 90, timestamp: '01:30' }]])
+    expect(ui.emitted().locate).toEqual([[{ seconds: 90, timestamp: '1:30' }]])
   })
 
   it('allows a failed authenticated read to be retried', async () => {
     mediaUrl.mockRejectedValueOnce(new Error('unavailable'))
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
@@ -98,7 +107,10 @@ describe('AttachmentVideo', () => {
     )
     const view = render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/old.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     await view.rerender({ topicId: 'topic-a', path: 'library/new.mp4' })
@@ -110,7 +122,10 @@ describe('AttachmentVideo', () => {
   it('gives a portrait recording a portrait box, not a 16:9 one', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/IMG_0001.MOV' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     await waitFor(() => expect(document.querySelector('video')).toBeTruthy())
@@ -129,7 +144,10 @@ describe('AttachmentVideo', () => {
     const download = vi.fn()
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mov', onDownload: download },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
@@ -147,7 +165,10 @@ describe('AttachmentVideo', () => {
   it('draws its own controls, and reports position and duration on the bar', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     const video = await waitFor(() => {
@@ -171,16 +192,39 @@ describe('AttachmentVideo', () => {
   it('names the file, its length and its size under the picture', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
+    // 没打开时只写名字：时长要播放器读元数据才知道，大小要签发地址那次响应才带回来。
+    expect(screen.getByText('screen.mp4')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     // 大小来自签发地址那次响应的 Content-Range，不额外发一次请求。
-    expect(screen.getByText(/screen\.mp4 · 14\.80 MB/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByText(/screen\.mp4 · 14\.80 MB/)).toBeTruthy())
+  })
+
+  it('widens for the preview panel, and offers the one-second steps there', async () => {
+    const { container } = render(AttachmentVideo, {
+      props: { topicId: 'topic-a', path: 'library/screen.mp4', variant: 'panel', canLocate: true },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
+    })
+    expect(container.querySelector('.video-card--panel')).not.toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
+    expect(await screen.findByTestId('video-back')).toBeTruthy()
+    expect(screen.getByTestId('video-forward')).toBeTruthy()
   })
 
   it('takes the keyboard only while the card itself has focus', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     const video = await waitFor(() => {
@@ -213,7 +257,10 @@ describe('AttachmentVideo', () => {
   it('cycles the playback speed through the card', async () => {
     render(AttachmentVideo, {
       props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-      global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+      global: {
+        plugins: [createVuetify({ components, directives })],
+        provide: { [ATTACHMENT_SOURCE as symbol]: source },
+      },
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     await waitFor(() => expect(document.querySelector('video')).toBeTruthy())
@@ -229,7 +276,10 @@ describe('AttachmentVideo', () => {
     try {
       render(AttachmentVideo, {
         props: { topicId: 'topic-a', path: 'library/screen.mp4' },
-        global: { plugins: [createVuetify({ components, directives })], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+        global: {
+          plugins: [createVuetify({ components, directives })],
+          provide: { [ATTACHMENT_SOURCE as symbol]: source },
+        },
       })
       await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
       const video = await waitFor(() => {

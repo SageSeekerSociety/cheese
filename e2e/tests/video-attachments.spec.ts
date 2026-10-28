@@ -86,36 +86,25 @@ test('a video selected from the album uploads, persists and plays only on reques
   const player = card.locator('video');
   await expect(player).toBeVisible();
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.readyState)).toBeGreaterThanOrEqual(1);
-  // 自绘控制条：浏览器的控件关掉，键盘由卡片自己接（作用范围见下一段）。
+  // 触屏：控制权在系统播放器手上（全屏、画中画、手势都得靠它），所以这里要的是
+  // 原生控件，而不是自绘那一条。自绘那一条是精确指针的设备才摆的。
   expect(await player.evaluate((video: HTMLVideoElement) => ({
     paused: video.paused, autoplay: video.autoplay, controls: video.controls, inline: video.playsInline,
-  }))).toEqual({ paused: true, autoplay: false, controls: false, inline: true });
+  }))).toEqual({ paused: true, autoplay: false, controls: true, inline: true });
+  await expect(card.getByTestId('video-bar')).toHaveCount(0);
   const bounds = await player.boundingBox();
   expect(bounds).not.toBeNull();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
-  // 控制条上先念出总长，再拿一条真能拖的进度条。
-  await expect(card.locator('.video-card__time')).toContainText('/ 0:0');
-  await expect(card.getByTestId('video-bar')).toBeVisible();
 
-  // 播放/暂停走卡片自己的键；空格在卡片拿到焦点时生效。
-  await card.getByTestId('video-play').click();
+  // 播放器自己的动作照旧：播到某一刻、停、拖到 0.05 秒。
+  await player.evaluate((video: HTMLVideoElement) => video.play());
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBeGreaterThan(0.15);
-  await card.getByTestId('video-play').click();
-  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
-  await card.getByTestId('video-play').focus();
-  await page.keyboard.press('Space');
-  await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(false);
-  await page.keyboard.press('Space');
+  await player.evaluate((video: HTMLVideoElement) => video.pause());
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
   await player.evaluate((video: HTMLVideoElement) => { video.currentTime = 0.05; });
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.seeking)).toBe(false);
   expect(await player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBeCloseTo(0.05, 1);
-
-  // 作用范围：焦点在输入框里时，空格不碰这一段视频。
-  await page.locator('.composer-input .ProseMirror').first().click();
-  await page.keyboard.press('Space');
-  expect(await player.evaluate((video: HTMLVideoElement) => video.paused)).toBe(true);
 });
 
 for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-matroska']]) {

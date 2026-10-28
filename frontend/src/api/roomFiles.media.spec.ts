@@ -15,7 +15,9 @@ afterEach(() => {
 
 describe('attachmentMediaUrl', () => {
   it('reads the whole size off the same response it signs the address with', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 206, headers: { 'Content-Range': 'bytes 0-0/15519744' } }))
+    const fetchMock = vi.fn(
+      async () => new Response(null, { status: 206, headers: { 'Content-Range': 'bytes 0-0/15519744' } })
+    )
     vi.stubGlobal('fetch', fetchMock)
 
     const got = await attachmentMediaUrl('topic-a', 'library/screen.mp4')
@@ -28,13 +30,19 @@ describe('attachmentMediaUrl', () => {
   })
 
   it('says null instead of guessing when the server does not report a size', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 200 }))
+    )
 
     await expect(attachmentMediaUrl('topic-a', 'library/screen.mp4')).resolves.toMatchObject({ bytes: null })
   })
 
   it('still reports the failure when this viewer may not read it', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403 })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 403 }))
+    )
 
     await expect(attachmentMediaUrl('topic-a', 'library/screen.mp4')).rejects.toThrow()
   })
