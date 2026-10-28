@@ -104,7 +104,10 @@ it('清的是收起来的那一份，不是眼前这一份：换个文件回来�
 it('会话收起来时只清「改」：从改切到批注，批注要留住', () => {
   // 编辑器收会话的不只是「读者走开了」：从「改」切到「批注」时它也会 end()。
   // 那一下读者明确选了批注，不能被顺手抹成「看」。
-  const mode = usePreviewMode(() => true, () => 'a.md')
+  const mode = usePreviewMode(
+    () => true,
+    () => 'a.md'
+  )
   mode.set('note')
   mode.forget('a.md')
   expect(mode.mode.value).toBe('note')
