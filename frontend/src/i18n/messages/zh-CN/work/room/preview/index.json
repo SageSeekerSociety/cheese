@@ -94,5 +94,10 @@
   "webRegion": "框选了一块区域",
   "webView": "网页视图",
   "webViewTitle": "按屏幕排版显示，元素带可寻址的编号",
-  "imageRegionWhere": "原图像素 x={x}、y={y}、宽={w}、高={h}"
+  "imageRegionWhere": "原图像素 x={x}、y={y}、宽={w}、高={h}",
+  "codeLine": "第 {line} 行",
+  "codeLines": "第 {start}–{end} 行",
+  "codeWrap": "自动换行",
+  "codeNoWrap": "不换行",
+  "codeView": "代码"
 }

@@ -1,0 +1,23 @@
+{
+  "pages": "{n} 页",
+  "sheets": "{n} 张表",
+  "version": "第 {n} 版",
+  "updated": "已更新到第 {n} 版",
+  "cellsChanged": "改了 {n} 格",
+  "updatedHint": "这条消息发的是第 {from} 版，之后又存到了第 {to} 版",
+  "cellChanged": "这条消息之后改过这一格",
+  "sheetRows": "共 {n} 行 · 点开看全部",
+  "sheetFailed": "表格内容读不出来，打开看看",
+  "slide": "第 {n} 页",
+  "expand": "会话内展开",
+  "collapse": "收起",
+  "download": "下载",
+  "morePages": "还有 {n} 页，在右侧看全部",
+  "appRunning": "实时运行中",
+  "appNoApp": "机器在线，应用没在跑",
+  "appOffline": "运行环境离线",
+  "appReplaced": "已换成更新的预览",
+  "appChecking": "正在确认运行状态…",
+  "app": "应用",
+  "newWindow": "新窗口"
+}

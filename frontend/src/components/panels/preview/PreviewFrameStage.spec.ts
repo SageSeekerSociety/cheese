@@ -293,6 +293,9 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
   expect(ui.queryByTestId('frame-source')).toBeNull()
   await fireEvent.click(ui.getByTestId('toggle-frame-source'))
   expect(ui.getByTestId('frame-source').textContent).toContain('<circle r="4" />')
+  // 网页源码折行（原来是 `<pre>` 的 `pre-wrap`）：生成的 HTML 常常整页一两行，
+  // 横着滚等于看不见。代码文件那一档才默认横滚。
+  expect(ui.getByTestId('frame-source').querySelector('.code-view__scroll--wrap')).toBeTruthy()
 
   await ui.rerender({
     previewFile: {

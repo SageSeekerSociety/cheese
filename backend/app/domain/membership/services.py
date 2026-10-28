@@ -62,6 +62,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
+    PERMISSION_ORDER,
     Permission,
     Role,
     Seat,
@@ -70,6 +71,9 @@ from app.domain.project_permissions import (
 from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
+
+#: What a role may be granted, by name.
+_ROLE_PERMISSION_NAMES = frozenset(p.value for p in PERMISSION_ORDER)
 
 
 async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
@@ -577,12 +581,13 @@ class RoleService:
         changed: dict[Role, list[str]],
         actor: Actor,
     ) -> None:
-        """Change what roles may do. A permission name nobody knows is refused;
-        a locked permission keeps its place whatever was sent."""
+        """Change what roles may do. A name that is not a role's permission —
+        one nobody knows, or one only an AI teammate holds — is refused; a
+        locked permission keeps its place whatever was sent."""
         await self._members._ensure_project(project_id)
         await self._members.require(project_id, actor, Permission.change_roles)
         for role, names in changed.items():
-            unknown = [n for n in names if n not in Permission._value2member_map_]
+            unknown = [n for n in names if n not in _ROLE_PERMISSION_NAMES]
             if unknown:
                 raise UnprocessableEntityError(
                     say("permissionUnknown", name=unknown[0])

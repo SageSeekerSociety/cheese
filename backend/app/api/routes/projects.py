@@ -25,7 +25,6 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import incomplete_tasks, project_task_rows
 from app.api.write_access import (
-    CHEESE_ONLY_IN_PROJECT,
     ROUTE_DECIDES,
     Can,
     InProject,
@@ -668,29 +667,6 @@ async def project_start_steps(
     await ProjectService(db).get_or_404(project_id)
     steps = await start_steps(db, project_id, actor.handle)
     return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
-
-
-@router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])
-async def add_memory(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """写记忆的旧入口 —— 已关闭，而且明说。
-
-    这条端点是 `cheese_remember` 的后端。它写的是旧的条目池（`memory_entries`，
-    按 agent 分池）；记忆换成「一条记忆一个 markdown 文件」之后（`MemoryFileStore`），
-    那一份不再注入任何地方——它的索引不进提示词、它的正文没有读点。再往后端写只会
-    得到一句「已记入」，而这条记忆以后谁都读不到：**静默丢失**。
-
-    所以这里一律拒绝，并在这句话里说清该写哪儿。旧会话（上下文里还留着
-    `cheese_remember` 那张工具表）里还在调它的调用方，读到的就是这句。
-
-    参数一个都不看：这条路的授权、作用域、layer 现在都没有意义——它不是
-    「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
-    """
-    raise ValidationError(say("rememberRetired"))
 
 
 @router.get("/{project_id}/private-chat")

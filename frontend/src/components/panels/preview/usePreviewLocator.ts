@@ -165,6 +165,13 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     quoted.range(payload)
   }
 
+  /** 代码里指的几行：位置就写行号。源码不重排，行号就是芝士改它时找的那个地址——和
+   *  markdown 按「哪一节」说位置正好相反（见上面那一支）。 */
+  function onCodeLines(payload: { start: number; end: number; text: string }) {
+    const where = codeLinesLabel(payload.start, payload.end)
+    openLocator(where, firstCodePoints(payload.text, 200), where)
+  }
+
   function onVideoLocate(payload: { seconds: number; timestamp: string }) {
     const where = t('work.room.video.timePoint', { time: payload.timestamp })
     openLocator(where, t('work.room.video.atTime', { time: payload.timestamp }), where)
@@ -306,7 +313,15 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onCell,
     onSheetRange,
     onMarkdownQuote,
+    onCodeLines,
     onVideoLocate,
     onAnnotate,
   }
+}
+
+/** 「第 12 行」「第 12–18 行」：定位框上和发出去的那句话里都是它。 */
+export function codeLinesLabel(start: number, end: number): string {
+  return start === end
+    ? t('work.room.preview.codeLine', { line: start })
+    : t('work.room.preview.codeLines', { start, end })
 }

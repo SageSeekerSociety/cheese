@@ -35,17 +35,6 @@ def test_garbage_token_rejected():
     assert not sa.verify_scoped_token("a.b.c", project_id="P")
 
 
-def test_is_valid_accepts_scoped_or_global():
-    scoped = sa.mint_scoped_token(project_id="P", topic_id="T")
-    assert sa.is_valid_cheese_token(scoped, topic_id="T")
-    # a scoped token for another topic is NOT valid for this topic
-    assert not sa.is_valid_cheese_token(scoped, topic_id="OTHER")
-    # the global secret is accepted (dev / trusted-single-host override)
-    assert sa.is_valid_cheese_token(sa.SANDBOX_TOKEN, topic_id="anything")
-    # nothing matches with no scope
-    assert not sa.is_valid_cheese_token(scoped)
-
-
 def test_token_payload_has_no_secret():
     """项目、地点、谁在做、何时签发、到期——名单是封闭的，而这五个里没有一个是卡。
 

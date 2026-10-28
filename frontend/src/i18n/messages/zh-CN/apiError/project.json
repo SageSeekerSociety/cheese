@@ -106,7 +106,6 @@
   "protectionNotList": "{what} 必须是列表",
   "protectionOverrideList": "人工放行名单",
   "protectionTooManyHandles": "{what} 最多 {max} 人",
-  "rememberRetired": "记忆改为直接写 `~/.cheese/memory/` 下的文件：一条记忆一个 markdown 文件（带 name/description/type 的 frontmatter），再在 `MEMORY.md` 里加一行指针。见系统提示里的「记忆」一节。`cheese_remember` 已停用——它写的是旧的条目池，那一份已经不再注入任何地方，写进去的事实以后读不到。",
   "removeSelfByLeaving": "无法移出自己，改用退出项目",
   "repoAlreadyConnected": "项目已连接代码仓库，暂不支持更换",
   "requiredCheckShape": "每条必跑检查要写成 {shape}",
