@@ -21,7 +21,7 @@ from starlette.websockets import WebSocket, WebSocketState
 
 from app.api.auth import ActorResolver
 from app.api.preview_relay import relay_http, relay_ws
-from app.api.preview_runtime import RUNTIME_SCRIPT, inject_runtime_script
+from app.api.preview_runtime import HTML_MEDIA, RUNTIME_SCRIPT, inject_runtime_script
 from app.core import origins, scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
@@ -244,9 +244,6 @@ def _destination(path: str) -> bool:
         and "\\" not in path
         and not any(ord(char) < 32 for char in path)
     )
-
-
-HTML_MEDIA = {"text/html", "application/xhtml+xml"}
 
 
 def _served_body(data: bytes, media: str | None) -> bytes:

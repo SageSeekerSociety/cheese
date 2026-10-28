@@ -12,6 +12,8 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { wakeSteps } from '@/composables/panelPreview/appWake'
+
 import {
   docStageProps,
   fileEditorUnsupported,
@@ -57,6 +59,16 @@ import { t } from '@/i18n'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
 
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
+
+// 应用睡着时顶上的那份静态快照：一页冻住的报名表（和原型里那一页同一个样子）。
+const SLEEP_SNAPSHOT = `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+body{margin:0;font:14px system-ui,sans-serif;color:#222;background:#fff}
+nav{display:flex;gap:16px;padding:12px 28px;border-bottom:1px solid #eee;color:#555;font-size:13px}nav b{color:#2f6fd6}
+main{display:flex;flex-direction:column;gap:12px;padding:8px 28px 24px;max-width:640px}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px}input{height:34px;border:1px solid #d9dce1;border-radius:6px;padding:0 10px}
+button{align-self:flex-start;padding:8px 20px;border:0;border-radius:6px;background:#2f6fd6;color:#fff}
+</style></head><body><nav><b>招新</b><span>首页</span><span>常见问题</span></nav><main><h1>第 2 步：填写信息</h1>
+<label>姓名<input value="张三"></label><label>手机号<input placeholder="11 位手机号"></label><button>提交报名</button></main></body></html>`
 const T: CatalogNeed[] = ['i18n']
 
 const MARKDOWN_SAMPLE = ['# 一份说明', '', '这一页把 Markdown 按文档的读法读出来。'].join('\n')
@@ -116,8 +128,8 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelFrameStage.s1.note')
         },
-        props: frameStageProps({ displayedFrame: previewFrame() }),
-        expect: '运行中的应用',
+        props: frameStageProps({ displayedFrame: previewFrame(), previewAppNote: 'npm run dev' }),
+        expectSelector: '[data-testid="preview-chain"]',
       },
       {
         get name() {
@@ -153,6 +165,43 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         },
         props: frameStageProps({ displayedFrame: previewFrame(), pickTarget: 'region', pickOn: true }),
         expectSelector: '[data-testid="preview-region-pick"]',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s5.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s5.note')
+        },
+        props: frameStageProps({
+          displayedFrame: previewFrame(),
+          previewAppNote: 'npm run dev',
+          // 电脑没连上：通道断了，也就没有地址——应用那一段自然不答。
+          previewTunnelUp: false,
+          previewUrl: null,
+          appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
+        }),
+        expectSelector: '[data-testid="preview-snapshot"]',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s6.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s6.note')
+        },
+        props: frameStageProps({
+          displayedFrame: previewFrame(),
+          previewAppNote: 'npm run dev',
+          // 唤醒走到第三步：开机和连上通道都打勾了，通道那一段就该是绿的，只有应用还是
+          // 琥珀——进度里的 tunnel 和链上的 tunnel 说的是同一件事，两处不能对不上。
+          // 通道通了、应用还没答，后端这时也还没给地址，所以 `previewUrl` 是空的。
+          previewTunnelUp: true,
+          previewUrl: null,
+          appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
+          wakeSteps: wakeSteps({ machine: true, tunnel: true, agent: false, port: false }),
+        }),
+        expectSelector: '[data-testid="preview-wake-steps"]',
       },
     ],
   },

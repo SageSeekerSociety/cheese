@@ -99,7 +99,6 @@ function mount(versions: PreviewVersionsBundle) {
       docLoading: false,
       docError: '',
       docRendererMissing: false,
-      downloadError: '',
       revs: bundles.revs,
       fileHistory: bundles.fileHistory,
       showHistory: false,

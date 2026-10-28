@@ -74,7 +74,6 @@ const props = defineProps<{
   docLoading: boolean
   docError: string
   docRendererMissing: boolean
-  downloadError: string
   slideContext?: SlideSource
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
@@ -85,6 +84,13 @@ const props = defineProps<{
   /** 这一份文件上已有的评论指着的那几处（Markdown 里画成标记）。 */
   anchors?: readonly {
     id: string
+    quote: { text: string; heading: string | null; prefix: string; suffix: string }
+  }[]
+  /** 攒在待发篮里、还没发出去的那几处（Markdown 里在那一句话末尾挂一颗序号）。
+   *  `n` 是它在篮里的编号，和 tray 上那一行对得上。 */
+  pins?: readonly {
+    id: string
+    n: number
     quote: { text: string; heading: string | null; prefix: string; suffix: string }
   }[]
   /** 分页文档（PDF、转成 PDF 的 Office）上已有的评论指着的那几处：第几页、页内比例。 */
@@ -439,10 +445,7 @@ defineExpose({ snapshot, clearMark })
       @next="goChange(changeIndex + 1)"
     />
 
-    <v-alert v-if="downloadError" type="warning" density="compact" class="mx-3 mb-2">
-      {{ downloadError }}
-    </v-alert>
-    <v-alert v-else-if="stage.stage === 'shown' && stage.stale" type="warning" density="compact" class="mx-3 mb-2">
+    <v-alert v-if="stage.stage === 'shown' && stage.stale" type="warning" density="compact" class="mx-3 mb-2">
       {{ t('work.room.preview.staleDoc', { error: docError }) }}
     </v-alert>
     <!-- 按了「编辑」，但这一份开不了协同（太大、二进制、部署没接）：说一句为什么，
@@ -490,6 +493,7 @@ defineExpose({ snapshot, clearMark })
       v-else-if="documentType.view === 'markdown'"
       :source="previewFile?.content ?? null"
       :anchors="anchors"
+      :pins="pins"
       :active-id="activeAnchor"
       @quote="emit('markdown-quote', $event)"
       @anchor="emit('anchor', $event)"

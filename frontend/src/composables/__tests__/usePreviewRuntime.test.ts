@@ -254,3 +254,93 @@ it('turning pick mode on is posted to the frame with the current session and ori
   host.setPickMode(false)
   expect(send.mock.calls.at(-1)![0].on).toBe(false)
 })
+
+it('the address the frame reports follows in-app navigation; back/forward fall back to our own trail', async () => {
+  const { host, frame, hello } = await setup()
+  const dispatch = (data: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+    )
+  // 别的会话报来的地址不算。
+  dispatch({ ...hello, sessionId: 'old', type: 'location', href: 'https://preview-fixed.example/x' })
+  expect(host.displayed.value?.href).toBeUndefined()
+  expect(host.displayed.value?.bridged).toBeFalsy()
+  // 帧说不出能不能后退（没有 Navigation API）：自己数。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup', title: '报名' })
+  expect(host.displayed.value).toMatchObject({
+    href: 'https://preview-fixed.example/signup',
+    title: '报名',
+    bridged: true,
+    canBack: false,
+    canForward: false,
+  })
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup?step=2' })
+  expect(host.displayed.value).toMatchObject({ canBack: true, canForward: false })
+  // 退回上一格：能前进了。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/signup' })
+  expect(host.displayed.value).toMatchObject({ canBack: false, canForward: true })
+  // 帧说得出（Navigation API）就照它。
+  dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/faq', canBack: true, canForward: true })
+  expect(host.displayed.value).toMatchObject({ canBack: true, canForward: true })
+})
+
+it('history and navigation commands go to the current session only once the frame has a bridge', async () => {
+  const { host, frame, hello, send } = await setup()
+  // 还没证明有桥：不发，调用方退回整帧重来。
+  expect(host.stepHistory('reload')).toBe(false)
+  expect(host.goTo('/faq')).toBe(false)
+  window.dispatchEvent(
+    new MessageEvent('message', {
+      origin: 'https://preview-fixed.example',
+      source: frame.contentWindow,
+      data: { ...hello, type: 'location', href: 'https://preview-fixed.example/' },
+    })
+  )
+  expect(host.stepHistory('back')).toBe(true)
+  expect(send.mock.calls.at(-1)![0]).toEqual({
+    channel: 'cheese-preview-runtime',
+    version: 1,
+    sessionId: hello.sessionId,
+    type: 'history',
+    action: 'back',
+  })
+  expect(send.mock.calls.at(-1)![1]).toBe('https://preview-fixed.example')
+  expect(host.goTo('/faq?x=1')).toBe(true)
+  expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'navigate', path: '/faq?x=1' })
+})
+
+it('a live frame is asked for a snapshot once it settles, and the snapshot is handed up', async () => {
+  vi.useFakeTimers()
+  try {
+    const onSnapshot = vi.fn()
+    const { frame, hello, send } = await setup({ onSnapshot })
+    const dispatch = (data: unknown) =>
+      window.dispatchEvent(
+        new MessageEvent('message', { origin: 'https://preview-fixed.example', source: frame.contentWindow, data })
+      )
+    dispatch({ ...hello, type: 'location', href: 'https://preview-fixed.example/' })
+    // 换了地址之后先等它安静两秒，再要一份。
+    expect(send.mock.calls.some((call) => call[0].type === 'snapshot')).toBe(false)
+    vi.advanceTimersByTime(2_000)
+    expect(send.mock.calls.at(-1)![0]).toMatchObject({ type: 'snapshot', sessionId: hello.sessionId })
+    dispatch({
+      ...hello,
+      type: 'snapshot',
+      html: '<!DOCTYPE html><p>hi</p>',
+      href: 'https://preview-fixed.example/',
+      title: 't',
+    })
+    expect(onSnapshot).toHaveBeenCalledTimes(1)
+    expect(onSnapshot.mock.calls[0]![1]).toEqual({
+      html: '<!DOCTYPE html><p>hi</p>',
+      href: 'https://preview-fixed.example/',
+      title: 't',
+      viewport: { w: 0, h: 0 },
+    })
+    // 空快照（页面太大、拍不了）不往上递。
+    dispatch({ ...hello, type: 'snapshot', html: '' })
+    expect(onSnapshot).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
+})

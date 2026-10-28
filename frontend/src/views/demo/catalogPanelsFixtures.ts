@@ -316,7 +316,14 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
 }
 
 /** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
-type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
+type PreviewDerived =
+  | 'documentSuffix'
+  | 'documentType'
+  | 'documentName'
+  | 'isImageArtifact'
+  | 'docIdentity'
+  | 'canPage'
+  | 'previewAppUp'
 
 /** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
 type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
@@ -370,6 +377,7 @@ export function previewBundle(
     previewUrl: ref(v.previewUrl),
     previewAppNote: ref(v.previewAppNote),
     previewTunnelUp: ref(v.previewTunnelUp),
+    previewAppUp: ref(v.previewTunnelUp && !!v.previewUrl),
     previewNamedPath: ref(v.previewNamedPath),
     autoReloaded: ref(false),
     previewError: ref(v.previewError),
@@ -378,7 +386,6 @@ export function previewBundle(
     documentType: computed(() => DOCUMENT_TYPES[suffix] ?? null),
     documentName: computed(() => file?.path.split('/').pop() ?? ''),
     isImageArtifact: computed(() => IMAGE_SUFFIXES.has(suffix)),
-    downloadError: ref(v.downloadError),
     docBytes: computed(() => v.docBytes),
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),
@@ -420,6 +427,12 @@ export function previewBundle(
     toggleDocPage: noop,
     setDocNarrow: noop,
     setPickMode: noop,
+    stepHistory: () => false,
+    goTo: () => false,
+    appSnapshot: computed(() => null),
+    wakeSteps: computed(() => null),
+    wakeError: ref(''),
+    wakeApp: noopAsync,
   }
 }
 

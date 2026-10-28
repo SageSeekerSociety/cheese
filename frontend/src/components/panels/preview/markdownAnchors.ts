@@ -12,7 +12,7 @@
  *   一样像的时候宁可不画，也别把标记钉到另一句话上。
  */
 
-import { headingPath, normaliseText } from './markdownQuote'
+import { ANCHOR_IGNORE_ATTR, headingPath, normaliseText } from './markdownQuote'
 
 export type AnchorQuote = Readonly<{
   /** 选中的原文（取的时候已经归过空白）。 */
@@ -37,7 +37,7 @@ function collectText(root: HTMLElement): Text[] {
       const text = node as Text
       if (!text.data) return
       const parent = text.parentElement
-      if (parent && (SKIP.has(parent.tagName) || parent.closest('[data-anchor-ignore]'))) return
+      if (parent && (SKIP.has(parent.tagName) || parent.closest(`[${ANCHOR_IGNORE_ATTR}]`))) return
       out.push(text)
       return
     }
@@ -163,6 +163,18 @@ export function clearMarks(root: HTMLElement | null): void {
     while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
     parent.removeChild(mark)
   }
+  root.normalize()
+}
+
+/** 攒着的那几处挂在正文上的序号（原型里的 ②③）：它是**另一种**元素，不是评论的
+ *  `mark`——点它不开评论栏，按字找位置时也不该把它当正文。 */
+export const PIN_ATTR = 'data-pending-pin'
+
+/** 把上一轮挂上去的序号拆掉。和 `clearMarks` 分开：两种标记谁先画谁后画都要拆干净，
+ *  而 `clearMarks` 只认 `MARK_ATTR`，挂了序号不拆就会越积越多。 */
+export function clearPins(root: HTMLElement | null): void {
+  if (!root) return
+  for (const pin of Array.from(root.querySelectorAll<HTMLElement>(`[${PIN_ATTR}]`))) pin.remove()
   root.normalize()
 }
 
