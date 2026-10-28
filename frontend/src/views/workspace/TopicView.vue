@@ -263,7 +263,7 @@ function openSource(source: TaskSource) {
 }
 
 // 对话栏和面板回上来说的那几件事，在这一页各归哪一处（见 topicView/actions.ts）。
-const { chatEvents, onLocate, submitQuestion, handleMentionClick } = useTopicActions({
+const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } = useTopicActions({
   place: here,
   panel: { show: panelShow },
   focusMode,
@@ -451,6 +451,7 @@ void openPlace()
             v-show="!(threadId && mdAndUp)"
             ref="panelRef"
             :submit-question="submitQuestion"
+            :ask-personal="askPersonal"
             :agent-name="store.agentName"
             :agent-handle="store.agentHandle"
             :members="store.members"

@@ -27,6 +27,7 @@ async def add_shown_block(
     path: str,
     author: str,
     mime: str,
+    meta: dict | None = None,
 ) -> BlockOut:
     """把这个房间的一份文件记进「摆出来的东西」，交出那张卡。
 
@@ -41,6 +42,7 @@ async def add_shown_block(
         content=path,
         kind=BlockKind.artifact,
         mime_type=mime,
+        meta=meta,
         refs=[path],
     )
     return BlockOut.model_validate(block)

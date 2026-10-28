@@ -18,10 +18,12 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type { ChatColumnHandle, TopicPlace, WorkPanelHandle } from './shared'
 
-import { nextTick } from 'vue'
+import { computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { personalAsker } from '@/lib/personalAsker'
 import { userRefRoute } from '@/lib/userRef'
+import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
 /** 任务概览那一列往回够的那几处：标亮某一轮改的几处。组件自己暴露什么，这里就是什么。 */
 export type TaskOverviewHandle = InstanceType<typeof TaskOverview>
@@ -60,6 +62,14 @@ export function useTopicActions(opts: {
     opts.chatColumn.value?.say(payload.message, payload.attachments)
   }
   const submitQuestion: SubmitPreviewQuestion = (request) => opts.chatColumn.value?.submitQuestion(request) ?? false
+
+  /** 预览里私下问个人芝士：开面板、把那句话问过去。
+   *
+   *  没有这一条（没登录）时面板不摆那一项——摆一条按下去没反应的比不摆更糟。
+   *  「有没有」由这里说了算，面板只认「给了还是没给」。 */
+  const askPersonal = computed(() =>
+    personalAsker(agentAvailable.value, openAgent, (message) => void askAgent(message))
+  )
 
   function handleMentionClick(handle: string) {
     void router.push(userRefRoute(handle, opts.place().projectId))
@@ -125,5 +135,5 @@ export function useTopicActions(opts: {
     // topics: the topic panel is already in view next to the chat.
   }
 
-  return { chatEvents, handleOpenResource, handleMentionClick, onLocate, submitQuestion }
+  return { chatEvents, handleOpenResource, handleMentionClick, onLocate, submitQuestion, askPersonal }
 }

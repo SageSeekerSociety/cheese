@@ -9,6 +9,7 @@
 //
 // 换了一份文件就把上一处的指认撤掉：那句话说的是文件 A 里的位置，发出去时标题上写的
 // 却是文件 B 的名字（下面的 `watch`）。
+import type { PreviewModeApi } from '@/composables/panelPreview/previewMode'
 import type { AnnotateDraft } from '@/composables/usePanelPreview'
 import type { ChatAttachment } from '@/cx_types'
 import type { PreviewLocate } from '@/lib/previewQuestion'
@@ -30,8 +31,16 @@ import { PENDING_NOTES, type PendingAnchor, type PendingNote } from '@/lib/pendi
 import { fileName } from '@/lib/viewingContext'
 
 interface LocatorDeps {
+  /** 看 / 批注 / 改 三段模式（原型里那一段）。由宿主**显式传进来**，不靠 `inject`：
+   *  `PanelPreviewView` 是在同一个 setup 里 `provide` 的，而 `inject` 只往祖先找——
+   *  同一层提供的东西自己读不到（这条坑 `useRevealGate` 已经记过一次），照那样写
+   *  「改」那一段挡指认的闸永远不生效。宿主没给（资料库、产物页那几处没有话题页）
+   *  时按过去的行为走。 */
+  mode: PreviewModeApi | null
   /** 指了一处，交给房间的对话。 */
   onLocate: (payload: PreviewLocate) => void
+  /** 指了一处，私下问个人芝士：这句话只进自己和芝士那一条对话，不进这间房。 */
+  onAskPersonal: (message: string) => void
   /** 圈选开关变了：有桥的网页要把它递进帧。 */
   onPickMode: (on: boolean) => void
   /** 把文档某一页此刻的样子截下来（`PreviewPages` 的实例方法），钉一处时随行带上。 */
@@ -44,6 +53,21 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   const locator = ref<{ label: string; quote: string; address: string; context?: QuoteContext } | null>(null)
   const locatorNote = ref('')
   const queued = ref<string[]>([])
+  /** 看 / 批注 / 改 三段模式（原型里那一段）。有它时：
+   *  - 「看」：拖选一段先在选区下浮一颗「添加批注」，点了才展开整张卡（两步，原型读模式）。
+   *  - 「批注」：指一处直接出卡（一步，原型批注模式）。
+   *  - 「改」：读者在打字，指一处什么都不做。
+   *  没有这个口（资料库、产物页那几处）时按过去的行为走：指一处出卡，拖着选的那一段
+   *  仍先出小按钮（`armFirst` 由外面给）。 */
+  // 宿主那一份 `provide` 出去的和递给这里的是同一个对象（它在 `usePreviewLocator` 之前
+  // 就建好了），所以直接拿着用；不包一层 getter——那会让下面的 `computed` 少一层依赖。
+  const previewMode = deps.mode
+  /** 这一段指不指得动。判据是「正文此刻真在编辑」而不是「模式停在改」：协同会话断了、
+   *  编辑器自己关掉时，模式还停在「改」而正文已经回到只读——那时还按模式拦，读者会发现
+   *  选中一段什么都不出，而屏幕上明明是可以读的正文。`annotating` 之外的两段都指得动，
+   *  区别只在摆什么（看是先一颗小按钮、批注是直接出卡）。 */
+  const pointing = computed(() => !previewMode || !previewMode.editing.value)
+
   /** 话题页提供的那一份待发篮。有它时逐条列在输入框上方、一起发；没有（资料库、产物页
    *  这些没有对话栏的地方）就退回本格自己面板底下那条老样式。 */
   const sharedPending = inject(PENDING_NOTES, null)
@@ -60,6 +84,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     snapshot: async (page) => (await deps.snapshot(page)) ?? null,
     open: openLocator,
     clear: clearLocator,
+    pointing: () => pointing.value,
   })
   const quoted = usePreviewQuote(props, (context) => pageLocator.canUse(context))
 
@@ -70,9 +95,15 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onRuntime: deps.onPickMode,
     open: (label, quote, address) => openLocator(label, quote, address),
     quote: quoted,
+    allowed: () => pointing.value,
   })
 
   function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
+    // 「改」那一段里指一处什么都不弹：读者在正文里打字，拖选是选字，不是在批注。
+    // 全部指法都收口到这里（选段、点格、框一块、钉一页、指一行、圈选），所以闸门只设
+    // 这一处；页上那个钉和网页圈选是两个例外，它们会先动别的东西（截图、给帧发消息），
+    // 各自另拦一道。
+    if (!pointing.value) return
     imageRegion.clear()
     quoted.clear()
     pageLocator.pin.value = null
@@ -364,6 +395,19 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     clearLocator()
   }
 
+  /** 去处选的是「问个人芝士」：同一句话和同一处位置，交给私聊，不进房间的对话。
+   *
+   *  不走 `quoted`（那条路把引用挂到房间的对话上），也不管待发篮——篮里攒的是「交给
+   *  这间房的芝士」，私下问的几句合进去会发到错的地方。页上钉着的那一处照样按位置拼
+   *  一句话发过去：个人芝士读不到房里的截图，要看的是页码和原文。 */
+  function sendPersonalLocator() {
+    const target = locator.value
+    const note = locatorNote.value.trim()
+    if (!target || !note) return
+    deps.onAskPersonal(formatLocateMessage(target, note))
+    clearLocator()
+  }
+
   /** 图上画完、按了「加入对话」：把那张合成图交出去传进房间，再发那一句连同附件。
    *
    * 上传是外面递进来的能力（`uploadAnnotation`），消息要等它回来才拼得出来。发之前再
@@ -415,6 +459,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     clearQueued,
     sendQueued,
     sendLocator,
+    sendPersonalLocator,
     onImageRegion,
     onPageContext,
     onQuote,

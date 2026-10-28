@@ -29,6 +29,7 @@ from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
+from app.domain.machine.preview_wake import touch_preview_activity
 from app.domain.remote_mcp import apps
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
@@ -446,6 +447,20 @@ class PreviewHostMiddleware:
                 # A third party's View: fetched from its server here (the session
                 # is still open for that read) and served under its own policy.
                 return await self.mcp_app(session, place, request, resource)
+            if resource and resource["kind"] == "app":
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    resource["seat"],
+                    project_id=place.project_id,
+                )
+            elif artifact is not None and artifact.mime_type == APP_MIME:
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    artifact.author,
+                    project_id=place.project_id,
+                )
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
                 return Response(status_code=405)
@@ -584,6 +599,12 @@ class PreviewHostMiddleware:
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")
                     seat = artifact.author
+                await touch_preview_activity(
+                    session,
+                    place.conversation_id,
+                    seat,
+                    project_id=place.project_id,
+                )
             # No DB session or read transaction lives for the HMR connection.
             async with asyncio.timeout(max(0, claims["exp"] - time.time())):
                 await relay_ws(
