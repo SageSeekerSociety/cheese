@@ -301,6 +301,9 @@ function relayout() {
     slot.host?.replaceChildren()
     sizeSlot(slot)
   }
+  // 文字层刚被清掉，旧底色的坐标已经不指着那些字了：叫它重画一次（这时没有文字层，
+  // 就是把残留的那一块抹掉，不让读者看到一道贴在别处的橙）。
+  highlight.refresh()
   observe()
 }
 
@@ -341,6 +344,9 @@ function zoomTo(
   if (!host) return
   zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next))
   for (const slot of pages.value) sizeSlot(slot)
+  // 纸长大了一圈，底色的坐标却还是上一倍率下的：按新的纸重算一次，底色才跟着字走
+  // （文字层是 CSS 缩放出来的，这时候量到的选区已经是新倍率下的）。
+  highlight.refresh()
   const box = anchor?.slot.el?.getBoundingClientRect()
   if (anchor && box) {
     host.scrollLeft += box.left + anchor.rx * box.width - to.x
@@ -420,14 +426,24 @@ usePinchZoom(container, {
 })
 
 let relayoutTimer: ReturnType<typeof setTimeout> | null = null
+/** 上一次排版的宽度。页的大小只由宽度决定，高度变了不用重排——而这一格的**高度**
+ *  是会变的：批注卡贴着底边摆进来时占掉一条，它一出现 ResizeObserver 就回调。跟着
+ *  重排的后果是文字层被整个重建、上面那个选区连同底色一起没了：读者刚选好一段、
+ *  正要写批注，框一弹出来选中的字就不亮了。
+ *
+ *  量不到宽度时（还没上屏）不作判断，照旧重排。 */
+let laidOutWidth = 0
 function onResize() {
+  const width = container.value?.clientWidth ?? 0
+  if (width > 0 && width === laidOutWidth) return
+  laidOutWidth = width
   if (relayoutTimer) clearTimeout(relayoutTimer)
   relayoutTimer = setTimeout(relayout, 200)
 }
 
 // 选中那段文字的底色自己画。浏览器给每一段文字各画一层，而文字层里相邻两段是搭着
 // 的，叠出来的那块比别处深——读者看到的就是「字旁边多出来一个框」。见那个文件。
-useSelectionHighlight({
+const highlight = useSelectionHighlight({
   sheets: () => pages.value.map((slot) => slot.el).filter((el): el is HTMLElement => !!el),
   layerClass: 'pv-text',
   paintClass: 'pv-hl',
