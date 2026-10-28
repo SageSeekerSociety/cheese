@@ -710,7 +710,9 @@ async def read(
         keys: list[str] = [r.object_key for r in batch if r.object_key]
         if keys and sealed is None:
             sealed = storage or private_storage()
-        bodies: dict[str, bytes | None] = {}
+        # Fetched bodies by key. A key that is absent was not fetched (the
+        # budget ran out), which the `.get` below reads as "no body" either way.
+        bodies: dict[str, bytes] = {}
         if keys:
             assert sealed is not None
             if deadline is not None:
