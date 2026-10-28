@@ -120,6 +120,12 @@ const body = computed(() => {
   pointer-events: none;
 }
 .app-sleep__card {
+  /* 缩小的档（平板/手机在窄面板里）里，这一层跟页面一起缩：卡得按**画出来的**尺寸摆，
+     不然手机上点「唤醒」的是一颗缩到一半的按钮，上面几行字也发糊。
+     做法只有一个反向缩放：外层把整层缩了 s，卡自己缩回 1/s，屏幕上就是原尺寸——宽度和
+     位置照原型那几个数写，别再乘一遍（乘了会双算，卡宽变成 1/s 倍，右边被裁掉）。
+     `--preview-scale` 没给（没缩）时反向缩放等于 1，和原型一模一样。 */
+  --inv: calc(1 / var(--preview-scale, 1));
   position: absolute;
   /* 和原型一样靠上：卡的上沿在页面往下约 100px 处（页面矮时按 18% 收），不是垂直居中——
    * 居中会盖住页面正中的那几行。 */
@@ -137,7 +143,8 @@ const body = computed(() => {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
-  transform: translateX(-50%);
+  transform: translateX(-50%) scale(var(--inv));
+  transform-origin: top center;
   pointer-events: auto;
 }
 .app-sleep__icon {

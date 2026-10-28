@@ -692,12 +692,6 @@ button.preview-errors {
 .preview-errors__message {
   color: var(--text);
 }
-/* 缩小的是**页面**，不是盖在页面上那几句话：休眠卡、唤醒进度、圈选遮罩都按原尺寸画，
-   否则手机上点「唤醒」的是一颗缩到一半的按钮。卡自己也别按缩放比重排位置。 */
-.preview-frames--scaled :deep(.app-sleep__card) {
-  transform: translateX(-50%) scale(calc(1 / var(--preview-scale, 1)));
-  transform-origin: top center;
-}
 .preview-frames .preview-frame {
   position: absolute;
   inset: 0;
