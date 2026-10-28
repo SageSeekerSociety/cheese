@@ -6,7 +6,7 @@
   "snapshotTitle": "Static snapshot of the app",
   "wake": "Wake and restart the app",
   "restart": "Ask {agent} to restart the app",
-  "hint": "About 20–40 seconds; progress is shown step by step",
+  "hint": "About 20–40 seconds, longer on a slow link; progress is shown step by step",
   "stepMachine": "Start the computer",
   "stepTunnel": "Connect the tunnel",
   "stepAgent": "{agent} restarts the app",

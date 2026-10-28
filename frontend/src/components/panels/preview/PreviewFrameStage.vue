@@ -137,18 +137,27 @@ const { width: paneWidth, height: paneHeight } = useElementSize(
 /** 这一档的内容视口宽度：`null` 是「铺满面板」。 */
 const tierWidth = computed(() => VIEWPORT_WIDTH[viewport.value])
 const scale = computed(() => fitScale(paneWidth.value, viewport.value))
-/** 画面那一层自己的尺寸：固定档按档宽排，放不下就缩；纵向按面板补足缩小后的高度。 */
+/** 固定档那一块的尺寸和缩放。
+ *
+ *  它是**绝对定位**在槽里的：缩小之后的布局尺寸（`paneHeight / scale`）比看得见的那块
+ *  大，留在流里的话槽会跟着一起长高，下一帧量到的就更高，比例一路往下追（实测长到
+ *  1.7 亿 px）。绝对定位把它从流里摘出去，槽的高度只由外面给。 */
 const surfaceStyle = computed(() => {
   const target = tierWidth.value
   if (!target) return {}
   const s = scale.value
+  const height = s < 1 && paneHeight.value > 0 ? paneHeight.value / s : null
   return {
     width: `${target}px`,
-    // 缩小后要填满可见高度：布局高度得按比例放大，否则页面底下空出一截。
-    height: s < 1 && paneHeight.value > 0 ? `${paneHeight.value / s}px` : '100%',
-    transform: s < 1 ? `scale(${s})` : undefined,
-    transformOrigin: 'top left',
-    marginInline: s < 1 ? '0' : 'auto',
+    ...(s < 1 && height ? { height: `${height}px` } : {}),
+    ...(s < 1
+      ? {
+          transform: `scale(${s})`,
+          transformOrigin: 'top left',
+          left: '50%',
+          marginLeft: `-${(target * s) / 2}px`,
+        }
+      : { left: '50%', marginLeft: `-${target / 2}px` }),
   }
 })
 
@@ -418,8 +427,13 @@ watch(
       <div
         :data-viewport="viewport"
         :data-scale="scale"
-        :style="surfaceStyle"
-        :class="['preview-frames', `preview-frames--${viewport}`, framesClass, { 'preview-frames--fixed': !!tierWidth }]"
+        :style="{ ...surfaceStyle, '--preview-scale': scale }"
+        :class="[
+          'preview-frames',
+          `preview-frames--${viewport}`,
+          framesClass,
+          { 'preview-frames--fixed': !!tierWidth, 'preview-frames--scaled': scale < 1 },
+        ]"
       >
       <template v-if="frames">
         <iframe
@@ -456,7 +470,11 @@ watch(
         :agent-name="agentName"
         @wake="emit('wake')"
       />
-      <PreviewRegionPick v-if="pickTarget === 'region' && pickOn" @pick="emit('pick-region', $event)" />
+      <PreviewRegionPick
+        v-if="pickTarget === 'region' && pickOn"
+        :scale="scale"
+        @pick="emit('pick-region', $event)"
+      />
       </div>
     </div>
   </div>
@@ -542,12 +560,10 @@ button.preview-viewport__btn.preview-viewport__btn--active {
    变宽窄、变缩放——分开两级是为了**别量自己改过的东西**：量自己的话，缩到 0.78 之后
    量出来的宽度又变了，比例会一直往下追。 */
 .preview-slot {
+  position: relative;
   flex: 1 1 auto;
   width: 100%;
   min-height: var(--preview-min);
-}
-.preview-slot:has(.preview-frames--fixed) {
-  overflow: hidden;
 }
 .preview-frames {
   position: relative;
@@ -555,9 +571,17 @@ button.preview-viewport__btn.preview-viewport__btn--active {
   min-height: var(--preview-min);
 }
 /* 固定档（平板 768、手机 375）的宽度和缩放由行内样式给（见 `surfaceStyle`）：
-   放得下就是那一档的原宽，放不下整块等比缩小，中心对齐。 */
+   放得下就是那一档的原宽，放不下整块等比缩小，中心对齐。绝对定位是为了把缩小后那个
+   更大的布局尺寸挡在槽外面（理由见 `surfaceStyle`）。 */
 .preview-frames--fixed {
-  flex: none;
+  position: absolute;
+  top: 0;
+}
+/* 缩小的是**页面**，不是盖在页面上那几句话：休眠卡、唤醒进度、圈选遮罩都按原尺寸画，
+   否则手机上点「唤醒」的是一颗缩到一半的按钮。卡自己也别按缩放比重排位置。 */
+.preview-frames--scaled :deep(.app-sleep__card) {
+  transform: translateX(-50%) scale(calc(1 / var(--preview-scale, 1)));
+  transform-origin: top center;
 }
 .preview-frames .preview-frame {
   position: absolute;

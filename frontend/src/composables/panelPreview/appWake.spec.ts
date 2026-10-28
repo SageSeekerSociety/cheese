@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => api)
 
-import { snapshotAge, usePanelPreviewAppSleep, wakeSteps } from './appWake'
+import { snapshotAge, usePanelPreviewAppSleep, wakePollDelay, wakeSteps } from './appWake'
 
 import { setLocale } from '@/i18n'
 
@@ -110,11 +110,12 @@ it('waking polls the steps and reloads the preview once the app answers', async 
   await sleep.wake()
   expect(sleep.wakeSteps.value!.map((s) => s.state)).toEqual(['now', 'todo', 'todo', 'todo'])
   api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: true, app_up: false })
-  await vi.advanceTimersByTimeAsync(2_000)
+  // 轮询间隔是逐格放松的（见 `wakePollDelay`）：按表上的下一格推进，别写死 2 秒。
+  await vi.advanceTimersByTimeAsync(wakePollDelay(1))
   expect(sleep.wakeSteps.value!.map((s) => s.state)).toEqual(['done', 'done', 'now', 'todo'])
   expect(reload).not.toHaveBeenCalled()
   api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: false, app_up: true })
-  await vi.advanceTimersByTimeAsync(2_000)
+  await vi.advanceTimersByTimeAsync(wakePollDelay(2))
   // 应用答了：重新载入一次，然后卡收起。收在载入之后、不管载入成不成——留在「四步
   // 全绿」上会把唤醒按钮一直挡住，读者只能重挂面板。
   expect(reload).toHaveBeenCalledTimes(1)
@@ -130,7 +131,7 @@ it('a reload that throws after the app answers still gives the card back', async
   state.previewAppUp.value = false
   reload.mockRejectedValueOnce(new Error('读预览失败'))
   await sleep.wake()
-  await vi.advanceTimersByTimeAsync(2_000)
+  await vi.advanceTimersByTimeAsync(wakePollDelay(1))
   expect(reload).toHaveBeenCalledTimes(1)
   expect(sleep.wakeSteps.value).toBeNull()
   // 还能再按一次：进度清掉了，判据不再挡。
@@ -240,7 +241,8 @@ it('a wake that does not get the app up in time gives the button back with a sen
   const { state, sleep, scope } = setup()
   state.previewTunnelUp.value = false
   await sleep.wake()
-  await vi.advanceTimersByTimeAsync(181_000)
+  // 预算 180 秒；轮询间隔越往后越大，多给一格，别让最后那一问卡在窗口外。
+  await vi.advanceTimersByTimeAsync(181_000 + wakePollDelay(99))
   expect(sleep.wakeSteps.value).toBeNull()
   expect(sleep.wakeError.value).toContain('180 秒')
   expect(sleep.wakeError.value).toContain('小 C')
@@ -254,4 +256,15 @@ it('a refused wake says why and keeps the button', async () => {
   expect(sleep.wakeSteps.value).toBeNull()
   expect(sleep.wakeError.value).toContain('没有权限')
   scope.stop()
+})
+
+it('轮询节奏逐格放松：头两问密，之后松开但封顶', () => {
+  expect(wakePollDelay(0)).toBe(2_000)
+  expect(wakePollDelay(1)).toBe(2_000)
+  expect(wakePollDelay(2)).toBe(3_000)
+  expect(wakePollDelay(3)).toBe(5_000)
+  expect(wakePollDelay(4)).toBe(8_000)
+  // 一直用最后一档，不会停问。
+  expect(wakePollDelay(50)).toBe(8_000)
+  expect(wakePollDelay(-1)).toBe(2_000)
 })
