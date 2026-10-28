@@ -24,6 +24,8 @@ beforeEach(() => setLocale('zh-CN'))
 const pdf = vi.hoisted(() => ({
   resolveDoc: null as null | ((doc: unknown) => void),
   calls: 0,
+  /** 一页画了几回。重画不换页框尺寸，只有这个数看得出重画发生过。 */
+  renders: 0,
 }))
 
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => {
@@ -56,7 +58,10 @@ function page(number: number) {
   return {
     number,
     getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale }),
-    render: () => ({ promise: Promise.resolve() }),
+    render: () => {
+      pdf.renders += 1
+      return { promise: Promise.resolve() }
+    },
     streamTextContent: () => ({}),
   }
 }
@@ -71,6 +76,13 @@ const ONE_BAD_PAGE = {
 
 /** 浏览器的 ResizeObserver 在 observe() 时会立刻回调一次 —— 这一条就是被它绊倒的。 */
 let resize: (() => void) | null = null
+
+/** 浏览器里那个真实的「Ctrl 加号」：像素比变了，同时来一次窗口 resize。
+ *  happy-dom 不会自己改 `devicePixelRatio`，这里替它改。 */
+function zoomBrowserTo(value: number) {
+  Object.defineProperty(window, 'devicePixelRatio', { value, configurable: true })
+  window.dispatchEvent(new Event('resize'))
+}
 
 beforeAll(() => {
   vi.stubGlobal(
@@ -104,6 +116,8 @@ beforeEach(() => {
   resize = null
   pdf.resolveDoc = null
   pdf.calls = 0
+  pdf.renders = 0
+  Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
 })
 
 afterEach(cleanup)
@@ -215,6 +229,38 @@ describe('分页文档的阅读视图', () => {
     resize?.()
     await new Promise((r) => setTimeout(r, 260))
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(2))
+  })
+
+  it('浏览器缩放改了屏幕像素比时，页照新精度重画一遍', async () => {
+    // 缩放（Ctrl 加号）同时改像素比和视口宽度，而纸的 CSS 尺寸一个像素没变，
+    // ResizeObserver 量到的宽度是同一个数、就此打住。没人管的话画布就停在旧精度的
+    // 位图上被浏览器拉大，越放越糊。
+    const ui = await opened()
+    // 挂载时那次重排的防抖是 200 毫秒，等它落定，别把它的重画算进来。
+    await new Promise((r) => setTimeout(r, 300))
+    const drawn = pdf.renders
+    expect(drawn).toBeGreaterThan(0)
+
+    zoomBrowserTo(2)
+
+    // 手停 150 毫秒后再画，和捏合放大走的是同一条路。
+    await new Promise((r) => setTimeout(r, 200))
+    await waitFor(() => expect(pdf.renders).toBeGreaterThan(drawn))
+    // 重画之前页框尺寸不动：缩放不换版面，只换位图精度。
+    expect(ui.container.querySelectorAll('[data-page]')).toHaveLength(2)
+  })
+
+  it('像素比没变的那次窗口 resize 不重画', async () => {
+    // 拖窗口、转屏幕方向都会来 resize，像素比往往没变。不看像素比就重画一遍，
+    // 每拖一次窗口整份文档白画一回。
+    const ui = await opened()
+    await new Promise((r) => setTimeout(r, 300))
+    const drawn = pdf.renders
+
+    window.dispatchEvent(new Event('resize'))
+    await new Promise((r) => setTimeout(r, 250))
+    expect(pdf.renders).toBe(drawn)
+    expect(ui.container.querySelectorAll('[data-page]')).toHaveLength(2)
   })
 
   it('文字层带着 pdf.js 6 按它算字号和宽高的那几个变量', async () => {

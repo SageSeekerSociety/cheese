@@ -176,6 +176,8 @@ async function renderPage(slot: PageSlot, mine: number) {
       window.devicePixelRatio || 1,
       Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, viewport.width * viewport.height))
     )
+    // 记下这一张是按哪个像素比画的，浏览器缩放之后才认得出该重画。
+    drawnAtRatio = window.devicePixelRatio || 1
 
     const canvas = document.createElement('canvas')
     canvas.width = Math.floor(viewport.width * ratio)
@@ -330,6 +332,21 @@ function redrawSoon() {
   }, 150)
 }
 
+/** 浏览器缩放（Ctrl 加号）改的是屏幕像素比，纸的 CSS 尺寸一个像素没变，所以宽度那条重排
+ *  不会响；画布停在旧精度的位图上被浏览器拉大，越放越糊。位图精度只在画的时候读一次，
+ *  所以缩放之后必须照缩放那条路重画一遍（旧图留着，新图画好再换，眼前不白）。
+ *
+ *  时机：缩放必然同时改视口在 CSS 像素里的宽度和像素比，`resize` 因此一定会来；来的时候
+ *  比一下像素比是不是还等于上次画用的那个。不订阅分辨率媒体查询——它每次改值都要重新
+ *  订阅一个带新 dppx 的查询，多一处会失效的地方，而这里的判据本来就是「画的时候那个值
+ *  现在还成立吗」。 */
+let drawnAtRatio = window.devicePixelRatio || 1
+function onPixelRatio() {
+  const now = window.devicePixelRatio || 1
+  if (now === drawnAtRatio) return
+  redrawSoon()
+}
+
 /** 屏幕上这一点落在哪一页的哪个比例上。 */
 function pageAt(x: number, y: number) {
   for (const slot of pages.value) {
@@ -443,7 +460,12 @@ let relayoutTimer: ReturnType<typeof setTimeout> | null = null
 let laidOutWidth = 0
 function onResize() {
   const width = container.value?.clientWidth ?? 0
-  if (width > 0 && width === laidOutWidth) return
+  if (width > 0 && width === laidOutWidth) {
+    // 宽度没变，那这一下多半是缩放：页框一个像素都不用动，只把位图换精度。
+    // 宽度真变了就走下面的重排，重排本来就会按新像素比重画。
+    onPixelRatio()
+    return
+  }
   laidOutWidth = width
   if (relayoutTimer) clearTimeout(relayoutTimer)
   relayoutTimer = setTimeout(relayout, 200)
@@ -621,11 +643,16 @@ watch(container, (el) => {
   resizeObserver.observe(el)
 })
 
+// 面板宽度是钉死的时候，缩放改不了它，ResizeObserver 就不响——窗口自己那条 `resize`
+// 才是缩放一定会来的地方。
+if (typeof window !== 'undefined') window.addEventListener('resize', onPixelRatio)
+
 onBeforeUnmount(() => {
   loadGeneration += 1
   renderGeneration += 1
   observer?.disconnect()
   resizeObserver?.disconnect()
+  window.removeEventListener('resize', onPixelRatio)
   if (relayoutTimer) clearTimeout(relayoutTimer)
   if (redrawTimer) clearTimeout(redrawTimer)
   void task?.destroy()
