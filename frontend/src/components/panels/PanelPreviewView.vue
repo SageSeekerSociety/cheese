@@ -642,7 +642,6 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-loading="docLoading"
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
-      :download-error="downloadError"
       :slide-context="slideContext"
       :revs="revs"
       :file-history="fileHistory"

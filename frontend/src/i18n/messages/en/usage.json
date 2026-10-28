@@ -150,5 +150,15 @@
     "unlimited": "Unlimited",
     "models": "Models",
     "noModels": "No models available"
+  },
+  "warning": {
+    "teamTitle": "The team's credits are running low",
+    "teamBody": "{n} left of this month's plan, resetting {at}.",
+    "teamHoursBody": "{n} left of the {hours}-hour plan, reopening {at}.",
+    "teamWeekBody": "{n} left of this week's plan, reopening {at}.",
+    "teamMonthBody": "{n} left of this month's plan, reopening {at}.",
+    "projectTitle": "This project's credit budget is running low",
+    "projectBody": "{n} left. It does not reset on its own; a project administrator has to raise it.",
+    "memberTitle": "Your task allowance in this project is running low"
   }
 }

@@ -135,7 +135,6 @@ function props(overrides: Record<string, unknown> = {}) {
     },
     documentName: 'budget.xlsx',
     isImageArtifact: false,
-    downloadError: '',
     docBytes,
     docLoading: false,
     docError: '',

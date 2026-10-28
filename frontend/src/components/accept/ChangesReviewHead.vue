@@ -47,7 +47,6 @@ const props = defineProps<{
   agentName: string
   agentHandle: string | null
   deliverableBusy: boolean
-  deliverableError: string
   /** 上一轮退回带走的批注，芝士这一次交上来时逐条说了处理没有。 */
   round?: { id: string; text: string; where: string; outcome: 'handled' | 'not_handled' | null }[]
 }>()
@@ -300,7 +299,6 @@ const moreActions = computed<MenuAction[]>(() => {
     <p v-else-if="card.deliverable?.kind === 'link' && card.deliverable.url" class="review-head__line">
       {{ card.deliverable.url }}
     </p>
-    <div v-if="deliverableError" role="alert" class="review-head__error">{{ deliverableError }}</div>
     <!-- The owner's own PR, opened by the AI teammate this time. -->
     <div v-if="ownerCredit" class="review-head__credit" data-testid="owner-credit">
       <span class="review-head__credit-text">{{

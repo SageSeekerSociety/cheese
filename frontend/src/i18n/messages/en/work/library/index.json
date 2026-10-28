@@ -12,7 +12,6 @@
   "deleteTitle": "Delete “{name}”",
   "docKind": "Doc",
   "download": "Download",
-  "downloadFailed": "Download failed",
   "downloadOnly": "This format cannot be previewed yet; download it to view",
   "dropHint": "Drop files here to upload",
   "empty": "No files yet",
