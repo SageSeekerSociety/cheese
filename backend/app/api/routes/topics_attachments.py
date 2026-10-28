@@ -167,6 +167,19 @@ class RoomAttachmentOut(BaseModel):
     in_library: bool
 
 
+class AttachmentNotesOut(BaseModel):
+    """A deck's speaker notes, one entry per slide (index 0 is slide 1).
+
+    ``readable`` is false when the file is not a deck we can open at all — a
+    page that is empty is an empty string in ``notes``, and the two must not be
+    conflated or an unreadable file looks like a deck with no notes.
+    """
+
+    notes: list[str]
+    readable: bool
+    version: str
+
+
 @router.get("/{topic_id}/attachments", **typed_response(Page[RoomAttachmentOut]))
 async def list_attachments(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -458,7 +471,7 @@ async def attachment_as_pdf(
     )
 
 
-@router.get("/{topic_id}/attachments/notes")
+@router.get("/{topic_id}/attachments/notes", **typed_response(AttachmentNotesOut))
 async def attachment_notes(
     topic_id: uuid.UUID,
     path: str,
