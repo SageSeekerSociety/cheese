@@ -154,7 +154,9 @@ async def test_a_raised_budget_is_news_again(business_db_factory):
 
     await _spend(business_db_factory, pid, 720)
     assert await _sweep(business_db_factory) >= 1
-    contents = [row.metadata_payload["content"] for row in await _said(business_db_factory)]
+    contents = [
+        row.metadata_payload["content"] for row in await _said(business_db_factory)
+    ]
     assert any("不会自动恢复" in text for text in contents)
 
 
