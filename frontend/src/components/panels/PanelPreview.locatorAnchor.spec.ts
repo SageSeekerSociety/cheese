@@ -12,8 +12,8 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-import PanelPreviewView from './PanelPreviewView.vue'
 import { FLOATING_MIN_WIDTH } from './preview/locatorAnchor'
+import PanelPreviewView from './PanelPreviewView.vue'
 
 import { setLocale } from '@/i18n'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
