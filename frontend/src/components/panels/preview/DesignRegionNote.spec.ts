@@ -28,11 +28,11 @@ it('Escape bubbles through the compact entry and input to exactly one cancel; IM
       geometry: { viewport: { left: 0, top: 0, width: 240, height: 48 }, region: null },
     },
   })
-  const entry = await ui.findByRole('button', { name: '就这一处说点什么' })
+  const entry = await ui.findByRole('button', { name: '输入修改要求或批注内容…' })
   await fireEvent.keyDown(entry, { key: 'Escape' })
   expect(ui.emitted().cancel).toHaveLength(1)
   await fireEvent.click(entry)
-  const input = ui.getByRole('textbox', { name: '就这一处说点什么' })
+  const input = ui.getByRole('textbox', { name: '输入修改要求或批注内容…' })
   expect(input.style.display).not.toBe('none')
   await fireEvent.keyDown(input, { key: 'Enter', isComposing: true, keyCode: 229 })
   expect(ui.emitted().send).toBeUndefined()
@@ -68,7 +68,7 @@ it('图上框选批注卡的去处由一个下拉定：默认发进对话，切�
   // 同一个选择不再摆两颗按钮：没有单独的「评论」按钮，去处只在下拉里选。
   expect(ui.queryByTestId('region-note-comment')).toBeNull()
 
-  const input = ui.getByRole('textbox', { name: '就这一处说点什么' })
+  const input = ui.getByRole('textbox', { name: '输入修改要求或批注内容…' })
   await fireEvent.keyDown(input, { key: 'Enter' })
   expect(ui.emitted().send).toHaveLength(1)
   expect(ui.emitted().comment).toBeUndefined()

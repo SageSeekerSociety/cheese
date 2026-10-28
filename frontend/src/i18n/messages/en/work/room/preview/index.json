@@ -31,7 +31,7 @@
   "locateContextAfter": "Followed by “{suffix}”",
   "locateContextBefore": "Preceded by “{prefix}”",
   "locateMessage": "In {path} at {address} (“{quote}”): {note}",
-  "locatorPlaceholder": "Say something about this spot",
+  "locatorPlaceholder": "Describe the change or leave a note…",
   "mdHeading": "heading “{heading}”",
   "mdTop": "the top of the file",
   "mutableFile": "Dependencies can change; not a complete snapshot",
@@ -63,7 +63,7 @@
   "queuedCount": "{count} queued note(s)",
   "readFailed": "Couldn't read the file",
   "readVersion": "Version at metadata read: {version}",
-  "recipientAgent": "Send to conversation",
+  "recipientAgent": "Send to Cheese",
   "recipientComment": "Comment only",
   "recipientLabel": "Annotation target",
   "refresh": "Refresh",
@@ -98,9 +98,13 @@
   "webView": "Web view",
   "webViewTitle": "Laid out for the screen; elements carry addressable numbers",
   "imageRegionWhere": "Original pixels x={x}, y={y}, w={w}, h={h}",
+  "addNote": "Add note",
+  "recipientAgentHint": "Post in this conversation so Cheese edits the file here",
+  "recipientCommentHint": "Pin a comment here for people to discuss; Cheese will not edit",
+  "locatorHintQueue": "↵ send now · “Add to queue” to send several spots together",
+  "locatorHintSend": "↵ send now · Shift+↵ new line",
   "codeLine": "line {line}",
   "codeLines": "lines {start}–{end}",
   "codeWrap": "Wrap lines",
   "codeNoWrap": "Don't wrap",
-  "codeView": "Code"
-}
+  "codeView": "Code"}
