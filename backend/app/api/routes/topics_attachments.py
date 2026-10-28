@@ -63,6 +63,7 @@ from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.model_images import model_media_type
 from app.core.sentences import exception_text, say
+from app.domain.documents.notes import slide_notes
 from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
@@ -74,6 +75,7 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_html,
     render_to_pdf,
+    suffix_of,
 )
 from app.domain.project.room_files import clean_artifact_path
 from app.domain.room_task.place import place_or_404
@@ -453,6 +455,64 @@ async def attachment_as_pdf(
             "Cache-Control": "no-store",
             "X-Cheese-Source-Version": content_version(data),
         },
+    )
+
+
+@router.get("/{topic_id}/attachments/notes")
+async def attachment_notes(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
+) -> Response:
+    """A deck's speaker notes, one entry per slide.
+
+    A slide's notes are not on the slide, and the preview panel is handed the
+    *converted PDF* — so this is the one thing about a deck the panel cannot
+    read off what it holds. It arrives as its own small JSON rather than as part
+    of the conversion response: the PDF is cached by content and read on every
+    page change, while the notes are a few kilobytes read once per file.
+
+    Authorization is the PDF route's, exactly: this reads the same bytes for the
+    same reader, so a second, weaker path to them would be a hole rather than a
+    shortcut.
+    """
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await place_or_404(db, topic_id)).room
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    topic_id = topic.id
+    clean = clean_artifact_path(path)
+    if suffix_of(clean) not in (".pptx", ".ppt"):
+        raise ValidationError(say("previewFormatUnsupported"))
+    if task is not None:
+        await TaskService(db).require_source_in_room(topic_id, task)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
+    if len(data) > library.MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
+        )
+    # Reading a zip is CPU work on bytes that may be 200MB; keep it off the loop
+    # the same way the comparison does.
+    notes = await asyncio.to_thread(slide_notes, data)
+    return ok(
+        {
+            "notes": notes or [],
+            "readable": notes is not None,
+            "version": content_version(data),
+        }
     )
 
 

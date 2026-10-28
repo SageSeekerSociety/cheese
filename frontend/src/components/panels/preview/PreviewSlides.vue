@@ -30,8 +30,18 @@ const props = withDefaults(
     rendererMissing?: boolean
     canDownload?: boolean
     context?: SlideSource
+    /** 每一页的演讲者备注，下标即页码（`notes[0]` 是第一页）。空的那几页是没有备注。 */
+    notes?: readonly string[]
   }>(),
-  { title: '', pending: false, error: '', rendererMissing: false, canDownload: false, context: undefined }
+  {
+    title: '',
+    pending: false,
+    error: '',
+    rendererMissing: false,
+    canDownload: false,
+    context: undefined,
+    notes: () => [],
+  }
 )
 const emit = defineEmits<{
   quote: [payload: { text: string; page: number }]
@@ -74,10 +84,27 @@ const frame = computed(() => {
   if (narrow.value) return { x: 8, top: 8, bottom: 8 }
   return { x: 16, top: 16, bottom: 16 }
 })
+// ---- 演讲者备注 ----
+//
+// 备注是**给讲的人看的**，摆在幻灯片**下面**那一条空闲里（原型也是这个位置）：一页 16:9
+// 的稿子按宽度缩到面板里之后，上下本来就空着，正好放一块不挤画面的正文。
+//
+// 放映时整块收掉，和工具栏一样：放映是把画面投给别人看，备注一旦跟着上屏，台下的每个
+// 人都读到了讲稿。真要在放映时自己看备注，那是「讲者视图」——另开一个窗口，不是这一层。
+//
+// 这一份有没有备注由「整份里有没有一段非空的」定：一份稿子只要有一页有备注，这一档就该
+// 让人找得到它在哪；某一页是空的，摆一句「这一页没有备注」，而不是把那一条整个抽掉——
+// 抽掉了读者不知道是这一页没有，还是这一档没有这个功能。
+const hasNotes = computed(() => props.notes.some((text) => text.trim()))
+const pageNote = computed(() => (props.notes[current.value - 1] ?? '').trim())
+const notesOpen = ref(true)
+const showNotes = computed(() => ready.value && hasNotes.value && notesOpen.value && !presenting.value)
+
 /** 读屏播报用：换页时说出来的是「第 4 页，共 6 页」，不是工具栏上那个数字框。 */
 const announcement = computed(() =>
   ready.value ? t('slides.pageOf', { page: current.value, count: count.value }) : ''
 )
+
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
 let textGeneration = 0
@@ -351,6 +378,16 @@ onBeforeUnmount(() => {
         <span v-if="title" class="slides__title t-body">{{ title }}</span>
         <span class="slides__spacer" />
         <button
+          v-if="ready && hasNotes"
+          type="button"
+          class="slides__tool"
+          :aria-pressed="showNotes"
+          data-testid="slides-notes-toggle"
+          @click="notesOpen = !notesOpen"
+        >
+          {{ t('slides.notes') }}
+        </button>
+        <button
           v-if="ready && !narrow"
           type="button"
           class="slides__tool"
@@ -470,6 +507,11 @@ onBeforeUnmount(() => {
               :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
             />
           </div>
+          <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
+          <section v-if="showNotes" class="slides__notes" data-testid="slides-notes" :aria-label="t('slides.notes')">
+            <p v-if="pageNote" class="slides__notes-text t-body">{{ pageNote }}</p>
+            <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
+          </section>
         </div>
       </div>
       <!-- 放映没有工具栏；留一颗看得见的出口，触屏上没有 Esc 也退得出来（原型只有那句提示）。-->
@@ -702,6 +744,30 @@ onBeforeUnmount(() => {
 }
 .slides--narrow .slides__bar {
   padding: 4px 8px 0;
+}
+/* 幻灯片下面那一条：讲稿。高度有上限（一份备注可以很长），再长就在自己里面滚，
+   不让它把幻灯片挤小——读者是来看这一页的。 */
+.slides__notes {
+  flex: none;
+  max-height: 34%;
+  overflow: auto;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.slides__notes-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.slides__notes-empty {
+  margin: 0;
+  color: var(--faint);
+}
+.slides--narrow .slides__notes {
+  max-height: 40%;
+  padding: 8px;
 }
 .slides__exit {
   position: fixed;

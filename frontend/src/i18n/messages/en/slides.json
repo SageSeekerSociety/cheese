@@ -39,5 +39,7 @@
   "jumpTo": "Jump to a page",
   "pageOf": "Page {page} of {count}",
   "presenting": "Presenting",
-  "presentHint": "← → to turn pages · Esc to exit"
+  "presentHint": "← → to turn pages · Esc to exit",
+  "notes": "Speaker notes",
+  "notesEmpty": "No notes on this slide"
 }

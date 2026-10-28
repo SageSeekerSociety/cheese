@@ -220,6 +220,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     docIdentity: doc.docIdentity,
     docSnapshot: doc.docSnapshot,
     slideContext: doc.slideContext,
+    slideNotes: doc.slideNotes,
     docLoading: doc.docLoading,
     docError: doc.docError,
     docRendererMissing: doc.docRendererMissing,
