@@ -122,6 +122,11 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
   let loadedFor: string | null = null
   // 手上这一窗是哪段对话的。换了对话又没读回来时，屏上那份是上一个对话的，失败要报出来。
   let loadedTopic: string | null = null
+  // 上一页是从数据库的行里赶紧答出来的（后端带了 `deferred`）：它少的是**最新**那
+  // 一头，往上翻够不着。所以下一次读要丢掉游标、整页重读一次——那一趟此刻已经不再
+  // 等对象存储，被跳过的那一段多半已经落进缓存了。只有为它专门排的那一次重读会清掉
+  // 这个记号，所以一次延迟最多多读一页，不会每三秒重读一次。
+  let needFullPage = false
 
   //: 预取走在读者前面两页：打开时先多拉两页放在上面，之后每次读到边上，
   //: 后台再补到「手上这些 + 两页」。
@@ -340,11 +345,20 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     // 接着问「从这一窗最新那条往后有什么」，而不是重读一整页：手上这一窗就是上一次
     // 读回来的，重读只会把同样的 120 条再传一遍。没有游标（第一次读、换了对话）时
     // 才整页读。窗口被裁过（`hasNewer`）也不走这一路——那时中间是断的，接不上。
-    const forward = !hasNewer.value ? newestCursor : null
+    const refill = needFullPage
+    const forward = !hasNewer.value && !refill ? newestCursor : null
+    if (refill) needFullPage = false
     try {
+      // Only the whole newest page without a cursor asks to be served from the
+      // rows: that is the one a reader is staring at while it loads. `refill`
+      // (the re-read after a deferred page) deliberately does not, so it takes
+      // the full archive walk and gets the records the fast path skipped.
+      const resident = forward === null && !refill
       const tx = await getTranscript(
         tid,
-        forward ? { limit: SITE_PAGE_SIZE, after: forward, author } : { limit: SITE_PAGE_SIZE, author }
+        forward
+          ? { limit: SITE_PAGE_SIZE, after: forward, author }
+          : { limit: SITE_PAGE_SIZE, author, resident }
       )
       // 读的人可能已经又换了一个视角：这一页不是他现在要的，丢掉。骨架屏由下面的
       // finally 收掉，不能让它留在半路。
@@ -383,6 +397,14 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
             if (tx.newest_id !== undefined && tx.newest_id !== null) newestCursor = tx.newest_id
           }
         } else {
+          // `tx.deferred`: the backend answered from the database's rows rather
+          // than waiting on the bucket, so this page is short and the records it
+          // skipped sit at the NEWEST end, not above it. Paging up would walk
+          // into older records and never reach them, so the page must be read
+          // again rather than trusted: `needFullPage` makes the next load drop
+          // its cursor and re-read the whole newest page, which is now served
+          // from the warm cache the skipped fetch filled in the background.
+          if (tx.deferred) needFullPage = true
           const reset = switched || firstRead || switchedTopic || hasNewer.value
           // 换了对话就是另一条时间线：手上那几行一条都不能留下。
           transcript.value = mergeSite(tx.data, transcript.value, switched, switchedTopic)
