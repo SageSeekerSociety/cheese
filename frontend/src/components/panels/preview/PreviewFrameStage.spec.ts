@@ -564,3 +564,14 @@ it('唤醒中：卡变成分步进度，按钮收起；圈选打开时卡让开'
   expect((ui.container.querySelector('.app-sleep__card') as HTMLElement).style.display).toBe('none')
   expect(ui.getByTestId('preview-region-pick')).toBeTruthy()
 })
+
+it('冷启动那一段摆骨架：等的时候不是一片白', () => {
+  // 第一次连上（机器还在起）能等一两分钟，原来内容区是一片白。骨架只在真没有内容可看时
+  // 摆：换一页时上一帧还在屏幕上，那不是「空的」，不能盖。
+  const waiting = mount('navigating', null)
+  expect(waiting.queryByTestId('preview-skeleton')).not.toBeNull()
+
+  cleanup()
+  const withOldPage = mount('navigating', frame())
+  expect(withOldPage.queryByTestId('preview-skeleton')).toBeNull()
+})

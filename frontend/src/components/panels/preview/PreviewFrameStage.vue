@@ -534,6 +534,19 @@ watch(
           :title="t('work.room.preview.frameTitle')"
           :sandbox="DEFAULT_SANDBOX"
         />
+        <!-- 冷启动那一段的骨架：先在屏幕上占出页面大概的样子（标题、几行正文），等它
+             到了再换成真的。原来这里是一片白，加上顶上那行秒数，读者还是在盯着空框。
+             只在**真没有内容可看**时摆：换一页时上一帧还在（那是另一件事，不能盖）。 -->
+        <div
+          v-if="step && !displayedFrame && !sleepKind"
+          class="preview-skeleton"
+          data-testid="preview-skeleton"
+          aria-hidden="true"
+        >
+          <div class="preview-skeleton__bar preview-skeleton__bar--title" />
+          <div v-for="i in 4" :key="i" class="preview-skeleton__bar" :style="{ width: `${92 - i * 7}%` }" />
+          <div class="preview-skeleton__block" />
+        </div>
         <PreviewAppSleep
           v-if="sleepKind"
           :kind="sleepKind"
@@ -702,5 +715,50 @@ button.preview-errors {
 }
 .preview-source {
   min-height: var(--preview-min);
+}
+/* 冷启动那一阵摆的骨架：几根浅色的条，像一页还在路上。它只是占位，不接鼠标也不被读屏
+   念（`aria-hidden`）——要说的话在顶上那行「正在加载…已等 N 秒」里。 */
+.preview-skeleton {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: var(--raised);
+  pointer-events: none;
+}
+.preview-skeleton__bar,
+.preview-skeleton__block {
+  background: var(--fill);
+  border-radius: 6px;
+}
+.preview-skeleton__bar {
+  height: 12px;
+}
+.preview-skeleton__bar--title {
+  width: 46%;
+  height: 20px;
+  margin-bottom: 4px;
+}
+.preview-skeleton__block {
+  height: 96px;
+  margin-top: 8px;
+}
+/* 关掉动效时不给它闪：静态的几条照样说得出「还在等」。 */
+@media (prefers-reduced-motion: no-preference) {
+  .preview-skeleton__bar,
+  .preview-skeleton__block {
+    animation: preview-skeleton-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes preview-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 </style>
