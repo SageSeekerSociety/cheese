@@ -146,11 +146,9 @@ export function useProjectFile(opts: {
   }
 
   async function download() {
-    try {
-      await downloadFile(rawUrl.value, opts.path().split('/').pop() || 'file')
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.room.changes.downloadFailed')
-    }
+    // 成没成、失败了怎么说，都是 `downloadFile` 那一层的事（`lib/download`）：成功弹
+    // 一句，失败弹一句。这里不再自己落一行红字，否则同一次失败会说两遍。
+    await downloadFile(rawUrl.value, opts.path().split('/').pop() || 'file')
   }
 
   watch(() => [opts.projectId(), opts.path()], load, { immediate: true })

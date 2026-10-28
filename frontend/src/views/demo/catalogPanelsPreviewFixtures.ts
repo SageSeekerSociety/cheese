@@ -220,7 +220,6 @@ export function docStageProps(over: Record<string, unknown> = {}): Record<string
     docLoading: false,
     docError: '',
     docRendererMissing: false,
-    downloadError: '',
     revs: revisionsWith(),
     fileHistory: fileHistoryWith(),
     showHistory: false,

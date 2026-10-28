@@ -564,7 +564,6 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-loading="docLoading"
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
-      :download-error="downloadError"
       :slide-context="slideContext"
       :revs="revs"
       :file-history="fileHistory"
@@ -622,6 +621,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     />
     <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
       <AttachmentVideo
+        variant="panel"
         can-locate
         :topic-id="topicId"
         :path="previewFile.path"

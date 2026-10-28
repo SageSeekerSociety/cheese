@@ -2,11 +2,12 @@ import type { ApiEnvelope, ChatAttachment, DocumentRevision, FileSource, ListPay
 import type { DocumentTemplate, RoomOutput } from '../types/roomOutput'
 
 import { t } from '../i18n'
+import { announceDownload, announceDownloadFailure, saveBlob } from '../lib/download'
 import { refusalWords } from '../lib/noticeText'
 import { createPreviewPdfReader } from '../lib/previewPdf'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, ensureFreshToken, request } from './http'
+import { authHeaders, BASE, downloadBytes, ensureFreshToken, request } from './http'
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
@@ -163,16 +164,21 @@ export async function rawImageUrl(rawUrl: string): Promise<string> {
   return URL.createObjectURL(await res.blob())
 }
 
-/** A video object URL fetched with Authorization; the browser can then seek it. */
-/** The address a `<video>` plays a video attachment from, streaming it.
+/** The address a `<video>` plays a video attachment from, streaming it, and how
+ *  many bytes the whole recording is (from the one range request below).
  *
  *  The element fetches the recording itself, one byte range at a time, and none
  *  of those requests can carry Authorization. So this reads the first byte with
  *  the header, and the response leaves a cookie scoped to this room's raw path
  *  (backend `remember_for_media`); the element's own requests to the same URL
  *  carry it. Nothing is downloaded up front, so a long recording starts playing
- *  at once and seeking reads only the part it lands on. */
-export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
+ *  at once and seeking reads only the part it lands on. The same response's
+ *  `Content-Range` carries the total size, so the card can say how big the file
+ *  is without a second request. */
+export async function attachmentMediaUrl(
+  topicId: string,
+  path: string
+): Promise<{ url: string; bytes: number | null }> {
   const url = attachmentRawUrl(topicId, path)
   // no-store: a cached answer would skip the response that renews the cookie,
   // and once the old one expires the player's own range requests get 401.
@@ -182,7 +188,8 @@ export async function attachmentMediaUrl(topicId: string, path: string): Promise
   })
   if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
   await res.body?.cancel()
-  return url
+  const total = Number(res.headers.get('Content-Range')?.split('/').at(-1))
+  return { url, bytes: Number.isFinite(total) && total > 0 ? total : null }
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
@@ -252,17 +259,20 @@ export async function previewDocumentPdf(
 }
 
 // Downloads carry the same credentials as API requests, including token-only sessions.
+//
+// 成没成、失败了怎么说，都在 `lib/download` 那一层定：这里只负责带凭证取字节、把
+// 字节交给浏览器，下完说一句话。所有下载入口都汇到这一个函数上（附件、资料库、预览、
+// 验收交付物、产物、任务文件、项目导出…），所以成功提示和失败提示各写一次就够。
 export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
-  const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const url = URL.createObjectURL(await res.blob())
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  try {
+    const bytes = await downloadBytes(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, authHeaders())
+    saveBlob(bytes, filename)
+    announceDownload()
+  } catch (cause) {
+    // 说过一次就不再往上抛：调用点各自那行红字已经撤掉，再抛一次没人接，只会多一条
+    // 没人看的 unhandled rejection。
+    announceDownloadFailure(cause)
+  }
 }
 
 // ---- 房间文件：在线编辑（草稿历史在 ./roomFileRevisions） ----

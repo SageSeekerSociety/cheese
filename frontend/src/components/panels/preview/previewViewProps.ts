@@ -59,7 +59,6 @@ export interface PreviewViewProps {
   documentType: FileKind | null
   documentName: string
   isImageArtifact: boolean
-  downloadError: string
   docBytes: ArrayBuffer | null
   docIdentity?: DocumentIdentity | null
   docSnapshot?: DocumentSnapshot | null

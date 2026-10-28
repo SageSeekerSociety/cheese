@@ -833,6 +833,20 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # ledger, saying on the alert webhook when one crosses 80% or reaches it
     # (`app.domain.agent.spend_cap_alerts`). 0 turns it off.
     model_spend_cap_alert_interval_s: float = 300.0
+    # Seconds between passes over the three credit caps (team plan, project
+    # budget, member cap), telling the people a nearly spent one will stop
+    # (`usage.alerts`, #:credit-warning). A crossing is said once by the
+    # delivery ledger's dedup key, so a frequent pass costs reads and no
+    # repetition. 0 turns it off.
+    credit_warning_interval_s: float = 300.0
+    # The DeepSeek key whose balance `relay_balance` reads. Empty turns that
+    # clock off; a deployment that does not pay DeepSeek directly has none.
+    deepseek_api_key: str = ""
+    # CNY below which the relay balance is called nearly gone. A floor, not a
+    # share: the balance is topped up by hand.
+    deepseek_balance_alert_cny: float = 50.0
+    # Seconds between reads of that balance. 0 turns it off.
+    deepseek_balance_check_interval_s: float = 1800.0
     # Seconds between looks, on the process holding the sessions, for work
     # still running in a task that has closed (`stop_work_in_closed_tasks`).
     # One indexed read of the tasks its working seats are in, and none when no

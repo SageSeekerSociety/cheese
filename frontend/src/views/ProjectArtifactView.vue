@@ -128,11 +128,9 @@ watch(
 async function download(version: ArtifactVersion) {
   if (!version.filename) return
   downloading.value = version.card_id
-  actionError.value = ''
   try {
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）。
     await downloadFile(artifactVersionFileUrl(props.projectId, props.artifactId, version.card_id), version.filename)
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('tasks.artifact.downloadError')
   } finally {
     downloading.value = ''
   }
