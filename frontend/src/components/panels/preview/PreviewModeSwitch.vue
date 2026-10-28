@@ -70,27 +70,30 @@ function usable(key: PreviewMode): boolean {
 </template>
 
 <style scoped>
+/* 尺寸照原型（171×28、13px、圆角 8px、槽 --fill-2），也就是这一条上别的按钮那一号
+   （历史、看原文、下载都是 28px 高、13px 字）。矮一号站在它们旁边会像是缩了一档。 */
 .mode-switch {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: var(--radius-sm);
-  background: var(--fill);
+  border-radius: var(--radius-md);
+  background: var(--fill-2);
 }
 .mode-switch__item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
+  height: 24px;
+  padding: 0 8px;
   font: inherit;
-  font-size: 12px;
-  line-height: var(--lh-12);
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
   background: none;
   border: 0;
-  border-radius: calc(var(--radius-sm) - 1px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .mode-switch__item:hover:not(:disabled) {
