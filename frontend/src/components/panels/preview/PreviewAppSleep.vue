@@ -25,6 +25,9 @@ const props = defineProps<{
   snapshotHtml: string | null
   /** 快照是多久以前留的，已经说成一句话（「4 分钟前」）。 */
   snapshotAge: string
+  /** 快照停在哪一页（标题或路径）。一份应用只留一张快照，几个读者同开时后写的盖掉先写
+   *  的，所以得说清是哪一页，否则另一个读者会以为自己那一页被冻住了。空串就不说。 */
+  snapshotWhere?: string
   /** 正在唤醒时的分步进度；没在唤醒是 null。 */
   steps: AppWakeStep[] | null
   /** 唤醒没成时那一句。 */
@@ -47,6 +50,8 @@ const body = computed(() => {
   if (!props.snapshotHtml) return t('work.room.preview.sleep.noSnapshot')
   return t('work.room.preview.sleep.snapshotBody', { age: props.snapshotAge })
 })
+/** 停在那一页：有就单独一行放在正文下面（一串路径混在正文里读不出来）。 */
+const where = computed(() => (props.snapshotHtml ? props.snapshotWhere ?? '' : ''))
 </script>
 
 <template>
@@ -65,6 +70,7 @@ const body = computed(() => {
       <v-icon size="30" class="app-sleep__icon" aria-hidden="true">mdi-sleep</v-icon>
       <b class="app-sleep__title">{{ title }}</b>
       <div class="app-sleep__body">{{ body }}</div>
+      <div v-if="where" class="app-sleep__where">{{ t('work.room.preview.sleep.snapshotWhere', { where }) }}</div>
       <div v-if="steps" class="app-sleep__steps" data-testid="preview-wake-steps">
         <div
           v-for="step in steps"
@@ -152,6 +158,12 @@ const body = computed(() => {
 }
 .app-sleep__title {
   font-size: 15px;
+}
+.app-sleep__where {
+  max-width: 100%;
+  font: 12px/1.5 var(--font-mono);
+  color: var(--faint);
+  overflow-wrap: anywhere;
 }
 .app-sleep__body,
 .app-sleep__hint {

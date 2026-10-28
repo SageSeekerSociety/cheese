@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => api)
 
-import { snapshotAge, usePanelPreviewAppSleep, wakePollDelay, wakeSteps } from './appWake'
+import { snapshotAge, snapshotWhere, usePanelPreviewAppSleep, wakePollDelay, wakeSteps } from './appWake'
 
 import { setLocale } from '@/i18n'
 
@@ -97,7 +97,8 @@ it('a sleeping app with no snapshot in hand reads the kept one once', async () =
   state.previewAppUp.value = false
   await flush()
   expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
-  expect(sleep.appSnapshot.value).toEqual({ html: '<p>kept</p>', age: '4 分钟前' })
+  // 没有 href/title 的那一份：「停在哪一页」是空串，卡上那句就不带这一截。
+  expect(sleep.appSnapshot.value).toEqual({ html: '<p>kept</p>', age: '4 分钟前', where: '' })
   scope.stop()
 })
 
@@ -267,4 +268,27 @@ it('轮询节奏逐格放松：头两问密，之后松开但封顶', () => {
   // 一直用最后一档，不会停问。
   expect(wakePollDelay(50)).toBe(8_000)
   expect(wakePollDelay(-1)).toBe(2_000)
+})
+
+it('一份应用几个读者同开：快照说得出停在哪一页，后写的盖掉先写的', async () => {
+  // 平台按应用存一份快照，不按读者存：两个读者同时开着，后加载的那一个写进去，另一个
+  // 读者再打开看到的就是**别人那一页**。卡上得说清是哪一页，否则会以为自己那页被冻住。
+  api.getPreviewSnapshot.mockResolvedValue({
+    html: '<p>other</p>',
+    href: 'https://preview.example.test/signup?step=3',
+    title: '提交确认',
+    taken_at: Date.now() / 1000 - 120,
+  })
+  const { state, sleep, scope } = setup()
+  state.previewAppUp.value = false
+  await flush()
+  expect(sleep.appSnapshot.value?.where).toBe('提交确认')
+  scope.stop()
+})
+
+it('快照没有标题时用路径，两者都没有就空着', () => {
+  expect(snapshotWhere('https://preview.example.test/signup?step=3', '')).toBe('/signup?step=3')
+  expect(snapshotWhere('https://preview.example.test/a', '关于')).toBe('关于')
+  expect(snapshotWhere('', '')).toBe('')
+  expect(snapshotWhere('not a url', '')).toBe('not a url')
 })

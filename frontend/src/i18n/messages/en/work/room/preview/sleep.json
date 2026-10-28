@@ -17,5 +17,6 @@
   "minutesAgo": "{n} min ago",
   "hoursAgo": "{n} h ago",
   "daysAgo": "{n} d ago",
-  "snapshotTag": " (showing a static snapshot)"
+  "snapshotTag": " (showing a static snapshot)",
+  "snapshotWhere": "Frozen at \"{where}\""
 }

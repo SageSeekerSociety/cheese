@@ -53,7 +53,7 @@ const props = defineProps<{
   /** 应用的端口有应答（后端给了地址）：连通链「应用」那一段。 */
   previewAppUp: boolean
   /** 这个应用最近一次成功加载时留的静态快照，和它是多久以前留的。 */
-  appSnapshot?: { html: string; age: string } | null
+  appSnapshot?: { html: string; age: string; where?: string } | null
   /** 唤醒的分步进度（没在唤醒是 null）和没成时那一句。 */
   wakeSteps?: AppWakeStep[] | null
   wakeError?: string
@@ -250,6 +250,11 @@ function annotateErrors() {
   )
   emit('annotate-errors', [t('work.room.preview.errorsIntro'), ...lines].join('\n'))
 }
+
+/** 链上第一段**断**了的：红条和链读的是同一句，不再各写一套。
+ *
+ *  「等」不算断：重连中、跟着重启后的新实例走都还会自己好，不该弹一条红的。 */
+const broken = computed(() => segments.value.find((segment) => segment.state === 'down') ?? null)
 
 /** 链点开后最下面那几行：资源、实例、读到的版本、就绪与否。平时不读，要查时还在。 */
 const details = computed(() => {
@@ -472,21 +477,13 @@ watch(
     <div v-if="step" role="status" class="px-3 py-2 text-caption">
       {{ stepLine }}
     </div>
-    <div
-      v-if="!sleepKind && (navigationError || previewError || previewReadError)"
-      role="alert"
-      class="px-3 py-2 text-error"
-    >
-      {{ navigationError || previewError || previewReadError }}
-      <div v-if="previewAppNote && !previewUrl">
-        {{
-          t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
-            agent: agentName,
-          })
-        }}
-      </div>
+    <!-- 链上断了的那一段：红条说的就是它，和点开链看到的是同一句。以前这里是第二个出处
+         ——先一行原始错误、再一行「应用没起来」，链上那一段还有一套自己的说法，三种断法
+         各说各的。现在四种断法都只在链上写一句，红条照它说，动作只有「重试」一个。 -->
+    <div v-if="!sleepKind && (broken || previewReadError)" role="alert" class="px-3 py-2 text-error">
+      {{ broken ? t(broken.reason, broken.params ?? {}) : previewReadError }}
       <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <BaseButton v-if="broken" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
@@ -542,6 +539,7 @@ watch(
           :kind="sleepKind"
           :snapshot-html="appSnapshot?.html ?? null"
           :snapshot-age="appSnapshot?.age ?? ''"
+          :snapshot-where="appSnapshot?.where ?? ''"
           :bare="!appSnapshot && !displayedFrame"
           :steps="wakeSteps ?? null"
           :wake-error="wakeError ?? ''"

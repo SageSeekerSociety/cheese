@@ -197,7 +197,8 @@ it('页面报错时链上「应用」那段变红，点开看得到原因', () =
   const alert = ui.getByTestId('preview-runtime-alert')
   expect(alert.querySelector('[data-state="down"]')?.textContent).toContain('应用')
   const detail = ui.getByTestId('preview-chain-detail')
-  expect(detail.textContent).toContain('页面报错：端口没起来')
+  // 四种断法都是同一套句子（`chain.json`）：这一段说的是「页面自己报了错」。
+  expect(detail.textContent).toContain('页面自己报了错：端口没起来')
   expect(detail.textContent).toContain('应用报告失败')
 })
 

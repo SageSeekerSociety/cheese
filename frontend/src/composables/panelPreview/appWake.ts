@@ -48,6 +48,23 @@ export function snapshotAge(takenAtSeconds: number, now: number): string {
   return t('work.room.preview.sleep.daysAgo', { n: Math.floor(hours / 24) })
 }
 
+/** 快照是哪一页：有标题就说标题，否则说路径。
+ *
+ *  一份应用只留一张快照，几个读者同时开着时**后写的盖掉先写的**（平台按应用存一份，
+ *  不按读者存）。所以卡上得说清停在哪一页，否则另一个读者会以为自己那一页被冻住了。
+ *  都没有就答空串，卡上那句不带这一截。 */
+export function snapshotWhere(href: string, title: string): string {
+  const name = (title || '').trim()
+  if (name) return name
+  if (!href) return ''
+  try {
+    const url = new URL(href)
+    return url.pathname + url.search
+  } catch {
+    return href
+  }
+}
+
 export interface WakeProgress {
   machine: boolean
   tunnel: boolean
@@ -79,7 +96,9 @@ export function usePanelPreviewAppSleep(deps: {
   reload: () => Promise<void>
 }) {
   const { props, state } = deps
-  const snapshot = ref<{ html: string; takenAt: number } | null>(null)
+  // 快照里还记着是哪一页（`href` / `title`）：一份应用只有一张快照，几个读者同时开着时
+  // 后写的盖掉先写的——不说清是哪一页，读者会以为睡着前停在的就是自己那一页。
+  const snapshot = ref<{ html: string; takenAt: number; href: string; title: string } | null>(null)
   // 快照属于哪一件：换了产物，旧的那份就不归它了。
   let snapshotOf: string | null = null
   let fetchedFor: string | null = null
@@ -111,7 +130,7 @@ export function usePanelPreviewAppSleep(deps: {
     // 照收就会署成新那一件的快照——那一件睡着时显示的会是上一件的页面。
     const shotFor = frameArtifactId(frame)
     if (shotFor && shotFor !== artifactId) return
-    snapshot.value = { html: shot.html, takenAt: Date.now() / 1000 }
+    snapshot.value = { html: shot.html, takenAt: Date.now() / 1000, href: shot.href, title: shot.title }
     snapshotOf = artifactId
     void putPreviewSnapshot(topicId, artifactId, { html: shot.html, href: shot.href, title: shot.title }).catch(
       () => {}
@@ -143,7 +162,7 @@ export function usePanelPreviewAppSleep(deps: {
       try {
         const kept = await getPreviewSnapshot(topicId)
         if (kept && state.previewArtifactId.value === artifactId && !snapshot.value) {
-          snapshot.value = { html: kept.html, takenAt: kept.taken_at }
+          snapshot.value = { html: kept.html, takenAt: kept.taken_at, href: kept.href, title: kept.title }
           snapshotOf = artifactId
         }
       } catch {
@@ -158,7 +177,13 @@ export function usePanelPreviewAppSleep(deps: {
   )
 
   const appSnapshot = computed(() =>
-    snapshot.value ? { html: snapshot.value.html, age: snapshotAge(snapshot.value.takenAt, now.value) } : null
+    snapshot.value
+      ? {
+          html: snapshot.value.html,
+          age: snapshotAge(snapshot.value.takenAt, now.value),
+          where: snapshotWhere(snapshot.value.href, snapshot.value.title),
+        }
+      : null
   )
 
   function stopPolling() {
