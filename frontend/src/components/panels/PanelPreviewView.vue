@@ -630,6 +630,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     />
     <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
       <AttachmentVideo
+        variant="panel"
         can-locate
         :topic-id="topicId"
         :path="previewFile.path"

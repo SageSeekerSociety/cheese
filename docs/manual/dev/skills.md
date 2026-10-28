@@ -40,7 +40,7 @@ covers:
 
 仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "lean", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
 技能的数量少、条件都要能判准，所以「读线上页面」（`cheese_web(action=fetch)` 工具）与「读 Figma 稿」（`showcase/scripts/figma.py`）不各立一颗，而是合进 `showcase`：它们本来也只在这一件事里用得上（把一个东西摆给人看）。技能池子（`_platform_catalog()`）按目录里有 `SKILL.md` 自动收，加内容不加名字，池子里的颗数不变。反过来，一整件事、别处用不上的才单立一颗：`mcp-builder`（要把某个外部 API 接给 AI、写一台 MCP server 时加载）与那几颗不重叠，就自成一颗，它的 `scripts/smoke.py` 是「接进项目之前必须绿」的那条自检。
 

@@ -210,6 +210,17 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  /* ---- Presentation ground ----
+     A deck shown full-screen takes the whole screen: unlike the picture viewer,
+     nothing behind it should read through. Same dark in both themes for the same
+     reason (a slide is judged against a neutral surround), but opaque. The dark
+     block repeats these values deliberately. */
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* ---- Terminal ground ----
      DeviceLiveViewer's xterm.js paints its own dark scheme in both themes (its
      theme.background is this same #1e1e1e), so the ground under it, and the
@@ -218,6 +229,19 @@
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* ---- Video picture ground ----
+     The box a recording is drawn in (the conversation card, the preview panel)
+     is dark in both themes, for the reason the picture viewer is: a picture is
+     judged against a dark surround, and a pale box would compete with it. On a
+     portrait phone recording the letterbox bars are most of the box, so this is
+     not a detail — it is what the reader sees when nothing else is loaded yet.
+     The dark block repeats these values deliberately. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  /* 画面上的播放键：垫在它后面的一层半透明深底。画面可能整片是浅色的（白底录屏），
+     白图标直接放上去就看不见了。和 --lightbox-* 同一个理由，深色主题重复同一个值。 */
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
@@ -541,10 +565,21 @@
   --lightbox-fill-2: rgba(255, 255, 255, 0.2);
   --lightbox-dim: rgba(0, 0, 0, 0.55);
 
+  --present-ground: #0d0e10;
+  --present-ink: #fff;
+  --present-muted: rgba(255, 255, 255, 0.72);
+  --present-fill: rgba(255, 255, 255, 0.14);
+  --present-fill-2: rgba(255, 255, 255, 0.24);
+
   /* Same as light, deliberately: xterm.js paints the same dark terminal in both themes. */
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* Same as light, deliberately: a recording is drawn on the same dark box in both themes. */
+  --video-ground: #1b1d20;
+  --video-ink: #fff;
+  --video-scrim: rgba(0, 0, 0, 0.42);
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;
@@ -1410,6 +1445,65 @@ button:not(.v-btn) {
 .md-content pre code {
   background: none;
   padding: 0;
+}
+/* 代码块右上角的两颗（自动换行 / 复制）。它们由 `reader.ts` 的 `withCopy` 挂在
+   `.md-pre` 里，但样式以前只写在对话那一个组件的作用域里，于是**只有对话栏里的
+   Markdown 带得住这两颗**：预览面板用的是同一个渲染器、同一份正文，按钮画出来了
+   却没有任何样式（绝对定位失效，两颗灰字压在代码第一行上）。定义搬到这一处公共
+   样式里，两处一起管——和上面那段 `overflow-x` 的教训是同一条。 */
+.md-content .md-pre {
+  position: relative;
+}
+.md-content .md-pre-bar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--dur-quick) var(--ease-standard);
+}
+.md-content .md-pre:hover .md-pre-bar,
+.md-content .md-pre-bar:focus-within {
+  opacity: 1;
+}
+.md-content .md-code-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.md-content .md-code-btn:hover {
+  color: var(--ink);
+}
+/* 换行开着时那颗按钮换个色，看得出这是个「现在生效」的开态（同 .rx-chip--mine）。 */
+.md-content .md-wrap-btn[aria-pressed='true'] {
+  color: var(--accent-ink);
+}
+/* 没有悬停的设备上这条工具条一直在，不能按悬停版那样浮在代码上：绝对定位在右上角、
+   24px 高，而代码块只留了 10px 上内边距，头一行尾巴会被两颗按钮盖住、点也点不到。
+   这种设备上让它回正常流、排在代码块上方一行。 */
+@media (hover: none) {
+  .md-content .md-pre-bar {
+    position: static;
+    justify-content: flex-end;
+    padding: 0 0 4px;
+    opacity: 1;
+  }
+}
+/* 换行开着（那颗「自动换行」）：长行折进框里，横向滚动让位。默认不换行——一条命令、
+   一段长 URL 站在一行上比折成几截更好读。 */
+.md-content pre.md-wrap,
+.md-content pre.md-wrap code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: hidden;
 }
 .md-content img {
   max-width: 100%;
