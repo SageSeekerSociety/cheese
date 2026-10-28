@@ -98,6 +98,7 @@ const {
   showHistory,
   editor,
   fileHistory,
+  versions,
   // 动作
   load,
   downloadArtifact,
@@ -179,6 +180,7 @@ function refresh() {
     :show-history="showHistory"
     :editor="editor"
     :file-history="fileHistory"
+    :versions="versions"
     @frame-load="frameLoaded"
     @frame-error="frameFailed"
     @pick-mode="setPickMode"

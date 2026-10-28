@@ -25,6 +25,9 @@ vi.mock('../../api', async (importOriginal) => {
     readPreviewFile: vi.fn(),
     previewDocumentPdfSnapshot: vi.fn(),
     documentRevisions: vi.fn(),
+    // 房间里的文档一打开就读它的保存历史（文档条上的版本行）。这个用例问的是窄处
+    // Word 读哪一份、怎么重排，不是版本：给一份空清单。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: 'report.docx', version: null })),
   }
 })
 // 网页那一份不在 `api.ts` 里：那一份已经超了长度上限，只能变短。

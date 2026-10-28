@@ -1,6 +1,7 @@
 // PanelPreviewView 的 props 契约：这一格要什么，全写在这里。摆在视图外面，取数那一层和这一格看的是同一份说明，视图文件也留在一千行以内。
 import type { PreviewCommentsBundle } from '../../../composables/panelPreview/comments'
 import type { PanelPreviewLiveEdit } from '../../../composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '../../../composables/panelPreview/versions'
 import type { DocumentRevisionsBundle } from '../../../composables/useDocumentRevisions'
 import type { UploadAnnotation } from '../../../composables/usePanelPreview'
 import type { PreviewFrame, PreviewNavigation } from '../../../composables/usePreviewFrames'
@@ -79,6 +80,9 @@ export interface PreviewViewProps {
   editor: RoomFileEditorBundle
   /** 同一栏历史：编辑器旁边那一栏和下面文档条那一栏读的是同一份（`useRoomFileHistory.ts`）。 */
   fileHistory: RoomFileHistoryBundle
+  /** 文档条上的版本：第几版、本版改了几处、两版对比、看旧版（`composables/panelPreview/versions.ts`）。
+   *  不给就不摆这一套（组件预览站、单测里那些只看正文的场景）。 */
+  versions?: PreviewVersionsBundle
   /** 现在开着哪一份的编辑会话；null 就是没开。开不开由外面记，因为关掉之后还要重取那一页。 */
   editing: string | null
   /** 文档条下面那一栏历史开着没有。 */

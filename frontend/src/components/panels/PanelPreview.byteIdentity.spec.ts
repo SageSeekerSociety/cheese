@@ -13,7 +13,13 @@ import { setLocale } from '@/i18n'
 const text = 'Whole page text from displayed PDF '.repeat(30)
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
-  return { ...actual, readPreviewFile: vi.fn(), previewDocumentPdfSnapshot: vi.fn() }
+  return {
+    ...actual,
+    readPreviewFile: vi.fn(),
+    previewDocumentPdfSnapshot: vi.fn(),
+    // 房间里的文档一打开就读版本清单（文档条上的「第 N 版」），这里没有历史。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
+  }
 })
 // 分页文档现在也会读这一份的评论串（页上要画已有的评论标记），所以这一条也得打桩。
 vi.mock('@/api/fileThreads', async (importOriginal) => ({

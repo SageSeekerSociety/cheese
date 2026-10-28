@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { versionDiff } from './versionDiff'
+import { BLANK_LINE, changeRuns, versionDiff } from './versionDiff'
 
 describe('文档两版逐段对比', () => {
   it('改了一段：配成一对，标出改了的字', () => {
@@ -42,5 +42,29 @@ describe('文档两版逐段对比', () => {
     const d = versionDiff('a\n\nb', 'a\n\nb\n\nc')
     expect(d.added).toBe(1)
     expect(versionDiff(null, 'a\n\nb').added).toBe(2)
+  })
+})
+
+describe('整篇对比（预览里的对比态）', () => {
+  it('collapse: false 留着每一段没改的，不折成「N 段未改」', () => {
+    const before = ['一', '二', '三', '四', '五', '六', '七'].join('\n')
+    const after = ['一', '二', '三', '四', '五', '六', '七改'].join('\n')
+    const diff = versionDiff(before, after, { collapse: false })
+    expect(diff.rows.some((r) => r.kind === 'skip')).toBe(false)
+    expect(diff.rows).toHaveLength(7)
+  })
+
+  it('「几处」按连着的改动算：相邻两段一起改是一处，隔开的是两处', () => {
+    const before = ['a', 'b', 'c', 'd', 'e'].join('\n')
+    const after = ['a', 'B', 'C', 'd', 'E'].join('\n')
+    expect(changeRuns(versionDiff(before, after, { collapse: false }).rows)).toBe(2)
+  })
+
+  it('只动了空行（Markdown 换成占位字符的那种）不算一处', () => {
+    const before = ['# 标题', BLANK_LINE, '正文'].join('\n')
+    const after = ['# 标题', BLANK_LINE, BLANK_LINE, '正文'].join('\n')
+    const rows = versionDiff(before, after, { collapse: false }).rows
+    expect(rows.some((r) => r.kind !== 'same')).toBe(true)
+    expect(changeRuns(rows)).toBe(0)
   })
 })

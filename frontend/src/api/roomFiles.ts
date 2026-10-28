@@ -265,7 +265,7 @@ export async function downloadFile(rawUrl: string, filename: string): Promise<vo
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// ---- 房间文件：草稿历史与在线编辑 ----
+// ---- 房间文件：在线编辑（草稿历史在 ./roomFileRevisions） ----
 
 export function copyIntoRoom(
   topicId: string,
