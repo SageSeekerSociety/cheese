@@ -42,6 +42,12 @@ from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.machine.preview_wake import (
+    can_wake_on_machine,
+    find_seat_session,
+    is_preview_waking,
+    schedule_direct_preview_wake,
+)
 from app.domain.machine.session_reports import conversation_sessions
 from app.domain.project.room_files import ARTIFACT_MIME
 from app.domain.project_permissions import Permission
@@ -201,8 +207,18 @@ async def wake_preview_app(
     state = await app_state(place.conversation_id, seat)
     if state.alive:
         return ok({"started": False, "reason": "up"})
-    if await chat.has_running_turn(place.conversation_id):
+    if is_preview_waking(place.conversation_id) or await chat.has_running_turn(
+        place.conversation_id
+    ):
         return ok({"started": False, "reason": "working"})
+    session_row = await find_seat_session(
+        db,
+        project_id=place.project_id,
+        conversation_id=place.conversation_id,
+        seat=seat,
+    )
+    art_meta = art.meta if isinstance(art.meta, dict) else None
+    direct = can_wake_on_machine(art_meta, session_row)
     redis = get_redis_client()
     key = f"preview-wake:{_snapshot_key(place, art)}"
     if redis is not None:
@@ -211,7 +227,8 @@ async def wake_preview_app(
                 return ok({"started": False, "reason": "pending"})
         except Exception:  # an unreachable limiter does not block a person's wake
             key = ""
-    try:
+
+    def _submit_turn() -> None:
         runner.submit(
             chat,
             place.conversation_id,
@@ -226,6 +243,20 @@ async def wake_preview_app(
                 "previewWakeRequested", actor=f"<@{actor.handle}>", seat=f"<@{seat}>"
             ),
         )
+
+    if direct and session_row is not None and art_meta is not None:
+        schedule_direct_preview_wake(
+            db.bind,
+            place=place,
+            session_id=session_row.id,
+            seat=seat,
+            serve=art_meta["serve"],
+            fallback=_submit_turn,
+            dedup_key=key,
+        )
+        return ok({"started": True})
+    try:
+        _submit_turn()
     except Exception:
         # 这一轮没起成：把刚才占下的坑放掉，再按一次还能按。留着的话接下来 90 秒都只会
         # 报「刚有人按过」，而实际上没有任何东西在跑。
@@ -272,7 +303,8 @@ async def preview_wake_status(
         {
             "machine": machine,
             "tunnel_up": state.tunnel_up,
-            "agent_working": await chat.has_running_turn(place.conversation_id),
+            "agent_working": is_preview_waking(place.conversation_id)
+            or await chat.has_running_turn(place.conversation_id),
             "app_up": state.alive,
         }
     )
