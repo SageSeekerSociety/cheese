@@ -4,6 +4,7 @@
   "autoReloaded": "应用已重启，已自动重新载入",
   "cancel": "取消",
   "cantDisplay": "无法显示这个文件",
+  "columns": "第 {start}–{end} 列 / 共 {total} 列",
   "docCantDisplay": "无法显示这个文档",
   "docOpenFailed": "无法打开这个文档",
   "docPreviewDisabled": "文档预览未启用",

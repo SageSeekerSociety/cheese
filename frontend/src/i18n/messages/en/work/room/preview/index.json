@@ -4,6 +4,7 @@
   "autoReloaded": "The app restarted; reloaded automatically",
   "cancel": "Cancel",
   "cantDisplay": "Couldn't display this file",
+  "columns": "Columns {start}–{end} of {total}",
   "docCantDisplay": "Couldn't display this document",
   "docOpenFailed": "Couldn't open this document",
   "docPreviewDisabled": "Document preview is not enabled",

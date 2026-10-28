@@ -38,12 +38,17 @@ MAX_TEXT_BYTES = 1024 * 1024
 # a 3 MB log report itself as "not text": the only answers available were "the
 # whole thing" and "nothing".
 #
-# The size follows the measured knee rather than a round number. In the preview
-# panel (546 px, 13 px mono) 4,000 lines / ~480 KB still scroll at 24–30 ms a
-# frame; 8,000 lines / ~1 MB is 43–56 ms. A head this size lands around 2,000
-# lines of a typical log, inside the smooth range. Raise it only with a fresh
+# Both limits below follow the measured knee rather than a round number. What
+# costs the preview panel is the LINE COUNT, not the bytes — every line is its
+# own element — so a cap on bytes alone does not bound the work: 256 KB of
+# 4-byte lines is 52,428 lines and scrolls at 245 ms a frame, while the same
+# bytes as 120-byte lines is 2,169 lines at 17 ms. Measured in the panel
+# (546 px, 13 px mono): 4,000 lines 25 ms, 5,000 lines 31 ms, 8,000 lines 49 ms.
+# So the head is the smaller of the two: the byte cut bounds long-line files,
+# the line cut bounds short-line ones. Raise either only with a fresh
 # measurement.
 PREVIEW_TEXT_BYTES = 256 * 1024
+PREVIEW_TEXT_LINES = 4_000
 
 
 # The longest UTF-8 sequence is 4 bytes, so a prefix cut anywhere inside one
@@ -52,34 +57,60 @@ _MULTIBYTE = 4
 
 
 def head_text(data: bytes) -> str | None:
-    """The whole of ``data`` as text, or None when it is not text at all.
+    """The reader's copy of a text file's opening, or None when it is not text.
 
     ``data`` is a byte prefix of a longer file, so the cut may land inside the
-    last line, and even inside a multi-byte UTF-8 sequence. Two steps keep the
-    head to whole lines:
+    last line, and even inside a multi-byte UTF-8 sequence. Three things happen
+    here, in order: keep it to whole lines, keep it to a line budget, and make
+    sure the bytes left actually decode.
 
-    - Cut back to the last newline when there is one. A newline byte never
-      occurs inside a multi-byte sequence, so that alone settles the tail.
-    - When the prefix holds no newline at all — a minified JSON, a long first
-      line — drop the trailing bytes of whatever sequence the cut landed in
-      instead. Without this a one-line file reported itself as non-text, which
-      is exactly the answer this ceiling change exists to stop giving.
+    The line budget is the one that bounds the reader's cost — a prefix of
+    short lines can be far more lines than the preview can lay out. It never
+    cuts below ``PREVIEW_TEXT_MIN_BYTES``, because one long line is worth more
+    than several short ones and the byte ceiling already bounds that side.
     """
     if b"\x00" in data[:_SNIFF_BYTES]:
         return None
-    cut = data.rfind(b"\n")
+    limit = min(len(data), PREVIEW_TEXT_BYTES)
+    # Cut back to the last newline. A newline byte never occurs inside a
+    # multi-byte sequence, so that alone settles the tail, and every boundary
+    # below stays on a newline so the result always decodes.
+    cut = data.rfind(b"\n", 0, limit)
     if cut >= 0:
-        data = data[: cut + 1]
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
+        end = cut + 1
+        # Whichever of the two budgets is smaller. Files with long lines are
+        # already bounded by the byte cut — fewer than `PREVIEW_TEXT_LINES` of
+        # them fit — so this only shortens the short-line ones, which is the
+        # side the byte cap cannot bound.
+        line_cut = _nth_newline(data, PREVIEW_TEXT_LINES)
+        if line_cut is not None and line_cut < end:
+            end = line_cut
+        return data[:end].decode("utf-8")
+    # No newline in the prefix at all — a minified JSON, a long first line:
+    # drop the trailing bytes of whatever sequence the cut landed in instead.
+    # Without this a one-line file reported itself as non-text, which is exactly
+    # the answer this ceiling change exists to stop giving.
     for drop in range(_MULTIBYTE):
         try:
-            return data[: len(data) - drop].decode("utf-8")
+            return data[: limit - drop].decode("utf-8")
         except UnicodeDecodeError:
             continue
     return None
+
+
+def _nth_newline(data: bytes, n: int) -> int | None:
+    """The offset just past the ``n``-th newline, or None when there are fewer.
+
+    Bounds the head by lines rather than bytes: a prefix of short lines can hold
+    many more lines than the panel can lay out, and the line count — not the
+    byte count — is what costs it.
+    """
+    at = -1
+    for _ in range(n):
+        at = data.find(b"\n", at + 1)
+        if at < 0:
+            return None
+    return at + 1
 
 
 def compare_bytes(before: bytes, after: bytes, left: str, right: str) -> dict:

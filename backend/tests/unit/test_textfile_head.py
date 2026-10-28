@@ -14,6 +14,7 @@ import pytest
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
     PREVIEW_TEXT_BYTES,
+    PREVIEW_TEXT_LINES,
     head_text,
     text_payload,
 )
@@ -94,4 +95,27 @@ def test_a_cut_inside_any_width_of_character_still_decodes(unit):
 
     assert head is not None
     # Whole lines: the cut backed off to the last newline, never mid-character.
+    assert head.endswith("\n")
+
+
+def test_a_file_of_short_lines_is_bounded_by_lines_not_bytes():
+    # 256 KB of 4-byte lines is 52,428 lines — far more than the panel can lay
+    # out, while the same bytes as long lines is a couple of thousand. The byte
+    # cap cannot bound this side, so the head carries a line budget too.
+    data = b"".join(b"x" * 4 + b"\n" for _ in range(60_000))
+
+    head = head_text(data)
+
+    assert head is not None
+    assert head.count("\n") <= PREVIEW_TEXT_LINES
+    assert head.endswith("\n")
+
+
+def test_long_lines_are_still_bounded_by_bytes():
+    data = b"".join(b"x" * 2_000 + b"\n" for _ in range(1_000))
+
+    head = head_text(data)
+
+    assert head is not None
+    assert len(head.encode()) <= PREVIEW_TEXT_BYTES
     assert head.endswith("\n")

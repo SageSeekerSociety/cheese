@@ -21,6 +21,7 @@ import {
   IMAGE_SUFFIXES,
   imageMimeOf,
   NEEDS_CONVERSION,
+  headOf,
   PREVIEW_TEXT_BYTES,
   sheetKindOf,
   SLIDE_SUFFIXES,
@@ -84,13 +85,15 @@ async function load() {
       // 整份摆，超过就摆开头。以前超过 1 MB 就一个字都不摆、只给下载，理由和预览
       // 面板那一支一样——读者要的是开头，不是「什么都没有」。
       const window = raw.slice(0, PREVIEW_TEXT_BYTES)
-      cut.value = raw.byteLength > PREVIEW_TEXT_BYTES
+      const bytesCut = raw.byteLength > PREVIEW_TEXT_BYTES
       if (!window.slice(0, 8192).includes(0)) {
         try {
           // 截断时末尾会切在多字节字中间，解码器那时不严；退回最后一个换行保证
           // 一行一行是齐的（同后端 `head_text`）。
-          const whole = new TextDecoder('utf-8', { fatal: !cut.value }).decode(window)
-          text.value = cut.value ? whole.slice(0, whole.lastIndexOf('\n') + 1) : whole
+          const whole = new TextDecoder('utf-8', { fatal: !bytesCut }).decode(window)
+          const kept = headOf(whole, bytesCut)
+          text.value = kept.head
+          cut.value = kept.cut
         } catch {
           /* 不是文本：只能下载。 */
         }
