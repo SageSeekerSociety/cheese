@@ -120,3 +120,19 @@ it('找不到时说没找到，不把地址栏挪到别处去', async () => {
   expect(address(container)).toBe('—')
   expect(container.querySelector('.ps__summary')?.textContent).toContain('没找到')
 })
+
+it('回车在还没指过任何一处时交出去的是 A1，不是什么都不做', async () => {
+  const { container, emitted } = mount()
+  await waitFor(() => expect(container.querySelector('table[role=grid]')).not.toBeNull())
+  await fireEvent.keyDown(container.querySelector('table[role=grid]') as HTMLElement, { key: 'Enter' })
+  expect(emitted('cell')?.at(-1)).toEqual([{ address: 'A1', value: '姓名', sheet: '' }])
+})
+
+it('定位：地址栏写的一片（`A2:B3`）也认，抄回来落到同一片', async () => {
+  const { container } = mount()
+  await waitFor(() => expect(container.querySelector('[data-testid=sheet-locate]')).not.toBeNull())
+  const input = container.querySelector('[data-testid=sheet-locate]') as HTMLInputElement
+  await fireEvent.update(input, 'A2:B3')
+  await fireEvent.keyDown(input, { key: 'Enter' })
+  expect(address(container)).toBe('A2:B3')
+})

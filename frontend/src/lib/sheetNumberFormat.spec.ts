@@ -37,6 +37,19 @@ it('负数按格式自己的那一段排：负号，或者会计的括号', () =
   expect(formatNumber(-5, '0.00;[Red](0.00)')).toBe('(5.00)')
 })
 
+it('百分数后面还有字面量时，那一段留着', () => {
+  // `0.0%;(0.0%)` 的负数是「括号 + 百分数 + 右括号」：右括号不能跟着 `%` 一起丢。
+  expect(formatNumber(-0.041, '0.0%;(0.0%)')).toBe('(4.1%)')
+  expect(formatNumber(0.041, '0.0%" of total"')).toBe('4.1% of total')
+  // 引号里的 `%` 是字面量：数不乘一百，只在那后面加一个百分号。
+  expect(formatNumber(0.041, '0.0"%"')).toBe('0.0%')
+})
+
+it('按千缩的写法（末尾那颗逗号）不排，不能把数放大一千倍', () => {
+  expect(formatNumber(12345, '#,##0,')).toBeNull()
+  expect(formatNumber(12345, '0.0,,')).toBeNull()
+})
+
 it('认不出来的格式退回数本身，不猜', () => {
   // General、日期、文本、科学计数法、分数：都不是这里能排的，排错了比不排更坏。
   expect(formatNumber(386200, undefined)).toBeNull()

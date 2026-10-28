@@ -110,7 +110,8 @@ function changedTitle(row: number, col: number): string | null {
             :key="`pin-${pin.id}`"
             class="ps-card__pin"
             :data-pending-pin="pin.id"
-            :title="t('work.room.preview.pendingCount', { count: pin.n })"
+            :title="t('work.room.preview.pendingPin', { n: pin.n })"
+            aria-hidden="true"
             >{{ pin.n }}</span
           >
           <span class="ps-card__row t-meta">{{ t('work.room.preview.sheetRow', { row: r + 1 }) }}</span>
@@ -145,7 +146,8 @@ function changedTitle(row: number, col: number): string | null {
                 :key="`pin-${pin.id}`"
                 class="ps-card__pin"
                 :data-pending-pin="pin.id"
-                :title="t('work.room.preview.pendingCount', { count: pin.n })"
+                :title="t('work.room.preview.pendingPin', { n: pin.n })"
+                aria-hidden="true"
                 >{{ pin.n }}</span
               >
             </dd>

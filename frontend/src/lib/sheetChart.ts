@@ -44,6 +44,10 @@ export interface ChartParts {
 
 const EMPTY: ChartParts = { raw: [], needed: new Map() }
 
+/** 一张图最多取多少格。读表那一步按它记原始数、取数那一步按它展开，两处必须是同一个数：
+ *  只改一处，另一处就会把「记了数的格子」读成空档。 */
+const MAX_REF_CELLS = 2000
+
 /** 一份工作簿里的一批图，按 XML 里的定义原样。读不出图的（不是 OOXML、没有图）给空。 */
 export async function readChartParts(bytes: ArrayBuffer): Promise<ChartParts> {
   try {
@@ -97,7 +101,7 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
           const owner = sheetOf(ref) || chart.sheet
           let set = needed.get(owner)
           if (!set) needed.set(owner, (set = new Set()))
-          for (const address of expandRef(ref, 2000)) set.add(address)
+          for (const address of expandRef(ref, MAX_REF_CELLS)) set.add(address)
         }
       }
     }
@@ -105,29 +109,29 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
   return { raw, needed }
 }
 
+/** OOXML 的图形元素 → 我们画得出来的那几种。表里没有的（组合图里的自定义图形、
+ *  曲面图、雷达图等）一律不画。 */
+const PLOT_KINDS: Record<string, ChartKind | undefined> = {
+  barChart: 'bar',
+  lineChart: 'line',
+  areaChart: 'area',
+  pieChart: 'pie',
+  doughnutChart: 'pie',
+  scatterChart: 'scatter',
+}
+
 /** 一张图里我们要的那几件。认不出类型、或者一条数据都没有时给 null。 */
 function parseChart(xml: string, sheet: string): RawChart | null {
   const doc = parseXml(xml)
   if (!doc) return null
-  const plot =
-    first(doc, 'barChart') ??
-    first(doc, 'lineChart') ??
-    first(doc, 'areaChart') ??
-    first(doc, 'pieChart') ??
-    first(doc, 'doughnutChart') ??
-    first(doc, 'scatterChart')
-  if (!plot) return null
-  const tag = plot.localName
-  const kind: ChartKind =
-    tag === 'barChart'
-      ? 'bar'
-      : tag === 'lineChart'
-        ? 'line'
-        : tag === 'areaChart'
-          ? 'area'
-          : tag === 'pieChart' || tag === 'doughnutChart'
-            ? 'pie'
-            : 'scatter'
+  // 一张图里可能有不止一种图形（柱 + 折线那种组合图）。我们只画一种，所以组合图整个
+  // 跳过——画一半等于给读者一张错的图。
+  const plots = all(doc, 'plotArea').flatMap((area) =>
+    Array.from(area.children).filter((child) => PLOT_KINDS[child.localName] && all(child, 'ser').length)
+  )
+  if (plots.length !== 1) return null
+  const plot = plots[0]!
+  const kind = PLOT_KINDS[plot.localName]!
   const barDir = first(plot, 'barDir')?.getAttribute('val')
   const horizontal = kind === 'bar' && barDir === 'bar'
   const title = chartTitle(doc)
@@ -142,7 +146,10 @@ function parseChart(xml: string, sheet: string): RawChart | null {
 }
 
 function chartTitle(doc: Document): string {
-  const titleNode = first(doc, 'title')
+  // 只认 `<c:chart>` 直接挂着的那个标题。坐标轴也有自己的 `<c:title>`（在 `plotArea`
+  // 里面），拿全文档第一个会在一张没有标题的图上显示成「销量」这种轴名。
+  const chart = first(doc, 'chart')
+  const titleNode = chart ? Array.from(chart.children).find((child) => child.localName === 'title') ?? null : null
   if (!titleNode) return ''
   // 图表标题有两种写法：直接的 `<c:title><c:tx><c:rich>…<a:t>文字</a:t>`，或者引用一格。
   const parts: string[] = []
@@ -205,8 +212,8 @@ export function resolveCharts(
     let categories: string[] = []
     for (const line of chart.series) {
       const source = byName.get(sheetOf(line.values) || chart.sheet) ?? host
-      const values = expandRef(line.values, 2000)
-      const cats = line.categories ? expandRef(line.categories, 2000) : []
+      const values = expandRef(line.values, MAX_REF_CELLS)
+      const cats = line.categories ? expandRef(line.categories, MAX_REF_CELLS) : []
       const catSheet = byName.get(sheetOf(line.categories) || chart.sheet) ?? source
       const texts = values.map((address) => textAt(source, address) ?? '')
       const catTexts = cats.length

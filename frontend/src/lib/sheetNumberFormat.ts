@@ -87,6 +87,18 @@ function codesOnly(format: string): string {
   return out
 }
 
+/** 一段格式拆成「数字占位之前的前缀、数字占位、之后的后缀」。没有数字占位的那一段
+ *  （`General`、纯文本）给 null。 */
+function splitSection(section: string): { prefix: string; digits: string; suffix: string } | null {
+  const match = /[0#.,]+/.exec(section)
+  if (!match) return null
+  return {
+    prefix: section.slice(0, match.index),
+    digits: match[0],
+    suffix: section.slice(match.index + match[0].length),
+  }
+}
+
 /** 格式串 → 要的那几件；不是我们认得的数字格式就给 null。 */
 function shapeOf(format: string): Shape | null {
   const text = plain(format)
@@ -96,28 +108,35 @@ function shapeOf(format: string): Shape | null {
   // 日期、时间、文本、通用（`General`）都不是这里管的事。判「是不是日期」要在没有引号
   // 字面量的那一份上判：`#,##0.00 "USD"` 的 `D` 是币种名里的一个字母，不是「日」——
   // 拿带字面量的串去判，一整类带货币名的格式会被当成日期退回裸数。
-  if (/[ymdhs]/i.test(codesOnly(format))) return null
+  const codes = codesOnly(format)
+  if (/[ymdhs]/i.test(codes)) return null
   if (body.includes('@')) return null
   // 科学计数法（`0.00E+00`）和分数（`# ?/?`）：我们排不出它们真正的样子，
   // 按普通小数排会把 1.2E+05 写成「1.20E+05」这种既不是原样也不是科学计数的东西。
   if (/[eE][+-]/.test(body) || body.includes('/')) return null
-  const match = /([^0#.,%]*)([0#.,]+)([^0#.,%]*)/.exec(body)
-  if (!match) return null
-  const [, before, digits, after] = match
-  const percent = body.includes('%')
-  const point = digits.indexOf('.')
-  const decimals = point === -1 ? 0 : digits.length - point - 1
-  const grouping = digits.includes(',')
-  const negative = sections[1] !== undefined ? sections[1] : null
-  const negativeMatch = negative ? /([^0#.,%]*)([0#.,]+)([^0#.,%]*)/.exec(negative) : null
+  const first = splitSection(body)
+  if (!first) return null
+  // 数字占位末尾的逗号在 Excel 里是「按千缩」运算符（`#,##0,` 把 12345 显示成 12），
+  // 不是分组。排不出来就退回数本身，不能把数放大一千倍给人看。
+  if (first.digits.endsWith(',')) return null
+  const point = first.digits.indexOf('.')
+  const decimals = point === -1 ? 0 : first.digits.length - point - 1
+  // `%` 是不是运算符要看没被引号包住的那一份：`0.0"%"` 是在数后面加一个百分号，
+  // 数本身不乘一百；`0.0%` 才是百分数。运算符那一颗从字面量里去掉，剩下的照旧留着
+  // （`0.0%;(0.0%)` 的后缀是 `)`）。
+  const percent = codes.includes('%')
+  const negative = sections[1]
+  const second = negative === undefined ? null : splitSection(negative)
   return {
     decimals,
-    grouping,
+    grouping: first.digits.includes(','),
     percent,
-    prefix: before,
-    suffix: after,
-    negativePrefix: negativeMatch ? negativeMatch[1] : `-${before}`,
-    negativeSuffix: negativeMatch ? negativeMatch[3] : after,
+    prefix: first.prefix,
+    // `%` 留在它原来那个位置上（`0.0%` 的后缀就是 `%`，`0.0%;(0.0%)` 的负数后缀是
+    // `%)`）：它既是运算符、也是屏幕上那几个字的一部分，从中间挪到最后会把右括号挤错地方。
+    suffix: first.suffix,
+    negativePrefix: second ? second.prefix : `-${first.prefix}`,
+    negativeSuffix: second ? second.suffix : first.suffix,
   }
 }
 
@@ -136,7 +155,7 @@ export function formatNumber(value: number, format: string | undefined): string 
     body = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (fraction === undefined ? '' : `.${fraction}`)
   }
   const prefix = negative ? shape.negativePrefix : shape.prefix
-  const suffix = (negative ? shape.negativeSuffix : shape.suffix) + (shape.percent ? '%' : '')
+  const suffix = negative ? shape.negativeSuffix : shape.suffix
   return `${prefix}${body}${suffix}`
 }
 

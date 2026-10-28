@@ -320,13 +320,14 @@ export async function readSheets(data: ArrayBuffer, kind: 'workbook' | 'csv' | '
     return hit
   }
   const read = (async (): Promise<SheetRead> => {
-    if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
-    if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
     try {
+      if (kind === 'csv' || kind === 'tsv') return readText(data, kind)
+      if (isOle2(new Uint8Array(data))) return failed(t('work.room.preview.sheetLegacyUnsupported'))
       return await readWorkbook(data)
     } catch (e) {
       // 读失败不进缓存：换一份字节重试是读者会做的事，而这条路的结果不该被记成「这份文件
-      // 就是读不出来」。
+      // 就是读不出来」。整个身体都在 try 里——分隔文本那一路也会抛，抛出去就是一条被
+      // 缓存住、又没人接的拒绝承诺，下一次打开同一份字节只会再撞一次。
       if (key !== null) readCache.delete(key)
       return failed(e instanceof Error ? e.message : t('work.room.preview.sheetReadFailed'))
     }

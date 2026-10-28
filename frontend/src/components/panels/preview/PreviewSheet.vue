@@ -22,7 +22,7 @@
 import type { RawChart, SheetChart } from '@/lib/sheetChart'
 import type { CellAlign, Sheet } from '@/lib/sheetRead'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue'
 
 import PreviewSheetCards from './PreviewSheetCards.vue'
 import PreviewSheetChart from './PreviewSheetChart.vue'
@@ -275,13 +275,26 @@ let observer: ResizeObserver | null = null
 const locate = ref('')
 const locateMiss = ref(false)
 
-/** 地址写法：`B7`、`B7:D9`、`数据!B7`。右边那半截是给「输表名跳过去」留的。 */
-function parseAddress(text: string): { sheet: string | null; row: number; col: number } | null {
-  const match = /^([^!]+!)?\$?([A-Za-z]{1,3})\$?(\d{1,7})$/.exec(text.trim())
+/** 地址写法：`B7`、`B7:D9`、`数据!B7`、`数据!B7:D9`。地址栏自己就把一片写成
+ *  `C3:E8`，读者把它抄回定位框得找得到同一个地方。 */
+function parseAddress(text: string): { sheet: string | null; start: string; end: string } | null {
+  const match = /^([^!]+!)?(\$?[A-Za-z]{1,3}\$?\d{1,7})(?::(\$?[A-Za-z]{1,3}\$?\d{1,7}))?$/.exec(text.trim())
+  if (!match) return null
+  const bare = (value: string) => value.replace(/\$/g, '').toUpperCase()
+  return {
+    sheet: match[1] ? match[1].slice(0, -1) : null,
+    start: bare(match[2]),
+    end: bare(match[3] ?? match[2]),
+  }
+}
+
+/** `C3` 这种写法拆成行列（都从 0 起）；拆不出来给 null。 */
+function splitAddress(address: string): { row: number; col: number } | null {
+  const match = /^([A-Za-z]{1,3})(\d{1,7})$/.exec(address)
   if (!match) return null
   let col = 0
-  for (const ch of match[2].toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64)
-  return { sheet: match[1] ? match[1].slice(0, -1) : null, row: Number(match[3]) - 1, col: col - 1 }
+  for (const ch of match[1].toUpperCase()) col = col * 26 + (ch.charCodeAt(0) - 64)
+  return { row: Number(match[2]) - 1, col: col - 1 }
 }
 
 /** 地图上走一格：这是键盘那一路的落点，地址栏跟着它变。 */
@@ -299,9 +312,9 @@ function moveTo(row: number, col: number) {
 }
 
 /** 回车/空格：把键盘指着的这一格说出去（和点一下那一格是同一件事）。 */
-function commitFocus() {
+function commitFocus(target: { row: number; col: number } | null = focus.value) {
   const sheet = active.value
-  const at = focus.value
+  const at = target
   if (!sheet || !at) return
   const address = addressAt(at.row, at.col)
   selected.value = address
@@ -324,11 +337,22 @@ function runLocate() {
     }
     if (index >= 0 && index !== activeIndex.value) switchSheet(index)
     const sheet = active.value
-    if (!sheet || at.row >= sheet.rows.length || at.col >= sheet.width) {
+    const start = splitAddress(at.start)
+    const end = splitAddress(at.end)
+    if (!sheet || !start || !end || start.row >= sheet.rows.length || start.col >= sheet.width) {
       locateMiss.value = true
       return
     }
-    moveTo(at.row, at.col)
+    if (start.row === end.row && start.col === end.col) {
+      moveTo(start.row, start.col)
+      return
+    }
+    // 一片：和拖出来的一样看待，两个角都摆上，地址栏写回 `C3:E8`。
+    focus.value = { row: end.row, col: end.col }
+    selected.value = ''
+    dragStart.value = start
+    dragEnd.value = end
+    scrollToRow(start.row)
     return
   }
   // 内容：当前这张表里第一个包含它的格子。找的是「显示出来的那几个字」，所以读者拿
@@ -383,7 +407,7 @@ function onKeydown(event: KeyboardEvent) {
     case 'Enter':
       if (event.key === 'Enter' && !extend) {
         event.preventDefault()
-        commitFocus()
+        commitFocus(at)
         return
       }
       return go(at.row + 1, at.col)
@@ -408,7 +432,7 @@ function onKeydown(event: KeyboardEvent) {
       return
     case ' ':
       event.preventDefault()
-      commitFocus()
+      commitFocus(at)
       return
   }
 }
@@ -503,11 +527,18 @@ function changedTitle(rowIndex: number, colIndex: number): string | null {
 }
 
 /** 正在看的这张表上的图。图挂在它自己那张表上（Excel 里就是浮在那张表的画布上）。 */
-const activeCharts = computed<SheetChart[]>(() => {
-  const sheet = active.value
+function chartsFor(sheet: Sheet | undefined): SheetChart[] {
   if (!sheet || !charts.value.length) return []
   return resolveCharts(charts.value, sheets.value).get(sheet.name) ?? []
-})
+}
+const activeCharts = computed<SheetChart[]>(() => chartsFor(active.value))
+
+/** 看图 / 回到表。卡片那一档在窄处替掉表格，所以点「图表」时先把卡片关掉——不然
+ *  按钮按下去什么都不会变（卡片那一支排在前面，赢的是它）。 */
+function toggleCharts() {
+  showCharts.value = !showCharts.value
+  if (showCharts.value) cards.value = false
+}
 
 /** 哪几张表里有改过的格子：页签上点一颗点，读者知道该切过去看哪张。 */
 const changedSheets = computed(() => {
@@ -570,6 +601,9 @@ function choose(rowIndex: number, colIndex: number) {
 function switchSheet(index: number) {
   activeIndex.value = index
   cardRows.value = CARD_CHUNK
+  // 换到一张没有图的表：图表那一支要退出去。不退的话它照旧赢，而「图表 N」那颗开关
+  // 因为这张表没图已经不画了，读者就再也回不到表格。
+  if (!chartsFor(sheets.value[index]).length) showCharts.value = false
   selected.value = ''
   focus.value = null
   dragging.value = false
@@ -643,12 +677,21 @@ function endDrag() {
 // 松开的那一下可能在表外面：挂在 `window` 上才收得到。挂一次、卸组件时摘掉。
 onMounted(() => {
   window.addEventListener('mouseup', endDrag)
-  observer = new ResizeObserver(() => measure())
-  if (scroller.value) {
-    observer.observe(scroller.value)
-    measure()
-  }
+  // 老一点的浏览器（和测试环境）可能没有 ResizeObserver：没有它也要能用，只是面板
+  // 改尺寸之后要等下一次重新渲染才重新量。
+  if (typeof ResizeObserver !== 'undefined') observer = new ResizeObserver(() => measure())
+  observeScroller()
 })
+
+/** 观察滚动区：它是读完之后才渲染出来的，所以 `onMounted` 那一刻还没有这个元素；
+ *  等它出现再挂（换一份文件、退出卡片档时也会换一个新的）。 */
+function observeScroller() {
+  const grid = scroller.value
+  if (!grid) return
+  observer?.observe(grid)
+  measure()
+}
+onUpdated(observeScroller)
 onBeforeUnmount(() => {
   window.removeEventListener('mouseup', endDrag)
   observer?.disconnect()
@@ -774,7 +817,7 @@ watch(showSource, async () => {
         <table
           class="ps__table"
           role="grid"
-          :aria-rowcount="active.rows.length"
+          :aria-rowcount="active.totalRows + 1"
           :aria-colcount="active.width"
           :aria-label="t('work.room.preview.sheetRegion')"
           tabindex="0"
@@ -791,7 +834,7 @@ watch(showSource, async () => {
             <tr v-if="padTop" class="ps__spacer" aria-hidden="true" role="presentation">
               <td :colspan="active.width + 1" :style="{ height: `${padTop}px` }" />
             </tr>
-            <tr v-for="{ cells, row: r } in visibleRows" :key="r" class="ps__row-line">
+            <tr v-for="{ cells, row: r } in visibleRows" :key="r" class="ps__row-line" :aria-rowindex="r + 2">
               <th class="ps__row" scope="row">{{ r + 1 }}</th>
               <!-- eslint-disable-next-line vuejs-accessibility/mouse-events-have-key-events -- 拖过一片是鼠标手势（按下、经过、松开）。键盘上对应的一步是方向键选格子再回车（见 onKeydown），不是对每一格都挂 keydown。 -->
               <td
@@ -826,7 +869,7 @@ watch(showSource, async () => {
                   :key="`pin-${pin.id}`"
                   class="ps__pin"
                   :data-pending-pin="pin.id"
-                  :title="t('work.room.preview.pendingCount', { count: pin.n })"
+                  :title="t('work.room.preview.pendingPin', { n: pin.n })"
                   aria-hidden="true"
                   >{{ pin.n }}</span
                 >
@@ -881,7 +924,7 @@ watch(showSource, async () => {
           :class="{ 'ps__tab--on': showCharts }"
           :aria-pressed="showCharts"
           data-testid="sheet-charts"
-          @click="showCharts = !showCharts"
+          @click="toggleCharts"
         >
           <v-icon size="14">mdi-chart-bar</v-icon>
           {{ t('work.room.preview.sheetChartCount', { count: activeCharts.length }) }}

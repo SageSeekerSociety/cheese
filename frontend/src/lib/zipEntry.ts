@@ -14,7 +14,8 @@ interface Entry {
   name: string
   method: number
   compressed: number
-  start: number
+  /** 这一条本地头在文件里的偏移。真正的起始位置要到取字节时才算，见 `readZipEntry`。 */
+  local: number
 }
 
 /** 中央目录尾记录在文件最后 22 字节起、往前至多再有 65535 字节的注释。 */
@@ -72,10 +73,9 @@ function entries(bytes: ArrayBuffer): Entry[] | null {
     const local = view.getUint32(at + 42, true)
     const name = decoder.decode(new Uint8Array(bytes, at + 46, nameLength))
     at += 46 + nameLength + extraLength + commentLength
-    if (local + 30 > view.byteLength || view.getUint32(local, true) !== LOCAL_HEADER) return null
-    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true)
-    if (start + compressed > view.byteLength) return null
-    out.push({ name, method, compressed, start })
+    // 只读中央目录，不碰各条的本地头：一份几十个部件的文件里，一条诡异的本地头不该
+    // 让整份档案都读不出来（调用方常常只要其中一条）。
+    out.push({ name, method, compressed, local })
   }
   return out
 }
@@ -89,7 +89,12 @@ export function listZipEntries(bytes: ArrayBuffer): string[] {
 export async function readZipEntry(bytes: ArrayBuffer, name: string): Promise<Uint8Array | null> {
   const found = entries(bytes)?.find((entry) => entry.name === name)
   if (!found) return null
-  const data = new Uint8Array(bytes, found.start, found.compressed)
+  // 这一条的本地头是不是对得上，取它的时候才判：读一个坏条目就只坏这一个。
+  const view = new DataView(bytes)
+  if (found.local + 30 > view.byteLength || view.getUint32(found.local, true) !== LOCAL_HEADER) return null
+  const start = found.local + 30 + view.getUint16(found.local + 26, true) + view.getUint16(found.local + 28, true)
+  if (start + found.compressed > view.byteLength) return null
+  const data = new Uint8Array(bytes, start, found.compressed)
   if (found.method === 0) return data.slice()
   if (found.method === 8) return inflateRaw(data)
   return null

@@ -15,6 +15,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { reducedMotion } from '@/utils/motion'
 
 import { chartData, chartHeight, chartOption } from '@/components/panels/doc/blocks/chartOption'
+import { onThemeChange } from '@/components/panels/doc/blocks/viewKit'
 import { t } from '@/i18n'
 
 type ECharts = { setOption: (option: object, notMerge: boolean) => void; resize: () => void; dispose: () => void }
@@ -64,7 +65,7 @@ function chartTheme(): ChartTheme {
 const props = defineProps<{ chart: SheetChart; narrow?: boolean }>()
 const el = ref<HTMLElement | null>(null)
 let drawn: ECharts | null = null
-let themeWatched = false
+let disconnectTheme: (() => void) | null = null
 
 /** 图的数据按图表块那套摆：第一行是各条的名字，之后每一行是「类别 + 各条的值」。 */
 function table(): string[][] {
@@ -75,28 +76,28 @@ function table(): string[][] {
   return rows
 }
 
+/** 这张图还挂在页面上没有。ECharts 那一包是第一次有图要画时才去取的，等它回来的
+ *  那几百毫秒里读者可能已经切走——那之后 `el` 是 null，实例也早该跟着组件一起销毁。 */
+let alive = false
+
 async function draw() {
-  if (!el.value) return
+  const host = el.value
+  if (!host) return
   const init = await loadECharts()
+  // 等包回来之后可能已经卸载了：此时不再建实例，也不碰 DOM。
+  if (!alive || el.value !== host) return
   const data = chartData(table())
   const height = chartHeight(props.chart.kind, props.chart.horizontal, data)
-  if (!drawn) drawn = init(el.value, null, { renderer: 'svg' })
-  el.value.style.height = `${height}px`
+  if (!drawn) drawn = init(host, null, { renderer: 'svg' })
+  host.style.height = `${height}px`
   drawn.setOption(chartOption(props.chart.kind, props.chart.horizontal, data, chartTheme(), !!props.narrow), true)
   drawn.resize()
 }
 
-/** 深色/浅色切换的时候要重画一次：配色是从令牌里现取的，换了主题不重取就还是旧色。 */
-function watchTheme() {
-  if (themeWatched) return
-  themeWatched = true
-  const observer = new MutationObserver(() => void draw())
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
-  onBeforeUnmount(() => observer.disconnect())
-}
-
 onMounted(() => {
-  watchTheme()
+  alive = true
+  // 深色/浅色切换时要重画一次：配色是从令牌里现取的，换了主题不重取还是旧色。
+  disconnectTheme = onThemeChange(() => void draw())
   void draw()
 })
 watch(
@@ -105,6 +106,9 @@ watch(
   { deep: true }
 )
 onBeforeUnmount(() => {
+  alive = false
+  disconnectTheme?.()
+  disconnectTheme = null
   drawn?.dispose()
   drawn = null
 })
@@ -113,7 +117,7 @@ onBeforeUnmount(() => {
 <template>
   <!-- 一张图：标题在图上（ECharts 自己画），这块只给画布一个尺寸和一个可访问的名字。 -->
   <figure class="sc">
-    <div ref="el" class="sc__canvas" role="img" :aria-label="chart.title || t('work.room.preview.sheetChart')" />
+    <div ref="el" class="sc__canvas" role="img" :aria-label="chart.title || t('work.room.preview.sheetChartLabel')" />
     <figcaption v-if="chart.title" class="sc__title">{{ chart.title }}</figcaption>
   </figure>
 </template>
