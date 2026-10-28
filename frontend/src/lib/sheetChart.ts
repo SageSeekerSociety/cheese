@@ -90,10 +90,13 @@ async function parseCharts(bytes: ArrayBuffer): Promise<ChartParts> {
       const chart = parseChart(xml, name)
       if (!chart) continue
       raw.push(chart)
-      let set = needed.get(chart.sheet)
-      if (!set) needed.set(chart.sheet, (set = new Set()))
+      // 图上的数来自它引用的那张表，不一定是挂着它的那张（这张图挂在「汇总」上、数在
+      // 「数据」里）。所以要留原始数的也是被引用的那张表。
       for (const series of chart.series) {
         for (const ref of [series.categories, series.values]) {
+          const owner = sheetOf(ref) || chart.sheet
+          let set = needed.get(owner)
+          if (!set) needed.set(owner, (set = new Set()))
           for (const address of expandRef(ref, 2000)) set.add(address)
         }
       }
@@ -157,9 +160,12 @@ function refOf(ser: Element, name: string): string {
 }
 
 /** `'数据'!$A$2:$A$6` → 那几个地址。整列引用（`A:A`）、整行引用、跨工作簿的引用都不管：
- *  一张图引用一整列在我们这里和引用一万格一样重，而读者要看的还是开头那几行。 */
+ *  一张图引用一整列在我们这里和引用一万格一样重，而读者要看的还是开头那几行；而
+ *  `[1]'数据'!A1` 指的是另一个工作簿里的一张表，不在这份 zip 里。 */
 export function expandRef(ref: string, limit: number): string[] {
   const at = ref.lastIndexOf('!')
+  // `[1]` 这种外部工作簿前缀：`!` 前面那一截里带方括号，就不是这一份里的引用。
+  if (at >= 0 && ref.slice(0, at).includes('[')) return []
   const range = at >= 0 ? ref.slice(at + 1) : ref
   const match = /^\$?([A-Za-z]{1,3})\$?(\d{1,7})(?::\$?([A-Za-z]{1,3})\$?(\d{1,7}))?$/.exec(range.trim())
   if (!match) return []
