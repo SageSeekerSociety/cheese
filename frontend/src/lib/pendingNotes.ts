@@ -119,12 +119,12 @@ export function usePendingNotes(sendMessage: (content: string) => boolean): Pend
     notes.value = [...notes.value, { ...note, id: pendingNoteId() }]
   }
   function remove(id: string) {
+    // 这句话说的是「那几条带得走的没发出去」，所以判据也用带得走的那些：只留评论的
+    // 压根不经对话发，删光交给芝士的那几条之后它就不再指任何东西了。按总数判的话，
+    // 剩下一条只挂评论的就会把这句锁住——「全部发送」那时是灰的、「发送」键也不动它，
+    // 这句失败话再没有一条路能清掉。
     const left = notes.value.filter((note) => note.id !== id)
-    // 逐条删空和 `clear` 是同一种「这一批没了」：那句「上次没发出去」跟着它一起清。
-    // 不清的话，托盘在删空时消失、再攒一条时又出现，冒出来的却是上一批的失败话——
-    // 而这一条压根没按过发送。删到还剩几条时**不**清：那几条正是没发出去的那一批，
-    // 这句话说的还是它们。
-    if (!left.length) failed.value = false
+    if (!sendableNotes(left).length) failed.value = false
     notes.value = left
   }
   function clear() {

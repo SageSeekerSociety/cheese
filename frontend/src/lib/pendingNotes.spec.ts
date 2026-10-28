@@ -87,6 +87,21 @@ it('发送失败那句话不会跟到新的一批上', () => {
   expect(api.failed.value).toBe(false)
 })
 
+it('删光交给芝士的那几条之后，那句话就清了', () => {
+  // 这句话说的是「带得走的没发出去」。篮里还剩一条只挂评论的时，它已经不指任何东西了：
+  // 「全部发送」那时是灰的（带得走的 0 条），发送键也不动它，所以不在这里清就再没有一条
+  // 路能清掉它。判据得用带得走的那些，不是总数。
+  const api = usePendingNotes(() => false)
+  api.add(note({ message: '甲' }))
+  api.add(note({ message: '乙', audience: 'comment' }))
+  expect(api.send('')).toBe(false)
+  expect(api.failed.value).toBe(true)
+  const cheeseId = api.notes.value.find((n) => n.audience === 'cheese')!.id
+  api.remove(cheeseId)
+  expect(api.notes.value).toHaveLength(1)
+  expect(api.failed.value).toBe(false)
+})
+
 it('发送成功之后那句失败话也清了', () => {
   let ok = false
   const api = usePendingNotes(() => ok)

@@ -121,7 +121,11 @@ const pending = inject(PENDING_NOTES, null)
 const pendingCount = computed(() => pending?.notes.value.length ?? 0)
 /** 这一下按发送键真的会带走几条批注：要满足两条——去处是交给芝士的（只留评论的不经
  *  对话发），且没带附件（带附件时走的是附件 + 正文那条路，不含这一批）。不满足时发送
- *  键就不写「含 N 条批注」，写了就是承诺它做不到的事。 */
+ *  键就不写「含 N 条批注」，写了就是承诺它做不到的事。
+ *
+ *  「带附件时不带这一批」这条规矩**只**写在下面这一行；旁边 `sendDraft` 判批量时用的
+ *  就是它，不再另判一次附件——两处各写一遍的话，改一处漏一处就会一边说带得走、一边
+ *  又不带。 */
 const sendableCount = computed(() => (props.atts.length ? 0 : countSendable(pending?.notes.value ?? [])))
 /** 光标在正文里的位置（第几个字符前面）。 */
 const caret = ref(draft.value.length)
