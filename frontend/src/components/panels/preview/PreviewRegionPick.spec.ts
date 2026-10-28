@@ -10,6 +10,16 @@ import PreviewRegionPick from './PreviewRegionPick.vue'
 
 const BOX = { left: 0, top: 0, width: 384, height: 200 }
 
+/** 拖出来的那一下。`emitted()` 给的是 `unknown[]`，`[0][0]` 会落在 `unknown` 上；
+ *  在这一个地方按组件的 `pick` 形状收窄，三处断言都从这儿拿。 */
+type PickPayload = { rect: Record<string, number>; viewport: Record<string, number> }
+
+function firstPick(ui: ReturnType<typeof mount>['ui']): PickPayload {
+  const calls = ui.emitted<[PickPayload]>('pick')
+  expect(calls).toHaveLength(1)
+  return calls[0][0]
+}
+
 function mount(scale: number) {
   const ui = render(PreviewRegionPick, { props: { scale } })
   const root = ui.getByTestId('preview-region-pick')
@@ -23,7 +33,7 @@ it('缩放为 1 时，拖出来的就是页面像素', async () => {
   const { ui, root } = mount(1)
   await fireEvent.pointerDown(root, { clientX: 10, clientY: 20, pointerId: 1 })
   await fireEvent.pointerUp(root, { clientX: 110, clientY: 70, pointerId: 1 })
-  const payload = ui.emitted('pick')![0][0] as { rect: Record<string, number>; viewport: Record<string, number> }
+  const payload = firstPick(ui)
   expect(payload.rect).toEqual({ x: 10, y: 20, w: 100, h: 50 })
   expect(payload.viewport).toEqual({ w: 384, h: 200 })
 })
@@ -32,7 +42,7 @@ it('缩到一半时，坐标与视口都换成页面自己的像素（768×400�
   const { ui, root } = mount(0.5)
   await fireEvent.pointerDown(root, { clientX: 10, clientY: 20, pointerId: 1 })
   await fireEvent.pointerUp(root, { clientX: 110, clientY: 70, pointerId: 1 })
-  const payload = ui.emitted('pick')![0][0] as { rect: Record<string, number>; viewport: Record<string, number> }
+  const payload = firstPick(ui)
   expect(payload.rect).toEqual({ x: 20, y: 40, w: 200, h: 100 })
   expect(payload.viewport).toEqual({ w: 768, h: 400 })
 })

@@ -292,9 +292,12 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     } else if (data.type === 'errors' && Array.isArray(data.items)) {
       // 页面自己抛的错：认得出形状的留下，最多 5 条（桥那边也是这个数）。换页时在
       // `located` 里清掉——新一页的错归新一页。
-      frame.pageErrors = data.items
+      // 先收成 `unknown[]`：`Array.isArray` 只收到 `any[]`，后面那条链子就一路是 any，
+      // 收错形状的东西也过得了闸门。
+      const items: unknown[] = data.items
+      frame.pageErrors = items
         .map(pageError)
-        .filter((item): item is PageError => !!item)
+        .filter((item): item is PageError => item !== null)
         .slice(0, 5)
     }
   }
