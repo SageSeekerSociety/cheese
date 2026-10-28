@@ -48,7 +48,7 @@ beforeEach(() => {
   getFeedbackCounts.mockReset()
   supportFeedback.mockReset()
   unsupportFeedback.mockReset()
-  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: 0 })
 })
 
 describe('冷启动进详情页', () => {

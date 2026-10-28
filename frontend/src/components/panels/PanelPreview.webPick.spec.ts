@@ -78,7 +78,6 @@ function baseProps(submitQuestion: SubmitPreviewQuestion | undefined, overrides:
     documentType: null,
     documentName: 'report.html',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docIdentity: identity,
     docSnapshot: null,

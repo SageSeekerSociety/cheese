@@ -126,12 +126,16 @@ class UsageReport:
 
     @staticmethod
     def _windows(uses: tuple[WindowUse, ...]) -> list[dict]:
-        """Each window: how full it is and when it resets; an hours window no
-        call has started has no reset yet."""
+        """Each window: how full it is, in points and as a share, and when it
+        resets; an hours window no call has started has no reset yet. The
+        points are what the nearly-spent banner says (`usage.alerts` says the
+        same figure in the inbox)."""
         return [
             {
                 "hours": u.window.hours,
                 "calendar": u.window.calendar,
+                "credits_total": u.window.credits,
+                "credits_used": u.credits_used,
                 "used_ratio": _used(u),
                 "resets_at": u.resets_at.isoformat() if u.resets_at else None,
             }

@@ -334,7 +334,6 @@ class FeedbackCounts(BaseModel):
 
     all: int
     hot: int
-    active: int
     resolved: int
     #: 「上线」单独一个数。`resolved` 装的是全部办完的（`_tab_where` 的
     #: docstring 写着那条决定），这里只是**另外**多给一个，栏位口径不变 —— 看板上
