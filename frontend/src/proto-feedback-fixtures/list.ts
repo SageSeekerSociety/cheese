@@ -31,21 +31,19 @@ function inPublicList(item: FeedbackCard): boolean {
 export const CLOSED: FeedbackStatus[] = ['resolved', 'deployed', 'declined']
 
 /** 栏位谓词。这是 `repositories._tab_where` 的镜像，**形状也照抄**：
- *  `sunk` 一处定义、三个栏位共用，免得这里写着写着就和后端分了叉 —— 预览存在的
- *  意义就是让人看后端的口径长什么样，它自己先不一致就白看了。
+ *  免得这里写着写着就和后端分了叉 —— 预览存在的意义就是让人看后端的口径长什么样，
+ *  它自己先不一致就白看了。
  *
- *  §8.23：只有**办完了的 bug** 沉底。办完了的建议是「团队决定做、并且做了」，
- *  仍然值得读；两者都在 `resolved` 栏里，所以四个数字不是一份划分。 */
+ *  `all` 和 `hot` 都不按状态收窄（2026-10-28 撤掉了「已办完的 bug 沉底」那条：
+ *  「全部」曾经比「已完成」少，因为它把办完的 Bug 拿掉了）。只有 `resolved` 有
+ *  自己的规则，装的是三种结局的并集，所以三个数字不是一份划分。 */
 function matchesTab(item: FeedbackCard, tab: string): boolean {
-  const closed = CLOSED.includes(item.status)
-  if (tab === 'resolved') return closed
-  const sunk = !closed || item.kind !== 'bug'
-  if (tab === 'active') return sunk && item.status === 'in_progress'
+  if (tab === 'resolved') return CLOSED.includes(item.status)
   // 「热门」这一栏是**近似**：后端按热度分（支持数按半衰期打折）比 `HOT_SCORE`，这里
   // 按原始支持数比 `HOT_MIN_ITEMS`。假数据的 `created_at` 都在几分钟内，两者只差在
   // 「几条刚发出来、票还少的」，而预览要给人看的是这一栏的样子，不是那个门槛的边界。
-  if (tab === 'hot') return sunk && item.supports >= HOT_MIN_ITEMS
-  return sunk
+  if (tab === 'hot') return item.supports >= HOT_MIN_ITEMS
+  return true
 }
 
 /** 搜索匹配的字段。**四列**，和 `repositories.matching(q)` 是同一份：标题、摘要、
@@ -121,7 +119,6 @@ export function counts(): FeedbackCounts {
   return {
     all: open.filter((item) => matchesTab(item, 'all')).length,
     hot: open.filter((item) => matchesTab(item, 'hot')).length,
-    active: open.filter((item) => matchesTab(item, 'active')).length,
     resolved: open.filter((item) => matchesTab(item, 'resolved')).length,
     deployed: open.filter((item) => item.status === 'deployed').length,
     unread: unreadCount(),

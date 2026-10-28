@@ -35,5 +35,9 @@
   "removeQuote": "Remove reference",
   "draftQuoteConflict": "The composer already has another reference. Send or remove it first.",
   "quotedImageRegion": "Circled an area of the image",
-  "quotedViewing": "The file open while this was sent"
+  "quotedViewing": "The file open while this was sent",
+  "jumpTo": "Jump to a page",
+  "pageOf": "Page {page} of {count}",
+  "presenting": "Presenting",
+  "presentHint": "← → to turn pages · Esc to exit"
 }

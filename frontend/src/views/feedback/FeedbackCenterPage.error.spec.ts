@@ -59,7 +59,7 @@ beforeEach(() => {
   listFeedback.mockResolvedValue({
     data: [CARD],
     total: 1,
-    counts: { all: 1, hot: 0, active: 0, resolved: 0, unread: 0 },
+    counts: { all: 1, hot: 0, resolved: 0, unread: 0 },
   })
 })
 
