@@ -68,7 +68,8 @@ describe('authenticated file download', () => {
   })
 
   it('reports authorization failures instead of saving an error page', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403 }))
+    // 一个没有正文的 403（拿不出理由的那一种）。
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 403, json: async () => null }))
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click')
 
     // 说一句失败的话，不落盘：既不该点那条链接（会存下一个 403 页面），也不该再往
@@ -85,5 +86,37 @@ describe('authenticated file download', () => {
     await downloadFile('/api/projects/p/file/raw?path=a.txt', 'a.txt')
 
     expect(notices).toEqual([{ level: 'error', text: '网络连接失败，没能下载，检查网络后重试' }])
+  })
+
+  it('服务器给了理由就说它那句，不退回通用的 HTTP 话', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({ code: 403, message: '这份文件不在你能读的范围里' }),
+      })
+    )
+
+    await downloadFile('/api/projects/p/file/raw?path=secret.txt', 'secret.txt')
+
+    expect(notices).toEqual([{ level: 'error', text: '这份文件不在你能读的范围里' }])
+  })
+
+  it('拒绝的正文读不动（错误页、空体）时退回通用的 HTTP 话', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new Error('not json')
+        },
+      })
+    )
+
+    await downloadFile('/api/projects/p/file/raw?path=a.txt', 'a.txt')
+
+    expect(notices).toEqual([{ level: 'error', text: '下载失败（HTTP 502）' }])
   })
 })

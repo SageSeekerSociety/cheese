@@ -16,12 +16,13 @@
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
+import { refusalWords } from '@/lib/noticeText'
 
 /** 取一次下载的字节。
  *
- *  HTTP 拒绝了原样成形一句话抛出去（`下载失败（HTTP 403）`），调用方不用再管；
- *  请求根本没发出去时 fetch 抛的是浏览器自己的英文串（"Failed to fetch"），换成平台
- *  那句话——那种串端给人看等于什么都没说。 */
+ *  说话的顺序和别处一样：服务器给了话就用它那句（它知道为什么拒绝），没有才退回
+ *  「下载失败（HTTP 403）」；请求根本没发出去时 fetch 抛的是浏览器自己的英文串
+ *  （"Failed to fetch"），换成平台那句话——那种串端给人看等于什么都没说。 */
 export async function downloadBytes(url: string, headers: Record<string, string>): Promise<Blob> {
   let res: Response
   try {
@@ -29,7 +30,12 @@ export async function downloadBytes(url: string, headers: Record<string, string>
   } catch {
     throw new Error(t('global.request.downloadUnreachable'))
   }
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
+  if (!res.ok) {
+    // `refusalWords` 认得出服务器那句话（含 `error.i18n`，会渲染成读者这一门语言）；
+    // 读不动正文（错误页、空体）不算错，那时退回平台那句。
+    const body = await res.json().catch(() => null)
+    throw new Error(refusalWords(body) || t('global.request.downloadFailed', { status: res.status }))
+  }
   return res.blob()
 }
 
