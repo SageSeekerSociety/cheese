@@ -4,6 +4,7 @@
 // 管它们存过的每一版。预览顶上的版本行、两版对比、卡片上的「改了 N 格」都只读这一份。
 
 import { t } from '../i18n'
+import { announceDownload, announceDownloadFailure, downloadBytes, saveBlob } from '../lib/download'
 
 import { authHeaders, BASE, ensureFreshToken, request } from './http'
 
@@ -54,22 +55,18 @@ export async function downloadRoomFileRevision(topicId: string, revision: RoomFi
   // 同上：裸 fetch，先自己换一次 token。版本列表是打开面板时取的，点下载之前可能已经
   // 放了很久。
   await ensureFreshToken()
-  const res = await fetch(
-    `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
-    { headers: authHeaders() }
-  )
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const blob = await res.blob()
   const leaf = revision.path.split('/').pop() ?? 'file'
   const dot = leaf.lastIndexOf('.')
   const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
-  // 挂进文档再点：脱离文档的锚点在某些浏览器里点了不下载（同 `./roomFiles` 的 `downloadFile`）。
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  try {
+    const blob = await downloadBytes(
+      `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
+      authHeaders()
+    )
+    saveBlob(blob, t('global.request.revisionFileName', { name: base, seq: revision.seq, ext }))
+    announceDownload()
+  } catch (cause) {
+    announceDownloadFailure(cause)
+    throw cause
+  }
 }

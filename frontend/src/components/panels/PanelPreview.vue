@@ -80,7 +80,6 @@ const {
   documentType,
   documentName,
   isImageArtifact,
-  downloadError,
   docBytes,
   docIdentity,
   docSnapshot,
@@ -162,7 +161,6 @@ function refresh() {
     :document-type="documentType"
     :document-name="documentName"
     :is-image-artifact="isImageArtifact"
-    :download-error="downloadError"
     :doc-bytes="docBytes"
     :doc-identity="docIdentity"
     :doc-snapshot="docSnapshot"

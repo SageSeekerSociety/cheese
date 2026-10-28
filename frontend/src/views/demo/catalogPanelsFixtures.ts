@@ -378,7 +378,6 @@ export function previewBundle(
     documentType: computed(() => DOCUMENT_TYPES[suffix] ?? null),
     documentName: computed(() => file?.path.split('/').pop() ?? ''),
     isImageArtifact: computed(() => IMAGE_SUFFIXES.has(suffix)),
-    downloadError: ref(v.downloadError),
     docBytes: computed(() => v.docBytes),
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),

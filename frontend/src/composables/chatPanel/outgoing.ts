@@ -16,8 +16,6 @@ import { postChatMessage } from '../../api/messages'
 import { SendRefused, useOutbox } from '../../components/room/composables/useOutbox'
 import { outgoingMessageBody } from '../../lib/outgoingMessage'
 
-import { t } from '@/i18n'
-
 /** 发件箱、发送、回复，和附件的下载。 */
 export function usePanelOutgoing(deps: {
   /** 这一栏此刻读的那段对话（房间自己，或房间里的一个任务）。 */
@@ -65,11 +63,9 @@ export function usePanelOutgoing(deps: {
     return room ? attachmentRawUrl(room.id, m.content) : ''
   }
   async function downloadAttachment(m: Block) {
-    try {
-      await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
-    } catch (e) {
-      deps.errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.downloadFailed')
-    }
+    // 成没成由 `downloadFile` 那一层弹一句（`lib/download`）。`errorMsg` 是房间那条
+    // 出错提示行，还给别的事用，下载不再往它上面写，否则失败会说两遍。
+    await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
   }
 
   // 发件箱：已经打出去、库里还没有的那几条 —— 见 room/composables/useOutbox。

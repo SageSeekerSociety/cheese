@@ -16,6 +16,7 @@ import type {
 } from '../cx_types'
 
 import { t } from '../i18n'
+import { announceDownload, announceDownloadFailure, downloadBytes, saveBlob } from '../lib/download'
 import { refusalWords } from '../lib/noticeText'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
@@ -177,12 +178,13 @@ export async function feedbackAttachmentBlobUrl(attachmentId: string): Promise<s
  *  不走 `<a href={url} download>` 那一条，因为那个地址要 Authorization —— 浏览器
  *  自己发那次导航时带不上，结果是下载到一个 401 的页面。 */
 export async function downloadFeedbackAttachment(attachment: FeedbackAttachment): Promise<void> {
-  const objectUrl = await feedbackAttachmentBlobUrl(attachment.id)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = attachment.name
-  link.click()
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  try {
+    saveBlob(await downloadBytes(feedbackAttachmentUrl(attachment.id), authHeaders()), attachment.name)
+    announceDownload()
+  } catch (cause) {
+    announceDownloadFailure(cause)
+    throw cause
+  }
 }
 
 /** 支持。重复点是幂等的，回的是**写完之后**的计数，不是增量 —— 增量会让两个

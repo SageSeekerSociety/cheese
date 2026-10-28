@@ -20,7 +20,7 @@ import type { McpAppMessage } from '@/lib/mcpAppBridge'
 import type { ChatAttachment } from '../cx_types'
 import type { ImageUpload, PanelPreviewOptions, PanelPreviewProps } from './panelPreview/types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
@@ -35,8 +35,6 @@ import { createPreviewState } from './panelPreview/previewState'
 import { usePanelPreviewVersions } from './panelPreview/versions'
 import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
-
-import { t } from '@/i18n'
 
 export type {
   AnnotateDraft,
@@ -130,16 +128,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
 
   // 下载当前这一份。地址由 api 那一层拼（房间里的文件走 attachment 那条路），文件名
   // 取路径最后那一段——判据都在这一层，所以展示组件只往上发一个「下载」。
-  const downloadError = ref('')
+  //
+  // 成没成由 `downloadFile` 那一层弹一句（`lib/download`），预览顶上不再留一行红字。
   async function downloadArtifact() {
-    downloadError.value = ''
     const path = state.previewFile.value?.path
     if (!props.topicId || !path) return
-    try {
-      await downloadFile(attachmentRawUrl(props.topicId, path), state.documentName.value || 'file')
-    } catch (e) {
-      downloadError.value = e instanceof Error ? e.message : t('work.room.preview.downloadFailed')
-    }
+    await downloadFile(attachmentRawUrl(props.topicId, path), state.documentName.value || 'file')
   }
 
   const doc = usePanelPreviewDocument({ props, state })
@@ -211,7 +205,6 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     documentType: state.documentType,
     documentName: state.documentName,
     isImageArtifact: state.isImageArtifact,
-    downloadError,
     docBytes: doc.docBytes,
     docIdentity: doc.docIdentity,
     docSnapshot: doc.docSnapshot,

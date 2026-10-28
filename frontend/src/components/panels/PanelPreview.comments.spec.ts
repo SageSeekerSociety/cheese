@@ -113,7 +113,6 @@ function props() {
     documentType: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' as const },
     documentName: 'week-1.md',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docLoading: false,
     docError: '',
