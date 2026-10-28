@@ -105,6 +105,11 @@ async function loaded(count = 20) {
 function pageInput(ui: ReturnType<typeof render>) {
   return ui.getByRole('spinbutton', { name: '页码' }) as HTMLInputElement
 }
+/** 屏幕上是哪一页。放映时这一层被挪到 body 下（而且工具栏整个收掉了，页码框不在），
+ *  所以从 document 里读那一页自己的标记。 */
+function shownPage() {
+  return document.querySelector('.slides__sheet')?.getAttribute('data-page')
+}
 
 describe('slide reader contract (PDF.js substituted)', () => {
   it('navigates, bounds jumps, and selects thumbnails without parsing bytes again', async () => {
@@ -146,35 +151,44 @@ describe('slide reader contract (PDF.js substituted)', () => {
   it('presents the same document and page, then restores trigger focus on Escape', async () => {
     const ui = await loaded()
     await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
-    const trigger = ui.getByRole('button', { name: '演示' })
+    const trigger = ui.getByRole('button', { name: '放映' })
     trigger.focus()
     await fireEvent.click(trigger)
-    const reader = ui.getByRole('region', { name: '幻灯片阅读' })
+    const reader = ui.getByRole('dialog', { name: '放映中' })
     expect(document.activeElement).toBe(reader)
     expect(ui.queryByRole('navigation', { name: '缩略图' })).toBeNull()
+    // 放映是整屏的幻灯片：工具栏和页码框都收掉，只留画面和底下一行提示。
+    expect(ui.queryByRole('spinbutton', { name: '页码' })).toBeNull()
     // 放映时挪到 body 下，不受面板外层绘制层级的限制（否则左边被侧栏盖住）。
     expect(reader.parentElement).toBe(document.body)
     await fireEvent.keyDown(reader, { key: 'ArrowRight' })
-    expect(pageInput(ui).value).toBe('3')
+    expect(shownPage()).toBe('3')
     await fireEvent.keyDown(reader, { key: 'Escape' })
-    await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '演示' })))
+    await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '放映' })))
     expect(ui.getByRole('region', { name: '幻灯片阅读' }).parentElement).not.toBe(document.body)
     expect(pageInput(ui).value).toBe('3')
     expect(pdf.requests).toHaveLength(1)
   })
 
-  it('exits presentation from the page field without capturing its arrow keys', async () => {
+  it('keeps the presented layer to itself: Tab circles inside it, and the exit button leaves', async () => {
     const ui = await loaded()
-    const trigger = ui.getByRole('button', { name: '演示' })
+    const trigger = ui.getByRole('button', { name: '放映' })
     trigger.focus()
     await fireEvent.click(trigger)
-    const field = pageInput(ui)
-    field.focus()
-    await fireEvent.keyDown(field, { key: 'ArrowRight' })
-    expect(field.value).toBe('1')
-    await fireEvent.keyDown(field, { key: 'Escape' })
-    expect(ui.queryByRole('button', { name: '退出演示' })).toBeNull()
-    expect(document.activeElement).toBe(trigger)
+    const reader = ui.getByRole('dialog', { name: '放映中' })
+    await fireEvent.keyDown(reader, { key: 'Tab' })
+    const exit = ui.getByRole('button', { name: '退出放映' })
+    expect(document.activeElement).toBe(exit)
+    // 再按一次绕回这一层自己，不会跑到后面的页面上。
+    await fireEvent.keyDown(exit, { key: 'Tab' })
+    expect(document.activeElement).toBe(reader)
+    // 反向绕一圈也一样：Shift+Tab 从这一层回到退出键。
+    await fireEvent.keyDown(reader, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(exit)
+    await fireEvent.click(ui.getByRole('button', { name: '退出放映' }))
+    await waitFor(() => expect(ui.queryByRole('dialog')).toBeNull())
+    // 放映时工具栏卸掉了，「放映」那颗按钮是重新挂上来的一个新元素：还焦点要按名字再取一次。
+    expect(document.activeElement).toBe(ui.getByRole('button', { name: '放映' }))
   })
 
   for (const replacement of [true, false]) {
@@ -202,6 +216,29 @@ describe('slide reader contract (PDF.js substituted)', () => {
     })
   }
 
+  it('walks the thumbnails with the arrow keys once focus is in the rail, and turns the page with it', async () => {
+    const ui = await loaded(6)
+    await waitFor(() => expect(ui.getAllByRole('button', { name: /跳转到第/ })).toHaveLength(6))
+    const first = ui.getByRole('button', { name: '跳转到第 1 页' })
+    first.focus()
+    await fireEvent.keyDown(first, { key: 'ArrowDown' })
+    // 焦点在轨道里：方向键在缩略图之间走，同时也换页（焦点停在第 2 页那张上）。
+    expect(pageInput(ui).value).toBe('2')
+    await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '跳转到第 2 页' })))
+    // 轨道里处理过的键不再落到阅读器那一条上：只前进一页，不是两页。
+    expect(pageInput(ui).value).toBe('2')
+    await fireEvent.keyDown(ui.getByRole('button', { name: '跳转到第 2 页' }), { key: 'End' })
+    expect(pageInput(ui).value).toBe('6')
+    await waitFor(() => expect(document.activeElement).toBe(ui.getByRole('button', { name: '跳转到第 6 页' })))
+    // 到顶了再往下走：留在原地，不越界。
+    await fireEvent.keyDown(ui.getByRole('button', { name: '跳转到第 6 页' }), { key: 'ArrowDown' })
+    expect(pageInput(ui).value).toBe('6')
+    // 轨道之外（阅读器自己有焦点）仍然是原来的逐页翻页。
+    ui.getByRole('region', { name: '幻灯片阅读' }).focus()
+    await fireEvent.keyDown(ui.getByRole('region', { name: '幻灯片阅读' }), { key: 'Home' })
+    expect(pageInput(ui).value).toBe('1')
+  })
+
   it('bounds the thumbnail budget even for a thousand pages, and releases offscreen paints', async () => {
     const ui = await loaded(1000)
     await waitFor(() => expect(pdf.renders.length).toBeGreaterThan(0))
@@ -209,7 +246,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(new Set(pdf.renders.map((r) => r.number)).size).toBeLessThanOrEqual(8)
     const old = pdf.renders.slice()
     const rail = ui.getByRole('navigation', { name: '缩略图' })
-    rail.scrollTop = 112 * 90
+    rail.scrollTop = 71 * 90
     await fireEvent.scroll(rail)
     await waitFor(() => expect(ui.getByRole('button', { name: '跳转到第 91 页' })).toBeTruthy())
     expect(ui.getAllByRole('button', { name: /跳转到第/ })).toHaveLength(8)
