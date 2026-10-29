@@ -177,6 +177,26 @@ class ModelUsage:
     cache_read_tokens: int
     total_tokens: int
 
+    def plus(self, other: "ModelUsage") -> "ModelUsage":
+        return ModelUsage(
+            spend_usd=self.spend_usd + other.spend_usd,
+            requests=self.requests + other.requests,
+            failed_requests=self.failed_requests + other.failed_requests,
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+        )
+
+
+def _summed(
+    a: Mapping[str, ModelUsage], b: Mapping[str, ModelUsage]
+) -> dict[str, ModelUsage]:
+    out = dict(a)
+    for name, usage in b.items():
+        out[name] = out[name].plus(usage) if name in out else usage
+    return out
+
 
 @dataclass(frozen=True)
 class UsageWindow:
@@ -191,3 +211,16 @@ class UsageWindow:
     # 上游模型（``litellm_params.model``）-> 用量：``breakdown.models``，键就是
     # ``LiteLLM_DailyUserSpend.model``，spend_cap.py 拦截时求和的正是这一列。
     by_upstream: dict[str, ModelUsage] = field(default_factory=dict)
+
+    def then(self, later: "UsageWindow") -> "UsageWindow":
+        """This window followed by ``later``, which starts the day after it ends:
+        one window over both, every figure the sum of the two."""
+        return UsageWindow(
+            start_date=self.start_date,
+            end_date=later.end_date,
+            totals=self.totals.plus(later.totals),
+            by_model=_summed(self.by_model, later.by_model),
+            by_key=_summed(self.by_key, later.by_key),
+            daily=[*self.daily, *later.daily],
+            by_upstream=_summed(self.by_upstream, later.by_upstream),
+        )

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
@@ -69,10 +69,29 @@ async def _usage_window(
     return await _cached(key, lambda: admin.usage(start.isoformat(), end.isoformat()))
 
 
-async def _ledger_window(service: pkg.GatewayModelsService, end: date) -> UsageWindow:
+# 窗口之前那一段账的存活时间。那些天已经过完，账不会再变；钥匙随窗口的起点每天换
+# 一次，所以这一小时只管「午夜刚过、昨天最后几笔还在落账」那一下。
+_HISTORY_TTL_SECONDS = 3600.0
+
+
+async def _ledger_window(
+    service: pkg.GatewayModelsService, start: date, end: date
+) -> UsageWindow:
     """消费上限的那份终身账：从 `LEDGER_START` 到 ``end``，与 spend_cap.py 拦截时
-    同一张表、同一种求和（按上游模型名、不分窗口）。只在有线路设了上限时读。"""
-    return await service._usage_window(LEDGER_START, end)
+    同一张表、同一种求和（按上游模型名、不分窗口）。只在有线路设了上限时读。
+
+    拼成两段：``start`` 之前的整段历史，加上页面本来就要读的 ``[start, end]``。整段
+    一次读要从网关拉回好几 MB、一秒半，而它在窗口之前的部分不再变，没必要每次开页
+    都重读。"""
+    admin = service._admin
+    assert admin is not None
+    before = start - timedelta(days=1)
+    history = await _cached(
+        f"usage:{LEDGER_START.isoformat()}:{before.isoformat()}",
+        lambda: admin.usage(LEDGER_START.isoformat(), before.isoformat()),
+        ttl=_HISTORY_TTL_SECONDS,
+    )
+    return history.then(await service._usage_window(start, end))
 
 
 async def _require_models(service: pkg.GatewayModelsService) -> list[AdminModel]:

@@ -39,7 +39,7 @@ from __future__ import annotations
 import bisect
 import statistics
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -129,6 +129,41 @@ class Window:
     since: datetime
     until: datetime
     days: list[date]
+
+
+#: Every figure on the page is read from the tables the sweep fills, and only the
+#: sweep writes them (`store.py`), closing each pass with its `ci_activity_sweeps`
+#: row. An answer therefore stays right until the next sweep row lands or the UTC
+#: day turns, so a worker computes each one once per sweep rather than on every
+#: open: a board over a week's ~25k jobs is two seconds of this worker's event
+#: loop, which every other request on the worker waits out. With no sweep
+#: recorded nothing marks the tables as settled, so nothing is kept.
+_per_sweep: dict[str, Any] = {"key": None, "answers": {}}
+
+
+async def once_per_sweep(
+    session: AsyncSession,
+    repo: str,
+    question: tuple,
+    compute: Callable[[], Awaitable[Any]],
+) -> Any:
+    """``compute()``'s answer to ``question``, computed once per finished sweep."""
+    sweep = await session.scalar(
+        select(CiActivitySweep.id)
+        .where(CiActivitySweep.repo == repo)
+        .order_by(CiActivitySweep.started_at.desc())
+        .limit(1)
+    )
+    if sweep is None:
+        return await compute()
+    key = (repo, sweep, datetime.now(UTC).date())
+    if _per_sweep["key"] != key:
+        _per_sweep["key"] = key
+        _per_sweep["answers"] = {}
+    answers = _per_sweep["answers"]
+    if question not in answers:
+        answers[question] = await compute()
+    return answers[question]
 
 
 def window(days: int) -> Window:

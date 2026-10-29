@@ -17,6 +17,7 @@
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -102,9 +103,11 @@ class _Gateway:
         self.requests: list[httpx.Request] = []
         # Virtual keys by alias -> the models each may call (`/key/update`).
         self.keys: dict[str, list[str]] = {}
-        # The ledger by upstream model (`breakdown.models`), and the start date
-        # of every usage window asked for.
+        # The ledger by upstream model (`breakdown.models`) as spent today, the
+        # same spent a month ago, and the start date of every usage window asked
+        # for. A usage read answers only the days it asks for, as LiteLLM does.
         self.ledger: dict[str, float] = {}
+        self.earlier_ledger: dict[str, float] = {}
         self.usage_starts: list[str] = []
 
     def _find(self, model_id: str) -> dict | None:
@@ -119,16 +122,26 @@ class _Gateway:
         if path == "/model/info":
             return httpx.Response(200, json={"data": self.rows})
         if path == "/user/daily/activity/aggregated":
-            self.usage_starts.append(request.url.params["start_date"])
-            models = {
-                upstream: {"metrics": {"spend": spend}}
-                for upstream, spend in self.ledger.items()
-            }
-            results = (
-                [{"date": "2026-10-20", "breakdown": {"models": models}}]
-                if models
-                else []
-            )
+            start = request.url.params["start_date"]
+            end = request.url.params["end_date"]
+            self.usage_starts.append(start)
+            today = datetime.now(UTC).date()
+            results = [
+                {
+                    "date": day.isoformat(),
+                    "breakdown": {
+                        "models": {
+                            upstream: {"metrics": {"spend": spend}}
+                            for upstream, spend in spent.items()
+                        }
+                    },
+                }
+                for day, spent in (
+                    (today - timedelta(days=30), self.earlier_ledger),
+                    (today, self.ledger),
+                )
+                if spent and start <= day.isoformat() <= end
+            ]
             return httpx.Response(200, json={"results": results, "metadata": {}})
         if path == "/model/new":
             model_id = str(uuid.uuid4())
@@ -1060,6 +1073,24 @@ async def test_a_capped_source_shows_what_its_upstream_has_cost_all_time():
         (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
     ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
     assert "2000-01-01" in gw.usage_starts
+
+
+@pytest.mark.anyio
+async def test_used_counts_spend_before_the_window_and_inside_it_once_each():
+    """The cap is all-time, so a month-old spend counts as much as today's, and
+    neither is counted twice however the page's window splits them."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.earlier_ledger = {_ARGON: 2000.0}
+    gw.ledger = {_ARGON: 100.0}
+
+    item = await _listed(service, "argon")
+
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
 
 
 @pytest.mark.anyio

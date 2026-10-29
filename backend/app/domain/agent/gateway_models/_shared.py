@@ -101,7 +101,7 @@ async def _read_back(
         usage = await service._usage_window(start, end)
         found = next((m for m in models if m.name == name), None)
         ledger = (
-            await service._ledger_window(end)
+            await service._ledger_window(start, end)
             if found is not None and _capped([found])
             else None
         )

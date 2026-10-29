@@ -219,8 +219,8 @@ class GatewayModelsService:
     async def _usage_window(self, start: date, end: date) -> UsageWindow:
         return await answers._usage_window(self, start, end)
 
-    async def _ledger_window(self, end: date) -> UsageWindow:
-        return await answers._ledger_window(self, end)
+    async def _ledger_window(self, start: date, end: date) -> UsageWindow:
+        return await answers._ledger_window(self, start, end)
 
     async def _require_models(self) -> list[AdminModel]:
         return await answers._require_models(self)
