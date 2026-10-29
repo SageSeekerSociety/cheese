@@ -30,7 +30,21 @@ export interface DesignViewportOptions {
   adjust?: () => Pick<ImageAdjust, 'rotate' | 'flip'>
   /** 裁掉了哪一块（按转好之后那张图的宽高比例）。版面只留裁完的那一块。 */
   crop?: () => CropBox | null
+  /**
+   * 宿主给了这张图一块定高的地方没有（见 DesignImage 的 `fitsHeight`）。
+   *
+   * 没给的时候这一格的高就是图撑出来的：按它的高去「适应视口」，图越缩这一格越矮、
+   * 越矮图又越缩，从挂上那一刻的几十像素起就停在 1%。那种地方只有宽度可适应。
+   */
+  fitsHeight?: () => boolean
 }
+
+/**
+ * 「取色 / 量距离」那一小条浮在这一格左上角（`.design-image__inspect`：离边 8px、高 32px）。
+ * 这一格的上内边距要让过它，图在适应档下才从它底下开始——否则图的左上角被它压着，
+ * 从那里拖不出框、画不了笔。和样式里 `.design-image__pane` 的 `padding-top` 是同一个数。
+ */
+const INSPECT_ROOM = 48
 
 export function useDesignViewport(options: DesignViewportOptions) {
   const { natural, image, selectedBox, selectedRegion } = options
@@ -47,7 +61,10 @@ export function useDesignViewport(options: DesignViewportOptions) {
    * `fitv` 整张都看得见，`fitw` 按宽度铺满（超长截图要的就是这一档：按 `fitv` 会被压成
    * 一条线），`actual` 一比一原图像素，`custom` 是按钮和捏合调出来的比例。
    */
-  const zoomMode = ref<'fitv' | 'fitw' | 'actual' | 'custom'>('fitv')
+  const fitsHeight = () => options.fitsHeight?.() ?? false
+  /** 打开一张图时落在哪一档：有定高就整张看得见，没有就铺满宽度。 */
+  const fitMode = () => (fitsHeight() ? 'fitv' : 'fitw')
+  const zoomMode = ref<'fitv' | 'fitw' | 'actual' | 'custom'>(fitMode())
   const fitted = computed(() => zoomMode.value === 'fitv' || zoomMode.value === 'fitw')
   const geometry = ref<RegionNoteGeometry | null>(null)
   const spaceHeld = ref(false)
@@ -74,8 +91,8 @@ export function useDesignViewport(options: DesignViewportOptions) {
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(available.value)) return 0
     const fitWidth = Math.min(1, Math.max(0, (available.value - 2 * gutter.value) / width))
     // 「适应视口」还要装得下高度；没量到高度时退回按宽度装。
-    if (zoomMode.value === 'fitv' && availableHeight.value > 0) {
-      const room = availableHeight.value - 2 * gutter.value
+    if (zoomMode.value === 'fitv' && fitsHeight() && availableHeight.value > 0) {
+      const room = availableHeight.value - INSPECT_ROOM - gutter.value
       return Math.min(fitWidth, Math.max(0.01, room / shown.value.height))
     }
     return fitWidth
@@ -173,7 +190,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
     zoomMode.value = 'custom'
   }
   function fit() {
-    zoomMode.value = 'fitv'
+    zoomMode.value = fitMode()
   }
   /** 滚到整张的某一比例（0–1），定位条拖到哪儿就用它。 */
   function scrollToRatio(ratio: number) {
