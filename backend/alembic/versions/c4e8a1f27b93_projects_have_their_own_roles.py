@@ -68,7 +68,12 @@ def upgrade() -> None:
     )
     op.execute("ALTER TABLE project_roles ADD COLUMN IF NOT EXISTS role_id uuid")
     op.execute("ALTER TABLE project_invitations ADD COLUMN IF NOT EXISTS role_id uuid")
-    for table in ("project_roles", "project_invitations"):
+    # Someone holding a role keeps it from being deleted; an answered
+    # invitation is a record and lets go of it.
+    for table, on_delete in (
+        ("project_roles", "RESTRICT"),
+        ("project_invitations", "SET NULL"),
+    ):
         op.execute(
             f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS"
             f" fk_{table}_role_id_project_role_defs"
@@ -76,7 +81,7 @@ def upgrade() -> None:
         op.execute(
             f"ALTER TABLE {table} ADD CONSTRAINT fk_{table}_role_id_project_role_defs"
             " FOREIGN KEY (role_id) REFERENCES project_role_defs (id)"
-            " ON DELETE RESTRICT NOT VALID"
+            f" ON DELETE {on_delete} NOT VALID"
         )
         # migration-safety: allow validate-outside-autocommit — both tables hold a few hundred rows; the whole migration takes well under a second
         op.execute(

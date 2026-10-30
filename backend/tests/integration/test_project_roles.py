@@ -325,3 +325,21 @@ def test_a_channel_limited_to_some_roles_refuses_the_rest_in_its_main_line(clien
         headers=session_auth_headers("carol"),
     )
     assert closed.status_code == 403, closed.text
+
+
+def test_a_role_people_joined_by_invitation_can_still_be_deleted(client):
+    """An invitation someone accepted is a record: it does not keep the role it
+    brought from being deleted."""
+    p = new_project(client, owner="alice")
+    tester = _new_role(client, p["id"], "内测用户")
+    _invite(client, p["id"], "zhao", role=tester["key"])
+    assert _held(client, p["id"], "zhao") == tester["key"]
+
+    moved = client.delete(
+        f"/projects/{p['id']}/roles/{tester['key']}",
+        params={"move_to": "member"},
+        headers=session_auth_headers("alice"),
+    )
+    assert moved.status_code == 200, moved.text
+    assert _held(client, p["id"], "zhao") == "member"
+

@@ -268,12 +268,14 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     #: The role the invitee takes once they accept: ``member``, or ``custom``
-    #: with the project's own role in ``role_id``.
+    #: with the project's own role in ``role_id``. A waiting invitation moves
+    #: with its role's holders when the role is deleted; an answered one is a
+    #: record and lets go of it (``SET NULL``).
     role: Mapped[str] = mapped_column(String(16), default="member")
     role_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "project_role_defs.id",
-            ondelete="RESTRICT",
+            ondelete="SET NULL",
             name="fk_project_invitations_role_id_project_role_defs",
         ),
         nullable=True,
