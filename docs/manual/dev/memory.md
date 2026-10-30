@@ -87,7 +87,7 @@ steps:
 
 注入的规矩：**`team/MEMORY.md` 加这一轮那一位的 `private/<handle>/MEMORY.md`**，一轮只有一位（`files_store.memory_index`，`turn_speakers.turn_speaker`，只认 `names_a_person()` 认的人）。那一位按这个先后认：这一轮窗口里最后一位说话的人；没有人说话时，这一轮替谁在做事的那一位（周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人）；私聊里是那个人。多人的房间里别人的 private 不进这一轮：这一轮的 agent 说的话、做的事房间里的人都看得到。
 
-会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。会话碰到 private 的地方有两处，各由知道它的那一方做记号：注入进去的 private 那一段在输入原文里，由 `session_record.privacy.private_span` 圈起来，结尾那个标记带着一个由主人和正文算出的封印，正文里写不出自己的结尾，结尾被截掉时开头之后的全算 private；会话用文件工具读写某个人 private 下的文件时，那一次调用和答它的结果由 runner 盖章 `cheese.private`（`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，按这两种记号把不是这个人的换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。
+会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。会话碰到 private 的地方有两处，各由知道它的那一方做记号：注入进去的 private 那一段在输入原文里，由 `session_record.privacy.private_span` 圈起来，结尾那个标记带着一个由主人和正文算出的封印，正文里写不出自己的结尾，结尾被截掉时开头之后的全算 private；会话用文件工具读写某个人 private 下的文件时，那一次调用和答它的结果由 runner 盖章 `cheese.private`（`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，按这两种记号把不是这个人的换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。现场还实时显示 agent 正在写的那个工具调用，参数一边流进来一边显示，这一帧发给房间里所有人：runner 用同一个判据（`files.private_owner`）认出落在某人 private 上的调用，参数换成存下的记录里那同一个占位（`privacy.hidden_input`），文件工具的路径还没写出来之前参数一个字都不显示（`runner.live_arguments`）；这一帧是广播，所以本人实时看到的也是占位，写完之后在会话记录里看原文。
 
 ## 写入、更新、删除 {#write}
 
@@ -99,9 +99,9 @@ steps:
 1. **输入之前**：把数据库这一份铺进会话目录。agent 一睁眼读到的就是平台现在这一份，别人刚改的也在里面。
 2. **这一轮结束之后**：会话改过的收回来，写进 `memory_files`，并在房间里留一条折叠事件（带 diff）。
 
-两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。点名的是 team 加这个座位这一轮那一位的 private（`MemoryLedger._scopes`），不点同一间房别的座位的。一间房的座位共用一棵树，上一轮铺下、这一次没点名的那一位的 private（`tree.withdrawn_prefixes`），会话不在自己那一侧合，而是连同它那一段基线原样交回来、从树上整个拿走；平台读出那个人现在的那一份，按同一条三方规矩合一次，合出来的写回他的 private（`memory.session.apply_withdrawn`），改动只记进他的私聊，不说给这一轮的 agent。所以哪个座位先对账，他的会话写下还没对过账的改动都不会丢。同一间房的对账排队跑。
+两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。点名的是 team 加这个座位这一轮那一位的 private（`MemoryLedger._scopes`），不点同一间房别的座位的。**每个座位一棵自己的树**，在座位自己的目录里、执行配置旁边（`runner.memory_root`；`remote_execution/client.prepare` 的 `central_memory` 从同一个文件算出来，agent 写 `~/.cheese/memory/` 落到的就是它），不在房间的家里：一间房的座位共用那个家，而两个座位可以同时在替两个人干活，共用一棵树就等于让一个人的会话读得到另一个人的 private。一个座位同一时刻只替一个人干活；它换了一位说话的人时，上一轮铺下、这一次没点名的那一位的 private（`tree.withdrawn_prefixes`），会话不在自己那一侧合，而是连同它那一段基线原样交回来、从树上整个拿走；平台读出那个人现在的那一份，按同一条三方规矩合一次，合出来的写回他的 private（`memory.session.apply_withdrawn`），改动只记进他的私聊，不说给这一轮的 agent。所以换人之前没来得及对账，上一位的会话写下的改动也不会丢。同一间房的对账排队跑。
 
-两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，`$HOME/.cheese/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，会话的家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
+两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，座位目录下 `remote-session/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，座位目录在会话的家里，家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
 
 合成哪一份的规矩在 `tree.sync_tree`（纯函数，两侧跑的是同一段代码），一句话：**平台这一份赢冲突**。三种情形——会话没动过 → 用平台那一份；平台没动过 → 用会话那一份；两边都动了 → 平台赢，会话那一版**存成旁路文件**（`<名字>.conflict.md`，同一个目录，`runner._keep_refused`）并在现场记一条运行记录、给写它的 agent 留一句「重读再写」（见[改动记在哪](#events)）。旁路文件不在树里、不进索引、也不会被同步回库（`read_memory` 只收过得去 `check_scoped_path` 的 `.md`，那个名字带点，过不去），它只是留给写的人重读自己那一版的东西。
 

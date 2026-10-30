@@ -183,9 +183,9 @@ class MemoryLedger:
     async def sync(self, session: SessionRef) -> None:
         """对一遍这个座位的会话的记忆账；同一间房的两场对账排队，不交错。
 
-        输入之前和会话停下来时各对一次账；一间房里几个座位的会话可能用的是同一
-        棵树。两场交错时，后一场读到的是前一场提交之前的数据库：它会把平台的旧版
-        铺回会话，盖掉刚落库的改动。
+        输入之前和会话停下来时各对一次账；一间房里几个座位各有各的树，对的是同
+        一份数据库。两场交错时，后一场读到的是前一场提交之前的数据库，铺下去的
+        就是平台的旧版；排队跑，每一场读到的都是前一场提交之后的那一份。
         """
         async with self._syncs.setdefault(session.topic_id, asyncio.Lock()):
             await self.sync_once(session)

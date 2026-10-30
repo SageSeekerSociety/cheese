@@ -40,8 +40,8 @@ def _session() -> Runner:
 
 
 def _home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """把会话的家搬到 `tmp_path`：`memory_root()` 认的是 `$HOME`。"""
-    monkeypatch.setenv("HOME", str(tmp_path))
+    """把这个座位的目录搬到 `tmp_path`：`memory_root()` 认的是座位的执行配置。"""
+    monkeypatch.setenv("CHEESE_EXECUTION_CONFIG", str(tmp_path / "execution.json"))
     return memory_root()
 
 

@@ -17,10 +17,14 @@ Two marks say what is private, each put down by the code that knows it:
   after the opening one.
 - A file tool's call on a private memory path, and the result that answers it,
   carry the runner's stamp ``cheese.private`` (call id → owner), put on both
-  records by the runner that saw the call (`claude_code.runner`).
+  records by the runner that saw the call (`claude_code.runner`). The same
+  runner shows the room a call as it is being written, before any record of
+  it exists, and puts `hidden_input` in place of such a call's arguments there.
 
 This package is the bottom layer: the memory package that writes the index and
-the runner that stamps the calls import it, never the other way round.
+the runner that stamps the calls import it, never the other way round. The
+runner's archive carries this module (`claude_code.bundle`), so it is stdlib
+only.
 """
 
 import hashlib
@@ -32,6 +36,13 @@ _MARK = "<private-memory"
 # copy: needs product sign-off — what a reader sees in place of another
 # person's private memory, an index or a file alike.
 HIDDEN = "（{owner} 的 private 记忆，只有本人看得到）"
+
+
+def hidden_input(owner: str) -> dict:
+    """What anyone but ``owner`` reads as the input of a file tool's call on
+    ``owner``'s private memory: the stored call (`for_reader`) and the one the
+    room watches being written (`claude_code.runner`) alike."""
+    return {"file_path": HIDDEN.format(owner=owner)}
 
 
 def _seal(owner: str, text: str) -> str:
@@ -136,7 +147,7 @@ def _calls_for(record: dict, reader: str | None) -> dict:
         if isinstance(block, dict) and block.get("type") == "tool_use":
             owner = others.get(str(block.get("id")))
             if owner is not None:
-                block = {**block, "input": {"file_path": HIDDEN.format(owner=owner)}}
+                block = {**block, "input": hidden_input(owner)}
         elif isinstance(block, dict) and block.get("type") == "tool_result":
             owner = others.get(str(block.get("tool_use_id")))
             if owner is not None:

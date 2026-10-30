@@ -38,6 +38,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -58,7 +59,6 @@ if sys.platform == "win32":
     import portable
 from app.domain.memory.files import (
     INDEX_NAME,
-    MEMORY_ROOT,
     check_scoped_path,
     conflict_path,
     private_owner,
@@ -70,6 +70,7 @@ from app.domain.memory.tree import (
     sync_tree,
     withdrawn_prefixes,
 )
+from app.domain.session_record.privacy import hidden_input
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
@@ -385,16 +386,51 @@ MEMORY_BASELINE = ".baseline.json"
 MEMORY_BASES = ".bases.json"
 
 
-def memory_root() -> Path:
-    """会话里那棵记忆树的根。
+#: The tools a session reaches its memory files with: the file tools the
+#: executor's client hands back to this host for a memory path
+#: (`remote_execution/client.NATIVE_TOOLS`, which runs on the other machine
+#: and is not importable here).
+FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+_PATH_ARGUMENT = re.compile(r'"(?:file_path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
-    用的是会话自己的 `$HOME`（`machine_launcher` 把它换成了这一间房的会话家），
-    不是机器主人的家：一个会话一个家，记忆的副本也就一间房一份。
+
+def live_arguments(tool: str, written: str) -> str:
+    """What the room is shown of a tool call's arguments, ``written`` so far.
+
+    The room watches a call being written before any record of it exists, so
+    the call is judged here the way its record will be (`files.private_owner`):
+    one on somebody's private memory shows `privacy.hidden_input` in place of
+    its arguments, to everyone, since the frame goes to the whole room. A file
+    tool shows nothing until its path is written out: the rest of its
+    arguments may come first, and are that person's if the path is."""
+    found = _PATH_ARGUMENT.search(written)
+    if found is None:
+        return "" if tool in FILE_TOOLS else written
+    try:
+        path = json.loads(f'"{found.group(1)}"')
+    except ValueError:
+        return ""
+    owner = private_owner(path)
+    if owner is None:
+        return written
+    return json.dumps(hidden_input(owner), ensure_ascii=False)
+
+
+def memory_root() -> Path:
+    """这个座位的会话那棵记忆树的根：座位自己的目录里，执行配置旁边
+    （`CHEESE_EXECUTION_CONFIG`，启动脚本按座位导出），`remote_execution/client`
+    的 `prepare` 也从同一个文件算出 `central_memory`，agent 写 `~/.cheese/memory/`
+    落到的就是这里。
+
+    不放在房间的家里：一间房的几个座位共用那个家，而两个座位可以同时在替两个人
+    干活，一棵共用的树上就会同时躺着两个人的 private，各自的会话都读得到对方的。
+    一个座位同一时刻只替一个人干活，换人时上一位的那一棵交回平台
+    （`tree.withdrawn_prefixes`）。
     """
-    home = os.environ.get("HOME") or ""
-    if not home:
-        raise RuntimeError("The session has no home directory to keep memory in")
-    return Path(home) / MEMORY_ROOT
+    config = os.environ.get("CHEESE_EXECUTION_CONFIG") or ""
+    if not config:
+        raise RuntimeError("The session has no seat directory to keep memory in")
+    return Path(config).parent / "memory"
 
 
 def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
@@ -621,6 +657,9 @@ class Runner(runner.Runner[Journal]):
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # The arguments of the tool call being shown, as written so far; what
+        # the room is shown of them is `live_arguments`'s.
+        self.streaming_arguments = ""
         # The last frame read off the child's stdout, for the readout of what
         # a session is doing (`heartbeat`). None until a frame, and the work is
         # the one in flight when THAT frame arrived — never `last_work`, so a
@@ -1067,6 +1106,7 @@ class Runner(runner.Runner[Journal]):
             if block.get("type") == "text":
                 self.show([{"type": "text", "text": block.get("text") or ""}], work)
             elif block.get("type") == "tool_use":
+                self.streaming_arguments = ""
                 self.show(
                     [
                         {
@@ -1093,7 +1133,10 @@ class Runner(runner.Runner[Journal]):
                 self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
-                block["arguments"] += str(delta.get("partial_json") or "")
+                self.streaming_arguments += str(delta.get("partial_json") or "")
+                block["arguments"] = live_arguments(
+                    str(block.get("name") or ""), self.streaming_arguments
+                )
                 self.shown()
 
     def _private_calls(self, message: dict) -> dict[str, str]:
@@ -1513,7 +1556,7 @@ class Runner(runner.Runner[Journal]):
 
         上一次铺下、这一次没点名的 private（`tree.withdrawn_prefixes`）不在这里
         合：它们连同基线原样交回去（``withdrawn``），由平台替主人合进数据库，再从
-        这棵树上整个拿走——一间房的座位共用这棵树，而这一轮只给这一位看。
+        这棵树上整个拿走——这棵树这一轮只给这一位看。
         """
         scopes = memory_scopes(params)
         root = memory_root()

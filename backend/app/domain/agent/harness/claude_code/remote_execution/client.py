@@ -378,11 +378,13 @@ def prepare(
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
-        # The session's memory tree, in its own home on this host: the runner
-        # lays the platform's copy down and collects the agent's edits there
-        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
-        # reach it here and not on the executor (`proxy.js` `memoryPath`).
-        central_memory=str(home / ".cheese/memory"),
+        # The seat's memory tree, beside its execution config on this host:
+        # the runner lays the platform's copy down and collects the agent's
+        # edits there (`runner.memory_root`, from the same file), so its file
+        # tools reach it here and not on the executor (`proxy.js`
+        # `memoryPath`). Not in the room's home, which the room's seats share:
+        # two seats can be working for two people at once.
+        central_memory=str(directory / "memory"),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
