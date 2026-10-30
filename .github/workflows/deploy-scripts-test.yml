@@ -117,6 +117,9 @@ jobs:
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
 
+      - name: Database backup cadence, retention, and freshness
+        run: python3 deploy/tests/test_r2_backups.py
+
       - name: The dev deploy's fetches wait out reset connections
         run: bash deploy/tests/test-git-fetch.sh
 
