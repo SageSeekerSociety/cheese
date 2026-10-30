@@ -573,7 +573,7 @@ useCommands(() => [
                 </template>
               </v-select>
             </div>
-            <span v-else class="member-role member-role--text t-meta">{{ roleLabel(roleOf(m)) }}</span>
+            <span v-else class="member-role member-role--text">{{ roleLabel(roleOf(m)) }}</span>
             <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
             <AdaptiveMenu
               v-if="removable(m)"
@@ -836,6 +836,14 @@ useCommands(() => [
 
 .member-role--text {
   padding-inline-start: 12px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+/* The dropdown reads at the size of the plain role beside it. */
+.member-role :deep(.v-field__input) {
+  font-size: 14px;
   color: var(--text);
 }
 
