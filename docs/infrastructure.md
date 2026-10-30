@@ -821,7 +821,7 @@ recreate-not-restart rule (`deploy/gateway/README.md`).
 dev 和 prod 使用 `db-backup.sh`，etrip 使用独立脚本；恢复步骤见
 [`deploy/README-backup.md`](../deploy/README-backup.md)。
 
-- **数据库**：dev 每小时 `pg_dump -Fc` 并校验本地备份，距上次成功至少 6 小时才上传 R2；prod／etrip 保持每次备份上传。
+- **数据库**：dev 每小时 `pg_dump -Fc` 并校验本地备份；默认距上次 R2 上传成功至少 6 小时才再次上传。prod／etrip 保持每次备份上传。
   桶为 `cheese-db-backups`，前缀分别为 `db/`（dev）、`prod-db/`（prod）、`etrip/`。
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Session records** (what each session's runner journaled,
