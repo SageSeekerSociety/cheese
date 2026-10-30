@@ -43,6 +43,8 @@ covers:
 
 同一个 job 还拿这两份文档问另一件事：这次改动会不会让照基点那版接口造的、还开着的页面说不通（`.github/scripts/api_compat.py`：接口删了；请求字段删了、改名、能收的类型变少或新增为必填；响应字段删了、改名、可能缺席或多出没见过的类型；枚举值删了）。会的话，`backend/api-generation` 里的数必须在同一个 diff 里调高，否则 job 失败。调高之后，后端拒掉带着更低代数的请求（409 `ClientOutdated`，房间连接以 4409 关闭），开着的旧页面就弹出提示请人刷新（`frontend/src/lib/apiGeneration.ts`）。前后端一起改的 PR 也问这一句，所以这个 job 现在只看后端有没有被选中。两个 PR 各把数从 N 调到 N+1，合并时不冲突、落成同一个数；前一个先部署了的话，main 上的 push 运行（基点是上一次全绿的提交）会在这里变红，再调高一次即可。
 
+CI 只能比较 OpenAPI 的形状；已有接口或推送消息的含义变化（包括默认行为和实时／WebSocket 消息）由作者通过 PR 模板的必填问题判断，回答“是”就在同一个 PR 调高 `backend/api-generation`。
+
 **主干是提交后门禁**：PR squash 进 main 之后，每次落码触发一次 `push` run，它判的是**一批**而不是这一条提交。`scope` 的基点不是 `github.event.before`（那只是上一个 tip，被顶掉的排队 run 里的提交会落在所有后续 diff 之外），而是 `refs/heads/main-green`：上一次这道理检查通过的提交。`mark-green` job 只在 main push 的 `required` 绿之后把锚点推到这个提交，红了不动，下一批自然把这段一起盖上。push 的并发组固定为 `required-ci-push-main`、`cancel-in-progress` 为 `false`：GitHub 同时只让一个 run 在跑、最多一个排队，新的排队顶掉旧的排队，所以攒批不丢提交。第一次落地时还没有 `main-green`，`scope` 把所有已跟踪路径都算作改动、选全部套件——宁宽不窄。部署门禁认 main 上这次 `push` run。
 
 **三档**（`required-ci.py` 的 `tier_for`）：
