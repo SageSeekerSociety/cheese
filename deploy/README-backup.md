@@ -175,6 +175,7 @@ dev R2 数据库对象的阈值为上传间隔加 2 小时（默认 8 小时）�
 `r2-upload.py`、`r2-prune-dumps.py` 和 `r2-common.py` 至 dev 的 `~/ops`。
 旧文件保存到 `~/ops/backup-rollouts/<release-sha>/`，依赖先安装，各文件通过重命名原子替换。
 小时 timer、凭据和 `backup.env` 保持原值；此步骤只在 dev 执行。
+回滚到引入分层保留之前的发布时，只安装该发布已有的三个脚本；目标备份脚本不调用分层清理器，机器上已有的清理器保持原值。
 
 dev uploads 的 CI 检查读取 `cheese-uploads-mirror.service` 最近一次成功退出记录
 （`Result=success`、正常退出、状态为 `0`），以服务退出时间写入 uploads 标记。
