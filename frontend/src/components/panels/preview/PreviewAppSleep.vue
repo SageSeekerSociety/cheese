@@ -13,7 +13,7 @@
 // 挡不住框自己发起导航，点得到链结就会走），那一跳到外站时面板地址不该跟着过去。
 import type { AppWakeStep } from '@/composables/panelPreview/appWake'
 
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -25,6 +25,9 @@ const props = defineProps<{
   snapshotHtml: string | null
   /** 快照是多久以前留的，已经说成一句话（「4 分钟前」）。 */
   snapshotAge: string
+  /** 快照停在哪一页（标题或路径）。一份应用只留一张快照，几个读者同开时后写的盖掉先写
+   *  的，所以得说清是哪一页，否则另一个读者会以为自己那一页被冻住了。空串就不说。 */
+  snapshotWhere?: string
   /** 正在唤醒时的分步进度；没在唤醒是 null。 */
   steps: AppWakeStep[] | null
   /** 唤醒没成时那一句。 */
@@ -47,6 +50,23 @@ const body = computed(() => {
   if (!props.snapshotHtml) return t('work.room.preview.sleep.noSnapshot')
   return t('work.room.preview.sleep.snapshotBody', { age: props.snapshotAge })
 })
+/** 停在那一页：有就单独一行放在正文下面（一串路径混在正文里读不出来）。 */
+const where = computed(() => (props.snapshotHtml ? props.snapshotWhere ?? '' : ''))
+
+/** 说明那一块是不是放不下、正在滚。CSS 判不出「内容比框高」，所以量一次；量完加一道
+ *  底部淡出，让人看得出下面还有。画面一变（换步骤、换窗口高度）就重量。 */
+const scroll = ref<HTMLElement | null>(null)
+const overflowing = ref(false)
+function measureOverflow() {
+  const el = scroll.value
+  overflowing.value = !!el && el.scrollHeight > el.clientHeight + 1
+}
+onMounted(() => {
+  measureOverflow()
+  window.addEventListener('resize', measureOverflow)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', measureOverflow))
+watch([() => props.steps, where, () => props.snapshotHtml], () => void nextTick(measureOverflow))
 </script>
 
 <template>
@@ -64,22 +84,30 @@ const body = computed(() => {
     <div v-show="!picking" class="app-sleep__card" role="status" aria-live="polite">
       <v-icon size="30" class="app-sleep__icon" aria-hidden="true">mdi-sleep</v-icon>
       <b class="app-sleep__title">{{ title }}</b>
-      <div class="app-sleep__body">{{ body }}</div>
-      <div v-if="steps" class="app-sleep__steps" data-testid="preview-wake-steps">
-        <div
-          v-for="step in steps"
-          :key="step.key"
-          class="app-sleep__step"
-          :class="`app-sleep__step--${step.state}`"
-          :data-state="step.state"
-        >
-          <v-icon size="16" aria-hidden="true" :class="{ 'app-sleep__spin': step.state === 'now' }">{{
-            step.state === 'done' ? 'mdi-check-circle' : step.state === 'now' ? 'mdi-loading' : 'mdi-circle-outline'
-          }}</v-icon>
-          <span>{{ t(step.label, { agent: agentName }) }}</span>
+      <!-- 卡里能滚的是这一段说明和进度；标题和底下那颗按钮不跟着滚。画面矮的时候
+           （半屏右栏、笔记本拉高对话栏、手机横屏）说明会把按钮挤到看不见的地方——
+           卡叫人唤醒而按钮按不到就没意义了。 -->
+      <div ref="scroll" class="app-sleep__scroll" :class="{ 'app-sleep__scroll--overflowing': overflowing }">
+        <div class="app-sleep__body">{{ body }}</div>
+        <div v-if="where" class="app-sleep__where">{{ t('work.room.preview.sleep.snapshotWhere', { where }) }}</div>
+        <!-- 四步进度也在能滚的这一块里：它和底下那颗按钮是二选一（唤醒中就没有按钮），
+             几行说明加四步在矮画面里会被挤掉，让它跟着滚比截断强。 -->
+        <div v-if="steps" class="app-sleep__steps" data-testid="preview-wake-steps">
+          <div
+            v-for="step in steps"
+            :key="step.key"
+            class="app-sleep__step"
+            :class="`app-sleep__step--${step.state}`"
+            :data-state="step.state"
+          >
+            <v-icon size="16" aria-hidden="true" :class="{ 'app-sleep__spin': step.state === 'now' }">{{
+              step.state === 'done' ? 'mdi-check-circle' : step.state === 'now' ? 'mdi-loading' : 'mdi-circle-outline'
+            }}</v-icon>
+            <span>{{ t(step.label, { agent: agentName }) }}</span>
+          </div>
         </div>
       </div>
-      <template v-else>
+      <template v-if="!steps">
         <div v-if="wakeError" class="app-sleep__error" role="alert">{{ wakeError }}</div>
         <BaseButton kind="primary" prepend-icon="mdi-power" data-testid="preview-wake" @click="emit('wake')">
           {{
@@ -120,16 +148,27 @@ const body = computed(() => {
   pointer-events: none;
 }
 .app-sleep__card {
+  /* 缩小的档（平板/手机在窄面板里）里，这一层跟页面一起缩：卡得按**画出来的**尺寸摆，
+     不然手机上点「唤醒」的是一颗缩到一半的按钮，上面几行字也发糊。
+     做法只有一个反向缩放：外层把整层缩了 s，卡自己缩回 1/s，屏幕上就是原尺寸——宽度和
+     位置照原型那几个数写，别再乘一遍（乘了会双算，卡宽变成 1/s 倍，右边被裁掉）。
+     `--preview-scale` 没给（没缩）时反向缩放等于 1，和原型一模一样。 */
+  --inv: calc(1 / var(--preview-scale, 1));
   position: absolute;
-  /* 和原型一样靠上：卡的上沿在页面往下约 100px 处（页面矮时按 18% 收），不是垂直居中——
-   * 居中会盖住页面正中的那几行。 */
-  top: min(120px, 18%);
+  /* 和原型一样靠上：卡的上沿在页面往下约 120px 处，不是垂直居中——居中会盖住页面正中
+   * 的那几行。画面矮的时候这个留白先让出去（按高度的 6% 收），把高度留给卡：留白比说明
+   * 文字更该让位，不然矮画面里第一行说明就被压在标题下面。 */
+  top: min(120px, 6%);
   left: 50%;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
   width: min(340px, calc(100% - 32px));
+  /* 画面矮的时候（半屏的右栏、笔记本上拉高的对话栏、手机横屏）卡会比看得见的那块还高。
+     卡自己按可用高度封顶，但**滚的是中间那层说明**（见 `.app-sleep__scroll`）：标题和
+     那颗「唤醒」按钮都留在外面，再挤也够得着。卡本身不滚，否则按钮会跟着说明一起滚走。 */
+  max-height: calc(100% - min(120px, 6%) - 8px);
   padding: 18px;
   text-align: center;
   color: var(--text);
@@ -137,7 +176,8 @@ const body = computed(() => {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
-  transform: translateX(-50%);
+  transform: translateX(-50%) scale(var(--inv));
+  transform-origin: top center;
   pointer-events: auto;
 }
 .app-sleep__icon {
@@ -145,6 +185,27 @@ const body = computed(() => {
 }
 .app-sleep__title {
   font-size: 15px;
+}
+.app-sleep__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* 放不下、正在滚的时候，底部淡出一小道：读起来像「下面还有」，而不是字被切了。用 `mask`
+   走颜色本身，不铺一层假白——卡底下的快照是压暗的，白色会露馅。是不是放不下由
+   `overflowing` 量出来（CSS 自己判不出来），放得下就一点痕迹都不留。
+   mask 里那一段要的是**不透明**，不是某个具体颜色：照仓库其他几处写 `var(--ink)`
+   （见 `landing.css`、`FileBytesPreview.vue`），不写字面色，写死一个值就跟不上深色主题。 */
+.app-sleep__scroll--overflowing {
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 14px), transparent);
+}
+.app-sleep__where {
+  max-width: 100%;
+  font: 12px/1.5 var(--font-mono);
+  color: var(--faint);
+  overflow-wrap: anywhere;
 }
 .app-sleep__body,
 .app-sleep__hint {

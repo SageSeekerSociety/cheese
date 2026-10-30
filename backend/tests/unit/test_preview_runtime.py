@@ -733,3 +733,72 @@ assert.equal(picked.selector.indexOf('body'), 0,
         [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_bridge_collects_page_errors_and_reports_them():
+    """页面自己抛的错报回宿主。以前宿主只认「应用说它 ready / failed」：页面里一个未捕获的
+    异常它看不见，读者看到的是照常显示的页面加三个绿勾，点提交却没反应。
+
+    两处挂：window 的 error（捕获段，不抢页面自己的 onerror）和 unhandledrejection。同
+    一个错报两次只留一条；握手之前收到的那些在握手之后补报。
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required to execute the opt-in JavaScript bridge")
+    script = RUNTIME_SCRIPT.replace(
+        "__PLATFORM_ORIGIN__", json.dumps("https://platform.example")
+    )
+    harness = r"""
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const messages = [];
+let receive;
+const parent = { postMessage: (data, origin) => messages.push({data, origin}) };
+const listeners = {};
+const window = { parent, addEventListener: (type, handler) => {
+  if (type === 'message') receive = handler;
+  (listeners[type] = listeners[type] || []).push(handler);
+} };
+vm.runInNewContext(fs.readFileSync(0, 'utf8'), {
+  window,
+  setTimeout: () => {},
+  ErrorEvent: class { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+});
+// 握手之前抛的：报不出去，等握手后补报。
+const fire = (type, event) => (listeners[type] || []).forEach((h) => h(event));
+fire('error', { message: 'boom', filename: 'a.js', lineno: 3 });
+fire('error', { message: 'boom', filename: 'a.js', lineno: 3 });
+fire('error', { message: 'second', filename: 'b.js', lineno: 9 });
+fire('unhandledrejection', { reason: new Error('promise gone') });
+assert.equal(messages.filter((m) => m.data.type === 'errors').length, 0);
+receive({source: parent, origin: 'https://platform.example',
+         data: {channel: 'cheese-preview-runtime', version: 1, type: 'hello', sessionId: 's'}});
+const reported = messages.filter((m) => m.data.type === 'errors');
+assert.equal(reported.length, 1, 'the handshake flushes what it collected');
+// 桥跑在另一个 realm 里：它的对象原型和这里不是同一个，用 JSON 比形状而不是 deepEqual。
+assert.equal(JSON.stringify(reported[0].data.items), JSON.stringify([
+  { message: 'boom', source: 'a.js', line: 3 },
+  { message: 'second', source: 'b.js', line: 9 },
+  { message: 'promise gone', source: '', line: 0 },
+]));
+// 握手之后新的错即时报；同一个错不再重复。清单是攒着的一整份（那颗按钮要说「一共几个」），
+// 新来的接在后面。
+messages.length = 0;
+fire('error', { message: 'later', filename: 'c.js', lineno: 1 });
+assert.equal(messages.length, 1);
+assert.equal(messages[0].data.type, 'errors');
+assert.equal(messages[0].data.items.length, 4);
+assert.equal(messages[0].data.items[3].message, 'later');
+fire('error', { message: 'later', filename: 'c.js', lineno: 1 });
+assert.equal(messages.length, 1);
+// 上限 5 条：只留最近的。
+for (let i = 0; i < 8; i += 1) fire('error', { message: 'e' + i, filename: 'x.js', lineno: i });
+const last = messages[messages.length - 1].data.items;
+assert.equal(last.length, 5);
+assert.equal(last[4].message, 'e7');
+"""
+    result = subprocess.run(
+        [node, "-e", harness], input=script, text=True, capture_output=True, timeout=10
+    )
+    assert result.returncode == 0, result.stderr

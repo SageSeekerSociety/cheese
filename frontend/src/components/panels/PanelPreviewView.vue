@@ -243,6 +243,7 @@ const {
   pageLocator,
   quoted,
   pick,
+  openLocator,
   clearLocator,
   queueLocator,
   clearQueued,
@@ -270,6 +271,17 @@ const {
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+/** 页面抛的那几条错要附进批注：开定位条，把那几行预填进去，指的位置是这一页。
+ *
+ *  和页上圈一处走的是同一个出口（`openLocator`）：读者在定位条上补一句「提交点了没反应」
+ *  再发，发出去的就是「这一页的这几个错 + 我要说的那句」。 */
+function openPageErrors(text: string) {
+  const frame = props.displayedFrame
+  const where = frame?.href || frame?.label || props.previewUrl || ''
+  openLocator(t('work.room.preview.pageErrors', { count: frame?.pageErrors?.length ?? 0 }), where, where)
+  locatorNote.value = text
+}
 
 /** 攒在待发篮里、还没发出去的那几处：正文里在那一句话末尾挂一颗序号，和篮里那一行
  *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
@@ -612,6 +624,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @history="emit('history', $event)"
       @navigate="emit('navigate', $event)"
       @wake="emit('wake')"
+      @annotate-errors="openPageErrors"
     />
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>

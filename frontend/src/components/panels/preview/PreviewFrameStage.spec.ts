@@ -198,7 +198,8 @@ it('页面报错时链上「应用」那段变红，点开看得到原因', () =
   const alert = ui.getByTestId('preview-runtime-alert')
   expect(alert.querySelector('[data-state="down"]')?.textContent).toContain('应用')
   const detail = ui.getByTestId('preview-chain-detail')
-  expect(detail.textContent).toContain('页面报错：端口没起来')
+  // 四种断法都是同一套句子（`chain.json`）：这一段说的是「页面自己报了错」。
+  expect(detail.textContent).toContain('页面自己报了错：端口没起来')
   expect(detail.textContent).toContain('应用报告失败')
 })
 
@@ -214,8 +215,8 @@ it('宽面板平铺：视口三键在，「…」菜单不在，刷新是一颗�
 it('窄面板把「在新标签页打开」「下载」收进「…」菜单；刷新留在地址栏旁边', async () => {
   panelWidth.value = 390
   const ui = staticFileMount()
-  // 视口三键在窄面板上藏起来。
-  expect(ui.queryByTestId('viewport-desktop')).toBeNull()
+  // 视口三键不跟着进菜单：它说的是「现在按哪种宽度排」，窄的时候更要看得见（下一条）。
+  expect(ui.queryByTestId('viewport-desktop')).not.toBeNull()
   const more = ui.getByTestId('preview-more')
   expect(ui.container.textContent).toContain('下载')
   expect(ui.getByTestId('refresh-preview')).not.toBeNull()
@@ -225,16 +226,48 @@ it('窄面板把「在新标签页打开」「下载」收进「…」菜单；�
   expect(ui.container.textContent).toContain('在新标签页打开')
 })
 
-it('窄面板上视口三档进了「…」菜单，照样能切', async () => {
+it('视口三键在窄面板上也平铺在条上，窄的时候照样能换一种宽度看', async () => {
   panelWidth.value = 390
   const ui = staticFileMount()
-  const text = ui.container.textContent ?? ''
-  expect(text).toContain('桌面')
-  expect(text).toContain('手机')
-  const items = ui.getAllByRole('menuitemradio')
-  const mobile = items.find((el) => (el.textContent ?? '').includes('手机'))!
+  expect(ui.queryByTestId('viewport-tablet')).not.toBeNull()
+  const mobile = ui.getByTestId('viewport-mobile')
   await fireEvent.click(mobile)
   expect(ui.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+})
+
+it('窄面板默认按手机档打开；宽面板默认桌面档', () => {
+  panelWidth.value = 390
+  const narrow = staticFileMount()
+  expect(narrow.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+
+  cleanup()
+  panelWidth.value = 1200
+  const wide = staticFileMount()
+  expect(wide.container.querySelector('[data-viewport="desktop"]')).not.toBeNull()
+})
+
+it('固定档按那一档的原宽排：面板比它宽时就是 768 / 375', async () => {
+  panelWidth.value = 1200
+  const ui = staticFileMount()
+  const surface = () => ui.container.querySelector('.preview-frames') as HTMLElement
+  // 桌面档没有固定宽度：铺满面板。
+  expect(surface().style.width).toBe('')
+  await fireEvent.click(ui.getByTestId('viewport-tablet'))
+  expect(surface().style.width).toBe('768px')
+  expect(surface().style.transform).toBe('')
+  await fireEvent.click(ui.getByTestId('viewport-mobile'))
+  expect(surface().style.width).toBe('375px')
+})
+
+it('面板装不下那一档时整块等比缩小，而不是压成面板宽再管它叫那一档', async () => {
+  panelWidth.value = 600
+  const ui = staticFileMount()
+  await fireEvent.click(ui.getByTestId('viewport-tablet'))
+  const surface = ui.container.querySelector('.preview-frames') as HTMLElement
+  // 宽度还是 768（排版按平板走），画出来按 600/768 缩。
+  expect(surface.style.width).toBe('768px')
+  expect(surface.style.transform).toBe('scale(0.78125)')
+  expect(surface.getAttribute('data-scale')).toBe('0.78125')
 })
 
 it('换一页时上一帧还摆着：加载那一句照样说得出口', () => {
@@ -313,7 +346,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
   expect(ui.queryByTestId('frame-source')).toBeNull()
 })
 
-it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢复为桌面视口', async () => {
+it('支持在桌面、平板、手机视口宽度之间切换，换文件时回到默认档', async () => {
   const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
   const ui = render(PreviewFrameStage, {
     props: {
@@ -535,4 +568,15 @@ it('唤醒中：卡变成分步进度，按钮收起；圈选打开时卡让开'
   await ui.rerender({ pickOn: true })
   expect((ui.container.querySelector('.app-sleep__card') as HTMLElement).style.display).toBe('none')
   expect(ui.getByTestId('preview-region-pick')).toBeTruthy()
+})
+
+it('冷启动那一段摆骨架：等的时候不是一片白', () => {
+  // 第一次连上（机器还在起）能等一两分钟，原来内容区是一片白。骨架只在真没有内容可看时
+  // 摆：换一页时上一帧还在屏幕上，那不是「空的」，不能盖。
+  const waiting = mount('navigating', null)
+  expect(waiting.queryByTestId('preview-skeleton')).not.toBeNull()
+
+  cleanup()
+  const withOldPage = mount('navigating', frame())
+  expect(withOldPage.queryByTestId('preview-skeleton')).toBeNull()
 })
