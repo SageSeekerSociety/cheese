@@ -111,16 +111,15 @@ class NativeTurns:
                 # Read whether or not this process opened it: a session keeps
                 # working across a backend restart, and the process that fed or
                 # first saw the turn wrote what it knew on the row.
-                # Recovery takes the row locked, as the sweep closing a silent
-                # turn does (`turn_inputs.close_silent_turns`): whichever holds
-                # it first decides, and a turn the sweep closed first is over
-                # and not taken up.
-                row = (
-                    await AgentTurnRepository(session).get_locked(turn_id)
-                    if opened
-                    else await AgentTurnRepository(session).get(turn_id)
-                )
-                if opened and row is not None and row.stopped_at is not None:
+                # Taken locked, as the sweep closing a silent turn takes it
+                # (`turn_inputs.close_silent_turns`): whichever holds the row
+                # first decides. A turn whose interval is closed is over, whoever
+                # asks — recovery, or the session's own output replayed after
+                # the sweep: it is not made to run again, and what the session
+                # still says lands in the room with no turn running, as output
+                # does when this returns None.
+                row = await AgentTurnRepository(session).get_locked(turn_id)
+                if row is not None and row.stopped_at is not None:
                     return None
             if not opened:
                 await self.open_turn(
