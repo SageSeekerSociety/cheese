@@ -70,3 +70,19 @@
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode walk
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode warm
        python scripts/perf-open-page/report.py scripts/perf-open-page/measurements.json --mode cold
+
+6. **Run controlled fault calibration & interleaved A/B verification**
+
+       # Build Before (origin/main) and After (working tree) bundles for interleaved A/B:
+       git worktree add --detach /tmp/before-wt origin/main
+       ln -s "$(pwd)/frontend/node_modules" /tmp/before-wt/frontend/node_modules
+       (cd /tmp/before-wt/frontend && VITE_API_BASE_URL=/api ./node_modules/.bin/vite build)
+       cp -r /tmp/before-wt/frontend/dist /tmp/dist-before && git worktree remove --force /tmp/before-wt
+       (cd frontend && VITE_API_BASE_URL=/api ./node_modules/.bin/vite build && cp -r dist /tmp/dist-after)
+
+       uv run --no-project --with playwright python scripts/perf-open-page/verify_calibration.py \
+           --base-url http://127.0.0.1:3000
+       uv run --no-project --with playwright python scripts/perf-open-page/verify_phase2.py \
+           --base-url http://127.0.0.1:3000 --rounds 3 \
+           --before-commit a9385f9c7153 --after-commit 55f77bce9c21
+       backend/.venv/bin/pytest scripts/perf-open-page/test_calibration.py

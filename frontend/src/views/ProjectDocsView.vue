@@ -26,7 +26,7 @@ import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import { patchQuery, queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
-import { projectQuery, roomRowQuery } from '@/query/project'
+import { projectQuery, readProjectTopic } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 项目目标 / 周报集 / 记忆 — one address each
@@ -104,7 +104,7 @@ const docs = useQuery(
       }
       if (kind.value === 'charter' && overviewRead) {
         payload.overviewId = (await overviewRead).id
-        if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
+        if (project.root_topic_id) payload.rootTopic = await readProjectTopic(props.projectId, project.root_topic_id)
       } else if (kind.value === 'memory') {
         payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
       } else if (kind.value === 'weeklies') {
@@ -136,7 +136,9 @@ const errorMessage = computed<string | null>(() =>
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
 const rootTopic = computed<Topic | null>(() => data.value?.rootTopic ?? null)
 const overviewDoc = computed(() =>
-  data.value?.overviewId ? { id: data.value.overviewId, projectId: props.projectId, title: '' } : null
+  data.value?.overviewId
+    ? { id: data.value.overviewId, projectId: props.projectId, title: t('project.docs.kind.charter') }
+    : null
 )
 
 function fmtDate(d: string | null): string {
