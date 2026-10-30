@@ -15,6 +15,7 @@
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.memory import history
@@ -313,17 +314,22 @@ async def list_memory_changes(
     return ok(page([_change_out(r) for r in rows], len(rows)))
 
 
-@router.post("/history/{change_id}/restore", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/history/{change_id}/restore")
 async def restore_memory_change(
-    change_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    change_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.ask_agent)],
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """把一条记忆写回这一次改动之前的样子（`history.restore`）。
 
-    和写入同一道门（`_writable`）：恢复就是一次写入，写不动这个作用域的人也恢复
-    不了它。恢复本身留下一条新的改动记录。
+    `Can(ask_agent)` 是进门的那一道：能和芝士说话的人才有记忆可恢复。进门之后
+    和写入同一道门（`_writable`）：恢复就是一次写入，team 要能配置 AI 队友，
+    private 只有本人，写不动这个作用域的人也恢复不了它。恢复本身留下一条新的
+    改动记录。
     """
     row = await history.change(db, change_id)
-    if row is None:
+    if row is None or row.project_id != at.project.id:
         raise NotFoundError(say("memoryChangeNotFound"))
     owner = row.owner_handle or None
     actor = await _writable(db, resolver, row.project_id, owner)

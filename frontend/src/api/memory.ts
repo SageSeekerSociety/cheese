@@ -47,9 +47,12 @@ export function listMemoryChanges(
     `/memory/files/history?project_id=${encodeURIComponent(projectId)}&scope=${scope}${owner}`
   )
 }
-export function restoreMemoryChange(changeId: string): Promise<{ file: { path: string; version: number } }> {
+export function restoreMemoryChange(
+  projectId: string,
+  changeId: string
+): Promise<{ file: { path: string; version: number } }> {
   return request<{ file: { path: string; version: number } }>(
-    `/memory/files/history/${encodeURIComponent(changeId)}/restore`,
+    `/memory/files/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(changeId)}/restore`,
     { method: 'POST' }
   )
 }

@@ -88,9 +88,9 @@ def _changes(client, project_id, handle, **kw) -> list[dict]:
     return response.json()["data"]["data"]
 
 
-def _restore(client, change_id: str, handle: str):
+def _restore(client, project_id: str, change_id: str, handle: str):
     return client.post(
-        f"/memory/files/history/{change_id}/restore",
+        f"/memory/files/projects/{project_id}/history/{change_id}/restore",
         headers=session_auth_headers(handle),
     )
 
@@ -149,7 +149,7 @@ def test_someone_elses_private_history_is_theirs_alone(client):
         # And none of it shows up in the shared history either.
         assert _changes(client, project_id, other) == []
     # Nor can they restore from it.
-    assert _restore(client, own[0]["id"], "bob").status_code == 403
+    assert _restore(client, project_id, own[0]["id"], "bob").status_code == 403
 
 
 def test_a_memory_deleted_on_the_panel_comes_back_from_its_history(client):
@@ -179,7 +179,7 @@ def test_a_memory_deleted_on_the_panel_comes_back_from_its_history(client):
         for c in _changes(client, project_id, "alice")
         if c["path"] == "answer-first.md" and c["deleted"]
     )
-    restored = _restore(client, deletion["id"], "alice")
+    restored = _restore(client, project_id, deletion["id"], "alice")
     assert restored.status_code == 200, restored.text
 
     files = _files(client, project_id, "alice")
@@ -198,6 +198,6 @@ def test_a_change_that_created_a_memory_has_nothing_to_restore(client):
     _put(client, project_id, "alice", path="answer-first.md", content=_NOTE)
     (creation,) = _changes(client, project_id, "alice")
 
-    refused = _restore(client, creation["id"], "alice")
+    refused = _restore(client, project_id, creation["id"], "alice")
     assert refused.status_code == 422, refused.text
     assert _files(client, project_id, "alice")["answer-first.md"] == _NOTE

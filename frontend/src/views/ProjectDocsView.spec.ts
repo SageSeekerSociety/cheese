@@ -338,7 +338,7 @@ describe('记忆', () => {
     expect(buttons).toHaveLength(1)
     await fireEvent.click(buttons[0] as Element)
 
-    await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('c-deleted'))
+    await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('p', 'c-deleted'))
     view.unmount()
   })
 

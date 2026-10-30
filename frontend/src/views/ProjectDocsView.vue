@@ -225,7 +225,7 @@ const restoring = ref<string | null>(null)
 async function restoreChange(id: string) {
   restoring.value = id
   try {
-    await restoreMemoryChange(id)
+    await restoreMemoryChange(props.projectId, id)
     await queryClient.invalidateQueries({ queryKey: docsKey.value })
   } catch (err) {
     void errorHandler.handle(err as Error)
