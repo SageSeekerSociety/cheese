@@ -482,7 +482,8 @@ function send(event: KeyboardEvent | MouseEvent) {
 .locator {
   position: sticky;
   bottom: 12px;
-  z-index: var(--z-raised);
+  /* Keep note controls above image inspection tools (4), below image editing overlays (6). */
+  z-index: var(--z-raised-5);
   flex: none;
   margin: 0 12px 12px;
   display: flex;

@@ -28,7 +28,7 @@ import type { PreviewViewProps } from './preview/previewViewProps'
 
 import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useEventListener, useFullscreen, useOnline } from '@vueuse/core'
+import { useEventListener, useFullscreen, useOnline, useResizeObserver } from '@vueuse/core'
 
 import {
   MODE_KEYS,
@@ -329,6 +329,7 @@ let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
 const locatorAnchor = ref<LocatorAnchor | null>(null)
+const locatorRegionElement = ref<HTMLElement | null>(null)
 /** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
 const locatorFromSelection = ref(false)
 useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
@@ -369,6 +370,7 @@ watch(locator, (now) => {
   if (!now) {
     anchorRange = anchorPointer = lastPointer = null
     locatorAnchor.value = null
+    locatorRegionElement.value = null
     locatorFromSelection.value = false
     keptSelection.value = null
     return
@@ -390,9 +392,21 @@ watch(locator, (now) => {
     !nodeElement(anchorRange.commonAncestorContainer)?.closest('[data-locator-points]')
   anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
   lastPointer = null
-  void nextTick(placeLocator)
+  void nextTick(() => {
+    locatorRegionElement.value = imageRegion.target.value
+      ? panelElement.value?.querySelector<HTMLElement>('.design-image__selection') ?? null
+      : null
+    placeLocator()
+  })
 })
 useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+useResizeObserver(
+  () =>
+    [panelElement.value, locatorRegionElement.value].filter(
+      (element): element is HTMLElement => element instanceof HTMLElement
+    ),
+  placeLocator
+)
 
 useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
 
