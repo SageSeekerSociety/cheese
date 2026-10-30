@@ -344,7 +344,12 @@ def test_a_message_through_any_harness_silences_the_reminder(
 
         harness("chat_send", {"content": "我先核对一下当前流程。"})
         assert client.portal.call(quiet.silence, clock) == 0
-        assert len(notices) == 1
+        # An interval later it is asked for a line on what it is doing, not
+        # to answer: the message landed and counted as its answer.
+        clock += timedelta(seconds=threshold)
+        assert client.portal.call(quiet.silence, clock) == 1
+        assert len(notices) == 2
+        assert "分钟没在对话里说话" in notices[1] and "还没回" not in notices[1]
 
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished")
         while ws.receive_json()["type"] != "done":
