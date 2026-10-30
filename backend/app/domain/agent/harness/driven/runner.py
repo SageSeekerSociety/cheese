@@ -17,8 +17,9 @@ import os
 import secrets
 import sys
 import time
+import traceback
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -101,6 +102,27 @@ def current_loop() -> asyncio.AbstractEventLoop | None:
         return asyncio.get_running_loop()
     except RuntimeError:
         return None
+
+
+def watched(work: Coroutine) -> asyncio.Task:
+    """Run ``work`` in the background, and print its failure to the runner's
+    log the moment it fails.
+
+    A task keeps its exception until someone asks for it, and a runner asks its
+    background tasks only as it closes, gathering them with
+    ``return_exceptions``: one that died stopped doing its job, and nothing
+    anywhere said so.
+    """
+    task = asyncio.create_task(work)
+    task.add_done_callback(_say_failure)
+    return task
+
+
+def _say_failure(task: asyncio.Task) -> None:
+    if task.cancelled() or (error := task.exception()) is None:
+        return
+    print(f"runner task {task!r} failed:", file=sys.stderr, flush=True)
+    traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
 
 
 def socket_path(state: Path) -> str:
@@ -431,9 +453,9 @@ class Runner(Generic[J]):  # noqa: UP046
             )
             os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
-            self.idler = asyncio.create_task(self._idle())
+            self.idler = watched(self._idle())
         if self.process is not None:
-            self.ender = asyncio.create_task(self._announce_exit(self.process))
+            self.ender = watched(self._announce_exit(self.process))
 
     async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
         """The agent process ended: a read held now is answered at once, saying

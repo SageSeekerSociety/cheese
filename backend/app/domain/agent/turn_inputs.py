@@ -52,6 +52,7 @@ from app.domain.agent.models import (
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
+from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import (
     terminate_inputs_of_dead_works,
     terminate_unread_of_session,
@@ -702,10 +703,11 @@ async def open_turns(session_factory) -> dict:
     nothing will close a turn left open in it: the sweep keeps a delivered turn
     open until its session is known dead, and stopping the session
     (`ChatService.stop_work_in_closed_tasks`) leaves its row as it is. Such a
-    turn kept its room reading as busy, and its inputs refused the seat, for
-    good. They are ended here and never handed to the
-    sweep, which would otherwise offer the work again. A turn begun after the
-    close is not that work: someone asked about the finished task.
+    turn kept its room reading as busy for good. They are ended here and never
+    handed to the sweep, which would otherwise offer the work again. A turn
+    begun after the close is not that work: someone asked about the finished
+    task. The task's unread inputs are given up on with them
+    (`_give_up_inputs_of_closed_tasks`).
 
     Whether reading this can fail is the sweep's business, not this function's:
     it raises, and the callers that must survive a database blip say so where
@@ -730,7 +732,49 @@ async def open_turns(session_factory) -> dict:
         )
         if ended:
             await turns.close(ended, datetime.now(UTC), reason=STOP_TASK_CLOSED)
-            await terminate_inputs_of_dead_works(session, ended, reason="task_closed")
+        if await _give_up_inputs_of_closed_tasks(session) or ended:
             await session.commit()
         rows = await turns.open_turns()
     return {record.turn_id: record for record in rows}
+
+
+async def _give_up_inputs_of_closed_tasks(session) -> int:
+    """Give up on every unread input of a closed task, whatever work it was
+    filed under; how many.
+
+    The work of a closed task is over, and every input still unread in it
+    refuses its seat every later message (`seat_has_unfinished_input`). Keyed
+    by the task rather than by the turns its close ends, because the input that
+    leaks is one no open turn accounts for: a message said into a work that had
+    already stopped — at an earlier close of a task since reopened, say. Only
+    an input of a turn begun after the close is left alone: that is someone
+    asking about the finished task.
+
+    Given up on as `terminate_inputs_of_dead_works` does: whether the session
+    read them before the close is unknown, so their holds stay held.
+    """
+    after_close = (
+        exists()
+        .where(
+            AgentTurn.conversation_id == _tasks.c.id,
+            AgentTurn.started_at > _tasks.c.closed_at,
+            or_(
+                AgentTurn.id == NativeInput.work_id,
+                AgentTurn.id == NativeInput.execution_work_id,
+            ),
+        )
+        .correlate(NativeInput, _tasks)
+    )
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.conversation_id == _tasks.c.id,
+            _tasks.c.status == "closed",
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            ~after_close,
+        )
+        .values(terminated_at=datetime.now(UTC), termination=STOP_TASK_CLOSED)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
