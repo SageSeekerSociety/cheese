@@ -17,7 +17,9 @@ Two Unix domain sockets live in the room's read-only platform socket directory
   directly to the forge (or falls back to the platform when the forge is
   unreachable from the execution machine). Other destinations are spliced
   through without terminating TLS, except private/loopback addresses which are
-  refused.
+  refused. Every destination is dialled by `ForgeProxyRuntime.dial`, which
+  reaches the deployment's site over the machine's forward when it has one
+  (`--site-forward`), so the room needs no route of its own to the site.
 - `preview.sock`: out-of-sandbox preview WebSocket relay. `cheese-preview.py`
   inside the sandbox connects here with no token; this process obtains a
   short-lived credential on `platform.sock` using `X-Cheese-Proxy-Proof`,
@@ -591,6 +593,24 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _DialledConnection(http.client.HTTPConnection):
+    """An HTTP or HTTPS connection whose socket `ForgeProxyRuntime.dial` opens.
+    TLS is verified against the name asked for, wherever the socket leads."""
+
+    def __init__(self, host: str, port: int, *, dial, tls: bool, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._dial = dial
+        self._tls = tls
+
+    def connect(self) -> None:
+        sock = self._dial(self.host, self.port, self.timeout)
+        if self._tls:
+            sock = ssl.create_default_context().wrap_socket(
+                sock, server_hostname=self.host
+            )
+        self.sock = sock
+
+
 class ForgeProxyRuntime:
     def __init__(
         self,
@@ -600,6 +620,7 @@ class ForgeProxyRuntime:
         api_url: str,
         preview_url: str,
         proof: str,
+        site_forward: str = "",
     ) -> None:
         self.platform_dir = platform_dir
         self.ca_dir = ca_dir
@@ -607,6 +628,23 @@ class ForgeProxyRuntime:
         self.preview_url = preview_url
         self.certs = CertificateStore(ca_dir)
         self.platform = PlatformSocketClient(str(platform_dir / "platform.sock"), proof)
+        # `site:port` when this machine forwards the deployment's site over
+        # TLS to that loopback port (`machine_address.site_forward`).
+        site, _, port = site_forward.rpartition(":")
+        self.site_forward = (
+            (site.lower(), int(port)) if site and port.isdigit() else None
+        )
+
+    def dial(self, host: str, port: int, timeout: float) -> socket.socket:
+        """A TCP connection to `host:port`. The site's name on 443 is reached
+        over the machine's forward, which serves the site's own certificate:
+        its public address leaves the private network for the public relay
+        and comes back through its tunnels."""
+        if self.site_forward and (host.lower(), port) == (self.site_forward[0], 443):
+            return socket.create_connection(
+                ("127.0.0.1", self.site_forward[1]), timeout=timeout
+            )
+        return socket.create_connection((host, port), timeout=timeout)
 
     def is_forge_host(self, host: str) -> tuple[bool, str]:
         """Whether `host` is one of the project's forge hosts, and its scheme."""
@@ -637,12 +675,9 @@ class ForgeProxyRuntime:
     ) -> tuple[int, str, list[tuple[str, str]], bytes]:
         clean_path = urllib.parse.urlsplit(path).path or "/"
         is_git = ".git/" in clean_path or clean_path.endswith(".git")
-        conn_cls = (
-            http.client.HTTPSConnection
-            if scheme == "https"
-            else http.client.HTTPConnection
+        conn = _DialledConnection(
+            host, port, dial=self.dial, tls=scheme == "https", timeout=10
         )
-        conn = conn_cls(host, port, timeout=10)
         connected = False
         try:
             conn.connect()
@@ -809,7 +844,7 @@ class _ForgeSocketHandler(socketserver.BaseRequestHandler):
                     sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                 return
             try:
-                upstream = socket.create_connection((host, port), timeout=15)
+                upstream = proxy.dial(host, port, timeout=15)
             except OSError:
                 with contextlib.suppress(OSError):
                     sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
@@ -925,6 +960,7 @@ def serve(
     api_url: str,
     preview_url: str,
     proof: str,
+    site_forward: str = "",
 ) -> int:
     ensure_ca(ca_dir, platform_dir)
     forge_sock = platform_dir / "forge.sock"
@@ -938,6 +974,7 @@ def serve(
         api_url=api_url,
         preview_url=preview_url,
         proof=proof,
+        site_forward=site_forward,
     )
     forge_srv = _ForgeSocketServer(str(forge_sock), _ForgeSocketHandler, proxy)
     preview_srv = _PreviewSocketServer(str(preview_sock), _PreviewSocketHandler, proxy)
@@ -980,6 +1017,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--preview-url", default=os.environ.get("CHEESE_PREVIEW_URL", "")
     )
+    parser.add_argument(
+        "--site-forward", default=os.environ.get("CHEESE_SITE_FORWARD", "")
+    )
     args = parser.parse_args(argv)
     return serve(
         platform_dir=Path(args.platform_dir),
@@ -987,6 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
         api_url=args.api_url,
         preview_url=args.preview_url,
         proof=os.environ.get("CHEESE_PROXY_PROOF", ""),
+        site_forward=args.site_forward,
     )
 
 
