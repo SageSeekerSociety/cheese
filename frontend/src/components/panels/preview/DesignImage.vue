@@ -57,6 +57,13 @@ const props = withDefaults(
     transparent?: boolean
     /** 这一张的原始字节：是动图时用它逐帧解，交给浏览器自己放就只能看不能翻。 */
     gifBytes?: ArrayBuffer | null
+    /**
+     * 宿主给了这张图一块定高的地方（工作面板的预览格）。
+     *
+     * 给了才有「适应视口」这一档、打开时也落在这一档；嵌在一段按内容长高的正文里
+     * （文件详情、版本对比）没有高可适应，只摆「适应宽度」和「实际像素」。
+     */
+    fitsHeight?: boolean
   }>(),
   {
     selectionEnabled: true,
@@ -67,6 +74,7 @@ const props = withDefaults(
     activeMark: null,
     transparent: false,
     gifBytes: null,
+    fitsHeight: false,
   }
 )
 const emit = defineEmits<{
@@ -148,6 +156,7 @@ const {
   image,
   adjust: () => adjust.adjust.value,
   crop: () => layoutCrop.value,
+  fitsHeight: () => props.fitsHeight,
 })
 
 /** 读这张图那两件：取色、量距离。 */
@@ -424,6 +433,7 @@ watch(
     <DesignViewToolbar
       :scale="scale"
       :mode="zoomMode"
+      :fits-height="fitsHeight"
       :adjust="adjust.adjust.value"
       :edited="adjust.edited.value"
       :cropping="adjust.cropping.value"
@@ -461,8 +471,10 @@ watch(
     />
     <!-- Status lines, not a form's result: a <p> with the live-region role says so, where <output> would want a label. -->
     <p v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</p>
-    <p v-if="selectedRegion" class="t-meta design-image__region" role="status">
-      {{ t('design.selectedRegion', selectedRegion) }}
+    <!-- 没选的时候也占着这一行：选中一块时这行要是才长出来，下面的图格就矮一截，「适应视口」
+         跟着把图缩一档，刚框好的那块和旁边的说明卡都挪了位。 -->
+    <p class="t-meta design-image__region" role="status">
+      <template v-if="selectedRegion">{{ t('design.selectedRegion', selectedRegion) }}</template>
     </p>
     <div
       ref="viewport"

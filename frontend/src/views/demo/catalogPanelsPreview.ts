@@ -727,8 +727,9 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelDesignImage.s1.note')
         },
         props: { src: PREVIEW_IMAGE_SRC, alt: '示例图', identity: 'demo.png' },
-        // 缩放档位那一栏在第一行：认它最左那一档的名字。
-        expect: '适应视口',
+        // 缩放档位那一栏在第一行：认它最左那一档的名字。这里没给 fitsHeight（预览站的格子
+        // 没有定高），所以最左是「适应宽度」。
+        expect: '适应宽度',
       },
     ],
   },

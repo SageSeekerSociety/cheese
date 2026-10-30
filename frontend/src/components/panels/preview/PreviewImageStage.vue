@@ -66,6 +66,7 @@ const emit = defineEmits<{
       :active-mark="activeMark"
       :transparent="transparent"
       :gif-bytes="imageRegion.snapshot.value?.bytes ?? null"
+      fits-height
       @region="emit('region', $event)"
       @annotate="emit('annotate', $event)"
       @mark="emit('mark', $event)"
