@@ -23,7 +23,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
-import { runRecordOf, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { runRecordOf, streamAt, threadStatusOf } from '../../components/room/composables/useRunRecords'
 import { renderNoticeMessage } from '../../lib/noticeText'
 import { ANNOUNCED, SNAPSHOT_RESOURCES } from '../chatPanelContract'
 import { applyRoomState } from '../useRoomResync'
@@ -112,7 +112,7 @@ export function usePanelSocket(deps: {
       }
       deps.tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
-      sendOnSocket({ type: 'sync', asked: deps.runRecords.asking() })
+      sendOnSocket({ type: 'sync' })
       deps.flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
@@ -137,7 +137,7 @@ export function usePanelSocket(deps: {
   }
   function verifyWorking() {
     // 没连上时 `send` 自己就不发；这条只决定「还有没有必要问」。
-    if (deps.awaitingReply.value) sendOnSocket({ type: 'sync', asked: deps.runRecords.asking() })
+    if (deps.awaitingReply.value) sendOnSocket({ type: 'sync' })
   }
   watch(deps.awaitingReply, (working) => {
     stopVerifier()
@@ -202,7 +202,7 @@ export function usePanelSocket(deps: {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
     if (recorded) {
-      deps.runRecords.receive(recorded)
+      deps.runRecords.receive(recorded, streamAt(frame))
       toSite(recorded)
     }
     const told = threadStatusOf(frame)

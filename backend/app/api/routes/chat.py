@@ -233,7 +233,9 @@ async def rooms_live(
                 # Not (yet) watching this room: nothing to sync or type into.
                 continue
             if kind == "sync":
-                asked = payload.get("asked")
+                # Taken before the read: a run record numbered after it may be
+                # missing from the read, and the page keeps what it heard.
+                read_at = broker.books_read()
                 async with chat_service.session_factory() as session:
                     resumes = await turn_resume.waiting(session, topic_id)
                 await send(
@@ -245,10 +247,8 @@ async def rooms_live(
                         "agents": broker.activity.turn_agents(topic),
                         "members": broker.activity.snapshot(topic),
                         "resumes": resumes,
-                        # Which `sync` this answers: frames published while
-                        # the resumes were read reach the client first, and
-                        # it keeps what it heard after asking.
-                        "asked": asked if isinstance(asked, int) else None,
+                        "at": read_at,
+                        "stream": broker.stream,
                     }
                 )
                 continue

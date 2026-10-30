@@ -202,7 +202,7 @@ export function applyRoomState(
 ) {
   room.turns.reconcile(frame.turn_ids, frame.since, frame.agents)
   for (const id of frame.turn_ids) room.runRecords.turnBegan(id)
-  room.runRecords.resumesNow(frame.resumes, frame.asked)
+  room.runRecords.resumesNow(frame.resumes, { stream: frame.stream, at: frame.at })
   room.activity.snapshot(frame.members)
   room.liveSteps.keepOnly(new Set(Object.values(frame.agents ?? {})))
   room.typing.keepTurns(new Set(frame.turn_ids))

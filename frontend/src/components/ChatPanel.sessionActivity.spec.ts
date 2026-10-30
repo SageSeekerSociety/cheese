@@ -107,9 +107,9 @@ async function flush() {
 const RESUME_DUE = '2026-10-30T19:20:00Z'
 const RESUME_HINT = () => `约 ${clockTime(Date.parse(RESUME_DUE))} 自动重试`
 
-/** 自动重试的一步（排上、开始），一条运行记录。 */
-function resumeRecord(event: string, id: string, meta: Record<string, unknown> = {}): Block {
-  return {
+/** 自动重试的一步（排上、开始）：一条运行记录，排在后端发出的第 `at` 帧。 */
+function resumeFrame(event: string, id: string, at: number, meta: Record<string, unknown> = {}): WsServerFrame {
+  const record: Block = {
     id,
     conversation_id: topic.id,
     kind: 'event',
@@ -120,6 +120,7 @@ function resumeRecord(event: string, id: string, meta: Record<string, unknown> =
     meta: { event_type: event, seat: 'cheese-a', resume_id: 'resume-1', ...meta },
     created_at: '2026-10-30T19:00:05Z',
   }
+  return { type: 'run_record', record, at, stream: 'backend' }
 }
 
 beforeEach(() => {
@@ -181,16 +182,16 @@ describe('session activity', () => {
       // 一句话都没再说：结束帧不会来了，页面自己核一次。
       socket.sent.length = 0
       vi.advanceTimersByTime(30_000)
-      expect(socket.sent).toContainEqual(expect.objectContaining({ type: 'sync' }))
+      expect(socket.sent).toContainEqual({ type: 'sync' })
 
-      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], asked: null })
+      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], at: 0, stream: 'backend' })
       await flush()
       expect(view.emitted('working')?.at(-1)).toEqual([false])
 
       // 没有活在跑了，就不再问了。
       socket.sent.length = 0
       vi.advanceTimersByTime(60_000)
-      expect(socket.sent).not.toContainEqual(expect.objectContaining({ type: 'sync' }))
+      expect(socket.sent).not.toContainEqual({ type: 'sync' })
     } finally {
       vi.useRealTimers()
     }
@@ -323,49 +324,53 @@ describe('session activity', () => {
           since: '2026-10-30T19:00:00Z',
         },
       ],
-      asked: null,
+      at: 1,
+      stream: 'backend',
     })
     await flush()
     expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
 
-    socket.emit({ type: 'run_record', record: resumeRecord('turn_resume_started', 'started-1') })
+    socket.emit(resumeFrame('turn_resume_started', 'started-1', 2))
     await flush()
     expect(view.container.textContent).not.toContain(RESUME_HINT())
   })
 
   // 服务端答 sync 时先读库、再发现场。读库之后才排上的那一次自动重试，它的运行记录
   // 先到页面；这一轮随后结束、不再定时核对，那份读早了的现场不能把它抹掉。
-  it('a room_state read before a retry was scheduled does not erase the wait heard after asking', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
-    try {
-      const vuetify = createVuetify({ components, directives })
-      const view = render(ChatPanel, {
-        props: { topic, topicList: [topic], showComposer: true },
-        global: { plugins: [vuetify, i18n] },
-      })
-      await flush()
+  it('a room_state read before a retry was scheduled does not erase that wait', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
 
-      const socket = FakeWebSocket.instances.at(-1)!
-      socket.emit({ type: 'turn_started', turn_id: 'failing' })
-      await flush()
-      socket.sent.length = 0
-      vi.advanceTimersByTime(30_000)
-      const sync = socket.sent.find((m) => m.type === 'sync') as { type: 'sync'; asked?: number } | undefined
-      expect(sync).toBeDefined()
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'failing' })
+    socket.emit(resumeFrame('turn_resume_wait', 'wait-1', 7, { due_at: RESUME_DUE }))
+    socket.emit({ type: 'turn_finished', turn_id: 'failing' })
+    socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], at: 6, stream: 'backend' })
+    await flush()
+    expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
+  })
 
-      socket.emit({ type: 'run_record', record: resumeRecord('turn_resume_wait', 'wait-1', { due_at: RESUME_DUE }) })
-      socket.emit({ type: 'turn_finished', turn_id: 'failing' })
-      socket.emit({
-        type: 'room_state',
-        turn_ids: [],
-        members: [],
-        resumes: [],
-        asked: sync?.asked ?? null,
-      })
-      await flush()
-      expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
-    } finally {
-      vi.useRealTimers()
-    }
+  // 重连时，服务端先发 subscribed、再补发这一轮里留着的旧帧；页面在 subscribed 时就
+  // 问了现场，补发的帧和那份现场谁先到都有可能。补发的那条排上记录说的队友已经移出
+  // 房间，现场说不欠了：它不该再回来。
+  it('a replayed wait from before the room_state does not bring back a retry the room no longer owes', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'other' })
+    socket.emit({ type: 'room_state', turn_ids: ['other'], members: [], resumes: [], at: 6, stream: 'backend' })
+    socket.emit(resumeFrame('turn_resume_wait', 'wait-1', 3, { due_at: RESUME_DUE }))
+    socket.emit({ type: 'turn_finished', turn_id: 'other' })
+    await flush()
+    expect(view.container.textContent).not.toContain(RESUME_HINT())
   })
 })

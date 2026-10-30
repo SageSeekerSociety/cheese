@@ -60,6 +60,23 @@ function scheduled(record: Block): ResumeWait | null {
   }
 }
 
+/** 一帧在后端进程发出的帧里排第几（`stream` 是这套数的名字）。 */
+export interface StreamAt {
+  stream: string
+  at: number
+}
+
+/** 运行记录那一帧带的位置；没带的是 null。 */
+export function streamAt(frame: unknown): StreamAt | null {
+  const f = frame as { stream?: unknown; at?: unknown } | null
+  return typeof f?.stream === 'string' && typeof f.at === 'number' ? { stream: f.stream, at: f.at } : null
+}
+
+/** `a` 排在 `b` 之后：同一套数里号更大。不同进程的号没法比，算不上。 */
+function after(a: StreamAt | null, b: StreamAt | null): boolean {
+  return a !== null && b !== null && a.stream === b.stream && a.at > b.at
+}
+
 /** 结束了的那一次自动重试（开始了或取消了）的 id；别的记录是 null。 */
 function settled(record: Block): string | null {
   const m = record.meta
@@ -85,18 +102,16 @@ export function useRunRecords() {
   const records = ref<Block[]>([])
   // 已经开始或结束了的轮次：它们的排队记录不再说「排队中」。
   const begun = ref<Set<string>>(new Set())
-  // 每位队友还欠着的那一次自动重试（按座位），连同是在听到第几件自动重试的事时知道的
-  // （`heard`；`room_state` 给的记 -1）。
-  const resumes = ref<Map<string, { wait: ResumeWait; heardAt: number }>>(new Map())
+  // 每位队友还欠着的那一次自动重试（按座位），连同说它的那条运行记录的位置
+  // （`room_state` 给的没有，记 null）。
+  const resumes = ref<Map<string, { wait: ResumeWait; at: StreamAt | null }>>(new Map())
   // 已经开始或取消了的自动重试：晚到的那份 `room_state`、补发的排上记录不再把它说回来。
   let ended = new Set<string>()
-  // 到现在为止听到的自动重试的事（排上、开始、取消）有几件。
-  let heard = 0
-  // 还没回答的 `sync`：问的那一刻 `heard` 是几。
-  let asks = new Map<number, number>()
-  let lastAsk = 0
+  // 最近那份 `room_state` 读库之前的位置：排在它前面的运行记录，那份现场已经算进去了。
+  let read: StreamAt | null = null
 
-  function receive(record: Block) {
+  /** 一条运行记录，`position` 是它那一帧的位置（`streamAt`）。 */
+  function receive(record: Block, position: StreamAt | null = null) {
     const at = records.value.findIndex((r) => r.id === record.id)
     const next = records.value.slice()
     if (at >= 0) next[at] = record
@@ -104,34 +119,27 @@ export function useRunRecords() {
     records.value = next.length > KEPT ? next.slice(next.length - KEPT) : next
     const wait = scheduled(record)
     const over = settled(record)
-    if (wait || over) heard += 1
-    if (wait && !ended.has(wait.resume_id))
-      resumes.value = new Map(resumes.value).set(wait.seat, { wait, heardAt: heard })
+    // 重连时补发的旧记录排在最近那份现场之前：它说的那一次，现场已经算过了。
+    const stale = position !== null && read !== null && position.stream === read.stream && position.at <= read.at
+    if (wait && !ended.has(wait.resume_id) && !stale)
+      resumes.value = new Map(resumes.value).set(wait.seat, { wait, at: position })
     if (over) {
       ended = new Set(ended).add(over)
       resumes.value = new Map([...resumes.value].filter(([, w]) => w.wait.resume_id !== over))
     }
   }
 
-  /** 要发一次 `sync` 了：它带的号，回答它的 `room_state` 会原样带回来。 */
-  function asking(): number {
-    lastAsk += 1
-    asks = new Map(asks).set(lastAsk, heard)
-    return lastAsk
-  }
-
   /**
-   * `room_state` 说的此刻还欠着的全部自动重试，换掉手上那一份 —— 问过之后才听到的
-   * 不换：服务端读库在先、把这份现场发出来在后，中间排上的那一次已经先到了，这份
-   * 现场里还没有它。
+   * `room_state` 说的此刻还欠着的全部自动重试（`at` 是它读库之前的位置），换掉手上那
+   * 一份 —— 排在它之后的运行记录说的不换：服务端读库在先、发这一帧在后，中间排上的
+   * 那一次先到了，这份现场里还没有它。
    */
-  function resumesNow(owed: ResumeWait[], asked: number | null) {
-    const mark = asked === null ? undefined : asks.get(asked)
-    if (asked !== null) asks = new Map([...asks].filter(([id]) => id > asked))
-    const next = new Map<string, { wait: ResumeWait; heardAt: number }>()
-    for (const wait of owed) if (!ended.has(wait.resume_id)) next.set(wait.seat, { wait, heardAt: -1 })
-    if (mark !== undefined) for (const [seat, w] of resumes.value) if (w.heardAt > mark) next.set(seat, w)
+  function resumesNow(owed: ResumeWait[], at: StreamAt) {
+    const next = new Map<string, { wait: ResumeWait; at: StreamAt | null }>()
+    for (const wait of owed) if (!ended.has(wait.resume_id)) next.set(wait.seat, { wait, at: null })
+    for (const [seat, w] of resumes.value) if (after(w.at, at)) next.set(seat, w)
     resumes.value = next
+    read = at
   }
 
   function turnBegan(id: string) {
@@ -144,8 +152,7 @@ export function useRunRecords() {
     begun.value = new Set()
     resumes.value = new Map()
     ended = new Set()
-    heard = 0
-    asks = new Map()
+    read = null
   }
 
   /**
@@ -196,5 +203,5 @@ export function useRunRecords() {
     return lines
   }
 
-  return { records, receive, asking, resumesNow, turnBegan, reset, forgetWaiting, waitingLines }
+  return { records, receive, resumesNow, turnBegan, reset, forgetWaiting, waitingLines }
 }

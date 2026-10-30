@@ -4,8 +4,7 @@ import type { MemberActivity } from '@/lib/memberActivity'
 
 // The client sends the liveness probe, `typing` (I am composing here; `active:
 // false` = stopped; who is the socket's credential) and `sync` — a message is a POST.
-// `sync` carries `asked`, a number the answering `room_state` echoes: which question it answers.
-export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean } | { type: 'sync'; asked: number }
+export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean } | { type: 'sync' }
 
 /** 后端还欠着的一次自动重试，`room_state` 帧里的那一项（turn_resume.waiting）。 */
 export interface ResumeWait {
@@ -34,8 +33,10 @@ export interface RoomStateFrame {
   /** 此刻还欠着的自动重试：哪位队友、约几点重试。 */
   resumes: ResumeWait[]
   /**
-   * 回答的是哪一次 `sync`（它带的 `asked`）。服务端读库要时间，读的那一刻之后发出的帧
-   * 可能先到；页面拿它认出哪些是问过之后才听到的、比这份现场新。
+   * 读库之前，这个后端进程发出的帧排到了第几（`stream` 是这套数的名字，运行记录带的
+   * 同一套）。排在它之后的运行记录这份现场里可能还没有；排在它之前的，现场已经算进去了，
+   * 重连时补发的旧记录也在其中。
    */
-  asked: number | null
+  at: number
+  stream: string
 }
