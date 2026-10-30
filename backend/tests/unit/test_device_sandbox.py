@@ -598,6 +598,19 @@ def site_forge(tmp_path, monkeypatch):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
+            if self.path == "/api/live":
+                if self.headers.get("Upgrade", "").lower() != "websocket":
+                    self._send(400, b"missing upgrade")
+                    return
+                self.send_response(101)
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Upgrade", "websocket")
+                self.end_headers()
+                self.wfile.flush()
+                self.wfile.write(self.rfile.read(4))
+                self.wfile.flush()
+                self.close_connection = True
+                return
             auth = self.headers.get("Authorization") or ""
             seen.append((self.path, auth))
             if auth not in expected:
@@ -738,3 +751,36 @@ def test_fj_in_a_room_reaches_a_forge_on_the_forwarded_site_with_its_credential(
         said = room.bash("fj repo view 2>&1; echo exit=$?")
     assert said.endswith("o/r\nexit=0"), said
     assert not any("placeholder" in auth for _, auth in seen)
+
+
+def test_a_room_keeps_a_live_connection_to_the_site_beside_its_forge(site_forge, rooms):
+    """An upgraded site connection still exchanges bytes when the site and
+    forge share a hostname and use the credential proxy."""
+    forward, _ = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    check = room.home / "site-live.py"
+    check.write_text(
+        "import os, socket, ssl, urllib.parse\n"
+        "proxy = urllib.parse.urlsplit(os.environ['HTTPS_PROXY'])\n"
+        "sock = socket.create_connection((proxy.hostname, proxy.port), timeout=5)\n"
+        f"sock.sendall(b'CONNECT {SITE}:443 HTTP/1.1\\r\\nHost: {SITE}\\r\\n\\r\\n')\n"
+        "def headers(sock):\n"
+        "    data = b''\n"
+        "    while not data.endswith(b'\\r\\n\\r\\n'):\n"
+        "        part = sock.recv(1)\n"
+        "        assert part, data\n"
+        "        data += part\n"
+        "    return data\n"
+        "assert b' 200 ' in headers(sock)\n"
+        f"sock = ssl.create_default_context().wrap_socket(sock, server_hostname='{SITE}')\n"
+        f"sock.sendall(b'GET /api/live HTTP/1.1\\r\\nHost: {SITE}\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n')\n"
+        "reply = headers(sock)\n"
+        "assert b' 101 ' in reply, reply\n"
+        "sock.sendall(b'ping')\n"
+        "assert sock.recv(4) == b'ping'\n"
+        "sock.close()\n"
+        "print('live connection exchanged ping')\n"
+    )
+    with _platform_socket_of(room):
+        said = room.bash(f"{sys.executable} {check} 2>&1; echo exit=$?")
+    assert said.endswith("live connection exchanged ping\nexit=0"), said

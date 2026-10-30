@@ -431,10 +431,10 @@ def _is_private_destination(host: str) -> bool:
     return False
 
 
-def _pipe(src: socket.socket, dst: socket.socket) -> None:
+def _pipe(src: socket.socket, dst: socket.socket, reader=None) -> None:
     try:
         while True:
-            data = src.recv(65536)
+            data = reader.read1(65536) if reader is not None else src.recv(65536)
             if not data:
                 break
             dst.sendall(data)
@@ -445,8 +445,8 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
             dst.shutdown(socket.SHUT_WR)
 
 
-def _splice(a: socket.socket, b: socket.socket) -> None:
-    t1 = threading.Thread(target=_pipe, args=(a, b), daemon=True)
+def _splice(a: socket.socket, b: socket.socket, reader=None) -> None:
+    t1 = threading.Thread(target=_pipe, args=(a, b, reader), daemon=True)
     t2 = threading.Thread(target=_pipe, args=(b, a), daemon=True)
     t1.start()
     t2.start()
@@ -494,6 +494,43 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
 
     def _handle_one(self) -> None:
         proxy: ForgeProxyRuntime = self.server.proxy  # type: ignore[attr-defined]
+        data = proxy.platform.forge_data() or {}
+        clean_path = urllib.parse.urlsplit(self.path).path or "/"
+        forge_api = urllib.parse.urlsplit(data.get("api_url") or "")
+        forge_prefix = forge_api.path.removesuffix("/api/v1").rstrip("/")
+        if (
+            data.get("kind") == "forgejo"
+            and forge_api.hostname == self.target_host
+            and forge_prefix
+            and clean_path != forge_prefix
+            and not clean_path.startswith(forge_prefix + "/")
+        ):
+            # The site's pages and live connections share the forge's host.
+            # Keep their headers and streams intact, without adding credentials.
+            connection = _DialledConnection(
+                self.target_host,
+                self.target_port,
+                dial=proxy.dial,
+                tls=self.target_scheme == "https",
+                timeout=10,
+            )
+            try:
+                connection.connect()
+                upstream = connection.sock
+                request_headers = "".join(
+                    f"{key}: {value}\r\n" for key, value in self.headers.items()
+                )
+                upstream.sendall(
+                    self.raw_requestline + request_headers.encode("latin-1") + b"\r\n"
+                )
+                self.request.settimeout(None)
+                upstream.settimeout(None)
+                # The HTTP reader may already hold bytes after the headers.
+                _splice(self.request, upstream, self.rfile)
+            finally:
+                self.close_connection = True
+                connection.close()
+            return
         body = self._read_body()
         if is_pr_merge_request(self.command, self.path, body):
             payload = json.dumps({"message": MERGE_REFUSED_MESSAGE}).encode("utf-8")
@@ -506,12 +543,10 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
 
-        data = proxy.platform.forge_data() or {}
         token = data.get("token") or ""
         if token == PLACEHOLDER_TOKEN:
             token = ""
         username = data.get("username") or "x-access-token"
-        clean_path = urllib.parse.urlsplit(self.path).path or "/"
         is_git = ".git/" in clean_path or clean_path.endswith(".git")
 
         headers: dict[str, str] = {}
