@@ -61,13 +61,14 @@ from app.domain.memory.files import (
     MEMORY_ROOT,
     check_scoped_path,
     conflict_path,
+    private_owner,
     rejected_path,
 )
 from app.domain.memory.tree import (
     BULK_DELETE_MIN,
     BULK_DELETE_RATIO,
-    prefixes_of,
     sync_tree,
+    withdrawn_prefixes,
 )
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
@@ -598,6 +599,9 @@ class Runner(runner.Runner[Journal]):
         # What each tool call in flight was, by its id, for the records that
         # bring its result back (``_stamp_calls``).
         self.calls: dict[str, dict] = {}
+        # The calls on someone's private memory file still waiting for their
+        # result: call id → owner (``_private_calls``).
+        self.private_calls: dict[str, str] = {}
         # Tool calls made on the main thread; an agent started by one of them
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
@@ -1092,6 +1096,35 @@ class Runner(runner.Runner[Journal]):
                 block["arguments"] += str(delta.get("partial_json") or "")
                 self.shown()
 
+    def _private_calls(self, message: dict) -> dict[str, str]:
+        """The calls in this record on one person's private memory file, and
+        the results in it that answer such a call: call id → owner, stamped
+        on the record as ``cheese.private``.
+
+        The result says nothing of the file it came from, so the call is what
+        names the owner, and the result is matched to it here, where both
+        pass in order: a page read later can hold either one without the
+        other. Who may read what is stamped is `session_record.privacy`'s."""
+        content = (message.get("message") or {}).get("content")
+        marked: dict[str, str] = {}
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                given = block.get("input")
+                arguments = given if isinstance(given, dict) else {}
+                owner = private_owner(
+                    arguments.get("file_path") or arguments.get("notebook_path")
+                )
+                if owner is not None:
+                    self.private_calls[str(block.get("id"))] = owner
+                    marked[str(block.get("id"))] = owner
+            elif block.get("type") == "tool_result":
+                call = str(block.get("tool_use_id"))
+                if (owner := self.private_calls.pop(call, None)) is not None:
+                    marked[call] = owner
+        return marked
+
     def _watch_marks(self, message: dict) -> dict:
         """What one transcript-shaped record says to the stuck-work clocks,
         and the calls whose results it brings back (``cheese.calls``)."""
@@ -1196,6 +1229,8 @@ class Runner(runner.Runner[Journal]):
                         self.main_calls.add(str(block.get("id")))
             if returned := self._watch_marks(message):
                 stamp["calls"] = returned
+            if private := self._private_calls(message):
+                stamp["private"] = private
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
@@ -1475,18 +1510,38 @@ class Runner(runner.Runner[Journal]):
 
         基线从**记忆树自己的根**上读、也写回那里（`MEMORY_BASELINE`）：它和这棵树
         同生同死，所以「树没了」不会被读成「会话删光了这棵树」。
+
+        上一次铺下、这一次没点名的 private（`tree.withdrawn_prefixes`）不在这里
+        合：它们连同基线原样交回去（``withdrawn``），由平台替主人合进数据库，再从
+        这棵树上整个拿走——一间房的座位共用这棵树，而这一轮只给这一位看。
         """
         scopes = memory_scopes(params)
         root = memory_root()
         baseline = _recall_baseline(root)
-        managed = prefixes_of(scopes, baseline)
-        disk, emptied = self.read_memory(managed)
-        outcome = sync_tree(
-            scopes=scopes,
-            disk=disk,
-            baseline=baseline,
-            bases=_recall_baseline(root, MEMORY_BASES),
-        )
+        bases = _recall_baseline(root, MEMORY_BASES)
+        withdrawn = withdrawn_prefixes(scopes, baseline)
+        disk, emptied = self.read_memory(set(scopes) | withdrawn)
+        handed = {
+            prefix: {
+                "files": {
+                    path[len(prefix) + 1 :]: content
+                    for path, content in disk.items()
+                    if path.startswith(f"{prefix}/")
+                },
+                "baseline": {
+                    path: mark
+                    for path, mark in baseline.items()
+                    if path.startswith(f"{prefix}/")
+                },
+                "bases": {
+                    path: text
+                    for path, text in bases.items()
+                    if path.startswith(f"{prefix}/")
+                },
+            }
+            for prefix in withdrawn
+        }
+        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline, bases=bases)
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
             # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
@@ -1513,6 +1568,12 @@ class Runner(runner.Runner[Journal]):
                 continue
             with contextlib.suppress(OSError):
                 (root / path).unlink(missing_ok=True)
+        # 交回去的那几棵连同旁路文件（冲突的、没收的那几版）一起拿走：留下的哪一
+        # 个都是那个人的 private，而这棵树这一轮是别人的。
+        for prefix in withdrawn:
+            owner = prefix.split("/", 1)[1]
+            if owner not in ("", ".", "..") and "/" not in owner:
+                shutil.rmtree(root / prefix, ignore_errors=True)
         self._keep_refused(root, outcome.refused)
         _write_memory(root, MEMORY_BASES, json.dumps(outcome.bases))
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
@@ -1525,6 +1586,7 @@ class Runner(runner.Runner[Journal]):
             "rejected": outcome.rejected,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
+            "withdrawn": handed,
         }
 
     @staticmethod

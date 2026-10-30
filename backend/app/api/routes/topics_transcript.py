@@ -9,11 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.session_record_rows import (
-    hidden_private_memory,
-    no_platform_reminders,
-    text_of,
-)
+from app.api.session_record_rows import no_platform_reminders, text_of
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -108,6 +104,7 @@ async def _newer_page(
         after=forward,
         author=native_author,
         limit=limit + 1,
+        reader=reader,
     )
     items = [as_block(item, place.conversation_id) for item in raw.items]
     for item in items:
@@ -145,7 +142,7 @@ async def _newer_page(
     # 一条都没有（读者已经追上了）时把进来的那个游标原样还回去：不还的话读者手上
     # 的游标就被清空了，下一次只能整页重读——正是这一路要消掉的那件事。
     newest = taken[-1]["meta"]["cursor"] if taken else service.encode_cursor(forward)
-    shown = hidden_private_memory(hide_platform_reminders(taken), reader)
+    shown = hide_platform_reminders(taken)
     starts = await turn_starts(
         db,
         place.conversation_id,
@@ -227,6 +224,7 @@ async def topic_transcript(
         # retried. `deferred` tells the reader the page skipped the archive so
         # it re-reads (without `resident`) to fill it in.
         resident_budget_s=SITE_FIRST_PAGE_BUDGET_S if resident else None,
+        reader=actor.handle,
     )
     items = [as_block(item, place.conversation_id) for item in raw.items]
     for item in items:
@@ -271,7 +269,7 @@ async def topic_transcript(
     # 交出去的那几条里最后一条的游标：读者接着问「从这儿往后有什么」用的就是它。
     # 藏在平台提醒后面取，理由同 `_newer_page`：一页全是提醒时游标就不动了。
     newest = taken[-1]["meta"]["cursor"] if taken else None
-    items = hidden_private_memory(hide_platform_reminders(taken), actor.handle)
+    items = hide_platform_reminders(taken)
     starts = await turn_starts(
         db,
         place.conversation_id,

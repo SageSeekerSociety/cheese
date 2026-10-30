@@ -78,7 +78,7 @@ class IndexSection:
     prefix: str
     text: str
     #: private 那一份的主人；team 的是 None。注入时按它把这一段圈起来，现场只给
-    #: 本人看（`opening.PRIVATE_MEMORY_OPEN`）。
+    #: 本人看（`session_record.privacy.private_span`）。
     owner: str | None = None
 
 
@@ -356,7 +356,7 @@ async def memory_index(
     **只读这一位的。** 一间多人的房间里，这一轮的 agent 说的话、做的事房间里的人都
     看得到，所以别人的 private 不进来（产品决定，2026-10-30）。private 只有本人看得
     见（`routes/memory_files._readable`），注入进来的这一段在现场里也只给本人看
-    （`opening.PRIVATE_MEMORY_OPEN`）。
+    （`session_record.privacy.private_span`）。
 
     超预算照样注入（截断后），并在注入块里说清截断过：静默截断读起来就是「索引
     就这么长」，于是没有人会去修它。

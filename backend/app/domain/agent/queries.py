@@ -490,10 +490,11 @@ async def _say_memory_change(
     change: MemoryChange,
     scopes: list[tuple[MemoryFileScope, str | None]],
     *,
-    writer_room: uuid.UUID,
+    writer_room: uuid.UUID | None,
 ) -> None:
     """改动记成运行记录：team 的记在写它的那段对话（`writer_room`）的现场里，
-    private 的记在那个人的私聊里。
+    private 的记在那个人的私聊里。`writer_room` 为 None：写它的那一轮已经不在
+    这次对账的座位上（`memory.session.apply_withdrawn`），只记，不说给谁。
 
     不进对话：一条记忆是 agent 写下的一份观察，没有人在等它，想知道这一轮改了
     哪几条的人去现场看。两棵树分开记，因为读它们的人不是一批：把某个人 private
@@ -537,6 +538,8 @@ async def _say_memory_change(
             await keep_record(session, conversation_id=room, content=content, meta=meta)
     # `writer_room` is the writer's conversation: a room's line, or a task or
     # 支线 inside one, which `announce` reaches through its room.
+    if writer_room is None:
+        return
     writer = await PlaceResolver(session).conversation(writer_room)
     if told and writer is not None:
         await announce(

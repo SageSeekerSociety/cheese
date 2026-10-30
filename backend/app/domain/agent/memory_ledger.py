@@ -42,7 +42,13 @@ from app.domain.memory.dream_prompt import (
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore, private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
-from app.domain.memory.session import apply_tree, prefix_of_scope, read_tree
+from app.domain.memory.session import (
+    MemoryChange,
+    apply_tree,
+    apply_withdrawn,
+    prefix_of_scope,
+    read_tree,
+)
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.models import ResourceUsage
@@ -150,8 +156,8 @@ class MemoryLedger:
         private（`turn_speaker`）。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
-        没点到的 private 既不铺也不收，数据库里那一份不会被这一次对账碰掉；会话目
-        录里上一轮铺下的别人那一份，会话那一侧会收走（`tree.prefixes_of`）。多人
+        没点到的 private 不铺下去；会话目录里上一轮铺下的别人那一份，会话交回来、
+        从树上拿走，平台替那个人收下（`tree.withdrawn_prefixes`）。多人
         的房间里别人的 private 不进这一轮（产品决定，2026-10-30），所以只点这个座
         位自己的那一位，不点同一间房里别的座位的。
         """
@@ -161,6 +167,18 @@ class MemoryLedger:
             (MemoryFileScope.team, None),
             *([(MemoryFileScope.private, speaker)] if speaker else []),
         ]
+
+    def _writer_of(self, room_id: uuid.UUID, prefix: str) -> str:
+        """这间房里最近一轮答的是 ``prefix`` 那个人的座位，署的是谁的名；不知道
+        就是 system。"""
+        for turn in reversed(self._turns.values()):
+            if (
+                turn.room_id == room_id
+                and turn.speaker
+                and prefix_of_scope(MemoryFileScope.private, turn.speaker) == prefix
+            ):
+                return turn.acting or "system"
+        return "system"
 
     async def sync(self, session: SessionRef) -> None:
         """对一遍这个座位的会话的记忆账；同一间房的两场对账排队，不交错。
@@ -216,15 +234,35 @@ class MemoryLedger:
                 scopes=collected,
                 updated_by=updated_by,
             )
-            if change.is_empty() and not change.refused and not change.rejected:
-                # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
-                # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
-                return
-            # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
-            await _say_memory_change(
-                db, project_id, change, collected, writer_room=session.conversation_id
-            )
-            await db.commit()
+            # 上一轮那一位的 private，这一次没点名、会话交了回来：替那个人收下
+            # （`memory.session.apply_withdrawn`）。写它的那一轮不在这个座位上，
+            # 所以只记进那个人的私聊，不说给这一轮的 agent。
+            said = _said(change)
+            for prefix, given in (answer.get("withdrawn") or {}).items():
+                handed, owners = await apply_withdrawn(
+                    db,
+                    project_id,
+                    {prefix: given},
+                    updated_by=self._writer_of(topic_id, prefix),
+                )
+                if _said(handed):
+                    said = True
+                    await _say_memory_change(
+                        db, project_id, handed, owners, writer_room=None
+                    )
+            if _said(change):
+                # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
+                await _say_memory_change(
+                    db,
+                    project_id,
+                    change,
+                    collected,
+                    writer_room=session.conversation_id,
+                )
+            # 一次对账大部分时候什么都没变：那就什么都不说，也没有可提交的。这条
+            # 事件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
+            if said:
+                await db.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 
@@ -533,3 +571,8 @@ def _alert_refused(
         lines,
         key=f"memory-dream-refused:{project_id}",
     )
+
+
+def _said(change: MemoryChange) -> bool:
+    """这一份改动有没有要说的：改了什么，或者有被盖回去、没收下的。"""
+    return not change.is_empty() or bool(change.refused or change.rejected)

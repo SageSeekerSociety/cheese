@@ -363,3 +363,67 @@ async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers
     assert (tree / "private" / "bob" / INDEX_NAME).exists()
     assert not (tree / "private" / "alice" / INDEX_NAME).exists()
     assert (tree / "team" / INDEX_NAME).exists()
+
+
+async def test_a_private_memory_written_before_another_seat_reconciles_reaches_its_owner(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Two teammates in one room answer two people over the room's one tree.
+    What alice's session wrote into her private memory is hers whichever seat
+    reconciles next: when bob's seat takes the tree, her edits reach the
+    platform and leave the disk, and her next turn lays them down again."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    original = "- [她的偏好](note.md) — 原来那一版\n"
+    edited = "- [她的偏好](note.md) — 她这一轮改过的\n"
+    note = (
+        "---\nname: alice-new\ndescription: 新记下的\ntype: feedback\n---\n\n"
+        "alice-unsynced-new-note\n"
+    )
+    async with factory() as session:
+        for owner in ("alice", "bob"):
+            await MemoryFileStore(session).write(
+                project_id=project_id,
+                scope=MemoryFileScope.private,
+                owner_handle=owner,
+                path=INDEX_NAME,
+                content=original,
+                updated_by=owner,
+                expected_version=None,
+            )
+        await session.commit()
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    first = _seat(project_id, room)
+    second = SessionRef(project_id, room, "helper", harness=CLAUDE_CODE)
+    ledger.remember_turn(
+        room, (room, first.agent_handle), acting="cheese", speaker="alice"
+    )
+    ledger.remember_turn(
+        room, (room, second.agent_handle), acting="helper", speaker="bob"
+    )
+    await ledger.sync(first)
+    hers = sessions.tree(room) / "private" / "alice"
+    (hers / INDEX_NAME).write_text(edited, encoding="utf-8")
+    (hers / "alice-new.md").write_text(note, encoding="utf-8")
+
+    await ledger.sync(second)
+
+    assert not (hers / "alice-new.md").exists()
+    assert not (hers / INDEX_NAME).exists()
+    async with factory() as session:
+        store = MemoryFileStore(session)
+        index = await store.get(
+            project_id, MemoryFileScope.private, "alice", INDEX_NAME
+        )
+        written = await store.get(
+            project_id, MemoryFileScope.private, "alice", "alice-new.md"
+        )
+    assert index is not None and index.content == edited
+    assert written is not None and written.content == note
+
+    await ledger.sync(first)
+
+    assert (hers / INDEX_NAME).read_text(encoding="utf-8") == edited
+    assert (hers / "alice-new.md").read_text(encoding="utf-8") == note

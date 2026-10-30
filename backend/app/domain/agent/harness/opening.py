@@ -20,7 +20,8 @@ from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
 from app.domain.memory.files_store import MemoryIndex
-from app.domain.memory.instructions import memory_block, private_memory_section
+from app.domain.memory.instructions import memory_block
+from app.domain.session_record.privacy import private_span
 from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 
@@ -504,9 +505,9 @@ def build_session_opening(
             (section, f"### {section.label}（`{section.prefix}/`）\n{section.text}")
             for section in memory.sections
         )
-        # private 那一段圈起来：现场只给本人看（`private_memory_section`）。
+        # private 那一段圈起来：会话记录只给本人看（`session_record.privacy`）。
         index_text = "\n\n".join(
-            private_memory_section(section.owner, text) if section.owner else text
+            private_span(section.owner, text) if section.owner else text
             for section, text in rendered
         )
         sections["memory"] = memory_block(index_text, memory.warnings)
