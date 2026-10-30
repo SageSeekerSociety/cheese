@@ -1522,7 +1522,7 @@ class Runner(runner.Runner[Journal]):
         临时文件都不是这条规矩的一部分，给它们一个身份等于替 agent 认了一条它没
         写过的记忆。
         """
-        root = memory_root()
+        root = self.memory_root()
         found: dict[str, str] = {}
         emptied: set[str] = set()
         for prefix in sorted(managed):
@@ -1545,6 +1545,10 @@ class Runner(runner.Runner[Journal]):
                     found[path] = content
         return found, emptied
 
+    def memory_root(self) -> Path:
+        """This seat's memory tree: where its launch says (`memory_root`)."""
+        return memory_root()
+
     def sync_memory(self, params: dict) -> dict:
         """对一次账：平台这一份铺下来，会话改过的带回去。
 
@@ -1559,7 +1563,7 @@ class Runner(runner.Runner[Journal]):
         这棵树上整个拿走——这棵树这一轮只给这一位看。
         """
         scopes = memory_scopes(params)
-        root = memory_root()
+        root = self.memory_root()
         baseline = _recall_baseline(root)
         bases = _recall_baseline(root, MEMORY_BASES)
         withdrawn = withdrawn_prefixes(scopes, baseline)

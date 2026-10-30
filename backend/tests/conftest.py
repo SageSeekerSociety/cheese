@@ -357,6 +357,12 @@ class ScriptedSession(Runner):
         )
         self.written: list[dict] = []
 
+    def memory_root(self) -> Path:
+        """This seat's own memory tree, beside its state: a real runner is
+        told its seat's directory by its launch (`runner.memory_root`), and
+        the seats here share one process and its environment."""
+        return self.state.parent / "memory"
+
     async def _write(self, message: dict) -> None:
         self.written.append(message)
         if message.get("type") == "control_request":
