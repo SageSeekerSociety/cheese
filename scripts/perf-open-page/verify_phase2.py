@@ -29,11 +29,12 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 DEFAULT_OUT = HERE / "phase2_ab_evidence.json"
 
 TARGET_PAGES = [
-    "thread",
-    "project-settings",
-    "teams",
-    "team-detail",
-    "settings-connections",
+    "project-library",
+    "project-members",
+    "project-skills",
+    "inbox",
+    "settings-devices",
+    "user-profile",
 ]
 MODES = ["walk", "warm", "cold"]
 
@@ -116,7 +117,7 @@ def main() -> None:
     ap.add_argument("--pages", default=",".join(TARGET_PAGES))
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
-    ap.add_argument("--before-commit", default="1ff126a64926")
+    ap.add_argument("--before-commit", default="4938caef5184")
     ap.add_argument("--after-commit", default="HEAD")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -232,12 +233,17 @@ def main() -> None:
                     _count_matching_apis(s.get("api_timeline", []), lambda u: u == "projects")
                     for s in ok_samples
                 ]
+                address_project_list = [
+                    _count_matching_apis(s.get("api_timeline", []), lambda u: u.startswith("addresses/projects/"))
+                    for s in ok_samples
+                ]
 
                 unbatched_room_calls = int(statistics.median(unbatched_room_list)) if unbatched_room_list else 0
                 hidden_settings_calls = int(statistics.median(hidden_settings_list)) if hidden_settings_list else 0
                 default_model_calls = int(statistics.median(default_model_list)) if default_model_list else 0
                 my_teams_calls = int(statistics.median(my_teams_list)) if my_teams_list else 0
                 projects_calls = int(statistics.median(projects_list)) if projects_list else 0
+                address_project_calls = int(statistics.median(address_project_list)) if address_project_list else 0
 
                 var_summary[variant] = {
                     "n_attempts": len(samples),
@@ -254,6 +260,7 @@ def main() -> None:
                     "default_model_calls": default_model_calls,
                     "my_teams_calls": my_teams_calls,
                     "projects_calls": projects_calls,
+                    "address_project_calls": address_project_calls,
                     "raw_samples": [
                         {
                             "round": s.get("interleaved_round"),
@@ -314,6 +321,10 @@ def main() -> None:
             elif page == "settings-connections" and mode == "warm":
                 guardrail_checks["eliminated_duplicate_projects_fetch"] = (
                     b["projects_calls"] >= 2 and a["projects_calls"] <= 1
+                )
+            elif page in ("project-library", "project-members", "project-skills") and mode == "cold":
+                guardrail_checks["eliminated_cold_address_project_lookup"] = (
+                    b["address_project_calls"] >= 1 and a["address_project_calls"] == 0
                 )
 
             if not all(guardrail_checks.values()):
