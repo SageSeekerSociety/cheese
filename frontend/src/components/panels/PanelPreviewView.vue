@@ -329,6 +329,7 @@ let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
 let anchorRange: Range | null = null
 let anchorPointer: ReturnType<typeof markPointer> | null = null
 const locatorAnchor = ref<LocatorAnchor | null>(null)
+const locatorMaxHeight = ref<number>()
 const locatorRegionElement = ref<HTMLElement | null>(null)
 /** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
 const locatorFromSelection = ref(false)
@@ -347,6 +348,7 @@ function placeLocator() {
   placing = requestAnimationFrame(() => {
     placing = 0
     const panel = panelElement.value
+    locatorMaxHeight.value = panel?.clientHeight
     // 图上框出来的那一块没有文字选区，也没有「松手的那一点」那么窄：位置取那块选区
     // 在屏幕上的实际矩形（`.design-image__selection`），卡片才落在这一块旁边而不是角上。
     locatorAnchor.value =
@@ -852,6 +854,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :can-ask-personal="!!props.askPersonal"
       :comment-error="commentError"
       :anchor="locatorAnchor"
+      :max-height="locatorMaxHeight"
       :arm-first="locatorFromSelection"
       @send="sendLocator"
       @personal="sendPersonalLocator"
