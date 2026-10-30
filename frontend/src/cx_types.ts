@@ -37,7 +37,7 @@ export interface Project {
   team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
   team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
   /** 我在这个项目里的位置和能做的事（#3830），按钮按它给，后端再判一次。 */
-  my_role?: 'owner' | 'admin' | 'member' | 'mentor' | null
+  my_role?: 'owner' | 'admin' | 'member' | null
   my_permissions?: string[]
   pending_transfer?: { id: string; to_handle: string } | null
   /** 所有者归档这个项目的时间；没归档是 null。 */

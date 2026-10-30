@@ -2,7 +2,7 @@
 //
 // 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
 // 和推送通过下面这几个函数改缓存，不各存副本。
-import type { TopicNotifySetting, TopicUnread } from '@/api'
+import type { ProjectRoleRow, TopicNotifySetting, TopicUnread } from '@/api'
 import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
@@ -13,19 +13,26 @@ import { queryOptions, useQuery } from '@tanstack/vue-query'
 import {
   getPrivateUnread,
   getProject,
+  getProjectArtifact,
   getTopic,
   getTopicNotifyLevels,
   getTopicUnread,
   listProjectAgents,
   listProjectMembers,
+  listProjectRoles,
   listTopics,
 } from '@/api'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
+import { listChannels } from '@/api/channels'
+import { getDocumentText, getProjectOverview, listProjectDocuments } from '@/api/projectDocuments'
 import { getProjectSituation, listProjectProgress } from '@/api/projectProgress'
+import { listProjectSkills } from '@/api/projectSkills'
 import { projectRefusal, rememberNumbered, rememberProjects } from '@/lib/addresses'
+import { listProjectLibrary } from '@/lib/libraryApi'
 import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
 import { patchQuery, queryClient, settled } from '@/query/client'
 import { keys } from '@/query/keys'
+import { readEarly } from '@/query/snapshot'
+import { openProjectTasksQuery } from '@/query/tasks'
 
 // 最近有动静的在前，不可调：侧栏用位置本身说这个顺序。
 const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
@@ -48,6 +55,14 @@ export function projectQuery(projectId: string) {
   })
 }
 const STARTER_POLL_MS = 20_000
+
+/** 项目的角色（#4795）：频道设置里选「谁能发言」读它。 */
+export function projectRolesQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectRoles(projectId),
+    queryFn: async (): Promise<ProjectRoleRow[]> => (await listProjectRoles(projectId)).roles,
+  })
+}
 
 /** 项目的 AI 队友（含停用的）：私聊的地址和标题、成员页那一段、设置里那一节都读它。 */
 export function agentsQuery(projectId: string) {
@@ -140,6 +155,53 @@ export function notifyLevelsQuery(projectId: string) {
 export function prefetchProjectTopics(projectId: string): void {
   if (!projectId || projectRefusal(projectId)) return
   void queryClient.prefetchQuery(topicsQuery(projectId)).catch(() => {})
+}
+
+/**
+ * 项目子页（成员、资料库、技能、任务、全部频道、产物）自己的首屏数据，趁该页代码块
+ * 还在下载时和外框并行出发，免得代码块下完才发出第一波接口请求。
+ */
+export function prefetchProjectSubpage(
+  routeName: string | symbol | null | undefined,
+  projectId: string,
+  params: Record<string, string>,
+  query: Record<string, unknown>
+): void {
+  if (!projectId || projectRefusal(projectId) || typeof routeName !== 'string') return
+  switch (routeName) {
+    case 'project-members':
+      void queryClient.prefetchQuery(membersQuery(projectId)).catch(() => {})
+      break
+    case 'project-library': {
+      if (typeof query.doc === 'string') break
+      const dir = typeof query.dir === 'string' ? query.dir : ''
+      readEarly(keys.projectLibraryRoot(projectId, dir), () =>
+        listProjectLibrary(projectId, { dir, cursor: null, limit: 50 })
+      )
+      if (!dir) {
+        readEarly(keys.projectDocumentsRoot(projectId), () => listProjectDocuments(projectId, null, 50))
+      }
+      break
+    }
+    case 'project-skills':
+      readEarly(keys.projectSkills(projectId), () => listProjectSkills(projectId))
+      break
+    case 'project-tasks':
+      if (query.status !== 'closed') {
+        void queryClient.prefetchQuery(openProjectTasksQuery(projectId)).catch(() => {})
+      }
+      break
+    case 'project-channels':
+      readEarly(keys.projectChannels(projectId), () => listChannels(projectId))
+      break
+    case 'project-artifact':
+      if (params.artifactId) {
+        readEarly(keys.projectArtifact(projectId, params.artifactId), () =>
+          getProjectArtifact(projectId, params.artifactId)
+        )
+      }
+      break
+  }
 }
 
 /** 项目总览是哪一份文档、现在写着什么。读不到就按「还没写」：那一块的入口（写一份）仍然在。 */

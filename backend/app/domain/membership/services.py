@@ -12,14 +12,16 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_roles import (
+    RoleDef,
     is_owner,
     is_personal,
     may,
     owner_of,
+    project_roles,
     require,
     require_above,
     require_owner,
-    role_grants,
+    seats,
     standing,
 )
 from app.core.errors import (
@@ -63,9 +65,11 @@ from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
     PERMISSION_ORDER,
+    TEMPLATE_GRANTS,
+    Builtin,
     Permission,
-    Role,
     Seat,
+    Template,
     with_locks,
 )
 from app.domain.team.services import team_service
@@ -350,10 +354,12 @@ class InvitationService:
         project_id: uuid.UUID,
         invitee_handle: str,
         actor: Actor,
-        role: Role = Role.member,
+        role: str = Builtin.member.value,
     ) -> ProjectInvitation:
+        """``role`` is a role's key, or ``mentor``: the project's mentor role,
+        made from its template if the project has none yet."""
         project = await self._project_or_404(project_id)
-        if role not in (Role.member, Role.mentor):
+        if role == Builtin.admin.value:
             # An admin is made from someone already in the project.
             raise UnprocessableEntityError(say("inviteRole"))
         # 同一条授权，和改名册用的是同一个判断：能管名册的人才能发邀请。
@@ -381,11 +387,12 @@ class InvitationService:
             is not None
         ):
             raise ValidationError(say("invitePending"))
+        role_id = await RoleService(self._session).custom_role_id(project_id, role)
         invitation = await self._repo.add(
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
-            role=role.value,
+            role_id=role_id,
             invited_by_assistant=actor.by_assistant,
         )
         await self._notify_invitee(invitation, project)
@@ -478,11 +485,11 @@ class InvitationService:
                     user_handle=invitation.invitee_handle,
                 )
             roles = RoleRepository(self._session)
-            if invitation.role == Role.mentor.value:
+            if invitation.role_id is not None:
                 await roles.set_role(
                     project_id=invitation.project_id,
                     user_handle=invitation.invitee_handle,
-                    role=Role.mentor.value,
+                    role_id=invitation.role_id,
                 )
             else:
                 await roles.clear_role(
@@ -527,27 +534,224 @@ class InvitationService:
         )
 
 
+async def _no_teammates(session: AsyncSession, project_id: uuid.UUID) -> tuple[()]:
+    """The roster's teammate source when only its people are wanted."""
+    return ()
+
+
+#: Names a project's own role cannot take: those the screen gives the owner
+#: and the two built-in roles.
+_FIXED_NAMES = frozenset({"所有者", "管理员", "成员", "Owner", "Admin", "Member"})
+
+#: The longest name a project's own role may have.
+ROLE_NAME_MAX = 40
+
+
 class RoleService:
-    """Roles in a project and what each role may do there (#3830)."""
+    """A project's roles, who holds which, and what each may do (#3830, #4795)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
         self._roles = RoleRepository(session)
         self._members = MemberService(session)
 
-    async def set_role(
-        self, *, project_id: uuid.UUID, handle: str, role: Role, actor: Actor
+    async def _manager(self, project_id: uuid.UUID, actor: Actor) -> None:
+        await self._members._ensure_project(project_id)
+        await self._members.require(project_id, actor, Permission.change_roles)
+
+    async def roles(self, project_id: uuid.UUID) -> dict[str, RoleDef]:
+        return await project_roles(self._session, project_id)
+
+    async def holders(self, project_id: uuid.UUID) -> dict[str, int]:
+        """How many people hold each role, by key. The owner holds none."""
+        people = [
+            m.handle
+            for m in await roster(self._session, project_id, team=_no_teammates)
+            if not m.agent
+        ]
+        counts: dict[str, int] = {}
+        for held in (await seats(self._session, project_id, people)).values():
+            if held.seat is not Seat.owner:
+                counts[held.role] = counts.get(held.role, 0) + 1
+        return counts
+
+    async def _own(self, project_id: uuid.UUID, key: str) -> RoleDef:
+        role = (await self.roles(project_id)).get(key)
+        if role is None:
+            raise NotFoundError(say("projectRoleNotFound"))
+        return role
+
+    async def _check_name(
+        self, project_id: uuid.UUID, name: str, *, besides: str | None = None
+    ) -> str:
+        name = name.strip()
+        if not name or len(name) > ROLE_NAME_MAX:
+            raise ValidationError(say("roleNameLength", max=ROLE_NAME_MAX))
+        if name in _FIXED_NAMES:
+            raise ValidationError(say("roleNameTaken", name=name))
+        taken = await self._roles.named(project_id=project_id, name=name)
+        if taken is not None and str(taken.id) != besides:
+            raise ValidationError(say("roleNameTaken", name=name))
+        return name
+
+    @staticmethod
+    def _known(names: list[str]) -> frozenset[Permission]:
+        # A name nobody knows, or one only an AI teammate holds, is no role's.
+        unknown = [n for n in names if n not in _ROLE_PERMISSION_NAMES]
+        if unknown:
+            raise UnprocessableEntityError(say("permissionUnknown", name=unknown[0]))
+        return frozenset(Permission(n) for n in names)
+
+    async def create(
+        self,
+        *,
+        project_id: uuid.UUID,
+        name: str | None,
+        copy_from: str | None,
+        template: Template | None,
+        actor: Actor,
+    ) -> RoleDef:
+        """One more role, its permissions copied from another role or taken from
+        a template. A templated role may go unnamed: it shows the template's
+        name until someone renames it."""
+        await self._manager(project_id, actor)
+        if template is not None:
+            granted = TEMPLATE_GRANTS[template]
+        else:
+            granted = (
+                await self._own(project_id, copy_from or Builtin.member.value)
+            ).permissions
+        if name is None and template is None:
+            raise ValidationError(say("roleNameLength", max=ROLE_NAME_MAX))
+        stored = await self._check_name(project_id, name) if name is not None else None
+        row = await self._roles.add_def(
+            project_id=project_id,
+            name=stored,  # type: ignore[arg-type]
+            permissions=sorted(p.value for p in with_locks(False, granted)),
+            template=template.value if template is not None else None,
+        )
+        return (await self.roles(project_id))[str(row.id)]
+
+    async def update(
+        self,
+        *,
+        project_id: uuid.UUID,
+        key: str,
+        name: str | None,
+        permissions: list[str] | None,
+        actor: Actor,
+    ) -> RoleDef:
+        """Rename one of the project's own roles, or change what a role may do.
+        A built-in role keeps its name; a locked permission keeps its place
+        whatever was sent; a built-in role set back to its defaults stores
+        nothing."""
+        await self._manager(project_id, actor)
+        role = await self._own(project_id, key)
+        if role.builtin is not None:
+            if name is not None:
+                raise UnprocessableEntityError(say("roleBuiltinFixed"))
+            if permissions is not None:
+                admin = role.builtin is Builtin.admin
+                granted = with_locks(admin, self._known(permissions))
+                if granted == with_locks(admin, DEFAULT_GRANTS[role.builtin]):
+                    await self._roles.clear_builtin_grants(
+                        project_id=project_id, builtin=role.builtin.value
+                    )
+                else:
+                    await self._roles.set_builtin_grants(
+                        project_id=project_id,
+                        builtin=role.builtin.value,
+                        permissions=sorted(p.value for p in granted),
+                    )
+            return (await self.roles(project_id))[key]
+        row = await self._roles.get_def(project_id=project_id, role_id=uuid.UUID(key))
+        assert row is not None
+        if name is not None:
+            row.name = await self._check_name(project_id, name, besides=key)
+        if permissions is not None:
+            row.permissions = sorted(
+                p.value for p in with_locks(False, self._known(permissions))
+            )
+        await self._session.flush()
+        return (await self.roles(project_id))[key]
+
+    async def delete(
+        self, *, project_id: uuid.UUID, key: str, move_to: str | None, actor: Actor
     ) -> None:
-        """Make ``handle`` an admin, a member or a mentor.
+        """Delete one of the project's own roles. Whoever holds it, and every
+        invitation still waiting to give it, moves to ``move_to`` first; with
+        nobody holding it none is needed. Channels it could speak in forget it."""
+        await self._manager(project_id, actor)
+        role = await self._own(project_id, key)
+        if role.builtin is not None:
+            raise UnprocessableEntityError(say("roleBuiltinFixed"))
+        role_id = uuid.UUID(key)
+        if move_to is not None:
+            if move_to == key:
+                raise ValidationError(say("roleMoveElsewhere"))
+            target = await self._own(project_id, move_to)
+            if target.builtin is Builtin.admin and not await is_owner(
+                self._session, project_id, actor.handle
+            ):
+                raise ForbiddenError(say("adminByOwnerOnly"))
+            await self._roles.move_holders(
+                role_id=role_id,
+                to_role_id=None
+                if target.builtin is not None
+                else uuid.UUID(target.key),
+                to_admin=target.builtin is Builtin.admin,
+            )
+        elif await self._roles.holders(role_id) or await self._waiting(role_id):
+            raise ValidationError(say("roleMoveFirst"))
+        await self._roles.replace_speaker(
+            project_id=project_id, key=key, to_key=move_to
+        )
+        row = await self._roles.get_def(project_id=project_id, role_id=role_id)
+        assert row is not None
+        await self._roles.delete_def(row)
+
+    async def _waiting(self, role_id: uuid.UUID) -> bool:
+        return await InvitationRepository(self._session).waiting_for_role(role_id)
+
+    async def mentor_role(self, project_id: uuid.UUID) -> uuid.UUID:
+        """The project's mentor role, made from its template the first time it
+        is needed. A project that deleted it gets a new one the same way."""
+        row = await self._roles.templated(
+            project_id=project_id, template=Template.mentor.value
+        )
+        if row is None:
+            row = await self._roles.add_def(
+                project_id=project_id,
+                name=None,  # type: ignore[arg-type]
+                permissions=sorted(p.value for p in TEMPLATE_GRANTS[Template.mentor]),
+                template=Template.mentor.value,
+            )
+        return row.id
+
+    async def custom_role_id(self, project_id: uuid.UUID, key: str) -> uuid.UUID | None:
+        """The project's own role a key names, ``mentor`` meaning its mentor
+        role; none for member. Refuses a key the project does not have."""
+        if key == Template.mentor.value:
+            return await self.mentor_role(project_id)
+        role = await self._own(project_id, key)
+        if role.builtin is Builtin.member:
+            return None
+        if role.builtin is Builtin.admin:
+            raise UnprocessableEntityError(say("inviteRole"))
+        return uuid.UUID(role.key)
+
+    async def set_role(
+        self, *, project_id: uuid.UUID, handle: str, role: str, actor: Actor
+    ) -> None:
+        """Give ``handle`` a role: ``admin``, ``member``, one of the project's
+        own, or ``mentor`` for its mentor role.
 
         Only someone above them may, and the owner is above everyone. Making
         someone an admin is the owner's alone, like the team's own admins are
-        its owner's: an admin manages members and mentors. The role is recorded
-        only when it differs from the one they would hold anyway, so a member
-        made admin and back holds no row.
+        its owner's: an admin manages everyone holding another role. Member is
+        what someone holds with no row, so it is recorded by removing theirs.
         """
-        await self._members._ensure_project(project_id)
-        await self._members.require(project_id, actor, Permission.change_roles)
+        await self._manager(project_id, actor)
         if handle == actor.handle:
             raise UnprocessableEntityError(say("roleNotYourOwn"))
         current = await standing(self._session, project_id, handle)
@@ -556,56 +760,20 @@ class RoleService:
         if await IdentityService(self._session).is_agent(handle):
             raise UnprocessableEntityError(say("roleNotForAgents"))
         await require_above(self._session, project_id, actor.handle, handle)
-        if role is Role.admin and not await is_owner(
-            self._session, project_id, actor.handle
-        ):
-            raise ForbiddenError(say("adminByOwnerOnly"))
-        await self._roles.clear_role(project_id=project_id, user_handle=handle)
-        held = await standing(self._session, project_id, handle)
-        if held is not None and held.seat.value != role.value:
+        if role == Builtin.admin.value:
+            if not await is_owner(self._session, project_id, actor.handle):
+                raise ForbiddenError(say("adminByOwnerOnly"))
             await self._roles.set_role(
-                project_id=project_id, user_handle=handle, role=role.value
+                project_id=project_id, user_handle=handle, role_id=None
             )
-
-    async def grants(self, project_id: uuid.UUID) -> dict[Role, frozenset[Permission]]:
-        return await role_grants(self._session, project_id)
-
-    async def changed(self, project_id: uuid.UUID) -> bool:
-        """Whether any role differs from its defaults here."""
-        return bool(await self._roles.grants(project_id))
-
-    async def set_grants(
-        self,
-        *,
-        project_id: uuid.UUID,
-        changed: dict[Role, list[str]],
-        actor: Actor,
-    ) -> None:
-        """Change what roles may do. A name that is not a role's permission —
-        one nobody knows, or one only an AI teammate holds — is refused; a
-        locked permission keeps its place whatever was sent."""
-        await self._members._ensure_project(project_id)
-        await self._members.require(project_id, actor, Permission.change_roles)
-        for role, names in changed.items():
-            unknown = [n for n in names if n not in _ROLE_PERMISSION_NAMES]
-            if unknown:
-                raise UnprocessableEntityError(
-                    say("permissionUnknown", name=unknown[0])
-                )
-            granted = with_locks(role, frozenset(Permission(n) for n in names))
-            if granted == with_locks(role, DEFAULT_GRANTS[role]):
-                await self._roles.clear_grants(project_id, role=role.value)
-                continue
-            await self._roles.set_grants(
-                project_id=project_id,
-                role=role.value,
-                permissions=sorted(p.value for p in granted),
+            return
+        role_id = await self.custom_role_id(project_id, role)
+        if role_id is None:
+            await self._roles.clear_role(project_id=project_id, user_handle=handle)
+        else:
+            await self._roles.set_role(
+                project_id=project_id, user_handle=handle, role_id=role_id
             )
-
-    async def reset_grants(self, *, project_id: uuid.UUID, actor: Actor) -> None:
-        await self._members._ensure_project(project_id)
-        await self._members.require(project_id, actor, Permission.change_roles)
-        await self._roles.clear_grants(project_id)
 
 
 class OwnershipService:
@@ -641,7 +809,7 @@ class OwnershipService:
         recipient = await standing(self._session, project_id, to_handle)
         if (
             recipient is None
-            or recipient.seat is Seat.mentor
+            or Permission.edit_content not in recipient.permissions
             or await IdentityService(self._session).is_agent(to_handle)
         ):
             raise UnprocessableEntityError(say("transferToMember"))
@@ -683,8 +851,9 @@ class OwnershipService:
             return await self._close(offer, InvitationStatus.declined)
         project = await self._project(offer.project_id)
         recipient = await standing(self._session, project.id, offer.to_handle)
-        if recipient is None or recipient.seat is Seat.mentor:
-            # They left, or became a mentor, after the offer was made.
+        if recipient is None or Permission.edit_content not in recipient.permissions:
+            # They left, or their role stopped letting them work in it, after
+            # the offer was made.
             await self._close(offer, InvitationStatus.revoked)
             raise UnprocessableEntityError(say("transferToMember"))
         previous = await owner_of(self._session, project)
@@ -705,7 +874,7 @@ class OwnershipService:
         await self._roles.clear_role(project_id=project.id, user_handle=offer.to_handle)
         if previous and previous != offer.to_handle:
             await self._roles.set_role(
-                project_id=project.id, user_handle=previous, role=Role.admin.value
+                project_id=project.id, user_handle=previous, role_id=None
             )
         return await self._close(offer, InvitationStatus.accepted)
 
@@ -774,8 +943,9 @@ async def pending_transfers_for(
 async def seat_mentors(
     session: AsyncSession, project_id: uuid.UUID, handles: Sequence[str]
 ) -> None:
-    """Put a task's mentors in the project made for a claim: on its roster, as
-    mentors. Someone already in the project keeps where they sit."""
+    """Put a task's mentors in the project made for a claim: on its roster, in
+    the project's mentor role. Someone already in the project keeps where they
+    sit."""
     members = MemberRepository(session)
     roles = RoleRepository(session)
     for handle in handles:
@@ -783,5 +953,7 @@ async def seat_mentors(
             continue
         await members.add(project_id=project_id, user_handle=handle)
         await roles.set_role(
-            project_id=project_id, user_handle=handle, role=Role.mentor.value
+            project_id=project_id,
+            user_handle=handle,
+            role_id=await RoleService(session).mentor_role(project_id),
         )

@@ -219,8 +219,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # which is what a developer's machine and every test wants.
     feishu_alert_webhook: str = ""
     # Where each new feedback report is announced (`feedback/announce.py`): the
-    # team group's Feishu custom-bot webhook URL. Empty sends nothing, which is
-    # the default until a deployment names the group that works the queue.
+    # team group's Feishu custom-bot webhook URL. Empty sends nothing; on a
+    # deployment the health report names that as a failure (`feedback_announce`).
     feishu_feedback_webhook: str = ""
 
     # Coordinated ingress cutover is a separate release. No implicit fallback.
@@ -566,6 +566,17 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # name: `FEEDBACK_ADMIN_HANDLES` above is the OLD spelling of the PLATFORM
     # roster, which is why this one is not called that.
     feedback_triage_handles: list[str] = []
+    # Where the platform's built-in feedback triage rule runs and who it answers
+    # to (`app/domain/routine/builtin_triage.py`): the room (a topic id in a
+    # project working on the platform itself), the person the results go to (one
+    # of `feedback_triage_handles`, a member of that room), and the AI teammate
+    # seat in that room that does the work. The rule is installed at startup
+    # once all three name something valid; its schedule and batch size ship
+    # with the product. On a deployment, an unset or invalid one is a named
+    # failure in the health report (`feedback_triage`), not a quiet absence.
+    feedback_triage_topic_id: str = ""
+    feedback_triage_owner_handle: str = ""
+    feedback_triage_agent_handle: str = ""
     # How many feedback PROPOSAL cards one topic may see per day. The cap exists
     # for the agent path (`cheese_feedback(action=propose)`): a misfiring loop proposes
     # once per turn, and a number in settings is the difference between a bad

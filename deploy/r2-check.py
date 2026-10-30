@@ -86,6 +86,11 @@ def main() -> int:
         return 0
     now = int(time.time())
     limit = args.max_age_hours * 3600
+    interval = int(os.environ.get("CHEESE_BACKUP_OFFSITE_INTERVAL_HOURS", "6"))
+    if interval <= 0:
+        raise ValueError("CHEESE_BACKUP_OFFSITE_INTERVAL_HOURS must be positive")
+    # The timer is hourly with up to 120s jitter; include one delayed run.
+    dev_limit = (interval + 2) * 3600
     errors = []
 
     def check(fn, *values):
@@ -99,7 +104,7 @@ def main() -> int:
 
     if args.mode == "local":
         backup_dir = Path(env.get("CHEESE_BACKUP_DIR", "~/backups")).expanduser()
-        check(check_marker, backup_dir / ".last-offsite-success", "DB off-site upload", now, limit)
+        check(check_marker, backup_dir / ".last-offsite-success", "DB off-site upload", now, dev_limit)
         check(check_marker, common.uploads_marker(env), "uploads mirror", now, limit)
     else:
         s3 = common.client(env)
@@ -111,7 +116,8 @@ def main() -> int:
             ("etrip", rf"etrip-cheesex-db-{stamp}\.dump", "etrip agent DB"),
             ("etrip", rf"etrip-uploads-{stamp}\.tar", "etrip uploads volume"),
         ):
-            check(check_remote, s3, env["R2_BUCKET"], prefix, pattern, label, now, limit)
+            check(check_remote, s3, env["R2_BUCKET"], prefix, pattern, label, now,
+                  dev_limit if label == "dev DB" else limit)
     return 1 if errors else 0
 
 

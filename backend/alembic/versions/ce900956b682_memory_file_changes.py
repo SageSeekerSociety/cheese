@@ -10,7 +10,7 @@ A new table, written only by the new release: the previous release never reads
 it, so it keeps serving during the deploy.
 
 Revision ID: ce900956b682
-Revises: e3f9a1c62b47
+Revises: c4e8a1f27b93
 Create Date: 2026-10-30 10:00:00.000000
 
 """
@@ -23,7 +23,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "ce900956b682"
-down_revision: str | Sequence[str] | None = "e3f9a1c62b47"
+down_revision: str | Sequence[str] | None = "c4e8a1f27b93"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -18,6 +18,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
+import { useChannelSpeakers } from '@/composables/useChannelSpeakers'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
@@ -127,7 +128,11 @@ watch(task, (made) => {
   if (made) emit('title', taskTitle(made))
 })
 // 归档的频道只能看。
-const composerClosed = computed(() => (props.room.status === 'archived' ? t('work.channel.archivedNotice') : null))
+// 主线只让部分角色发言、支线也不让人人回时，这里同样只读（#4795）。
+const speakers = useChannelSpeakers(() => props.room)
+const composerClosed = computed(() =>
+  props.room.status === 'archived' ? t('work.channel.archivedNotice') : speakers.notice(true)
+)
 // 页头那一行：转成任务后是任务名，之前是它挂着的那条消息说的事。
 const heading = computed(() => {
   if (task.value) return taskTitle(task.value)
