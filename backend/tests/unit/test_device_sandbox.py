@@ -790,8 +790,7 @@ def test_a_room_keeps_a_live_connection_to_the_site_beside_its_forge(site_forge,
 
 
 def test_a_room_can_query_its_forge_after_reading_the_site(site_forge, rooms):
-    """A client reusing its HTTPS connection still gets its project
-    credential when a site request is followed by a private forge request."""
+    """A client can access its private forge after reading the site."""
     forward, _ = site_forge
     room = rooms(sandbox=False, site_forward=forward)
     check = room.home / "site-then-forge.py"
