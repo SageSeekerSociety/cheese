@@ -125,6 +125,7 @@ async def test_an_input_handed_on_after_its_first_process_exited_stays_held(
 
     host = SimpleNamespace(
         _session_factory=business_db_factory,
+        _hand=None,
         _started=lambda ref: running,
         _call=call,
         start=restart,

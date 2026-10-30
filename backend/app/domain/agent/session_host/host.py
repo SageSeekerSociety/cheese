@@ -182,6 +182,7 @@ class SessionHost:
         on_alive: Callable[[uuid.UUID], None] | None = None,
         records: Records | None = None,
         register: Callable[[SeatKey], Awaitable[int]] | None = None,
+        hand: Callable[[str, str, uuid.UUID, int], Awaitable[None]] | None = None,
         drivers: Mapping[str, Driver] | None = None,
     ):
         self._hub = hub
@@ -192,6 +193,10 @@ class SessionHost:
         #: reports in the lifecycle protocol: in the platform's database
         #: (`session_state.register`) unless told otherwise.
         self._registrar = register
+        #: Records which process an input is being handed to, in the books the
+        #: epochs come from (`delivery.receipts.hand_to`) unless told otherwise:
+        #: ``(harness, native conversation, input id, epoch)``.
+        self._hand = hand
         self._memory = memory
         #: Told the conversation of a session whose runner answered a read, on
         #: every pass that heard one: proof that the session is still there,
@@ -263,16 +268,21 @@ class SessionHost:
     ) -> None:
         """Record that ``input_id`` is being handed to the process ``running``
         holds (`delivery.receipts.hand_to`)."""
+        args = (ref.harness, running.launched.conversation, input_id)
+        epoch = running.launched.epoch
+        if self._hand is not None:
+            await self._hand(*args, epoch)
+            return
         # deferred-import: tests replace this name on app.core.db
         from app.core.db import async_session_factory
 
         async with (self._session_factory or async_session_factory)() as session:
             await hand_to(
                 session,
-                harness=ref.harness,
-                native_session_id=running.launched.conversation,
-                input_id=input_id,
-                epoch=running.launched.epoch,
+                harness=args[0],
+                native_session_id=args[1],
+                input_id=args[2],
+                epoch=epoch,
             )
             await session.commit()
 

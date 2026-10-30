@@ -30,6 +30,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.session_state import SeatKey
+from app.domain.delivery.receipts import hand_to
 
 # The driver's read of a launch's ending from its runner log
 # (`ClaudeCodeDriver._ended`): the record's marker is what it searches for.
@@ -150,6 +151,7 @@ class SeatChannel:
             screens=_Screens(self),
             mirrors=self.root / "mirrors",
             register=self.register,
+            hand=self.hand,
         )
 
         async def api(host: str) -> str:
@@ -185,6 +187,25 @@ class SeatChannel:
             return await session_state.register(EPOCHS.sessions, key)
         self.epochs[key] = self.epochs.get(key, 0) + 1
         return self.epochs[key]
+
+    async def hand(
+        self, harness: str, conversation: str, input_id: uuid.UUID, epoch: int
+    ) -> None:
+        """Record which process an input is handed to, in the books the epochs
+        come from (``register``): the test's database when it keeps one, as
+        production records it (`delivery.receipts.hand_to`); with no
+        database there are no books to record it in."""
+        if EPOCHS.sessions is None:
+            return
+        async with EPOCHS.sessions() as session:
+            await hand_to(
+                session,
+                harness=harness,
+                native_session_id=conversation,
+                input_id=input_id,
+                epoch=epoch,
+            )
+            await session.commit()
 
     async def open(self, session: SessionRef, agent: str, launch) -> None:
         """Have the seat's runner running; ``launch`` is what it is started
