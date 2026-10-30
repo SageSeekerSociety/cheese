@@ -818,11 +818,11 @@ recreate-not-restart rule (`deploy/gateway/README.md`).
 
 ## Backups
 
-Every box runs the same scripts (only the R2 prefix and host differ); details and
-restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
+dev 和 prod 使用 `db-backup.sh`，etrip 使用独立脚本；恢复步骤见
+[`deploy/README-backup.md`](../deploy/README-backup.md)。
 
-- **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
-  `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
+- **数据库**：dev 每小时 `pg_dump -Fc` 并校验本地备份，距上次成功至少 6 小时才上传 R2；prod／etrip 保持每次备份上传。
+  桶为 `cheese-db-backups`，前缀分别为 `db/`（dev）、`prod-db/`（prod）、`etrip/`。
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
 - **Session records** (what each session's runner journaled,
   `session_records`): the last few minutes sit in the table and go out with the
@@ -849,9 +849,9 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
   `backup-restore-test.yml` (weekly, restores the newest dump into a throwaway
   postgres and fails if it doesn't come back).
 
-The backup scripts are version-controlled, but **installing them on a box**
-(copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
-manual runbook, not automated provisioning — see `deploy/README-backup.md`.
+dev 发布流水线从同一发布提交安装备份脚本到 `~/ops/`，先备份旧脚本，再原子替换。
+systemd 小时 timer、`backup.env` 和 `r2.env` 保持原值；prod／etrip 没有此安装步骤。
+安装和异地上传间隔设置见 `deploy/README-backup.md`。
 
 ## Database encoding — always create with an explicit `ENCODING 'UTF8'`
 
