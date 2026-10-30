@@ -65,8 +65,6 @@ SIBLINGS: dict[str, types.ModuleType] = {}
 #: The guides, and what a session is shipped of them (`app.domain.skill_library`).
 SKILL_LIBRARY = AGENT.parent / "skill_library"
 INSTRUCTIONS_PY = MEMORY_PKG / "instructions.py"
-#: Where the opening encloses a private index (``private_span``): stdlib-only.
-PRIVACY_PY = ROOT / "backend" / "app" / "domain" / "session_record" / "privacy.py"
 
 #: ``build_system_prompt``'s first two arguments are positional; the samples
 #: below give the rest by keyword, and ``assemble`` hands each function its own.
@@ -136,9 +134,7 @@ class _StubFinder(importlib.abc.MetaPathFinder):
         if fullname == "app" or fullname.startswith("app."):
             # is_package: a submodule is imported through its parent, which
             # needs a `__path__` even when everything under it is a stub.
-            return importlib.util.spec_from_loader(
-                fullname, _StubLoader(), is_package=True
-            )
+            return importlib.util.spec_from_loader(fullname, _StubLoader(), is_package=True)
         return None
 
 
@@ -155,19 +151,17 @@ def load_prompt_module():
     # Modules that are stdlib-only, put where an import will find the real one
     # before the stub answers it: ``skills.py`` and the library it reads
     # (``prompt.py`` reads their text at import — the living-document section),
-    # ``instructions.py`` and ``session_record/privacy.py`` (the memory block is
-    # *text*, and a stand-in makes the whole real run worthless — 「真跑这条路
-    # 不可信」), and ``prompt.py``'s own
+    # ``instructions.py`` (the memory block is *text*, and a stand-in makes the
+    # whole real run worthless — 「真跑这条路不可信」), and ``prompt.py``'s own
     # siblings below.
     sys.modules["app.domain.agent.skills"] = load_skills_module()
     sys.modules["app.domain.memory.instructions"] = load_module(
         INSTRUCTIONS_PY, "cheese_memory_reference"
     )
-    sys.modules["app.domain.session_record.privacy"] = load_module(
-        PRIVACY_PY, "cheese_session_record_privacy_reference"
-    )
     for path in PROMPT_SIBLINGS:
-        SIBLINGS[path.stem] = load_module(path, f"cheese_harness_{path.stem}_reference")
+        SIBLINGS[path.stem] = load_module(
+            path, f"cheese_harness_{path.stem}_reference"
+        )
         sys.modules[f"app.domain.agent.harness.{path.stem}"] = SIBLINGS[path.stem]
     try:
         module = load_module(PROMPT_PY, "cheese_prompt_reference")
@@ -177,7 +171,6 @@ def load_prompt_module():
             "app.domain.agent.skills",
             "app.domain.skill_library",
             "app.domain.memory.instructions",
-            "app.domain.session_record.privacy",
         ):
             sys.modules.pop(name, None)
         for path in PROMPT_SIBLINGS:
@@ -211,9 +204,7 @@ class _Week:
     system_prompt = "课上讲到了循环和数组，不要用递归。"
     space_prompt = None
     learning_goals = ["能自己写出循环", "能讲清数组和循环怎么配合"]
-    private_prompt = (
-        "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
-    )
+    private_prompt = "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
 
     @property
     def is_empty(self) -> bool:
@@ -235,9 +226,7 @@ class _Week:
 TEACHING = types.SimpleNamespace(
     course="创研课 2026 秋",
     teaching=_Week(),
-    materials=[
-        {"id": 7, "name": "第 6 周讲义", "url": "https://example.com/week6.pdf"}
-    ],
+    materials=[{"id": 7, "name": "第 6 周讲义", "url": "https://example.com/week6.pdf"}],
     documents=[{"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "推荐系统入门"}],
 )
 
@@ -257,46 +246,17 @@ STAGES = [
 ]
 
 ROSTER = [
-    {
-        "name": "张衡",
-        "handle": "zhangheng",
-        "source": "owner",
-        "agent": False,
-        "active": True,
-    },
-    {
-        "name": "李工",
-        "handle": "ligong",
-        "source": "team",
-        "agent": False,
-        "active": True,
-    },
-    {
-        "name": "芝士",
-        "handle": "cheese",
-        "source": "team",
-        "agent": True,
-        "active": True,
-    },
+    {"name": "张衡", "handle": "zhangheng", "source": "owner", "agent": False, "active": True},
+    {"name": "李工", "handle": "ligong", "source": "team", "agent": False, "active": True},
+    {"name": "芝士", "handle": "cheese", "source": "team", "agent": True, "active": True},
 ]
 
 TOPICS = [{"title": "搭建推荐算法原型"}, {"title": "接口联调"}]
 
 ARTIFACTS = [
-    {
-        "name": "实验报告",
-        "version": 3,
-        "about": "交给老师的那份结题报告",
-        "id": "a1b2c3",
-    },
-    {
-        "name": "演示网站",
-        "version": 0,
-        "about": "给评审看的可点开的站点",
-        "id": "d4e5f6",
-    },
+    {"name": "实验报告", "version": 3, "about": "交给老师的那份结题报告", "id": "a1b2c3"},
+    {"name": "演示网站", "version": 0, "about": "给评审看的可点开的站点", "id": "d4e5f6"},
 ]
-
 
 class _Index:
     """Stand-in for ``MemoryIndex``: two scoped sections and the truncation
@@ -313,22 +273,23 @@ class _Index:
         return not any(section.text.strip() for section in self.sections)
 
 
-#: The two indexes a turn actually carries: the project's, and one for whoever
-#: is speaking. One line per memory, never the body — that is the whole point of
-#: the index being short.
+#: What a turn carries of memory: the project's index, one line per memory and
+#: never the body — that is the whole point of the index being short — and, for
+#: whoever is speaking, where their private index is for the session to read
+#: (`memory.instructions.private_index_pointer`).
 INDEX_SECTIONS = [
     {
         "label": "项目共享（team）",
         "prefix": "team",
-        "owner": None,
         "text": "- [构建用 npm ci](build.md) — 不要用 npm install\n"
         "- [移动端发版前冻结合并](freeze.md) — 非关键 PR 排到发版之后",
     },
     {
         "label": "关于 zhangheng（private）",
         "prefix": "private/zhangheng",
-        "owner": "zhangheng",
-        "text": "- [回答短一点](short.md) — 结尾不要总结刚做了什么",
+        "text": "这一轮答的是 zhangheng。他的 private 记忆只有他本人看得到，索引在 "
+        "`~/.cheese/memory/private/zhangheng/MEMORY.md`：这一轮动手之前先用 Read "
+        "读它，正文在同一个目录下，需要时再读。",
     },
 ]
 
@@ -462,7 +423,7 @@ TOGGLES = [
     {
         "id": "topic_doc",
         "kwargs": {"doc": DOC},
-        "label": '`doc` 非空：这个任务的实况文档有正文（`doc=""` 是还没有）',
+        "label": "`doc` 非空：这个任务的实况文档有正文（`doc=\"\"` 是还没有）",
         "params": ["doc=…"],
     },
     {
@@ -524,10 +485,7 @@ def fill_unknown(signature) -> tuple[dict, list[str]]:
     filled: dict = {}
     names: list[str] = []
     for name, parameter in signature.parameters.items():
-        if name in SPOKEN_FOR or parameter.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
+        if name in SPOKEN_FOR or parameter.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
         annotation = str(parameter.annotation)
         if "bool" in annotation:
@@ -562,7 +520,7 @@ def samples_for(module, skills_text: str) -> list[dict]:
     samples = [
         {
             "name": "最小",
-            "about": '除底稿外的参数一律不传（`skills=""`、`doc=None`、`memory=None`）',
+            "about": "除底稿外的参数一律不传（`skills=\"\"`、`doc=None`、`memory=None`）",
             "kwargs": {"skills": "", "doc": None, "memory": None},
         },
         *[
@@ -586,31 +544,13 @@ def samples_for(module, skills_text: str) -> list[dict]:
                 "name": f"参数 {name}",
                 "about": f"`{name}`：生成器还不认识的参数，值是按类型补的",
                 "toggle": f"{UNKNOWN}{name}",
-                "kwargs": {
-                    "skills": "",
-                    "doc": None,
-                    "memory": None,
-                    name: extra[name],
-                },
+                "kwargs": {"skills": "", "doc": None, "memory": None, name: extra[name]},
             }
             for name in unknown
         ],
         {"name": "全部打开", "about": "上面每个开关都给值", "kwargs": full},
-        {
-            "name": "项目目标超预算",
-            "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子",
-            "kwargs": {
-                "skills": "",
-                "doc": None,
-                "memory": None,
-                "overview_doc": OVERSIZE,
-            },
-        },
-        {
-            "name": "产物清单空着",
-            "about": "`artifacts=[]`：清单空着时那一段是短指针",
-            "kwargs": {"skills": "", "doc": None, "memory": None, "artifacts": []},
-        },
+        {"name": "项目目标超预算", "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子", "kwargs": {"skills": "", "doc": None, "memory": None, "overview_doc": OVERSIZE}},
+        {"name": "产物清单空着", "about": "`artifacts=[]`：清单空着时那一段是短指针", "kwargs": {"skills": "", "doc": None, "memory": None, "artifacts": []}},
     ]
     return samples, unknown
 
@@ -632,9 +572,7 @@ def split_blocks(text: str) -> list[str]:
             current.append(line)
     if current:
         blocks.append(current)
-    return [
-        "\n".join(block).strip("\n") for block in blocks if "\n".join(block).strip()
-    ]
+    return ["\n".join(block).strip("\n") for block in blocks if "\n".join(block).strip()]
 
 
 def segments(text: str) -> list[str]:
@@ -663,12 +601,7 @@ def contribution(bare: str, text: str) -> str:
     it instead of being glued onto it."""
     before, after = segments(bare), segments(text)
     matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
-    changed = [
-        j
-        for tag, _i1, _i2, j1, j2 in matcher.get_opcodes()
-        if tag != "equal"
-        for j in range(j1, j2)
-    ]
+    changed = [j for tag, _i1, _i2, j1, j2 in matcher.get_opcodes() if tag != "equal" for j in range(j1, j2)]
     if not changed:
         return ""
     return "\n\n".join(after[min(changed) : max(changed) + 1])
@@ -712,13 +645,7 @@ def constants_of(module) -> list[dict]:
                 value = getattr(module, target.id)
             except AttributeError:
                 value = _literal(node.value)
-            kind = (
-                "int"
-                if isinstance(value, int) and not isinstance(value, bool)
-                else "str"
-                if isinstance(value, str)
-                else None
-            )
+            kind = "int" if isinstance(value, int) and not isinstance(value, bool) else "str" if isinstance(value, str) else None
             if kind is None:
                 continue
             out.append(
@@ -751,19 +678,14 @@ def assemble(module, kwargs: dict) -> str:
     in front of its first message. Each function gets the arguments it takes."""
     import inspect
 
-    rules = set(inspect.signature(module.build_system_prompt).parameters) - {
-        "base",
-        "skills",
-    }
+    rules = set(inspect.signature(module.build_system_prompt).parameters) - {"base", "skills"}
     state = set(inspect.signature(module.build_session_opening).parameters)
     system = module.build_system_prompt(
         BASE,
         kwargs.get("skills", ""),
         **{key: value for key, value in kwargs.items() if key in rules},
     )
-    opening = module.build_session_opening(
-        **{key: value for key, value in kwargs.items() if key in state}
-    ).text
+    opening = module.build_session_opening(**{key: value for key, value in kwargs.items() if key in state}).text
     # The marker line says to the agent that the platform is speaking; on the
     # page it would only glue itself to the block in front of it.
     opening = opening.replace(module.PLATFORM_NOTICE + "\n", "", 1)
@@ -788,18 +710,14 @@ def run_exec(module, samples) -> dict:
         try:
             text = assemble(module, sample["kwargs"])
         except Exception as exc:  # noqa: BLE001 — one sample failing costs that sample
-            failed.append(
-                {"name": sample["name"], "error": f"{type(exc).__name__}: {exc}"}
-            )
+            failed.append({"name": sample["name"], "error": f"{type(exc).__name__}: {exc}"})
             continue
         finally:
             owner.fit_doc_to_budget = real
         results[sample["name"]] = {"text": text, "calls": calls}
 
     if "最小" not in results:
-        raise _Fallback(
-            "连「最小」那个样本都跑不出来：" + "; ".join(f["error"] for f in failed)
-        )
+        raise _Fallback("连「最小」那个样本都跑不出来：" + "; ".join(f["error"] for f in failed))
     if "<stub>" in "".join(result["text"] for result in results.values()):
         raise _Fallback("样板输出里出现了替身对象（<stub>），真跑这条路不可信")
 
@@ -857,9 +775,7 @@ def run_exec(module, samples) -> dict:
             entry["variants"].append([sample_name, block])
 
     blocks = []
-    for entry in sorted(
-        entries.values(), key=lambda e: (e["at"] is None, e["at"] or 0)
-    ):
+    for entry in sorted(entries.values(), key=lambda e: (e["at"] is None, e["at"] or 0)):
         texts = [entry["text"] or "", *[variant[1] for variant in entry["variants"]]]
         condition, params = condition_of(entry["toggles"])
         blocks.append(
@@ -872,9 +788,7 @@ def run_exec(module, samples) -> dict:
                 "condition": condition,
                 "params": params,
                 "always": not entry["toggles"],
-                "base": not entry["toggles"]
-                and not entry["heading"]
-                and entry["at"] == 0,
+                "base": not entry["toggles"] and not entry["heading"] and entry["at"] == 0,
                 "budget": budget_of(texts, results, by_value),
                 "variants": entry["variants"],
                 "said_in": entry["samples"],
@@ -885,11 +799,7 @@ def run_exec(module, samples) -> dict:
         "mode": "exec",
         "note": "",
         "samples": [
-            {
-                "name": sample["name"],
-                "about": sample["about"],
-                "params": sample_params(sample["kwargs"]),
-            }
+            {"name": sample["name"], "about": sample["about"], "params": sample_params(sample["kwargs"])}
             for sample in samples
             if sample["name"] in results
         ],
@@ -936,13 +846,7 @@ def budget_of(texts: list[str], results: dict, by_value: dict):
             if not out or not any(out in text for text in texts):
                 continue
             names = by_value.get(budget, [])
-            hint = (
-                "OVERVIEW"
-                if "overview" in sample_name
-                else "TOPIC"
-                if "topic" in sample_name
-                else ""
-            )
+            hint = "OVERVIEW" if "overview" in sample_name else "TOPIC" if "topic" in sample_name else ""
             chosen = [name for name in names if hint and hint in name] or names
             if len(chosen) == 1:
                 return {"value": budget, "const": chosen[0], "sample": sample_name}
@@ -1018,11 +922,7 @@ def _walk_parts(stmts, conditions, out):
     for statement in stmts:
         if isinstance(statement, ast.If):
             _walk_parts(statement.body, conditions + [ast.unparse(statement.test)], out)
-            _walk_parts(
-                statement.orelse,
-                conditions + ["not " + ast.unparse(statement.test)],
-                out,
-            )
+            _walk_parts(statement.orelse, conditions + ["not " + ast.unparse(statement.test)], out)
         elif isinstance(statement, (ast.For, ast.While)):
             _walk_parts(statement.body, conditions + ["循环里逐个拼"], out)
         elif isinstance(statement, (ast.With, ast.Try)):
@@ -1030,12 +930,7 @@ def _walk_parts(stmts, conditions, out):
         elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
             call = statement.value
             func = call.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr in ("append", "extend")
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "parts"
-            ):
+            if isinstance(func, ast.Attribute) and func.attr in ("append", "extend") and isinstance(func.value, ast.Name) and func.value.id == "parts":
                 out.append((call.args[0] if call.args else call, conditions))
 
 
@@ -1046,16 +941,10 @@ def run_ast(reason: str) -> dict:
     except SyntaxError as exc:
         # Neither path can say anything true about the prompt now. Fail the docs
         # build with one line instead of a traceback from inside the fallback.
-        raise SystemExit(
-            f"读不出 prompt.py：{reason}；静态解析也不行（{exc}）"
-        ) from exc
+        raise SystemExit(f"读不出 prompt.py：{reason}；静态解析也不行（{exc}）") from exc
     lines = source.splitlines()
     function = next(
-        (
-            n
-            for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == "build_system_prompt"
-        ),
+        (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "build_system_prompt"),
         None,
     )
     if function is None:
@@ -1073,45 +962,21 @@ def run_ast(reason: str) -> dict:
         source = path.read_text(encoding="utf-8")
         lines = source.splitlines()
         for node in ast.parse(source).body:
-            if (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id.isupper()
-            ):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper():
                 value = _literal(node.value)
                 if isinstance(value, (str, int)) and not isinstance(value, bool):
-                    constants[node.targets[0].id] = {
-                        "name": node.targets[0].id,
-                        "kind": "int" if isinstance(value, int) else "str",
-                        "file": str(path.relative_to(ROOT)),
-                        "line": node.targets[0].lineno,
-                        "value": value,
-                        "comment": comment_above(lines, node.targets[0].lineno),
-                    }
+                    constants[node.targets[0].id] = {"name": node.targets[0].id, "kind": "int" if isinstance(value, int) else "str", "file": str(path.relative_to(ROOT)), "line": node.targets[0].lineno, "value": value, "comment": comment_above(lines, node.targets[0].lineno)}
 
     blocks = []
     for node, conditions in appends:
         # `parts.append(CONSTANT)` is a whole block in a name: read the name's
         # text out of the module, so the always-on blocks are not `{ALWAYS_PUSH}`.
-        if isinstance(node, ast.Name) and isinstance(
-            constants.get(node.id, {}).get("value"), str
-        ):
+        if isinstance(node, ast.Name) and isinstance(constants.get(node.id, {}).get("value"), str):
             text, dynamic = constants[node.id]["value"], False
         else:
             text, dynamic = _render(node)
-        used = sorted(
-            {
-                n.id
-                for n in ast.walk(node)
-                if isinstance(n, ast.Name) and n.id in constants and "BUDGET" in n.id
-            }
-        )
-        budget = (
-            {"value": constants[used[0]]["value"], "const": used[0]}
-            if len(used) == 1
-            else None
-        )
+        used = sorted({n.id for n in ast.walk(node) if isinstance(n, ast.Name) and n.id in constants and "BUDGET" in n.id})
+        budget = {"value": constants[used[0]]["value"], "const": used[0]} if len(used) == 1 else None
         for block in split_blocks(text):
             heading = block.split("\n", 1)[0]
             blocks.append(
@@ -1121,9 +986,7 @@ def run_ast(reason: str) -> dict:
                     "headline": heading.startswith("## "),
                     "text": block,
                     "chars": len(block),
-                    "condition": "；".join(conditions)
-                    if conditions
-                    else "每次都会拼进来",
+                    "condition": "；".join(conditions) if conditions else "每次都会拼进来",
                     "params": conditions,
                     "always": not conditions,
                     "base": False,
@@ -1173,9 +1036,7 @@ def read_library() -> dict:
 
 def chat_guide(library: dict) -> str:
     """What the `skills` argument holds for a room: the chat guide's body."""
-    return next(
-        (file["body"] for file in library["files"] if file["name"] == "chat"), ""
-    )
+    return next((file["body"] for file in library["files"] if file["name"] == "chat"), "")
 
 
 def _fallback_parse(path: Path):

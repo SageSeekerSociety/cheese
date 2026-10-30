@@ -273,19 +273,24 @@ async def apply_withdrawn(
     withdrawn: object,
     *,
     updated_by: str,
-) -> tuple[MemoryChange, list[tuple[MemoryFileScope, str | None]]]:
+) -> tuple[MemoryChange, list[tuple[MemoryFileScope, str | None]], dict[str, str]]:
     """会话交回来的那几棵没点名的 private 树（``withdrawn``：前缀 → 它在磁盘上的
-    ``files``、它那一段 ``baseline`` 和 ``bases``），合进它们主人的那一份。
+    ``files``、它那一段 ``baseline`` 和 ``bases``、树上的旁路文件 ``sidecars``），
+    合进它们主人的那一份。
 
     合的规矩和 `sync_tree` 在会话那一侧对点名的树用的是同一条，只是平台这一份
-    此刻才读：会话改过、平台没动的收下；两边都动过的，索引按行合并，别的平台赢。返回
-    改了什么，和收了哪几个作用域（说给谁听用）。"""
+    此刻才读：会话改过、平台没动的收下；两边都动过的，索引按行合并，别的平台赢。
+    返回改了什么、收了哪几个作用域（说给谁听用），和那个人写下、却没有收进去的
+    那几版（路径 → 正文）：被平台盖回去的、超了上限的、树上还留着的旁路文件。
+    在点了名的树上它们留在会话目录里给写它的 agent 重读；这一棵已经离开了那个座
+    位，它们只能交给本人（`queries._say_handed_back`）。"""
     if not isinstance(withdrawn, dict):
-        return MemoryChange(), []
+        return MemoryChange(), [], {}
     scopes: list[tuple[MemoryFileScope, str | None]] = []
     disk: dict[str, str] = {}
     baseline: dict[str, str] = {}
     bases: dict[str, str] = {}
+    kept: dict[str, str] = {}
     for prefix, given in withdrawn.items():
         parts = str(prefix).split("/")
         if (
@@ -310,8 +315,11 @@ async def apply_withdrawn(
             for path, value in (table or {}).items():
                 if str(path).startswith(f"{prefix}/") and isinstance(value, str):
                     into[str(path)] = value
+        for name, content in (given.get("sidecars") or {}).items():
+            if isinstance(content, str) and "/" not in str(name):
+                kept[f"{prefix}/{name}"] = content
     if not scopes:
-        return MemoryChange(), []
+        return MemoryChange(), [], {}
     stored = await read_tree(session, project_id, scopes)
     merged = sync_tree(scopes=stored.scopes, disk=disk, baseline=baseline, bases=bases)
     change = await apply_tree(
@@ -327,7 +335,9 @@ async def apply_withdrawn(
         scopes=scopes,
         updated_by=updated_by,
     )
-    return change, scopes
+    kept.update({path: body for path, body in change.refused.items() if body})
+    kept.update({path: disk[path] for path in change.rejected if path in disk})
+    return change, scopes, kept
 
 
 def _diffs(before: dict[str, str], files: dict[str, str]) -> dict[str, str]:

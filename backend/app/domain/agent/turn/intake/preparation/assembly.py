@@ -44,7 +44,11 @@ from app.domain.agent.turn.intake.preparation.gates import (
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, turn_speaker
+from app.domain.agent.turn_speakers import (
+    is_routine_run,
+    private_memory_for,
+    turn_speaker,
+)
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -214,17 +218,18 @@ async def prepare(
                 task.owner_handle if task is not None and place.thread is None else None
             ),
         )
+        private_for = await private_memory_for(session, agent.instance_id, speaker)
         memory = await memory_index(
             session,
             topic.project_id,
-            speaker=speaker,
+            speaker=private_for,
             shared_read_only=seats_only(topic),
         )
         prep.memory.remember_turn(
             topic.id,
             (place.conversation_id, agent.handle),
             acting=acting_agent,
-            speaker=speaker,
+            speaker=private_for,
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)

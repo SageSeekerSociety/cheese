@@ -75,7 +75,14 @@ def enter(target_path, argv):
     if start != seen and _unplaceable(start, needed):
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise SystemExit(f"This session cannot start at {start!r}")
+    narrowed = target.get("seat_only") or []
+    problem = _unnarrowable(narrowed, [*needed, seen, start])
+    if problem:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(f"This session cannot be kept to its own seat: {problem}")
     _place(seen, view, Path(target_path).parent / "namespace-root")
+    for cover, keep in narrowed:
+        _keep_only(cover, keep)
     if start != seen:
         try:
             os.makedirs(start, exist_ok=True)
@@ -104,6 +111,66 @@ def _unplaceable(seen, needed):
             if spelled == seen or spelled.startswith(seen + "/"):
                 return f"it would cover {spelled}, which the session needs"
     return None
+
+
+def _unnarrowable(narrowed, needed):
+    """Why the session cannot be left only `keep` of each `cover`, or None:
+    a path it needs would be hidden with the rest."""
+    for cover, keep in narrowed:
+        if not (keep + "/").startswith(cover.rstrip("/") + "/") or keep == cover:
+            return f"{keep!r} is not below {cover!r}"
+        for path in needed:
+            for spelled in {path, os.path.realpath(path)} if path else ():
+                inside = spelled == cover or spelled.startswith(cover + "/")
+                kept = spelled == keep or spelled.startswith(keep + "/")
+                if inside and not kept:
+                    return f"it needs {spelled}, which is beside {keep!r}"
+    return None
+
+
+def _keep_only(cover, keep):
+    """Leave the session nothing of `cover` but `keep` below it.
+
+    The seats of a room share the room's home, and the rooms on a session host
+    share the host: each seat's memory tree holds the private memory of the
+    person its turn answers (`runner.memory_root`), and the session's own file
+    tools are not the only thing that runs in it. So beside its own seat and
+    its own room it sees an empty directory, and no process it starts can open
+    another seat's tree by any path. `keep` is bound aside first, `cover` is
+    then covered with an empty tmpfs, and `keep` is bound back at its place.
+    """
+    if not os.path.isdir(cover) or not os.path.isdir(keep):
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    def check(result, what):
+        if result != 0:
+            number = ctypes.get_errno()
+            raise OSError(number, f"{what}: {os.strerror(number)}")
+
+    def mount(source, place, kind, flags, data=None):
+        check(
+            libc.mount(
+                source.encode() if source else None,
+                place.encode(),
+                kind.encode() if kind else None,
+                flags,
+                data.encode() if data else None,
+            ),
+            f"mount {place}",
+        )
+
+    aside = "/.cheese-kept"
+    os.mkdir(aside)
+    mount(keep, aside, None, _MS_BIND | _MS_REC)
+    mount("tmpfs", cover, "tmpfs", _MS_NOSUID | _MS_NODEV, "mode=755,size=1m")
+    place = cover
+    for name in os.path.relpath(keep, cover).split("/"):
+        place = os.path.join(place, name)
+        os.mkdir(place)
+    mount(aside, place, None, _MS_BIND | _MS_REC)
+    check(libc.umount2(aside.encode(), _MNT_DETACH), f"umount {aside}")
+    os.rmdir(aside)
 
 
 def _place(seen, view, root):

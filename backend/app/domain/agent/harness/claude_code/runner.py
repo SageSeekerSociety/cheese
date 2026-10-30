@@ -59,6 +59,7 @@ if sys.platform == "win32":
     import portable
 from app.domain.memory.files import (
     INDEX_NAME,
+    PRIVATE_PREFIX,
     check_scoped_path,
     conflict_path,
     private_owner,
@@ -474,6 +475,40 @@ def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
         for path, value in baseline.items()
         if isinstance(path, str) and isinstance(value, str)
     }
+
+
+#: 这个座位上一次铺下的 private 作用域（前缀 → ""），和基线放在一起。基线只记得
+#: 有文件的那几棵：铺下一棵空的、会话在里面写了第一条，下一轮换了人，只看基线
+#: 就认不出它要交回去。
+MEMORY_LAID = ".laid.json"
+#: 交接区里一份交接的名字：交出的时刻（纳秒，排序用）加一个随机串。
+_HANDOFF_TOKEN = re.compile(r"[0-9]{20}-[0-9a-f]{32}")
+
+
+def _handoff_root(root: Path) -> Path:
+    """交出去、平台还没回收到的那几棵（`Runner._hand_over`）：在记忆树旁边，不
+    在树里，所以 agent 的文件工具够不着它。"""
+    return root.parent / "memory-handoff"
+
+
+def _private_dirs(root: Path) -> set[str]:
+    """树上现有的 private 目录（`private/<handle>`）。"""
+    try:
+        return {
+            f"{PRIVATE_PREFIX}/{entry.name}"
+            for entry in (root / PRIVATE_PREFIX).iterdir()
+            if entry.is_dir() and not entry.is_symlink()
+        }
+    except OSError:
+        return set()
+
+
+def _remove_tree(root: Path, prefix: str) -> None:
+    """从树上拿走一整个 private 作用域，旁路文件一起。"""
+    owner = prefix.split("/", 1)[1] if "/" in prefix else ""
+    if prefix.startswith(f"{PRIVATE_PREFIX}/") and owner not in ("", ".", ".."):
+        if "/" not in owner:
+            shutil.rmtree(root / prefix, ignore_errors=True)
 
 
 def _write_memory(root: Path, path: str, content: str) -> None:
@@ -1558,36 +1593,36 @@ class Runner(runner.Runner[Journal]):
         基线从**记忆树自己的根**上读、也写回那里（`MEMORY_BASELINE`）：它和这棵树
         同生同死，所以「树没了」不会被读成「会话删光了这棵树」。
 
-        上一次铺下、这一次没点名的 private（`tree.withdrawn_prefixes`）不在这里
-        合：它们连同基线原样交回去（``withdrawn``），由平台替主人合进数据库，再从
-        这棵树上整个拿走——这棵树这一轮只给这一位看。
+        这个座位上一次铺下、这一次没点名的 private（`MEMORY_LAID` 记着铺过哪几
+        棵，空的也算；`tree.withdrawn_prefixes`）不在这里合：整棵连同它那一段基线
+        和旁路文件挪进交接区（`_hand_over`），从树上拿走——这棵树这一轮是别人的。
+        交接区不在树里，agent 的文件工具够不着（`remote_execution/client.own_memory`）。
+        每一次的回答都带着交接区里还在的那几份（``withdrawn``），直到平台把它合进
+        数据库、提交、回一句收到（``acked``，`acknowledge`）才删：回答丢了，下一
+        次照样交，那个人写下的东西不会只活在一个丢掉的回答里。
+
+        没铺过、也没点名的 private 目录（会话替别人干活时写进了这个人的目录）既
+        不交也不留：它不是谁的记忆，交回去就是替别人往他的 private 里写了东西。
         """
+        if "scopes" not in params:
+            return self.acknowledge(params)
         scopes = memory_scopes(params)
         root = self.memory_root()
         baseline = _recall_baseline(root)
         bases = _recall_baseline(root, MEMORY_BASES)
-        withdrawn = withdrawn_prefixes(scopes, baseline)
+        laid = set(_recall_baseline(root, MEMORY_LAID))
+        withdrawn = withdrawn_prefixes(scopes, baseline) | (laid - set(scopes))
         disk, emptied = self.read_memory(set(scopes) | withdrawn)
-        handed = {
-            prefix: {
-                "files": {
-                    path[len(prefix) + 1 :]: content
-                    for path, content in disk.items()
-                    if path.startswith(f"{prefix}/")
-                },
-                "baseline": {
-                    path: mark
-                    for path, mark in baseline.items()
-                    if path.startswith(f"{prefix}/")
-                },
-                "bases": {
-                    path: text
-                    for path, text in bases.items()
-                    if path.startswith(f"{prefix}/")
-                },
-            }
-            for prefix in withdrawn
-        }
+        for prefix in sorted(withdrawn):
+            self._hand_over(root, prefix, disk, baseline, bases)
+        for stray in _private_dirs(root) - set(scopes) - withdrawn:
+            print(
+                f"{ended(self.launch)}: memory sync removed {stray}, "
+                "which this seat never laid down",
+                file=sys.stderr,
+                flush=True,
+            )
+            _remove_tree(root, stray)
         outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline, bases=bases)
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
@@ -1609,21 +1644,21 @@ class Runner(runner.Runner[Journal]):
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
         # 到这里才从磁盘上消失：先算完再删，删的不是「还没看过的东西」。
         # 写空了的那一条也在这里清掉，下一轮的树里就没有一个空壳；批量删除被拦下
-        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。
+        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。交回去的那几
+        # 棵已经整棵挪走了。
         for path in set(disk) | set(baseline) | emptied:
             if path in outcome.files:
                 continue
             with contextlib.suppress(OSError):
                 (root / path).unlink(missing_ok=True)
-        # 交回去的那几棵连同旁路文件（冲突的、没收的那几版）一起拿走：留下的哪一
-        # 个都是那个人的 private，而这棵树这一轮是别人的。
-        for prefix in withdrawn:
-            owner = prefix.split("/", 1)[1]
-            if owner not in ("", ".", "..") and "/" not in owner:
-                shutil.rmtree(root / prefix, ignore_errors=True)
         self._keep_refused(root, outcome.refused)
         _write_memory(root, MEMORY_BASES, json.dumps(outcome.bases))
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
+        _write_memory(
+            root,
+            MEMORY_LAID,
+            json.dumps({prefix: "" for prefix in scopes if prefix != "team"}),
+        )
         # `held` 跟着回去：会话这一侧的兜底挡下的那些删除，平台那一侧看不见
         # （`files` 里它们已经被放回去了）。整理那一轮要知道这件事——「这次删得
         # 太多」是它必须说出来的一句话，而不是只在会话机的 stderr 里响一次。
@@ -1633,8 +1668,61 @@ class Runner(runner.Runner[Journal]):
             "rejected": outcome.rejected,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
-            "withdrawn": handed,
+            "withdrawn": self._handed(root),
         }
+
+    def _hand_over(
+        self,
+        root: Path,
+        prefix: str,
+        disk: dict[str, str],
+        baseline: dict[str, str],
+        bases: dict[str, str],
+    ) -> None:
+        """把 ``prefix`` 那一棵整棵挪进交接区：先写下一份完整的交接（原子写），
+        再从树上删。中间断了，树还在、交接也在，下一次再交一遍；平台按同一条三
+        方规矩合，同样的东西合两次结果一样。"""
+        within = f"{prefix}/"
+        sidecars: dict[str, str] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted((root / prefix).iterdir()):
+                path = f"{prefix}/{entry.name}"
+                if path in disk or not entry.is_file():
+                    continue
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    sidecars[entry.name] = entry.read_text(encoding="utf-8")
+        handover = {
+            "prefix": prefix,
+            "files": {
+                path[len(within) :]: content
+                for path, content in disk.items()
+                if path.startswith(within)
+            },
+            "baseline": {p: m for p, m in baseline.items() if p.startswith(within)},
+            "bases": {p: t for p, t in bases.items() if p.startswith(within)},
+            "sidecars": sidecars,
+        }
+        token = f"{time.time_ns():020d}-{uuid.uuid4().hex}"
+        _write_memory(_handoff_root(root), f"{token}.json", json.dumps(handover))
+        _remove_tree(root, prefix)
+
+    @staticmethod
+    def _handed(root: Path) -> dict[str, dict]:
+        """交接区里平台还没回过收到的那几份，按交出的先后。"""
+        handed: dict[str, dict] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted(_handoff_root(root).glob("*.json")):
+                with contextlib.suppress(OSError, ValueError):
+                    handed[entry.stem] = json.loads(entry.read_text(encoding="utf-8"))
+        return handed
+
+    def acknowledge(self, params: dict) -> dict:
+        """平台已经把这几份交接合进数据库、提交了（``acked``）：删掉它们。"""
+        handoff = _handoff_root(self.memory_root())
+        for token in params.get("acked") or []:
+            if isinstance(token, str) and _HANDOFF_TOKEN.fullmatch(token):
+                (handoff / f"{token}.json").unlink(missing_ok=True)
+        return {}
 
     @staticmethod
     def _keep_refused(root: Path, refused: dict[str, str]) -> None:

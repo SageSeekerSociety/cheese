@@ -30,7 +30,11 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.queries import _agent_handle, _say_memory_change
+from app.domain.agent.queries import (
+    _agent_handle,
+    _say_handed_back,
+    _say_memory_change,
+)
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import (
@@ -235,21 +239,26 @@ class MemoryLedger:
                 updated_by=updated_by,
             )
             # 上一轮那一位的 private，这一次没点名、会话交了回来：替那个人收下
-            # （`memory.session.apply_withdrawn`）。写它的那一轮不在这个座位上，
-            # 所以只记进那个人的私聊，不说给这一轮的 agent。
+            # （`memory.session.apply_withdrawn`），只说给他本人
+            # （`queries._say_handed_back`）。提交之后才回一句收到，会话那一侧
+            # 才删它的那份交接（`runner.acknowledge`）：回答在路上丢了、这里没
+            # 提交成，下一次对账它还会再交一遍。
             said = _said(change)
-            for prefix, given in (answer.get("withdrawn") or {}).items():
-                handed, owners = await apply_withdrawn(
+            acked: list[str] = []
+            for token, given in sorted((answer.get("withdrawn") or {}).items()):
+                if not isinstance(given, dict):
+                    continue
+                prefix = str(given.get("prefix") or "")
+                handed, owners, kept = await apply_withdrawn(
                     db,
                     project_id,
                     {prefix: given},
                     updated_by=self._writer_of(topic_id, prefix),
                 )
-                if _said(handed):
+                if _said(handed) or kept:
                     said = True
-                    await _say_memory_change(
-                        db, project_id, handed, owners, writer_room=None
-                    )
+                    await _say_handed_back(db, project_id, handed, owners, kept)
+                acked.append(str(token))
             if _said(change):
                 # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
                 await _say_memory_change(
@@ -263,6 +272,8 @@ class MemoryLedger:
             # 事件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
             if said:
                 await db.commit()
+        if acked:
+            await self._compute.memory(session, {"acked": acked})
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 

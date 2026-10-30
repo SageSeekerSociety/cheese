@@ -25,6 +25,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent.place import OWN_LOGIN_ID
+from app.domain.agent.turn_speakers import private_memory_for
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -236,6 +237,39 @@ async def test_an_own_agent_whose_environment_is_its_owners_machine_works_there(
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["target"]["device_id"] == own.bobs_laptop
+
+
+async def test_an_own_agent_on_its_owners_machine_carries_nobodys_private_memory(
+    client,
+):
+    """Bob's own Claude Code runs its session on Bob's laptop, where one account
+    runs everything, its commands may run unconfined, and Bob reads the disk.
+    A turn of it answering alice carries none of alice's private memory; the
+    room's own agent, on the platform's session host, carries hers."""
+    own = await _own_session(client, environment_on="bob")
+
+    async def whose() -> tuple[str | None, str | None]:
+        async with client.test_request_factory() as db:
+            instances = (
+                await db.execute(
+                    select(AgentInstance).where(
+                        AgentInstance.project_id == own.project_id
+                    )
+                )
+            ).scalars()
+            mine = room = None
+            for instance in instances:
+                given = await private_memory_for(db, instance.id, "alice")
+                if instance.handle == own.handle:
+                    mine = given
+                else:
+                    room = given
+            return mine, room
+
+    mine, room = client.portal.call(whose)
+
+    assert mine is None
+    assert room == "alice"
 
 
 async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):

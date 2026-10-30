@@ -6,7 +6,8 @@
 私聊拿到的是同样两个索引，换一个项目就是另一份。
 
 这里比的是 system prompt 里有什么——注入是这套机制唯一能被看见的地方，索引怎么读
-出来是实现，不是要守的东西。
+出来是实现，不是要守的东西。说话那个人的那一份只注入它在哪（`MINE`），不注入正文：
+注入记进会话记录，房间里的人都读得到，正文由他的会话自己读。
 """
 
 import uuid
@@ -24,7 +25,7 @@ from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
@@ -36,6 +37,9 @@ pytestmark = pytest.mark.anyio
 TEAM_HOOK = "- [回答先给结论](answer-first.md) — 项目那一份的钩子"
 MINE_HOOK = "- [他要结论在最前面](conclusion-first.md) — 说话这个人那一份的钩子"
 SOMEONE_ELSE_HOOK = "- [别人](elsewhere.md) — 没说话那个人那一份的钩子"
+#: 这一轮说话那个人（`u`）的 private 索引在哪：注入里有它，没有它的正文。
+MINE = prompt_path(f"private/u/{INDEX_NAME}")
+SOMEONE_ELSES = prompt_path(f"private/bob/{INDEX_NAME}")
 OTHER_TEAM_HOOK = "- [另一个项目的](other.md) — 另一个项目那一份的钩子"
 
 
@@ -156,8 +160,10 @@ async def test_a_room_carries_the_projects_index_and_the_speakers(client, tmp_pa
         )
     )
     assert TEAM_HOOK in prompt
-    assert MINE_HOOK in prompt
+    assert MINE in prompt
+    assert MINE_HOOK not in prompt
     assert SOMEONE_ELSE_HOOK not in prompt
+    assert SOMEONE_ELSES not in prompt
 
 
 async def test_a_shared_room_carries_only_the_person_the_turn_answers(client, tmp_path):
@@ -177,8 +183,10 @@ async def test_a_shared_room_carries_only_the_person_the_turn_answers(client, tm
         )
     )
     assert TEAM_HOOK in prompt
-    assert MINE_HOOK in prompt
+    assert MINE in prompt
+    assert MINE_HOOK not in prompt
     assert SOMEONE_ELSE_HOOK not in prompt
+    assert SOMEONE_ELSES not in prompt
 
 
 async def test_a_dm_carries_the_same_two(client, tmp_path):
@@ -197,7 +205,8 @@ async def test_a_dm_carries_the_same_two(client, tmp_path):
         )
     )
     assert TEAM_HOOK in prompt
-    assert MINE_HOOK in prompt
+    assert MINE in prompt
+    assert MINE_HOOK not in prompt
 
 
 async def test_a_harness_that_keeps_no_memory_is_not_given_the_index(client, tmp_path):

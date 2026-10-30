@@ -385,6 +385,18 @@ def prepare(
         # `memoryPath`). Not in the room's home, which the room's seats share:
         # two seats can be working for two people at once.
         central_memory=str(directory / "memory"),
+        # What the session's namespace leaves it of the room's seats and of the
+        # session host's rooms (`namespace._keep_only`): its own seat, which
+        # holds its memory tree, and its own room's home. The launch names
+        # both roots (`device_launch`); a session it did not launch has none.
+        seat_only=[
+            [os.environ[root], str(own)]
+            for root, own in (
+                ("CHEESE_SEATS_ROOT", directory.parent),
+                ("CHEESE_HOMES_ROOT", home),
+            )
+            if os.environ.get(root) and not local
+        ],
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -1089,13 +1101,23 @@ def probed(config, call):
 def own_memory(config, call):
     """A file tool on the session's memory tree, which lives on this host
     (`prepare`'s `central_memory`). The plugin has already spelled the path
-    out; anything that resolves outside the tree is not admitted."""
+    out; it is admitted only when it is the very file that path names inside
+    the tree. Nothing that resolves outside it, and nothing reached through a
+    link inside it: whose memory a call touches is read off the path it names
+    (`memory.files.private_owner`), so a `team/` path that leads into somebody's
+    `private/` would hand that person's memory to whoever reads the call."""
     if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
         return False
     tool_input = call.get("tool_input") or {}
-    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    memory = os.path.realpath(config["central_memory"]) + os.sep
-    return os.path.realpath(str(path)).startswith(memory)
+    path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+    root = os.path.normpath(config["central_memory"])
+    named = os.path.normpath(path)
+    if not named.startswith(root + os.sep):
+        return False
+    real_root = os.path.realpath(root)
+    return os.path.realpath(named) == os.path.join(
+        real_root, os.path.relpath(named, root)
+    )
 
 
 def gateway(config):

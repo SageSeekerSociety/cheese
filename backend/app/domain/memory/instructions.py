@@ -276,3 +276,18 @@ def memory_block(index_text: str, warnings: list[str] | None = None) -> str:
     for warning in warnings or []:
         parts.append(f"> ⚠️ {warning}")
     return "\n\n".join(parts)
+
+
+def private_index_pointer(owner: str) -> str:
+    """这一轮那一位的 private 记忆在注入里的样子：不是索引本身，是它在哪。
+
+    注入是会话的输入，输入原样记进会话记录，房间里的人都读得到；记录里哪一段是谁
+    的，只能按平台自己记下的结构认，不能按文字里的记号认——文字谁都写得进去
+    （team 的索引就是）。所以 private 索引不进输入，由 agent 自己读：那一次文件工
+    具调用落在 `private/<他>/` 下，runner 给调用和它的结果记上主人
+    （`cheese.private`），会话记录只给本人看（`session_record.privacy`）。"""
+    path = f"{MEMORY_DIR}/private/{owner}/MEMORY.md"
+    return (
+        f"这一轮答的是 {owner}。他的 private 记忆只有他本人看得到，索引在 `{path}`："
+        "这一轮动手之前先用 Read 读它，正文在同一个目录下，需要时再读。"
+    )

@@ -22,6 +22,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.own import owned_instance
 from app.domain.block.models import Block
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import names_a_person
@@ -82,3 +83,21 @@ async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -
     row = await session.get(Delivery, delivery_id)
     payload = (row.payload if row is not None else None) or {}
     return payload.get("eventType") == EVENT_ROUTINE_RUN
+
+
+async def private_memory_for(
+    session: AsyncSession, instance_id: uuid.UUID, speaker: str | None
+) -> str | None:
+    """Whose private memory this agent's turn may carry: ``speaker``'s, unless
+    the agent's session runs on a person's machine.
+
+    A member's own agent whose model connection is on their machine runs its
+    session there (`owner_provider`). That machine is a person's: one account
+    runs everything on it, a command the session runs may run on it with no
+    sandbox, and its owner reads its disk. Nothing there can keep one person's
+    private memory from another person's turn, so such an agent carries none,
+    neither the pointer to the index nor the tree, and the shared memory only.
+    Every other session runs on the platform's session host, kept to its own
+    seat (`remote_execution/namespace._keep_only`)."""
+    owned = await owned_instance(session, instance_id)
+    return speaker if owned is None or owned.on_account else None
