@@ -113,6 +113,32 @@ def _unplaceable(seen, needed):
     return None
 
 
+def _syscalls():
+    """libc, and `check` / `mount` over it: what `_place` and `_keep_only` call."""
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    def check(result, what):
+        if result != 0:
+            number = ctypes.get_errno()
+            # OSError(errno, ...) is the subclass the errno names, so a source
+            # that vanished is a FileNotFoundError.
+            raise OSError(number, f"{what}: {os.strerror(number)}")
+
+    def mount(source, place, kind, flags, data=None):
+        check(
+            libc.mount(
+                source.encode() if source else None,
+                place.encode(),
+                kind.encode() if kind else None,
+                flags,
+                data.encode() if data else None,
+            ),
+            f"mount {place}",
+        )
+
+    return libc, check, mount
+
+
 def _unnarrowable(narrowed, needed):
     """Why the session cannot be left only `keep` of each `cover`, or None:
     a path it needs would be hidden with the rest."""
@@ -141,24 +167,7 @@ def _keep_only(cover, keep):
     """
     if not os.path.isdir(cover) or not os.path.isdir(keep):
         return
-    libc = ctypes.CDLL(None, use_errno=True)
-
-    def check(result, what):
-        if result != 0:
-            number = ctypes.get_errno()
-            raise OSError(number, f"{what}: {os.strerror(number)}")
-
-    def mount(source, place, kind, flags, data=None):
-        check(
-            libc.mount(
-                source.encode() if source else None,
-                place.encode(),
-                kind.encode() if kind else None,
-                flags,
-                data.encode() if data else None,
-            ),
-            f"mount {place}",
-        )
+    libc, check, mount = _syscalls()
 
     aside = "/.cheese-kept"
     os.mkdir(aside)
@@ -185,26 +194,7 @@ def _place(seen, view, root):
     so files keep their owner, and the capabilities it grants end at exec.
     """
 
-    libc = ctypes.CDLL(None, use_errno=True)
-
-    def check(result, what):
-        if result != 0:
-            number = ctypes.get_errno()
-            # OSError(errno, ...) is the subclass the errno names, so a source
-            # that vanished is a FileNotFoundError.
-            raise OSError(number, f"{what}: {os.strerror(number)}")
-
-    def mount(source, place, kind, flags, data=None):
-        check(
-            libc.mount(
-                source.encode() if source else None,
-                place.encode(),
-                kind.encode() if kind else None,
-                flags,
-                data.encode() if data else None,
-            ),
-            f"mount {place}",
-        )
+    libc, check, mount = _syscalls()
 
     uid, gid = os.getuid(), os.getgid()
     root = str(root)
