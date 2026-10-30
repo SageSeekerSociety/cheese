@@ -32,8 +32,20 @@ async def seat_if_named(
     mentions need no connection lookup; actual seats are still checked against
     project rows.
     """
+    members = TopicMemberService(session)
+    for seat in await named_own_seats(session, topic, content):
+        already = seat in await members.agent_handles(topic.id)
+        await members.ensure_agent_seat(topic.id, seat)
+        if not already:
+            await ask_owner_to_join(session, topic, seat)
+
+
+async def named_own_seats(session: AsyncSession, topic, content: str) -> list[str]:
+    """The personal agents' seats ``content`` names that a message in ``topic``
+    seats (`seat_if_named`). Reads only: the composer's preview of who a
+    message is for asks it without seating anyone."""
     if not content or f"<@{AGENT_HANDLE_PREFIX}" not in content:
-        return
+        return []
     owned = await session.scalars(
         select(AgentInstance.id)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
@@ -58,11 +70,7 @@ async def seat_if_named(
         )
         owners = {instance: username for instance, username in rows.all()}
         seats = {own: seat for own, seat in seats.items() if owners.get(own) in people}
-    for seat in seats.values():
-        already = seat in await members.agent_handles(topic.id)
-        await members.ensure_agent_seat(topic.id, seat)
-        if not already:
-            await ask_owner_to_join(session, topic, seat)
+    return list(seats.values())
 
 
 async def ask_owner_to_join(session: AsyncSession, room, seat: str) -> None:
