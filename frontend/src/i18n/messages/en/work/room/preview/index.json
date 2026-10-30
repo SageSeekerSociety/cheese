@@ -150,5 +150,7 @@
   "zoomOut": "Zoom out",
   "imageFailed": "This picture would not open",
   "imageReading": "Reading the picture",
-  "retry": "Retry"
+  "retry": "Retry",
+  "offlineTitle": "This device is offline",
+  "offlineBody": "Reconnect and this pane retries on its own."
 }

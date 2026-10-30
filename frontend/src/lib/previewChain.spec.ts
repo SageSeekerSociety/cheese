@@ -84,3 +84,14 @@ it('every reason that carries {agent} gets one, so no sentence renders a bare �
   expect(down[1].params?.agent).toBe('小 C')
   expect(agentKeys).toContain(silent.reason.split('.').pop())
 })
+
+it('a device with no network says so, not that the platform could not be read', () => {
+  // 断网时第一段说的是这台设备：后面两段都还判不了。一句 fetch 错误在这里等于
+  // 把「你没网」说成「平台出问题」，读者能做的事也不一样。
+  const offline = previewChain({ ...base, offline: true, platformError: 'Failed to fetch' })
+  expect(offline[0]).toMatchObject({ key: 'platform', state: 'down', reason: 'work.room.preview.chain.offline' })
+  expect(offline[0].params).toBeUndefined()
+  expect(states({ offline: true })).toEqual(['platform:down', 'tunnel:wait', 'app:wait'])
+  // 有网时仍旧按平台那一条说。
+  expect(previewChain({ ...base, platformError: '502' })[0].reason).toBe('work.room.preview.chain.platformDown')
+})

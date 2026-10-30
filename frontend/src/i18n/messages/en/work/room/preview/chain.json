@@ -13,5 +13,6 @@
   "appRestarted": "The app just restarted; following the new instance.",
   "appReconnecting": "The connection dropped and is reconnecting; the loaded page stays on screen.",
   "pageError": "The page itself reported an error: {error}",
-  "unknown": "The link before this one is down, so this one cannot be checked yet."
+  "unknown": "The link before this one is down, so this one cannot be checked yet.",
+  "offline": "This device is offline. Reconnect and the preview picks up again."
 }
