@@ -1333,8 +1333,8 @@ class BackupWriterInstallation(unittest.TestCase):
         step = next(step for step in workflow["jobs"]["deploy"]["steps"]
                     if step.get("name") == "Install the dev database backup writer from this release")
         names = ("r2-common.py", "r2-prune-dumps.py", "r2-upload.py", "db-backup.sh")
-        for tiered in (True, False):
-            with self.subTest(tiered=tiered), tempfile.TemporaryDirectory() as directory:
+        for missing in ((), ("r2-prune-dumps.py",), ("r2-common.py", "r2-prune-dumps.py")):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 source = root / "deploy"
                 source.mkdir()
@@ -1347,7 +1347,7 @@ class BackupWriterInstallation(unittest.TestCase):
                 git.chmod(0o755)
                 for name in names:
                     (ops / name).write_text(f"previous {name}\n")
-                    if tiered or name != "r2-prune-dumps.py":
+                    if name not in missing:
                         (source / name).write_text(f"release {name}\n")
                 result = subprocess.run(
                     ["bash", "-eu", "-c", step["run"]], cwd=root,
@@ -1356,7 +1356,7 @@ class BackupWriterInstallation(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 for name in names:
-                    if not tiered and name == "r2-prune-dumps.py":
+                    if name in missing:
                         self.assertEqual((ops / name).read_text(), f"previous {name}\n")
                         continue
                     self.assertEqual((ops / name).read_text(), f"release {name}\n")

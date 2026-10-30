@@ -527,10 +527,8 @@ jobs:
           mkdir -p "$saved"
           # Install dependencies first; rename leaves any running writer's file intact.
           for name in r2-common.py r2-prune-dumps.py r2-upload.py db-backup.sh; do
-            # Supported rollback releases before tiered retention do not use this helper.
-            if [ "$name" = r2-prune-dumps.py ] && [ ! -f "deploy/$name" ]; then
-              continue
-            fi
+            # Supported rollback releases predate some helpers; install their own file set.
+            [ -f "deploy/$name" ] || continue
             if [ -f "$ops/$name" ] && [ ! -e "$saved/$name" ]; then
               cp -p "$ops/$name" "$saved/$name"
             fi
