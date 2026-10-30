@@ -190,6 +190,10 @@ async def send_chat_message(
     async def addressed_now() -> AddressingChanged:
         """Refuse a send shown as one for an AI teammate that is for none now,
         saying whom it is for now."""
+        if place.task is not None:
+            # This request read the task before the writer refused the send;
+            # whom it is for now turns on the task as it is now.
+            await db.refresh(place.task)
         now = await preview_addressing(
             db,
             place,

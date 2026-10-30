@@ -18,9 +18,11 @@ The rules a person can state without the code:
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
+from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.models import Task, TaskStatus
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -201,6 +203,45 @@ def test_a_send_meant_for_the_teammate_of_a_task_closed_meanwhile_is_refused(
     assert error["data"]["agent"] is None
     assert error["data"]["task_status"] == "closed"
     assert _written(client, task) == before
+
+
+def test_a_task_closed_while_the_send_is_on_its_way_refuses_it(
+    client, stub_hooks, monkeypatch
+):
+    """The close lands after the request read the task and before the message
+    is written: what decides is the task as it is when the message is written."""
+    _, _, room = _channel(client)
+    task, _ = _task_with_a_turn(client, room)
+    lines_before, _ = _written(client, task)
+    runner = get_work_runner()
+    receive = runner.receive_message
+
+    async def closed_meanwhile(*args, **kwargs):
+        async with client.test_factory() as db:
+            await db.execute(
+                update(Task)
+                .where(Task.id == uuid.UUID(task))
+                .values(status=TaskStatus.closed)
+            )
+            await db.commit()
+        return await receive(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "receive_message", closed_meanwhile)
+    r = client.post(
+        f"/topics/{task}/messages",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "content": "再加一个接口",
+            "expects_agent": True,
+        },
+        headers=session_auth_headers("alice"),
+    )
+
+    assert r.status_code == 409, r.text
+    assert r.json()["error"]["data"]["task_status"] == "closed"
+    assert r.json()["error"]["data"]["agent"] is None
+    # Lines only: the task's first turn may still be settling in the background.
+    assert _written(client, task)[0] == lines_before
 
 
 def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):

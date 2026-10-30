@@ -175,6 +175,14 @@ async def persist_human_message(
                 [uuid.UUID(value) for value in stored["block_ids"]],
                 True,
             )
+        if place.task is not None:
+            # Whether the task's owner is speaking to its teammate turns on
+            # the task being open (`prepare`), and the place may be the
+            # request's copy, read before this transaction began. Read the
+            # task's committed row here, under a share lock: a close committed
+            # since is seen, and one still in flight lands after this message
+            # rather than between reading the task and storing what it said.
+            await session.refresh(place.task, with_for_update={"read": True})
         created_blocks: list[Block] = []
         # Written by the author's own 芝士: every block of the send says so.
         written_for = {BY_ASSISTANT_META_KEY: True} if by_assistant else {}
