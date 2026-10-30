@@ -194,9 +194,17 @@ async def _read_roster(
         rows = [
             row for row in rows if row.handle not in excluded or row.handle == owner
         ]
+    # Existing seats and project teammates not yet seated share this roster;
+    # the ProjectTeam port supplies teammate state and member provenance.
+    # 行类型在这里认下来：口子上写的是「一列东西」（`ports.py` 里说了为什么），
+    # 递回来的每一行都是本包声明的 ``TeammateSeat``，唯一的实现也是照它填的。
+    seats = cast("Sequence[TeammateSeat]", await team(session, project_id))
     # 授权行那一半里也坐着 agent：``MemberService.add`` 是平台给队友放座位的原语，
-    # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，一次问完整张表。
-    agents = await IdentityService(session).agents_among([row.handle for row in rows])
+    # 而队友的实例不一定建在这个项目里。谁是 agent 由 binding 答，连同本项目队友席位
+    # 一次问完整张表，同请求后续按房间查 `addressable_agent_handles` 直接命中缓存。
+    agents = await IdentityService(session).agents_among(
+        [*(row.handle for row in rows), *(seat.seat for seat in seats)]
+    )
     # An AI teammate's seat row came back marked ``external`` with the people's
     # rows; it is a teammate, not an outside person.
     rows = [
@@ -204,11 +212,6 @@ async def _read_roster(
         for row in rows
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
-    # Existing seats and project teammates not yet seated share this roster;
-    # the ProjectTeam port supplies teammate state and member provenance.
-    # 行类型在这里认下来：口子上写的是「一列东西」（`ports.py` 里说了为什么），
-    # 递回来的每一行都是本包声明的 ``TeammateSeat``，唯一的实现也是照它填的。
-    seats = cast("Sequence[TeammateSeat]", await team(session, project_id))
     for seat in seats:
         index = at.get(seat.seat)
         if index is None:

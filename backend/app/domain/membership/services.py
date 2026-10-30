@@ -195,10 +195,8 @@ class MemberService:
         self, project_id: uuid.UUID
     ) -> tuple[list[ProjectMember], int]:
         await self._ensure_project(project_id)
-        return (
-            await self._repo.list_for_project(project_id),
-            await self._repo.count_for_project(project_id),
-        )
+        rows = await self._repo.list_for_project(project_id)
+        return rows, len(rows)
 
     async def remove(
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor

@@ -3,10 +3,11 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.project.models import (
     InvitationStatus,
     ProjectInvitation,
@@ -49,10 +50,23 @@ class MemberRepository:
 
     async def excluded_handles(self, project_id: uuid.UUID) -> set[str]:
         """Everyone excluded from this project, in one read — the roster's half."""
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("excluded_handles", project_id)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
         stmt = select(ProjectMemberExclusion.user_handle).where(
             ProjectMemberExclusion.project_id == project_id
         )
-        return set((await self._session.scalars(stmt)).all())
+        handles = set((await self._session.scalars(stmt)).all())
+        remember(
+            self._session,
+            key,
+            handles,
+            tables=frozenset({"project_member_exclusions"}),
+        )
+        return handles
 
     async def exclude(self, *, project_id: uuid.UUID, user_handle: str) -> None:
         """Record 「他在小队里，但不属于这个项目」.
@@ -93,14 +107,6 @@ class MemberRepository:
             .order_by(ProjectMember.created_at.asc())
         )
         return list((await self._session.scalars(stmt)).all())
-
-    async def count_for_project(self, project_id: uuid.UUID) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(ProjectMember)
-            .where(ProjectMember.project_id == project_id)
-        )
-        return int((await self._session.scalar(stmt)) or 0)
 
     async def delete(self, member: ProjectMember) -> None:
         await self._session.delete(member)
