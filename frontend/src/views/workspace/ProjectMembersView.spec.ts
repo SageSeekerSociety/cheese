@@ -1,8 +1,8 @@
-/** 成员页：一个项目的人按角色分段——所有者、管理员、成员、导师（#3830）。
+/** 成员页：一个项目的人排成一张名单，所有者在前、管理员其次（#3830、#4795）。
  *
- * 这一份钉的是那些错了也照样渲染的东西：每个人落在哪一段、谁挂「外部」，只往下管
- * （⋯ 菜单只出现在比我低的人身上，设管理员只有所有者能做），邀请时选的角色交给
- * 后端，以及退出、转让、移到团队、撤回转让、私聊这几颗按钮对谁出现。
+ * 这一份钉的是那些错了也照样渲染的东西：谁排在前面、谁挂「外部」，只往下管（角色
+ * 下拉和 ⋯ 只出现在比我低的人身上，设管理员只有所有者能做），换的角色、邀请时选的
+ * 角色交给后端，以及退出、转让、移到团队、撤回转让、私聊这几颗按钮对谁出现。
  *
  * 我坐在哪、能做什么只看后端在 `GET /projects/{id}` 上给的 `my_role` / `my_permissions`。
  */
@@ -24,6 +24,7 @@ const setMemberRole = vi.fn()
 const cancelTransfer = vi.fn()
 const listProjectAgents = vi.fn()
 const getProject = vi.fn()
+const listProjectRoles = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
@@ -38,6 +39,7 @@ vi.mock('@/api', async () => {
     cancelTransfer: (...a: unknown[]) => cancelTransfer(...a),
     listProjectAgents: (...a: unknown[]) => listProjectAgents(...a),
     getProject: (...a: unknown[]) => getProject(...a),
+    listProjectRoles: (...a: unknown[]) => listProjectRoles(...a),
   }
 })
 
@@ -47,8 +49,24 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push, replace: vi.fn() }), us
 let meHandle = 'alice'
 vi.mock('@/me', () => ({ myHandle: () => meHandle }))
 
-type Seat = 'owner' | 'admin' | 'member' | 'mentor'
-type Row = ProjectMemberRow & { role?: Seat; role_from_team?: boolean }
+type Seat = 'owner' | 'admin' | 'member'
+type Row = ProjectMemberRow & { role?: string; seat?: Seat; role_from_team?: boolean }
+
+const role = (key: string, extra: object) => ({
+  key,
+  name: null,
+  builtin: null,
+  template: null,
+  permissions: [],
+  defaults: null,
+  holders: 0,
+  ...extra,
+})
+const ADMIN = role('admin', { builtin: 'admin' })
+const MEMBER = role('member', { builtin: 'member' })
+const MENTOR = role('r-mentor', { template: 'mentor' })
+// i18n-data: a role name the project chose, rendered as its user data
+const TESTER = role('r-tester', { name: '内测用户' })
 
 const refreshMembers = vi.fn()
 let members: Row[] = []
@@ -124,6 +142,7 @@ beforeEach(() => {
   setMemberRole.mockReset().mockResolvedValue({ role: 'member' })
   cancelTransfer.mockReset().mockResolvedValue({})
   getProject.mockReset().mockImplementation(async (id: string) => ({ ...projectRow, id, ...seat }))
+  listProjectRoles.mockReset().mockResolvedValue({ roles: [ADMIN, MEMBER, MENTOR, TESTER] })
   listProjectAgents.mockReset().mockResolvedValue({
     data: [{ handle: 'cheese', display_name: '芝士', is_default: true, is_active: true }],
   })
@@ -131,7 +150,7 @@ beforeEach(() => {
   projectRow = { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'zhishi' }
   as('alice', 'owner', [...MANAGER, 'edit_settings'])
   members = [
-    { user_handle: 'alice', name: '爱丽丝', source: 'owner', role: 'owner' },
+    { user_handle: 'alice', name: '爱丽丝', source: 'owner', role: 'owner', seat: 'owner' },
     {
       user_handle: 'boss',
       name: '团长',
@@ -139,9 +158,18 @@ beforeEach(() => {
       team_handle: 'zhishi',
       team_name: '知是小队',
       role: 'admin',
+      seat: 'admin',
       role_from_team: true,
     },
-    { user_handle: 'dora', name: '朵拉', source: 'team', team_handle: 'zhishi', team_name: '知是小队', role: 'admin' },
+    {
+      user_handle: 'dora',
+      name: '朵拉',
+      source: 'team',
+      team_handle: 'zhishi',
+      team_name: '知是小队',
+      role: 'admin',
+      seat: 'admin',
+    },
     {
       user_handle: 'ligan',
       name: '李干',
@@ -149,8 +177,9 @@ beforeEach(() => {
       team_handle: 'zhishi',
       team_name: '知是小队',
       role: 'member',
+      seat: 'member',
     },
-    { user_handle: 'mentor1', name: '老师', source: 'external', role: 'mentor' },
+    { user_handle: 'mentor1', name: '老师', source: 'external', role: 'r-mentor', seat: 'member' },
     { user_handle: 'cheese-x', name: '芝士', source: 'agent', agent: true },
   ]
 })
@@ -167,12 +196,27 @@ async function settled() {
 
 const MENU = '[aria-label="管理成员"]'
 
-/** 打开某一行的 ⋯ 菜单，返回菜单里各项的文字。 */
-async function openMenu(container: Element, handle: string): Promise<string[]> {
-  await waitFor(() => expect(rowFor(container, handle).querySelector(MENU)).toBeTruthy())
-  await fireEvent.click(rowFor(container, handle).querySelector(MENU) as Element)
-  await screen.findByText('移出项目')
+const ROLE = '.member-role .v-field'
+
+/** 打开某一行的角色下拉，返回能选的角色。 */
+async function openRoles(container: Element, handle: string): Promise<string[]> {
+  await waitFor(() => expect(rowFor(container, handle).querySelector(ROLE)).toBeTruthy())
+  await fireEvent.mouseDown(rowFor(container, handle).querySelector(ROLE) as Element)
+  await waitFor(() => expect(document.body.querySelectorAll('.v-overlay .v-list-item').length).toBeGreaterThan(0))
   return Array.from(document.body.querySelectorAll('.v-overlay .v-list-item'), (el) => el.textContent?.trim() ?? '')
+}
+
+async function pickRole(name: string) {
+  const item = Array.from(document.body.querySelectorAll('.v-overlay .v-list-item')).find(
+    (el) => el.textContent?.trim() === name
+  )
+  await fireEvent.click(item as Element)
+}
+
+function handlesInOrder(container: Element): string[] {
+  return Array.from(container.querySelectorAll('.member-row'), (row) =>
+    ['alice', 'boss', 'dora', 'ligan', 'mentor1'].find((h) => showsHandle(row, h))
+  ).filter((h): h is string => !!h)
 }
 
 function section(container: Element, key: string): Element | null {
@@ -190,17 +234,24 @@ function rowFor(container: Element, handle: string): Element {
   return row
 }
 
-describe('成员页：按角色分段', () => {
-  it('所有者、管理员、成员、导师各一段，AI 队友不混进人里', () => {
+describe('成员页：一张名单', () => {
+  it('所有者在最前，管理员其次，其余的人在后，每行写着角色，AI 队友不混进人里', async () => {
     const { container } = mount()
-    expect(showsHandle(section(container, 'owner')!, 'alice')).toBe(true)
-    expect(showsHandle(section(container, 'admin')!, 'boss')).toBe(true)
-    expect(showsHandle(section(container, 'admin')!, 'dora')).toBe(true)
-    expect(showsHandle(section(container, 'member')!, 'ligan')).toBe(true)
-    expect(showsHandle(section(container, 'mentor')!, 'mentor1')).toBe(true)
-    expect(showsHandle(section(container, 'member')!, 'mentor1')).toBe(false)
+    const order = handlesInOrder(container)
+    expect(order[0]).toBe('alice')
+    expect(new Set(order.slice(1, 3))).toEqual(new Set(['boss', 'dora']))
+    expect(new Set(order.slice(3))).toEqual(new Set(['ligan', 'mentor1']))
+    await waitFor(() => expect(rowFor(container, 'alice').textContent).toContain('所有者'))
     expect(container.textContent).not.toContain('@alice')
     expect(() => rowFor(container, 'cheese-x')).toThrow()
+  })
+
+  it('按角色筛：只看拿着这个角色的人', async () => {
+    const { container } = mount()
+    await waitFor(() => expect(listProjectRoles).toHaveBeenCalled())
+    await fireEvent.mouseDown(container.querySelector('.member-tools__filter .v-field') as Element)
+    await pickRole('导师')
+    await waitFor(() => expect(handlesInOrder(container)).toEqual(['mentor1']))
   })
 
   it('团队给的管理员身份写明来自团队：这一条只能在团队那边改', () => {
@@ -230,70 +281,62 @@ describe('成员页：按角色分段', () => {
 })
 
 describe('成员页：只往下管', () => {
-  it('所有者对除自己以外的每个人都有管理菜单', async () => {
+  it('所有者能给除自己以外的每个人换角色、移出', async () => {
     const { container } = mount()
     for (const handle of ['dora', 'ligan', 'mentor1']) {
-      await waitFor(() => expect(rowFor(container, handle).querySelector(MENU), handle).toBeTruthy())
+      await waitFor(() => expect(rowFor(container, handle).querySelector(ROLE), handle).toBeTruthy())
+      expect(rowFor(container, handle).querySelector(MENU), handle).toBeTruthy()
     }
+    expect(rowFor(container, 'alice').querySelector(ROLE)).toBeNull()
     expect(rowFor(container, 'alice').querySelector(MENU)).toBeNull()
   })
 
-  it('所有者能把成员设为管理员或导师，也能移出', async () => {
+  it('所有者能选的角色里有管理员，也有项目自己的角色', async () => {
     const { container } = mount()
-    const items = await openMenu(container, 'ligan')
-    expect(items).toEqual(expect.arrayContaining(['设为管理员', '设为导师', '移出项目']))
-    expect(items).not.toContain('设为成员')
+    expect(await openRoles(container, 'ligan')).toEqual(['管理员', '成员', '导师', '内测用户'])
   })
 
-  it('导师只能被设回成员，不能一步升成管理员', async () => {
+  it('换角色交给后端，然后刷新名册', async () => {
     const { container } = mount()
-    const items = await openMenu(container, 'mentor1')
-    expect(items).toContain('设为成员')
-    expect(items).not.toContain('设为管理员')
-    expect(items).not.toContain('设为导师')
-  })
-
-  it('改角色交给后端，然后刷新名册', async () => {
-    const { container } = mount()
-    await openMenu(container, 'ligan')
-    await fireEvent.click(await screen.findByText('设为导师'))
-    await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('p1', 'ligan', 'mentor'))
+    await openRoles(container, 'ligan')
+    await pickRole('内测用户')
+    await waitFor(() => expect(setMemberRole).toHaveBeenCalledWith('p1', 'ligan', 'r-tester'))
     await waitFor(() => expect(refreshMembers).toHaveBeenCalled())
   })
 
-  it('改角色被拒时把理由说出来', async () => {
+  it('换角色被拒时把理由说出来', async () => {
     setMemberRole.mockRejectedValue(new Error('只有所有者能设管理员'))
     const { container, findByText } = mount()
-    await openMenu(container, 'ligan')
-    await fireEvent.click(await screen.findByText('设为管理员'))
+    await openRoles(container, 'ligan')
+    await pickRole('管理员')
     expect(await findByText('只有所有者能设管理员')).toBeTruthy()
   })
 
-  it('管理员只管成员和导师：所有者、别的管理员、自己都没有菜单，也设不了管理员', async () => {
+  it('管理员管不了所有者、别的管理员和自己，也设不了管理员', async () => {
     as('dora', 'admin', MANAGER)
     const { container } = mount()
-    await waitFor(() => expect(rowFor(container, 'ligan').querySelector(MENU)).toBeTruthy())
-    expect(rowFor(container, 'mentor1').querySelector(MENU)).toBeTruthy()
-    expect(rowFor(container, 'alice').querySelector(MENU)).toBeNull()
-    expect(rowFor(container, 'boss').querySelector(MENU)).toBeNull()
-    expect(rowFor(container, 'dora').querySelector(MENU)).toBeNull()
-
-    const items = await openMenu(container, 'ligan')
-    expect(items).toContain('设为导师')
-    expect(items).not.toContain('设为管理员')
+    await waitFor(() => expect(rowFor(container, 'ligan').querySelector(ROLE)).toBeTruthy())
+    expect(rowFor(container, 'mentor1').querySelector(ROLE)).toBeTruthy()
+    for (const handle of ['alice', 'boss', 'dora']) {
+      expect(rowFor(container, handle).querySelector(ROLE), handle).toBeNull()
+      expect(rowFor(container, handle).querySelector(MENU), handle).toBeNull()
+    }
+    expect(await openRoles(container, 'ligan')).not.toContain('管理员')
   })
 
-  it('成员谁也管不了：没有管理菜单，也看不到邀请', async () => {
+  it('成员谁也管不了：没有角色下拉和管理菜单，也看不到邀请', async () => {
     as('ligan', 'member', PLAIN)
     const { container, queryByText } = mount()
     await settled()
+    expect(container.querySelectorAll(ROLE).length).toBe(0)
     expect(container.querySelectorAll(MENU).length).toBe(0)
     expect(queryByText('邀请')).toBeNull()
   })
 
   it('移出要先确认，确认后调接口并刷新名册', async () => {
     const { container } = mount()
-    await openMenu(container, 'mentor1')
+    await waitFor(() => expect(rowFor(container, 'mentor1').querySelector(MENU)).toBeTruthy())
+    await fireEvent.click(rowFor(container, 'mentor1').querySelector(MENU) as Element)
     await fireEvent.click(await screen.findByText('移出项目'))
     expect(removeProjectMember).not.toHaveBeenCalled()
     const dialog = await screen.findByRole('dialog')
@@ -305,7 +348,7 @@ describe('成员页：只往下管', () => {
 
 describe('成员页：退出、转让与移到团队', () => {
   it('导师能退出项目，不能转让', async () => {
-    as('mentor1', 'mentor', PLAIN)
+    as('mentor1', 'member', PLAIN)
     const { findByText, queryByText } = mount()
     expect(await findByText('退出项目')).toBeTruthy()
     expect(queryByText('转让项目')).toBeNull()
@@ -361,7 +404,7 @@ describe('成员页：退出、转让与移到团队', () => {
   })
 
   it('每个人都能去看角色和权限', async () => {
-    as('mentor1', 'mentor', PLAIN)
+    as('mentor1', 'member', PLAIN)
     const { findByText } = mount()
     await fireEvent.click(await findByText('角色和权限'))
     expect(push).toHaveBeenCalledWith({ name: 'project-settings', params: { projectId: 'p1', section: 'roles' } })
@@ -402,11 +445,28 @@ describe('成员页：邀请', () => {
     await waitFor(() => expect(inviteExternalMember).toHaveBeenCalledWith('p1', 'zhangheng', 'member'))
   })
 
-  it('选了导师就以导师身份邀请', async () => {
+  /** 在邀请框里选一个角色。 */
+  async function chooseRole(dialog: HTMLElement, name: string) {
+    await fireEvent.mouseDown(within(dialog).getByLabelText('角色').closest('.v-field') as Element)
+    await pickRole(name)
+  }
+
+  it('选了项目的导师角色，就以它邀请', async () => {
     lookupUser.mockResolvedValue({ handle: 'zhangheng', name: '张衡', avatar_id: null })
     mount()
     const dialog = await lookUp('zhangheng')
-    await fireEvent.click(within(dialog).getByRole('radio', { name: '导师' }))
+    await chooseRole(dialog, '导师')
+    await within(dialog).findByText('张衡')
+    await fireEvent.click(within(dialog).getByRole('button', { name: '发送邀请' }))
+    await waitFor(() => expect(inviteExternalMember).toHaveBeenCalledWith('p1', 'zhangheng', 'r-mentor'))
+  })
+
+  it('项目还没有导师角色时也能选导师，由后端建出来', async () => {
+    listProjectRoles.mockResolvedValue({ roles: [ADMIN, MEMBER, TESTER] })
+    lookupUser.mockResolvedValue({ handle: 'zhangheng', name: '张衡', avatar_id: null })
+    mount()
+    const dialog = await lookUp('zhangheng')
+    await chooseRole(dialog, '导师')
     await within(dialog).findByText('张衡')
     await fireEvent.click(within(dialog).getByRole('button', { name: '发送邀请' }))
     await waitFor(() => expect(inviteExternalMember).toHaveBeenCalledWith('p1', 'zhangheng', 'mentor'))
@@ -485,8 +545,8 @@ describe('成员页：邀请', () => {
 
   it('设了个人备注的队友显示「备注名 (原昵称)」，且按备注名或原名都能搜到', async () => {
     members = [
-      { user_handle: 'alice', name: '爱丽丝', source: 'owner', role: 'owner' },
-      { user_handle: 'ligan', name: '李干', remark: '前端组件-李工', source: 'team', role: 'member' },
+      { user_handle: 'alice', name: '爱丽丝', source: 'owner', role: 'owner', seat: 'owner' },
+      { user_handle: 'ligan', name: '李干', remark: '前端组件-李工', source: 'team', role: 'member', seat: 'member' },
       ...Array.from({ length: 8 }, (_, i) => ({
         user_handle: `m${i}`,
         name: `成员${i}`,

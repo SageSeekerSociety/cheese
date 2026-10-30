@@ -8,19 +8,22 @@ includes every module-level `APIRouter` under `app.api.routes`.
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
+from app.auth.project_roles import project_roles
+from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic_membership.services import TopicMemberService
@@ -103,4 +106,45 @@ async def set_members_only(
     # Made private, it leaves the list of everyone not in it: they saw it a
     # moment ago, so telling them its id says nothing new.
     await tell_project(topic_id, TOPICS, everyone=True)
+    return ok(out)
+
+
+class SpeakersIn(BaseModel):
+    #: The keys of the project roles that may speak in the main line; None for
+    #: everyone.
+    speaker_roles: list[str] | None = None
+    thread_replies_open: bool = True
+
+
+@router.put("/{topic_id}/speakers", **typed_response(TopicOut))
+async def set_speakers(
+    at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
+    body: SpeakersIn,
+    db: DbSession,
+) -> dict:
+    """Who may speak in the channel's main line, and whether everyone may
+    still answer in a 支线, set by whoever manages it (#4795): someone in the
+    channel's project who manages this channel or every channel."""
+    topic_id = at.place.room_id
+    if at.place.conversation_id != topic_id:
+        raise NotFoundError(say("topicNotFound"))
+    if not at.actor.authenticated:
+        raise AuthenticationRequiredError(say("signInForProject"))
+    room = await TopicMemberService(db).require_manager(topic_id, at.actor.handle)
+    if body.speaker_roles is not None:
+        known = await project_roles(db, room.project_id)
+        wanted = list(dict.fromkeys(body.speaker_roles))
+        if not wanted:
+            raise ValidationError(say("channelSpeakersNone"))
+        missing = [key for key in wanted if key not in known]
+        if missing:
+            raise NotFoundError(say("projectRoleNotFound"))
+        room.speaker_roles = wanted
+    else:
+        room.speaker_roles = None
+    room.thread_replies_open = body.thread_replies_open
+    await db.flush()
+    out = TopicOut.model_validate(room).model_dump(mode="json")
+    await db.commit()
+    await announce_stale(topic_id, "topics", id=topic_id)
     return ok(out)

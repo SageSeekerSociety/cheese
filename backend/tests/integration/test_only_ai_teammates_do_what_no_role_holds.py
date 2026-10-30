@@ -66,10 +66,10 @@ def _agent_of(client: TestClient, project_id: str, room: str) -> dict[str, str]:
 
 def _grant_admins_everything(p: Project) -> None:
     """The owner gives the admin role every permission the role table lists."""
-    listed = p.owner_get(f"{p.base}/roles")["grants"]
-    everything = sorted({name for names in listed.values() for name in names})
+    listed = p.owner_get(f"{p.base}/roles")["roles"]
+    everything = sorted({name for r in listed for name in r["permissions"]})
     granted = p.as_owner(
-        "PUT", f"{p.base}/roles", json={"grants": {"admin": everything}}
+        "PATCH", f"{p.base}/roles/admin", json={"permissions": everything}
     )
     assert granted.status_code == 200, granted.text
 
@@ -79,13 +79,13 @@ def test_no_role_holds_or_is_granted_what_only_ai_teammates_do(client):
 
     for name in sorted(_AGENT_ONLY_NAMES):
         refused = p.as_owner(
-            "PUT", f"{p.base}/roles", json={"grants": {"member": [name]}}
+            "PATCH", f"{p.base}/roles/member", json={"permissions": [name]}
         )
         assert refused.status_code == 422, (name, refused.text)
 
     _grant_admins_everything(p)
-    roles = p.owner_get(f"{p.base}/roles")["grants"]
-    assert all(not _AGENT_ONLY_NAMES & set(names) for names in roles.values()), roles
+    roles = p.owner_get(f"{p.base}/roles")["roles"]
+    assert all(not _AGENT_ONLY_NAMES & set(r["permissions"]) for r in roles), roles
     for seat in ("owner", "admin"):
         mine = client.get(p.base, headers=p.headers[seat]).json()["data"]
         assert mine["my_permissions"], seat

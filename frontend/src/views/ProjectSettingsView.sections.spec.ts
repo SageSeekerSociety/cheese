@@ -346,7 +346,7 @@ describe('两个「连接」入口', () => {
     expect(api.getForgeConnection).not.toHaveBeenCalled()
     expect(api.getCommitCredit).not.toHaveBeenCalled()
     expect(api.getBranchProtection).not.toHaveBeenCalled()
-    expect(api.getRoleGrants).not.toHaveBeenCalled()
+    expect(api.listProjectRoles).not.toHaveBeenCalled()
     expect(api.getProjectCreditBudget).not.toHaveBeenCalled()
     expect(api.getProjectDefaultModel).toHaveBeenCalledTimes(1)
   })

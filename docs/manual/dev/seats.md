@@ -25,7 +25,7 @@ covers:
 
 ## 管理项目 {#manage}
 
-一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员、导师，每个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
+一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员，以及项目自己的角色（`project_role_defs`，导师是带 `template = mentor` 标记的一种）。内置两个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
 
 ## 管理团队 {#teams}
 

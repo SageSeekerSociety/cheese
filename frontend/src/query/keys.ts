@@ -24,6 +24,7 @@ export const keys = {
   projectTopics: (projectId: string) => ['project', projectId, 'topics'] as const,
   projectMembers: (projectId: string) => ['project', projectId, 'members'] as const,
   projectAgents: (projectId: string) => ['project', projectId, 'agents'] as const,
+  projectRoles: (projectId: string) => ['project', projectId, 'roles'] as const,
   projectUnread: (projectId: string, me: string) => ['project', projectId, 'unread', me] as const,
   projectPrivateUnread: (projectId: string, me: string) => ['project', projectId, 'private-unread', me] as const,
   projectNotifyLevels: (projectId: string) => ['project', projectId, 'notify-levels'] as const,

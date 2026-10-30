@@ -268,8 +268,20 @@ class ProjectInvitation(UuidPk, Timestamps, Base):
     responded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: The role the invitee takes once they accept: ``member`` or ``mentor``.
+    #: The role the invitee takes once they accept: ``member``, or ``custom``
+    #: with the project's own role in ``role_id``. A waiting invitation moves
+    #: with its role's holders when the role is deleted; an answered one is a
+    #: record and lets go of it (``SET NULL``).
     role: Mapped[str] = mapped_column(String(16), default="member")
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "project_role_defs.id",
+            ondelete="SET NULL",
+            name="fk_project_invitations_role_id_project_role_defs",
+        ),
+        nullable=True,
+        index=True,
+    )
 
 
 class ProjectRole(UuidPk, Timestamps, Base):
@@ -277,14 +289,20 @@ class ProjectRole(UuidPk, Timestamps, Base):
 
     Without a row a person's role follows from how they are in the project: the
     team's owner and admins are admins, everyone else is a member
-    (``app.auth.project_roles``). A row says otherwise — a member made admin, a
-    person invited as mentor. The owner is never a row: that is
-    ``projects.owner_handle``.
+    (``app.auth.project_roles``). A row says otherwise: ``admin`` for a member
+    made admin, ``custom`` for one of the project's own roles, named by
+    ``role_id``. A role someone holds cannot be deleted from under them
+    (``RESTRICT``): they are moved to another role first. The owner is never a
+    row: that is ``projects.owner_handle``.
     """
 
     __tablename__ = "project_roles"
     __table_args__ = (
         UniqueConstraint("project_id", "user_handle", name="uq_project_role"),
+        CheckConstraint(
+            "(role = 'custom') = (role_id IS NOT NULL)",
+            name="ck_project_roles_custom_has_role_id",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -297,29 +315,55 @@ class ProjectRole(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     role: Mapped[str] = mapped_column(String(16))
+    role_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "project_role_defs.id",
+            ondelete="RESTRICT",
+            name="fk_project_roles_role_id_project_role_defs",
+        ),
+        nullable=True,
+        index=True,
+    )
 
 
-class ProjectRoleGrant(UuidPk, Timestamps, Base):
-    """What one role may do in one project, when the project changed it.
+class ProjectRoleDef(UuidPk, Timestamps, Base):
+    """A role of one project and what it may do (#4795).
 
-    No row means the role's defaults (``project.permissions.DEFAULT_GRANTS``);
-    restoring the defaults deletes the row.
+    Two kinds of row, one thing — a role's definition here:
+
+    - a built-in role (``builtin`` = ``admin`` or ``member``) whose permissions
+      this project changed. No row means its defaults
+      (``project_permissions.DEFAULT_GRANTS``); restoring them deletes the row.
+      Its name is fixed and not stored.
+    - one of the project's own roles: a ``name`` and its permissions, and a
+      ``template`` mark when it was made from one (a mentor), which is how the
+      platform knows it whatever it is called. A role made from a template and
+      never renamed stores no name: each reader sees the template's name in
+      their own language.
     """
 
-    __tablename__ = "project_role_grants"
+    __tablename__ = "project_role_defs"
     __table_args__ = (
-        UniqueConstraint("project_id", "role", name="uq_project_role_grant"),
+        UniqueConstraint("project_id", "builtin", name="uq_project_role_def_builtin"),
+        UniqueConstraint("project_id", "name", name="uq_project_role_def_name"),
+        CheckConstraint(
+            "(builtin IS NOT NULL AND name IS NULL AND template IS NULL)"
+            " OR (builtin IS NULL AND (name IS NOT NULL OR template IS NOT NULL))",
+            name="ck_project_role_defs_builtin_or_named",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey(
             "projects.id",
             ondelete="CASCADE",
-            name="fk_project_role_grants_project_id_projects",
+            name="fk_project_role_defs_project_id_projects",
         ),
         index=True,
     )
-    role: Mapped[str] = mapped_column(String(16))
+    builtin: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    template: Mapped[str | None] = mapped_column(String(16), nullable=True)
     permissions: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
 

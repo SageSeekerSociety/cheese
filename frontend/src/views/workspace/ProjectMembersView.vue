@@ -1,15 +1,17 @@
 <script setup lang="ts">
 // 「成员」—— 这个项目里有谁、各自是什么角色，以及对他们能做什么（#3830）。
 //
-// 按角色分段：所有者、管理员、成员、导师，AI 队友在最后。团队所有者和团队管理员带标签：
-// 他们的身份是团队给的，只能在团队那边改。外部成员（团队以外、被邀请进来的人）带「外部」。
+// 一张名单：所有者在最前，然后是管理员，再往下是其他人（#4795），AI 队友在最后。每一行
+// 写着这个人的角色，比我低的人那一格是下拉，直接换。角色多了也不分段：顶上可以按角色筛。
+// 团队所有者和团队管理员带标签：他们的身份是团队给的，只能在团队那边改。外部成员（团队
+// 以外、被邀请进来的人）带「外部」。
 // 我能做什么由项目上的 `my_role` / `my_permissions` 说了算，后端动手时按同一条规则再判
 // 一次；它们只在 `GET /projects/{id}` 上有，所以这一页自己问一次。
 //
-// 一行 = 一个人：点开是他的主页，右边是私聊；比我低的人还有一个「⋯」——改角色、移出。
-// 只往下管：管理员管成员和导师，设管理员、撤管理员只有所有者能做。
+// 一行 = 一个人：点开是他的主页，右边是私聊、角色；比我低的人还有一个「⋯」——移出。
+// 只往下管：管理员管除管理员以外的人，设管理员、撤管理员只有所有者能做。
 //
-// 右上角：邀请（选成员还是导师）、角色和权限、所有者的「转让项目」（个人项目还有「移到
+// 右上角：邀请（选一个角色）、角色和权限、所有者的「转让项目」（个人项目还有「移到
 // 团队」）、其余人的「退出项目」。团队成员退的也是**这个项目**：他还在团队里。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
@@ -22,6 +24,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { useAccountLookup } from '@/composables/useAccountLookup'
 import { useMoveProject } from '@/composables/useMoveProject'
+import { useProjectRoles } from '@/composables/useProjectRoles'
 import { provideRevealGate } from '@/composables/useRevealGate'
 import { useRowMenu } from '@/composables/useRowMenu'
 
@@ -43,7 +46,6 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
@@ -53,7 +55,7 @@ import { t } from '@/i18n'
 import { memberName, memberOriginalName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
-import { mayIn } from '@/lib/projectPermissions'
+import { mayIn, roleName } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -154,7 +156,6 @@ function matches(m: ProjectMemberRow): boolean {
   )
 }
 
-const people = computed(() => store.members.filter((m) => !m.agent && matches(m)))
 const agents = computed(() =>
   teammates.value.filter((a) => {
     const q = query.value.trim().toLowerCase()
@@ -164,41 +165,70 @@ const agents = computed(() =>
   })
 )
 
-// 名册行上的角色（#3830）：后端说这个人坐在哪（`role`），以及这个身份是不是团队给的
-// （`role_from_team`，团队所有者和团队管理员，只能在团队那边改）。
+// 名册行上的角色（#3830、#4795）：后端说这个人拿的是哪个角色（`role`，所有者是 `owner`）、
+// 坐得多高（`seat`），以及这个身份是不是团队给的（`role_from_team`，团队所有者和团队管理员，
+// 只能在团队那边改）。
 // Declared here, not on `ProjectMemberRow`: cx_types.ts is over its size cap and may only shrink.
-type Seat = 'owner' | 'admin' | 'member' | 'mentor'
-type RoleRow = ProjectMemberRow & { role?: Seat; role_from_team?: boolean }
-const RANK: Record<Seat, number> = { owner: 3, admin: 2, member: 1, mentor: 1 }
-function roleOf(m: ProjectMemberRow): Seat {
+type Seat = 'owner' | 'admin' | 'member'
+type RoleRow = ProjectMemberRow & { role?: string; seat?: Seat; role_from_team?: boolean }
+const RANK: Record<Seat, number> = { owner: 3, admin: 2, member: 1 }
+const projectRoles = useProjectRoles(() => props.projectId)
+function roleOf(m: ProjectMemberRow): string {
   return (m as RoleRow).role ?? 'member'
+}
+function seatOf(m: ProjectMemberRow): Seat {
+  return (m as RoleRow).seat ?? 'member'
+}
+function roleLabel(key: string): string {
+  if (key === 'owner') return t('work.members.sectionOwner')
+  const role = projectRoles.roles.value.find((r) => r.key === key)
+  return role ? roleName(role) : ''
 }
 function teamChip(m: ProjectMemberRow): string | null {
   const row = m as RoleRow
   if (!row.role_from_team) return null
-  return t(row.role === 'owner' ? 'work.members.teamOwner' : 'work.members.teamAdmin')
+  return t(row.seat === 'owner' ? 'work.members.teamOwner' : 'work.members.teamAdmin')
 }
 
-// 按角色分段。
-const sections = computed(() =>
-  (['owner', 'admin', 'member', 'mentor'] as const)
-    .map((role) => ({
-      key: role,
-      title: t(`work.members.section${role[0].toUpperCase()}${role.slice(1)}`),
-      rows: people.value.filter((m) => roleOf(m) === role),
-    }))
-    .filter((s) => s.rows.length > 0)
-)
+// 按角色筛：「全部角色」，或只看拿着某一个角色的人。
+const roleFilter = ref('all')
+const filterOptions = computed(() => [
+  { value: 'all', title: t('work.members.allRoles') },
+  ...projectRoles.roles.value.map((r) => ({ value: r.key, title: roleName(r) })),
+])
+// 所有者在前，管理员其次，再往下按角色清单的先后，同一角色里按名字。
+const people = computed(() => {
+  const order = new Map(projectRoles.roles.value.map((r, i) => [r.key, i]))
+  return store.members
+    .filter((m) => !m.agent && matches(m))
+    .filter((m) => roleFilter.value === 'all' || roleOf(m) === roleFilter.value)
+    .sort(
+      (a, b) =>
+        RANK[seatOf(b)] - RANK[seatOf(a)] ||
+        (order.get(roleOf(a)) ?? 99) - (order.get(roleOf(b)) ?? 99) ||
+        (memberName(a) || a.user_handle).localeCompare(memberName(b) || b.user_handle)
+    )
+})
 
-// 只往下管（#3830）：比自己低的人才有这一行的菜单。团队给的身份（团队所有者、团队管理员）
-// 在团队那边改，这里不给菜单（后端按同一条规则再判一次）。自己走右上角那颗「退出项目」。
+// 只往下管（#3830）：比自己低的人才能换角色、才有「⋯」。团队给的身份（团队所有者、团队
+// 管理员）在团队那边改，这里不给（后端按同一条规则再判一次）。自己走右上角那颗「退出项目」。
 function below(m: ProjectMemberRow): boolean {
-  const mine = myRole.value
+  const mine = myRole.value as Seat | null
   if (!mine || m.user_handle === me.value || (m as RoleRow).role_from_team) return false
-  return RANK[mine] > RANK[roleOf(m)]
+  return RANK[mine] > RANK[seatOf(m)]
 }
 function removable(m: ProjectMemberRow): boolean {
-  return below(m) && (canManage.value || changesRoles.value)
+  return below(m) && canManage.value
+}
+function retitlable(m: ProjectMemberRow): boolean {
+  return below(m) && changesRoles.value
+}
+// 一行的角色下拉：设管理员只有所有者能；内置的两个在上，项目自己的角色在一道线下面。
+function roleChoices(): { value: string; title: string; divider: boolean }[] {
+  const own = myRole.value === 'owner'
+  const list = projectRoles.roles.value.filter((r) => r.builtin !== 'admin' || own)
+  const firstOwn = list.findIndex((r) => !r.builtin)
+  return list.map((r, i) => ({ value: r.key, title: roleName(r), divider: i === firstOwn && i > 0 }))
 }
 
 function faceUrl(m: ProjectMemberRow): string {
@@ -227,44 +257,26 @@ function messageOf(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback
 }
 
-// ---- 改角色、移出 ----
+// ---- 换角色、移出 ----
 const removeTarget = ref<ProjectMemberRow | null>(null)
 function memberActions(m: ProjectMemberRow): MenuAction[] {
-  const role = roleOf(m)
-  const make = (key: 'admin' | 'member' | 'mentor', icon: string): MenuAction => ({
-    key,
-    label: t(`work.members.make${key[0].toUpperCase()}${key.slice(1)}`),
-    icon,
-    onSelect: () => void changeRole(m, key),
-  })
-  const roles: MenuAction[] = []
-  if (changesRoles.value) {
-    // 设管理员、撤管理员都只有所有者能做。
-    if (role === 'member' && myRole.value === 'owner') roles.push(make('admin', 'mdi-shield-account-outline'))
-    if (role === 'member') roles.push(make('mentor', 'mdi-school-outline'))
-    if (role === 'mentor' || role === 'admin') roles.push(make('member', 'mdi-account-outline'))
-  }
   return [
-    ...roles,
-    ...(canManage.value
-      ? [
-          {
-            key: 'remove',
-            label: t('work.members.remove'),
-            icon: 'mdi-account-remove-outline',
-            danger: true,
-            onSelect: () => (removeTarget.value = m),
-          },
-        ]
-      : []),
+    {
+      key: 'remove',
+      label: t('work.members.remove'),
+      icon: 'mdi-account-remove-outline',
+      danger: true,
+      onSelect: () => (removeTarget.value = m),
+    },
   ]
 }
-async function changeRole(m: ProjectMemberRow, role: 'admin' | 'member' | 'mentor') {
+async function changeRole(m: ProjectMemberRow, role: string) {
+  if (role === roleOf(m)) return
   busyHandle.value = m.user_handle
   error.value = null
   try {
     await setMemberRole(props.projectId, m.user_handle, role)
-    await store.refreshMembers()
+    await Promise.all([store.refreshMembers(), projectRoles.load()])
   } catch (e) {
     error.value = messageOf(e, t('work.members.roleFailed'))
   } finally {
@@ -351,11 +363,17 @@ async function moveTo(teamId: number) {
 // 前就露出来。
 const inviteOpen = ref(false)
 const inviting = ref(false)
-const inviteRole = ref<'member' | 'mentor'>('member')
-const inviteRoleOptions = computed(() => [
-  { value: 'member', label: t('work.projectSettings.roles.role.member') },
-  { value: 'mentor', label: t('work.projectSettings.roles.role.mentor') },
-])
+const inviteRole = ref('member')
+// 邀请时能选的角色：管理员以外的每一个；项目还没有导师角色时，末尾带一项「导师」，选了
+// 由后端照模板建出来。
+const inviteRoleOptions = computed(() => {
+  const roles = projectRoles.roles.value.filter((r) => r.builtin !== 'admin')
+  const items = roles.map((r) => ({ value: r.key, title: roleName(r), divider: false }))
+  if (!roles.some((r) => r.template === 'mentor')) {
+    items.push({ value: 'mentor', title: t('work.projectSettings.roles.role.mentor'), divider: true })
+  }
+  return items
+})
 const {
   query: inviteQuery,
   found,
@@ -371,6 +389,7 @@ const alreadyIn = computed(() => !!found.value && store.members.some((m) => m.us
 
 function resetInvite() {
   inviteOpen.value = false
+  inviteRole.value = 'member'
   inviteQuery.value = ''
   found.value = null
   lookupError.value = null
@@ -383,7 +402,7 @@ async function submitInvite() {
   error.value = null
   try {
     await inviteExternalMember(props.projectId, user.handle, inviteRole.value)
-    await refreshInvitations(true)
+    await Promise.all([refreshInvitations(true), projectRoles.load()])
     resetInvite()
   } catch (e) {
     lookupError.value = messageOf(e, t('work.members.inviteFailed'))
@@ -452,37 +471,44 @@ useCommands(() => [
     <!-- 名册、队友、邀请三处各自到货；到齐之前整页藏在转圈后面，不然后到的名册会
          把先画出来的队友那一段往下推一整屏。见 useRevealGate。 -->
     <div class="reveal-gate" :class="{ 'reveal-gate--waiting': !revealed }">
-      <v-text-field
-        v-if="store.members.length > 8"
-        v-model="query"
-        autocomplete="off"
-        density="compact"
-        variant="outlined"
-        hide-details
-        clearable
-        :placeholder="t('work.members.search')"
-        prepend-inner-icon="mdi-magnify"
-        class="mb-5"
-      />
+      <div v-if="store.members.length > 8 || projectRoles.roles.value.length > 2" class="member-tools mb-5">
+        <v-text-field
+          v-model="query"
+          autocomplete="off"
+          density="compact"
+          variant="outlined"
+          hide-details
+          clearable
+          :placeholder="t('work.members.search')"
+          prepend-inner-icon="mdi-magnify"
+        />
+        <v-select
+          v-model="roleFilter"
+          autocomplete="off"
+          :items="filterOptions"
+          item-title="title"
+          item-value="value"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="member-tools__filter"
+          :aria-label="t('work.members.filterRole')"
+        />
+      </div>
 
       <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
         {{ error }}
       </v-alert>
 
-      <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
-        <div class="t-eyebrow mb-2 section-head">
-          <span>{{ s.title }}</span
-          ><span class="c-muted">{{ s.rows.length }}</span>
-        </div>
-        <p v-if="s.key === 'admin'" class="t-meta-read mb-2">{{ t('work.members.adminHint') }}</p>
-        <div v-if="s.key === 'owner' && pendingTransfer" class="pending-transfer mb-2" data-testid="pending-transfer">
+      <div class="mb-6" data-section="people">
+        <div v-if="pendingTransfer" class="pending-transfer mb-2" data-testid="pending-transfer">
           <span class="t-meta c-muted">{{ t('work.members.pendingTransfer', { name: pendingName }) }}</span>
           <BaseButton kind="ghost" size="sm" :loading="withdrawing" @click="withdrawTransfer">
             {{ t('work.members.cancelTransfer') }}
           </BaseButton>
         </div>
         <v-card
-          v-for="m in s.rows"
+          v-for="m in people"
           :key="m.user_handle"
           class="mb-2 member-row"
           variant="outlined"
@@ -528,6 +554,29 @@ useCommands(() => [
                 {{ countLabel(unreadWith(m.user_handle)) }}
               </span>
             </span>
+            <!-- The role: a dropdown for someone below me, plain text otherwise. -->
+            <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- only stops the row's own click from opening the profile -->
+            <div v-if="retitlable(m)" class="member-role" @click.stop>
+              <v-select
+                autocomplete="off"
+                :model-value="roleOf(m)"
+                :items="roleChoices()"
+                item-title="title"
+                item-value="value"
+                density="compact"
+                variant="plain"
+                hide-details
+                :disabled="busyHandle === m.user_handle"
+                :aria-label="t('work.members.roleOf', { name: memberName(m) || m.user_handle })"
+                @update:model-value="(role: string) => changeRole(m, role)"
+              >
+                <template #item="{ props: itemProps, item }">
+                  <v-divider v-if="item.raw.divider" class="my-1" />
+                  <v-list-item v-bind="itemProps" />
+                </template>
+              </v-select>
+            </div>
+            <span v-else class="member-role member-role--text">{{ roleLabel(roleOf(m)) }}</span>
             <!-- 桌面是下拉菜单，手机是底部面板（AdaptiveMenu）。 -->
             <AdaptiveMenu
               v-if="removable(m)"
@@ -661,17 +710,23 @@ useCommands(() => [
       @primary="submitInvite"
     >
       <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
-      <BaseField
-        :label="t('work.members.inviteRole')"
-        :hint="t(`work.members.inviteRoleHint.${inviteRole}`)"
-        class="mb-5"
-      >
-        <SegmentedControl
+      <BaseField :label="t('work.members.inviteRole')" class="mb-5">
+        <v-select
           v-model="inviteRole"
-          :options="inviteRoleOptions"
-          :label="t('work.members.inviteRole')"
-          size="md"
-        />
+          autocomplete="off"
+          :items="inviteRoleOptions"
+          item-title="title"
+          item-value="value"
+          density="comfortable"
+          variant="outlined"
+          hide-details
+          :aria-label="t('work.members.inviteRole')"
+        >
+          <template #item="{ props: itemProps, item }">
+            <v-divider v-if="item.raw.divider" class="my-1" />
+            <v-list-item v-bind="itemProps" />
+          </template>
+        </v-select>
       </BaseField>
       <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person opened this dialog to look someone up; focus moves into the search field -->
       <v-text-field
@@ -765,6 +820,34 @@ useCommands(() => [
 .section-head {
   display: flex;
   gap: 8px;
+}
+
+.member-tools {
+  display: flex;
+  gap: 8px;
+}
+
+.member-tools__filter {
+  flex: 0 0 160px;
+}
+
+/* The role cell keeps one width, so names and buttons line up row to row. */
+.member-role {
+  flex: 0 0 132px;
+  margin-inline-start: 8px;
+}
+
+.member-role--text {
+  padding-inline-start: 12px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+/* The dropdown reads at the size of the plain role beside it. */
+.member-role :deep(.v-field__input) {
+  font-size: 14px;
+  color: var(--text);
 }
 
 /* 查到的那个人：一行头像 + 名字，压在输入框下面，两边都留了呼吸。 */
