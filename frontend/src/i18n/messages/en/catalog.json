@@ -293,10 +293,10 @@
     }
   },
   "previewPanelFrameStage": {
-    "about": "The web/app stage: an app bar (which file, which version), a runtime status line, the frames below, and region picking laid over the app.",
+    "about": "The web/app tier: a little browser row (back, forward, reload, address bar, the platform › tunnel › app chain) over a layer of frames; when the app sleeps, a static snapshot and a wake card cover it, and a region can still be picked on the page.",
     "s1": {
-      "name": "An app that is running",
-      "note": "The bar says what this frame is called, the 'running app' chip says it answers; the line below reports resource, instance and readiness."
+      "name": "A running app",
+      "note": "The address bar shows where this frame is now and all three links of the chain are green; resource, instance and readiness are inside the chain's details."
     },
     "s2": {
       "name": "Two frames both running",
@@ -309,6 +309,14 @@
     "s4": {
       "name": "Picking a region on an app",
       "note": "While picking is on, a transparent overlay covers the app; drag out a rectangle."
+    },
+    "s5": {
+      "name": "The app is asleep",
+      "note": "The teammate's computer sleeps: the platform link stays green, the tunnel and app links turn amber (waiting), the page becomes the last static snapshot, dimmed, with a card offering to wake and restart the app."
+    },
+    "s6": {
+      "name": "Waking",
+      "note": "After pressing wake the card becomes steps — start the computer, connect the tunnel, the teammate restarts the app, wait for the port — each ticked in turn; the ones after the current step stay empty."
     }
   },
   "previewPanelDocStage": {
@@ -357,6 +365,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
@@ -392,10 +404,14 @@
     }
   },
   "previewPanelLocator": {
-    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+      "note": "On top, what it points at (label + that sentence); below, an input and three exits: send to Cheese / ask your personal Cheese in private / comment only."
+    },
+    "s2": {
+      "name": "This file takes no comments",
+      "note": "A library original or a message attachment takes no comments, so only 'send' is offered."
     }
   },
   "previewPanelPickToggle": {
@@ -460,13 +476,6 @@
       "note": "A freehand stroke and a rectangle annotation, laid back onto the image to scale."
     }
   },
-  "previewPanelRegionNote": {
-    "about": "The small card that appears when pointing at a region of an image: it says what it points at, then write what to change, send or cancel.",
-    "s1": {
-      "name": "Pointing at this region",
-      "note": "On top, what it points at (label + that sentence); below, the input and 'Send'. It says so when the region is outside the view."
-    }
-  },
   "previewPanelDesignImage": {
     "about": "Design preview: an image laid into the viewport, zoomable, pannable, region-selectable, annotation layer toggleable; scale and 'Fit to viewport' on top.",
     "s1": {
@@ -519,6 +528,14 @@
     "s5": {
       "name": "Cheese closed",
       "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
+    },
+    "s6": {
+      "name": "Publish refused",
+      "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
+    },
+    "s7": {
+      "name": "Publish all with one refused",
+      "note": "After \"Publish all\", the server refused the second task: the note says how many went out, and the refused one carries the server's own words."
     }
   },
   "basicInfoView": {
@@ -573,7 +590,7 @@
     "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
     "s1": {
       "name": "Claimed and submitted",
-      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+      "note": "Default cell: four KPIs (participants / submitted / pass rate / idle since starting), a participation trend, how far they got, squad makeup."
     },
     "s2": {
       "name": "Read failure, not drawn as 0",
@@ -589,18 +606,18 @@
     }
   },
   "rosterView": {
-    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "about": "Task detail 'Participants' tab: handling applications, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
     "s1": {
       "name": "Roster loaded",
       "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
     },
     "s2": {
       "name": "Roster still loading",
-      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No participants' first."
     },
     "s3": {
       "name": "Not for you",
-      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see participants."
     },
     "s4": {
       "name": "Failed this time",
@@ -608,7 +625,7 @@
     },
     "s5": {
       "name": "No one has claimed",
-      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No participants'."
     }
   },
   "views404": {
@@ -1323,7 +1340,7 @@
     }
   },
   "alertsView": {
-    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, applications to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
     "s1": {
       "name": "Counts with alerts",
       "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
@@ -1644,6 +1661,18 @@
     "s12": {
       "name": "Work done, nothing written",
       "note": "The answer says Cheese gave no answer; earlier messages of the topic are read back with Earlier messages."
+    },
+    "s13": {
+      "name": "With the page, a selection and citations",
+      "note": "The row in the box: the page Cheese reads and the text selected this time, the same chips as attachments. The last question's cited document and task are chips, with one line each under it: the selection, and the page it was asked on."
+    },
+    "s14": {
+      "name": "Page left out",
+      "note": "The page's × clicked: the name is struck through and × becomes +, which brings it back; the next page is included again."
+    },
+    "s15": {
+      "name": "Citing with {'@'}",
+      "note": "Type {'@'} in the box and the menu opens above it; the pick becomes a chip in the box."
     }
   },
   "myDraftsView": {
@@ -1689,7 +1718,7 @@
     }
   },
   "settingsAssistantView": {
-    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), automations (one list: when, what, its state; repeating ones can be viewed, paused, resumed and deleted, a waiting one-off cancelled, and a one-off leaves the list once it has run), and recent actions (done or asked, with the reason when asked).",
     "s1": {
       "name": "With routines",
       "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
@@ -1697,6 +1726,51 @@
     "s2": {
       "name": "Nothing set yet",
       "note": "No entries of your own, so “No confirmation needed” says None; no routines."
+    }
+  },
+  "citeMenu": {
+    "about": "The menu {'@'} opens in Cheese's box: pick a task, channel, document, library file or problem to cite as a chip. Each row says on the right which project and channel it is in.",
+    "s1": {
+      "name": "Just typed {'@'}",
+      "note": "Recent places first, then the four kinds in this project; click one to list that kind."
+    },
+    "s2": {
+      "name": "Typed a few letters",
+      "note": "Grouped by kind, at most 4 each, the project in view first; the matched letters in bold."
+    },
+    "s3": {
+      "name": "Five already cited",
+      "note": "A question cites at most 5 things; typing {'@'} again only says so."
+    }
+  },
+  "versionsView": {
+    "about": "Task detail 'Version history' tab: each version's number, time, author, what changed, and the files it held. Whether they download is the server's to say.",
+    "s1": {
+      "name": "Three versions, newest on top",
+      "note": "Default cell: version 3 is marked current; a draft deleted later keeps only its name in version 2; version 1's files were not recorded."
+    },
+    "s2": {
+      "name": "Opened from a project",
+      "note": "The address carries ?version=2: version 2 is marked and scrolled to."
+    },
+    "s3": {
+      "name": "Someone who has not started the task",
+      "note": "Sees every version and file name, with no download button and a note that files download once they start."
+    }
+  },
+  "agentRules": {
+    "about": "When Cheese makes or changes an automation, the answer carries a card: when, in bold; what it does; and a line with its state and the one thing to do (cancel a wait, pause one that is on, resume a paused one). When a one-off fires, the platform says what happened in the same conversation and Cheese carries on.",
+    "s1": {
+      "name": "Just made",
+      "note": "Waiting once for a task to go to review: the card says Waiting, with Cancel. Nothing over the input."
+    },
+    "s2": {
+      "name": "After it happened",
+      "note": "The card says Started; the platform line says the task went to review, and Cheese answers below."
+    },
+    "s3": {
+      "name": "Card states",
+      "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
     }
   }
 }

@@ -2,8 +2,10 @@ import type { FramePick } from '@/composables/usePreviewFrames'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type {
+  ImageRegionQuote,
   QuotedContext,
   SheetCellQuote,
+  SheetRangeQuote,
   TextRangeQuote,
   WebElementQuote,
   WebRect,
@@ -28,6 +30,7 @@ type Identity = 'path' | 'source' | 'version' | 'task_id'
  *  发的时候才配上文件身份。 */
 type FilePick =
   | Omit<SheetCellQuote, Identity>
+  | Omit<SheetRangeQuote, Identity>
   | Omit<TextRangeQuote, Identity>
   | Omit<WebElementQuote, Identity>
   | Omit<WebTextQuote, Identity>
@@ -42,19 +45,53 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
   const pick = ref<FilePick | null>(null)
   /** 应用上圈的一块：页面在别的源上，只有地址和几何，没有文件身份。 */
   const area = ref<{ url: string; rect: WebRect; viewport: WebViewport } | null>(null)
+  /** 图片上框的一块：原图像素加当时的原图尺寸。几何本身不带身份，发的时候才配上。 */
+  const image = ref<Omit<ImageRegionQuote, Identity> | null>(null)
 
   function clear() {
     page.value = null
     pick.value = null
     area.value = null
+    image.value = null
   }
 
   function region(payload: { url: string; rect: WebRect; viewport: WebViewport }) {
     area.value = payload
   }
 
+  /** 图片上框的一块。坐标是原图像素，和显示缩放无关。 */
+  function imageRegion(payload: {
+    x: number
+    y: number
+    width: number
+    height: number
+    naturalWidth: number
+    naturalHeight: number
+  }) {
+    image.value = {
+      kind: 'image-region',
+      x: payload.x,
+      y: payload.y,
+      width: payload.width,
+      height: payload.height,
+      natural_width: payload.naturalWidth,
+      natural_height: payload.naturalHeight,
+    }
+  }
+
   function cell(payload: { address: string; value: string; sheet: string }) {
     pick.value = { kind: 'sheet-cell', sheet: payload.sheet, address: payload.address, value: payload.value }
+  }
+
+  /** 表格里拖过的一片。两个角和内容都是指的那一刻量下来的；发的时候才配文件身份。 */
+  function sheetRange(payload: { sheet: string; start: string; end: string; text: string }) {
+    pick.value = {
+      kind: 'sheet-range',
+      sheet: payload.sheet,
+      start: payload.start,
+      end: payload.end,
+      text: payload.text,
+    }
   }
 
   function range(payload: MarkdownQuote) {
@@ -95,6 +132,15 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
       const topicId = props.topicId
       const quotedContext = { kind: 'web-region' as const, ...area.value }
       if (!topicId || !props.submitQuestion || !isQuotedContext(quotedContext)) return null
+      return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
+    }
+    if (image.value) {
+      const identity = props.docIdentity
+      // 图片的那一块要连同这一版的身份才指得回去；拿不到身份就退回拼一句话那条路。
+      if (!identity?.version || !props.submitQuestion) return null
+      const { path, source, version, taskId, topicId } = identity
+      const quotedContext = { ...image.value, path, source, version, task_id: taskId ?? null }
+      if (!isQuotedContext(quotedContext)) return null
       return props.submitQuestion({ intent: 'ask-agent', topicId, content: note, quotedContext }) ? true : null
     }
     if (page.value) {
@@ -139,6 +185,18 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
       const quotedContext = { kind: 'web-region' as const, ...area.value }
       return isQuotedContext(quotedContext) ? quotedContext : null
     }
+    // 图片上框的那一块也要给出来：评论栏已经开着时读者可以直接在里面写一条，那时
+    // `commentPick` 带的是这一块的位置文字；锚点要是 null，这条新评论会被画成「这一处
+    // 已经不在原处了」（`PreviewComments` 的 `placeOf` 只认带版本号的锚点）。
+    // 还没做的是「在图上看得到这一处」：没有地方画 `image-region` 的标记，框着时评论
+    // 按钮也收起来，所以它目前只从已经开着的那条评论栏里被写下去。
+    if (image.value) {
+      const identity = props.docIdentity
+      if (!identity?.version) return null
+      const { path, source, version, taskId } = identity
+      const quotedContext = { ...image.value, path, source, version, task_id: taskId ?? null }
+      return isQuotedContext(quotedContext) ? quotedContext : null
+    }
     if (page.value) {
       const payload = page.value
       if (!canUse(payload.context)) return null
@@ -164,5 +222,5 @@ export function usePreviewQuote(props: QuoteProps, canUse: (context: SlidePageCo
     return isQuotedContext(quotedContext) ? quotedContext : null
   }
 
-  return { page, pick, clear, cell, range, web, region, send, anchor }
+  return { page, pick, clear, cell, sheetRange, range, web, region, imageRegion, send, anchor }
 }

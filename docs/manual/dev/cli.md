@@ -30,7 +30,6 @@ cheese serve <端口> "说明"      把跑在本机端口上的应用设为当�
 cheese show <路径>              把一份东西摆到房间里给人看
 cheese check <路径>             让平台的浏览器把一份 HTML 截成图并报出撑破版面的元素
 cheese pull <路径>              把房间里一份文件的最新保存取到这台机器上
-cheese transcript              把本会话的会话记录拉到本机（归一化后的 JSONL，含分身的）
 cheese library get <名字>       取一份项目资料到本机
 cheese mail attachment <连接> <邮件 uid> <序号>   取一封邮件的附件到本机
 cheese template list|new ...   列出平台标准模板，或从模板在房间里新建一份

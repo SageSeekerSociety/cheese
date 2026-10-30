@@ -48,13 +48,16 @@ def _make_service(repo=None) -> tuple[PasskeyService, AsyncMock]:
 
 
 class TestPasskeyServiceInit:
-    def test_stores_repo_and_reads_settings(self):
-        repo = AsyncMock()
-        svc, _ = _make_service(repo)
-        assert svc._repo is repo
-        assert svc._rp_id == "localhost"
-        assert svc._rp_name == "Cheese Community"
-        assert svc._origin == "http://localhost:5173"
+    @pytest.mark.anyio
+    async def test_registration_names_the_configured_relying_party(self):
+        # Which origins a credential is accepted from is observable only with a
+        # signed credential: tests/integration/test_passkey.py signs one.
+        svc, repo = _make_service()
+        repo.list_by_user.return_value = []
+
+        result = await svc.generate_registration_options(user_id=42, username="a")
+
+        assert result["rp"] == {"id": "localhost", "name": "Cheese Community"}
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
   "why": "Operations whose success response has no schema. The list only shrinks: declare a route's response with typed_response(...) and rerun `uv run python -m scripts.export_openapi`.",
-  "count": 647,
+  "count": 643,
   "operations": [
     "DELETE /admin/admins/{target}",
     "DELETE /admin/gateway/models/{name}",
@@ -270,8 +270,6 @@
     "GET /tasks",
     "GET /tasks/joined",
     "GET /tasks/{taskId}",
-    "GET /tasks/{taskId}/attachments",
-    "GET /tasks/{taskId}/attachments/{attachmentId}/download",
     "GET /tasks/{taskId}/inheritance",
     "GET /tasks/{taskId}/participants",
     "GET /tasks/{taskId}/participants/{participantId}",
@@ -477,7 +475,6 @@
     "POST /projects/{project_id}/library/restore",
     "POST /projects/{project_id}/mcp/servers/{name}/connect",
     "POST /projects/{project_id}/members",
-    "POST /projects/{project_id}/memory",
     "POST /projects/{project_id}/read-all",
     "POST /projects/{project_id}/site",
     "POST /projects/{project_id}/site-session",
@@ -517,7 +514,6 @@
     "POST /spaces/{spaceId}/members",
     "POST /tags",
     "POST /tasks",
-    "POST /tasks/{taskId}/attachments",
     "POST /tasks/{taskId}/participants",
     "POST /tasks/{taskId}/participants/{participantId}/submissions",
     "POST /tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review",

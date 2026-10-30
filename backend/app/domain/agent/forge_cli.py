@@ -12,6 +12,7 @@ import os
 import platform
 import runpy
 import shutil
+import socket
 import socketserver
 import subprocess
 import sys
@@ -156,11 +157,62 @@ def _recall(path):
     return None
 
 
+#: What the HTTP client raises besides OSError when an answer breaks off: a
+#: platform socket that stopped answering, as much as one that never did.
+_CLIENT_ERRORS = (
+    http.client.IncompleteRead,
+    http.client.BadStatusLine,
+    http.client.LineTooLong,
+    http.client.ImproperConnectionState,
+)
+
+
+class _UnixConnection(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        super().__init__("platform.cheese", timeout=timeout)
+        self._socket_path = path
+
+    def connect(self):
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self._socket_path)
+        self.sock = sock
+
+
+def _platform_socket():
+    path = os.environ.get("CHEESE_PLATFORM_SOCKET", "")
+    return path if path and os.path.exists(path) else ""
+
+
+def _ask_socket(path, target, timeout=30):
+    """``GET target`` on the sandbox's platform socket, to its JSON: the
+    platform knows whose the request is without a token."""
+    connection = _UnixConnection(path, timeout)
+    try:
+        connection.request("GET", target)
+        response = connection.getresponse()
+        body = response.read()
+    except _CLIENT_ERRORS as exc:
+        raise OSError(
+            f"the platform socket broke off: {exc}"  # i18n-exempt: machine log
+        ) from exc
+    finally:
+        connection.close()
+    if response.status != 200:
+        raise OSError(
+            f"the platform socket answered HTTP {response.status}"  # i18n-exempt: machine log
+        )
+    return json.loads(body)
+
+
 def credentials():
+    socket_path = _platform_socket()
+    if socket_path:
+        return _ask_socket(socket_path, "/api/sandbox/forge-token")["data"]
     api = os.environ["CHEESE_API"].rstrip("/")
     request = urllib.request.Request(
         f"{api}/sandbox/forge-token",
-        headers={"X-Cheese-Token": os.environ["CHEESE_TOKEN"]},
+        headers={"Authorization": "Bearer " + os.environ["CHEESE_TOKEN"]},
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)["data"]
@@ -188,9 +240,75 @@ def reaches(url):
     return reached
 
 
+def _pipe_unix(src, dst):
+    try:
+        while True:
+            chunk = src.recv(65536)
+            if not chunk:
+                break
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        with contextlib.suppress(OSError):
+            dst.shutdown(socket.SHUT_WR)
+
+
 @contextlib.contextmanager
 def github_transport(data, env):
     """Choose a route before invoking the CLI, never replay a native mutation."""
+    socket_path = _platform_socket()
+    if socket_path:
+        platform_dir = Path(socket_path).parent
+        ca_bundle = platform_dir / "ca-bundle.pem"
+        if ca_bundle.is_file():
+            env["SSL_CERT_FILE"] = str(ca_bundle)
+        forge_sock = platform_dir / "forge.sock"
+        if forge_sock.exists():
+            if env.get("HTTPS_PROXY") or env.get("https_proxy"):
+                yield
+                return
+
+            class _BridgeHandler(socketserver.BaseRequestHandler):
+                def handle(self):
+                    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as upstream:
+                        upstream.connect(str(forge_sock))
+                        t1 = threading.Thread(
+                            target=_pipe_unix,
+                            args=(self.request, upstream),
+                            daemon=True,
+                        )
+                        t2 = threading.Thread(
+                            target=_pipe_unix,
+                            args=(upstream, self.request),
+                            daemon=True,
+                        )
+                        t1.start()
+                        t2.start()
+                        t1.join()
+                        t2.join()
+
+            class _Bridge(socketserver.ThreadingTCPServer):
+                daemon_threads = True
+
+            with _Bridge(("127.0.0.1", 0), _BridgeHandler) as proxy:
+                thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+                thread.start()
+                destination = f"http://127.0.0.1:{proxy.server_address[1]}"
+                env.update(
+                    HTTPS_PROXY=destination,
+                    https_proxy=destination,
+                    NO_PROXY="127.0.0.1,localhost,127.0.0.2",
+                    no_proxy="127.0.0.1,localhost,127.0.0.2",
+                )
+                try:
+                    yield
+                finally:
+                    proxy.shutdown()
+                    thread.join()
+            return
+        yield
+        return
     if not reaches(data["api_url"]):
         helper = runpy.run_path(str(Path.home() / ".cheese/cheese-tunnel.py"))
         api = urllib.parse.urlsplit(os.environ["CHEESE_API"].rstrip("/"))
@@ -203,10 +321,13 @@ def github_transport(data, env):
                 "",
             )
         )
-        secret = os.environ["CHEESE_TOKEN"]
 
         class Connection(socketserver.BaseRequestHandler):
             def handle(self):
+                secret = os.environ.get("CHEESE_TOKEN", "")
+                if not secret:
+                    self.request.close()
+                    return
                 helper["handle_connection"](self.request, tunnel, secret)
 
         class Proxy(socketserver.ThreadingTCPServer):
@@ -392,7 +513,7 @@ def run(name, arguments):
         for index in range(len(arguments) - 1)
     ) and not any(arg in ("--help", "-h") for arg in arguments):
         print(
-            "[cheese] Merging accepts this task. Use cheese_accept_request "
+            "[cheese] Merging accepts this task. Use cheese_card(action=request) "
             "to submit it for project review.",
             file=sys.stderr,
             flush=True,

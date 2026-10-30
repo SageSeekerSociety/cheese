@@ -405,13 +405,14 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
     whether it failed, each draft write, each publish, each file it handed the
-    person. Kept with the answer, so the conversation shows them again."""
+    person, each rule it made. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
     handed: list[dict] = []
+    rules: list[dict] = []
     branches: list[dict] = []
     reasoning: dict | None = None
 
@@ -450,8 +451,10 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             step["args"] = step["args"][: int(data.get("at") or 0)] + str(
                 data.get("text") or ""
             )
-        elif event == "tool_done" and data.get("call") in by_call and data.get("shown"):
-            by_call[data["call"]]["shown"] = str(data["shown"])
+        elif event == "tool_done" and data.get("call") in by_call:
+            for named in ("shown", "effect"):
+                if data.get(named):
+                    by_call[data["call"]][named] = str(data[named])
         elif event == "tool_failed" and data.get("call") in by_call:
             by_call[data["call"]]["failed"] = str(data.get("text") or "")
         elif event == "change":
@@ -462,11 +465,13 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             proposed.append(data)
         elif event == "handed":
             handed.append(data)
+        elif event == "rule":
+            rules.append(data)
         elif event == "subagents":
             branches = list(data.get("branches") or [])
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed or handed):
+    if not (steps or edits or published or proposed or handed or rules):
         return None
     return {
         "steps": steps,
@@ -474,6 +479,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
         "published": published,
         **({"proposals": proposed} if proposed else {}),
         **({"handed": handed} if handed else {}),
+        **({"rules": rules} if rules else {}),
         **({"subagents": branches} if branches else {}),
     }
 
@@ -588,7 +594,11 @@ class Answers:
             await self._consumptions.publish(
                 consumption,
                 "tool_done",
-                {"call": item.call, **({"shown": item.shown} if item.shown else {})},
+                {
+                    "call": item.call,
+                    **({"shown": item.shown} if item.shown else {}),
+                    **({"effect": item.effect} if item.effect else {}),
+                },
             )
         elif isinstance(item, Thinking):
             # That it reasons, never what: the page shows 思考中.
@@ -767,6 +777,9 @@ async def ask(
     project: uuid.UUID | None = None,
     run: uuid.UUID | None = None,
     shown: dict | None = None,
+    told: str | None = None,
+    cited: str = "",
+    asked_with: dict | None = None,
     kept: bool = False,
 ) -> Consumption:
     """Ask ``question`` in the conversation; the answer is read to its end in
@@ -788,9 +801,13 @@ async def ask(
     it says is the platform's, not the person's (``role`` ``platform``), and
     the run is told when the answer ends. Its id is the answer's ``work``, so
     the cards the run puts up are found by it. ``shown`` is how the panel
-    names the routine, in place of what the platform told 芝士. ``kept``:
-    the question is in the conversation already (said mid-answer, and the
-    answer ended before 芝士 heard it), so it is not written down again."""
+    names the routine, in place of what the platform told 芝士. ``told`` is
+    the question as 芝士 reads it, when that differs from how it is kept (what
+    it cites, by name); ``cited`` what it cites, written out after it;
+    ``asked_with`` is kept with the question: where it was asked, the text
+    selected, what it cites. ``kept``: the question is in the conversation
+    already (said mid-answer, and the answer ended before 芝士 heard it), so
+    it is not written down again."""
     work = run or uuid.uuid4()
     async with sessions() as session:
         store = AssistantConversations(session)
@@ -803,9 +820,12 @@ async def ask(
                 conversation,
                 "platform" if run else "user",
                 question,
-                parts={"files": [name for _, name in files]}
-                if files
-                else ({"shown": shown} if shown else None),
+                parts={
+                    **({"files": [name for _, name in files]} if files else {}),
+                    **({"shown": shown} if shown and not files else {}),
+                    **(asked_with or {}),
+                }
+                or None,
             )
         handle = (await usernames_by_ids(session, [user_id])).get(user_id)
         timezone = (await timezones_by_ids(session, [user_id])).get(user_id)
@@ -847,7 +867,9 @@ async def ask(
         )
         # The page goes with the question itself: a preface is said only to a
         # session that has not been spoken to yet.
-        said = "\n\n".join(part for part in (page(context), question) if part)
+        said = "\n\n".join(
+            part for part in (page(context), told or question, cited) if part
+        )
         said += files_said(files or [])
         if decided:
             said += "\n\n你之前请用户确认的操作，结果如下：\n" + "\n".join(

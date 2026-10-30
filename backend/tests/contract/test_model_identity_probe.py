@@ -976,16 +976,15 @@ def test_model_ids_that_are_not_filenames_are_slugged(tmp_path) -> None:
 # --- credential seat / declared binding --------------------------------------
 
 
-def _scoped(payload: dict, sig: str = "sig", prefix: str = "") -> str:
+def _scoped(payload: dict, sig: str = "sig") -> str:
     import base64
     import json
 
-    body = (
-        base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode())
-        .decode()
-        .rstrip("=")
-    )
-    return f"{prefix}{body}.{sig}"
+    def part(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    return f"{part({'alg': 'HS256', 'typ': 'agent+jwt'})}.{part(payload)}.{sig}"
 
 
 def test_credential_seat_reads_the_claim_and_never_the_signature() -> None:
@@ -994,7 +993,6 @@ def test_credential_seat_reads_the_claim_and_never_the_signature() -> None:
     token = _scoped(
         {"p": "proj", "t": "topic", "a": "cheese-opus"},
         sig="secret-signature",
-        prefix="cxss_",
     )
     assert credential_seat(token) == "cheese-opus"
     claims = credential_claims(token)
@@ -1242,9 +1240,7 @@ def test_verify_takes_the_model_from_the_operator_declaration(
         ),
     )
     monkeypatch.delenv("CHEESE_TOKEN", raising=False)
-    monkeypatch.setenv(
-        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
-    )
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "seat-1"}))
     monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
     # No topic: the seat-config/card lookups return empty without any request.
     monkeypatch.delenv("CHEESE_TOPIC", raising=False)
@@ -1280,9 +1276,7 @@ def test_a_probe_that_could_not_be_made_surfaces_the_transport_error(
             error="ProxyError: 407 ",
         ),
     )
-    monkeypatch.setenv(
-        "CHEESE_TOKEN", "cxss_" + _scoped({"a": "seat-1"}).split(".")[0] + ".sig"
-    )
+    monkeypatch.setenv("CHEESE_TOKEN", _scoped({"a": "seat-1"}))
     monkeypatch.setenv("CHEESE_AUTHOR", "seat-1")
     monkeypatch.delenv("CHEESE_TOPIC", raising=False)
     args = cli.build_parser().parse_args(

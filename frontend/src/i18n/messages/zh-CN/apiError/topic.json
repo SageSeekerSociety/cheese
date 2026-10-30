@@ -65,5 +65,8 @@
   "topicMuteUntilPast": "静音的截止时间必须晚于现在",
   "topicNotifyLevelInvalid": "通知设置只能从三个档位里选",
   "unarchiveSignIn": "取消归档需要登录",
-  "unarchiveWhileSessionStopping": "频道里的 AI 队友正在停下并保存记录，完成后即可取消归档"
+  "unarchiveWhileSessionStopping": "频道里的 AI 队友正在停下并保存记录，完成后即可取消归档",
+  "threadRestoreNotYours": "只有开这条支线的人和频道管理员能把它放回来",
+  "threadRestoreSignIn": "恢复这条支线需要登录",
+  "threadNotFound": "找不到这条支线"
 }

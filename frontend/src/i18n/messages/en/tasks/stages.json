@@ -1,0 +1,15 @@
+{
+  "label": "Stages",
+  "noDue": "No due date",
+  "due": "Due {when}",
+  "dateFormat": "MMM D HH:mm",
+  "number": "Stage {n}",
+  "numbered": "{n}. {name}",
+  "status": {
+    "NOT_SUBMITTED": "Not submitted",
+    "PENDING_REVIEW": "Awaiting grading",
+    "PASSED": "Passed",
+    "REJECTED": "Sent back",
+    "MISSED": "Failed"
+  }
+}

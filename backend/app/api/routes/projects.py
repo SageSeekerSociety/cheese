@@ -15,7 +15,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
-from app.api.member_settings import change_project_settings, member_setting_actor
+from app.api.member_settings import change_project_settings
 from app.api.place import (
     channels_unseen,
     live_rooms_seen,
@@ -24,12 +24,17 @@ from app.api.place import (
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import incomplete_tasks, project_task_rows
-from app.api.write_access import CHEESE_ONLY_IN_PROJECT, ROUTE_DECIDES
+from app.api.write_access import (
+    ROUTE_DECIDES,
+    Can,
+    InProject,
+)
 from app.auth.project_access import may_read_project
 from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
+    BadRequestError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -57,7 +62,7 @@ from app.domain.membership.services import (
     OwnershipService,
 )
 from app.domain.onboarding.start import start_steps
-from app.domain.project.forge import follow_github_rename
+from app.domain.project.forge import follow_github_rename, starter_push
 from app.domain.project.github_app import (
     github_app_read_token_for_project,
     parse_github_repo,
@@ -89,13 +94,14 @@ from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
+from app.domain.task import package
 from app.domain.task.adapters import TaskTerms
-from app.domain.task.claims import deadline_for_project
-from app.domain.task.services import claim_backs_project
+from app.domain.task.claims import deadline_for_project, stages_for_project
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage import referrals
 from app.domain.usage.adapters import ComputeCredits
 
 logger = logging.getLogger("cheesex.projects")
@@ -188,7 +194,7 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
     ``body.team_id`` 以前原样送到 ``ProjectService.create``，于是任何人都能把项目
     种进别人的团队：它会出现在那个团队的 ``GET /projects?team_id=`` 列表里，挂着
     那个团队的名字和调用方自己的 ``owner_handle``。团队域的路由用
-    ``require_permission(Action.X, Resource.Y, "teamId")`` 回答同一个问题；
+    ``Can(TeamPermission.x)`` 回答同一个问题；
     这里团队是**请求体**里给的、不是路径里的，所以同一个判断得显式做一遍。
 
     和 ``ActorResolver.authorize_team`` 的关键区别：这里**不挂**
@@ -204,22 +210,6 @@ async def _require_team_membership(db: DbSession, who: Actor, team_id: int) -> N
         team_id, who.user_id
     ):
         raise ForbiddenError(say("teamProjectNotMember"))
-
-
-async def _require_claim(
-    db: DbSession, who: Actor, task_id: int, team_id: int | None
-) -> None:
-    """用一道题建项目的，得先领了这道题。
-
-    个人题看建项目的这个人有没有领，团队题看项目要挂的那个团队有没有领。等批的申请
-    也算领了（领题那一刻就给它开了项目）；被拒绝或退出的不算。
-    """
-    if who.user_id is None:
-        raise AuthenticationRequiredError(say("challengeProjectSignIn"))
-    if not await claim_backs_project(
-        db, task_id=task_id, user_id=who.user_id, team_id=team_id
-    ):
-        raise ForbiddenError(say("challengeProjectClaimFirst"))
 
 
 @router.get("/resource-limits")
@@ -244,11 +234,10 @@ async def create_project(
         raise AuthenticationRequiredError(say("projectCreateSignIn"))
     # 项目归团队 (v4) 的那支外键是**请求体**给的，所以要在这里过一道：问的不是
     # 「这个团队在不在」，是「你是不是这个团队的人」。
+    if body.external_task_id is not None:
+        raise BadRequestError(say("projectFromTaskByStarting"))
     if body.team_id is not None:
         await _require_team_membership(db, who, body.team_id)
-    # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
-    if body.external_task_id is not None:
-        await _require_claim(db, who, body.external_task_id, body.team_id)
     project = await ProjectService(
         db,
         default_teammate=default_teammate,
@@ -256,10 +245,13 @@ async def create_project(
         overview=seed_overview,
         task_terms=TaskTerms(db),
     ).create(
-        **body.model_dump(exclude={"id"}),
+        **body.model_dump(exclude={"id", "external_task_id"}),
         project_id=body.id,
         owner_handle=who.handle,
     )
+    user_id = getattr(who, "user_id", None)
+    if user_id is not None:
+        await referrals.on_onboarded(db, user_id)
     # The caller can create a room as soon as this response arrives; the
     # request-scoped dependency commits only after sending the response.
     await db.commit()
@@ -409,6 +401,47 @@ async def get_project(
     )
     payload["challenge_deadline"] = (
         {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
+    )
+    # A staged challenge shows its stages instead: each with its due date and
+    # where this project's claim stands on it.
+    payload["challenge_stages"] = [
+        {
+            "index": stage.index,
+            "name": stage.name,
+            "description": stage.description,
+            "due_at": stage.due_at.isoformat() if stage.due_at else None,
+            "status": stage.status,
+        }
+        for stage in (
+            await stages_for_project(
+                db, task_id=project.external_task_id, team_id=project.team_id
+            )
+            if project.external_task_id is not None
+            else []
+        )
+    ]
+    # The 题目's starter code this repository begins with (#4767): which
+    # version, whether it has landed yet (`pending` / `done` / `failed`), and
+    # the sentence a failed push is told with. Null without starter code.
+    push = await starter_push(project_id, db)
+    payload["starter"] = (
+        {"revision": push.revision, "state": push.state, "error": push.error}
+        if push is not None
+        else None
+    )
+    # The 题目 itself while the project's `题目/` folder is shown — that follows
+    # the claim the project came from, the same for everyone in it: where its
+    # page and its version history are, and which version it is at now.
+    found = await package.shown_task(db, project_id)
+    payload["task"] = (
+        {
+            "id": found[0].id,
+            "space_id": found[0].space_id,
+            "name": found[0].name,
+            "version": found[1],
+        }
+        if found is not None
+        else None
     )
     _with_standing(
         payload,
@@ -639,29 +672,6 @@ async def project_start_steps(
     return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
 
 
-@router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])
-async def add_memory(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """写记忆的旧入口 —— 已关闭，而且明说。
-
-    这条端点是 `cheese_remember` 的后端。它写的是旧的条目池（`memory_entries`，
-    按 agent 分池）；记忆换成「一条记忆一个 markdown 文件」之后（`MemoryFileStore`），
-    那一份不再注入任何地方——它的索引不进提示词、它的正文没有读点。再往后端写只会
-    得到一句「已记入」，而这条记忆以后谁都读不到：**静默丢失**。
-
-    所以这里一律拒绝，并在这句话里说清该写哪儿。旧会话（上下文里还留着
-    `cheese_remember` 那张工具表）里还在调它的调用方，读到的就是这句。
-
-    参数一个都不看：这条路的授权、作用域、layer 现在都没有意义——它不是
-    「写错了」而是「不该往这里写」，答一个「你没权限」只会把人引去要权限。
-    """
-    raise ValidationError(say("rememberRetired"))
-
-
 @router.get("/{project_id}/private-chat")
 async def get_private_chat(
     project_id: uuid.UUID,
@@ -735,23 +745,17 @@ async def get_commit_credit(
     return ok({"mode": credit_mode(project.settings or {})})
 
 
-@router.put(
-    "/{project_id}/commit-credit",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(CommitCredit),
-)
+@router.put("/{project_id}/commit-credit", **typed_response(CommitCredit))
 async def save_commit_credit(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.edit_settings)],
     body: CommitCreditUpdate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await member_setting_actor(resolver, project_id)
-    project = await ProjectService(db).get_or_404(project_id)
     await change_project_settings(
-        db, project, {CREDIT_SETTING: body.mode}, by=actor.handle
+        db, at.project, {CREDIT_SETTING: body.mode}, by=at.actor.handle
     )
-    return await get_commit_credit(project_id, db, resolver)
+    return await get_commit_credit(at.project.id, db, resolver)
 
 
 @router.get("/{project_id}/task-naming")
@@ -772,22 +776,22 @@ async def get_task_naming(
     )
 
 
-@router.put("/{project_id}/task-naming", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/task-naming")
 async def set_task_naming(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Switch the project's tasks between automatic and manual naming. Tasks a
-    person named keep their names either way. Anyone in the project may
-    (``member_settings``)."""
-    actor = await member_setting_actor(resolver, project_id)
+    person named keep their names either way (``member_settings``)."""
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    project = await ProjectService(db).get_or_404(project_id)
     await change_project_settings(
-        db, project, {naming.SETTINGS_KEY: mode}, by=actor.handle
+        db, at.project, {naming.SETTINGS_KEY: mode}, by=at.actor.handle
     )
-    return await get_task_naming(project_id, db, resolver)
+    return await get_task_naming(at.project.id, db, resolver)
 
 
 # --- Project stewardship: who answers for a project ---------------------------
@@ -1011,19 +1015,20 @@ async def get_project_upstream(
     return ok({"url": (project.settings or {}).get("github_repository_url")})
 
 
-@router.put("/{project_id}/upstream", dependencies=[ROUTE_DECIDES])
+@router.put("/{project_id}/upstream")
 async def set_project_upstream(
-    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    db: DbSession,
 ) -> dict:
     """Select a GitHub repository before binding its installation."""
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    project_id = at.project.id
+    await MemberService(db).require(project_id, at.actor, Permission.edit_settings)
     service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    project = at.project
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":

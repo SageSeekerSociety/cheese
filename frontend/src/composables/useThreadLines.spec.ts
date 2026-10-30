@@ -171,7 +171,10 @@ describe('一轮出错、还没有回复的支线', () => {
       },
     }
     const messages = ref<Block[]>([asked])
-    vi.mocked(listThreads).mockResolvedValue([{ ...asked.thread!, failed: true, root: null, unread: false }])
+    vi.mocked(listThreads).mockResolvedValue({
+      open: [{ ...asked.thread!, failed: true, root: null, unread: false }],
+      recycled: [],
+    })
     const l = useThreadLines({
       mainLine: () => true,
       roomId: () => 'room1',

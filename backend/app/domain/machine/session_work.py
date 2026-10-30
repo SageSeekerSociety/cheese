@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, for_a_machine
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
@@ -172,6 +172,13 @@ async def _session_author(db, project, handle: str) -> str:
     if teammate is None:
         return handle
     return await AgentInstanceService(db).ensure_identity(teammate)
+
+
+async def session_author(db, project, handle: str) -> str:
+    """``_session_author``, for the caller of a sandbox's platform-socket
+    request (`domain.machine.caller`): what the session's launch credential
+    names, and so what the request acts as."""
+    return await _session_author(db, project, handle)
 
 
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
@@ -360,7 +367,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
             if key.startswith(("CHEESE_", "GIT_"))
         },
         "CHEESE_API": api,
-        "CHEESE_TOKEN": token,
+        # The machine's copy, marked as held there (`sandbox_auth.for_a_machine`).
+        "CHEESE_TOKEN": for_a_machine(token) if token else "",
         # Empty for a sandbox in no project (``holder``).
         "CHEESE_PROJECT": str(project_id or ""),
         "CHEESE_TOPIC": str(topic_id),

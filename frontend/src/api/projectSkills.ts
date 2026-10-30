@@ -95,6 +95,11 @@ export function listSkillCatalog(projectId: string): Promise<ListPayload<{ name:
   )
 }
 
+/** 同一份发货目录，不经项目：出题人给题目挑技能时还没有项目（`GET /skill-catalog`）。 */
+export function listPlatformSkills(): Promise<ListPayload<{ name: string; description: string }>> {
+  return request<ListPayload<{ name: string; description: string }>>('/skill-catalog')
+}
+
 export function getSkillHealth(projectId: string, name: string): Promise<SkillHealth> {
   const path = `/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(name)}/health`
   return request<SkillHealth>(path)

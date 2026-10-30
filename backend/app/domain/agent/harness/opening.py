@@ -16,10 +16,12 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import memory_block
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 
 # How a roster row is in the project, in the words the agent reads. An external
@@ -80,6 +82,46 @@ DEFAULT_TEACHING_PROMPT = """先弄清他卡在哪一步，再决定怎么帮。
 胜过大段文字；简单的问题就用简单文字回答，不要为了花哨生成界面。"""
 
 
+#: How a stage stands, in the words the task page shows it by
+#: (`submission_state` STAGE_*).
+_STAGE_SAYS = {
+    "NOT_SUBMITTED": "未提交",
+    "PENDING_REVIEW": "待批改",
+    "PASSED": "已通过",
+    "REJECTED": "被退回",
+    "MISSED": "未通过（过了截止没有提交）",
+}
+
+
+def stages_section(stages: Sequence[StageProgress]) -> str | None:
+    """这个项目所出自的题目分成的阶段：每个阶段的名称、截止时间、要求，以及这个
+    项目在每个阶段上走到哪一步。题目不分阶段时是 None，一个字都不加。
+
+    它会变（交了一版、批改了、出题人改了截止），所以是一段跟踪着再说一次的现状
+    （``TRACKED_SECTIONS``）。"""
+    if not stages:
+        return None
+    lines = []
+    for stage in stages:
+        due = (
+            f"截止 {stage.due_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC"
+            if stage.due_at is not None
+            else "不设截止"
+        )
+        lines.append(
+            f"{stage.index + 1}. {stage.name}（{due}）："
+            + _STAGE_SAYS.get(stage.status, stage.status)
+        )
+        if stage.description:
+            lines.append("   " + stage.description.replace("\n", "\n   "))
+    return (
+        "## 这道题的阶段\n"
+        "这个项目来自一道分阶段的题目：按阶段提交，每个阶段单独批改，一个阶段有一版"
+        "被采纳，这个阶段就完成；过了截止的阶段不再收提交。各阶段现在的状态：\n"
+        + "\n".join(lines)
+    )
+
+
 def teaching_section(context: TeachingContext) -> str | None:
     """这门课希望 AI 队友怎么帮学生 —— 课程那一段，或者 None。
 
@@ -102,8 +144,12 @@ def teaching_section(context: TeachingContext) -> str | None:
     if teaching.space_prompt and teaching.system_prompt:
         parts.append("### 课程的要求\n" + teaching.fill(teaching.space_prompt))
         parts.append("### 这道题的要求\n" + teaching.fill(teaching.system_prompt))
-    elif teaching.system_prompt:
-        parts.append(teaching.fill(teaching.system_prompt))
+    elif teaching.system_prompt or teaching.space_prompt:
+        # Only one level wrote requirements — a 题目 that says something else of
+        # its own (a way of helping, skills) still has the 空间's in force.
+        parts.append(
+            teaching.fill(teaching.system_prompt or teaching.space_prompt or "")
+        )
     elif teaching.learning_goals:
         # 教育性（写了学习目标）而老师没留自己的要求：带上默认教学要求 ——
         # 「留空」在这里是「用你的教学规矩」，不是「没规矩」。只有范围没有
@@ -133,11 +179,15 @@ def teaching_section(context: TeachingContext) -> str | None:
         # 只给标题，正文按 id 读：一份文档可以有多长，不是这门课说了算的，prompt
         # 不跟着别人写的东西长。
         parts.append(
-            "### 阅读材料（要正文用 cheese_doc_get(document=id) 去读）\n"
+            "### 阅读材料（要正文用 cheese_doc(action=get, document=id) 去读）\n"
             + "\n".join(
                 f"- 《{d['title']}》（id={d['id']}）" for d in context.documents
             )
         )
+    if len(parts) == 1 and teaching.skills:
+        # 只配了技能的题目：技能正文走技能那一段（`carried_skills`），这一段没有
+        # 话要说。
+        return None
     return "\n\n".join(parts)
 
 
@@ -211,7 +261,8 @@ def fit_doc_to_budget(text: str, budget: int, *, full_read_hint: str) -> str:
 
 #: 开场快照里，会话期间变了要再告诉一次的那几段。实况文档不在里面：它被人改过时
 #: 平台已经发一条「请重读」的提醒（`block/documents.py`）。教学配置也不在：一个会话
-#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。
+#: 有意保持开场那一份到下一次新会话（见模块说明）。运行环境只在开场时有意义。题目
+#: 那一段在里面：出题人改了题目，正在做的会话下一轮就要知道到了第几版、改了什么。
 TRACKED_SECTIONS = (
     "tasks",
     "topics",
@@ -220,6 +271,8 @@ TRACKED_SECTIONS = (
     "overview",
     "memory",
     "task",
+    "stages",
+    "package",
 )
 
 
@@ -236,7 +289,7 @@ def task_section(
             "## 这个任务\n"
             "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
             "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
-            "用 cheese_reopen_task 重新打开再接着做；"
+            "用 cheese_task(action=reopen) 重新打开再接着做；"
             "说的是另一件事，建议他回到频道主线说，或者另开任务。"
         )
     people = [f"@{h}" for h in (owner, *contributors) if h]
@@ -258,7 +311,7 @@ def task_section(
 
 def became_task_prompt(*, owner: str | None) -> str:
     """支线转为任务那一刻交给 AI 队友的话：人点「转为任务」时是一条指令，叫它马上
-    开工；它自己转的（`cheese_task` 的 ``here``）在工具的回复里读到同样的话。"""
+    开工；它自己转的（`cheese_task(action=open)` 的 ``here``）在工具的回复里读到同样的话。"""
     who = f"负责人是 @{owner}。" if owner else ""
     return (
         f"这条支线已经转为任务，{who}从现在起你可以改动项目：在任务自己的工作目录里"
@@ -331,12 +384,16 @@ def build_session_opening(
     overview_doc_id: uuid.UUID | None = None,
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
+    stages: Sequence[StageProgress] = (),
     keeps_memory: bool = False,
     task: str | None = None,
+    package: str | None = None,
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
+    ``package``：从题目来的项目里「题目」那一段（``task.package.section_for_project``）：
+    第几版、材料在资料库的 `题目/`、这一版改了什么；别的项目是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
     变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
@@ -348,6 +405,10 @@ def build_session_opening(
         sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
+    if section := stages_section(stages):
+        sections["stages"] = section
+    if package:
+        sections["package"] = package
     if topics:
         lines = "\n".join(f"- {t['title']}" for t in topics)
         sections["topics"] = (
@@ -366,7 +427,7 @@ def build_session_opening(
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
-        # 规则在 `cheese_accept_request` 的工具说明里（与代码同源），这里只给清单
+        # 规则在 `cheese_card(action=request)` 的工具说明里（与代码同源），这里只给清单
         # 和一句指路；交合并的那条路上没有名字可写错，所以也不用嘱咐。
         head = "## 这个项目的产物清单（交出去的东西，一项一行）\n"
         if artifacts:
@@ -381,14 +442,14 @@ def build_session_opening(
                 head + "交出文件或地址时，交的是下面某一项的新一版就用 "
                 "`artifact=<那一行的 id>`，是一样新东西就用 `new_artifact` 加 "
                 "`about`；交合并的不用声明产物，交的是项目那个仓库。细则看 "
-                "`cheese_accept_request` 的说明。"
+                "`cheese_card(action=request)` 的说明。"
                 "\n\n" + lines
             )
         else:
             sections["artifacts"] = (
                 head + "清单还空着。第一次交出文件或地址时，用 `new_artifact=<真名>` "
                 "加 `about=<一句话>` 声明它；交合并的不用声明产物，交的是项目那个"
-                "仓库。细则看 `cheese_accept_request` 的说明。"
+                "仓库。细则看 `cheese_card(action=request)` 的说明。"
             )
     if roster:
         names = {m["handle"]: m["name"] for m in roster if not m.get("agent")}
@@ -423,18 +484,18 @@ def build_session_opening(
             "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
             "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
             "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
-            f"了才改，用 `cheese_doc_edit`{where}。\n"
+            f"了才改，用 `cheese_doc(action=edit)`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
-                full_read_hint=f"用 `cheese_doc_get`{where}读全文",
+                full_read_hint=f"用 `cheese_doc(action=get)`{where}读全文",
             )
         )
     if doc:
         sections["doc"] = "## 实况文档现在的内容\n\n" + fit_doc_to_budget(
             doc,
             TOPIC_DOC_CHAR_BUDGET,
-            full_read_hint="用 `cheese_doc_get` 读全文",
+            full_read_hint="用 `cheese_doc(action=get)` 读全文",
         )
     elif doc is not None:
         sections["doc"] = "## 实况文档现在的内容\n\n这里还没有实况文档。"
@@ -480,6 +541,6 @@ def task_opening_prompt(
         f"{put}"
         f"{accepted}"
         "按讨论动手，在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "实况文档边做边写，用 cheese_doc_set：最要紧的一两句放在最上面，讨论里否掉的"
+        "实况文档边做边写，用 cheese_doc(action=set)：最要紧的一两句放在最上面，讨论里否掉的"
         "做法也记下来，写明没采用和原因。要人决定的事，用 cheese_ask 问负责人。"
     )

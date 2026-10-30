@@ -88,7 +88,6 @@ const ownsProject = computed(() => projectRead.data.value?.my_role === 'owner')
 const managesChannels = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
 const editsSettings = computed(() => mayIn(projectRead.data.value, 'edit_settings'))
 const changesRoles = computed(() => mayIn(projectRead.data.value, 'change_roles'))
-const creditBudget = useProjectCreditBudget(() => props.projectId)
 const editsCreditBudget = computed(() => ownsProject.value || projectRead.data.value?.my_role === 'admin')
 
 const {
@@ -131,24 +130,11 @@ const {
   saveOverrideHandles,
 } = useBranchProtection(() => props.projectId)
 
-const { exporting, exportError, exportProject } = useProjectExport(
+const { exporting, exportProject } = useProjectExport(
   () => props.projectId,
   () => projectName.value
 )
 
-onMounted(() => {
-  consumeGithubCallbackNotice()
-  load()
-  void loadBranchProtection().finally(gate.hold())
-  void loadGithubAccountConnection().finally(gate.hold())
-})
-watch(
-  () => props.projectId,
-  () => {
-    load()
-    loadBranchProtection()
-  }
-)
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
@@ -167,8 +153,6 @@ const { archiving, archiveError, archiveProject } = useProjectArchive(
 )
 
 const address = useProjectAddress(() => props.projectId)
-const roles = useProjectRoles(() => props.projectId)
-
 // 「角色和权限」：一张角色清单，点开一个角色是它自己那一页（地址上的 `?role=`），页上
 // 拨它的权限，⋯ 里改名、删除，内置角色改过权限的可以恢复默认（#4795）。
 const roleKey = computed(() => {
@@ -290,6 +274,30 @@ const section = computed(() => {
 const gate = provideRevealGate()
 const { revealed } = gate
 
+const creditBudget = useProjectCreditBudget(() => props.projectId, {
+  enabled: () => section.value === 'environment',
+})
+const roles = useProjectRoles(() => props.projectId, {
+  enabled: () => section.value === 'roles',
+})
+
+function syncActiveSectionLoads() {
+  if (section.value === 'repository') {
+    void load()
+    void loadGithubAccountConnection().finally(gate.hold())
+  } else if (section.value === 'merge') {
+    void loadBranchProtection().finally(gate.hold())
+  }
+}
+
+onMounted(() => {
+  consumeGithubCallbackNotice()
+  syncActiveSectionLoads()
+})
+watch([() => props.projectId, () => section.value], () => {
+  syncActiveSectionLoads()
+})
+
 // 这五栏的数据与动作。组件只吃 props、只往上发事件；取数、保存、错误、busy / 显示闸、
 // 环境状态轮询与重试/采用、MCP 授权回跳都在各自那一个 composable 里。`enabled` 说的是
 // 「这一刻是不是这一栏」：设置页一次只画一栏，没被打开过的那几栏不读，环境那一栏不起
@@ -398,10 +406,10 @@ function close() {
         </BaseButton>
       </header>
 
-      <div v-if="loading" class="d-flex justify-center py-10">
+      <div v-if="section === 'repository' && loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4">
+      <v-alert v-else-if="section === 'repository' && error" type="error" density="comfortable" class="mb-4">
         {{ error }}
       </v-alert>
       <!-- 各块各自取数；全部首次到齐之前藏在一个转圈后面，到齐后一起出现，不然每到
@@ -632,12 +640,7 @@ function close() {
 
         <!-- Exporting is for everyone who can read the project; the archive follows the
              caller's current room permissions (docs/project-export.md). -->
-        <ProjectExportSection
-          v-else-if="section === 'export'"
-          :busy="exporting"
-          :error="exportError"
-          @export="exportProject"
-        />
+        <ProjectExportSection v-else-if="section === 'export'" :busy="exporting" @export="exportProject" />
 
         <!-- 归档只给所有者：归档是他一个人的决定（后端也只认他）。 -->
         <ArchiveProjectSection

@@ -166,7 +166,7 @@ describe('a mini-app block', () => {
   it('refuses an opening line with no key and version, naming its line and the right form', () => {
     const problem = checkMarkdownWrite('正文\n\n:::app 并发数的影响\n说明\n:::\n')
     expect(problem?.line).toBe(3)
-    expect(problem?.message).toContain('cheese_app_save')
+    expect(problem?.message).toContain('cheese_app(action=save)')
   })
 
   it('refuses more than one sentence of text, which the block cannot hold', () => {

@@ -16,7 +16,7 @@ import pytest
 
 from tests.integration.migration_replay import database_at, seed_room
 
-BEFORE = "b7d41e9c05af"
+BEFORE = "e3f9a1c62b47"
 AFTER = "c4e8a1f27b93"
 
 

@@ -8,19 +8,10 @@
 // The last section pins the notifications `del` command (same batch, pilot
 // domain): a real 204 must resolve to the explicit success value `true`, never
 // the `undefined` a caught failure maps to.
-import { delay, http, HttpResponse } from 'msw'
+import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import {
-  auth,
-  contractEnvironment,
-  envelope,
-  newer,
-  refresh,
-  replace,
-  server,
-  uploadFile,
-} from './requestContract.spec.helper'
+import { auth, contractEnvironment, envelope, newer, refresh, replace, server } from './requestContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a swallowed failure does not leave the
@@ -232,67 +223,6 @@ describe('task board: authentication edge cases', () => {
     expect(error).toBeInstanceOf(Error)
     expect(count()).toBe(2)
     expect(refresh).toHaveBeenCalledOnce()
-  })
-})
-
-describe('task board: upload progress, timeout and multipart shape', () => {
-  it('lets a slow attachment upload finish and carries the 60s upload timeout, not the 30s default', async () => {
-    const { axiosNewApi } = await import('./axiosHttp')
-    // What is verified: the upload dial raises the per-request timeout above
-    // the 30s instance default (read off the request as it reaches the
-    // transport), a delayed upload still completes, and progress fires and
-    // settles at loaded === total. What is NOT verified here: a real
-    // 30s-against-60s wall-clock boundary — see the dedicated boundary spec.
-    expect(axiosNewApi.defaults.timeout).toBe(30000)
-    let seenTimeout: number | undefined
-    const interceptor = axiosNewApi.interceptors.request.use((config) => {
-      seenTimeout = config.timeout
-      return config
-    })
-    try {
-      const progress: number[] = []
-      let final: { loaded: number; total: number } | undefined
-      server.use(
-        http.post(`${newer}/tasks/7/attachments`, async () => {
-          await delay(400)
-          return HttpResponse.json(envelope({ attachment: { id: 1 } }), { status: 201 })
-        })
-      )
-      const attachment = await tasks.uploadAttachment(7, uploadFile(), (event) => {
-        progress.push(event.loaded ?? 0)
-        final = { loaded: event.loaded ?? 0, total: event.total ?? 0 }
-      })
-      expect(attachment).toEqual({ attachment: { id: 1 } })
-      // The event measures the request body (the multipart envelope around the
-      // file, so a few bytes more than the file alone).
-      expect(progress.length).toBeGreaterThan(0)
-      expect(final!.total).toBeGreaterThan(uploadFile().size)
-      expect(final!.loaded).toBe(final!.total)
-      for (let i = 1; i < progress.length; i++) expect(progress[i]).toBeGreaterThanOrEqual(progress[i - 1])
-      expect(seenTimeout).toBe(60000)
-    } finally {
-      axiosNewApi.interceptors.request.eject(interceptor)
-    }
-  })
-
-  it('keeps multipart fields as an ordered entry list, not a folded object', async () => {
-    const seen: unknown[] = []
-    server.use(
-      http.post(`${newer}/tasks/7/attachments`, async ({ request }) => {
-        expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
-        const form = await request.formData()
-        seen.push(
-          await Promise.all(
-            [...form.entries()].map(async ([key, value]) =>
-              typeof value === 'string' ? [key, value] : [key, { name: value.name, type: value.type }]
-            )
-          )
-        )
-        return HttpResponse.json(envelope({ attachment: { id: 1 } }), { status: 201 })
-      })
-    )
-    await tasks.uploadAttachment(7, uploadFile())
-    expect(seen[0]).toEqual([['file', { name: 'notes.pdf', type: 'application/pdf' }]])
   })
 })
 

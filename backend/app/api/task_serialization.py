@@ -15,30 +15,34 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from app.api.task_teaching import read_task_default_role, read_task_teaching
-from app.domain.attachment.models import Attachment
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
-from app.domain.task.attachment_service import TaskAttachmentRepository
+from app.domain.task import package
 from app.domain.task.claims import own_claim
 from app.domain.task.models import (
     Task,
-    TaskAttachment,
     TaskMembership,
     TaskSubmissionSchemaEntry,
 )
 from app.domain.task.repositories import (
     TaskMembershipRepository,
     TaskMentorRepository,
-    TaskSubmissionRepository,
     TaskSubmissionSchemaRepository,
     TopicRepository,
 )
+from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskMembershipService
-from app.domain.task.submission_state import claim_state
+from app.domain.task.stages import (
+    list_stages_for_tasks,
+    stage_count,
+    stage_ref,
+    stages_to_api,
+)
+from app.domain.task.submission_state import claim_state, handed_in_for, stage_states
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
@@ -71,6 +75,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         "deadline": deadline_ms,
         "registrationStartAt": registration_start_ms,
         "defaultDeadline": task.default_deadline,
+        # How a claim starts: ``DIRECT`` or ``APPLY`` (``inputs.START_*``).
+        "startMode": task.start_mode,
         "resubmittable": task.resubmittable,
         "editable": task.editable,
         "approved": approved_map.get(task.approved, "NONE"),
@@ -80,6 +86,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         # 评分要点只在详情与改题的响应里填（见 lifecycle）；列表不带。
         "rubric": [],
         "rubricPublic": task.rubric_public,
+        # 阶段同样只在详情与改题的响应里填（见 app.domain.task.stages）。
+        "stages": [],
         "space": {"id": task.space_id},
         "category": {"id": task.category_id, "name": ""},
         "categoryId": task.category_id,
@@ -112,16 +120,34 @@ _SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
 
 
 def _submission_schema_to_api(
-    entries: Sequence[TaskSubmissionSchemaEntry],
+    entries: Sequence[TaskSubmissionSchemaEntry], keys: Sequence[str]
 ) -> list[dict]:
-    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。每一项用
+    阶段的 id 指它属于哪个阶段（``keys`` 是这道题的阶段 id，按顺序；不分阶段时是空的，
+    这一格是 None）。"""
     return [
         {
             "prompt": entry.description,
             "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
+            "stage": stage_ref(entry.stage, keys),
         }
         for entry in entries
     ]
+
+
+async def _task_requirements(service, task_id: int) -> dict:
+    """What a 题目 asks of whoever takes it, as the detail, the edit form and
+    the change draft read it: its stages, its submission items and its rubric,
+    the items and lines naming their stage by the stage's id."""
+    stage_rows = await service.list_stages(task_id)
+    keys = [stage.key for stage in stage_rows]
+    return {
+        "stages": stages_to_api(stage_rows),
+        "submissionSchema": _submission_schema_to_api(
+            await service.list_submission_schema(task_id), keys
+        ),
+        "rubric": rubric_to_api(await service.list_rubric(task_id), keys),
+    }
 
 
 async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
@@ -142,12 +168,13 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
     grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
         task_ids
     )
+    stages = await list_stages_for_tasks(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
             continue
         task_model["submissionSchema"] = _submission_schema_to_api(
-            grouped.get(model_id, [])
+            grouped.get(model_id, []), [s.key for s in stages.get(model_id, [])]
         )
 
 
@@ -236,10 +263,20 @@ async def _enrich_task_models(
         if getattr(category, "name", None)
     }
 
+    # ``total`` 数每一份没删的申请（等批准的、被拒的都算）；``approved`` 只数申请
+    # 通过的 —— 页面上的「参与人数」和名额满没满都按它：还在等批准的人不是参与者，
+    # 也不占名额（通过时才数，``TaskMembershipService.update_membership``）。
+    # ``live`` 数还算数的领取（通过的、等批准的）：有一份，开始方式就不能再改。
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    approved_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    live_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     for membership in memberships:
         if membership.task_id in participant_counts:
             participant_counts[membership.task_id] += 1
+            if membership.approved == 0:
+                approved_counts[membership.task_id] += 1
+            if membership.approved != 1:
+                live_counts[membership.task_id] += 1
 
     for task_model in task_models:
         creator_id = task_model.get("creator", {}).get("id")
@@ -273,6 +310,8 @@ async def _enrich_task_models(
 
         task_model["participants"] = {
             "total": participant_counts.get(task_model["id"], 0),
+            "approved": approved_counts.get(task_model["id"], 0),
+            "live": live_counts.get(task_model["id"], 0),
             "examples": [],
         }
 
@@ -352,10 +391,11 @@ async def _enrich_task_models(
 
 
 async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
-    """把每道题挂着几个材料填进列表响应（就地改）。
+    """把每道题有几份材料填进列表响应（就地改）。
 
     只是**一个数**：不带文件本体、不带文件名，也不问谁能下载 —— 卡片上那格「附件
-    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/attachments`）。一个材料
+    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/files`）。「有几份材料」
+    不比「这道题在不在」多泄露什么。一个材料
     都没有的题给 0，不是缺字段：卡片按「有就列、没有就不显示」写，而 0 与「不知道」
     是两件事。
 
@@ -368,9 +408,7 @@ async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
     ]
     if not task_ids:
         return
-    counts = await TaskAttachmentRepository(session=db).count_live_by_task_ids(
-        task_ids=task_ids
-    )
+    counts = await package.file_counts(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
@@ -467,21 +505,19 @@ async def _enrich_task_user_state(
         return team_summary(teams_map.get(team_id), fallback_id=team_id)
 
     # 我在每道题上走到哪一步（卡片上那格「我的领取档位」）。只问我**本人**那条
-    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。判决照
+    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。按各阶段的状态照
     # `app.domain.task.submission_state` 的 `claim_state` 算 —— 它和
-    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按判决直接翻，
+    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按提交直接翻，
     # 而不是读那一列。整页一次查询，不按题各发一条。
     my_membership_by_task_id = {
         task_id: state["user_membership"].id
         for task_id, state in pending.items()
-        if state["user_membership"] is not None
-        and state["user_membership"].approved != 1
+        if state["user_membership"] is not None and state["user_membership"].live_claim
     }
-    verdicts_by_membership_id = await TaskSubmissionRepository(
-        session=db
-    ).list_review_verdicts_for_memberships(
-        membership_ids=list(my_membership_by_task_id.values())
+    handed_in_by_membership_id = await handed_in_for(
+        db, list(my_membership_by_task_id.values())
     )
+    stages_by_task_id = await list_stages_for_tasks(db, list(my_membership_by_task_id))
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -493,8 +529,8 @@ async def _enrich_task_user_state(
         # DISAPPROVED memberships should NOT show as "joined" — otherwise the
         # frontend renders "退出赛题" button for rejected applications.
         joined = bool(
-            (user_membership and user_membership.approved != 1)
-            or any(m.approved != 1 for m in team_memberships)
+            (user_membership is not None and user_membership.live_claim)
+            or any(m.live_claim for m in team_memberships)
         )
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)
@@ -534,7 +570,10 @@ async def _enrich_task_user_state(
         my_claim_status: str | None = None
         if my_membership_id is not None:
             my_claim_status = claim_state(
-                verdicts_by_membership_id.get(my_membership_id, [])
+                stage_states(
+                    handed_in_by_membership_id.get(my_membership_id, []),
+                    stage_count(stages_by_task_id.get(task_id, [])),
+                )
             )
 
         task_model.update(
@@ -638,35 +677,3 @@ def _membership_to_api_model(
         # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
         model["team"] = {"id": team.id, "name": team.name}
     return model
-
-
-def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
-    """一个**还没挂到任何题上**的文件在预览响应里的样子。
-
-    与 ``_task_attachment_to_api`` 是同一套字段来源（名字、大小、类型都取自
-    ``meta``），只是没有那两样要有关联行才成立的东西：下载计数、挂上来的时间。同样
-    **不带 url** —— 存储给的是直链，发出去就等于绕开下载那道门。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-    }
-
-
-def _task_attachment_to_api(*, attachment: Attachment, link: TaskAttachment) -> dict:
-    """一个附件在接口上的样子。
-
-    **不带 url**：存储给的是直链（本地 ``/uploads/...``、S3 公开地址），把它发出去
-    就等于把「下载限人」这道门绕过去了。要文件就走下面那个下载端点，门在那里。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-        "uploaderId": attachment.meta.get("uploaderId"),
-        "downloadCount": link.download_count,
-        "createdAt": int(link.created_at.timestamp() * 1000),
-    }

@@ -17,15 +17,30 @@
   "silent": "Cheese gave no answer",
   "today": "Today",
   "steps": {
-    "folded": "{first} and {n} steps",
     "thinking": "Thinking",
     "thought": "Thought for {s}s",
     "notFound": "Not found",
     "denied": "Not permitted",
-    "failed": "Call failed"
+    "failed": "Call failed",
+    "count": "Steps done: {n}",
+    "sent": "Messages sent: {n}",
+    "acted": "Actions taken: {n}",
+    "readCount": "Items looked at: {n}",
+    "reading": "{what}…",
+    "and": ", ",
+    "verbs": {
+      "read": "Read",
+      "find": "Find",
+      "search": "Search"
+    }
   },
   "changes": {
-    "memory": {"title": "Memory", "saved": "Remembered", "changed": "Updated", "forgotten": "Forgotten"},
+    "memory": {
+      "title": "Memory",
+      "saved": "Remembered",
+      "changed": "Updated",
+      "forgotten": "Forgotten"
+    },
     "title": "Form changes",
     "created": "New draft",
     "untitled": "Untitled task",
@@ -136,6 +151,62 @@
     "expired": "Expired"
   },
   "run": {
-    "routine": "Routine “{title}” started"
+    "routine": "Automation “{title}” started",
+    "wait": "“{title}” started",
+    "filed": "Task “{task}” went to review",
+    "accepted": "Task “{task}”: the delivery was accepted",
+    "rejected": "Task “{task}”: the delivery was returned"
+  },
+  "page": {
+    "channel": "Channel “{name}”",
+    "task": "Task “{name}”",
+    "thread": "Thread “{name}”",
+    "doc": "“{name}”",
+    "project": "Project “{name}”",
+    "problem": "Problem “{name}”",
+    "publish": "Publishing a problem",
+    "library": "My library",
+    "teamLibrary": "{name}'s library"
+  },
+  "context": {
+    "removeSelection": "Remove selected text",
+    "askSelection": "Ask Cheese",
+    "leavePage": "Leave this page out",
+    "includePage": "Include this page"
+  },
+  "cite": {
+    "recent": "Recent",
+    "inProject": "In {name}",
+    "everywhere": "Your projects",
+    "empty": "No matches",
+    "back": "Back",
+    "button": "Cite ({'@'})",
+    "tooMany": "Cite at most {most} things",
+    "loading": "Loading",
+    "kinds": {
+      "task": "Tasks",
+      "channel": "Channels",
+      "doc": "Documents",
+      "file": "Library files",
+      "problem": "Problems"
+    },
+    "label": "Cite"
+  },
+  "rule": {
+    "waiting": "Waiting",
+    "on": "On",
+    "started": "Started",
+    "gaveUp": "Did not happen within {days} days; stopped waiting",
+    "cancelled": "Cancelled",
+    "ended": "Ended",
+    "paused": {
+      "person": "Paused",
+      "credits": "Out of credits; paused",
+      "away": "Away for long; paused"
+    },
+    "cancel": "Cancel",
+    "pause": "Pause",
+    "resume": "Resume",
+    "failed": "Could not do that"
   }
 }

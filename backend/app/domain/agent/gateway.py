@@ -268,7 +268,11 @@ class LlmGateway:
         return out
 
     async def mint_project_key(
-        self, project_id: uuid.UUID, *, purpose: str | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        purpose: str | None = None,
+        daily_budget_usd: float | None = None,
     ) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via
         ``user_id``). The caller persists it in project.settings — minting is
@@ -276,8 +280,16 @@ class LlmGateway:
 
         ``purpose`` names a second key of the same project (``dream``, its
         memory consolidation), whose spend has to be read apart from the
-        rooms'."""
+        rooms'.
+
+        ``daily_budget_usd`` caps what the key spends a day; the gateway
+        refuses calls past it until the day turns."""
         alias = f"project-{project_id}" + (f"-{purpose}" if purpose else "")
+        budget = (
+            {"max_budget": daily_budget_usd, "budget_duration": "1d"}
+            if daily_budget_usd is not None
+            else {}
+        )
         metadata = {"cheesex_project": str(project_id)}
         if purpose:
             metadata["purpose"] = purpose
@@ -290,6 +302,7 @@ class LlmGateway:
                         "key_alias": alias,
                         "user_id": project_user_id(project_id),
                         "metadata": metadata,
+                        **budget,
                     },
                 )
                 r.raise_for_status()

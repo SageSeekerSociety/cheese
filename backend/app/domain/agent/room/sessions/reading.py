@@ -238,7 +238,7 @@ async def _take(
         )
         if isinstance(event, AgentCompacting) and event.done and not event.error:
             # Whichever way it came — the harness's own when the window
-            # filled, or `cheese_compact` — the event names no seat, and what
+            # filled, or `cheese_session(action=compact)` — the event names no seat, and what
             # the room forgets is this seat's.
             await svc._hear(live.session, Read(str(work), Compacted()))
     return False

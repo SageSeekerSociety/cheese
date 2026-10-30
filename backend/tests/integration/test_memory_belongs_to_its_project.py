@@ -37,7 +37,7 @@ from tests.integration.conftest import (
 
 # The harness sends the global sandbox token on every request; a caller in
 # these tests presents only what it names.
-NO_CREDENTIAL = {"X-Cheese-Token": ""}
+NO_CREDENTIAL = {"Authorization": ""}
 
 
 def _as(handle: str) -> dict[str, str]:
@@ -275,7 +275,9 @@ def test_the_projects_agent_reads_its_own_projects_memory_and_no_other(client):
     _remember_team(client, other_id, {"q.md": "Q 的事"})
     token = _project_credential(client, project_id, "alice")
 
-    listed = _list(client, project_id, {"X-Cheese-Token": token})
+    listed = _list(client, project_id, {"Authorization": f"Bearer {token}"})
     assert _contents(listed) == {"部署脚本在 deploy/deploy.sh"}
     assert {"updated_at", "path"} <= set(listed.json()["data"]["data"][0])
-    assert _list(client, other_id, {"X-Cheese-Token": token}).status_code == 403
+    assert (
+        _list(client, other_id, {"Authorization": f"Bearer {token}"}).status_code == 403
+    )

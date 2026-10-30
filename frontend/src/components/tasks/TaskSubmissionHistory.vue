@@ -162,7 +162,6 @@ import type { TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
@@ -176,6 +175,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()
@@ -197,6 +197,8 @@ interface Props {
   outlined?: boolean
   highlightLatest?: boolean
   isDialog?: boolean
+  /** 只看这个阶段（阶段的 id）的提交；`null` = 不分阶段。 */
+  stage?: string | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -210,6 +212,7 @@ const props = withDefaults(defineProps<Props>(), {
   outlined: false,
   highlightLatest: false,
   isDialog: false,
+  stage: null,
 })
 
 // 取数与写评审都在这个 composable 里：组件不许够到 API 层，只收 props、发 `changed`。
@@ -225,8 +228,9 @@ const {
   total,
   submitReview: saveReview,
   cancelReview,
-} = useTaskSubmissionHistory({ taskId: () => props.taskId, participantId: () => props.participantId }, () =>
-  emit('changed')
+} = useTaskSubmissionHistory(
+  { taskId: () => props.taskId, participantId: () => props.participantId, stage: () => props.stage },
+  () => emit('changed')
 )
 
 const calcSubmissionReviewColor = (review: TaskSubmissionReview) => {
@@ -284,7 +288,7 @@ const submitReview = handleSubmit(async (form) => {
 
 onMounted(refresh)
 
-watch(() => [props.taskId, props.participantId], refresh)
+watch(() => [props.taskId, props.participantId, props.stage], refresh)
 
 watch(latestSubmission, (newVal) => {
   if (props.reviewable && newVal.review) {

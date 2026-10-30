@@ -1,6 +1,6 @@
 // 交给芝士的文件：先传上去，传完那一行不再转圈，下一个问题带上它。普通页面交的文件
 // 进这个人自己的资料库；发布、改题目页上交的是题目的材料，存成附件。
-import { effectScope } from 'vue'
+import { effectScope, nextTick, ref } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const upload = vi.fn()
@@ -26,10 +26,15 @@ import { toast } from 'vuetify-sonner'
 
 import {
   agentFiles,
+  agentPageOff,
+  agentSelection,
   agentThread,
+  askAgent,
   attachToAgent,
+  pickForAgent,
   removeAgentFile,
   resetAgent,
+  selectForAgent,
   sendProposal,
   useAgentContext,
 } from './agent'
@@ -137,5 +142,144 @@ describe('芝士起草、人确认的事', () => {
     expect(openTask).toHaveBeenCalledWith('room-1', '排查超时')
     expect(post).toHaveBeenLastCalledWith('task-1', { content: '复现并修好', request_id: 'req-5' })
     expect(settle).toHaveBeenCalledWith(5, 'sent', { task: 'task-1', topic: 'task-1', message: 'block-2' })
+  })
+})
+
+describe('这一句带上什么', () => {
+  afterEach(() => {
+    resetAgent()
+    vi.unstubAllGlobals()
+  })
+
+  /** `hold`：开新话题的请求停在这里，等它放行（量这一阵里换了页）。 */
+  function serveAsk(hold?: Promise<void>) {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const json = (data: unknown, status = 200) =>
+        new Response(JSON.stringify({ code: 200, message: 'ok', data }), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        })
+      if (url.endsWith('/assistant/conversations') && (init?.method ?? 'GET') === 'POST') {
+        await hold
+        return json({ id: 'c1', title: '', lastActiveAt: '2026-10-24T08:00:00Z' }, 201)
+      }
+      if (url.endsWith('/assistant/conversations')) return json({ conversations: [] })
+      if (url.endsWith('/ask')) {
+        bodies.push(JSON.parse(String(init?.body)))
+        return new Response('event: done\ndata: {}\n\n', { headers: { 'content-type': 'text/event-stream' } })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    return bodies
+  }
+
+  it('the page taken off, a selection and a pick go with the question; the selection does not go with the next', async () => {
+    const bodies = serveAsk()
+    const scope = effectScope()
+    scope.run(() => useAgentContext(() => ({ page: { kind: 'topic', id: 'r1' }, label: '频道「后端」' })))
+    await nextTick()
+    agentPageOff.value = true
+    selectForAgent('超时设成 600 秒')
+    pickForAgent({ id: 'd1', kind: 'doc', title: '搜索接入方案', where: '知是' })
+
+    await askAgent('比较 <#d1> 和这句')
+
+    expect(bodies[0]).toMatchObject({ question: '比较 <#d1> 和这句', no_page: true, selection: '超时设成 600 秒' })
+    expect(bodies[0]).not.toHaveProperty('page')
+    expect(agentThread.messages.value[0]).toMatchObject({
+      selection: '超时设成 600 秒',
+      cited: [{ id: 'd1', kind: 'doc', title: '搜索接入方案' }],
+    })
+    expect(agentThread.messages.value[0]).not.toHaveProperty('askedOn')
+    expect(agentSelection.value).toBeNull()
+
+    agentPageOff.value = false
+    await askAgent('再问一句')
+
+    expect(bodies[1]).toMatchObject({ page: { kind: 'topic', id: 'r1' } })
+    expect(bodies[1]).not.toHaveProperty('selection')
+    expect(agentThread.messages.value.at(-1)).toMatchObject({ askedOn: '频道「后端」' })
+    scope.stop()
+  })
+
+  it('taken off on one page, the page is read again on the next', async () => {
+    const scope = effectScope()
+    const page = ref('r1')
+    scope.run(() => useAgentContext(() => ({ page: { kind: 'topic', id: page.value } })))
+    await nextTick()
+    agentPageOff.value = true
+
+    page.value = 'r2'
+    await nextTick()
+
+    expect(agentPageOff.value).toBe(false)
+    scope.stop()
+  })
+
+  it('page taken off when asking: still off if the person moves to another page before it goes out', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const scope = effectScope()
+    const page = ref<{ kind: 'topic' | 'doc'; id: string }>({ kind: 'topic', id: 'room-a' })
+    scope.run(() => useAgentContext(() => ({ page: page.value })))
+    await nextTick()
+    agentPageOff.value = true
+
+    const asking = askAgent('不要带页面')
+    page.value = { kind: 'doc', id: 'private-doc-b' }
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ question: '不要带页面', no_page: true })
+    expect(bodies[0]).not.toHaveProperty('page')
+    scope.stop()
+  })
+
+  it('the question goes with the page it was asked on, not the one open when it goes out', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const asked = effectScope()
+    asked.run(() => useAgentContext(() => ({ page: { kind: 'topic', id: 'room-a' } })))
+    await nextTick()
+
+    const asking = askAgent('这个频道在说什么')
+    asked.stop()
+    const next = effectScope()
+    next.run(() => useAgentContext(() => ({ page: { kind: 'doc', id: 'private-doc-b' } })))
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ page: { kind: 'topic', id: 'room-a' } })
+    next.stop()
+  })
+
+  it('asked where the page declares nothing yet: a page it declares before the question goes out is not attached', async () => {
+    let release = () => {}
+    const bodies = serveAsk(new Promise((resolve) => (release = resolve)))
+    const scope = effectScope()
+    const page = ref<{ kind: 'project'; id: string } | null>(null)
+    scope.run(() => useAgentContext(() => ({ page: page.value, label: '项目' })))
+    await nextTick()
+
+    const asking = askAgent('这里是什么')
+    page.value = { kind: 'project', id: 'p-later' }
+    await nextTick()
+    release()
+    await asking
+
+    expect(bodies[0]).toMatchObject({ no_page: true })
+    expect(bodies[0]).not.toHaveProperty('page')
+    scope.stop()
+  })
+
+  it('on a page 芝士 does not read, the question says it has no page', async () => {
+    const bodies = serveAsk()
+
+    await askAgent('今天几号？')
+
+    expect(bodies[0]).toMatchObject({ no_page: true })
   })
 })

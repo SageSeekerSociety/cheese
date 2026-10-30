@@ -1,0 +1,115 @@
+name: Merge another deployment (dev box)
+
+# Brings a converted export of another Cheese deployment into the dev
+# deployment, or takes one merged batch back (deploy/merge-deployment.sh,
+# deploy/README-merge-deployment.md). The export is a directory on the dev box
+# that an operator put there; nothing about it lives in the repository.
+#
+# A dry run changes nothing and needs no approval. An import or a revert waits
+# for a human approval first, the same gate deploy-prod.yml uses.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "dry-run and revert-dry-run change nothing"
+        type: choice
+        options: [dry-run, import, revert-dry-run, revert]
+        default: dry-run
+      batch:
+        description: "Batch name: what a revert later names ([A-Za-z0-9._-])"
+        required: true
+      export_dir:
+        description: "Export directory on the dev box (dry-run and import)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  # the merge job reads whether a dev release is running
+  actions: read
+  # manual-approval opens an issue and waits for an approver to comment
+  issues: write
+
+jobs:
+  # On a hosted runner: it waits for a person, and the box's runner is what the
+  # merge job needs.
+  gate:
+    runs-on: ubuntu-latest
+    # Deliberately unbounded: it blocks on a human approving.
+    steps:
+      - name: Require manual approval
+        if: ${{ inputs.action == 'import' || inputs.action == 'revert' }}
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: andylizf
+          minimum-approvals: 1
+          issue-title: "Approve ${{ inputs.action }} of merge batch ${{ inputs.batch }} on the dev deployment"
+          issue-body: "Runs `deploy/merge-deployment.sh ${{ inputs.action }}` for batch `${{ inputs.batch }}` on the dev box. Read the dry run's log first. Comment `approve` to proceed or `deny` to cancel."
+
+  merge:
+    needs: gate
+    runs-on: [self-hosted, cheese-dev]
+    # Not the deploy-dev group: a group keeps one pending run and cancels it
+    # when another queues, so joining it would let a merge cancel a waiting
+    # release and a release cancel an approved merge. Merges queue among
+    # themselves, and the step below refuses to start beside a release. A
+    # release that starts during a merge cannot corrupt it: the import checks
+    # in its own transaction that the schema is the one the source copy was
+    # migrated to, and a replaced backend ends the run before it commits.
+    concurrency:
+      group: merge-deployment
+      cancel-in-progress: false
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Refuse while a dev release is running or waiting
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, urllib.request
+          import time, urllib.error
+          def runs(query):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{os.environ['REPO']}/actions/workflows/deploy-dev.yml/runs?{query}",
+                  headers={"Authorization": f"Bearer {os.environ['GH_TOKEN']}", "Accept": "application/vnd.github+json"},
+              )
+              # The dev box's link to GitHub resets single connections (the deploy's
+              # image pulls retry for the same reason); try a few times, saying so.
+              for attempt in range(1, 7):
+                  try:
+                      return json.load(urllib.request.urlopen(req, timeout=30))["workflow_runs"]
+                  except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+                      if attempt == 6:
+                          raise
+                      print(f"::warning::GitHub API attempt {attempt} failed ({e}); retrying in {5 * attempt}s")
+                      time.sleep(5 * attempt)
+          # A run still queued behind one that has since started has usually been
+          # replaced by it, and GitHub can leave such a run listed as queued with no
+          # jobs, unable to be cancelled. Where the rule is too generous, the skipped
+          # run's deploy job still needs the box's one runner, which this merge holds,
+          # so it runs after the merge and never beside it.
+          started = [r["run_started_at"] or r["created_at"] for r in runs("per_page=20") if r["status"] not in ("queued", "waiting", "pending")]
+          latest_start = max(started, default="")
+          busy = []
+          for status in ("in_progress", "queued", "waiting", "pending"):
+              for r in runs(f"status={status}&per_page=20"):
+                  if status != "in_progress" and r["created_at"] < latest_start:
+                      print(f"::warning::ignoring {r['html_url']}: queued since {r['created_at']}, behind a release that started at {latest_start}")
+                      continue
+                  busy.append(r)
+          if busy:
+              print("::error::a dev release is running or waiting: " + ", ".join(r["html_url"] for r in busy))
+              sys.exit(1)
+          PY
+      - name: Merge
+        env:
+          ACTION: ${{ inputs.action }}
+          BATCH: ${{ inputs.batch }}
+          EXPORT_DIR: ${{ inputs.export_dir }}
+        run: bash deploy/merge-deployment.sh "$ACTION" "$BATCH" "$EXPORT_DIR"

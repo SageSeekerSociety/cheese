@@ -30,7 +30,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-ATTEMPTS = 5
+# The link's resets come in bursts (2026-10-24: one lasted over two minutes), so a
+# request is retried until the budget below runs out, not a fixed number of times,
+# with the wait capped so a burst's end is noticed within half a minute.
+MAX_DELAY_S = 30
 # No new attempt starts after this many seconds, so a stalled link usually fails the
 # step with its own message rather than the runner killing the job at
 # `timeout-minutes: 5`. It bounds when attempts start, not how long one runs (each
@@ -50,19 +53,20 @@ _opener = urllib.request.build_opener(_NoRedirect)
 
 
 def _with_retries(what: str, fetch):
-    for attempt in range(1, ATTEMPTS + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             return fetch()
         # A cut-short body raises http.client.IncompleteRead, which is not an OSError.
         except (OSError, http.client.HTTPException) as error:
             if isinstance(error, urllib.error.HTTPError) and error.code < 500 and error.code != 429:
                 raise
-            delay = 2**attempt
-            if attempt == ATTEMPTS or time.monotonic() - _started + delay > DEADLINE_S:
+            delay = min(2**attempt, MAX_DELAY_S)
+            if time.monotonic() - _started + delay > DEADLINE_S:
                 raise
-            print(f"{what}: {error}; retrying in {delay}s ({attempt}/{ATTEMPTS})", flush=True)
+            print(f"{what}: {error}; retrying in {delay}s (attempt {attempt})", flush=True)
             time.sleep(delay)
-    raise AssertionError("unreachable")
 
 
 def _api(path: str) -> urllib.request.Request:

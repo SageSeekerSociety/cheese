@@ -51,10 +51,11 @@ from app.api.space_payloads import (
     PatchSpaceInviteCodeRequest,
     _invite_codes_to_api_models,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.services import SpaceService
 
 router = APIRouter(
@@ -70,6 +71,7 @@ router = APIRouter(
 @router.get(
     "/{spaceId}/invite-codes",
     summary="List Space Invite Codes",
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def list_space_invite_codes(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -77,9 +79,7 @@ async def list_space_invite_codes(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    codes = await service.list_invite_codes(
-        space_id=space_id, actor_user_id=auth_user.user_id
-    )
+    codes = await service.list_invite_codes(space_id=space_id)
     items = await _invite_codes_to_api_models(codes, db=db)
     return ok({"inviteCodes": items})
 
@@ -88,7 +88,7 @@ async def list_space_invite_codes(
     "/{spaceId}/invite-codes",
     summary="Create Space Invite Code",
     status_code=status.HTTP_201_CREATED,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def create_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -114,7 +114,7 @@ async def create_space_invite_code(
 @router.patch(
     "/{spaceId}/invite-codes/{codeId}",
     summary="Update Space Invite Code",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def patch_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -129,7 +129,6 @@ async def patch_space_invite_code(
         expires_at = datetime.fromtimestamp(payload.expires_at / 1000.0, tz=UTC)
     invite = await service.update_invite_code(
         space_id=space_id,
-        actor_user_id=auth_user.user_id,
         code_id=code_id,
         max_uses=payload.max_uses,
         max_uses_set="max_uses" in payload.model_fields_set,
@@ -146,7 +145,7 @@ async def patch_space_invite_code(
     "/{spaceId}/invite-codes/{codeId}",
     summary="Revoke Space Invite Code",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(SpacePermission.manage_members)],
 )
 async def revoke_space_invite_code(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -156,7 +155,6 @@ async def revoke_space_invite_code(
 ) -> Response:
     await service.revoke_invite_code(
         space_id=space_id,
-        actor_user_id=auth_user.user_id,
         code_id=code_id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -48,14 +48,17 @@ from app.domain.agent.session_host.host import SessionHost
 from tests.support.session_host import DEVICE, Host, install_pi, stop_all
 
 PROMPT = "你是芝士。只用给你的工具。"
-TOOLS = ("cheese_read", "cheese_docs_search")
+TOOLS = ("cheese_read", "cheese_help")
 
 
 #: What the platform's routes answer a tool's request with, by path prefix.
 ANSWERS = {
     "/tasks/joined": [{"id": 7, "title": "一道题", "intro": "", "deadline": None}],
     "/topics/": {"content": "文档正文", "doc_version": 3},
-    "/assistant/agent/read": {"text": "任务「报名说明」（ml/tasks/12），进行中\n正文"},
+    "/assistant/agent/read": {
+        "text": "任务「报名说明」（ml/tasks/12），进行中\n正文",
+        "subject": "任务「报名说明」",
+    },
 }
 
 
@@ -100,7 +103,7 @@ class Platform:
                 outer.tool_calls.append(
                     (
                         f"{self.command} {self.path.split('?')[0]}",
-                        self.headers.get("X-Cheese-Token", ""),
+                        self.headers.get("Authorization", "").removeprefix("Bearer "),
                     )
                 )
                 data = next(
@@ -346,7 +349,7 @@ async def test_a_session_has_its_tools_and_nothing_else_and_does_not_think(
 
     first = fake.requests[0]
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
-        "cheese_docs_search",
+        "cheese_help",
         "cheese_read",
         "cheese_subagent_send",
         "cheese_subagent_start",
@@ -422,6 +425,8 @@ async def test_a_read_comes_back_with_the_name_of_what_it_read_and_its_whole_arg
 
     returned = next(e for e in events if isinstance(e, ToolDone))
     assert returned.shown == "任务「报名说明」"
+    # And what it does: a read, which a reader groups with the others.
+    assert returned.effect == "reads"
     args = ""
     for e in events:
         if isinstance(e, ToolArgs) and e.call == returned.call:

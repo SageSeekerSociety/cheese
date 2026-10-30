@@ -11,7 +11,13 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.tag.models import Tag
-from app.domain.task.models import Task, TaskRubricItem, TaskSubmissionSchemaEntry
+from app.domain.task import stages
+from app.domain.task.models import (
+    Task,
+    TaskRubricItem,
+    TaskStage,
+    TaskSubmissionSchemaEntry,
+)
 from app.domain.task.repositories import (
     TaskAccessDomainRepository,
     TaskRepository,
@@ -168,6 +174,7 @@ class TaskService:
         max_team_size: int | None,
         team_locking_policy: str,
         access_control_enabled: bool = False,
+        start_mode: str = "DIRECT",
     ) -> Task:
         return await self._repo.create_task(
             name=name,
@@ -189,6 +196,7 @@ class TaskService:
             max_team_size=max_team_size,
             team_locking_policy=team_locking_policy,
             access_control_enabled=access_control_enabled,
+            start_mode=start_mode,
         )
 
     async def replace_topic_relations(
@@ -220,6 +228,13 @@ class TaskService:
             session=self._require_session()
         ).replace_schema(task_id, entries)
 
+    async def list_submission_schemas(
+        self, task_ids: Sequence[int]
+    ) -> dict[int, list[TaskSubmissionSchemaEntry]]:
+        return await TaskSubmissionSchemaRepository(
+            session=self._require_session()
+        ).list_by_task_ids(task_ids)
+
     async def list_rubric(self, task_id: int) -> list[TaskRubricItem]:
         return await TaskRubricRepository(
             session=self._require_session()
@@ -229,6 +244,17 @@ class TaskService:
         await TaskRubricRepository(session=self._require_session()).replace(
             task_id, lines
         )
+
+    async def list_stages(self, task_id: int) -> list[TaskStage]:
+        return await stages.list_stages(self._require_session(), task_id)
+
+    async def replace_stages(
+        self, task_id: int, lines: Sequence[stages.StageLine]
+    ) -> None:
+        await stages.replace_stages(self._require_session(), task_id, lines)
+
+    async def stage_keys(self, task_id: int) -> list[str]:
+        return await stages.stage_keys(self._require_session(), task_id)
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]

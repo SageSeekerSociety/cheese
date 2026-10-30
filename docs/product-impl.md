@@ -91,7 +91,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 **两层都实时，但是两种不同的实时**（这是过程/状态分离的关键，混成一种会毁掉「文档=稳定状态」）：
 
 - **消息 = 过程：连续流式实时**。todo/状态/流式答案，讲"怎么做"——越快越好、抖动无所谓，token 级跳动。todo 是平台工具 **`todo_write`**（每次传整份清单，三态 pending/in_progress/completed；三个骨架是同一个工具，各自自带的清单工具在启动时关掉）——写进进度层（总览读它，下一轮开场也读它）；在房间里它是芝士自己的一条清单消息：第一次写时发出，之后每次写都通过消息编辑改这同一条（消息标「已编辑」），有人提了新请求时芝士带 `new` 另起一条。任务自己的会话写的清单记在那条任务上，不发到房间。人在输入框里也能发一条清单（同一个接口），点每一步前面的记号改它的状态；人的清单只是他自己的一条消息，不写进进度层，所以不会变成芝士下一轮接着做的计划。谁的清单只有谁能改。
-- **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese_doc_set`），讲"结果是什么"。**不是逐字流**：每次 `cheese_doc_set` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖，一次一个完整版本）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
+- **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese_doc(action=set)`），讲"结果是什么"。**不是逐字流**：每次 `cheese_doc(action=set)` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖，一次一个完整版本）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
 - **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
 - **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件（socket 推来即追加，顶部状态条说此刻在思考 / 做哪一步 / 重试 / 等机器，以及这一轮已用多久；摊开一步可看它输出的末尾 8 KiB，凭据已抹掉；房间里不止一个队友时可按队友看）+ 实况文档读写/工具事件刷新面板 + 芝士发在房间里的清单消息（`todo_write`，改的是同一条）；🟡 待做：@ 秒回占位消息、文档回合中途增量刷新。
 - **参考 / prior art**：①范式——Anthropic **Claude Tag**（2026-06，常驻 Slack 的 AI 队友：@Claude、一频道一共享实例多人接力、拆 stages、ambient 盯/催、自排任务跨小时·天、审计日志），与本平台的 @芝士/频道/巡检/分身/现场高度同构，CheeseX 可定位为「Claude Tag for 学生项目制学习，但以文档为中心、git 原生、采纳=merge」（[anthropic.com](https://www.anthropic.com/news/introducing-claude-tag)）。②活消息机制——Claude Code 交互模式单条 tracking comment + `- [ ]/- [x]` 清单原地更新 + Task 工具（[github-actions](https://code.claude.com/docs/en/github-actions)、[todo-tracking](https://docs.claude.com/en/docs/agent-sdk/todo-tracking)）。
@@ -101,7 +101,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件由会话核心从 runner 的日志读回来（`backend/app/domain/agent/session_host/`，房间那一份在 `agent/room/sessions/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
 - **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每频道一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该频道的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记记忆、创建任务、发通知/决策请求、递验收卡、关闭任务）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
-- **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），只收芝士凭据的写路由在路由上声明 `CHEESE_ONLY_IN_ROOM` / `CHEESE_ONLY_IN_PROJECT`（`backend/app/api/write_access.py`），前端只读这些路径、不受影响。
+- **cheese 写接口有 token 鉴权**：`Authorization: Bearer`（每容器注入 `CHEESE_TOKEN`），只有芝士调的写路由声明一项只有 AI 队友才有的权限（`Can`，`backend/app/api/write_access.py`；`project_permissions.AGENT_ONLY`），前端只读这些路径、不受影响。
 - **记忆**：会话目录里一棵文件树（会话机上的 `~/.cheese/memory/`），数据库是真相、树是副本，输入前铺下去、一轮结束后收回来。每轮把 L1 索引（`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`）和一段说明书拼进 system prompt，正文让 agent 自己读；只对会把文件对账回平台的 harness 注入（注册表的 `Harness.keeps_memory`）。agent 自己用 Write/Edit 改这棵树，`cheese remember` 那个工具已经撤掉。详见 `docs/manual/dev/memory.md`；🟡 整理（dream）与旧表迁移未做。
 
 ### 3.3 任务  ✅
@@ -110,9 +110,9 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 |---|---|---|
 | 新建任务 | `POST /api/topics/{room}/tasks` | ✅ 只有人能建，建的人是负责人；房间 ⋯ 菜单里的「新建任务」 |
 | 讨论转为任务（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 转的人是负责人。主线消息：它的支线原地转成任务，沿用支线的 id，对话和会话接着用（`api/thread_task.turn_into_task`），转两次是同一件；支线里的回复、主线上的文件：另开一件，任务的会话收到一段开场提示（那条消息和它前面的讨论）；私聊里不能转 |
-| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task`） | ✅ 只在有人说要做时调，负责人是要这件事的人；`here` 原地转这条支线，否则另开一件。自己看出来的先用 `cheese_ask` 问一句 |
+| AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task(action=open)`） | ✅ 只在有人说要做时调，负责人是要这件事的人；`here` 原地转这条支线，否则另开一件。自己看出来的先用 `cheese_ask` 问一句 |
 | 转交 | `PATCH /api/topics/{task}/task` | ✅ 负责人交给房间里另一个人，或换一位 AI 队友 |
-| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
+| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_task(action=close)`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 项目里的人都能说，AI 队友里只收任务自己的会话；负责人和协作者的话叫醒任务的队友，别人的话 `@` 了它才叫醒 |
 
 任务建出来就在做，没有「开始」这一步；审阅人在建任务时定下（`TaskService.default_reviewer`）。
@@ -123,7 +123,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 - **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**——正在跑的那一轮当场收到「第几版 + 一句改了哪」的通知，不在跑就由下一轮开头读到最新文档。
 - **实现**：文档是协同服务（`frontend/collab/`，Hocuspocus）里的一份 Yjs 文档，几个人同时编辑、看得到彼此的光标；协同服务停手几秒后把它存回后端，那一次存回才记一版（`api/doc_store.py`），`documents.content` 里的 Markdown 是从它导出的。归档频道文档只读。细节见 `docs/docs-canonical-data-map.md`。
-- **编辑器以外的写入都经过协同服务**：`PUT /api/documents/{文档}` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc_get` 记住它给出的版本、`cheese_doc_set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
+- **编辑器以外的写入都经过协同服务**：`PUT /api/documents/{文档}` 带 `expected_version`（读到的那一版，0 = 还没有文档），协同服务只在实时文档还是那一版时应用，否则 409。芝士侧 `cheese_doc(action=get)` 记住它给出的版本、`cheese_doc(action=set)` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
 - 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（存回时已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
 
 ### 3.5 验收 / 采纳（状态机）  ✅
@@ -171,12 +171,12 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.12 反馈（Feedback）  ✅ 主干 / 🟡 附件
 
 - **行为**：平台自带反馈系统，人和芝士都走同一条链路。
-  - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 我的 / 待处理…），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
-  - **芝士主动提**：芝士在频道里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese_feedback_propose`）。卡上最显眼的是**「你当时说的」**（引用用户原话；用户没就此说过话时提案带 `user_said_absent`，卡上不出这个标题，只写一行「用户没有就此说过话（芝士主动发现）」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每频道每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
+  - **人提反馈**：反馈中心（`/feedback`）按 Tab 筛选（全部 / 热门 / 已完成；另有「我的反馈」一页），提交时选类型（bug / 建议 / 其他…）和可见性；每条有个人类可读编号 `display_no`（如 `FB-7`，由 PG 序列 `feedback_seq` 生成）。
+  - **芝士主动提**：芝士在频道里干完活，可以直接把一条反馈**作为提案卡**发进对话流（`cheese_feedback(action=propose)`）。卡上最显眼的是**「你当时说的」**（引用用户原话；用户没就此说过话时提案带 `user_said_absent`，卡上不出这个标题，只写一行「用户没有就此说过话（芝士主动发现）」），下面才是判断依据 / 发生了什么 / 复现 / 证据；用户点**采纳**才真的建出反馈（提交者=点的人，作者=卡上的芝士），点**不用**按**指纹**记一条 dismissal，同一指纹不再出现。每频道每天限 2 条（`settings.feedback_proposals_per_topic_per_day`），超了回 412 并说明是三道限流里的哪一道。
   - **可见性**：`public` / `private`。私密条目只有提交者本人、平台管理员、以及「提出它时在那个房间里、且今天还读得到那个房间」的人看得到（结论 47 的三档；房间来源只有发送提案卡那条路留得下，`topic_id` 不是请求体字段），列表对别人不显示（对无权者与不存在是同一个 404），且没有支持按钮、只挂一个中性的「私密」标签。平台管理员白名单是 `settings.platform_admin_handles`（环境变量 `PLATFORM_ADMIN_HANDLES`，旧名 `FEEDBACK_ADMIN_HANDLES` 仍认；部署必填，见 `AdminService`）。
   - **互动**：评论（可删自己的）、支持（一人一次，可取消）。
   - **管理端**（`/admin/feedback`）：改状态 / 优先级、指派负责人、标安全（`security` 是 `private` 之下的**读时收窄**——公开条目一旦标上，读路径也按私密鉴权）、加备注（只增不改）。管理端**没有**「转为公开」按钮：可见性由提交者定，管理员不能替他把私密的东西亮出来。
-  - **默认筛选**：已解决的 **bug** 沉底不展示，其他类型的已解决项照常显示。
+  - **默认筛选**：没有。2026-10-28 起「全部」装所有公开反馈（不论类型、不论是否办完）——此前「已解决的 bug 沉底」那条已撤销，因为它让「全部」比「已完成」还少，而屏幕上没有一句话解释少掉的那些去哪了。状态筛选只列当前栏位里真能出现的状态。
 - **实现**：`backend/app/domain/feedback/`（`models.py` / `repositories.py` / `services.py` / `schemas.py` / `proposals.py`）；路由 `api/routes/feedback.py`（`/api/feedback`）、`admin_feedback.py`（`/api/admin/feedback`）、`admin_members.py`（`/api/admin/admins`，成员管理）、`feedback_proposals.py`（`/api/topics/{id}/feedback-proposals`）；平台管理员那一域在 `backend/app/domain/admin/`。**提案卡就是一条 `kind=message` 的 `Block`**（`meta.feedback_proposal`），不另开表；「采纳」在该块上落锁并建反馈，作者从卡上取、提交者取调用者。前端 `views/feedback/`（中心 / 详情 / 管理端 / 设计图）、`components/feedback/`、`stores/feedback.ts`、`api.ts`；对话流里那张卡是 `components/feedback/AgentFeedbackCard.vue`（`TopicChatColumn` 挂载）。
 - 🟡 附件上传未接：表单里按钮是灰的并写明原因（等后端字段）。🟡 管理端指派是自由输入 handle（平台级页面拿不到项目成员名册）。
 

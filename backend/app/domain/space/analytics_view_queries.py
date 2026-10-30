@@ -19,8 +19,13 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, case, func, select
 
 from app.core.errors import NotFoundError
-from app.domain.space.analytics_compute import STALLED_TASK_DAYS, _Context
+from app.domain.space.analytics_compute import (
+    APPROVED_MAP,
+    STALLED_TASK_DAYS,
+    _Context,
+)
 from app.domain.space.models import Space
+from app.domain.task.claims import started_at, started_at_of
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -28,8 +33,8 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.submission_state import (
+    COMPLETION_STATUS_SUCCESS,
     has_a_live_submission,
-    has_a_passed_submission,
 )
 from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
@@ -82,6 +87,7 @@ async def _load_context(
     # Submissions tied to those memberships
     submissions: list[TaskSubmission] = []
     membership_ids = [m.id for m in memberships]
+    started_at_by_membership_id = await started_at_of(service._session, membership_ids)
     if membership_ids:
         sub_stmt = select(TaskSubmission).where(
             TaskSubmission.membership_id.in_(membership_ids),
@@ -146,6 +152,7 @@ async def _load_context(
         profiles_by_user_id=profiles_by_user_id,
         identities_by_user_id=identities_by_user_id,
         member_users_by_user_id=member_users_by_user_id,
+        started_at_by_membership_id=started_at_by_membership_id,
     )
 
 
@@ -156,16 +163,13 @@ async def _load_people_rows(service, *, space_id: int):
     定序，两次调用给同一个顺序。
     """
     claims = func.count(TaskMembership.id).label("claims")
-    passed = func.sum(
-        case((has_a_passed_submission(TaskMembership.id), 1), else_=0)
-    ).label("passed")
+    # 通过 = 每个阶段都通过：那条轴推出来、存在领取行上的值（`submission_state`）。
+    done = TaskMembership.completion_status == COMPLETION_STATUS_SUCCESS
+    passed = func.sum(case((done, 1), else_=0)).label("passed")
     submitted = func.sum(
         case(
             (
-                and_(
-                    has_a_live_submission(TaskMembership.id),
-                    ~has_a_passed_submission(TaskMembership.id),
-                ),
+                and_(has_a_live_submission(TaskMembership.id), ~done),
                 1,
             ),
             else_=0,
@@ -197,16 +201,19 @@ async def _load_people_rows(service, *, space_id: int):
 
 
 async def _load_stalled_claims(service, *, space_id: int, now: datetime):
-    """领了没动的**逐条**领取：超过 14 天、且一版 live 提交都没有。
+    """开始做了没动的**逐条**领取：开始做（项目建好）超过 14 天、且一版 live
+    提交都没有。还在等批准、批了还没开始做的，没有项目，不算。
 
     最老的排在最前 —— 这一格是「谁该被问一句」，放最久的先问。
     """
     threshold = now - timedelta(days=STALLED_TASK_DAYS)
-    stmt = (
+    started = started_at().label("started_at")
+    claims = (
         select(
+            TaskMembership.id,
             TaskMembership.member_id,
             TaskMembership.is_team,
-            TaskMembership.created_at,
+            started,
             Task.id.label("task_id"),
             Task.name.label("task_name"),
         )
@@ -215,10 +222,21 @@ async def _load_stalled_claims(service, *, space_id: int, now: datetime):
             Task.space_id == space_id,
             Task.deleted_at.is_(None),
             TaskMembership.deleted_at.is_(None),
-            TaskMembership.created_at < threshold,
+            TaskMembership.approved == APPROVED_MAP["APPROVED"],
             ~has_a_live_submission(TaskMembership.id),
         )
-        .order_by(TaskMembership.created_at.asc(), TaskMembership.id.asc())
+        .subquery()
+    )
+    stmt = (
+        select(
+            claims.c.member_id,
+            claims.c.is_team,
+            claims.c.started_at,
+            claims.c.task_id,
+            claims.c.task_name,
+        )
+        .where(claims.c.started_at < threshold)
+        .order_by(claims.c.started_at.asc(), claims.c.id.asc())
     )
     result = await service._session.execute(stmt)
     return list(result.all())

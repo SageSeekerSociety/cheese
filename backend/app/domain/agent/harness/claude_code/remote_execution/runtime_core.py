@@ -78,6 +78,7 @@ RELEASE_FILES = {
     "remote-execution/worker_quota.py": "app/domain/agent/worker_quota.py",
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
+    "remote-execution/forge_proxy.py": "app/domain/agent/forge_proxy.py",
     "cheese": "sandbox/cheese",
 }
 
@@ -194,6 +195,16 @@ def socket_directory(state):
     every other room's."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
     return f"/tmp/cheese-execution-{os.getuid()}-{digest}"
+
+
+def platform_socket_directory(state):
+    """The directory of the platform socket the connector serves for this
+    state (`cli/internal/host/machine.go` names the same one): beside
+    `socket_directory`, and shown to the sandbox read-only. What the sandbox
+    asks of the platform it asks there, and the connector says whose it is by
+    which socket it came in on."""
+    digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
+    return f"/tmp/cheese-platform-{os.getuid()}-{digest}"
 
 
 def connect(state):

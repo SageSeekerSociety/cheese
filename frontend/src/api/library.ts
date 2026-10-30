@@ -19,14 +19,6 @@ export function libraryFileRawUrl(shelf: LibraryShelf, path: string): string {
   return `${BASE}${libraryBase(shelf)}/raw?path=${encodeURIComponent(path)}`
 }
 
-/** 题目附件清单里那份材料的字节。清单本身走 `TaskBoardApi.listAttachments`，但那条
- *  接口故意不带 url（存储给的是直链，发出来就绕过了下载那道门），所以取文件只能
- *  从这个端点走 —— 门在服务端，带的是这次请求自己的 Authorization。
- *  同 `libraryFileRawUrl`：`downloadFile` 补的 `download=true` 这里没有对应参数。 */
-export function taskAttachmentRawUrl(taskId: number, attachmentId: number): string {
-  return `${BASE}/tasks/${taskId}/attachments/${attachmentId}/download`
-}
-
 export function deleteLibraryFile(shelf: LibraryShelf, path: string): Promise<{ deleted: boolean }> {
   return request<{ deleted: boolean }>(`${libraryBase(shelf)}?path=${encodeURIComponent(path)}`, {
     method: 'DELETE',

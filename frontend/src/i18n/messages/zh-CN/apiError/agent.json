@@ -28,7 +28,6 @@
   "assistantChangeNoSuchPart": "这次修改不包含这一项",
   "assistantChangeNotUndone": "这处修改未撤销",
   "assistantFailed": "芝士暂时答不上来，稍后再试。",
-  "assistantGateNotPassed": "这项操作没有获得授权",
   "assistantInviteThenAdmin": "不在项目里的人要先以成员身份邀请，加入后才能设为管理员",
   "assistantMemoryNotInRuns": "例行事务运行时不记：用户不在，读到的都是别人的话和平台的资料。",
   "assistantMemoryOff": "用户在设置里关闭了记忆，现在不记也不改。",
@@ -36,6 +35,7 @@
   "assistantNoReviewCard": "这个任务还没有审阅卡",
   "assistantNotOpen": "芝士暂未开放，稍后再试。",
   "assistantNotifyMeLimit": "一小时内最多给用户发 {max} 条通知，把要说的合在一条里。",
+  "assistantPanelIsThePersons": "这里是用户自己管理芝士的地方，芝士不能替用户操作",
   "assistantProposalBadState": "只能标为已发送或不用了",
   "assistantProposalSettled": "这份草稿已经处理过了",
   "assistantRefUnknown": "认不出「{ref}」这个编号。项目里的东西写成项目短名加路径，如 ml-course/channels/3、ml-course/tasks/12、ml-course/tasks/12/review、ml-course/docs/5；项目本身就是短名。",
@@ -161,5 +161,6 @@
   "teammateNotSeatedHere": "这位 AI 队友不在这个频道里，不能在这里工作。把它加进频道，或者换一位队友",
   "topicNotFound": "频道不存在",
   "turnForceStopped": "AI 队友这次的工作被平台中止了，已做的改动都还在；发一句「继续」它会接着做",
-  "upstreamModelRequired": "上游模型标识不能为空"
+  "upstreamModelRequired": "上游模型标识不能为空",
+  "assistantCitesTooMany": "一次最多引用 {most} 样"
 }

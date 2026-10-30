@@ -3,7 +3,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.conftest import (
+    UserCreator,
+    create_approved_space,
+    join_task_space,
+    unique_int,
+)
 
 
 class TestTaskSubmissionReviewIntegration:
@@ -74,6 +79,12 @@ class TestTaskSubmissionReviewIntegration:
             f"Task approval failed: {approve_resp.status_code}: {approve_resp.text}"
         )
 
+        join_task_space(
+            api_client,
+            task_id,
+            participant.user_id,
+            admin_headers={"Authorization": f"Bearer {creator.token}"},
+        )
         join_resp = api_client.post(
             f"/tasks/{task_id}/participants",
             params={"member": participant.user_id},

@@ -23,6 +23,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.support.devices import enrollment_team
 
 if TYPE_CHECKING:
@@ -112,7 +113,7 @@ def test_supply_defaults_to_self_hosted_when_omitted(
             DeviceRow(
                 device_id="devdefault01",
                 name="omit-via-orm",
-                token="tok-devdefault01",
+                token_digest=digest_token("tok-devdefault01"),
                 owner_user_id=owner.id,
                 team_id=team_id,
                 created_at=datetime.now(UTC),

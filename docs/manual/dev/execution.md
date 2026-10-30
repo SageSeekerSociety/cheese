@@ -48,7 +48,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 
 | 形态 | 调用怎么走 | 典型场景 |
 | --- | --- | --- |
-| `device` | 平台 HTTP 直连（`POST` 一条 JSON），带 `X-Cheese-Token` | 自有设备（连接器在线） |
+| `device` | 平台 HTTP 直连（`POST` 一条 JSON），凭据在 `Authorization: Bearer` | 自有设备（连接器在线） |
 | 子进程 | `subprocess.run(self.command("request"), …)`，`ssh -T -o BatchMode=yes -o ConnectTimeout=10` | 走 SSH 的执行器 |
 | `deferred` / `unavailable` | 不落地：`context_fs` 的 tree 返回空、`ping` 报工作区；别的调用直接抛 `MachineOutOfReach` | 机器还没租到 / 租约不在手上 |
 
@@ -103,12 +103,12 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 个人芝士（`agent/personal/session.py`）的会话在部署的会话主机上跑，自己的工具（`read`、`write`、`edit`、`ls`、`find`、`grep`、`bash`）落在这段对话自己的沙箱里。沙箱和频道的一样按需开：第一次调用这些工具时，会话用主人的个人凭据（`cxpu_`）到 `/topics/{对话}/sessions/{对话}/work-lease` 要手，只聊天、只用平台工具的问题不开机。
 
 - 一段对话只有一个会话，会话编号就是对话编号；要手时平台按需写下这条 `agent_sessions`。
-- 执行凭据是单独一种（`cxpx_`），只签给主人和这段对话；执行路由按主人核对，只放行平台自己的主机，不写派发记录。执行路由由设备连接的属主进程提供，**属主进程要随这次改动一起发布**，否则个人对话拿到沙箱后调用不通。
+- 执行凭据是单独一种（`personal-execution+jwt`），只签给主人和这段对话；执行路由按主人核对，只放行平台自己的主机，不写派发记录。执行路由由设备连接的属主进程提供，**属主进程要随这次改动一起发布**，否则个人对话拿到沙箱后调用不通。
 - 沙箱里不放平台的任何凭据：`CHEESE_PROJECT` 为空，`cheese` 命令在里面什么都做不了。
 - 进度不发到任何频道，只记成运行记录。
 - 闲置回收和频道的沙箱一样；回收后下一次要手告诉芝士「沙箱环境已换成新的」，并说明之前的文件都不在了（个人沙箱没有检查点）。
 - 主人的个人额度用完时，沙箱随下一次清扫销毁，新的不开。
-- 文件进出沙箱不经过会话机，也不给沙箱凭据。芝士的 `cheese_file_give` 和 `cheese_file_to_computer`（`backend/sandbox/cheese`）先在会话机上问平台要一个只管一份文件、几分钟内有效的地址（`/assistant/agent/files/slot`、`/files/link`），再在沙箱里用 `curl` 往这个地址传或取。对象存储给的是预签名地址；存在本机磁盘时是 `/files/incoming/{令牌}`、`/files/outgoing/{令牌}`，前面补上 `frontend_url` 和 `/api`。所以沙箱要能经出口代理连到对象存储或平台的公网地址。会话机这一侧在 `pi/runner.py` 的 `_platform_tool` 里把在机器上跑命令的能力交给平台工具，只给能用这台机器干活的会话（`tools.works`）；只读房间机器的文档芝士拿不到。
+- 文件进出沙箱不经过会话机，也不给沙箱凭据。芝士的 `cheese_library(action=give)` 和 `cheese_library(action=take)`（`backend/sandbox/cheese`）先在会话机上问平台要只管一份文件、几分钟内有效的地址（传：`/assistant/agent/files/slot` 领一次上传，在沙箱里算好整份的 SHA-256 和每段的 MD5，再按段 `/files/part` 领地址；取：`/files/link`），再在沙箱里用 `curl` 往这些地址传或取。对象存储给的是预签名地址；存在本机磁盘时是 `/files/incoming/{令牌}`（一段一个）、`/files/outgoing/{令牌}`，前面补上 `frontend_url` 和 `/api`。所以沙箱要能经出口代理连到对象存储或平台的公网地址。会话机这一侧在 `pi/runner.py` 的 `_platform_tool` 里把在机器上跑命令的能力交给平台工具，只给能用这台机器干活的会话（`tools.works`）；只读房间机器的文档芝士拿不到。
 
 ## 地点：我们的东西放在哪、能给什么 {#place}
 

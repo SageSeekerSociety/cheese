@@ -54,7 +54,7 @@ class _CountingSession:
     """
 
     def __init__(self, files):
-        self.files = files  # name -> (location, blob_key)
+        self.files = files  # name -> (location, blob_key[, bytes])
         self.executes = 0
         self.asked: list[set[str]] = []
 
@@ -79,6 +79,7 @@ class _CountingSession:
                     name=name,
                     location=self.files[name][0],
                     blob_key=self.files[name][1],
+                    bytes=(*self.files[name], len(LIBRARY_BYTES))[2],
                 )
                 for name in names
                 if name in self.files
@@ -198,3 +199,29 @@ async def test_a_deleted_file_is_gone_and_is_never_read(store, room, thread_call
     # library would raise and the whole turn would end unfinished.
     assert session.asked[0] == {"one.png", "gone.png"}
     assert session.asked[1] == {"one.png"}
+
+
+@pytest.mark.anyio
+async def test_a_picture_too_large_for_a_model_is_never_read_and_the_turn_goes_on(
+    store, room, thread_calls
+):
+    """A file of several GB sent as a picture (a dataset named scan.png) is not
+    read into memory to be offered as one: a model takes nothing that large as
+    a picture. Its line says it cannot be looked at as a picture, and the other
+    attachments of the message still arrive."""
+    blocks = [_attachment("library/scan.png"), _attachment("library/one.png")]
+    session = _CountingSession(
+        {
+            "scan.png": ("bucket", "blob-huge", 5 * 1024**3),
+            "one.png": ("local", "blob-one"),
+        }
+    )
+
+    images, gone, undecodable = await offered_attachments(
+        session, blocks, uuid.uuid4(), uuid.uuid4()
+    )
+
+    assert store.read == ["blob-one"]
+    assert [image.data for image in images] == [LIBRARY_BYTES]
+    assert gone == set()
+    assert undecodable == {blocks[0].id}

@@ -6,5 +6,6 @@
   "kindFile": "File",
   "kindText": "Text",
   "rubric": "Rubric",
-  "rubricPrivate": "Visible to graders only"
+  "rubricPrivate": "Visible to graders only",
+  "stages": "Stages"
 }

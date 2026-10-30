@@ -34,7 +34,7 @@ import shlex
 import uuid
 from dataclasses import dataclass
 
-from app.domain.session_record.tool_keys import tool_key
+from app.domain.session_record.tool_keys import RETIRED, tool_key
 
 #: 预览的长度上限。现场是一行，不是一段。
 PREVIEW_MAX = 120
@@ -107,33 +107,33 @@ _TOOL_ARG = {
     "ls": "path",
     "find": "pattern",
     "grep": "pattern",
-    # 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。这张表是判断题不是
+    # 平台工具表里的工具，和旧记录里 pi 房间曾当工具调的 CLI 命令。这张表是判断题不是
     # 覆盖题 —— 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。
-    # `cheese_status`、`cheese_members`、`cheese_doc_get` 这种只有动词就够了，硬找
+    # `cheese_session.status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
     # 一个参数填进去反而不如留空。
     "chat_send": "content",
-    "chat_edit": "content",
+    "cheese_chat.edit": "content",
     # 搜记录时说的是在找什么。翻最近一页、按 id 读一条或它的回复，参数不是没有
     # 就是一个 UUID，跟在动词后面等于什么都没说 —— 只留动词。
-    "cheese_chat_search": "query",
+    "cheese_chat.search": "query",
     # 改文档时说的是为什么改；那几处原文要读全文才看得懂。
-    "cheese_doc_edit": "reason",
-    "cheese_doc_new": "title",
-    "cheese_app_save": "note",
-    "cheese_task": "title",
+    "cheese_doc.edit": "reason",
+    "cheese_doc.new": "title",
+    "cheese_app.save": "note",
+    "cheese_task.open": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
-    "cheese_close_task": "conclusion",
+    "cheese_task.close": "conclusion",
     # 报任务状态时说的是那一句：状态本身是个码。
-    "cheese_task_state": "note",
-    "cheese_fetch": "url",
-    "cheese_web_search": "query",
+    "cheese_task.state": "note",
+    "cheese_web.fetch": "url",
+    "cheese_web.search": "query",
     "cheese_decision": "text",
-    "cheese_title": "text",
+    "cheese_room.rename": "text",
     "cheese_notify": "title",
     "cheese_ask": "question",
-    "cheese_accept_request": "subject",
-    "cheese_describe": "subject",
+    "cheese_card.request": "subject",
+    "cheese_card.describe": "subject",
     "cheese_milestone": "title",
     "cheese_serve": "note",
     "cheese_show": "path",
@@ -519,7 +519,8 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
 # language, and never from the word appearing somewhere else in the command:
 # the dot and the text on that line have to be about the same thing.
 #: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
-#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
+#: 各不相同：MCP 服务器自己加前缀，pi 那边是 extension 原名注册（旧记录里还有它
+#: 曾把 CLI 命令当工具时的 `cheese_<命令>`），而
 #: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
 #: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
 #: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的
@@ -533,10 +534,10 @@ _PLATFORM_PREFIXES = ("mcp__cheese__", "mcp__native__", "cheese_")
 #: 命令的通道（Read / Edit / Bash 都从它过），把它算成平台动作会在时间线上点一颗琥珀
 #: 色的点 —— 而那只是读了一个文件。
 _NOT_A_PLATFORM_TOOL = frozenset({"mcp__native__invoke"})
-#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send`、`chat_edit` 和 `todo_write`
+#: 名字里没有 `cheese_` 的那几个平台工具：`chat_send` 和 `todo_write`
 #: 的名字照模型已经认得的说法起；另外两个是平台自己的 MCP 工具。
 _PLATFORM_ALIASES = frozenset(
-    {"chat_send", "chat_edit", "todo_write", "platform_request", "send_user_file"}
+    {"chat_send", "todo_write", "platform_request", "send_user_file"}
 )
 
 #: `mcp__<服务器>__<工具>` 的前缀。**认服务器名，不认某一个写死的**：写死一个的话，
@@ -558,6 +559,10 @@ def _is_platform_tool(raw_name: str, args: dict) -> bool:
     if raw_name.startswith(_PLATFORM_PREFIXES):
         return True
     if _short_tool_name(raw_name) in _PLATFORM_ALIASES:
+        return True
+    # A call recorded under a name the table no longer has (`chat_edit`, now
+    # `cheese_chat(action=edit)`) was a platform action then too.
+    if _short_tool_name(raw_name) in RETIRED:
         return True
     if raw_name in SHELL_TOOLS and isinstance(args, dict):
         return bool(cheese_subcommand(str(args.get("command", ""))))

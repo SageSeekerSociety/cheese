@@ -92,7 +92,7 @@ async function select(page: Page, handFocusAway = false) {
   await page.mouse.down()
   await page.mouse.move(image.x + 180, image.y + 140, { steps: 8 })
   await page.mouse.up()
-  await expect(page.getByPlaceholder('说明要改什么')).toBeVisible()
+  await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toBeVisible()
 }
 
 // Exercise both unchanged standalone callers, with decoded PNG bytes and a
@@ -127,6 +127,28 @@ async function dragImage(page: Page, small = false) {
   await page.mouse.move(image.x + (small ? 60 : 180), image.y + (small ? 24 : 140), { steps: 8 })
   await page.mouse.up()
 }
+
+// 图上那几颗评论点要真正接得住指针。区域选择层是 `inset: 0` 的一整张，和点同为
+// `position: absolute` 的兄弟；点排在它前面时，后者既画在上面也先接到这一下，真鼠标
+// 点上去就成了「开始框选」。单测把 `click` 直接打在 `<button>` 上，感受不到这一层，只有
+// 真指针能钉住。`marks` 按原图像素给，这里落在图正中。
+function marksFixture() {
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><body><div id="fixture"></div><script type="module">
+import {createApp,h,ref} from '/node_modules/.vite/deps/vue.js';
+import DesignImage from '/src/components/panels/preview/DesignImage.vue';
+import i18n,{setLocale} from '/src/i18n/index.ts';
+import '/src/style.css';
+setLocale('zh-CN');
+const bytes=Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0));
+const src=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));
+window.marks=[];window.selections=[];
+const marks=[{id:'t1',region:{x:600,y:400,width:1,height:1}}];
+createApp({setup(){return()=>h('main',{style:'padding:24px;width:860px;height:660px;display:flex'},[
+ h(DesignImage,{src,alt:'design.png',identity:'marks-probe',selectionEnabled:true,marks,activeMark:null,
+   onMark:id=>window.marks.push(id),onRegion:selection=>window.selections.push(selection)})])}}).use(i18n).mount('#fixture');
+</script></body></html>`
+}
+
 // The status line that reads out the selected region in the image's own pixels.
 const regionLine = (page: Page) => page.getByRole('status').filter({ hasText: '原图像素' })
 
@@ -176,7 +198,7 @@ test('the initially focused compact entry cancels once with Escape and hands foc
     fixture.height(150)
   })
   await dragImage(page, true)
-  const entry = page.getByRole('button', { name: '说明要改什么', exact: true })
+  const entry = page.getByRole('button', { name: '输入修改要求或批注内容…', exact: true })
   await expect(entry).toBeFocused()
   await testInfo.attach('compact-initial-focus', { body: await page.screenshot(), contentType: 'image/png' })
   await entry.press('Escape')
@@ -211,7 +233,7 @@ test('a short wide real panel settles into one compact placement without measure
   await testInfo.attach('short-wide-panel', { body: await page.screenshot(), contentType: 'image/png' })
   expect(new Set(samples.map(sample => `${sample.placement}:${sample.compact}:${sample.top}:${sample.height}`)).size).toBe(1)
   expect(samples.every(sample => sample.compact && sample.bottom <= sample.panelBottom)).toBe(true)
-  await expect(page.getByRole('button', { name: '说明要改什么', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '输入修改要求或批注内容…', exact: true })).toBeFocused()
   expect(errors).toEqual([])
 })
 async function insidePane(page: Page) {
@@ -226,14 +248,14 @@ async function geometry(page: Page) {
       const box = element.getBoundingClientRect()
       return { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width, height: box.height }
     }
-    const input = document.querySelector('input[placeholder="说明要改什么"]')!
+    const input = document.querySelector('input[placeholder="输入修改要求或批注内容…"]')!
     return { card: rect(input.closest('[data-region-note],.locator')!), region: rect(document.querySelector('.design-image__selection')!), pane: rect(document.querySelector('.design-image__pane')!) }
   })
 }
 test('accepted image region keeps its note beside the visible region in the real panel', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder('说明要改什么')
+  const input = page.getByPlaceholder('输入修改要求或批注内容…')
   await input.fill('把这块留白收紧')
   const measured = await geometry(page)
   await testInfo.attach('actual-layout', { body: JSON.stringify(measured, null, 2), contentType: 'application/json' })
@@ -253,7 +275,7 @@ test('accepted image region keeps its note beside the visible region in the real
 test('zoom, scroll and local resize retain the same input, draft and original region', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder('说明要改什么')
+  const input = page.getByPlaceholder('输入修改要求或批注内容…')
   await input.fill('保留中文草稿')
   await input.evaluate(element => {
     const field = element as HTMLInputElement
@@ -279,7 +301,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
     await insidePane(page)
     await expect(input).toHaveValue('保留中文草稿')
     await testInfo.attach(`width-${width}`, { body: await page.screenshot(), contentType: 'image/png' })
-    expect(await page.evaluate(() => document.querySelector('input[placeholder="说明要改什么"]') === (window as unknown as { originalInput: Element }).originalInput)).toBe(true)
+    expect(await page.evaluate(() => document.querySelector('input[placeholder="输入修改要求或批注内容…"]') === (window as unknown as { originalInput: Element }).originalInput)).toBe(true)
     expect(await input.evaluate(element => [(element as HTMLInputElement).selectionStart, (element as HTMLInputElement).selectionEnd])).toEqual([2, 4])
   }
   expect(await page.evaluate(() => (window as unknown as { focusedAgain: number }).focusedAgain)).toBe(0)
@@ -296,7 +318,7 @@ test('zoom, scroll and local resize retain the same input, draft and original re
 test('composition, explicit cancellation and external focus respect draft ownership', async ({ page }) => {
   await open(page)
   await select(page)
-  const input = page.getByPlaceholder('说明要改什么')
+  const input = page.getByPlaceholder('输入修改要求或批注内容…')
   await expect(input).toBeFocused()
   await input.fill('正在输入中文')
   await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true })))
@@ -314,7 +336,7 @@ test('composition, explicit cancellation and external focus respect draft owners
 test('replacement metadata retires the draft while new bytes are pending, without restoring old focus', async ({ page }) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder('说明要改什么').fill('旧图说明')
+  await page.getByPlaceholder('输入修改要求或批注内容…').fill('旧图说明')
   await page.getByLabel('聊天输入', { exact: true }).focus()
   await page.evaluate(() => {
     const fixture = window as unknown as { metadata: { version: string }; blockBytes: boolean; fixture: { refresh: () => void } }
@@ -322,7 +344,7 @@ test('replacement metadata retires the draft while new bytes are pending, withou
     fixture.blockBytes = true
     fixture.fixture.refresh()
   })
-  await expect(page.getByPlaceholder('说明要改什么')).toHaveCount(0)
+  await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toHaveCount(0)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeDisabled()
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
@@ -334,15 +356,15 @@ test('replacement metadata retires the draft while new bytes are pending, withou
 test('a compact image viewport keeps the draft entry and close button physically reachable', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder('说明要改什么').fill('短视口中的草稿')
+  await page.getByPlaceholder('输入修改要求或批注内容…').fill('短视口中的草稿')
   for (const height of [80, 48, 32]) {
     await page.locator('.design-image__viewport').evaluate((element, height) => {
       const viewport = element as HTMLElement
       viewport.style.flex = 'none'
       viewport.style.height = height + 'px'
     }, height)
-    await expect.poll(async () => page.getByRole('button', { name: '说明要改什么', exact: true }).count()).toBe(1)
-    for (const name of ['说明要改什么', '取消']) {
+    await expect.poll(async () => page.getByRole('button', { name: '输入修改要求或批注内容…', exact: true }).count()).toBe(1)
+    for (const name of ['输入修改要求或批注内容…', '取消']) {
       const control = page.getByRole('button', { name, exact: true })
       await expect.poll(async () => control.evaluate(element => {
         const box = element.getBoundingClientRect()
@@ -353,7 +375,7 @@ test('a compact image viewport keeps the draft entry and close button physically
     await testInfo.attach(`compact-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
   await page.getByRole('button', { name: '取消', exact: true }).click()
-  await expect(page.getByPlaceholder('说明要改什么')).toHaveCount(0)
+  await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toHaveCount(0)
 })
 
 test('a pointerup handoff before Vue layout wins over the initial composer focus', async ({ page }) => {
@@ -368,7 +390,7 @@ test('a pointerup handoff before Vue layout wins over the initial composer focus
 test('a short real PanelPreview clips the note to its parent rather than the taller image pane', async ({ page }, testInfo) => {
   await open(page)
   await select(page)
-  await page.getByPlaceholder('说明要改什么').fill('真实短面板草稿')
+  await page.getByPlaceholder('输入修改要求或批注内容…').fill('真实短面板草稿')
   await page.evaluate(() => (window as unknown as { fixture: { resize: (width: number) => void } }).fixture.resize(240))
   for (const height of [150, 220, 660]) {
     await page.evaluate(value => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(value), height)
@@ -386,5 +408,30 @@ test('a short real PanelPreview clips the note to its parent rather than the tal
     }
     await testInfo.attach(`parent-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
-  await expect(page.getByPlaceholder('说明要改什么')).toHaveValue('真实短面板草稿')
+  await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toHaveValue('真实短面板草稿')
+})
+
+test('a real pointer on a comment mark opens the thread instead of starting a region', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 760 })
+  await page.route('**/__marks-probe__', route => route.fulfill({ contentType: 'text/html', body: marksFixture() }))
+  await page.goto('/__marks-probe__', { waitUntil: 'commit' })
+  await expect(page.locator('.design-image img')).toBeVisible({ timeout: 60_000 })
+  await page.waitForFunction(() => {
+    const image = document.querySelector('.design-image img') as HTMLImageElement | null
+    return !!image && image.complete && image.naturalWidth > 0
+  })
+  const dot = page.locator('.design-image__mark').first()
+  await expect(dot).toHaveCount(1)
+  const box = await dot.boundingBox()
+  if (!box) throw new Error('No real layout for the mark dot')
+  const hit = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.className ?? '',
+    { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  )
+  expect(hit).toContain('design-image__mark')
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { marks: string[] }).marks))
+    .toEqual(['t1'])
+  expect(await page.evaluate(() => (window as unknown as { selections: unknown[] }).selections.length)).toBe(0)
 })

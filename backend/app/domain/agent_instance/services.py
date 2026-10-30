@@ -479,25 +479,12 @@ class AgentInstanceService:
             )
         await self._session.refresh(instance)
 
-    async def apply_protocol(
-        self,
-        instance: AgentInstance,
-        *,
-        prompt: str | None,
-        skills: list[str],
-    ) -> None:
-        """落一个题目包带来的 prompt 与 skill 名字（#944）。
-
-        调用方（project，在赛题被接受时）只说「加什么」；一份配置长什么样留在
-        这里，project 不必再 import ``configuration``（那是一条向上的边）。
-        ``skills`` 去重、保序：题目列的名字与 preset 那份重叠时不重复带。
-        """
+    async def append_to_persona(self, instance: AgentInstance, text: str) -> None:
+        """Add a paragraph to the end of this teammate's persona (``body``):
+        the 资源包's prompt, at project creation (``adapters.default_teammate``)."""
         config = AgentConfiguration.model_validate(instance.configuration or {})
-        config.body = "\n\n".join(part for part in (config.body, prompt) if part)
-        config.skills = list(dict.fromkeys([*config.skills, *skills]))
+        config.body = "\n\n".join(part for part in (config.body, text) if part)
         await self.configure(instance, config)
-
-        await self._validate_model(instance.project_id, config, instance.id)
 
     async def _validate_model(
         self,

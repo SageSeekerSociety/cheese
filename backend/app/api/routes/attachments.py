@@ -1,14 +1,9 @@
 """通用附件：上传一个文件，再按 id 读回去。
 
 **读这一侧判给谁** —— 这张表（``app/domain/attachment/models.py``）只有
-``id / type / url / meta``，**没有归属列**，所以判据只能问别的域：
-
-- **挂在某道题上的文件**（``task_attachment`` 里有一行活关联）：判据照抄题内那条路，
-  一个字不另立 —— 出题人 / 板管理员 / 已经领取的人（``may_teach_task`` 或
-  ``is_participant``）。从前这里一行判断都没有，等于给 `#1786` 立的闸门开了扇边门：
-  id 是小整数、可枚举，知道一个 id 就拿到了别人题目材料的原始字节，而同一个文件里的
-  ``DELETE`` 反倒是 owner-gated。
-- **不挂在任何题上的文件**：上传者本人；此外**图片**对登录用户放行，其余只有上传者。
+``id / type / url / meta``，**没有归属列**：上传者本人；此外**图片**对登录用户放行，
+其余只有上传者。题目的材料不在这里读：它们在题目资料库里（``GET /tasks/{id}/files``），
+发题时先传成这里的附件、建题时拷过去，这里的那一份仍只有上传者读得到。
   图片这一条是前端契约，不是宽容：公告与讨论里嵌的图（``AttachmentImage`` 节点带的是
   ``attachmentId``）由**每个看得见那段内容的人**通过这条路由解析成 url
   （``frontend/src/composables/useAttachmentImages.ts``、
@@ -38,7 +33,6 @@ from app.core.errors import BadRequestError, ForbiddenError, UnprocessableEntity
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.services import AttachmentService
-from app.domain.task.attachment_service import TaskAttachmentService
 
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
 
@@ -56,33 +50,15 @@ async def get_attachment_service(db=Depends(get_db)) -> AttachmentService:
     return AttachmentService.from_session(session=db, storage=get_storage_backend())
 
 
-async def get_task_attachment_service(db=Depends(get_db)) -> TaskAttachmentService:
-    """题目那一域的 service：通用路由要问它「这个文件挂在哪道题上、谁能读」。"""
-    return TaskAttachmentService(session=db, storage=get_storage_backend())
-
-
 async def _ensure_may_read(
     *,
     attachment: Any,
     user_id: int,
     service: AttachmentService,
-    task_attachments: TaskAttachmentService,
 ) -> None:
-    """通用读路由的判据，见模块顶部那两段 —— 三条路各对应一句话。"""
+    """通用读路由的判据，见模块顶部那两段。"""
     if service.is_uploader(attachment, user_id):
         return
-
-    on_a_task = await task_attachments.may_read_file(
-        attachment_id=attachment.id, user_id=user_id
-    )
-    if on_a_task is True:
-        return
-    if on_a_task is False:
-        # 挂在题上的文件：与题内那条下载路由**同一句话**，只是少了「是哪道题」。
-        raise ForbiddenError(
-            "Only the publisher, a board manager or a participant "
-            "can download this attachment"
-        )
     if service.is_image(attachment):
         return
     raise ForbiddenError("Only the uploader can read this attachment")
@@ -157,14 +133,12 @@ async def get_attachment_detail(
     attachmentId: int = Path(..., ge=0),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
-    task_attachments: TaskAttachmentService = Depends(get_task_attachment_service),
 ) -> dict:
     attachment = await service.get(attachmentId)
     await _ensure_may_read(
         attachment=attachment,
         user_id=auth_user.user_id,
         service=service,
-        task_attachments=task_attachments,
     )
     return ok({"attachment": attachment.to_dict()})
 
@@ -177,13 +151,11 @@ async def download_attachment(
     attachmentId: int = Path(..., ge=0),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AttachmentService = Depends(get_attachment_service),
-    task_attachments: TaskAttachmentService = Depends(get_task_attachment_service),
 ) -> Response:
     await _ensure_may_read(
         attachment=await service.get(attachmentId),
         user_id=auth_user.user_id,
         service=service,
-        task_attachments=task_attachments,
     )
     content, filename, content_type = await service.download(attachmentId)
     # ``filename*=UTF-8''…`` 而不是裸引号：中文文件名直接写进 header 会让

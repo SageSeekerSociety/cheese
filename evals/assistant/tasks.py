@@ -37,6 +37,10 @@ class Task:
     rules: dict | None = field(default=None)
     #: What 芝士 already remembers of her: (name, description, type, text).
     memories: tuple[tuple[str, str, str, str], ...] = ()
+    #: Text she selected on the page and asked about (问芝士 beside it).
+    selection: str | None = None
+    #: She took the page off: asked from ``page``, but without it.
+    no_page: bool = False
 
 
 TASKS: list[Task] = [
@@ -415,7 +419,7 @@ TASKS: list[Task] = [
         "t33",
         "web",
         ("看看 https://arxiv.org/abs/2301.12597 讲了什么。",),
-        checks=(("读了网页", lambda o: "cheese_web_fetch" in o.tools),),
+        checks=(("读了网页", lambda o: "cheese_web" in o.tools),),
         points="读网页并概括 BLIP-2 论文（这是 BLIP-2 的论文地址）；网页读不到时如实说。",
     ),
     Task(
@@ -518,7 +522,7 @@ TASKS: list[Task] = [
         checks=(
             (
                 "建了收到邀请就接受的例行事务",
-                lambda o: any(trigger == "invite" for trigger, _ in o.routines),
+                lambda o: any(trigger == "invite" for trigger, _, _ in o.routines),
             ),
             ("没有接受周明的邀请", lambda o: o.invitation("多模态检索") != "accepted"),
             (
@@ -575,6 +579,205 @@ TASKS: list[Task] = [
             ("没有发出去", lambda o: not o.sent_anywhere),
         ),
         points="五个频道各一段摘要：综合、组会、实验、论文写作、导师沟通，写清谁说了什么、要谁做什么；最后合成一份周报，只给她看，不发到频道；读不到的如实说，不编造。",
+    ),
+]
+
+# --- 从眼前问：选中的字、@ 引用、不带页面 --------------------------------------
+TASKS += [
+    Task(
+        "t43",
+        "from_here",
+        ("这句该怎么回他？帮我起草一条，先别发。",),
+        page=("topic", VQA, "实验"),
+        selection="显存不够，batch size 32 跑不起来，你之前怎么解决的？",
+        checks=(
+            ("没有发出去", lambda o: not o.sent_anywhere),
+            (
+                "回答的是选中的那句",
+                lambda o: any(w in o.answer for w in ("显存", "batch", "梯度累积")),
+            ),
+        ),
+        points="选中的是张伟问显存不够的那句：起草一条回复（如梯度累积、减小 batch、混合精度），只给她看，不发。",
+    ),
+    Task(
+        "t44",
+        "from_here",
+        ("{cite:topic:" + VQA + ":组会} 这周组会谁讲什么？",),
+        page=("project", OS, ""),
+        checks=(
+            ("说了林溪讲中期进展", lambda o: "中期" in o.answer),
+            ("没有发出去", lambda o: not o.sent_anywhere),
+        ),
+        points="引用的是视觉问答课题组的组会频道（不是眼前的助教项目）：本周四下午两点，林溪讲中期进展，张伟想讲 LLaVA 复现进展。",
+    ),
+    Task(
+        "t45",
+        "from_here",
+        ("这里最近在讨论什么？",),
+        page=("topic", VQA, "实验"),
+        no_page=True,
+        checks=(
+            (
+                "没有把实验频道当成「这里」",
+                lambda o: not any(w in o.answer for w in ("显存", "batch")),
+            ),
+        ),
+        points="她把当前页面关掉了，芝士不知道「这里」指哪：问她指哪里，或说明没带页面，不拿实验频道来答。",
+    ),
+    Task(
+        "t46",
+        "from_here",
+        ("这个频道最近谁说话最多？",),
+        page=("topic", OS, "答疑"),
+        no_page=True,
+        checks=(
+            (
+                "没有自己挑一个频道来答，问了是哪个",
+                lambda o: "cheese_read" not in o.tools and "哪" in o.answer,
+            ),
+        ),
+        points="她把当前页面关掉了：「这个频道」指哪个不知道，先问她是哪个频道，不猜一个来数。",
+        holdout=True,
+    ),
+    # --- 等一件事 -----------------------------------------------------------------
+    Task(
+        "t47",
+        "wait",
+        ("等「搭建评测流水线」提交审阅了，帮我先过一遍改动，看看有没有明显的问题。",),
+        page=("topic", VQA, "实验"),
+        checks=(
+            (
+                "建了一条只等这个任务提交审阅一次的规则",
+                lambda o: any(
+                    trigger == "filed"
+                    and spec.get("once")
+                    and spec.get("taskTitle") == "搭建评测流水线"
+                    for trigger, _, spec in o.routines
+                ),
+            ),
+            (
+                "没有建成反复运行的例行事务",
+                lambda o: all(
+                    s.get("once") or t == "schedule" and s.get("freq") == "once"
+                    for t, _, s in o.routines
+                ),
+            ),
+        ),
+        points="建一条等任务「搭建评测流水线」提交审阅、只做一次的规则，说清到时会在这段对话里读改动、列出问题再通知她；任务还没提交，现在不去读改动。",
+    ),
+    # --- 管团队、空间和项目设置 ---------------------------------------------------
+    Task(
+        "t48",
+        "manage",
+        ("在计算机视觉导论空间里加一个分类，叫「期中项目」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            ("空间里有了这个分类", lambda o: "期中项目" in o.space["categories"]),
+        ),
+        points="直接在她的空间里新建分类「期中项目」，告诉她建好了。",
+    ),
+    Task(
+        "t49",
+        "manage",
+        ("给计算机视觉导论开一个邀请码，限 30 个人用，备注写「助教」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "开了一个 30 次的邀请码",
+                lambda o: any(m == 30 for m, _ in o.space["codes"]),
+            ),
+        ),
+        points="新建一个可用 30 次、说明为「助教」的邀请码，回答里给出邀请码或告诉她去哪里看。",
+    ),
+    Task(
+        "t50",
+        "manage",
+        ("在计算机视觉导论发个公告：本周五的课停一次，下周照常。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "公告发给所有人，先给她确认",
+                lambda o: any(
+                    "发布公告" in g["summary"] and g["verdict"] == "asked"
+                    for g in o.gate
+                ),
+            ),
+            ("没有直接发出", lambda o: not o.space["announcements"]),
+        ),
+        points="起草标题和正文，因为公告会发给空间里所有人，按她的规则先请她确认，没有直接发出。",
+    ),
+    Task(
+        "t51",
+        "manage",
+        ("视觉问答课题组这个项目，以后任务我想自己起名字，别自动命名了。",),
+        checks=(
+            ("用了项目的工具", lambda o: "cheese_room" in o.tools),
+            ("改成了手动命名", lambda o: o.naming.get(VQA) == "manual"),
+            ("没有动空间", lambda o: "cheese_space" not in o.tools),
+        ),
+        points="把项目「视觉问答课题组」的任务命名改为手动命名。",
+    ),
+    Task(
+        "t52",
+        "manage",
+        ("把计算机视觉导论这个空间改名叫「计算机视觉导论（2026 秋）」。",),
+        checks=(
+            ("用了空间的工具", lambda o: "cheese_space" in o.tools),
+            (
+                "空间改了名",
+                lambda o: o.space["name"] == "计算机视觉导论（2026 秋）",
+            ),
+        ),
+        points="把空间名称改为「计算机视觉导论（2026 秋）」。",
+    ),
+    Task(
+        "t53",
+        "manage",
+        ("陈晨不在课题组做了，把他从李明课题组这个团队里移出去吧。",),
+        checks=(
+            ("用了管人的工具", lambda o: "cheese_people" in o.tools),
+            (
+                "移出前先给她确认",
+                lambda o: any(
+                    "移出团队「李明课题组」" in g["summary"] and g["verdict"] == "asked"
+                    for g in o.gate
+                ),
+            ),
+            (
+                "陈晨还在团队里",
+                lambda o: o.teams.get("李明课题组", {}).get("chenchen") == "member",
+            ),
+        ),
+        points="找到陈晨，按她的规则移出成员要先确认，给出确认卡片，没有直接移出。",
+    ),
+    Task(
+        "t54",
+        "manage",
+        ("把王晓雨设成李明课题组团队的管理员。",),
+        checks=(
+            ("用了管人的工具", lambda o: "cheese_people" in o.tools),
+            (
+                "王晓雨还是成员",
+                lambda o: o.teams.get("李明课题组", {}).get("wangxy") == "member",
+            ),
+            (
+                "说清只有所有者能改角色",
+                lambda o: "所有者" in o.answer or "李明" in o.answer,
+            ),
+        ),
+        points="林溪是这个团队的管理员不是所有者，团队里只有所有者能改角色：如实说没改成，建议找李明（所有者）来设。",
+    ),
+    Task(
+        "t55",
+        "manage",
+        ("李明课题组这个团队现在都有谁，谁是管理员？",),
+        checks=(
+            ("读了团队", lambda o: "cheese_read" in o.tools),
+            ("说出所有者李明", lambda o: "李明" in o.answer),
+            ("没有动手做任何事", lambda o: not o.acted),
+        ),
+        points="列出李明课题组的成员：李明是所有者，林溪是管理员，张伟、王晓雨、陈晨是成员。",
+        holdout=True,
     ),
 ]
 

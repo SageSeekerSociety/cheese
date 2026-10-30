@@ -238,7 +238,7 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
         event=say("prConflict", pr=card.pr_number),
         content=(
             f"PR #{card.pr_number}（{card.pr_url}）的{where}和目标分支冲突了，"
-            "GitHub 现在合不了它。\n"
+            "代码托管服务现在合不了它。\n"
             "先确认 PR 当前目标分支，在对应任务目录合入该分支、解决冲突并验证。"
             "撞的是 .docx、.pptx、.xlsx 这类文件时不要合并内容：git 不在这类文件里"
             "留冲突标记，直接提交会把对方的修改悄悄丢掉。在对方那一版上把你的改动"
@@ -265,7 +265,7 @@ def _title_nudge(
 
     平台不判断哪一行才对：标题该怎么写是仓库自己的规矩（它的 CI 说了算），平台
     只看这两个读者是不是在读同一个字符串。修法只有一条，而且必须从**卡**这边
-    改：`cheese_describe` 会把 PR 标题一起改掉，仓库的检查会按新标题重跑。反过来
+    改：`cheese_card(action=describe)` 会把 PR 标题一起改掉，仓库的检查会按新标题重跑。反过来
     在 GitHub 上直接改 PR 标题绕不过去 —— 卡片仍是落地的唯一源头。
 
     去重按内容：签名取「卡片 subject + PR 当前标题」。谁变了都是芝士没见过的新
@@ -299,7 +299,7 @@ def _title_nudge(
             "标题 —— 现在合下去，写进历史的就是一行没人检查过的字，所以平台停下"
             "不合。\n"
             "标题该怎么写是仓库自己的规矩，平台不猜哪一行才对，也不会替你把 PR "
-            "标题改回来。要合并，就用 cheese_describe 把这张卡的标题改成该落的那"
+            "标题改回来。要合并，就用 cheese_card(action=describe) 把这张卡的标题改成该落的那"
             "一行（`subject` 参数）：平台会同时把 GitHub 上的 PR 标题改成它，仓库"
             "的检查会按新标题重跑。改完等检查绿了，再采纳或等自动合并。\n"
             "如果改的是 PR 标题而不是卡片，请在频道里说清为什么卡片那行才是对的。"

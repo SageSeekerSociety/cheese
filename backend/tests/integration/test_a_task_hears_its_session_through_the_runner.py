@@ -615,4 +615,4 @@ def test_the_clock_asks_a_running_session_whose_report_went_stale(client):
     client.portal.call(reminder._job)
 
     assert [topic for topic, _ in chat.told] == [uuid.UUID(task_id)]
-    assert "cheese_task_state" in chat.told[0][1]
+    assert "cheese_task(action=state)" in chat.told[0][1]

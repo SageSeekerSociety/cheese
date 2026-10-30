@@ -53,8 +53,10 @@
 | 知是愿景 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xr8rwqIrKiqQaVkGFnScJxYCnkb) — 产品方向，去那评论 |
 | 产品定位（对谁、给什么） | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Xfm5wBpIwieCtjkM11SchWELnXg) — 现阶段为谁服务，以及一件事该不该做 |
 | 产品方向反馈 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/PtVAwDevmiKFnbkQiVAcuqNvnZf) |
+| 产品与工程决策的方法 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Ah2Yw7eF8itAlrkoynpcdhisnIC) — 拿到需求怎么判断、设计提案怎么写、bug 怎么修 |
+| 产品思维：每个人的职责 | [飞书](https://acnxgqu0961c.feishu.cn/wiki/Jb1MwOwxyi6cMIkiKMWcFJ65nUe) — 每个角色在产品上的固定动作：需求依据、设计过群、用户访谈 |
 | 执行环境（沙箱 / 整台机器，云机或用户电脑） | **#2320**——设计与实施步骤；现状见 `where-a-turn-runs.md` §四 |
 | 算力模型为何是这个样子 | **#282**（一个字段挤着四件事）、**#442**（两种机器被建模成一种加两个开关） |
 
 约定：产品/方向类文档住飞书（多人评论）；改代码时需要同步改的文档住 repo。
-飞书文档不留本地副本（防陈旧）；需要时 `lark-cli markdown +fetch` 拉临时工作副本，改完 `+patch` 推回，副本勿提交（已 gitignore 兜底）。
+飞书文档不留本地副本（防陈旧）；需要时 `lark-cli docs +fetch --profile cheese` 拉临时工作副本，改完 `docs +update` 推回，副本勿提交（已 gitignore 兜底）。

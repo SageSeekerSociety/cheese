@@ -10,12 +10,14 @@ All three are what a reader waits for.
 import asyncio
 import gzip
 import json
+import time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.session_record import service
+from app.domain.session_record import models, service
 from app.domain.session_record.models import SessionRecord
 from tests.integration.test_a_turns_raw_record_keeps_what_it_did import (
     _Bucket,
@@ -115,12 +117,44 @@ class _CountingBucket(_Bucket):
 
 
 def _site(
-    client, topic: uuid.UUID, *, limit: int = 120, before: str | None = None
+    client,
+    topic: uuid.UUID,
+    *,
+    limit: int = 120,
+    before: str | None = None,
+    after: str | None = None,
+    resident: bool = False,
 ) -> dict:
-    params = {"limit": limit, **({"before": before} if before else {})}
+    params = {
+        "limit": limit,
+        **({"before": before} if before else {}),
+        **({"after": after} if after else {}),
+        **({"resident": "true"} if resident else {}),
+    }
     response = client.get(f"/topics/{topic}/transcript", params=params)
     assert response.status_code == 200, response.text
     return response.json()["data"]
+
+
+class _SlowBucket(_CountingBucket):
+    """A bucket whose reads take their time — what the panel must not wait on."""
+
+    #: Seconds each body read sleeps before answering.
+    delay_s = 0.0
+
+    async def download(self, key: str) -> bytes | None:
+        if self.delay_s:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+            try:
+                await asyncio.sleep(self.delay_s)
+                body = self.objects.get(key)
+                if body is not None:
+                    self.bodies.append(body)
+                return body
+            finally:
+                self.in_flight -= 1
+        return await super().download(key)
 
 
 def _sealed(
@@ -172,6 +206,51 @@ def test_a_page_the_rows_already_hold_never_lists_the_index(
 
     assert len(page["data"]) == 120
     assert bucket.listings == 0, "读者要的那一页数据库自己就有"
+
+
+def test_a_forward_read_inside_the_window_never_lists_the_index(
+    client, tmp_path, monkeypatch
+):
+    """现场 three-second refresh 不走归档索引。
+
+    面板开着时每 3 秒读一次增量（`after` 游标，几秒前）。那个游标落在保留窗口
+    以内，而索引只能说出窗口内每一个对象——它们每一条都还有行（行是最后才被清理
+    的），所以列一遍索引除了重复行里已有的东西，一条也添不上。限流就是在这里发生
+    的：3 秒一次、一次不落地列，撞上对象存储的并发上限，读慢到超时。
+    """
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=600)
+    newest = _site(client, topic, limit=50)["data"][-1]["meta"]["cursor"]
+    bucket.listings = 0
+
+    _site(client, topic, limit=50, after=newest)
+
+    assert bucket.listings == 0, "游标还在保留窗口里，索引说不出这一页缺的任何一条"
+
+
+def test_a_forward_read_older_than_the_window_still_lists_the_index(
+    client, tmp_path, monkeypatch
+):
+    """游标翻到三十天以前时仍要列索引——这正是它存在的理由。
+
+    过了保留期，更早那几个封存块的行已经被清理，只有索引还知道它们；这时跳过
+    列索引就等于把读者和更早的记录之间那一段整个抹掉。
+    """
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=600)
+    _drop_rows(client, topic)
+    stale = service.encode_cursor(
+        (
+            datetime.now(UTC) - models.RETENTION - timedelta(days=1),
+            "claude_code",
+            "cheese",
+            0,
+        )
+    )
+    bucket.listings = 0
+
+    page = _site(client, topic, limit=50, after=stale)
+
+    assert len(page["data"]) > 0, "更早的记录还在归档里，读者得读得到"
+    assert bucket.listings > 0, "窗口之外，索引是唯一能说出那些封存块的地方"
 
 
 def test_a_page_the_rows_exactly_fill_still_reaches_the_archive(
@@ -294,3 +373,39 @@ def test_a_page_the_newest_object_fills_fetches_no_more(client, tmp_path, monkey
         ]["message"]["content"][0]["text"]
         == "step 0512"
     )
+
+
+def test_opening_the_site_does_not_wait_on_the_bucket(client, tmp_path, monkeypatch):
+    """The page the reader stares at is answered without the bucket.
+
+    The bucket leg is the slow one — throttled by the object store and retried
+    by the SDK — so the newest page is read from the rows the database already
+    holds, under a short budget, and says `deferred` so the panel re-reads for
+    the rest. Here the rows are taken away: every record is reachable only
+    through the bucket, which answers in 5 seconds. An open that waits on it
+    reddens this; one that answers from the rows does not.
+    """
+    bucket = _SlowBucket()
+    monkeypatch.setattr(service, "private_storage", lambda: bucket)
+    monkeypatch.setattr(service, "bucket", lambda: bucket)
+    session = _Session(client, tmp_path, CLAUDE_CODE, _room_for(client))
+    session.write(_long_turn(str(uuid.uuid4()), 400))
+    session.drain(pages=2)
+    _seal(client, bucket)
+    topic = session.ref.topic_id
+    _drop_rows(client, topic)
+    bucket.delay_s = 5.0
+
+    started = time.monotonic()
+    page = _site(client, topic, resident=True)
+    waited = time.monotonic() - started
+
+    assert waited < 2.0, "打开现场不该等对象存储那一趟"
+    assert page["deferred"] is True, "这一页跳过了归档，读的人得知道要重读"
+    assert page["has_more"] is True, "跳过的记录在最新那一头，页面对不上就得说"
+
+    # 放开桶，重读一次（不带 resident）：跳过的记录这时到齐。
+    bucket.delay_s = 0.0
+    full = _site(client, topic)
+    assert full.get("deferred") in (False, None)
+    assert len(full["data"]) == 120

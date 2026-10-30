@@ -145,8 +145,22 @@ describe('芝士额度', () => {
       usage({
         period: null,
         windows: [
-          { hours: 5, calendar: null, used_ratio: 0.4, resets_at: '2026-10-03T10:00:00+00:00' },
-          { hours: null, calendar: 'month', used_ratio: 0.1, resets_at: '2026-10-31T16:00:00+00:00' },
+          {
+            hours: 5,
+            calendar: null,
+            credits_total: 500,
+            credits_used: 200,
+            used_ratio: 0.4,
+            resets_at: '2026-10-03T10:00:00+00:00',
+          },
+          {
+            hours: null,
+            calendar: 'month',
+            credits_total: 5000,
+            credits_used: 500,
+            used_ratio: 0.1,
+            resets_at: '2026-10-31T16:00:00+00:00',
+          },
         ],
       })
     )

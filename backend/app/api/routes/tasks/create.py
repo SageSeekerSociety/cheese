@@ -26,7 +26,7 @@ async def create_task(
       否则 403 —— 从前这条 route 只要求提供 space 并验证 category 归属，任何登录
       用户都能往别人的板里发题；中间一度收成「只有管理员能发」，重设计后放开为
       「板里的人都能发、所有者与管理员审」（见 ``_create_task_entity`` 里的
-      ``may_publish_in_space``）；
+      ``space_seats`` 的 ``publish``）；
     - submissionSchema 与 PATCH 一样写入提交表单；topics 只插关系行，不做校验。
     """
     return ok(

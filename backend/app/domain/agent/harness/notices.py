@@ -69,36 +69,36 @@ _CHECKLIST_EN = (
 )
 
 _PROGRESS_NONE_ZH = (
-    "你还没说这件任务做到哪了。现在就用 cheese_task_state 设一次：working "
+    "你还没说这件任务做到哪了。现在就用 cheese_task(action=state) 设一次：working "
     "在做、waiting 在等结果、blocked 卡住了，note 写一句在做什么。做完了就"
     "递卡，看板会显示等审。"
 )
 _PROGRESS_NONE_EN = (
-    "You have not said where this task stands. Call cheese_task_state now: "
+    "You have not said where this task stands. Call cheese_task(action=state) now: "
     "working, waiting (on a build, CI or a long command) or blocked, with a "
     "one-line note. When the work is done, file a card: the board then "
     "shows it awaiting review."
 )
 _PROGRESS_ZH = (
     "你报的任务状态已经 {minutes} 分钟没动过了，你停下以后看板显示的就是那一句。"
-    "情况变了就用 cheese_task_state 再设一次；还是那样，也再设一次，note "
+    "情况变了就用 cheese_task(action=state) 再设一次；还是那样，也再设一次，note "
     "写清现在在做什么、在等什么。"
 )
 _PROGRESS_EN = (
     "The task state you reported has not changed for {minutes} minutes, and "
-    "once you stop, that is what the board shows. Call cheese_task_state again: with "
+    "once you stop, that is what the board shows. Call cheese_task(action=state) again: with "
     "the new state if it changed, or the same one with a note saying what you "
     "are doing or waiting on now."
 )
 _BLOCKED_ZH = (
     "你上一次给这件任务报的状态是「卡住了，等人帮忙」。现在有人说话、这一轮开了："
-    "如果已经能往下走，就用 cheese_task_state 报回 working 或 waiting——不然"
+    "如果已经能往下走，就用 cheese_task(action=state) 报回 working 或 waiting——不然"
     "你一停下，任务又显示卡住、等负责人来；还卡着就再报一次 blocked，note 写清在等什么。"
 )
 _BLOCKED_EN = (
     "You last reported this task as blocked, waiting for help. Someone has "
     "spoken and this turn is open: if you can carry on now, call "
-    "cheese_task_state again with working or waiting — otherwise, once you "
+    "cheese_task(action=state) again with working or waiting — otherwise, once you "
     "stop, the task reads as blocked again and waits on its owner. If you are "
     "still stuck, report blocked "
     "again with a note saying what you are waiting for."
@@ -213,7 +213,7 @@ def stale_progress_reminder(minutes: int | None, language: str | None = None) ->
     从没报过）。
 
     没有卡在等审阅的时候，会话停下以后看板上这件任务显示的是它自己报的那一句
-    （`cheese_task_state`）：它在等构建、跑长命令时停下了也照旧是「在做」，而它做完了
+    （`cheese_task(action=state)`）：它在等构建、跑长命令时停下了也照旧是「在做」，而它做完了
     不说，看板就一直说它在做。所以平台能做的是问；卡在的时候由卡说，也就不问
     （`StaleProgressReminder`）。
     """

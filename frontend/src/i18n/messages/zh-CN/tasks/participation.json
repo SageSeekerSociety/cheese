@@ -1,6 +1,6 @@
 {
-  "claimFailed": "领取题目失败",
-  "joined": "报名已提交，项目已准备好",
+  "applied": "申请已提交，等待出题人通过",
+  "claimFailed": "申请失败",
   "leaveConfirm": "确定要退出该题目吗？",
   "leaveConfirmTitle": "确认退出",
   "leaveFailed": "退出题目失败",
@@ -10,7 +10,9 @@
   "noEligibleTeams": "你没有符合条件的团队可以参与此题目",
   "noTeamJoined": "你没有代表团队参与此题目",
   "signInFirst": "请先登录",
+  "started": "已开始，项目已准备好",
+  "startFailed": "开始失败",
   "submitInfoFailed": "信息提交失败",
-  "teamClaimFailed": "团队领取题目失败",
+  "teamClaimFailed": "团队申请失败",
   "teamLeft": "团队已退出题目"
 }

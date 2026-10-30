@@ -15,7 +15,7 @@ import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
-import { refusalText, renderNoticeMessage } from '@/lib/noticeText'
+import { type NoticeMessage, refusalText, renderNoticeMessage } from '@/lib/noticeText'
 
 export interface AssistantConversation {
   id: string
@@ -41,6 +41,17 @@ export interface AssistantStep {
   at?: number
   /** 它读到的东西叫什么（「频道「综合」」）：回来时才知道，显示在编号的位置。 */
   shown?: string
+  /** 它做的是哪一类事：查阅、改了东西、影响到别人。回来时才知道。 */
+  effect?: StepEffect
+}
+
+/** 一步做的是哪一类事，照工具表上写的（`backend/sandbox/cheese` 的 `READS` 等）。 */
+export type StepEffect = 'reads' | 'changes' | 'reaches others'
+
+const STEP_EFFECTS = new Set<string>(['reads', 'changes', 'reaches others'])
+
+function effectOf(value: unknown): { effect?: StepEffect } {
+  return typeof value === 'string' && STEP_EFFECTS.has(value) ? { effect: value as StepEffect } : {}
 }
 
 /** 芝士派出的一个分身：派它的那次调用（`call`）、它做什么、做到哪了、最近做的几步。 */
@@ -54,7 +65,16 @@ export interface AssistantSubagent {
 
 /** 服务端存下的那一轮做了什么（`assistant_messages.parts`）。 */
 interface StoredParts {
-  steps?: { call: string; name: string; args: string; failed?: string; ms?: number; at?: number; shown?: string }[]
+  steps?: {
+    call: string
+    name: string
+    args: string
+    failed?: string
+    ms?: number
+    at?: number
+    shown?: string
+    effect?: string
+  }[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
   /** 这一轮派出的分身，最后是什么样。 */
@@ -64,13 +84,27 @@ interface StoredParts {
   proposals?: AssistantProposal[]
   /** 问题带的文件名。 */
   files?: string[]
-  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条例行事务。 */
+  /** 平台开始一次运行的那一句（`role` 为 `platform`）：哪条自动化、发生了什么。 */
   shown?: AssistantShown
   /** 芝士交给人的文件。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
+  /** 问题是在哪一页问的（那一页的名字）。 */
+  page?: string
+  /** 问题带着的、人在页面上选中的那段字。 */
+  selection?: string
+  /** 问题里 `<#id>` 引用的东西。 */
+  cited?: AssistantCited[]
 }
 
-/** 芝士交给人的一份文件（`cheese_file_give`）：存在他自己的资料库里——他名下那个团队
+/** 问题里引用的一样东西：`<#id>` 里的 id、种类和名字。 */
+export interface AssistantCited {
+  id: string
+  kind: 'channel' | 'task' | 'thread' | 'doc' | 'file' | 'problem'
+  title: string
+}
+
+/** 芝士交给人的一份文件（`cheese_library(action=give)`）：存在他自己的资料库里——他名下那个团队
  *  （`team`）的，叫 `path`。 */
 export interface AssistantHanded {
   team: number
@@ -78,9 +112,21 @@ export interface AssistantHanded {
   bytes: number
 }
 
-/** 平台说的那一句在面板上怎么写：哪条例行事务开始运行。 */
+/** 芝士建或改的一条自动化（`cheese_routine`），回答里的那张卡片：什么时候、做什么。
+ *  它现在怎样（等待中、已开始……）按 `id` 另读。 */
+export interface AssistantRule {
+  id: string
+  when: string
+  note: string
+}
+
+/** 平台说的那一句在面板上怎么写：哪条自动化开始运行，或这段对话里等的事到了——任务的
+ *  审阅（`task`、`event`）时说是哪件事。 */
 export interface AssistantShown {
   routine?: string
+  wait?: string
+  task?: string
+  event?: string
 }
 
 /** 芝士往草稿里写的一次：改了哪几格（各自原来是什么），哪几格因为人改过而没动，以及
@@ -99,9 +145,14 @@ export interface AssistantEdit {
   created: boolean
   version: number
   name: string
+  /** 写完这一次，草稿上的题怎么开始：卡上队伍锁定、日期两格按它说。 */
+  startMode?: 'DIRECT' | 'APPLY'
   changed: Record<string, { before: unknown; after: unknown }>
   kept: string[]
   notes: { field: string; text: string }[]
+  /** 照这次写入之后草稿的样子，存下它的阶段会让几个人被判未通过、几个人回到进行中（或
+   *  保存会被拒的那句），按句子的键和参数给，读的人用自己的语言读。空 = 没人受影响。 */
+  stageEffect: NoticeMessage[]
   undone: string[]
 }
 
@@ -156,10 +207,21 @@ export interface AssistantMessage {
   published?: AssistantPublished[]
   proposals?: AssistantProposal[]
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写：面板说一句，不留一段空白。 */
   silent?: boolean
   /** 这一轮派出的分身。 */
   subagents?: AssistantSubagent[]
+  /** 人问的：在哪一页问的、带着选中的哪段字、引用了什么。 */
+  askedOn?: string
+  selection?: string
+  cited?: AssistantCited[]
+}
+
+/** 问一句时除了问题本身还交什么：请求里多带的几样，和这一句在面板上怎么写。 */
+export interface AssistantAsking {
+  body: Record<string, unknown>
+  shown: Pick<AssistantMessage, 'askedOn' | 'selection' | 'cited'>
 }
 
 /** 问的时候眼前是哪一页：芝士看到的「当前页面」就是它。题目和草稿按编号，项目里的频道、
@@ -174,7 +236,7 @@ export interface Unheard {
 }
 
 export interface AssistantPage {
-  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project'
+  kind: 'task' | 'draft' | 'topic' | 'doc' | 'project' | 'library'
   id: number | string
 }
 
@@ -198,11 +260,23 @@ export interface AssistantTopic {
   earlier?: boolean
 }
 
+/** 一问是从哪一页问的，按按下问的那一刻定下来：之后换了页、页面状态变了，都不改它。 */
+export interface AskTarget {
+  /** 人没把「当前页面」关掉：这一问带页面。 */
+  on: boolean
+  /** 那一页（那一刻的值）；还没有可挂的东西时是 null（发布页、改题页还没建草稿）。 */
+  page: AssistantPage | null
+  /** 那一页问之前要做的：先存好草稿。交回这一问要挂的那一份（它刚建、刚存的草稿）。 */
+  prepare?: () => Promise<AssistantPage | null | void>
+}
+
 export interface AssistantOptions {
-  page?: () => AssistantPage | null
-  /** 问之前：确保有地方可问（发布页上还没存过的草稿，先存一份）。 */
-  prepare?: () => Promise<void>
+  /** 按下问的那一刻读一次：问的是哪一页、那一页问之前要做什么（见 `AskTarget`）。不给就
+   *  不说页面的事。 */
+  target?: () => AskTarget
   on?: AssistantHooks
+  /** 这一句还带什么（不带页面、选中的字、引用），每问一句读一次。 */
+  asking?: (question: string) => AssistantAsking
 }
 
 export function createAssistant(opts: AssistantOptions = {}) {
@@ -220,7 +294,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const messages = ref<AssistantMessage[]>([])
   /** 正在流进来的那一段回答；没有在答时是 null。 */
   const streaming = ref<string | null>(null)
-  /** 芝士此刻在用的工具名（`cheese_docs_search` 之类），面板把它说成人话。 */
+  /** 芝士此刻在用的工具名（`cheese_help` 之类），面板把它说成人话。 */
   const tool = ref<string | null>(null)
   /** 这一轮正在做的几步。 */
   const steps = ref<AssistantStep[]>([])
@@ -229,6 +303,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
   const proposals = ref<AssistantProposal[]>([])
   /** 这一轮交出来的文件。 */
   const handed = ref<AssistantHanded[]>([])
+  const rules = ref<AssistantRule[]>([])
   /** 这一轮派出的分身，做到哪了。 */
   const subagents = ref<AssistantSubagent[]>([])
   /** 在等会话机空出来，还没开始答。 */
@@ -422,18 +497,20 @@ export function createAssistant(opts: AssistantOptions = {}) {
     creditRefused.value = false
     streaming.value = ''
     const at = new Date().toISOString()
+    const asking = opts.asking?.(text)
+    const target = opts.target?.() ?? null
     if (!kept)
       messages.value = [
         ...messages.value,
-        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
+        { role: 'user', text, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...asking?.shown },
       ]
     // 面板只留服务端存下的东西：被拒的问题不留那一句。
     let asked = false
     let unheard: Unheard[] = []
     try {
-      await opts.prepare?.()
+      const prepared = await target?.prepare?.()
       const id = await ensureConversation()
-      const page = opts.page?.() ?? null
+      const page = target?.on ? prepared || target.page : null
       unheard = await follow(
         id,
         (onEvent) =>
@@ -441,8 +518,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
             `/assistant/conversations/${id}/ask`,
             {
               question: text,
-              ...(page ? { page } : {}),
+              ...(page ? { page } : target ? { no_page: true } : {}),
               ...(files.length ? { files } : {}),
+              ...asking?.body,
               ...(kept ? { kept: true } : {}),
             },
             onEvent,
@@ -483,9 +561,24 @@ export function createAssistant(opts: AssistantOptions = {}) {
     parts: StoredParts
   ): Pick<
     AssistantMessage,
-    'steps' | 'edits' | 'published' | 'proposals' | 'files' | 'shown' | 'handed' | 'silent' | 'subagents'
+    | 'steps'
+    | 'edits'
+    | 'published'
+    | 'proposals'
+    | 'files'
+    | 'shown'
+    | 'handed'
+    | 'rules'
+    | 'silent'
+    | 'subagents'
+    | 'askedOn'
+    | 'selection'
+    | 'cited'
   > {
     return {
+      ...(parts.page ? { askedOn: parts.page } : {}),
+      ...(parts.selection ? { selection: parts.selection } : {}),
+      ...(parts.cited?.length ? { cited: parts.cited } : {}),
       ...(parts.subagents?.length ? { subagents: parts.subagents } : {}),
       ...(parts.files?.length ? { files: parts.files } : {}),
       ...(parts.silent ? { silent: true } : {}),
@@ -497,6 +590,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         ms: step.ms,
         ...(typeof step.at === 'number' ? { at: step.at } : {}),
         ...(step.shown ? { shown: step.shown } : {}),
+        ...effectOf(step.effect),
         state: step.failed !== undefined ? ('failed' as const) : ('done' as const),
         error: step.failed,
       })),
@@ -504,6 +598,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
       published: parts.published ?? [],
       proposals: parts.proposals ?? [],
       handed: parts.handed ?? [],
+      rules: parts.rules ?? [],
     }
   }
 
@@ -519,9 +614,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
       created: payload.created === true,
       version: Number(payload.version) || 0,
       name: typeof payload.name === 'string' ? payload.name : '',
+      startMode: payload.startMode === 'APPLY' || payload.startMode === 'DIRECT' ? payload.startMode : undefined,
       changed: (payload.changed as AssistantEdit['changed']) ?? {},
       kept: Array.isArray(payload.kept) ? (payload.kept as string[]) : [],
       notes: Array.isArray(payload.notes) ? (payload.notes as AssistantEdit['notes']) : [],
+      stageEffect: Array.isArray(payload.stageEffect) ? (payload.stageEffect as NoticeMessage[]) : [],
       undone: Array.isArray(payload.undone) ? (payload.undone as string[]) : [],
     }
   }
@@ -571,7 +668,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         if (step.call !== payload.call || step.state !== 'run') return step
         on.toolEnded?.(step.call, step.name, false)
         const shown = typeof payload.shown === 'string' && payload.shown ? { shown: payload.shown } : {}
-        return { ...step, ...shown, state: 'done' }
+        return { ...step, ...shown, ...effectOf(payload.effect), state: 'done' }
       })
       if (!steps.value.some((step) => step.state === 'run')) tool.value = null
     } else if (event === 'tool_args' && typeof payload.call === 'string' && typeof payload.text === 'string') {
@@ -596,6 +693,9 @@ export function createAssistant(opts: AssistantOptions = {}) {
       subagents.value = payload.branches as AssistantSubagent[]
     } else if (event === 'handed') {
       handed.value = [...handed.value, payload as unknown as AssistantHanded]
+    } else if (event === 'rule') {
+      const rule = payload as unknown as AssistantRule
+      rules.value = [...rules.value.filter((r) => r.id !== rule.id), rule]
     } else if (event === 'proposal') {
       proposals.value = [...proposals.value, payload as unknown as AssistantProposal]
     } else if (event === 'published') {
@@ -622,6 +722,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published.value = []
     proposals.value = []
     handed.value = []
+    rules.value = []
     subagents.value = []
     let answer = ''
     let failed = false
@@ -672,7 +773,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
         edits.value.length > 0 ||
         published.value.length > 0 ||
         proposals.value.length > 0 ||
-        handed.value.length > 0
+        handed.value.length > 0 ||
+        rules.value.length > 0
       if (current.value === conversation && ((answer && !failed && done) || stopped || did))
         messages.value = [
           ...messages.value,
@@ -686,6 +788,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
             published: published.value,
             proposals: proposals.value,
             handed: handed.value,
+            rules: rules.value,
             ...(subagents.value.length ? { subagents: subagents.value } : {}),
             ...(did && done && !failed && !stopped && !answer.trim() ? { silent: true } : {}),
           },
@@ -699,6 +802,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
         published.value = []
         proposals.value = []
         handed.value = []
+        rules.value = []
         subagents.value = []
       }
     }
@@ -757,14 +861,24 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if (!words && !files.length) return
     if (!id || !busy.value) return ask(words, fallback, files)
     const at = new Date().toISOString()
+    const asking = opts.asking?.(words)
+    // 插进去的话没换页面：只写它带的字和引用，不写「在哪问的」。
+    const shown = {
+      ...(asking?.shown.selection ? { selection: asking.shown.selection } : {}),
+      ...(asking?.shown.cited ? { cited: asking.shown.cited } : {}),
+    }
     messages.value = [
       ...messages.value,
-      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}) },
+      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
     ]
     try {
       await request(`/assistant/conversations/${id}/say`, {
         method: 'POST',
-        body: JSON.stringify({ text: words, files }),
+        body: JSON.stringify({
+          text: words,
+          files,
+          ...(asking?.body.selection ? { selection: asking.body.selection } : {}),
+        }),
       })
     } catch {
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
@@ -800,6 +914,7 @@ export function createAssistant(opts: AssistantOptions = {}) {
     published,
     proposals,
     handed,
+    rules,
     subagents,
     queued,
     notice,

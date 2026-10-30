@@ -14,12 +14,11 @@ The rules, as a person would state them:
 import asyncio
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.conftest import seed_claim, seed_task_with_protocol
+from tests.conftest import seed_task_with_protocol, start_task_project
 from tests.integration.conftest import (
     a_team,
     join_project_team,
     new_project,
-    post_project,
     room_agent_seat,
     session_auth_headers,
 )
@@ -158,12 +157,14 @@ def _agent_headers(client, project_id: str) -> dict:
     assert room.status_code == 200, room.text
     topic_id = room.json()["data"]["id"]
     return {
-        "x-cheese-token": mint_scoped_token(
-            project_id=project_id,
-            topic_id=topic_id,
-            agent_handle=room_agent_seat(client, topic_id),
-            access_scope="project",
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project_id,
+                topic_id=topic_id,
+                agent_handle=room_agent_seat(client, topic_id),
+                access_scope='project',
+            )
+        }"
     }
 
 
@@ -182,10 +183,7 @@ def test_an_ai_teammate_reads_only_the_team_documents_its_course_names(client):
     task = seed_task_with_protocol(
         client, override={"teaching": {"document_ids": [named]}}
     )
-    seed_claim(client, task, handle="owner")
-    course = post_project(
-        client, json={"name": "课程设计", "external_task_id": task}, owner="owner"
-    ).json()["data"]["id"]
+    course = start_task_project(client, task, handle="owner")
     agent = _agent_headers(client, course)
 
     got = client.get(f"/documents/{named}", headers=agent)

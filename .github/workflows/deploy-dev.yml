@@ -121,10 +121,21 @@ jobs:
       superseded: ${{ steps.check.outputs.superseded }}
       waiting: ${{ steps.check.outputs.waiting }}
       build_pending: ${{ steps.check.outputs.build_pending }}
+      fetch_tools: ${{ steps.fetch_tools.outputs.tools }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
+      # The deploy job's first fetch brings this commit to the box, so nothing
+      # of the repository is on disk there to retry that fetch with. This job
+      # runs on GitHub's network and has this commit checked out: it hands the
+      # fetch script, and the retry it sources, to the deploy job as an output.
+      - name: Hand the fetch scripts to the deploy job
+        id: fetch_tools
+        run: |
+          set -o pipefail
+          tools="$(tar -cz -C deploy git-fetch.sh registry-retry.sh | base64 -w0)"
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
       - name: Require images and tests for the same commit
         id: check
         env:
@@ -238,12 +249,11 @@ jobs:
     timeout-minutes: 180
     steps:
       # Another workflow on this runner (box-diag's dev-box job) can leave the
-      # shared workspace in a non-cone sparse checkout. actions/checkout then
+      # shared workspace in a non-cone sparse checkout. A checkout then
       # finishes green while deploy/ is not on disk at all, and the next two
       # steps fail on a missing script (2026-10-18 09:46 and 10:01). Clear the
       # leftovers before checking out. On a workspace that was never sparse this
-      # only rewrites git's sparse settings — no tracked file is touched — and
-      # the checkout after it clears them again.
+      # only rewrites git's sparse settings — no tracked file is touched.
       - name: Repair a sparse workspace
         run: |
           cd "$GITHUB_WORKSPACE" 2>/dev/null || exit 0
@@ -255,13 +265,27 @@ jobs:
           fi
           rm -f "$(git rev-parse --git-dir)/info/sparse-checkout"
 
-      # The candidate may predate this guard. Read policy from the workflow's
-      # default-branch commit before checking out that candidate's deploy code.
+      # The candidate may predate this guard and the ghcr login below. Read
+      # policy and log in from the workflow's default-branch commit before
+      # checking out that candidate's deploy code.
+      #
+      # Both checkouts in this job are deploy/git-fetch.sh, not
+      # actions/checkout: the box's link to github.com resets connections in
+      # bursts, and actions/checkout gives up after three fetches, 38-47 s
+      # after the first (dev deploy runs 40112125458, 40154711336, 40315955795). The
+      # script retries within the time budget the registry calls use and fails
+      # at once on a refused token or a missing ref. It runs from the copy the
+      # eligibility job handed over, kept outside the workspace both checkouts
+      # rewrite.
       - name: Check out automatic deployment policy
-        if: github.event_name == 'workflow_run' || inputs.rebuilt != ''
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.sha }}
+        env:
+          FETCH_TOOLS: ${{ needs.eligibility.outputs.fetch_tools }}
+          GIT_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/fetch-tools"
+          printf '%s' "$FETCH_TOOLS" | base64 -d | tar -xz -C "$RUNNER_TEMP/fetch-tools"
+          bash "$RUNNER_TEMP/fetch-tools/git-fetch.sh" "$GITHUB_SHA" 1
 
       - name: Keep automatic deployments from going backwards
         id: release
@@ -306,29 +330,30 @@ jobs:
             python3 deploy/check-auto-deploy.py "$CANDIDATE_SHA"
           fi
 
+      # Authenticate for the pull rather than trusting the box's stored login:
+      # the images are private, and a deploy must not fail because some other
+      # job's cleanup removed a credential. Retried within a time budget, as
+      # the pulls are (deploy/ghcr-login.sh). Run from this workflow's commit,
+      # so a release or rollback of an older commit is logged in too; the
+      # credential stays stored for the steps after it.
+      - name: Log in to ghcr
+        if: steps.release.outputs.skip != 'true'
+        env:
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash deploy/ghcr-login.sh
+
       - name: Check out the built commit (for the deploy scripts + compose)
         if: steps.release.outputs.skip != 'true'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          # workflow_run checks out the DEFAULT branch unless told otherwise, so
-          # pin the exact commit whose images were just built.
-          ref: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 2
+        env:
+          # workflow_run's own commit is the DEFAULT branch's tip, so name the
+          # exact commit whose images were just built.
+          REF: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          GIT_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash "$RUNNER_TEMP/fetch-tools/git-fetch.sh" "$REF" 2
 
       # A docs commit can include queued code changes relative to the running
       # release. Only the running-version guard above may skip this deployment.
-
-      # Authenticate for the pull rather than trusting the box's stored login:
-      # the images are private, and a deploy must not fail because some other
-      # job's cleanup removed a credential.
-      - name: Log in to ghcr
-        if: steps.release.outputs.skip != 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          logout: false
 
       # The configured half of the admin roster, out of a repo variable. It is
       # MERGED with what the box's env file already names, and this is the point

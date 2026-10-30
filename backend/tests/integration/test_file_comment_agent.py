@@ -218,7 +218,7 @@ def test_the_answer_reads_only_what_every_reader_of_the_room_may(client, session
             p = await db.get(Project, uuid.UUID(project))
             bob = await UserRepository(db).get_by_handle("bob")
             await TeamService(TeamRepository(db)).remove_team_member(
-                team_id=p.team_id, target_user_id=bob.id, actor_user_id=bob.id
+                team_id=p.team_id, target_user_id=bob.id
             )
             await db.commit()
 
@@ -254,7 +254,7 @@ def test_the_answer_reads_only_what_every_reader_of_the_room_may(client, session
             found = await page.get(
                 f"/projects/{project}/context/search",
                 params={"q": "紫色长颈鹿的预算"},
-                headers={"X-Cheese-Token": credential},
+                headers={"Authorization": f"Bearer {credential}"},
             )
         seen["status"] = found.status_code
         seen["rooms"] = (

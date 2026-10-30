@@ -62,6 +62,8 @@ vi.mock('@/api', async (importOriginal) => ({
   listBlocks: (...args: unknown[]) => listBlocks(...args),
   listTopicMembers: vi.fn(async () => ({ data: [] })),
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
+  // 资料库那一页读项目那一行（`题目/` 的页头）：这个项目不是从题目来的。
+  getProject: vi.fn(async (id: string) => ({ id, name: 'Project', task: null })),
 }))
 // 资料库那一页会读的文档接口：这一份测试只关心「打开的是哪一份、review 到没到」。
 const docTitles: Record<string, string> = { 'library-doc': 'Release plan', 'other-doc': 'Weekly notes' }

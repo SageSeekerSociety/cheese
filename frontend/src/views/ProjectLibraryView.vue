@@ -25,6 +25,7 @@ import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import DocMoveDialog from '../components/library/DocMoveDialog.vue'
 import DocShareDialog from '../components/library/DocShareDialog.vue'
@@ -52,6 +53,10 @@ import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
 import { refRoute } from '@/lib/refDirectory'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { TASK_FOLDER } from '@/lib/taskRevision'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
@@ -97,10 +102,33 @@ const listEl = ref<HTMLElement | null>(null)
 const pages = useLibraryPages(
   () => props.projectId,
   () => ({ dir: browsing.value ? dir.value : '', q: query.value, kind: kind.value }),
-  listEl
+  listEl,
+  () => !props.docId
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
 const inFolder = computed(() => browsing.value && !!dir.value)
+// 这一层是只读的（项目资料库里的 `题目/`）：服务端在每一行上说，这里只看它。
+const readonlyHere = computed(
+  () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
+)
+
+// 在 `题目/` 这一层：上面写一行它来自哪道题、现在第几版，连到题目页（`GET /projects/{id}`
+// 的 `task`，看的人看得到这个文件夹时才有）。
+const project = useQuery(
+  computed(() => ({
+    ...projectQuery(props.projectId),
+    enabled: !props.docId && browsing.value && dir.value === TASK_FOLDER,
+  })),
+  queryClient
+)
+const taskHere = computed(() => (browsing.value && dir.value === TASK_FOLDER ? project.data.value?.task ?? null : null))
+
+// 拖进 `题目/` 的文件放不进去：说一句为什么，而不是什么也不发生。
+function dropHere(event: DragEvent) {
+  if (!readonlyHere.value) return onDrop(event)
+  dragging.value = false
+  actionError.value = t('work.library.readonlyDrop', { folder: dir.value })
+}
 
 function goTo(path: string) {
   const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
@@ -146,6 +174,7 @@ const transfers = useLibraryTransfers({
 const {
   busy,
   uploading,
+  progress: uploadProgress,
   confirming,
   replacing,
   dragging,
@@ -259,6 +288,18 @@ const sharer = useDocumentShare()
 useCommands(() => {
   const open = selected.value
   // 手机上看着一份文件时，顶栏的 ⋯ 是这一份的操作；否则页头上是「上传文件」。
+  if (!mdAndUp.value && open?.readonly) {
+    return [
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
+      },
+    ]
+  }
   if (!mdAndUp.value && open) {
     return [
       {
@@ -290,6 +331,7 @@ useCommands(() => {
   }
   // 一份文档开着时，它的操作在文档自己的顶栏上。
   if (selectedDocId.value) return []
+  if (readonlyHere.value) return []
   return [
     {
       id: 'library.newFolder',
@@ -349,7 +391,7 @@ function read(file: LibraryFile) {
       :class="{ 'library--dragging': dragging }"
       @dragover.prevent="dragging = true"
       @dragleave.self="dragging = false"
-      @drop.prevent="onDrop"
+      @drop.prevent="dropHere"
     >
       <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
       <input
@@ -373,6 +415,13 @@ function read(file: LibraryFile) {
           @retry="pages.reset()"
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
+        <p v-if="uploadProgress" role="status" class="t-body c-muted">
+          {{
+            uploadProgress.percent >= 100
+              ? t('work.library.uploadProcessing', uploadProgress)
+              : t('work.library.uploadProgress', uploadProgress)
+          }}
+        </p>
 
         <div v-if="anything" class="library__tools">
           <v-text-field
@@ -402,6 +451,22 @@ function read(file: LibraryFile) {
         </div>
 
         <LibraryCrumbs v-if="inFolder" :dir="dir" :root="t('navigation.project.library')" @go="goTo" />
+        <!-- Inside the read-only task folder: which task it belongs to, its version now, and its page. -->
+        <p v-if="taskHere" class="t-body c-muted library__task" data-testid="library-task-folder">
+          <span data-user-content>{{
+            taskHere.version
+              ? t('work.library.taskFolderFrom', { name: taskHere.name, version: taskHere.version })
+              : t('work.library.taskFolderFromUnversioned', { name: taskHere.name })
+          }}</span>
+          <router-link
+            class="library__task-link"
+            :to="{
+              name: TASK_ROUTE_NAMES.detail,
+              params: { spaceId: String(taskHere.space_id), taskId: String(taskHere.id) },
+            }"
+            >{{ t('work.library.taskFolderOpen') }}</router-link
+          >
+        </p>
 
         <div
           v-if="loading && !entries.length"
@@ -594,6 +659,22 @@ function read(file: LibraryFile) {
 
 .library--dragging {
   outline-color: var(--accent);
+}
+
+.library__task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.library__task-link {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+
+.library__task-link:hover {
+  text-decoration: underline;
 }
 
 .library__list {

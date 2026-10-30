@@ -39,6 +39,7 @@ import re
 import sys
 import types
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -229,6 +230,21 @@ TEACHING = types.SimpleNamespace(
     documents=[{"id": "0b6d6a1e-3c1f-4f0a-9a52-6d1f2c3b4a5e", "title": "推荐系统入门"}],
 )
 
+#: A stand-in for ``task.claims.StageProgress``: a task in two stages, the
+#: first passed, the second not handed in yet.
+STAGES = [
+    types.SimpleNamespace(
+        index=0,
+        name="需求分析",
+        description="交一份需求文档",
+        due_at=datetime(2026, 11, 1, 15, 59, tzinfo=timezone.utc),
+        status="PASSED",
+    ),
+    types.SimpleNamespace(
+        index=1, name="实现", description="", due_at=None, status="NOT_SUBMITTED"
+    ),
+]
+
 ROSTER = [
     {"name": "张衡", "handle": "zhangheng", "source": "owner", "agent": False, "active": True},
     {"name": "李工", "handle": "ligong", "source": "team", "agent": False, "active": True},
@@ -289,13 +305,13 @@ MEMORY_OVER_CAP = _Index(
 
 ENVIRONMENT = [
     "- 这台机器：内存 4GB、2 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉。",
-    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat_list` 读。",
+    "- 你不在场时这个话题又说了 12 条，用 `cheese_chat(action=list)` 读。",
 ]
 
 #: Sample texts for injected content are one-liners on purpose: the page splits
 #: blocks at ``## `` and an injected document has headings of its own.
 DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型还在调。"
-#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc_edit`（`document: …`）」。
+#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc(action=edit)`（`document: …`）」。
 OVERVIEW_DOC_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 OVERVIEW_DOC = "要做成：把推荐算法做成一个能演示的原型。时间：11 月 15 日中期答辩前。这阶段不做：线上部署。"
 THREAD = (
@@ -303,8 +319,8 @@ THREAD = (
     "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
     "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
     "不摆预览；"
-    "要改的事用 `cheese_task` 创建成任务。别处定过的事不记得时，用 "
-    "`cheese_chat_search` 加 `channel` 搜整个频道。\n\n"
+    "要改的事用 `cheese_task(action=open)` 创建成任务。别处定过的事不记得时，用 "
+    "`cheese_chat(action=search)` 加 `channel` 搜整个频道。\n\n"
     "支线挂在主线的这条消息下面：\n"
     "[wangchangxin] @芝士 登录页的错误提示改成红色，手机上也看一下\n\n"
     "这条消息之前，主线上说的是：\n"
@@ -346,6 +362,12 @@ TOGGLES = [
         "kwargs": {"teaching": TEACHING},
         "label": "`teaching` 非空，且这一周的教学安排不是空的（`teaching_section` 说了话）",
         "params": ["teaching=…"],
+    },
+    {
+        "id": "stages",
+        "kwargs": {"stages": STAGES},
+        "label": "`stages` 非空：项目出自一道分阶段的题目",
+        "params": ["stages=…"],
     },
     {
         "id": "skills",

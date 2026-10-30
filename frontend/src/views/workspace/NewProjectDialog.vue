@@ -20,17 +20,6 @@
     @primary="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
   >
     <div v-show="newProjectStep === 1">
-      <p v-if="sourceTask" class="t-body c-muted mb-3">
-        {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
-      </p>
-      <!-- 从一道题建项目时，先把「会继承什么」摆出来 (#944)：资源包、合成后的
-           指导（连来自哪一层）、以及会被带上的资料。建之前看得见，才有得选。 -->
-      <TaskInheritance
-        v-if="sourceTask"
-        class="mb-3"
-        :inheritance="sourceInheritance"
-        :loading="sourceInheritanceLoading"
-      />
       <!-- Three lines of quota detail sat right under the floating label of the
            field below. The one line that changes what a project can expect
            stays; the rest moves behind the notice's own disclosure, and the
@@ -156,22 +145,14 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { randomTeammateName } from '@/lib/projectAgents'
 import { refreshProjects } from '@/query/projects'
-import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
 defineOptions({ name: 'NewProjectDialog' })
 
 // 只在对话框打开时才用得上，不跟外壳一起下。
 const ResourceLimitsNotice = defineAsyncComponent(() => import('@/components/ResourceLimitsNotice.vue'))
-const TaskInheritance = defineAsyncComponent(() => import('@/views/tasks/components/TaskInheritance.vue'))
 
 const router = useRouter()
-const { open: newProjectDialog, presetTeam, sourceTask } = useNewProjectDialog()
-
-// 从一道题建项目时那份「会继承什么」(#944)。取数按 `sourceTask` 走：对话框换个
-// 来源就重新问一次，没来源时不发请求。
-const { inheritance: sourceInheritance, loading: sourceInheritanceLoading } = useTaskInheritance(
-  () => sourceTask.value?.id
-)
+const { open: newProjectDialog, presetTeam } = useNewProjectDialog()
 const newProjectName = ref('')
 const newProjectStep = ref(1)
 const newProjectAgentName = ref('')
@@ -218,7 +199,7 @@ async function loadProjectTeams() {
 
 watch(newProjectDialog, (opened) => {
   if (!opened) return
-  newProjectName.value = sourceTask.value?.name ?? ''
+  newProjectName.value = ''
   newProjectStep.value = 1
   newProjectAgentName.value = randomTeammateName()
   newProjectForgeKind.value = 'forgejo'
@@ -246,7 +227,6 @@ async function confirmNewProject() {
     const project = await createProject(
       name,
       newProjectTeamId.value,
-      sourceTask.value?.id,
       newProjectForgeKind.value,
       newProjectIntent.value.trim(),
       newProjectAgentName.value.trim(),

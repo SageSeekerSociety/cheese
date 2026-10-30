@@ -343,7 +343,7 @@ describe('use cases on the homepage', () => {
     const roles = ['老师与助教', '学生', '办公', '开发团队']
     expect(section.getAllByRole('tab').map((tab) => tab.textContent?.trim())).toEqual(roles)
     expect(section.getByRole('tab', { name: '老师与助教' }).getAttribute('aria-selected')).toBe('true')
-    expect(section.getByText('批准领取')).toBeTruthy()
+    expect(section.getByText(i18n.global.t('publicSite.useCases.teachers.item2Title'))).toBeTruthy()
 
     const links = new Set<string>()
     for (const role of roles) {

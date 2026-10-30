@@ -27,6 +27,10 @@ import re
 import sys
 import time
 import uuid
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from evals.assistant.tasks import Task
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,8 +93,15 @@ class Outcome:
     _members: dict[tuple[str, str], list[str]]
     #: What the asker's 芝士 remembers of them after the task, file by file.
     memories: list[str] = field(default_factory=list)
-    #: The asker's routines after the task: (trigger, what the person said).
-    routines: list[tuple[str, str]] = field(default_factory=list)
+    #: The asker's rules after the task: (trigger, what the person said, spec).
+    routines: list[tuple[str, str, dict]] = field(default_factory=list)
+    #: Her course space after the task: its name, live categories, live invite
+    #: codes as (max uses, note), and announcement titles.
+    space: dict = field(default_factory=dict)
+    #: Each team's people after the task: team name → {handle: role}.
+    teams: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: How each project names its tasks after the task: project → auto / manual.
+    naming: dict[str, str] = field(default_factory=dict)
 
     @property
     def answer(self) -> str:
@@ -297,9 +308,9 @@ async def read_outcome(
             )
         ]
         routines = [
-            (str(trigger), str(words))
-            for trigger, words in await q(
-                "select trigger, words from assistant_routines where user_id = :u",
+            (str(trigger), str(words), dict(spec or {}))
+            for trigger, words, spec in await q(
+                "select trigger, words, spec from assistant_routines where user_id = :u",
                 u=uid,
             )
         ]
@@ -309,6 +320,44 @@ async def read_outcome(
         ):
             if str(topic) in rooms:
                 members.setdefault(rooms[str(topic)], []).append(handle)
+        sid = world.space_id
+        space = {
+            "name": (await q("select name from space where id = :i", i=sid)).scalar(),
+            "categories": [
+                str(n)
+                for (n,) in await q(
+                    "select name from space_categories where space_id = :i "
+                    "and deleted_at is null",
+                    i=sid,
+                )
+            ],
+            "codes": [
+                (int(m), str(n or ""))
+                for m, n in await q(
+                    "select max_uses, note from space_invite_code where space_id = :i "
+                    "and deleted_at is null",
+                    i=sid,
+                )
+            ],
+            "announcements": [
+                str(t)
+                for (t,) in await q(
+                    "select title from space_announcement where space_id = :i", i=sid
+                )
+            ],
+        }
+        roles = {0: "owner", 1: "admin", 2: "member"}
+        teams: dict[str, dict[str, str]] = {}
+        for name, handle, role in await q(
+            "select t.name, u.username, r.role from team_user_relation r "
+            'join team t on t.id = r.team_id join "user" u on u.id = r.user_id '
+            "where r.deleted_at is null and t.personal_owner_user_id is null"
+        ):
+            teams.setdefault(str(name), {})[str(handle)] = roles.get(role, str(role))
+        naming = {
+            projects.get(str(p), str(p)): str((st or {}).get("task_naming") or "auto")
+            for p, st in await q("select id, settings from projects")
+        }
     assert set(CARDS) <= set(cards)
     return Outcome(
         turns,
@@ -328,6 +377,9 @@ async def read_outcome(
         members,
         memories,
         routines,
+        space,
+        teams,
+        naming,
     )
 
 
@@ -370,11 +422,33 @@ def decide(world, card: int, state: str = "dismissed") -> None:
         )
 
 
-def ask(http, world, conversation: str, question: str, page) -> Turn:
+#: A thing a question cites, written in a task's turn as ``{cite:kind:project:name}``.
+_CITE = re.compile(r"\{cite:(topic|doc):([^:}]*):([^}]*)\}")
+
+
+def cited(world, question: str) -> str:
+    """The question as the panel sends it: each ``{cite:…}`` as the ``<#id>``
+    the @ menu writes."""
+
+    def token(m: re.Match) -> str:
+        kind, project, name = m.groups()
+        found = world.channel(project, name) if kind == "topic" else world.docs[name]
+        return f"<#{found['id']}>"
+
+    return _CITE.sub(token, question)
+
+
+def ask(
+    http, world, conversation: str, question: str, page, task: "Task | None" = None
+) -> Turn:
     turn = Turn(question)
-    body: dict = {"question": question}
-    if page:
+    body: dict = {"question": cited(world, question)}
+    if page and not (task and task.no_page):
         body["page"] = page
+    if task and task.no_page:
+        body["no_page"] = True
+    if task and task.selection:
+        body["selection"] = task.selection
     started = time.monotonic()
     event = ""
     with http.stream(
@@ -485,7 +559,10 @@ def judge(http_gateway, key: str, task, outcome: Outcome) -> dict:
     # Its own routines are hers alone and pass no authorization check, so
     # they are in no list above: without them a routine it did set up reads
     # to the judge as one it only claims to have.
-    did += [f"建了例行事务（{trigger}）：{words}" for trigger, words in outcome.routines]
+    did += [
+        f"建了{'只做一次的规则' if spec.get('once') else '例行事务'}（{trigger}）：{words}"
+        for trigger, words, spec in outcome.routines
+    ]
     prompt = (
         f"<对话>\n{said}\n</对话>\n<芝士的操作>\n"
         + ("\n".join(did) or "无")
@@ -597,7 +674,7 @@ def main() -> None:
             for q in task.turns:
                 try:
                     turns.append(
-                        ask(http, world, conversation, q, _page(world, task.page))
+                        ask(http, world, conversation, q, _page(world, task.page), task)
                     )
                 except Exception as e:  # noqa: BLE001  (the next task still runs)
                     turns.append(Turn(q, error=f"{type(e).__name__}: {e}"))

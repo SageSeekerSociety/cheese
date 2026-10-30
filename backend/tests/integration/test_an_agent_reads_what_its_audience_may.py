@@ -78,9 +78,14 @@ def _cheese(client, root: str) -> str:
 
 def _answering_in(pid: str, room: str, agent: str) -> dict[str, str]:
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=pid, topic_id=room, access_scope="project", agent_handle=agent
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=pid,
+                topic_id=room,
+                access_scope='project',
+                agent_handle=agent,
+            )
+        }"
     }
 
 
@@ -145,7 +150,7 @@ def test_a_project_credential_reads_no_dm(client):
         headers=session_auth_headers("dave"),
     )
     assert issued.status_code == 200, issued.text
-    token = {"X-Cheese-Token": issued.json()["data"]["token"]}
+    token = {"Authorization": f"Bearer {issued.json()['data']['token']}"}
 
     assert _reads(client, root, token) == 200
     assert _reads(client, dm, token) in REFUSED
@@ -172,7 +177,7 @@ def test_a_document_thread_answer_searches_only_what_every_reader_may(client):
         r = client.get(
             f"/projects/{p['id']}/context/search",
             params={"q": "预算"},
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 200, r.text
         return {h["room_id"] for h in r.json()["data"]["hits"]["records"]}
@@ -222,7 +227,7 @@ def test_a_room_documents_thread_answer_reads_only_the_room(client):
     found = client.get(
         f"/projects/{p['id']}/context/search",
         params={"q": "预算"},
-        headers={"X-Cheese-Token": client.portal.call(answered)},
+        headers={"Authorization": f"Bearer {client.portal.call(answered)}"},
     )
     assert found.status_code == 200, found.text
     rooms = {h["room_id"] for h in found.json()["data"]["hits"]["records"]}
@@ -297,7 +302,7 @@ def _off_the_team(client, project: str, handle: str) -> None:
             p = await db.get(Project, uuid.UUID(project))
             person = await UserRepository(db).get_by_handle(handle)
             await TeamService(TeamRepository(db)).remove_team_member(
-                team_id=p.team_id, target_user_id=person.id, actor_user_id=person.id
+                team_id=p.team_id, target_user_id=person.id
             )
             await db.commit()
 

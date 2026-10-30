@@ -8,6 +8,7 @@ includes every module-level `APIRouter` under `app.api.routes`.
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -15,13 +16,14 @@ from pydantic import BaseModel
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import project_roles
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic_membership.services import TopicMemberService
@@ -114,14 +116,21 @@ class SpeakersIn(BaseModel):
     thread_replies_open: bool = True
 
 
-@router.put("/{topic_id}/speakers", dependencies=[ROUTE_DECIDES])
+@router.put("/{topic_id}/speakers")
 async def set_speakers(
-    topic_id: uuid.UUID, body: SpeakersIn, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
+    body: SpeakersIn,
+    db: DbSession,
 ) -> dict:
     """Who may speak in the channel's main line, and whether everyone may
-    still answer in a 支线, set by whoever manages it (#4795)."""
-    _, actor = await _person(db, resolver, topic_id)
-    room = await TopicMemberService(db).require_manager(topic_id, actor.handle)
+    still answer in a 支线, set by whoever manages it (#4795): someone in the
+    channel's project who manages this channel or every channel."""
+    topic_id = at.place.room_id
+    if at.place.conversation_id != topic_id:
+        raise NotFoundError(say("topicNotFound"))
+    if not at.actor.authenticated:
+        raise AuthenticationRequiredError("A verified member identity is required")
+    room = await TopicMemberService(db).require_manager(topic_id, at.actor.handle)
     if body.speaker_roles is not None:
         known = await project_roles(db, room.project_id)
         wanted = list(dict.fromkeys(body.speaker_roles))

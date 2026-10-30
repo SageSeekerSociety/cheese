@@ -20,10 +20,14 @@ vi.mock('../../api', async (importOriginal) => {
     readPreviewFile: vi.fn(),
     previewDocumentPdfSnapshot: vi.fn(),
     documentRevisions: vi.fn(),
+    // 房间里的文档一打开就读版本清单（文档条上的「第 N 版」），这里没有历史。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
   }
 })
 // 网页那一份不在 `api.ts` 里：那一份已经超了长度上限，只能变短。
 vi.mock('../../lib/previewHtml', () => ({ previewDocumentPageSnapshot: vi.fn() }))
+// 分页文档现在也会读这一份的评论串（页上要画已有的评论标记），所以这一条也得打桩。
+vi.mock('@/api/fileThreads', () => ({ listFileThreads: vi.fn(async () => ({ data: [], total: 0 })) }))
 // 三个阅读器都换掉：它们拿到字节就会去画，而这里问的是「该不该取字节、取哪一种」。
 // 留一个类名，因为「字节取回来了、却没有任何一支去画它」正是要抓的那种空白。
 vi.mock('./preview/PreviewSlides.vue', () => ({ default: { props: ['data'], template: '<div class="viewer" />' } }))

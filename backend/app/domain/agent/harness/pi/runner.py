@@ -24,7 +24,6 @@ import base64
 import contextlib
 import json
 import os
-import re
 import shlex
 import shutil
 import sys
@@ -78,32 +77,38 @@ WORKING_TOOLS = ("read", "write", "edit", "ls", "find", "grep", "bash")
 BRANCH_TOOLS = ("cheese_subagent_start", "cheese_subagent_send", "cheese_subagent_stop")
 
 
-#: How what a reading tool read opens: the thing by its name, then its
-#: reference in brackets (``personal/reading.py``) — 「任务「报名说明」（…）」.
-_NAMED = re.compile(r"^((?:频道|任务|项目)「[^」\n]{1,80}」|文档《[^》\n]{1,80}》)")
-
-
-def named(result: object) -> str | None:
-    """The name of what a call read, as what came back opens with it: shown
-    in place of the reference the call was given. None for anything else."""
-    content = result.get("content") if isinstance(result, dict) else None
-    for block in content if isinstance(content, list) else ():
-        if isinstance(block, dict) and block.get("type") == "text":
-            found = _NAMED.match(str(block.get("text") or "").lstrip())
-            return found.group(1) if found else None
-    return None
-
-
 def _said(text: str) -> dict:
     """A platform tool's answer for the extension: its text, and the pictures
     it hands back (a mini-app's, as the platform ran it), which go to the
-    model beside the text (`platform.ts`)."""
+    model beside the text (`platform.ts`); and what it acted on, by name
+    (`cheese.Said.subject`), which the runner keeps for its step."""
     images = list(getattr(text, "images", ()))
-    return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+    said = {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+    if subject := getattr(text, "subject", ""):
+        said["subject"] = subject
+    return said
 
 
-#: How a delegated credential begins (``app.core.sandbox_auth``).
-DELEGATED_PREFIX = "cxdg_"
+#: The kind of credential that acts for a person (``app.core.credentials``).
+_DELEGATED_KIND = "delegated+jwt"
+
+
+def _part(token: str, i: int) -> dict:
+    """One JSON part of a JWT, read without verifying it."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        part = json.loads(
+            base64.urlsafe_b64decode(parts[i] + "=" * (-len(parts[i]) % 4))
+        )
+    except (ValueError, TypeError):
+        return {}
+    return part if isinstance(part, dict) else {}
+
+
+def is_delegated(token: str) -> bool:
+    return _part(token, 0).get("typ") == _DELEGATED_KIND
 
 
 def _scope_of(token: str) -> dict[str, str]:
@@ -111,14 +116,9 @@ def _scope_of(token: str) -> dict[str, str]:
     (``CHEESE_PROJECT``). Read, not verified: the backend verifies the
     credential on every request it is sent with; this only says where to send
     them."""
-    if not token.startswith(DELEGATED_PREFIX):
+    if not is_delegated(token):
         return {}
-    body = token.removeprefix(DELEGATED_PREFIX).rpartition(".")[0]
-    try:
-        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    except (ValueError, TypeError):
-        return {}
-    project = claims.get("p") if isinstance(claims, dict) else None
+    project = _part(token, 1).get("p")
     return {"CHEESE_PROJECT": str(project)} if project else {}
 
 
@@ -153,7 +153,7 @@ class Runner(runner.Runner[Journal]):
         # The work a compaction under way started under (``owner``).
         self.compacting_for: dict | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once pi has it and the compaction has not
         # finished. Set from the thread the tool call runs on (`run_cli`).
         self.compact_request = ""
@@ -232,18 +232,20 @@ class Runner(runner.Runner[Journal]):
             # Its arguments whole: what was shown of them as they were written
             # may have stopped short when the message ended.
             call = str(event.get("toolCallId") or "")
-            self.live_made[call] = {
-                "call": call,
-                "args": json.dumps(event.get("args") or {}, ensure_ascii=False),
-            }
+            step = self.live_made.setdefault(call, {"call": call})
+            step["args"] = json.dumps(event.get("args") or {}, ensure_ascii=False)
+            # pi's own tools on the session's own computer: what they do is
+            # known by their name. A platform tool's is the table's (`tool`).
+            if (name := event.get("toolName")) in READING_TOOLS:
+                step.setdefault("effect", "reads")
+            elif name in WORKING_TOOLS:
+                step.setdefault("effect", "changes")
             self.shown()
         elif kind == "tool_execution_end" and not event.get("parentToolCallId"):
             # A call came back: a reader shows it ended now, not when the
             # model next writes, which may be a long stretch of reasoning.
             call = str(event.get("toolCallId") or "")
             self.live_returned.append(call)
-            if shown := named(event.get("result")):
-                self.live_made.setdefault(call, {"call": call})["shown"] = shown
             self.shown()
         elif kind == "message_start":
             if (event.get("message") or {}).get("role") == "assistant":
@@ -567,11 +569,21 @@ class Runner(runner.Runner[Journal]):
         for name, content in sorted(files.items()):
             (home / name).write_text(content, encoding="utf-8")
         reason = ""
+        # What a room that calls one of the CLI's commands as a tool is told
+        # instead of pi's own "not found": it runs them with its bash. A
+        # session without hands has no bash to send it to.
+        commands: dict[str, str] = {}
         if tools is None:
             try:
                 tools = catalog.tools()
             except Exception as error:  # a room still opens without them
                 tools, reason = [], f"{type(error).__name__}: {error}"
+            try:
+                commands = {
+                    name: catalog.not_a_tool(name) for name in catalog.cli_commands()
+                }
+            except Exception:  # pi's own "not found" is said instead
+                commands = {}
         (home / "platform.json").write_text(
             json.dumps(
                 {
@@ -600,6 +612,7 @@ class Runner(runner.Runner[Journal]):
                     # monitor prints is told to the session, never a subagent.
                     "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
+                    "commands": commands,
                     "unavailable": reason,
                     # The project's MCP servers, each at the session's gateway
                     # (`open_servers`), for pi's own MCP client.
@@ -668,21 +681,25 @@ class Runner(runner.Runner[Journal]):
         """One platform tool call.
 
         A tool from the platform's table runs here against the backend, reaching
-        the machine only for what it needs from it. Anything else is a CLI
-        command, run on the machine as the CLI would have been typed there:
-        argparse is the authority twice over — it says what the arguments mean,
-        and ``catalog.argv`` re-parses what it built, so a call that could not
-        have been typed fails here rather than reaching the CLI as a malformed
-        command line.
+        the machine only for what it needs from it. The CLI's own commands are
+        no tools: the session runs them with its `bash`, as `cheese …`.
 
         A session with no hands, or one that only reads the machine, has
         neither: each of its tools is one request to the platform, under the
         tools' path and the session's own credential.
         """
         if self.machine is None or self.tools:
-            return await asyncio.to_thread(
+            said = await asyncio.to_thread(
                 self._platform_tool, tool, arguments, call_id
             )
+            # What the call acted on, by name, and what it does: its step
+            # shows them (`answer.ToolDone`).
+            step = self.live_made.setdefault(call_id, {"call": call_id})
+            if said.get("subject"):
+                step["shown"] = said["subject"]
+            if effect := catalog.effect_of(tool, arguments):
+                step["effect"] = effect
+            return said
         if catalog.is_platform_tool(tool):
             host = PlatformHost(
                 self.machine.client,
@@ -699,19 +716,26 @@ class Runner(runner.Runner[Journal]):
             except Exception as error:  # the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return _said(text)
-        command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
-        code, output = await asyncio.to_thread(
-            self.machine.run, f"exec {command} </dev/null", cwd=cwd
-        )
-        return {
-            "status": code,
-            "stdout": output.decode("utf-8", "replace"),
-            "stderr": "",
-        }
+        return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
 
     def _platform_tool(self, tool: str, arguments: dict, call_id: str) -> dict:
-        if tool not in (self.tools.get("names") or []):
-            return {"status": 1, "stdout": "", "stderr": f"{tool}: no such tool"}
+        # A session may be named only some of an object's verbs
+        # (`catalog.schemas_of`): one it was not named is refused with the
+        # ones it was, the way a call naming no verb is.
+        names = self.tools.get("names") or []
+        key = (
+            f"{tool}.{arguments.get('action')}" if isinstance(arguments, dict) else tool
+        )
+        if tool not in names and key not in names:
+            held = [
+                verb
+                for name, _, verb in (n.partition(".") for n in names)
+                if name == tool and verb
+            ]
+            said = (
+                catalog.ask_for_action(tool, held) if held else f"{tool}: no such tool"
+            )
+            return {"status": 1, "stdout": "", "stderr": said}
         if not self.platform_token:
             # Never the credential the session started with: that one is the
             # room's, and a tool acts for whoever asked.
@@ -723,7 +747,7 @@ class Runner(runner.Runner[Journal]):
         host = PlatformHost(
             RemoteClient({"platform_token": self.platform_token}),
             # A person's 芝士 works on a computer of its own and moves files
-            # between it and their library (`cheese_file_give`): the commands
+            # between it and their library (`cheese_library(action=give)`): the commands
             # run there, the requests go out under the question's credential.
             # One that only reads a room's machine (a document's 芝士) runs
             # nothing on it.
@@ -738,7 +762,7 @@ class Runner(runner.Runner[Journal]):
         for name, value in _scope_of(self.platform_token).items():
             host.environ.setdefault(name, value)
         try:
-            text = catalog.run_platform_tool(tool, arguments, host)
+            text = catalog.run_platform_tool(tool, arguments, host, delegated=True)
         except Exception as error:  # the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return _said(text)
@@ -1187,7 +1211,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

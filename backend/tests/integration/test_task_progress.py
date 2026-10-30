@@ -1,6 +1,6 @@
 """A task shows what its AI teammate last said about its work.
 
-The teammate says it through its own session (`cheese_task_state`); the board,
+The teammate says it through its own session (`cheese_task(action=state)`); the board,
 the task's page and the project's lists all show that, and the session
 stopping does not rewrite it: a turn ending does not, and neither does the
 session going away, which only puts 「已离开」 beside it. (A session running
@@ -227,7 +227,7 @@ def test_a_running_session_whose_report_went_stale_is_asked_for_a_new_one(client
     _said_at(client, task_id, now - threshold - timedelta(minutes=1))
     assert client.portal.call(remind, now) == 1
     assert chat.told[0][0] == uuid.UUID(task_id)
-    assert "cheese_task_state" in chat.told[0][1]
+    assert "cheese_task(action=state)" in chat.told[0][1]
     # Asked once; the next ask waits another threshold from this one.
     assert client.portal.call(remind, now + threshold / 2) == 0
     assert client.portal.call(remind, now + threshold) == 1
@@ -254,7 +254,7 @@ def test_a_teammate_that_never_reported_is_asked_once_its_session_has_run_a_whil
 
     assert client.portal.call(remind, now) == 0
     assert client.portal.call(remind, now + threshold) == 1
-    assert "cheese_task_state" in chat.told[0][1]
+    assert "cheese_task(action=state)" in chat.told[0][1]
 
 
 # —— one task, one state: a card's facts beat what the teammate said ——————————

@@ -40,9 +40,9 @@ covers:
 
 仓库自己的 `AGENTS.md` 是另一回事，它讲这个仓库本身的结构与约定，跟着仓库走。两者的分工与注入场合见[提示词注入与上下文管理](/dev/context)的「不同场景」一节。
 
-`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
+`skill_library` 里 `_SHIPPED_NATIVE_SKILLS = ("cheese", "documents", "showcase", "wolfram", "lean", "skill-creator", "mcp-builder")` 是平台随会话发的原生技能；`native_skill_files()` 把它们连同 `cheese-docs`（由 `doc_writing.md`、`doc_blocks.md`、`doc_live.md` 生成）和 `miniapp`（由 `miniapp.md`、`doc_apps.md` 生成）摊成 `{"skills/<name>/<路径>": 正文}`。技能不是一份 markdown：`documents` 还带着脚本和它们的参考文件，缺了就成「读了一条命令、跑起来说没有这个文件」，所以整个目录一起走；能走的后缀白名单是 `SKILL_FILE_SUFFIXES`，多出来的东西由 `backend/tests/unit/test_native_skill_files.py` 在构建时拦，而不是安静地不发。
 
-技能的数量少、条件都要能判准，所以「读线上页面」（`cheese_fetch` 工具）与「读 Figma 稿」（`showcase/scripts/figma.py`）不各立一颗，而是合进 `showcase`：它们本来也只在这一件事里用得上（把一个东西摆给人看）。技能池子（`_platform_catalog()`）按目录里有 `SKILL.md` 自动收，加内容不加名字，池子里的颗数不变。反过来，一整件事、别处用不上的才单立一颗：`mcp-builder`（要把某个外部 API 接给 AI、写一台 MCP server 时加载）与那几颗不重叠，就自成一颗，它的 `scripts/smoke.py` 是「接进项目之前必须绿」的那条自检。
+技能的数量少、条件都要能判准，所以「读线上页面」（`cheese_web(action=fetch)` 工具）与「读 Figma 稿」（`showcase/scripts/figma.py`）不各立一颗，而是合进 `showcase`：它们本来也只在这一件事里用得上（把一个东西摆给人看）。技能池子（`_platform_catalog()`）按目录里有 `SKILL.md` 自动收，加内容不加名字，池子里的颗数不变。反过来，一整件事、别处用不上的才单立一颗：`mcp-builder`（要把某个外部 API 接给 AI、写一台 MCP server 时加载）与那几颗不重叠，就自成一颗，它的 `scripts/smoke.py` 是「接进项目之前必须绿」的那条自检。
 
 `RESERVED_SKILL_NAMES` 是项目自己的技能不许占的名字：平台发的那些，加上 `cheese-docs` 和 `miniapp`。平台不再发的技能，每台机器按自己记下的清单（`.cheese-platform-skills`）删掉。
 
@@ -57,11 +57,11 @@ covers:
 - **限制**（`service.py` 顶上）：名字要匹配 `^[a-z0-9][a-z0-9-]{1,47}$`；配套文件最多 `MAX_FILES = 30` 个、每个不超过 `MAX_FILE_BYTES = 200_000` 字节、后缀在白名单里（都是文本：代码、标记、配置、数据），路径不许绝对、不许 `..`、不许有反斜杠和控制字符、不许叫 `SKILL.md`，一个路径也不能同时是另一个路径的上级文件夹（否则写镜像时文件和文件夹撞名，整个项目之后的发布都会失败）；`title`、`description`、`body` 一个都不能空。
 - **每次改动都重建镜像。** `publish()` 在 `{workspace_root}/.project-skills/<项目 id>/` 下搭一份新目录、写 `render_skill()` 的结果和配套文件，再把旧的换掉（先改名、再 `rename`、最后删），换的动作是整目录替换。接口层 `backend/app/api/routes/project_skills.py` 在 create / update / confirm / decline / restore / delete 每一处之后都调 `publish()`，并对这项技能来自的那段对话发 `announce_stale(…, "skills")`，那段对话里那张提议卡跟着重读。
 
-`render_skill()` 产出的 `SKILL.md` 是一份做法，不是一份记录：正文原样放进去，前面写上「第 N 版，由谁确认」，要求「每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；缺少必需的输入就先问用户」，末尾的「用的时候」一节带着这项技能的 id，告诉芝士照着做时被纠正就用 `cheese_skill_update` 提议修改这一份。
+`render_skill()` 产出的 `SKILL.md` 是一份做法，不是一份记录：正文原样放进去，前面写上「第 N 版，由谁确认」，要求「每次使用都以这一次用户给的输入为准，不沿用以前某一次的具体材料；缺少必需的输入就先问用户」，末尾的「用的时候」一节带着这项技能的 id，告诉芝士照着做时被纠正就用 `cheese_skill(action=update)` 提议修改这一份。
 
 ### 芝士怎么提议 {#proposals}
 
-芝士用两个平台工具提：`cheese_skill_draft` 起草新的一份，`cheese_skill_update` 提议改已有的一份。什么时候该提写在系统提示词的「项目技能」一节，和记忆说明并列：单条规则进记忆，同一类事攒成一整套才打包成项目技能；五个条件写在 `cheese_skill_draft` 的工具说明里。
+芝士用两个平台工具提：`cheese_skill(action=propose)` 起草新的一份，`cheese_skill(action=update)` 提议改已有的一份。什么时候该提写在系统提示词的「项目技能」一节，和记忆说明并列：单条规则进记忆，同一类事攒成一整套才打包成项目技能；五个条件写在 `cheese_skill(action=propose)` 的工具说明里。
 
 - **依据跟着草稿走。** 起草时带上 `taught`（用户为这类事教过哪几处）、`accepted`（这次怎么算做成的）、`related`（和最接近的已有技能比过没有；芝士写成技能 id 的，存的时候换成那份技能的名称）、`absorbs`（这项技能吸收掉的 team 记忆）；改的时候带 `reason`。它们存在行上的 `proposal` 里，提出它的那段对话底部那张提议卡（`SkillProposalCard`，数据在 `useSkillProposals`）把它们摆给人看，人在卡上点「保存」或「不保存」。保存或人改过之后 `proposal` 清空。
 - **门槛只管芝士，不管人**（`_admit_proposal`）：人拒绝过的同名技能不再提；一段对话同时只有一份提议在等人；项目里的技能到了 `PROPOSAL_LIMIT = 20` 项，芝士不再新建，改为提议合并或修改。人自己新建不受这几条限制。

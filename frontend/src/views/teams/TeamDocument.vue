@@ -20,6 +20,7 @@ import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { docAuthors } from '@/lib/docAuthors'
 import { useDialog } from '@/plugins/dialog'
+import { useAgentContext } from '@/stores/agent'
 
 const props = defineProps<{ handle: string; docId: string }>()
 const router = useRouter()
@@ -74,6 +75,14 @@ watch(
   },
   { immediate: true }
 )
+
+// 芝士读到的「当前页面」是这份文档：团队的文档芝士没有工具去读，后端把正文写给它。
+useAgentContext(() => ({
+  page: { kind: 'doc', id: props.docId },
+  label: document.value
+    ? t('tasks.assistant.page.doc', { name: document.value.title || t('work.room.doc.untitled') })
+    : undefined,
+}))
 
 /** 删除：先问一句，删了回到「文档」那一页。 */
 async function remove() {

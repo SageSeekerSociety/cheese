@@ -12,11 +12,10 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.common.auth import create_access_token, verify_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
-from app.domain.device.models import DeviceRow
 from app.domain.user.repositories import UserRepository
 from app.domain.user.sessions import SessionService
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project, session_auth_headers, session_token
+from tests.integration.conftest import post_project, session_token
 
 
 def _login(client, handle: str) -> str:
@@ -223,150 +222,6 @@ def test_unknown_screen_is_refused(client):
             ws.receive_bytes()
 
 
-# --- cheese-gate attribution wiring ------------------------------------------
-
-
-def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
-    """A cheese write carrying ``X-Cheese-Screen`` acts as the screen's agent-user
-    (device agent-as-user), not the generic 芝士 nor the body's author."""
-    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
-    topic = client.post(
-        "/topics", json={"project_id": project["id"], "title": "T"}
-    ).json()["data"]
-    screen = _register_screen(
-        project_id=uuid.UUID(project["id"]),
-        topic_id=uuid.UUID(topic["id"]),
-        handle="agent-macbook",
-    )
-    _agent_identity(client, "agent-macbook")
-    assert (
-        client.post(
-            f"/topics/{topic['id']}/members",
-            json={"handle": "agent-macbook"},
-            headers=session_auth_headers("alice"),
-        ).status_code
-        == 200
-    )
-    try:
-        r = client.post(
-            f"/topics/{topic['id']}/messages",
-            json={"content": "hi", "request_id": str(uuid.uuid4())},
-            headers={"X-Cheese-Screen": screen.token},
-        )
-        assert r.status_code == 200, r.text
-        blocks = client.get(
-            f"/topics/{topic['id']}/blocks", headers=session_auth_headers("alice")
-        ).json()["data"]["data"]
-        assert [b["author"] for b in blocks if b["content"] == "hi"] == [
-            "agent-macbook"
-        ]
-    finally:
-        _unregister(screen)
-
-
-def test_cheese_call_without_screen_header_is_not_the_agent(client):
-    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
-    topic = client.post(
-        "/topics", json={"project_id": project["id"], "title": "T"}
-    ).json()["data"]
-    # No X-Cheese-Screen → the screen attribution never fires: the write is the
-    # signed-in person's.
-    r = client.post(
-        f"/topics/{topic['id']}/messages",
-        json={"content": "hi", "request_id": str(uuid.uuid4())},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    blocks = client.get(
-        f"/topics/{topic['id']}/blocks", headers=session_auth_headers("alice")
-    ).json()["data"]["data"]
-    assert [b["author"] for b in blocks if b["content"] == "hi"] == ["alice"]
-
-
-def test_write_gate_and_route_use_the_same_screen_participant(client):
-    from app.core.sandbox_auth import mint_scoped_token
-
-    project = post_project(
-        client, json={"name": "Screen identity"}, owner="alice"
-    ).json()["data"]
-    tid = project["root_topic_id"]
-    owner = session_auth_headers("alice")
-    # 项目总览坐着项目自己的芝士，席位用的是它自己的 handle，所以「房间原来那条
-    # agent 席位」要从名册上读，读在别人进场之前。
-    roster = client.get(f"/topics/{tid}/members", headers=owner).json()["data"]["data"]
-    default_agent = next(row["member_handle"] for row in roster if row["agent"])
-    screen = _register_screen(
-        project_id=uuid.UUID(project["id"]),
-        topic_id=uuid.UUID(tid),
-        handle="screen-agent",
-    )
-    _agent_identity(client, "screen-agent")
-    try:
-        assert (
-            client.post(
-                f"/topics/{tid}/members", json={"handle": "screen-agent"}, headers=owner
-            ).status_code
-            == 200
-        )
-        assert (
-            client.delete(
-                f"/topics/{tid}/members/{default_agent}", headers=owner
-            ).status_code
-            == 200
-        )
-        auth = {
-            "X-Cheese-Token": mint_scoped_token(project_id=project["id"], topic_id=tid),
-            "X-Cheese-Screen": screen.token,
-        }
-        assert (
-            client.post(f"/topics/{tid}/webhook-token", headers=auth).status_code == 200
-        )
-        assert (
-            client.post(
-                f"/topics/{tid}/members", json={"handle": default_agent}, headers=owner
-            ).status_code
-            == 200
-        )
-        assert (
-            client.delete(
-                f"/topics/{tid}/members/screen-agent", headers=owner
-            ).status_code
-            == 200
-        )
-        assert (
-            client.post(f"/topics/{tid}/webhook-token", headers=auth).status_code == 401
-        )
-    finally:
-        _unregister(screen)
-
-
-def test_a_screen_writes_nothing_into_another_projects_inbox(client):
-    """A screen acts as its agent in the project it runs for. Naming another
-    project's inbox, with no room to be refused by, does not reach it."""
-    mine = post_project(client, json={"name": "Mine"}, owner="alice").json()["data"]
-    theirs = post_project(client, json={"name": "Theirs"}, owner="bob").json()["data"]
-    screen = _register_screen(
-        project_id=uuid.UUID(mine["id"]),
-        topic_id=uuid.UUID(mine["root_topic_id"]),
-        handle="agent-macbook",
-    )
-    _agent_identity(client, "agent-macbook")
-    try:
-        r = client.post(
-            f"/projects/{theirs['id']}/alerts",
-            json={"level": "light", "kind": "change_alert", "title": "看这里"},
-            headers={"X-Cheese-Screen": screen.token},
-        )
-        assert r.status_code == 403, r.text
-        inbox = client.get(
-            f"/projects/{theirs['id']}/alerts", headers=session_auth_headers("bob")
-        )
-        assert inbox.status_code == 200, inbox.text
-        assert [n["title"] for n in inbox.json()["data"]["data"]] == []
-    finally:
-        _unregister(screen)
-
-
 # --- Personal-team enrollment management -------------------------------------
 
 
@@ -523,14 +378,20 @@ def test_a_machine_learns_its_approval_was_withdrawn(client):
     ).json()["token"]
     device_id = connect.json()["device_id"]
 
-    held = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    held = client.get(
+        "/connector/device/me", headers={"Authorization": f"Bearer {token}"}
+    )
     assert held.status_code == 200 and held.json()["device_id"] == device_id
 
     client.delete(f"/connector/my/devices/{device_id}", headers=_bearer(alice))
-    gone = client.get("/connector/device/me", headers={"X-Cheese-Session": token})
+    gone = client.get(
+        "/connector/device/me", headers={"Authorization": f"Bearer {token}"}
+    )
     assert gone.status_code == 401
     assert (
-        client.get("/connector/device/me", headers={"X-Cheese-Session": ""}).status_code
+        client.get(
+            "/connector/device/me", headers={"Authorization": f"Bearer {''}"}
+        ).status_code
         == 401
     )
 
@@ -539,19 +400,19 @@ def test_registered_login_refresh_is_visible_on_team_models(client, monkeypatch)
     """A registered subscription reports its status on Models; probing an
     execution device does not register a credential."""
     alice = _login_real(client, "alice")
-    device_id = _enroll_device(client, alice)["device_id"]
+    start = client.post("/connector/auth/device/start", json={"device_name": "macbook"})
+    code = start.json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(alice)
+    )
+    assert connect.status_code == 200, connect.text
+    device_id = connect.json()["device_id"]
+    polled = client.post("/connector/auth/device/poll", json={"device_code": code})
+    token = polled.json()["token"]
     listing = client.get("/connector/my/devices", headers=_bearer(alice)).json()
     mine = next(d for d in listing["devices"] if d["device_id"] == device_id)
     team_id = mine["team_id"]
     models_path = f"/connector/teams/{team_id}/model-connections"
-
-    async def transport_token():
-        async with client.test_factory() as db:
-            device = await db.get(DeviceRow, device_id)
-            assert device is not None
-            return device.token
-
-    token = client.portal.call(transport_token)
     login_id = "default"
     status = {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}
 

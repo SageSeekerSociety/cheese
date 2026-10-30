@@ -58,7 +58,7 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         "放进房间，文件名带上日期。",
         "",
         "做完后必须交回结果，成功失败都要交：",
-        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        f'cheese_routine(action=report, run="{run.id}", status="succeeded" 或 "failed", '
         'summary="结果，或失败原因", outputs=["房间里的结果文件路径"])',
         "成功时的 summary 会作为你的一条消息发在频道主线上，频道里的人直接读它："
         "写清结论，可以分几点，不用在这里再发一遍。",

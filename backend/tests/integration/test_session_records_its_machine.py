@@ -159,7 +159,7 @@ def _open(central, project, topic, agent, *, resume=None):
     assert target["kind"] == "deferred"
     response = client.post(
         target["lease_path"],
-        headers={"X-Cheese-Token": opening["token"]},
+        headers={"Authorization": f"Bearer {opening['token']}"},
         json={"env": {}},
     )
     assert response.status_code == 200, response.text

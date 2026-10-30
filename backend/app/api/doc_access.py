@@ -46,6 +46,8 @@ from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
 from app.domain.task import teaching
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 from app.domain.user.services import user_by_handle
 
@@ -132,10 +134,10 @@ async def is_team_member(db: AsyncSession, team_id: int, handle: str) -> bool:
     return user is not None and await team_service(db).is_team_member(team_id, user.id)
 
 
-async def is_team_admin(db: AsyncSession, team_id: int, handle: str) -> bool:
+async def manages_team_documents(db: AsyncSession, team_id: int, handle: str) -> bool:
     user = await user_by_handle(db, handle)
-    return user is not None and await team_service(db).is_team_at_least_admin(
-        team_id, user.id
+    return user is not None and await team_seats.TEAM.allows(
+        db, team_id, user.id, TeamPermission.manage_documents
     )
 
 
@@ -147,7 +149,9 @@ async def may_move_or_delete(db: AsyncSession, reached: Reached) -> bool:
     if doc.project_id is not None:
         return True
     handle = reached.actor.handle
-    return doc.created_by == handle or await is_team_admin(db, doc.team_id, handle)
+    return doc.created_by == handle or await manages_team_documents(
+        db, doc.team_id, handle
+    )
 
 
 async def authorize_in_project(

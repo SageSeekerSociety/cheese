@@ -99,6 +99,20 @@ class LinkMsg:
 # omitted (not sent as null) to match the Go `omitempty` tags.
 
 
+def machine_data(stream_id: str, payload: bytes) -> dict[str, Any]:
+    """Bytes of the platform's answer on one machine stream."""
+    return {
+        "t": "machine.data",
+        "id": stream_id,
+        "data": base64.b64encode(payload).decode(),
+    }
+
+
+def machine_close(stream_id: str) -> dict[str, Any]:
+    """The platform answered a machine stream in full."""
+    return {"t": "machine.close", "id": stream_id}
+
+
 def welcome() -> dict[str, Any]:
     return {"t": "welcome", "v": PROTOCOL_VERSION}
 

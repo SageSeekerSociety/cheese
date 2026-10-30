@@ -119,7 +119,7 @@ Claude credentials record their own team and personal owner, independently of an
 
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
-3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、选择所属团队（默认个人团队），提交即 `POST /connector/connect`，写入唯一的 `team_id` 并保留接入人的身份作为来源记录，签发**不过期的 durable token**（只能服务端撤销）。
+3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、选择所属团队（默认个人团队），提交即 `POST /connector/connect`，写入唯一的 `team_id` 并保留接入人的身份作为来源记录，设备从此有了**不过期的 durable token**（只能服务端撤销），令牌在 CLI 下一次轮询时生成并交出，只交一次，服务端只存摘要。
 
 4. **同一条命令接着上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheesehost link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 

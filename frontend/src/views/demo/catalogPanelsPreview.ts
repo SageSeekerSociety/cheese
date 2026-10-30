@@ -12,6 +12,8 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { wakeSteps } from '@/composables/panelPreview/appWake'
+
 import {
   docStageProps,
   fileEditorUnsupported,
@@ -31,7 +33,6 @@ import {
 } from './catalogPanelsPreviewFixtures'
 
 import DesignImage from '@/components/panels/preview/DesignImage.vue'
-import DesignRegionNote from '@/components/panels/preview/DesignRegionNote.vue'
 import DesignSketchOverlay from '@/components/panels/preview/DesignSketchOverlay.vue'
 import DesignSketchToolbar from '@/components/panels/preview/DesignSketchToolbar.vue'
 import DesignViewportToolbar from '@/components/panels/preview/DesignViewportToolbar.vue'
@@ -57,9 +58,24 @@ import { t } from '@/i18n'
 import { DOCUMENT_TYPES } from '@/lib/fileKind'
 
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
+
+// 应用睡着时顶上的那份静态快照：一页冻住的报名表（和原型里那一页同一个样子）。
+const SLEEP_SNAPSHOT = `<!DOCTYPE html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
+body{margin:0;font:14px system-ui,sans-serif;color:#222;background:#fff}
+nav{display:flex;gap:16px;padding:12px 28px;border-bottom:1px solid #eee;color:#555;font-size:13px}nav b{color:#2f6fd6}
+main{display:flex;flex-direction:column;gap:12px;padding:8px 28px 24px;max-width:640px}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px}input{height:34px;border:1px solid #d9dce1;border-radius:6px;padding:0 10px}
+button{align-self:flex-start;padding:8px 20px;border:0;border-radius:6px;background:#2f6fd6;color:#fff}
+</style></head><body><nav><b>招新</b><span>首页</span><span>常见问题</span></nav><main><h1>第 2 步：填写信息</h1>
+<label>姓名<input value="张三"></label><label>手机号<input placeholder="11 位手机号"></label><button>提交报名</button></main></body></html>`
 const T: CatalogNeed[] = ['i18n']
 
 const MARKDOWN_SAMPLE = ['# 一份说明', '', '这一页把 Markdown 按文档的读法读出来。'].join('\n')
+/** 这一份文件上的两条评论指着的那两处（形状就是评论存下的那一样）。 */
+const MARKDOWN_ANCHORS = [
+  { id: 'c1', quote: { text: '按文档的读法', heading: '一份说明', prefix: '这一页把 Markdown ', suffix: '读出来' } },
+  { id: 'c2', quote: { text: 'Markdown', heading: '一份说明', prefix: '这一页把 ', suffix: ' 按文档' } },
+]
 
 export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
   {
@@ -111,8 +127,8 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelFrameStage.s1.note')
         },
-        props: frameStageProps({ displayedFrame: previewFrame() }),
-        expect: '运行中的应用',
+        props: frameStageProps({ displayedFrame: previewFrame(), previewAppNote: 'npm run dev' }),
+        expectSelector: '[data-testid="preview-chain"]',
       },
       {
         get name() {
@@ -126,7 +142,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           frames: [previewFrame(), previewFrame({ id: 2, label: '预览 · 第二版' })],
           displayedFrame: previewFrame({ id: 2, label: '预览 · 第二版' }),
         }),
-        expect: '预览 · 第二版',
+        // 指定了文件的那一格：条上不再写文件名（页签上已经写着），认下载那颗。
         expectSelector: '.mdi-download',
       },
       {
@@ -148,6 +164,43 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         },
         props: frameStageProps({ displayedFrame: previewFrame(), pickTarget: 'region', pickOn: true }),
         expectSelector: '[data-testid="preview-region-pick"]',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s5.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s5.note')
+        },
+        props: frameStageProps({
+          displayedFrame: previewFrame(),
+          previewAppNote: 'npm run dev',
+          // 电脑没连上：通道断了，也就没有地址——应用那一段自然不答。
+          previewTunnelUp: false,
+          previewUrl: null,
+          appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
+        }),
+        expectSelector: '[data-testid="preview-snapshot"]',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s6.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s6.note')
+        },
+        props: frameStageProps({
+          displayedFrame: previewFrame(),
+          previewAppNote: 'npm run dev',
+          // 唤醒走到第三步：开机和连上通道都打勾了，通道那一段就该是绿的，只有应用还是
+          // 琥珀——进度里的 tunnel 和链上的 tunnel 说的是同一件事，两处不能对不上。
+          // 通道通了、应用还没答，后端这时也还没给地址，所以 `previewUrl` 是空的。
+          previewTunnelUp: true,
+          previewUrl: null,
+          appSnapshot: { html: SLEEP_SNAPSHOT, age: '4 分钟前' },
+          wakeSteps: wakeSteps({ machine: true, tunnel: true, agent: false, port: false }),
+        }),
+        expectSelector: '[data-testid="preview-wake-steps"]',
       },
     ],
   },
@@ -308,6 +361,21 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         props: { source: MARKDOWN_SAMPLE },
         expect: '这一页把 Markdown 按文档的读法读出来',
       },
+      {
+        get name() {
+          return t('catalog.previewPanelMarkdown.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelMarkdown.s2.note')
+        },
+        // 一份有人评过的文件：那两处画着标记，画重一点的是正在看的那一条。
+        // 标记不是文字（是巢在那几个字外面的 `<mark>`），所以这一格看的是形状，不是某一句话：
+        // 两处都在，且 c2 那一处是重的。只挑重的那一颗的话，「一条评论都没画、只把在看的那条
+        // 画出来」也满足它——而那正是这一格要展示的东西少了一半。
+        props: { source: MARKDOWN_SAMPLE, anchors: MARKDOWN_ANCHORS, activeId: 'c2' },
+        expectSelector:
+          'mark.file-comment-mark.is-active[data-file-comment="c2"] + mark.file-comment-mark:not(.is-active)[data-file-comment="c1"]',
+      },
     ],
   },
   {
@@ -425,8 +493,28 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.previewPanelLocator.s1.note')
         },
-        props: { target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' }, note: '' },
-        expect: '网页 · 第 2 屏',
+        props: {
+          target: { label: '网页 · 第 2 屏', quote: '这块按钮点不动' },
+          note: '这一处按不到',
+          canComment: true,
+          canAskPersonal: true,
+        },
+        expect: '发给任务芝士',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelLocator.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelLocator.s2.note')
+        },
+        // 挂不了评论的那一份（资料库原件、消息附件）只该露出「发送」这一条。
+        props: {
+          target: { label: 'library/报告.pdf', quote: '第 2 页' },
+          note: '这一处的数字不对',
+          canComment: false,
+        },
+        expect: '发送',
       },
     ],
   },
@@ -622,35 +710,6 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'preview-panel-region-note',
-    title: 'DesignRegionNote · 区域的说明',
-    get about() {
-      return t('catalog.previewPanelRegionNote.about')
-    },
-    file: 'src/components/panels/preview/DesignRegionNote.vue',
-    component: DesignRegionNote,
-    needs: T,
-    states: [
-      {
-        get name() {
-          return t('catalog.previewPanelRegionNote.s1.name')
-        },
-        get note() {
-          return t('catalog.previewPanelRegionNote.s1.note')
-        },
-        props: {
-          target: { label: '图片 #3 · 右上角', quote: '这块按钮' },
-          note: '',
-          geometry: null,
-          resourceKey: 'demo-region',
-          focusOrigin: null,
-          restoreFocus: () => {},
-        },
-        expect: '图片 #3 · 右上角',
-      },
-    ],
-  },
-  {
     id: 'preview-panel-design-image',
     title: 'DesignImage · 设计图',
     get about() {
@@ -668,7 +727,9 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelDesignImage.s1.note')
         },
         props: { src: PREVIEW_IMAGE_SRC, alt: '示例图', identity: 'demo.png' },
-        expect: '适合视口',
+        // 缩放档位那一栏在第一行：认它最左那一档的名字。这里没给 fitsHeight（预览站的格子
+        // 没有定高），所以最左是「适应宽度」。
+        expect: '适应宽度',
       },
     ],
   },

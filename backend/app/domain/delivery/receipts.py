@@ -446,6 +446,39 @@ async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
     return result.rowcount or 0  # type: ignore[attr-defined]
 
 
+async def terminate_unread_of_session(
+    session, *, harness, native_session_id, reason
+) -> int:
+    """Give up on every unread input written into this native session.
+
+    For a session whose machine the platform destroyed: the runner that would
+    have reported any of them read or dropped went with the machine, so no
+    later fact about them can arrive, and an unfinished input refuses its seat
+    every later message (``seat_has_unfinished_input``).
+
+    Keyed by the session rather than by its works, because the input that
+    leaks is exactly the one no open work accounts for: a mid-turn addition
+    whose own turn had already stopped when the machine went. Nothing in the
+    works' close reaches it — that only names the turns still open.
+
+    Only ``terminated_at`` / ``termination`` are written, as
+    :func:`terminate_inputs_of_dead_works` does: the machine's death says
+    nothing about whether they were read before it, so their holds stay held
+    and nothing inside them is sent again.
+    """
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+        .values(terminated_at=datetime.now(UTC), termination=reason)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     """Reject unknown/conflicting identity without selecting by prompt text.
 

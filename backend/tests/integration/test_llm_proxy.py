@@ -32,7 +32,13 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     checked_out = []
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         status = pool_status(client.test_app_engine)
         assert status is not None
@@ -43,7 +49,8 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     token = mint_scoped_token(project_id=project_id)
     response = client.post(
         "/llm/admission",
-        headers={"Authorization": f"Bearer {token}", "X-Cheese-Token": SANDBOX_TOKEN},
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["supply"]["key"] == "project-key"
@@ -57,7 +64,13 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     from app.domain.agent.chat import ChatService
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "project-key"
 
@@ -67,15 +80,20 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     bearer = {"Authorization": f"Bearer {token}"}
     # The test client sends the platform's secret on every request; a session
     # has no such thing.
-    monkeypatch.delitem(client.headers, "X-Cheese-Token")
+    monkeypatch.delitem(client.headers, "Authorization")
 
-    for headers in (
-        bearer,
-        # What a session could add on its own: its scoped token again, or a guess.
-        {**bearer, "X-Cheese-Token": token},
-        {**bearer, "X-Cheese-Token": "not-the-secret"},
+    for headers, sent in (
+        (bearer, None),
+        # What a session could add on its own: its own token as the session
+        # asked about, or a guess at the proxy's credential.
+        (bearer, {"session": token}),
+        ({"Authorization": f"Bearer {'not-the-secret'}"}, {"session": token}),
     ):
-        body = client.post("/llm/admission", headers=headers).json()["data"]
+        body = client.post("/llm/admission", headers=headers, json=sent).json()
+        if sent is not None and headers is not bearer:
+            assert body["code"] == 401
+            continue
+        body = body["data"]
         assert body["allow"] is True
         assert body["supply"]["pool"] == "gateway"
         assert body["supply"]["model"]
@@ -83,7 +101,9 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
         assert "project-key" not in json.dumps(body)
 
     proxy = client.post(
-        "/llm/admission", headers={**bearer, "X-Cheese-Token": SANDBOX_TOKEN}
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
     ).json()["data"]
     assert proxy["supply"]["key"] == "project-key"
 
@@ -140,7 +160,13 @@ def _pool(monkeypatch):
 @pytest.fixture
 def _project_key(monkeypatch):
     async def fake_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
@@ -173,11 +199,40 @@ def test_scoped_token_is_swapped_for_the_project_key(client, _pool, _project_key
     assert sent["content"] == b'{"model":"m","messages":[]}'
 
 
+def test_a_room_session_names_its_room_so_the_gateway_keeps_its_cache(
+    client, _pool, _project_key
+):
+    """The gateway keeps a conversation on the upstream node whose prompt cache
+    holds it, by the session a request names. pi names none: a room's call is
+    named by its room. Claude Code names its own, which is kept."""
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    room = project["root_topic_id"]
+    token = mint_scoped_token(project_id=project["id"], topic_id=room)
+
+    for named, expected in ((None, room), ("cc-session-1", "cc-session-1")):
+        headers = {"Authorization": f"Bearer {token}"}
+        if named:
+            headers["x-litellm-session-id"] = named
+        r = client.post(
+            "/llm/v1/chat/completions",
+            headers=headers,
+            content=b'{"model":"m","messages":[]}',
+        )
+        assert r.status_code == 200, r.text
+        assert _FakeClient.seen["headers"]["x-litellm-session-id"] == expected
+
+
 def test_x_api_key_presentation_also_works(client, _pool, _project_key):
     pid = _make_project(client)
     token = mint_scoped_token(project_id=pid)
 
-    r = client.post("/llm/v1/messages", headers={"x-api-key": token}, content=b"{}")
+    # Claude Code with ANTHROPIC_API_KEY sends nothing else; the test client's
+    # own default credential is taken off.
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": "", "x-api-key": token},
+        content=b"{}",
+    )
 
     assert r.status_code == 200
 
@@ -209,7 +264,13 @@ def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
     async def no_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return None
 
@@ -528,7 +589,13 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
     from app.domain.memory import dream
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "dream-key" if dream else "room-key"
 
@@ -543,10 +610,8 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
         token = mint_scoped_token(project_id=pid, topic_id=topic)
         return client.post(
             "/llm/admission",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-Cheese-Token": SANDBOX_TOKEN,
-            },
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+            json={"session": token},
         ).json()["data"]["supply"]
 
     before = admitted(root)
@@ -570,7 +635,13 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
     from app.domain.agent.chat import ChatService
 
     async def gateway_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return "dream-key" if dream else "room-key"
 
@@ -588,3 +659,39 @@ def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_drea
 
     assert r.status_code == 200
     assert _FakeClient.seen["headers"]["authorization"] == "Bearer dream-key"
+
+
+def test_a_credential_an_execution_machine_holds_calls_no_model(
+    client, _pool, _project_key
+):
+    """A sandbox's own credential, copied anywhere, must not be a key to the
+    project's model pool: a sandbox asks on its platform socket instead
+    (``/machine/llm``), where it needs none. The session host's copy of the
+    same session-bound credential, which Codex and Pi call with, still does."""
+    from app.core.sandbox_auth import bind_resource_token, for_a_machine
+
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    room_token = mint_scoped_token(
+        project_id=project["id"], topic_id=project["root_topic_id"]
+    )
+    session_host = bind_resource_token(
+        room_token, "resource", session_id=str(uuid.uuid4())
+    )
+    held = for_a_machine(session_host)
+
+    _FakeClient.seen = {}
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": f"Bearer {held}"},
+        content=b'{"model":"m","messages":[]}',
+    )
+    assert r.status_code == 403, r.text
+    assert r.json()["error"]["i18n"]["key"] == "modelCallFromMachineNeedsSocket"
+    assert _FakeClient.seen == {}
+
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": f"Bearer {session_host}"},
+        content=b'{"model":"m","messages":[]}',
+    )
+    assert r.status_code == 200, r.text

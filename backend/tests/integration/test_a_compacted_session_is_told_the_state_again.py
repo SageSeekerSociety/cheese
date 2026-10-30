@@ -64,7 +64,7 @@ async def _prompts_around_a_compaction(factory, tmp_path, result: str) -> list[s
 
     await turn("开始吧")
     await turn("接着做")
-    # 会话空闲时压缩（`cheese_compact` 写下的 `/compact`，或者骨架自己），按
+    # 会话空闲时压缩（`cheese_session(action=compact)` 写下的 `/compact`，或者骨架自己），按
     # Claude Code 报压缩的那两条记录。
     screen.record(topic_id, type="system", subtype="status", status="compacting")
     extra = {"compact_error": "too long"} if result == "failed" else {}

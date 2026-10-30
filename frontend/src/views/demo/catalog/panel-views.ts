@@ -27,6 +27,24 @@ import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 
+/** 一个跑着、页面里抛过两个错的帧：给「页面自己抛了错」那一格用。 */
+const DEMO_APP_FRAME = {
+  id: 1,
+  name: 'cheese-preview-demo',
+  url: 'https://preview.example.test/',
+  label: '课程网站',
+  mime: 'text/html',
+  version: null,
+  live: true,
+  posted: true,
+  bridged: true,
+  runtime: 'ready' as const,
+  pageErrors: [
+    { message: 'Cannot read properties of undefined (reading "phone")', source: 'signup.ts', line: 41 },
+    { message: 'POST /api/signup 422 字段 grade 不能为空', source: '', line: 0 },
+  ],
+}
+
 export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-changes',
@@ -111,6 +129,28 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '课件和作业都在这里',
       },
       {
+        name: '网页太大，只摆了开头',
+        note: '一份超过读入上限的网页：切到「看原文」时，底下说清只摆了开头、整份在下载里。以前这一档什么都不说，读者滑到 `</html>` 会以为文件就这么长。判据是 `too_large`，和代码文件那一档同一个。',
+        props: previewPanelProps({
+          previewFile: {
+            path: 'site/index.html',
+            content: null,
+            head: '<!doctype html>\n<html>\n<head><title>课程网站</title></head>\n<body>\n  <h1>本周作业</h1>\n  <p>1. 读完第二章</p>\n',
+            version: 'v1',
+            bytes: 8_000_000,
+            binary: false,
+            too_large: true,
+          },
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: 'https://preview.example.test/site/index.html',
+          previewNamedPath: 'site/index.html',
+        }),
+        // 那条说明在「看原文」里：这一格先点进去，再看它。
+        click: 'toggle-frame-source',
+        expect: '只摆了开头',
+      },
+      {
         name: '这一份读不到了',
         note: '文件还在清单上、字节取不到：说的是「无法读取文件」，和「预览加载失败」不是同一件事。',
         props: previewPanelProps({
@@ -124,8 +164,29 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '无法读取文件',
       },
       {
+        name: '第一次连上，还在等',
+        note: '冷启动最开始那一段：还不知道摆的是不是应用（`authorizing`），内容区摆的是页面大概的样子——一根标题、几根正文条、一块——不是一片白。顶上那行写着已经等了几秒、慢在哪。它只在**真没有内容可看**时摆：换一页时上一帧还在屏幕上，那时不摆；已经认出是应用但睡着了，那是休眠卡的事。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: null,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          // 通道和应用都在（不然这一档会走休眠卡），只是第一帧还在拿授权。
+          previewTunnelUp: true,
+          previewAppUp: true,
+          navigation: 'authorizing',
+        }),
+        expect: '正在获取预览授权',
+        // 那几根占位条是这一格的重点，光钉那句字面钉不住它。
+        expectSelector: '[data-testid=preview-skeleton]',
+      },
+      {
         name: '跑着的应用断了',
-        note: '机器上没在跑，还是跑了但应用自己没了 —— 两句不同的话。这里给的是第一句。',
+        note: '机器休眠和应用自己没了是两张不同的卡：这里是第一张，还没留过快照时卡下面垫浅底。',
         props: previewPanelProps({
           previewFile: null,
           documentType: null,
@@ -136,7 +197,48 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
           previewNamedPath: 'app',
           previewTunnelUp: false,
         }),
-        expect: '应用预览暂不可用',
+        expect: '运行环境已休眠',
+      },
+      {
+        name: '断着，但有一份快照',
+        note: '最常见的那一种：应用睡着，卡下面压着最近一次加载成功的页面（0 沙箱开销），唤醒按钮就在卡上。底下那行写的是快照**停在哪一页**——一份应用只留一张快照，几个读者同开时后写的盖掉先写的，不说清就会让人以为自己那一页被冻住了。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: true,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: false,
+          appSnapshot: {
+            html: '<!doctype html><html><body><p>快照</p></body></html>',
+            age: '4 分钟前',
+            where: '提交确认',
+          },
+        }),
+        expect: '停在「提交确认」',
+      },
+      {
+        name: '页面自己抛了错',
+        note: '应用照常显示、连通链三个绿勾，但页面里的脚本抛了异常：条上出一颗红的「2 个错误」，点开是报错清单，能把这几行一次附进批注。以前这一档只认「应用说它 ready / failed」，这种页面读者只能干瞪眼。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: 'https://preview.example.test/',
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: true,
+          previewAppUp: true,
+          previewError: null,
+          previewReadError: null,
+          frames: [DEMO_APP_FRAME],
+          displayedFrame: DEMO_APP_FRAME,
+        }),
+        expect: '2 个错误',
       },
       {
         name: '取预览失败',

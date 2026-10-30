@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.api.assistant_deps import ProjectPages
+from app.api.assistant_deps import ProjectPages, not_by_their_assistant
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_consumptions, get_session_host
 from app.api.refusal import refuse
@@ -42,13 +42,14 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import (
     BadRequestError,
+    BaseError,
     ConflictError,
     NotFoundError,
     ValidationError,
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent.personal import pages
+from app.domain.agent.personal import citing, pages
 from app.domain.agent.personal import service as assistant
 from app.domain.agent.personal.session import session as conversation_session
 from app.domain.agent.session_host.consumptions import Consumptions
@@ -61,14 +62,20 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import changes, gate, proposals
 from app.domain.assistant import memory as assistant_memory
 from app.domain.memory.files import MemoryFileError
+from app.domain.project.services import ProjectService
 from app.domain.routine import personal as routine_personal
 from app.domain.space.services import SpaceService
+from app.domain.team.services import team_service
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.user.services import timezones_by_ids, usernames_by_ids
 from app.domain.voice.service import VoiceInputs
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/assistant", tags=["assistant"])
+router = APIRouter(
+    prefix="/assistant",
+    tags=["assistant"],
+    dependencies=[Depends(not_by_their_assistant)],
+)
 
 
 People = Annotated[SessionHost, Depends(get_session_host)]
@@ -114,6 +121,61 @@ class ConversationsOut(BaseModel):
 
     conversations: list[ConversationOut]
     next: str | None = None
+
+
+class CitableOut(BaseModel):
+    """One thing the person may cite with @: its id as the token carries it,
+    its kind (``channel``, ``task``, ``doc``, ``file``), its name, where it
+    lives (a project, a team, the person's own library), and a task's
+    channel."""
+
+    id: str
+    kind: str
+    title: str
+    where: str
+    place: str | None = None
+
+
+class CitablesOut(BaseModel):
+    items: list[CitableOut]
+
+
+@router.get("/citable", **typed_response(CitablesOut))
+async def citable(
+    db: DbSession,
+    auth: AuthUser,
+    resolver: ActorResolverDep,
+    project: uuid.UUID | None = None,
+) -> dict:
+    """What the person may cite with @ in a question, for the panel to match
+    as they type. ``project`` is the one they are in: its library's files are
+    listed too. Only what they may open is listed."""
+    me = await resolver.resolve()
+    access = ProjectPages(db, resolver)
+    projects = await ProjectService(db).list_visible_to(
+        handle=me.handle, user_id=auth.user_id
+    )
+    channels: dict[uuid.UUID, list] = {}
+    names: dict[uuid.UUID, str] = {}
+    for one in projects:
+        if one.archived_at is not None:
+            continue
+        try:
+            channels[one.id] = await access.channels(one.id)
+        except BaseError:  # listed, but not theirs to open now
+            continue
+        names[one.id] = one.name
+    teams = await team_service(db).get_teams_of_user(auth.user_id)
+    own = await team_service(db).ensure_personal_team(auth.user_id)
+    items = await citing.citable(
+        db,
+        channels=channels,
+        project_names=names,
+        teams=[*teams, *([] if any(t.id == own.id for t in teams) else [own])],
+        own_team_id=own.id,
+        here=project,
+    )
+    return ok({"items": items})
 
 
 def _topic_cursor(row) -> str:
@@ -325,19 +387,25 @@ class PageIn(BaseModel):
         return str(v)
 
 
-async def _page(
-    db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo, resolver
-) -> pages.Shown:
-    """The page, written out for 芝士; it takes the same judgment as opening
-    the page."""
+async def _reader(
+    db, spaces: SpaceService, auth: AuthUserInfo, resolver
+) -> pages.Reader:
     zones = await timezones_by_ids(db, [auth.user_id])
-    reader = pages.Reader(
+    return pages.Reader(
         session=db,
         user_id=auth.user_id,
         timezone=zones.get(auth.user_id),
         spaces=spaces,
         access=ProjectPages(db, resolver),
     )
+
+
+async def _page(
+    db, spaces: SpaceService, page: PageIn, auth: AuthUserInfo, resolver
+) -> pages.Shown:
+    """The page, written out for 芝士; it takes the same judgment as opening
+    the page."""
+    reader = await _reader(db, spaces, auth, resolver)
     return await pages.render(reader, page.kind, page.id)
 
 
@@ -374,6 +442,12 @@ class AskIn(BaseModel):
     question: str = Field(default="", max_length=4000)
     #: The page it is asked from; the conversation's own place when left out.
     page: PageIn | None = None
+    #: Asked from no page: the person took the page off, or is on one 芝士
+    #: does not read. Nothing stands in for it, not even the conversation's
+    #: own place.
+    no_page: bool = False
+    #: Text the person selected on the page and asked about.
+    selection: str | None = Field(default=None, max_length=citing.SELECTION_CHARS)
     #: Files handed over with it (uploaded with ``POST /attachments``); 芝士
     #: reads them with ``cheese_read`` (``files/<id>``), as the asker may.
     files: list[FileIn] = Field(default_factory=list, max_length=10)
@@ -390,6 +464,8 @@ class AskIn(BaseModel):
     def _something(self) -> "AskIn":
         if not self.question and not self.files:
             raise ValueError("empty question")
+        if len(citing.tokens(self.question)) > citing.MOST:
+            raise ValueError(say("assistantCitesTooMany", most=citing.MOST))
         return self
 
 
@@ -410,9 +486,17 @@ async def ask(
     ``error``, ``done`` (``stopped``). Each event carries its place in the
     question's stream (``id``)."""
     row = await _owned(db, auth.user_id, conversation_id)
-    shown = body.page or _page_of(row)
+    shown = None if body.no_page else body.page or _page_of(row)
     page = None if shown is None else await _page(db, spaces, shown, auth, resolver)
-    context = "" if page is None else page.text
+    context = pages.NO_PAGE if body.no_page else "" if page is None else page.text
+    cited = await citing.cite(
+        await _reader(db, spaces, auth, resolver), citing.tokens(body.question)
+    )
+    asked_with = {
+        **({"page": page.label} if page is not None and page.label else {}),
+        **({"selection": body.selection} if body.selection else {}),
+        **({"cited": cited.kept} if cited.kept else {}),
+    }
 
     redis = get_redis_client()
     slot = await assistant.admit(
@@ -437,6 +521,13 @@ async def ask(
             conversation_id=conversation_id,
             started=conversation_session(auth.user_id, conversation_id),
             question=body.question,
+            told=citing.in_words(body.question, cited.named),
+            cited="\n\n".join(
+                part
+                for part in (citing.selection(body.selection), cited.text())
+                if part
+            ),
+            asked_with=asked_with,
             held_at=held_at,
             slot=slot,
             context=said,
@@ -489,6 +580,8 @@ class SayIn(BaseModel):
     text: str = Field(default="", max_length=4000)
     #: Files handed over with it, as with a question.
     files: list[FileIn] = Field(default_factory=list, max_length=10)
+    #: Text selected on the page, as with a question.
+    selection: str | None = Field(default=None, max_length=citing.SELECTION_CHARS)
 
     @field_validator("text")
     @classmethod
@@ -511,6 +604,8 @@ async def say_in(
     db: DbSession,
     auth: AuthUser,
     questions: Questions,
+    spaces: Spaces,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Something the person says while the conversation's question is being
     answered: kept in the conversation as theirs, and said to 芝士 in the
@@ -531,16 +626,33 @@ async def say_in(
     if answering is None or not (body.text or body.files):
         raise ConflictError(say("assistantNotAnswering"))
     files = [(f.ref, f.name) for f in body.files]
+    cited = await citing.cite(
+        await _reader(db, spaces, auth, resolver), citing.tokens(body.text)
+    )
     await assistant.AssistantConversations(db).append(
         row,
         "user",
         body.text,
-        parts={"files": [name for _, name in files]} if files else None,
+        parts={
+            **({"files": [name for _, name in files]} if files else {}),
+            **({"selection": body.selection} if body.selection else {}),
+            **({"cited": cited.kept} if cited.kept else {}),
+        }
+        or None,
     )
     await db.commit()
+    told = "\n\n".join(
+        part
+        for part in (
+            citing.in_words(body.text, cited.named),
+            citing.selection(body.selection),
+            cited.text(),
+        )
+        if part
+    )
     await questions.say(
         answering,
-        body.text + assistant.files_said(files),
+        told + assistant.files_said(files),
         body.model_dump(exclude_none=True),
     )
     return ok({"said": True})
@@ -979,6 +1091,10 @@ class RoutineOut(BaseModel):
     #: Why a paused one stopped: ``person``, ``credits`` or ``away``.
     paused: str
     nextRunAt: str | None = None
+    #: Fires once, and runs in the conversation it was asked for in.
+    once: bool
+    #: The conversation it was asked for in.
+    conversationId: str | None = None
     lastRun: RoutineRunOut | None = None
     #: What its runs cost over the last seven days, in credits.
     weekCredits: float
@@ -1007,6 +1123,8 @@ async def _routines_out(db, user_id: int) -> dict:
                 "nextRunAt": r.next_run_at.isoformat()
                 if r.next_run_at and r.state == "active"
                 else None,
+                "once": routine_personal.once(r),
+                "conversationId": str(r.conversation_id) if r.conversation_id else None,
                 "lastRun": None
                 if r.id not in last
                 else {

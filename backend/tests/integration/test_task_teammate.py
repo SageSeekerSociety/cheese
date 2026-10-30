@@ -76,9 +76,11 @@ def test_a_task_a_teammate_created_is_worked_by_that_teammate(client):
         f"/topics/{channel}/teammate-tasks",
         json={"title": "堵住公开的调试接口", "summary": "调试接口要求登录"},
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project, topic_id=channel, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=project, topic_id=channel, agent_handle=seat
+                )
+            }"
         },
     )
 
@@ -94,9 +96,9 @@ def test_a_title_too_wide_for_the_sidebar_is_refused_not_cut(client):
     project, channel, seat = _channel_with_teammate(client)
     too_wide = "把这一条过于冗长的任务标题改短到侧栏一行里放得下"
     headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project, topic_id=channel, agent_handle=seat
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=project, topic_id=channel, agent_handle=seat)
+        }"
     }
 
     refused = client.post(

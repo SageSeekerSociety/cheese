@@ -2,8 +2,9 @@
 
 The write routes decide who is a member of the project, and project membership
 is what ``authorize_topic_access`` reads to let someone into every topic of that
-project. So the acting identity is resolved at the trust boundary
-(``ActorResolverDep``) and the service authorizes it — unlike most 2.0 routes
+project. So the acting identity is resolved at the trust boundary (``Can``,
+which judges the project permission a route needs, or ``ActorResolverDep``)
+and the service authorizes it — unlike most 2.0 routes
 these do NOT honor a handle passed in the body: a claimed handle is exactly the
 forgery this surface must not accept. Reading the roster used to stay open; it
 does not any more (see ``list_members``). The invitation list is part of the
@@ -12,13 +13,14 @@ door late, because this docstring still promised the old behaviour.
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_roles import RoleDef, seats, standing
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.adapters import project_team
@@ -47,7 +49,12 @@ from app.domain.membership.services import (
     OwnershipService,
     RoleService,
 )
-from app.domain.project_permissions import DEFAULT_GRANTS, PERMISSION_ORDER, Template
+from app.domain.project_permissions import (
+    DEFAULT_GRANTS,
+    PERMISSION_ORDER,
+    Permission,
+    Template,
+)
 from app.domain.user.services import remarks_by_handles
 
 router = APIRouter(prefix="", tags=["members"])
@@ -63,16 +70,14 @@ def _invitations(db: DbSession) -> InvitationService:
     return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
 
 
-@router.post("/projects/{project_id}/members", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/members")
 async def add_member(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: MemberCreate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(project_id=project_id)
     member = await MemberService(db).seat_agent(
-        project_id=project_id, user_handle=body.user_handle, actor=who
+        project_id=at.project.id, user_handle=body.user_handle, actor=at.actor
     )
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
@@ -122,18 +127,14 @@ async def list_members(
     return ok(page(items, len(items)))
 
 
-@router.delete(
-    "/projects/{project_id}/members/{user_handle}", dependencies=[ROUTE_DECIDES]
-)
+@router.delete("/projects/{project_id}/members/{user_handle}")
 async def remove_member(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.manage_members)],
     user_handle: str,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(project_id=project_id)
     await MemberService(db).remove(
-        project_id=project_id, user_handle=user_handle, actor=who
+        project_id=at.project.id, user_handle=user_handle, actor=at.actor
     )
     return ok({"deleted": True})
 
@@ -162,18 +163,16 @@ async def leave_project(
 # 人点头。
 
 
-@router.post("/projects/{project_id}/invitations", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/invitations")
 async def invite_member(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.manage_members)],
     body: InvitationCreate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(project_id=project_id)
     invitation = await _invitations(db).invite(
-        project_id=project_id,
+        project_id=at.project.id,
         invitee_handle=body.user_handle,
-        actor=who,
+        actor=at.actor,
         role=body.role,
     )
     await db.commit()
@@ -243,25 +242,22 @@ async def revoke_invitation(
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
 
 
-# ---- 角色与权限（#3830）-------------------------------------------------------
+# ---- 角色与权限（#3830、#4795）-------------------------------------------------
 
 
 @router.put(
-    "/projects/{project_id}/members/{user_handle}/role",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(RoleOut),
+    "/projects/{project_id}/members/{user_handle}/role", **typed_response(RoleOut)
 )
 async def set_member_role(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.change_roles)],
     user_handle: str,
     body: RoleSet,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Give someone below the caller another role."""
-    who = await resolver.resolve(project_id=project_id)
+    project_id = at.project.id
     await RoleService(db).set_role(
-        project_id=project_id, handle=user_handle, role=body.role, actor=who
+        project_id=project_id, handle=user_handle, role=body.role, actor=at.actor
     )
     await db.commit()
     held = await standing(db, project_id, user_handle)
@@ -307,68 +303,53 @@ async def list_roles(
     return ok(await _roles_payload(db, project_id))
 
 
-@router.post(
-    "/projects/{project_id}/roles",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(ProjectRoleOut),
-)
+@router.post("/projects/{project_id}/roles", **typed_response(ProjectRoleOut))
 async def create_role(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.change_roles)],
     body: RoleCreate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(project_id=project_id)
-    service = RoleService(db)
-    role = await service.create(
-        project_id=project_id,
+    role = await RoleService(db).create(
+        project_id=at.project.id,
         name=body.name,
         copy_from=body.copy_from,
         template=Template(body.template) if body.template else None,
-        actor=who,
+        actor=at.actor,
     )
     await db.commit()
     return ok(_role_out(role, {}))
 
 
-@router.patch(
-    "/projects/{project_id}/roles/{key}",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(ProjectRoleOut),
-)
+@router.patch("/projects/{project_id}/roles/{key}", **typed_response(ProjectRoleOut))
 async def update_role(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.change_roles)],
     key: str,
     body: RoleUpdate,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(project_id=project_id)
     service = RoleService(db)
     role = await service.update(
-        project_id=project_id,
+        project_id=at.project.id,
         key=key,
         name=body.name,
         permissions=body.permissions,
-        actor=who,
+        actor=at.actor,
     )
     await db.commit()
-    return ok(_role_out(role, await service.holders(project_id)))
+    return ok(_role_out(role, await service.holders(at.project.id)))
 
 
-@router.delete("/projects/{project_id}/roles/{key}", dependencies=[ROUTE_DECIDES])
+@router.delete("/projects/{project_id}/roles/{key}")
 async def delete_role(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.change_roles)],
     key: str,
     db: DbSession,
-    resolver: ActorResolverDep,
     move_to: str | None = None,
 ) -> dict:
     """Delete one of the project's own roles. Whoever holds it moves to the
     role ``move_to`` names, which is needed only while someone does."""
-    who = await resolver.resolve(project_id=project_id)
     await RoleService(db).delete(
-        project_id=project_id, key=key, move_to=move_to, actor=who
+        project_id=at.project.id, key=key, move_to=move_to, actor=at.actor
     )
     await db.commit()
     return ok({"deleted": True})

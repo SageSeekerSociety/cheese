@@ -19,7 +19,7 @@ describe('文档里引用的图', () => {
 
     expect(url).toBe('blob:figure')
     expect(fetch).toHaveBeenCalledWith('/api/documents/doc-1/image?path=figures%2F%E8%80%97%E6%97%B6.png', {
-      headers: { Authorization: 'Bearer reader-token' },
+      headers: expect.objectContaining({ Authorization: 'Bearer reader-token' }),
     })
   })
 

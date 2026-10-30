@@ -237,7 +237,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
     return t('tasks.teamSelect.notEligible')
   }
 
-  return t(eligibilityReasonKey(teamEligibility.eligibility.reasons[0].code))
+  return t(eligibilityReasonKey(teamEligibility.eligibility.reasons[0].code, props.taskData?.startMode === 'DIRECT'))
 }
 </script>
 

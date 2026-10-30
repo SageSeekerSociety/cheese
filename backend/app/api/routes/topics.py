@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -92,8 +92,11 @@ from app.domain.topic.services import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.budgets import CreditBudgets
+from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
+from app.domain.usage.windows import _TZ
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -202,6 +205,8 @@ async def _unresolved_failures(
 
     `tasks_of_room` 只列**还没关**的活——关了的活自己的错误不再点亮任何一行；原地
     转成任务的支线已按任务算，不折回频道（否则旧错误点亮它、它的话清掉它的失败）。
+    拖过三天的失败也不再点亮（`waits.FAILURE_GIVES_UP_AFTER`），这条线自己那条线
+    也是 —— 否则没人接手的频道仍然永远红。
     """
     if not room_ids:
         return {}, {}
@@ -1013,6 +1018,12 @@ def _disk_snapshot(root: str) -> dict | None:
     }
 
 
+def _credit_reset_text(at: datetime) -> str:
+    """When credits come back, as the page would say it: 「11月1日 00:00」."""
+    local = at.astimezone(_TZ)
+    return f"{local.month}月{local.day}日 {local.strftime('%H:%M')}"
+
+
 @router.get("/{topic_id}/status")
 async def topic_status(
     topic_id: uuid.UUID,
@@ -1044,6 +1055,35 @@ async def topic_status(
         [card.id for card in cards]
     )
     credits = await UsageService(db).project_credits(place.project_id)
+    # 芝士读得懂的那一层：还剩多少之外，还要说清是哪一层、上限多少、几时恢复
+    # （`usage.alerts` 的同一档）。项目预算这一层不会自动恢复，单独给个数。
+    payer = await payer_for_project(db, place.project_id)
+    balance = await Ledger(db).balance(payer)
+    budget = await CreditBudgets(db).report(place.project_id)
+    cap = budget["credits_limit"]
+    cap_remaining = None if cap is None else max(0.0, cap - budget["credits_used"])
+    plan_remaining = None if balance.unlimited else balance.credits_remaining
+    # 哪一层先停：项目预算和团队方案哪边剩得少就是哪边。上限和恢复时间要跟着那一层
+    # 说，不能拿团队方案的上限去配项目预算的剩余。
+    by_budget = cap_remaining is not None and (
+        plan_remaining is None or cap_remaining <= plan_remaining
+    )
+    total = None
+    reset = None
+    if by_budget:
+        total = cap
+    elif plan_remaining is not None:
+        total = balance.credits_total
+        # 按窗口的方案没有月包，`resets_at` 是空的；要回答「几时恢复」得看最紧的那
+        # 个窗口（`usage.alerts` 认的是同一个窗口）。
+        reset = balance.resets_at
+        if reset is None and balance.windows:
+            reset = min(balance.windows, key=lambda use: use.room).resets_at
+    credits["total"] = total
+    credits["resets_at"] = None if reset is None else _credit_reset_text(reset)
+    credits["project_remaining"] = cap_remaining
+    # 上面这组数说的是哪一层：团队方案会自己回来，项目预算要有管理人去调。
+    credits["layer"] = "project_budget" if by_budget else "plan"
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
@@ -1065,6 +1105,9 @@ async def topic_status(
                 "credits": {
                     "unlimited": credits["unlimited"],
                     "remaining": credits["credits_remaining"],
+                    "total": credits.get("total"),
+                    "resets_at": credits.get("resets_at"),
+                    "project_remaining": credits.get("project_remaining"),
                 },
             },
         }
@@ -1260,12 +1303,11 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/summon")
 async def summon_agent(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
@@ -1280,14 +1322,7 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    await require_role(db, actor, place.project_id, Permission.ask_agent)
+    place, actor = at.place, at.actor
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
@@ -1334,9 +1369,10 @@ async def summon_agent(
     return ok({"started": True})
 
 
-@router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/webhook-token")
 async def mint_webhook_token(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.mint_webhook_token, at="topic_id")],
+    db: DbSession,
 ) -> dict:
     """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
@@ -1345,19 +1381,13 @@ async def mint_webhook_token(
 
     The token is a write credential for this room: whoever holds it can post
     into the room's timeline as any source, and rotating it locks out every
-    token minted before. So minting takes the same door as writing to the room
-    — project membership — rather than being handed to whoever knows the id."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        project_id=place.project_id, topic_id=place.conversation_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    token minted before. So only the room's own AI teammate mints it, which
+    no person's role grants."""
+    place = at.place
     # Scoped to the place, because the webhook wakes the place: a thread's
     # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(
-        db, topic_id=topic_id, project_id=place.project_id
+        db, topic_id=place.conversation_id, project_id=place.project_id
     )
     await db.commit()
     return ok({"token": token})

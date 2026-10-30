@@ -28,6 +28,7 @@ import { useCommands } from '@/commands'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { libraryFileBytes, libraryRoom } from '@/lib/libraryApi'
+import { useAgentContext } from '@/stores/agent'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +38,18 @@ const teamData = inject(teamDataInjectionKey, ref())
 const teamId = computed(() => teamData.value?.id ?? 0)
 // 同一个团队一直是同一个对象：组合函数按它来判断换没换资料库。
 const shelf = computed<LibraryShelf>(() => ({ team: teamId.value }))
+
+// 芝士读到的「当前页面」是这个资料库：自己的能按名字读，团队的只看得到有哪些文件。
+useAgentContext(() =>
+  teamData.value
+    ? {
+        page: { kind: 'library', id: teamData.value.id },
+        label: teamData.value.personal
+          ? t('tasks.assistant.page.library')
+          : t('tasks.assistant.page.teamLibrary', { name: teamData.value.name }),
+      }
+    : null
+)
 
 const view = ref<InstanceType<typeof LibraryView> | null>(null)
 const scroller = computed(() => view.value?.listEl ?? null)

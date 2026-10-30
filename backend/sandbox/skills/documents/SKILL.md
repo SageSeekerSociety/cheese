@@ -39,7 +39,7 @@ command -v typst && command -v pandoc
 | 要做的 | 用 | 细节 |
 |---|---|---|
 | 读用户给的材料、几份交叉核对、写带出处的结论 | `scripts/read.py`（带页码/段号/单元格；扫描页渲染成图片给你看；列出没读到的部分） | `references/sources.md` |
-| 补外部资料、找项目里已有的信息、标来源 | WebSearch/WebFetch/`cheese_fetch`；项目检索接口 | `references/sources.md` |
+| 补外部资料、找项目里已有的信息、标来源 | WebSearch/WebFetch/`cheese_web(action=fetch)`；项目检索接口 | `references/sources.md` |
 | 只想快速看一眼 Word/PPT/ODT/HTML | `pandoc` | `references/reading.md` |
 | **在一份已有的 Word 上改** | `scripts/office.py` | `references/word.md` |
 | **在一份已有的 PPT 上改** | `scripts/office.py --plain` | `references/slides.md` |
@@ -227,7 +227,7 @@ cheese show output/报告.docx --note "改了第三节的结论，其余未动"
 - 每次保存平台都留一版，用户能自己恢复到任何一版，所以不用为「留底」另存副本。
 - 保存不等于交付。这份文件要**正式交出去**时，把房间里最新的那一版取进任务目录再递卡：
   `cheese pull output/报告.docx -o <任务目录>/output/报告.docx`，然后
-  `cheese_accept_request(deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
+  `cheese_card(action="request", deliver="output/报告.docx", ...)`。交出去的是递卡那一刻的快照，
   之后房间里再怎么改、恢复到哪一版，都不影响已经交出去的那份。
 
 ## 交付前自己看一眼

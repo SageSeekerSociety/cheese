@@ -106,6 +106,13 @@ const progressTitle = computed(() => {
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+const metaEl = ref<HTMLElement | null>(null)
+watch(
+  () => state.value?.line,
+  () => {
+    if (metaEl.value) metaEl.value.scrollLeft = 0
+  }
+)
 // 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
 // handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
 // 头像的人共用同一张，认不出是谁。
@@ -254,7 +261,7 @@ function actionTestId(id: string): string | undefined {
       <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
         task ? taskTitle(task) : ''
       }}</span>
-      <span class="task-header__meta">
+      <span ref="metaEl" class="task-header__meta">
         <TaskStateMark
           v-if="state"
           class="task-header__state"
@@ -666,10 +673,10 @@ function actionTestId(id: string): string | undefined {
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(auto, 1fr) auto;
   grid-template-rows: auto auto;
   align-content: center;
-  column-gap: 16px;
+  column-gap: 8px;
   row-gap: 1px;
 }
 .task-header--bar .task-header__text {
@@ -683,6 +690,20 @@ function actionTestId(id: string): string | undefined {
 .task-header--bar .task-header__meta {
   grid-column: 1;
   grid-row: 2;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  gap: 6px;
+}
+.task-header--bar .task-header__meta::-webkit-scrollbar {
+  display: none;
+}
+.task-header--bar .task-header__note {
+  flex: none;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 .task-header--bar .task-header__state,
 .task-header--bar .task-header__owner {
@@ -699,17 +720,16 @@ function actionTestId(id: string): string | undefined {
   grid-row: 2;
   justify-self: start;
   gap: 4px;
-  min-width: 0;
-  max-width: 100%;
   height: auto;
   padding-block: 8px;
   margin-block: -8px;
 }
 .task-header--bar .task-header__owner-name {
+  max-width: 8em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.task-header--bar [data-testid='task-more'] {
+.task-header--bar :deep([data-testid='task-more']) {
   grid-column: 3;
   grid-row: 1 / 3;
   align-self: center;

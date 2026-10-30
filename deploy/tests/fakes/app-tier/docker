@@ -40,6 +40,34 @@ if [[ " $* " == *" python - "* ]]; then
     printf 'migration-touches ok\n'
     exit 0
   fi
+  # deploy/release-smoke.py: `provision` opens the smoke account's session and
+  # prints it, `check` uses the new slots with it. APP_TIER_SMOKE_FAIL=<check>
+  # makes that check fail. The check records the session it was handed through
+  # the environment.
+  if [[ "$script" == *'def check_backend('* ]]; then
+    if [[ " $* " == *" provision "* ]]; then
+      if [ "${APP_TIER_SMOKE_FAIL:-}" = provision ]; then
+        printf 'smoke provision FAILED fake failure\n'
+        exit 1
+      fi
+      printf 'smoke provision ok fake\n'
+      printf 'smoke-session 42 fake-access-token-7f3a fake-refresh-token-9c1e\n'
+      exit 0
+    fi
+    [ -z "${APP_TIER_DOCKER_LOG:-}" ] || printf 'smoke-session-seen %s %s %s\n' \
+      "${DEPLOY_SMOKE_USER_ID:-missing}" "${DEPLOY_SMOKE_TOKEN:-missing}" "${DEPLOY_SMOKE_REFRESH:-missing}" \
+      >> "$APP_TIER_DOCKER_LOG"
+    checks="frontend-index frontend-asset login me task websocket logout"
+    [[ " $* " == *" --frontend "* ]] || checks="${checks#frontend-index frontend-asset }"
+    for check in $checks; do
+      if [ "${APP_TIER_SMOKE_FAIL:-}" = "$check" ]; then
+        printf 'smoke %s FAILED fake failure\n' "$check"
+        exit 1
+      fi
+      printf 'smoke %s ok fake\n' "$check"
+    done
+    exit 0
+  fi
   # deploy/code-digest.py: the code a running relay runs (`exec`) and the code
   # the release's image would run (`compose … run`).
   if [[ "$script" == *code-digest* ]]; then
@@ -91,6 +119,30 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
     printf 'preview-owner-up-env PREVIEW_CONNECTION_IMAGE=%s\n' \
       "${PREVIEW_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
   fi
+fi
+# `docker login`: the password arrives on stdin, as with --password-stdin. The
+# first APP_TIER_LOGIN_FAIL_COUNT logins fail on a dropped connection; a password
+# other than APP_TIER_GHCR_TOKEN is refused the way ghcr refuses one. The
+# password that arrived is kept in APP_TIER_LOGIN_SECRET_SEEN, if set.
+if [ "${1:-}" = login ]; then
+  password="$(cat)"
+  [ -z "${APP_TIER_LOGIN_SECRET_SEEN:-}" ] || printf '%s\n' "$password" >> "$APP_TIER_LOGIN_SECRET_SEEN"
+  if [ -n "${APP_TIER_LOGIN_FAIL_COUNT:-}" ] && [ -n "${APP_TIER_LOGIN_COUNTER:-}" ]; then
+    seen=0
+    [ -f "$APP_TIER_LOGIN_COUNTER" ] && seen="$(cat "$APP_TIER_LOGIN_COUNTER")"
+    seen=$((seen + 1))
+    printf '%s' "$seen" > "$APP_TIER_LOGIN_COUNTER"
+    if [ "$seen" -le "$APP_TIER_LOGIN_FAIL_COUNT" ]; then
+      echo 'Error response from daemon: Get "https://ghcr.io/v2/": read tcp 10.0.0.2:48428->10.0.0.3:443: read: connection reset by peer' >&2
+      exit 1
+    fi
+  fi
+  if [ "$password" != "${APP_TIER_GHCR_TOKEN:-}" ]; then
+    echo 'Error response from daemon: Get "https://ghcr.io/v2/": denied: denied' >&2
+    exit 1
+  fi
+  echo 'Login Succeeded'
+  exit 0
 fi
 if [ -n "${APP_TIER_DOCKER_FAIL_MATCH:-}" ] && [[ "$*" == *"$APP_TIER_DOCKER_FAIL_MATCH"* ]]; then
   exit 1
@@ -186,7 +238,8 @@ fi
 
 # Fail the first APP_TIER_PULL_FAIL_COUNT pull invocations, counting across both
 # `docker pull` and `docker compose pull`. Lets a test drive the retry path — and
-# the failure path's disk reclaim — without a registry.
+# the failure path's disk reclaim — without a registry. A failed compose pull
+# prints APP_TIER_PULL_FAIL_MESSAGE, so a test can make it a full disk.
 pull_should_fail() {
   local counter="${APP_TIER_PULL_COUNTER:-}" seen=0
   [ -n "${APP_TIER_PULL_FAIL_COUNT:-}" ] && [ -n "$counter" ] || return 1
@@ -319,7 +372,7 @@ if [ "${1:-}" = "compose" ]; then
       ;;
     pull)
       if pull_should_fail; then
-        echo "fake: compose pull failed" >&2
+        echo "${APP_TIER_PULL_FAIL_MESSAGE:-fake: compose pull failed: read: connection reset by peer}" >&2
         exit 1
       fi
       ;;

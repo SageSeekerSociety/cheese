@@ -46,6 +46,8 @@ export type SpaceTeaching = {
   materialIds?: number[]
   /** 课程让 AI 队友读的团队文档（#3774）。 */
   documentIds?: string[]
+  /** 项目里每个 AI 队友每一轮都带上的技能名。 */
+  skills?: string[]
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
@@ -236,6 +238,8 @@ export type SpaceTaskVisibilityStatus =
 export type SpaceMyPublishedTask = {
   taskId: number
   taskName: string
+  /** 怎么开始：直接开始的题没有申请。 */
+  startMode?: 'DIRECT' | 'APPLY'
   category: SpaceMyPublishedTaskCategory
   approved: AnalyticsApproveType
   visibilityStatus: SpaceTaskVisibilityStatus

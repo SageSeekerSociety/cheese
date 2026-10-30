@@ -138,7 +138,7 @@ class TeamUserRelation(Base):
     __tablename__ = "team_user_relation"
     __table_args__ = (
         # Team access asks "is this person in this team" on every request
-        # (`app.auth.domains.team`, `app.auth.domains.knowledge`), task
+        # (`app.domain.team.permissions`), task
         # visibility asks it inside an EXISTS for every candidate task, and the
         # team roster reads it the same way. That is why the index starts at
         # `team_id` — it also pays off `team_user_relation.team_id`'s

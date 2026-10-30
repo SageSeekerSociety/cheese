@@ -51,6 +51,12 @@ export interface Project {
    * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
    */
   shell?: Shell
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有（只在单个项目那一行里有）；
+   *  没有起始代码是 null。`error` 是没放成的原因（`{ key, params }`）。 */
+  starter?: { revision: number; state: 'pending' | 'done' | 'failed'; error: unknown } | null
+  /** 项目来自的那道题：在哪个空间、叫什么、现在第几版（只在单个项目那一行里有）。
+   *  看的人看不到这道题的 `题目/` 时是 null。 */
+  task?: { id: number; space_id: number; name: string; version: number | null } | null
 }
 
 export interface ProjectSite {
@@ -623,6 +629,14 @@ export interface FileContent {
   // null when the file must not be edited as text: `binary` (a text editor would
   // corrupt it on save) or `too_large` (never sent — it would freeze the tab).
   content: string | null
+  // The copy a READER sees: the whole text when the file fits, its opening
+  // PREVIEW_TEXT_BYTES otherwise, null only when the bytes are not text. Viewers
+  // take this, not `content` — an editor keeps taking `content`, which stays whole
+  // or absent so a save can never write a prefix back over the file.
+  // Optional only because callers that already hold the whole text (and the
+  // fixtures that stand in for them) need not repeat it; read it through
+  // `fileKind.readerText`, which falls back to `content`.
+  head?: string | null
   // Content id to echo back on save; a mismatch means someone wrote in between.
   // Present even for `too_large`; null means the file is gone.
   version: string | null
@@ -633,7 +647,7 @@ export interface FileContent {
   editable?: boolean
 }
 
-export type { PreviewInfo } from './types/preview'
+export type { PreviewInfo, PreviewSnapshot, PreviewWakeAnswer, PreviewWakeStatus } from './types/preview'
 
 // GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
 // answered without opening any of it. The 工作面板 offers a tab only where the

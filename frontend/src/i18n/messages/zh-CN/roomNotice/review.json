@@ -1,6 +1,6 @@
 {
   "acceptConflict": "采纳停下：PR #{pr} 和目标分支冲突了",
-  "acceptConflictDetail": "{url}\n冲突不能在采纳时解决：GitHub 现在合并不了这个 PR。平台会把冲突交给 AI 队友，它在任务目录里合入目标分支、解决冲突后重新推送；检查通过后再重新采纳。",
+  "acceptConflictDetail": "{url}\n冲突不能在采纳时解决：代码托管服务现在合并不了这个 PR。平台会把冲突交给 AI 队友，它在任务目录里合入目标分支、解决冲突后重新推送；检查通过后再重新采纳。",
   "acceptDismissed": "PR #{pr} 有新提交，已有的采纳批准被作废",
   "acceptDismissedDetail": "被作废的批准：{voided}。\n新提交作废已有的采纳（项目分支保护，默认开）。请重新查看这个 PR 后再采纳。\n{url}",
   "acceptDone": "{actor} 采纳了这次改动，PR #{pr} {how}",
@@ -21,7 +21,7 @@
   "acceptStoppedPrUnavailable": "采纳未完成：PR 未能合并",
   "acceptStoppedPrUnavailableDetail": "{why}。\n绑定 GitHub 的项目只通过合并 PR 完成采纳，平台不会绕过 PR 直推上游。处理后可重试采纳。",
   "acceptStoppedTitleDisagrees": "PR #{pr} 在 GitHub 上的标题和提交审阅时的标题不一致，采纳已暂停",
-  "acceptTitleDisagreesDetail": "GitHub 上的 PR 标题：{pr_title}\n提交审阅时的标题：{subject}\n标题该怎么写是仓库自己的规矩，平台不猜哪一行才对；平台只确认合下去的那一行正是仓库检查评判过的那一行。要合并，用 cheese_describe 把这次审阅的标题改成该落的那一行（平台会同时把 PR 标题改成它，仓库的检查会按新标题重跑）。",
+  "acceptTitleDisagreesDetail": "GitHub 上的 PR 标题：{pr_title}\n提交审阅时的标题：{subject}\n标题该怎么写是仓库自己的规矩，平台不猜哪一行才对；平台只确认合下去的那一行正是仓库检查评判过的那一行。要合并，用 cheese_card(action=describe) 把这次审阅的标题改成该落的那一行（平台会同时把 PR 标题改成它，仓库的检查会按新标题重跑）。",
   "acceptStoppedStatusUnread": "PR #{pr} 状态读取失败：{error}",
   "archiveStoppedFollowing": "频道归档，平台停止跟进 PR #{pr}",
   "archiveStoppedFollowingDetail": "{url}\n这个 PR 未合并，平台不会自动关闭它，需要人决定是否关闭。",

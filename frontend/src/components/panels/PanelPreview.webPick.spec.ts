@@ -78,7 +78,6 @@ function baseProps(submitQuestion: SubmitPreviewQuestion | undefined, overrides:
     documentType: null,
     documentName: 'report.html',
     isImageArtifact: false,
-    downloadError: '',
     docBytes: null,
     docIdentity: identity,
     docSnapshot: null,
@@ -159,7 +158,7 @@ it('an element pick from the frame becomes a structured web-element quote', asyn
   expect(typeof ui.view()!.handlePick).toBe('function')
   ui.view()!.handlePick(pick)
   await nextTick()
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这里改一下')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这里改一下')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit).toHaveBeenCalledTimes(1)
   expect(submit.mock.calls[0]![0].quotedContext).toEqual({
@@ -190,7 +189,7 @@ it('a selection from the frame stays a web-text quote with the words on either s
     viewport: { w: 800, h: 600 },
   })
   await nextTick()
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这句不对')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这句不对')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit.mock.calls[0]![0].quotedContext).toMatchObject({
     kind: 'web-text',
@@ -219,8 +218,8 @@ it('an app without the bridge gets an overlay and quotes the boxed region by url
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 50, clientY: 50 })
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 150, clientY: 150 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 150, clientY: 150 })
-  await waitFor(() => expect(ui.queryByPlaceholderText('说明要改什么')).toBeTruthy())
-  await fireEvent.update(ui.getByPlaceholderText('说明要改什么'), '这块空白太大')
+  await waitFor(() => expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeTruthy())
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这块空白太大')
   await fireEvent.click(ui.getByText('发送'))
   expect(submit.mock.calls[0]![0].quotedContext).toEqual({
     kind: 'web-region',

@@ -369,7 +369,7 @@ class ProgressNotices(Protocol):
 
 
 class StaleProgressReminder:
-    """做任务的会话还在跑，而它报的任务状态（`cheese_task_state`）停在原地超过
+    """做任务的会话还在跑，而它报的任务状态（`cheese_task(action=state)`）停在原地超过
     `chat_progress_reminder_after_s`，就问它一句。
 
     判据都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议声明的状态：

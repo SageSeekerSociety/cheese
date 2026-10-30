@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「题目内容」那一节：名称、描述，以及调用方塞进来的附件。
+// 「题目内容」那一块的第一节「说明」：名称、描述，以及调用方塞进来的附件。
 //
 // 除了画，它还管一件事：把编辑器里**现在**的正文念出来（`readText`）。提交那一刻才
 // 读一次正文（简介由它截出来），是这套行为的一部分，所以是一次调用，不是一串事件：
@@ -23,7 +23,7 @@ const NAME_MAX = 100
 withDefaults(
   defineProps<{
     nameControl: FieldControl
-    /** 这一节的标题；不给就是「题目内容」。一次发好几道时写明是第几道。 */
+    /** 这一节的标题；不给就是「说明」。一次发好几道时写明是第几道。 */
     title?: string
   }>(),
   { title: undefined }
@@ -55,7 +55,7 @@ defineExpose({
 </script>
 
 <template>
-  <TaskFormSection :title="title ?? t('tasks.form.content')">
+  <TaskFormSection :title="title ?? t('tasks.form.brief')">
     <template v-if="$slots.actions" #actions><slot name="actions" /></template>
 
     <BaseField

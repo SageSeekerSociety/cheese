@@ -52,6 +52,7 @@ from app.api.auth import (
 )
 from app.api.byte_response import blob_response, media_bytes_response
 from app.api.inert_headers import INERT_HEADERS, NO_SNIFF
+from app.api.project_library import may_read_path
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.api.topics_deps import _actor_in_place
@@ -62,6 +63,7 @@ from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.model_images import model_media_type
 from app.core.sentences import exception_text, say
+from app.domain.documents.notes import slide_notes
 from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
@@ -73,6 +75,7 @@ from app.domain.preview.office import (
     is_renderable,
     render_to_html,
     render_to_pdf,
+    suffix_of,
 )
 from app.domain.project.room_files import clean_artifact_path
 from app.domain.room_task.place import place_or_404
@@ -164,6 +167,19 @@ class RoomAttachmentOut(BaseModel):
     in_library: bool
 
 
+class AttachmentNotesOut(BaseModel):
+    """A deck's speaker notes, one entry per slide (index 0 is slide 1).
+
+    ``readable`` is false when the file is not a deck we can open at all — a
+    page that is empty is an empty string in ``notes``, and the two must not be
+    conflated or an unreadable file looks like a deck with no notes.
+    """
+
+    notes: list[str]
+    readable: bool
+    version: str
+
+
 @router.get("/{topic_id}/attachments", **typed_response(Page[RoomAttachmentOut]))
 async def list_attachments(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -206,8 +222,9 @@ async def upload_attachment(
         name = clean_artifact_path(library_path)
         # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
         ref = library.library_ref(name)
+        reads_task = await may_read_path(db, topic.project_id, ref)
         stored = await library_records.stored_file(
-            db, Shelf.of_project(topic.project_id), name
+            db, Shelf.of_project(topic.project_id, with_task=reads_task), name
         )
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
@@ -348,7 +365,11 @@ async def attachment_raw(
     }
     if task is None and source == "live":
         stored = await library_records.attachment_file(
-            db, topic.project_id, room_id, clean
+            db,
+            topic.project_id,
+            room_id,
+            clean,
+            with_task=await may_read_path(db, topic.project_id, clean),
         )
         response: Response
         if isinstance(stored, library_records.Stored):
@@ -364,7 +385,15 @@ async def attachment_raw(
         else:
             response = FileResponse(stored, media_type=media_type, headers=headers)
     else:
-        data = await source_bytes(db, topic.project_id, room_id, clean, task, source)
+        data = await source_bytes(
+            db,
+            topic.project_id,
+            room_id,
+            clean,
+            task,
+            source,
+            with_task=await may_read_path(db, topic.project_id, clean),
+        )
         response = media_bytes_response(
             data,
             media_type,
@@ -407,7 +436,15 @@ async def attachment_as_pdf(
         raise ValidationError(say("previewFormatUnsupported"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
             say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
@@ -431,6 +468,64 @@ async def attachment_as_pdf(
             "Cache-Control": "no-store",
             "X-Cheese-Source-Version": content_version(data),
         },
+    )
+
+
+@router.get("/{topic_id}/attachments/notes", **typed_response(AttachmentNotesOut))
+async def attachment_notes(
+    topic_id: uuid.UUID,
+    path: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
+) -> dict:
+    """A deck's speaker notes, one entry per slide.
+
+    A slide's notes are not on the slide, and the preview panel is handed the
+    *converted PDF* — so this is the one thing about a deck the panel cannot
+    read off what it holds. It arrives as its own small JSON rather than as part
+    of the conversion response: the PDF is cached by content and read on every
+    page change, while the notes are a few kilobytes read once per file.
+
+    Authorization is the PDF route's, exactly: this reads the same bytes for the
+    same reader, so a second, weaker path to them would be a hole rather than a
+    shortcut.
+    """
+    # A task's id reaches its room's roster, files and documents.
+    topic = (await place_or_404(db, topic_id)).room
+    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    topic_id = topic.id
+    clean = clean_artifact_path(path)
+    if suffix_of(clean) not in (".pptx", ".ppt"):
+        raise ValidationError(say("previewFormatUnsupported"))
+    if task is not None:
+        await TaskService(db).require_source_in_room(topic_id, task)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
+    if len(data) > library.MAX_ARTIFACT_BYTES:
+        raise ValidationError(
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
+        )
+    # Reading a zip is CPU work on bytes that may be 200MB; keep it off the loop
+    # the same way the comparison does.
+    notes = await asyncio.to_thread(slide_notes, data)
+    return ok(
+        {
+            "notes": notes or [],
+            "readable": notes is not None,
+            "version": content_version(data),
+        }
     )
 
 
@@ -467,7 +562,15 @@ async def attachment_as_html(
         raise ValidationError(say("previewFormatUnsupported"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
-    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+    data = await source_bytes(
+        db,
+        topic.project_id,
+        topic_id,
+        clean,
+        task,
+        source,
+        with_task=await may_read_path(db, topic.project_id, clean),
+    )
     if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
             say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))

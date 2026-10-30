@@ -143,6 +143,13 @@ class DownloadArtifacts(unittest.TestCase):
         with self.assertRaises(ConnectionResetError):
             dl.main("backend-*", str(self.dest))
 
+    def test_a_burst_longer_than_a_few_tries_is_ridden_out(self):
+        # Eight resets in a row on one blob (a burst) and then it answers: the step
+        # succeeds while the budget lasts, however many tries that takes.
+        self.github.blob_faults["blob-1"] = [ConnectionResetError("ECONNRESET")] * 8
+        self.assertEqual(dl.main("backend-*", str(self.dest)), 0)
+        self.assertEqual(len(self._files()), 2)
+
     def test_no_matching_artifact_fails(self):
         self.assertEqual(dl.main("nothing-*", str(self.dest)), 1)
 

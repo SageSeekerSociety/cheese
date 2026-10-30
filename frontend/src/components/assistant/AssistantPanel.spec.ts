@@ -1,18 +1,20 @@
 /** 个人芝士的面板：头上写着是谁在回答、属于谁；说出去的话交给外面去问；芝士还在答的
  * 时候不能再问，也不能开新话题，但能停下；停下的回答留着写出的部分；话题空着时，起步问题
  * 点一下就是一个问题；之前的话题摆在上面，用「新话题」隔开，「更早的话题」再往上读。 */
+import type { AssistantEdit, AssistantMessage } from '@/stores/agentThread'
 import type { PanelMessage } from './AssistantPanel.vue'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import AssistantPanel from './AssistantPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { composerText, typeInComposer } from '@/test/composerInput'
+import { panelMessages } from '@/lib/draftChangeView'
+import { composerText, pressInComposer, typeInComposer } from '@/test/composerInput'
 
 const SAID: PanelMessage[] = [
   { role: 'user', text: '学习率一般设多少？', at: '2026-10-01T08:00:00Z' },
@@ -281,7 +283,117 @@ describe('AssistantPanel', () => {
         { role: 'assistant', text: '今天没有待办。', at: '2026-10-01T00:00:05Z' },
       ],
     })
-    expect(view.getByText('例行事务「每日待办」开始运行')).toBeTruthy()
+    expect(view.getByText('自动化「每日待办」开始运行')).toBeTruthy()
     expect(view.queryByText(/<平台>/)).toBeNull()
+  })
+})
+
+describe('AssistantPanel: what a question carries', () => {
+  const CITABLE = [
+    { id: 'a1', kind: 'task' as const, title: '接入搜索', where: '知是', place: '后端' },
+    { id: 'd1', kind: 'doc' as const, title: '搜索接入方案', where: '知是' },
+  ]
+
+  it('a question that cited things shows them by name, where it was asked, and that it carried a selection', () => {
+    const view = mount({
+      messages: [
+        {
+          role: 'user',
+          text: '比较 <#d1> 和 <#file-f1>',
+          at: '2026-10-24T08:00:00Z',
+          askedOn: '频道「后端」',
+          selection: '超时设成 600 秒',
+          cited: [
+            { id: 'd1', kind: 'doc', title: '搜索接入方案' },
+            { id: 'file-f1', kind: 'file', title: '数据集说明.pdf' },
+          ],
+        },
+      ],
+    })
+
+    expect(view.getByText('搜索接入方案')).toBeTruthy()
+    expect(view.getByText('数据集说明.pdf')).toBeTruthy()
+    expect(view.queryByText(/<#/)).toBeNull()
+    expect(view.getByText('频道「后端」')).toBeTruthy()
+    expect(view.getByText('超时设成 600 秒')).toBeTruthy()
+  })
+
+  it('the page can be left out and put back, and a selection taken off, in the box beside the files', async () => {
+    const view = mount({ pageLabel: '频道「后端」', selection: '超时设成 600 秒' })
+
+    await fireEvent.click(view.getByRole('button', { name: '不带这一页' }))
+    await fireEvent.click(view.getByRole('button', { name: '去掉选中的内容' }))
+    await view.rerender({ pageOff: true })
+    await fireEvent.click(view.getByRole('button', { name: '带上这一页' }))
+
+    expect(view.emitted('togglePage')).toHaveLength(2)
+    expect(view.emitted('clearSelection')).toHaveLength(1)
+  })
+
+  it('@ opens the menu, letters narrow it, and Enter writes the reference where the @ was', async () => {
+    const view = mount({ citable: CITABLE, project: '知是' })
+
+    await typeInComposer(view.container, '比较 @jrss')
+    await waitFor(() => expect(view.getByRole('listbox')).toBeTruthy())
+    expect(view.emitted('citeOpen')).toBeTruthy()
+    pressInComposer(view.container, 'Enter')
+
+    await waitFor(() => expect(composerText(view.container)).toBe('比较 <#a1> '))
+    expect(view.emitted('cite')).toEqual([[CITABLE[0]]])
+    expect(view.emitted('send')).toBeUndefined()
+  })
+})
+
+describe('AssistantPanel: what saving the stages of a draft would do', () => {
+  const WARNING = '1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过'
+  const write = (
+    id: number,
+    stageEffect: AssistantEdit['stageEffect'],
+    changed: AssistantEdit['changed'] = { stages: { before: [], after: [] } }
+  ): AssistantEdit => ({
+    id,
+    kind: 'draft',
+    title: '',
+    undoable: false,
+    draft: 41,
+    taskId: 9,
+    created: false,
+    version: id,
+    name: '实验一',
+    changed,
+    kept: [],
+    notes: [],
+    stageEffect,
+    undone: [],
+  })
+  const answer = (at: string, edits: AssistantEdit[], asked = '改一下阶段截止'): AssistantMessage[] => [
+    { role: 'user', text: asked, at },
+    { role: 'assistant', text: '改好了', at, edits },
+  ]
+  const terms = { categories: [], topics: [] }
+
+  it('a warning a later answer took back is no longer waiting on the person, in any answer', () => {
+    const moved = answer('2026-10-01T08:00:00Z', [write(1, [{ key: 'stageEffectFailing', params: { n: 1 } }])])
+    expect(mount({ messages: panelMessages(moved, terms) }).container.textContent).toContain(WARNING)
+    cleanup()
+
+    const restored = answer('2026-10-01T08:05:00Z', [write(2, [])])
+    const view = mount({ messages: panelMessages([...moved, ...restored], terms) })
+
+    expect(view.container.textContent).not.toContain(WARNING)
+  })
+
+  it('a warning that still holds goes with the latest answer that touched the draft, whatever it changed', () => {
+    const failing: AssistantEdit['stageEffect'] = [{ key: 'stageEffectFailing', params: { n: 1 } }]
+    const moved = answer('2026-10-01T08:00:00Z', [write(1, failing)])
+    const renamed = answer(
+      '2026-10-01T08:05:00Z',
+      [write(2, failing, { name: { before: '实验一', after: '实验一（修订）' } })],
+      '把题目改个名'
+    )
+    const text = mount({ messages: panelMessages([...moved, ...renamed], terms) }).container.textContent ?? ''
+
+    expect(text.split(WARNING).length - 1).toBe(1)
+    expect(text.indexOf(WARNING)).toBeGreaterThan(text.indexOf('把题目改个名'))
   })
 })

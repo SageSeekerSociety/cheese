@@ -108,6 +108,9 @@ export interface OAuthProvider {
   id: string
   name: string
   scope: string[]
+  // The origin this provider's sign-in runs on, when the deployment is served
+  // under several and the provider's callback is registered on one of them.
+  origin?: string | null
 }
 
 export type GetOAuthProvidersResponse = {

@@ -4,7 +4,7 @@ The platform squash-merges, so a whole topic collapses into a single commit
 whose title is the card's subject. Its format and language belong to the
 hosted repository: a project keeps its own commit convention, and an agent
 follows it by reading that project's recent history and contributing docs
-(the `cheese_accept_request` tool says so). A repository that wants its
+(the `cheese_card(action=request)` tool says so). A repository that wants its
 convention enforced does that in its own tooling — this repo's is
 `.github/scripts/check-commit-title.py`.
 

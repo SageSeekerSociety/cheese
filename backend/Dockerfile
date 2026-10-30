@@ -163,6 +163,8 @@ RUN set -eu; for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 win
 COPY --chown=cheese:python app ./app
 COPY --chown=cheese:python alembic ./alembic
 COPY --chown=cheese:python alembic.ini ./
+# The API generation an open page must be at (app/core/api_generation.py).
+COPY --chown=cheese:python api-generation ./
 # The sentences the platform says — room lines, refusals, push — in every UI
 # language. Their one copy is the frontend's catalog, outside this context, so
 # it comes in through the named `i18n` context (build.yml), to the place
@@ -194,6 +196,8 @@ COPY --chown=cheese:python scripts/feedback_status.py ./scripts/
 COPY --chown=cheese:python scripts/retained_files.py ./scripts/
 # An operator mails the 「知是正在内测」 letter with this (dry run unless --send).
 COPY --chown=cheese:python scripts/send_beta_notice.py ./scripts/
+# The merge job (deploy/merge-deployment.sh) runs this beside the backend.
+COPY --chown=cheese:python scripts/merge_deployment.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

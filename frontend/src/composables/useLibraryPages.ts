@@ -54,7 +54,8 @@ function toRow(item: Item): LibraryRow {
 export function useLibraryPages(
   shelf: () => LibraryShelf,
   view: () => LibraryView,
-  scroller: Readonly<Ref<HTMLElement | null>>
+  scroller: Readonly<Ref<HTMLElement | null>>,
+  active: () => boolean = () => true
 ) {
   const rows = ref<LibraryRow[]>([])
   const loading = ref(false)
@@ -162,7 +163,7 @@ export function useLibraryPages(
     loading.value = false
     loadFailed.value = false
     loadReason.value = ''
-    void more()
+    if (active()) void more()
   }
 
   /** 摆完了：每一串都取完了，手里也都空了。 */
@@ -177,6 +178,16 @@ export function useLibraryPages(
     () => reset(),
     { immediate: true }
   )
+
+  watch(active, (isActive) => {
+    if (!isActive) {
+      generation++
+      loading.value = false
+      return
+    }
+    if (!rows.value.length && !loading.value && !exhausted.value && !loadFailed.value) void more()
+    else void nextTick(fillIfShort)
+  })
 
   /** 一份文档在别处改了名：表里那一行跟着改，不必从头取。 */
   function renameDoc(id: string, title: string) {

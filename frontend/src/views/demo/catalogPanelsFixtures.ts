@@ -20,13 +20,16 @@
  * `catalogPanels.ts`。
  */
 import type { MaybeRef, Ref } from 'vue'
+import type { PanelPreviewLiveEdit } from '@/composables/panelPreview/liveEdit'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
+import type { DocSession } from '@/composables/useDocCollab'
 import type { DocThreadsBundle } from '@/composables/useDocThreads'
 import type { PanelChangesBundle } from '@/composables/usePanelChanges'
 import type { PanelDocBundle } from '@/composables/usePanelDoc'
 import type { PanelPreviewBundle } from '@/composables/usePanelPreview'
 import type { PanelSiteBundle } from '@/composables/usePanelSite'
 import type { SessionInspectorBundle, SessionRead } from '@/composables/useSessionInspector'
-import type { Block, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
+import type { Block, FileContent, RoomTask, TodoItem, WorkspaceFile } from '@/cx_types'
 import type { DiffLine, FileDiff } from '@/lib/diff'
 import type { DocumentIdentity } from '@/lib/documentIdentity'
 import type { Routine, RoutineRun } from '@/lib/routine'
@@ -53,6 +56,7 @@ import { SCENES } from './scenes'
 
 import { buildFileRows } from '@/lib/changesTree'
 import { DIFF_WINDOW, parseDiffLines, splitDiffByFile } from '@/lib/diff'
+import { localDocSession } from '@/lib/docLocalSession'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, pageViewOf, suffixOf } from '@/lib/fileKind'
 import { groupByTurn } from '@/lib/siteLog'
 
@@ -312,10 +316,41 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
 }
 
 /** 预览那一包里由「这一份文件」算出来的几样：照 `usePanelPreview` 的算法算，不由夹具给。 */
-type PreviewDerived = 'documentSuffix' | 'documentType' | 'documentName' | 'isImageArtifact' | 'docIdentity' | 'canPage'
+type PreviewDerived =
+  | 'documentSuffix'
+  | 'documentType'
+  | 'documentName'
+  | 'isImageArtifact'
+  | 'docIdentity'
+  | 'canPage'
+  | 'previewAppUp'
 
-/** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
-type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
+/** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。
+ *  帧、导航、快照不在此列 —— 目录里那几格（骨架屏、休眠两态、页面报错）靠它们才画得出来，
+ *  写了就从 props 取。 */
+type PreviewFixed = 'autoReloaded' | 'docPage' | 'docPageHtml'
+
+/** 「文档条上的版本」那一包（`usePanelPreviewVersions` 的返回）。预览站不连后端、也没有
+ *  保存历史，所以给一份空的：`PreviewDocStage` 只在 `current` 有值时才摆版本行。 */
+export function versionsBundle(): PreviewVersionsBundle {
+  return {
+    list: computed(() => []),
+    changedCells: computed(() => null),
+    changedBy: computed(() => ''),
+    current: computed(() => null),
+    canCompare: computed(() => false),
+    canView: computed(() => false),
+    hint: computed(() => null),
+    compare: computed(() => null),
+    oldView: computed(() => null),
+    oldError: ref(''),
+    openCompare: noop,
+    exitCompare: noop,
+    dismissHint: noop,
+    choose: noop,
+    backToLatest: noop,
+  }
+}
 
 /** 「预览」那一包（`usePanelPreview` 的返回）。View 夹具里没有的那几样（帧、导航、网页
  *  那一档）给的是取数那一层的初值：这一份是 markdown，用不上它们。后缀、类型、名字、
@@ -330,9 +365,9 @@ export function previewBundle(
     ? { topicId: DEMO_TOPIC, path: file.path, taskId: null, source: file.source ?? 'live', version: file.version }
     : null
   return {
-    frames: computed(() => []),
-    displayedFrame: ref(null),
-    navigation: ref('idle'),
+    frames: computed(() => v.frames ?? []),
+    displayedFrame: ref(v.displayedFrame ?? null),
+    navigation: ref(v.navigation ?? 'idle'),
     navigationError: ref(''),
     frameLoaded: noop,
     frameFailed: noop,
@@ -344,6 +379,7 @@ export function previewBundle(
     previewUrl: ref(v.previewUrl),
     previewAppNote: ref(v.previewAppNote),
     previewTunnelUp: ref(v.previewTunnelUp),
+    previewAppUp: ref(v.previewTunnelUp && !!v.previewUrl),
     previewNamedPath: ref(v.previewNamedPath),
     autoReloaded: ref(false),
     previewError: ref(v.previewError),
@@ -352,11 +388,11 @@ export function previewBundle(
     documentType: computed(() => DOCUMENT_TYPES[suffix] ?? null),
     documentName: computed(() => file?.path.split('/').pop() ?? ''),
     isImageArtifact: computed(() => IMAGE_SUFFIXES.has(suffix)),
-    downloadError: ref(v.downloadError),
     docBytes: computed(() => v.docBytes),
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),
     slideContext: computed(() => undefined),
+    slideNotes: computed(() => []),
     docLoading: computed(() => v.docLoading),
     docError: computed(() => v.docError),
     docRendererMissing: computed(() => v.docRendererMissing),
@@ -376,10 +412,14 @@ export function previewBundle(
       avatarOf: () => '',
     },
     revs: v.revs,
+    // 演示里协同会话是活的（点「编辑」真能改、能收起），但存回不连后端——预览站不写
+    // 任何东西（同上面的 `refuseWrite`）。
+    liveEdit: demoLiveEdit(ref(v.previewFile)),
     editing: ref(v.editing),
     showHistory: ref(v.showHistory),
     editor: v.editor,
     fileHistory: v.fileHistory,
+    versions: versionsBundle(),
     load: noopAsync,
     downloadArtifact: noopAsync,
     refreshDocument: noop,
@@ -388,7 +428,14 @@ export function previewBundle(
     closeEditor: noop,
     toggleHistory: noop,
     toggleDocPage: noop,
+    setDocNarrow: noop,
     setPickMode: noop,
+    stepHistory: () => false,
+    goTo: () => false,
+    appSnapshot: computed(() => v.appSnapshot ?? null),
+    wakeSteps: computed(() => null),
+    wakeError: ref(''),
+    wakeApp: noopAsync,
   }
 }
 
@@ -452,9 +499,48 @@ export function docBundle(
     setError: view.setError,
     fetchDocNodes: view.fetchDocNodes,
     imageSrc: view.imageSrc,
+    imageData: view.imageSrc,
+    savePdf: refuseWrite,
     canvas: memoryCanvas(),
     applyEdits: refuseWrite,
     undoAgentChanges: refuseWrite,
+  }
+}
+
+/** 预览格里和大家一起改 markdown 的那个会话（`usePanelPreviewLiveEdit` 的返回）。
+ *
+ *  能开、能改、能收起；判据和产品里那一条同源（是 markdown、是这个房间的文件、正文
+ *  读得出来）。正文绑在一份只活在这个页面里的协同文档上（`localDocSession`），所以点
+ *  「编辑」真能打字，只是不连协作服务、也不存回文件——预览站不写任何东西（同上面那些
+ *  `refuseWrite` 的说明）。 */
+function demoLiveEdit(file: Ref<FileContent | null>): PanelPreviewLiveEdit {
+  const session = shallowRef<DocSession | null>(null)
+  const editingPath = computed(() => (session.value ? file.value?.path ?? '' : ''))
+  const canEdit = computed(() => {
+    const f = file.value
+    if (!f || f.content === null || !f.version || f.binary || f.too_large) return false
+    if (f.path.startsWith('library/') || f.path.startsWith('uploads/')) return false
+    return (DOCUMENT_TYPES[suffixOf(f.path)]?.view ?? null) === 'markdown'
+  })
+  return {
+    canEdit,
+    editingPath,
+    refused: ref(''),
+    session,
+    connection: ref('connected'),
+    synced: ref(true),
+    readOnly: ref(false),
+    error: computed(() => ''),
+    outdated: ref(false),
+    deleted: ref(false),
+    begin: () => {
+      const f = file.value
+      if (!canEdit.value || !f) return
+      session.value = localDocSession(f.content ?? '', `demo:${f.path}`)
+    },
+    end: () => {
+      session.value = null
+    },
   }
 }
 
@@ -525,7 +611,10 @@ export function siteBundle(
     loading: ref(over.loading ?? false),
     loadingOlder: ref(false),
     errorMsg: ref(over.errorMsg ?? null),
+    errorForbidden: ref(false),
     arrived: reactive(new Set<string>()),
+    load: async () => {},
+    retry: () => {},
     onSiteScroll: noop,
     receive: noop,
     selectAgent: (next) => {
@@ -592,6 +681,23 @@ export const THREAD_ROWS: ThreadRow[] = [
     unread: false,
   },
 ]
+
+/** 一条收起来的支线（`thread/recycle.py`）：报错满三天、没人回来的那条。
+ *  「已回收」那一栏画的就是它，和开着的那些同一个形状，多一个收起来的时刻。 */
+export const RECYCLED_THREAD_ROW: ThreadRow = {
+  id: 'thread-recycled',
+  room_id: DEMO_TOPIC,
+  root_block_id: 'root-3',
+  reply_count: 1,
+  last_reply_at: NOTE_REPLY.created_at,
+  last_reply: NOTE_REPLY,
+  participants: ['wang', 'cheese'],
+  created_by: 'wang',
+  tasks: [],
+  root: NOTE_ROOT,
+  unread: false,
+  recycled_at: '2026-10-24T02:00:00Z',
+}
 
 /** 支线行上的时刻：和话题页的写法一样，今天的写时分，更早的写月日。 */
 export function threadTime(iso: string): string {

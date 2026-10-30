@@ -190,7 +190,7 @@ check_platform_cli_in_claude_md() {
   # knowledge filed under one gets loaded on an unrelated criterion.
   for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
   [ ${#targets[@]} -eq 0 ] && return 0
-  # A tool (`cheese_doc_set`) and a subcommand (`cheese sync`) name the same
+  # A tool (`cheese_doc(action=set)`) and a subcommand (`cheese sync`) name the same
   # kind of thing, and either spelling in AGENTS.md is the leak. `|| true`: a
   # skill or CLI with no names must leave this guard inert, not abort the
   # script under `set -e`.

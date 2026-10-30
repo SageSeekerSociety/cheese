@@ -1,6 +1,7 @@
 {
   "accessDenied": "无权访问",
   "clientDisconnected": "客户端已断开",
+  "clientOutdated": "这个页面的版本已过期，刷新后再继续",
   "consentRequired": "请阅读并同意《用户协议》和《隐私政策》",
   "consentStale": "协议已更新，请刷新页面后重新阅读并同意",
   "deviceLinkInterrupted": "与设备 {device} 的连接在执行中断开，这次操作的结果未知",

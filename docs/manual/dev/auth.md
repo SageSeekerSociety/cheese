@@ -31,8 +31,18 @@ covers:
 ## 芝士和机器 {#agents}
 
 - **会话令牌**：每个会话一张平台签发的短期令牌（`CHEESE_TOKEN`），声明里带项目、频道和作者。它用来调用平台 API、通过模型准入，也用来换 GitHub 安装令牌。
-- **机器令牌**：连接器登录后得到自己的凭证；远端机器调用模型只带这张令牌，由平台换成项目的虚拟网关 key。
+- **机器令牌**：连接器登录后得到自己的凭证；远端机器调用模型只带这张令牌，由平台换成项目的虚拟网关 key。令牌只在交给机器的那一刻生成一次：人接入的机器在批准后第一次轮询时拿到，同一个设备码再轮询什么也拿不到；平台自己开的云机器每次装机时换一张新的（`DeviceService.issue_token`、`bootstrap_token`）。库里只存它的 SHA-256 摘要，读得到数据库也冒充不了任何一台机器。
 - **上游凭证**：模型厂商 key 在网关，GitHub App 私钥在主 API，都不下发。
+
+## 凭据怎么带、怎么认 {#credentials}
+
+每个请求只带一张凭据，放在 `Authorization: Bearer`。别人写的客户端放在它们自己的位置，照样读：git 作为密码（`Authorization: Basic`），GitHub CLI 写 `Authorization: token`，Claude Code 放在 `x-api-key`。浏览器开 WebSocket 和 iframe 加不了请求头，只在那几条路由上读 `?token=` 或路由自己的 cookie。读法只有一处（`core/credentials.presented`）。
+
+是哪一种凭据也只在一处判断（`core/credentials.py`）。平台签发的每一种都是 JWT，`typ` 头写明种类：人自己的 `access`、`2fa-pending`、`sudo`、`notices`、`app-sign-in`，芝士和会话的 `agent`、`project-agent`、`personal`、`personal-execution`、`delegated`、`webhook`。每一种用各自的密钥签：从所属一族的密钥（人的是 `jwt_secret`，芝士的是 `sandbox_signing_secret`）按种类名派生，所以改了头也冒充不了别的种类。计量代理持有 `sandbox_signing_secret`，自己验会话的 `agent+jwt`。
+
+不是 JWT 的只有两种：机器令牌（随机串，库里存摘要）和平台自己的密钥（`sandbox_signing_secret` 原样出示，平台的服务之间互相调用时用）。
+
+更新到发凭据方式改变之前的 cheesehost 仍把机器令牌放在 `X-Cheese-Session`。只有 `/connector/agent` 还认这个头，而且只做一件事：叫它更新，然后断开（`connector/devices._update_a_connector_too_old`）。所有机器都升级后删掉这条路。
 
 ## 内容域 {#content}
 

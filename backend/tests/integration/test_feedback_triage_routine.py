@@ -151,7 +151,7 @@ def test_the_run_carries_the_oldest_reports_nobody_took(client, platform_room):
     assert third["display_id"] not in content, "the batch was bigger than asked"
     assert private["display_id"] not in content
     assert "私密的一条" not in content
-    assert "cheese_feedback_claim" in content
+    assert "cheese_feedback(action=claim)" in content
     assert "Fixes-feedback" in content
 
 

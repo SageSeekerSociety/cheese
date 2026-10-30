@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
@@ -138,6 +139,7 @@ import app.domain.agent.turn_inputs  # noqa: E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
+from app.core.job_runs import JobRun  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
@@ -1256,40 +1258,45 @@ def stub_project_forge(monkeypatch, tmp_path):
     merge tests supply their own PR state; tests/forgejo exercises the real API.
     """
     from app.domain.project import forge
-    from app.domain.project.models import Project, ProjectForge
+    from app.domain.project import starter as starter_code
     from app.domain.repository import forge_files
     from app.domain.review import forge_clients
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
-    provision = forge.provision_repository
     default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
-    async def provision_repository(project_id, session, **kwargs):
-        existing = await forge.binding_for_project(project_id, session)
-        project = await session.get(Project, project_id)
-        if (
-            existing is not None
-            or (project.settings or {}).get("forge_kind") == "github_app"
-        ):
-            return await provision(project_id, session, **kwargs)
-        binding = ProjectForge(
+    async def prepare_repository(project_id, *, initialize=True, **kwargs):
+        # The forge's half of making a repository; recording it
+        # (`bind_repository`) is the real code.
+        if initialize:
+            git_store.ensure_repo(project_id)
+        else:
+            # Like the real forge: an empty, bare repository that a push
+            # fills in (no working tree, so no path is checked out anywhere).
+            repo = git_store.path(project_id)
+            repo.mkdir(parents=True, exist_ok=True)
+            git_store.git(repo, "init", "-q", "--bare", "-b", "main")
+        return forge.PreparedRepository(
             project_id=project_id,
-            kind="forgejo",
             repo=f"project-{project_id.hex}/code",
             url=f"https://forge.test/project-{project_id.hex}/code.git",
             api_url="https://forge.test/api/v1",
             default_branch="main",
+            sealed_password="",
         )
-        session.add(binding)
-        await session.flush()
-        git_store.ensure_repo(project_id)
-        return binding
+
+    async def starter_remote(project_id, session):
+        # The starter push reaches the local repository with the real git
+        # commands (ls-remote, fetch, push).
+        return starter_code.Remote(
+            url=str(git_store.path(project_id)), username="test", password="test"
+        )
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1460,7 +1467,8 @@ def stub_project_forge(monkeypatch, tmp_path):
             ],
         }
 
-    monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
+    monkeypatch.setattr(forge, "starter_remote", starter_remote)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
     monkeypatch.setattr(forge, "default_branch", read_default_branch)
     monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
@@ -1541,7 +1549,7 @@ def client(
             # The cheese-only write routes are token-gated (app/api/write_access.py);
             # send the secret on every test request so tests exercising those
             # endpoints (note/lock/...) aren't rejected with 401.
-            c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
+            c.headers["Authorization"] = f"Bearer {SANDBOX_TOKEN}"
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
             # Direct business coroutines must run through ``portal.call`` with this
@@ -1636,19 +1644,20 @@ def _clean_slate_queries() -> tuple[str, str]:
     return occupied, moved_sequences
 
 
-#: The loop and engine the harness's own work on the client database runs on,
-#: made on first use. See ``_on_worker_connection``.
+#: The loop the harness's own work on this worker's databases runs on, and one
+#: engine per database, made on first use. See ``_on_worker_connection``.
 _worker_loop: asyncio.AbstractEventLoop | None = None
-_worker_engine = None
+_worker_engines: dict[str, AsyncEngine] = {}
 
 
-def _on_worker_connection(work):
-    """Run ``work(engine)`` on this worker's own connection to the client
-    database, and return what it returns.
+def _on_worker_connection(work, url: str = TEST_DATABASE_URL):
+    """Run ``work(engine)`` on this worker's own connection to the database at
+    ``url`` (the client database unless named), and return what it returns.
 
     The harness's reads and writes between tests (the clear, the seeded agent
-    user, the check for transactions a test left open) all go through one
-    connection that lives as long as the worker, on a loop of its own. A
+    user, the check for transactions a test left open, the emptied job clock)
+    all go through one connection per database that lives as long as the
+    worker, on a loop of its own. A
     backend's first read of a table loads its catalog entries: 25-45 ms on a
     fresh connection against under 1 ms on one that has read them before, and
     every engine the fixtures build is new per test. On a hosted runner a
@@ -1657,16 +1666,38 @@ def _on_worker_connection(work):
     (``asyncio.run`` per step) that an asyncpg connection cannot outlive.
     ``pool_pre_ping`` reconnects it if the database was recreated underneath.
     """
-    global _worker_loop, _worker_engine
+    global _worker_loop
     if _worker_loop is None:
         _worker_loop = asyncio.new_event_loop()
         threading.Thread(
             target=_worker_loop.run_forever, name="client-db-worker", daemon=True
         ).start()
-        _worker_engine = create_async_engine(
-            TEST_DATABASE_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
+    if url not in _worker_engines:
+        _worker_engines[url] = create_async_engine(
+            url, pool_size=1, max_overflow=0, pool_pre_ping=True
         )
-    return asyncio.run_coroutine_threadsafe(work(_worker_engine), _worker_loop)
+    return asyncio.run_coroutine_threadsafe(work(_worker_engines[url]), _worker_loop)
+
+
+def _empty_the_job_clock() -> None:
+    """Start the test with no periodic job's clock in the integration database.
+
+    Every app lifespan a test enters (``client``, ``python_client``, a test's
+    own ``lifespan_context``) records its jobs' runs and tick leases in
+    ``periodic_job_runs`` through the app's own engine, which commits outside
+    both the client database's clear and ``db_session``'s rollback. Left
+    there, an earlier test's clock decides a later one's: once a worker is
+    300 s old, some ``client`` lifespan takes the real orphan sweep's overdue
+    tick, and its lease refuses every claim on that job for 300 s more. A test
+    whose own runner of that job has to tick then waits out a process it never
+    met. Each test begins as a first deployment does, with no job recorded.
+    """
+
+    async def empty(engine) -> None:
+        async with engine.begin() as connection:
+            await connection.execute(delete(JobRun))
+
+    _on_worker_connection(empty, settings.database_url).result(timeout=60)
 
 
 async def _clear_client_db(*, seed_agent_user: bool = False) -> None:
@@ -2444,6 +2475,7 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
         drop_connections_left_in_the_app_pool()
+        _empty_the_job_clock()
         explicit_anyio = request.node.get_closest_marker("anyio") is not None
         if explicit_anyio or inspect.iscoroutinefunction(request.function):
             request.getfixturevalue("_app_engine_on_test_loop")
@@ -2676,7 +2708,7 @@ async def python_client(
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            headers={"X-Cheese-Token": SANDBOX_TOKEN},
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
         ) as c:
             # Expose the per-worker factory so contract tests can seed rows (e.g. a
             # real authenticated user) on the SAME DB the app reads through get_db.
@@ -2741,15 +2773,15 @@ def seed_claim(
     *,
     handle: str | None = None,
     team_id: int | None = None,
-    approved: int = 2,
+    approved: int = 0,
 ) -> None:
     """A claim on ``task_id``: by ``handle`` for an individual task, by
-    ``team_id`` for a team one. Pending (``approved=2``) unless told otherwise;
-    ``ApproveType.APPROVED == 0``.
+    ``team_id`` for a team one. Approved (``ApproveType.APPROVED == 0``) unless
+    told otherwise; ``approved=2`` is one still waiting for the publisher.
 
-    A project can only be built from a task someone has claimed, so every test
-    that makes one from a task claims it first — through the DB, because the
-    claim itself is not what those tests are about.
+    A project can only be built from a task with an approved claim, so every
+    test that makes one from a task claims it first — through the DB, because
+    the claim itself is not what those tests are about.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -2784,6 +2816,83 @@ def seed_claim(
             await session.commit()
 
     _asyncio.run(_seed())
+
+
+def start_task_project(
+    client: TestClient,
+    task_id: int,
+    *,
+    handle: str | None = None,
+    team_id: int | None = None,
+    by: str | None = None,
+) -> str:
+    """开始做这道题: the one way a project is made from a task. The claim is
+    ``handle``'s for an individual task, ``team_id``'s for a team one (started
+    by ``by``, a member of that team); it is seeded approved through the DB
+    unless one is held already, which must then be approved. The project is
+    made the way the claim routes make it (``task_claims.start_claim``), with
+    the task's mentors agreed to. Returns the project's id.
+
+    Through the DB because the claim is not what those tests are about; the
+    claim routes themselves are tested in ``test_task_start_mode.py``.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.api.task_claims import start_claim
+    from app.domain.task.models import Task, TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    assert (handle is None) != (team_id is None), "a claim is by a person or a team"
+    actor_handle = by or handle
+    assert actor_handle is not None, "a team's claim is started by one of its members"
+
+    async def _start() -> str:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            users = UserRepository(session)
+            actor = await users.get_by_username(actor_handle)
+            if actor is None:
+                actor = await users.create_user(
+                    username=actor_handle, email=f"{actor_handle}@example.com"
+                )
+            member_id = team_id if team_id is not None else actor.id
+            claim = await session.scalar(
+                select(TaskMembership)
+                .where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.member_id == member_id,
+                    TaskMembership.is_team.is_(team_id is not None),
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.approved != 1,
+                )
+                .order_by(TaskMembership.approved)
+            )
+            if claim is None:
+                now = datetime.now(UTC)
+                claim = TaskMembership(
+                    task_id=task_id,
+                    member_id=member_id,
+                    is_team=team_id is not None,
+                    approved=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(claim)
+                await session.flush()
+            assert claim.approved == 0, "only an approved claim is started"
+            task = await session.get(Task, task_id)
+            project = await start_claim(
+                session,
+                task=task,
+                membership=claim,
+                acting_user_id=actor.id,
+                agreed_mentors=True,
+            )
+            await session.commit()
+            return str(project.id)
+
+    return client.portal.call(_start)  # type: ignore[attr-defined]
 
 
 def seed_task_with_protocol(
@@ -2872,6 +2981,47 @@ def seed_task_with_protocol(
 
     _asyncio.run(_seed())
     return holder["id"]
+
+
+def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
+    """Put ``user_id`` in the space ``task_id`` is published in: only a space's
+    members see and claim its problems (the creator, the space's admins and
+    those already taking part aside). Already a member is fine."""
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.domain.space.models import SpaceMember
+    from app.domain.task.models import Task
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            task = await session.get(Task, task_id)
+            assert task is not None
+            existing = await session.scalar(
+                select(SpaceMember.id).where(
+                    SpaceMember.space_id == task.space_id,
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.deleted_at.is_(None),
+                )
+            )
+            if existing is not None:
+                return
+            now = datetime.now(UTC)
+            session.add(
+                SpaceMember(
+                    space_id=task.space_id,
+                    user_id=user_id,
+                    invite_code_id=None,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_seed())
 
 
 def seed_user(client: TestClient, handle: str) -> str:

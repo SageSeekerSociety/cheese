@@ -34,9 +34,6 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.auth.core import Role
-from app.auth.domains.task import get_task_roles
-from app.auth.domains.team import get_team_roles
 from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
 from app.domain.task.models import (
     TaskMembership,
@@ -45,11 +42,13 @@ from app.domain.task.models import (
     TaskSubmissionReview,
 )
 from app.domain.task.repositories import (
+    TaskMembershipRepository,
     TaskSubmissionEntryRepository,
     TaskSubmissionRepository,
     TaskSubmissionReviewRepository,
 )
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
+from app.domain.team.permissions import Seat, seat_of
 from tests.integration.conftest import a_team
 
 #: What each model declares, and what `d3f6a2c85b71` builds.
@@ -320,11 +319,14 @@ async def test_the_deadline_sweep_reads_only_the_rows_it_can_fail(db_factory):
             failed = await check_and_fail_expired_deadlines(session)
         assert failed == seeded["sweepable"]
 
+        # The pass over claims past their own deadline; the other pass looks
+        # for claims on a task with a stage already due.
         sweeps = [
             (sql, params)
             for sql, params in seen
             if sql.lstrip().upper().startswith("SELECT")
             and "FROM task_membership" in sql
+            and "task_membership.deadline <" in sql
         ]
         # One page per round, so several rounds of the same statement.
         assert sweeps, "the sweep ran no query"
@@ -351,12 +353,13 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
         await session.execute(text("SET LOCAL enable_seqscan = off"))
 
         with statements(session) as seen:
-            assert await get_task_roles(session, MEMBER, "task", task_id) == {
-                Role.PARTICIPANT
-            }
-            assert await get_team_roles(session, MEMBER, "team", team_id) == {
-                Role.MEMBER
-            }
+            assert (
+                await TaskMembershipRepository(session).get_user_membership(
+                    task_id=task_id, user_id=MEMBER
+                )
+                is not None
+            )
+            assert await seat_of(session, team_id, MEMBER) is Seat.member
             assert (
                 await TaskSubmissionRepository(
                     session

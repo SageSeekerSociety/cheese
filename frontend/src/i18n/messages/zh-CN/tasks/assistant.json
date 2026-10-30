@@ -17,15 +17,30 @@
   "silent": "芝士没有给出回答",
   "today": "今天",
   "steps": {
-    "folded": "{first}等 {n} 步",
     "thinking": "思考中",
     "thought": "思考了 {s} 秒",
     "notFound": "内容不存在",
     "denied": "没有权限",
-    "failed": "调用失败"
+    "failed": "调用失败",
+    "count": "完成 {n} 步",
+    "sent": "发送 {n} 条消息",
+    "acted": "执行 {n} 项操作",
+    "readCount": "查阅 {n} 项资料",
+    "reading": "正在{what}…",
+    "and": "，",
+    "verbs": {
+      "read": "读取",
+      "find": "查找",
+      "search": "搜索"
+    }
   },
   "changes": {
-    "memory": {"title": "记忆", "saved": "已记住", "changed": "已更新", "forgotten": "已忘记"},
+    "memory": {
+      "title": "记忆",
+      "saved": "已记住",
+      "changed": "已更新",
+      "forgotten": "已忘记"
+    },
     "title": "表单改动",
     "created": "新建草稿",
     "untitled": "未命名题目",
@@ -136,6 +151,62 @@
     "expired": "已过期"
   },
   "run": {
-    "routine": "例行事务「{title}」开始运行"
+    "routine": "自动化「{title}」开始运行",
+    "wait": "「{title}」开始运行",
+    "filed": "任务「{task}」提交审阅了",
+    "accepted": "任务「{task}」的提交已采纳",
+    "rejected": "任务「{task}」的提交已退回"
+  },
+  "page": {
+    "channel": "频道「{name}」",
+    "task": "任务「{name}」",
+    "thread": "支线「{name}」",
+    "doc": "《{name}》",
+    "project": "项目「{name}」",
+    "problem": "题目「{name}」",
+    "publish": "发布题目",
+    "library": "我的资料库",
+    "teamLibrary": "团队「{name}」的资料库"
+  },
+  "context": {
+    "removeSelection": "去掉选中的内容",
+    "askSelection": "问芝士",
+    "leavePage": "不带这一页",
+    "includePage": "带上这一页"
+  },
+  "cite": {
+    "recent": "最近去过",
+    "inProject": "项目「{name}」里",
+    "everywhere": "你参加的项目",
+    "empty": "暂无匹配",
+    "back": "返回",
+    "button": "引用（{'@'}）",
+    "tooMany": "最多引用 {most} 样",
+    "loading": "正在读取",
+    "kinds": {
+      "task": "任务",
+      "channel": "频道",
+      "doc": "文档",
+      "file": "资料库文件",
+      "problem": "题目"
+    },
+    "label": "引用"
+  },
+  "rule": {
+    "waiting": "等待中",
+    "on": "已开启",
+    "started": "已开始",
+    "gaveUp": "{days} 天内没有发生，已停止等待",
+    "cancelled": "已取消",
+    "ended": "已结束",
+    "paused": {
+      "person": "已暂停",
+      "credits": "额度已用完，已暂停",
+      "away": "长时间未登录，已暂停"
+    },
+    "cancel": "取消",
+    "pause": "暂停",
+    "resume": "恢复",
+    "failed": "操作失败"
   }
 }

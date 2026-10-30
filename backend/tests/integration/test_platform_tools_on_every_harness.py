@@ -1,7 +1,7 @@
 """The room's checklist, message edits and the silence rule are the same on
 every harness.
 
-`todo_write`, `chat_send` and `chat_edit` are platform tools, and each harness
+`todo_write`, `chat_send` and `cheese_chat` are platform tools, and each harness
 reaches the backend through code of its own: Claude Code through the plugin
 module that takes the model's tool call (`proxy.js`) and the session's MCP
 transport process it hands the call to, Codex through the handler app-server
@@ -105,7 +105,7 @@ def _relay(client) -> ThreadingHTTPServer:
             headers = {
                 name: value
                 for name, value in self.headers.items()
-                if name.lower() in ("content-type", "x-cheese-token", "x-cheese-turn")
+                if name.lower() in ("content-type", "authorization", "x-cheese-turn")
             }
             response = client.request(
                 self.command, self.path, content=body, headers=headers
@@ -232,7 +232,7 @@ def harness(request, client, room, tmp_path, monkeypatch):
         # then exactly the platform's table.
         tools.client.call = lambda method, params: {"tools": []}
         listed = asyncio.run(tools.discover())
-        assert {"todo_write", "chat_send", "chat_edit"} <= {
+        assert {"todo_write", "chat_send", "cheese_chat"} <= {
             tool["name"] for tool in listed
         }
 
@@ -293,7 +293,12 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
     [sent] = [b for b in blocks if b["content"] == "先看 issue"]
     with room_socket(client, topic, "alice") as ws:
         harness(
-            "chat_edit", {"message_id": sent["id"], "content": "先看 issue，再写测试"}
+            "cheese_chat",
+            {
+                "action": "edit",
+                "message_id": sent["id"],
+                "content": "先看 issue，再写测试",
+            },
         )
         edited = _next(ws, "block_updated")
     assert edited["id"] == sent["id"]

@@ -65,7 +65,7 @@ function rowMeta(file: LibraryFile): string {
 }
 
 function folderMeta(folder: LibraryFolder): string {
-  return t('work.library.folderMeta', {
+  return t(folder.readonly ? 'work.library.readonlyFolderMeta' : 'work.library.folderMeta', {
     n: folder.count,
     when: relTime(new Date(folder.modified * 1000).toISOString()),
   })
@@ -99,13 +99,22 @@ function folderActions(folder: LibraryFolder): MenuAction[] {
 }
 
 function fileActions(file: LibraryFile): MenuAction[] {
+  const download: MenuAction = {
+    key: 'download',
+    label: t('work.library.download'),
+    icon: 'mdi-download-outline',
+    onSelect: () => emit('download', file),
+  }
+  const versions: MenuAction = {
+    key: 'versions',
+    label: t('work.library.versions'),
+    icon: 'mdi-history',
+    onSelect: () => emit('versions', file),
+  }
+  // 题目的材料只能读：换、挪、删都是出题人在题目那边的事。
+  if (file.readonly) return [download, versions]
   return [
-    {
-      key: 'download',
-      label: t('work.library.download'),
-      icon: 'mdi-download-outline',
-      onSelect: () => emit('download', file),
-    },
+    download,
     {
       key: 'replace',
       label: t('work.library.replace'),
@@ -118,12 +127,7 @@ function fileActions(file: LibraryFile): MenuAction[] {
       icon: 'mdi-folder-move-outline',
       onSelect: () => emit('rename', file.path),
     },
-    {
-      key: 'versions',
-      label: t('work.library.versions'),
-      icon: 'mdi-history',
-      onSelect: () => emit('versions', file),
-    },
+    versions,
     {
       key: 'delete',
       label: t('work.library.delete'),
@@ -182,7 +186,12 @@ function entryKey(row: unknown): string {
               <span class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
             </span>
           </button>
-          <AdaptiveMenu v-bind="rowMenu.bind(item.key)" :actions="folderActions(item.folder)" :title="item.folder.name">
+          <AdaptiveMenu
+            v-if="!item.folder.readonly"
+            v-bind="rowMenu.bind(item.key)"
+            :actions="folderActions(item.folder)"
+            :title="item.folder.name"
+          >
             <template #activator="{ props: menuProps }">
               <BaseButton
                 v-bind="menuProps"

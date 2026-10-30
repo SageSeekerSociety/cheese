@@ -27,6 +27,8 @@
     "otherPlaceholder": "其他回答",
     "otherSend": "发送",
     "closed": "已结束，不再等回答",
+    "withdrawn": "芝士收回了这道题",
+    "expired": "这道题过期了，仍可以回答",
     "withdraw": "撤回",
     "withdrawAria": "撤回你对「{text}」的回答",
     "withdrawTitle": "撤回这条回答？",

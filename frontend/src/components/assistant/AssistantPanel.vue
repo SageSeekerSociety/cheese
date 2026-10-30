@@ -55,12 +55,14 @@
           {{ t('tasks.assistant.olderMessages') }}
         </button>
         <template v-for="(m, i) in topic.messages" :key="i">
-          <div v-if="m.role === 'user'" class="ap__q">
-            <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
-            <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
-              <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
-            </p>
-          </div>
+          <AssistantAsked
+            v-if="m.role === 'user'"
+            :text="m.text"
+            :files="m.files"
+            :asked-on="m.askedOn"
+            :selection="m.selection"
+            :cited="m.cited"
+          />
           <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
           <div v-else class="ap__a">
             <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
@@ -72,6 +74,7 @@
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
               :files="m.handed ?? []"
+              :rules="m.rules ?? []"
               @download-file="(file) => emit('downloadFile', file)"
             >
               <template #text="{ text }">
@@ -110,12 +113,14 @@
       </button>
       <template v-for="(m, i) in messages" :key="i">
         <p v-if="dayOf(i)" class="ap__day">{{ dayOf(i) }}</p>
-        <div v-if="m.role === 'user'" class="ap__q">
-          <p v-if="m.text" class="ap__q-t">{{ m.text }}</p>
-          <p v-for="name in m.files ?? []" :key="name" class="ap__q-file">
-            <v-icon size="14">mdi-paperclip</v-icon><span data-user-content>{{ name }}</span>
-          </p>
-        </div>
+        <AssistantAsked
+          v-if="m.role === 'user'"
+          :text="m.text"
+          :files="m.files"
+          :asked-on="m.askedOn"
+          :selection="m.selection"
+          :cited="m.cited"
+        />
         <p v-else-if="m.role === 'platform'" class="ap__run">{{ runLine(m.shown) }}</p>
         <div v-else class="ap__a">
           <span class="ap__avatar" aria-hidden="true"><CheeseAvatar :size="26" /></span>
@@ -127,6 +132,7 @@
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
             :files="m.handed ?? []"
+            :rules="m.rules ?? []"
             :sending="sendingProposal"
             @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
             @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -161,6 +167,7 @@
           :results="results"
           :proposals="proposals"
           :files="handed"
+          :rules="rules"
           :sending="sendingProposal"
           @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
           @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -217,10 +224,21 @@
       </Transition>
       <!-- The same box as the channel composer's: the chip row, the editor, the action row. -->
       <div class="ap__box">
-        <ComposerChipRow
-          v-if="chips.length"
+        <CiteMenu
+          v-if="cite.open.value"
+          ref="citeMenu"
+          class="ap__cite-menu"
+          :picker="cite"
+          :project="project"
+          :most="MOST_CITED"
+        />
+        <AssistantContextRow
+          :page="pageLabel"
+          :page-off="pageOff"
+          :selection="selection"
           :atts="chips"
-          :topic-id="null"
+          @toggle-page="emit('togglePage')"
+          @clear-selection="emit('clearSelection')"
           @remove-att="(i: number) => emit('removeFile', i)"
         />
         <ComposerEditor
@@ -228,7 +246,7 @@
           v-model="draft"
           v-model:caret="caret"
           class="ap__input"
-          :names="NO_NAMES"
+          :names="names"
           :placeholder="placeholder ?? t('tasks.assistant.placeholder')"
           :label="placeholder ?? t('tasks.assistant.placeholder')"
           @keydown="onKeydown"
@@ -253,6 +271,18 @@
           @voice-done="voice.finish()"
           @voice-swap="swapVoice"
         >
+          <template #chips>
+            <BaseButton
+              kind="ghost"
+              size="sm"
+              icon="mdi-at"
+              class="ap__cite"
+              :aria-label="t('tasks.assistant.cite.button')"
+              :title="t('tasks.assistant.cite.button')"
+              @mousedown.prevent
+              @click="cite.start(), editor?.focus?.()"
+            />
+          </template>
           <!-- The recording bar grows out of the microphone, as in the channel composer. -->
           <template #voice>
             <Transition name="voice-grow" :duration="{ enter: 320, leave: 180 }">
@@ -284,25 +314,30 @@ import type { VoiceHeard } from '@/composables/useVoiceInput'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
-import type { AssistantHanded } from '@/stores/agentThread'
+import type { AssistantCited, AssistantHanded, AssistantRule, AssistantShown } from '@/stores/agentThread'
+import type { Citable } from '@/types/citable'
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 import dayjs from 'dayjs'
 
+import { MOST_CITED, useCitePicker } from '@/composables/useCitePicker'
 import { useComposerVoice } from '@/composables/useComposerVoice'
 
+import AssistantAsked from './AssistantAsked.vue'
+import AssistantContextRow from './AssistantContextRow.vue'
 import AssistantTurn from './AssistantTurn.vue'
+import CiteMenu from './CiteMenu.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { MarkdownRenderer } from '@/components/chat/services/markdownRenderer'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
-import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
+import { runLine } from '@/lib/agentRules'
 import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
@@ -318,19 +353,24 @@ export interface PanelTopic {
 export interface PanelMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
-  /** 平台开始一次运行的那一句：哪条例行事务。 */
-  shown?: { routine?: string }
+  /** 平台开始一次运行的那一句：哪条自动化、发生了什么。 */
+  shown?: AssistantShown
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
   /** 随问题交给芝士的文件名。 */
   files?: string[]
+  /** 人问的：在哪一页问的、带着选中的哪段字、引用了什么。 */
+  askedOn?: string
+  selection?: string
+  cited?: AssistantCited[]
   steps?: PanelStep[]
   changes?: PanelChange[]
   results?: PanelResult[]
   proposals?: PanelProposal[]
-  /** 芝士交给人的文件。 */
+  /** 芝士交给人的文件、建或改的自动化。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
 }
@@ -387,6 +427,18 @@ const props = withDefaults(
     /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
     dockable?: boolean
     docked?: boolean
+    /** 输入框上方那一排：这一页叫什么（没有就不画）、人关掉了没有，和选中交给芝士的那段字。 */
+    pageLabel?: string | null
+    pageOff?: boolean
+    selection?: string | null
+    /** `@` 能引用的东西（还没读回来是 null）、最近去过的 id、眼前这个项目的名字。 */
+    citable?: Citable[] | null
+    recents?: string[]
+    project?: string | null
+    /** 用 @ 挑过的东西，输入框里的标签照它写名字。 */
+    cited?: NonNullable<RefNames['cited']>
+    searchProblems?: (query: string) => Promise<Citable[]>
+    rules?: AssistantRule[]
   }>(),
   {
     earlier: () => [],
@@ -412,6 +464,15 @@ const props = withDefaults(
     hearVoice: undefined,
     files: () => [],
     closable: true,
+    pageLabel: null,
+    pageOff: false,
+    selection: null,
+    citable: null,
+    recents: () => [],
+    project: null,
+    cited: () => ({}),
+    searchProblems: undefined,
+    rules: () => [],
   }
 )
 
@@ -437,6 +498,11 @@ const emit = defineEmits<{
   downloadFile: [file: AssistantHanded]
   /** 芝士回答里的站内链接（`/projects/ml-course/channels/3`）：在这个页面里打开。 */
   openLink: [path: string]
+  togglePage: []
+  clearSelection: []
+  /** 打开了 @ 菜单：去读能引用的东西。 */
+  citeOpen: []
+  cite: [item: Citable]
 }>()
 
 /** 回答里指向站内页面的链接不整页刷新，交给外面换页；外链和带修饰键的点击照浏览器的来。 */
@@ -452,10 +518,6 @@ function followLink(event: MouseEvent) {
 
 const { t } = useI18n()
 
-/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
-function runLine(shown?: { routine?: string }): string {
-  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
-}
 const markdown = new MarkdownRenderer()
 
 /** 正在答的这一轮，按发生的顺序。最后做的几步都已回来、还没开始写下一段话时，末尾是
@@ -566,7 +628,23 @@ const {
   isImeKey: (e) => composing.value || e.isComposing || e.keyCode === 229,
 })
 
+const citeMenu = ref<{ scrollActiveIntoView: () => void } | null>(null)
+const cite = useCitePicker({
+  draft,
+  caret,
+  items: () => props.citable,
+  recents: () => props.recents,
+  project: () => props.project,
+  most: MOST_CITED,
+  opened: () => emit('citeOpen'),
+  picked: (item) => emit('cite', item),
+  searchProblems: props.searchProblems,
+  scrollActiveIntoView: () => citeMenu.value?.scrollActiveIntoView(),
+})
+const names = computed<RefNames>(() => ({ ...NO_NAMES, cited: { ...props.cited, ...cite.picks.value } }))
+
 function onKeydown(e: KeyboardEvent) {
+  if (cite.onKeydown(e)) return
   if (onVoiceKey(e)) return
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing.value) {
     e.preventDefault()
@@ -729,31 +807,6 @@ function nearTop() {
   border-radius: var(--radius-sm);
 }
 
-.ap__q {
-  align-self: flex-end;
-  max-width: 85%;
-  padding: 8px 12px;
-  margin: 0;
-  color: var(--ink);
-  white-space: pre-wrap;
-  background: var(--fill-2);
-  border-radius: var(--radius-lg);
-}
-
-.ap__q-t {
-  margin: 0;
-}
-
-.ap__q-file {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  margin: 4px 0 0;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
 .ap__a {
   display: flex;
   gap: 10px;
@@ -839,6 +892,7 @@ function nearTop() {
 }
 
 .ap__box {
+  position: relative;
   padding: 4px 6px 4px 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -846,6 +900,14 @@ function nearTop() {
     border-color var(--dur-quick) var(--ease-standard),
     box-shadow var(--dur-quick) var(--ease-standard),
     background-color var(--dur-quick) var(--ease-standard);
+}
+
+.ap__cite-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 3;
 }
 
 .ap__box:focus-within {

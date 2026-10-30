@@ -31,6 +31,13 @@ _MEDIA_TYPES = {
 #: decompression bomb can make this process allocate: 64 million pixels.
 MAX_SIDE = 8000
 
+#: The most bytes one picture may have. The Claude API takes an image of up to
+#: 10 MB once base64-encoded, which is 7.5 MB of the file itself; a larger one
+#: refuses the request, and the conversation with it. It also bounds what a turn
+#: reads into memory for a picture: a file of several GB sent as one is never
+#: read (`app.domain.agent.prompt.model_images`).
+MAX_BYTES = 10_000_000 * 3 // 4
+
 
 def model_media_type(source: bytes | BinaryIO) -> str | None:
     """The media type ``source`` decodes as, or None when a model would refuse it.

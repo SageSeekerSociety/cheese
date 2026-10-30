@@ -92,7 +92,7 @@ flowchart LR
         ccr["审阅卡片<br/>1 审阅 2 发送 0 忽略"]
     end
     subgraph L3["上报契约"]
-        propose["反馈提案工具<br/>cheese_feedback_propose"]
+        propose["反馈提案工具<br/>cheese_feedback(action=propose)"]
         render["渲染提案卡<br/>一条消息块, 不是旁白"]
         submit["统一提交管道<br/>POST /feedback"]
     end
@@ -151,6 +151,7 @@ flowchart LR
 - **私密反馈，提交者本人可见**。可见的人是「提交者本人 + 平台管理员 + 提出它时在那个房间里、且今天还读得到那个房间的人」（结论 47，见方案稿 §4.3）；查询同时算 `author_handle` 与 `submitted_by_handle`，因为 agent 提案、人确认提交的那一类两者不同。
 - **反馈中心是平台共享的，不以组织（Space）为单位**。「公开」= 对所有登录用户公开；`project_id` 只是**出处**，不是可见性范围。`topic_id` 两样都是：它既是出处，也是上面那一档的授权键——所以它不由客户端填，由发送提案卡的那个端点从 URL 解出来。
 - **默认不展示已解决的 bug**，取窄读法：**只沉底已解决的 bug**，已解决的 suggestion 不沉。
+  - 2026-10-28 撤销：「全部」真装所有公开反馈，不再沉底；理由与落点见方案稿 §8.23 下的撤销说明。
 - **§8.1 谁算平台管理员** → `settings.feedback_admin_handles` 白名单（照 `dogfood_owner_handles` 的先例）。不点亮 `SystemRole.SUPER_ADMIN`，那要动 1.0 的权限框架。
 - **§8.3 `security` 与 `visibility`** → `security` 是 `private` 之下的一层**读时收窄**，不覆写提交者自己选的 `visibility`。
 
@@ -166,7 +167,7 @@ flowchart LR
 - pi：平台工具不走 MCP，`harness/pi/catalog.py` 直接读机器上装着的那个 CLI，`platform.ts` 再把每个注册成 pi 的原生工具。
 - codex：从 executor 的 `native` 服务器和其余 MCP 服务器发现，平台工具随它那份 CLI 一起来。
 
-所以 `cheese feedback propose` 加进那棵树，三个 harness 同时就有了。两条值得记住的推论：**工具名是算出来的**（`feedback propose` → `cheese_feedback_propose`），**`help=` 就是工具 schema**（写进 argparse 的措辞直接是模型看到的那份，不存在文档和实现漂移）。另外，「无屏巡检轮次不给这个工具」不需要专门实现——该命令和 `cheese chat send` 一样要 `CHEESE_TOPIC`，巡检轮次没有话题，命令自己就拒绝；**门在服务端，不在工具清单上**。
+所以 `cheese feedback propose` 加进那棵树，三个 harness 同时就有了。两条值得记住的推论：**工具名是算出来的**（`feedback propose` → `cheese_feedback(action=propose)`），**`help=` 就是工具 schema**（写进 argparse 的措辞直接是模型看到的那份，不存在文档和实现漂移）。另外，「无屏巡检轮次不给这个工具」不需要专门实现——该命令和 `cheese chat send` 一样要 `CHEESE_TOPIC`，巡检轮次没有话题，命令自己就拒绝；**门在服务端，不在工具清单上**。
 
 ## agent 只能提案，不能发布
 

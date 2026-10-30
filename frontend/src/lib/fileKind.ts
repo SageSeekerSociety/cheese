@@ -7,10 +7,13 @@ export interface FileKind {
   label: string
   icon: string
   /** 预览面板把它交给哪个阅读器。 */
-  view: 'pages' | 'sheet' | 'markdown'
+  view: 'pages' | 'sheet' | 'markdown' | 'code'
   /** 表格按哪种读法打开。字节本身看不出区别，所以这是这一行类型自己的事，只对
    *  `view: 'sheet'` 的那些有意义；不是表格就没有这一项。 */
   sheet?: 'workbook' | 'csv' | 'tsv' | 'ods'
+  /** 代码按哪种语法高亮（highlight.js 的语言名，见 `lib/codeHighlight`）。只对
+   *  `view: 'code'` 的那些有意义；`plaintext` 是只要行号、不上色的纯文本。 */
+  language?: string
 }
 
 /** 类型名按当前语言取：`label` 是 getter，每次读都查一次目录，切换语言后跟着变。 */
@@ -19,6 +22,65 @@ function named<T extends { icon: string; view?: FileKind['view'] }>(labelKey: st
     enumerable: true,
     get: () => t(`work.room.fileKind.${labelKey}`),
   }) as T & { label: string }
+}
+
+/** 源码和纯文本：按行摆、带行号、能按行指一处（`PreviewCode`）。
+ *
+ *  它们进 DOCUMENT_TYPES 而不是另开一张表：预览面板、资料库、对话里的附件都按那一张
+ *  表挑阅读器，代码文件在三处都该是同一个样子。以前它们不在任何一张表里，`cheese show`
+ *  摆出来的 .py 会被当成网页塞进 iframe。
+ *
+ *  .html/.svg 不在这里：它们首先是网页（`WEB_TYPES`），源码是网页那一格「看原文」时的
+ *  另一种读法。 */
+function code(label: string, language: string, icon = 'mdi-file-code-outline'): FileKind {
+  return { label, icon, view: 'code', language }
+}
+const CODE_TYPES: Record<string, FileKind> = {
+  py: code('Python', 'python', 'mdi-language-python'),
+  pyi: code('Python', 'python', 'mdi-language-python'),
+  js: code('JavaScript', 'javascript', 'mdi-language-javascript'),
+  mjs: code('JavaScript', 'javascript', 'mdi-language-javascript'),
+  cjs: code('JavaScript', 'javascript', 'mdi-language-javascript'),
+  jsx: code('JavaScript', 'javascript', 'mdi-language-javascript'),
+  ts: code('TypeScript', 'typescript', 'mdi-language-typescript'),
+  mts: code('TypeScript', 'typescript', 'mdi-language-typescript'),
+  cts: code('TypeScript', 'typescript', 'mdi-language-typescript'),
+  tsx: code('TypeScript', 'typescript', 'mdi-language-typescript'),
+  vue: code('Vue', 'xml', 'mdi-vuejs'),
+  java: code('Java', 'java', 'mdi-language-java'),
+  kt: code('Kotlin', 'kotlin', 'mdi-language-kotlin'),
+  c: code('C', 'c', 'mdi-language-c'),
+  h: code('C', 'c', 'mdi-language-c'),
+  cpp: code('C++', 'cpp', 'mdi-language-cpp'),
+  cc: code('C++', 'cpp', 'mdi-language-cpp'),
+  cxx: code('C++', 'cpp', 'mdi-language-cpp'),
+  hpp: code('C++', 'cpp', 'mdi-language-cpp'),
+  hh: code('C++', 'cpp', 'mdi-language-cpp'),
+  cs: code('C#', 'csharp', 'mdi-language-csharp'),
+  go: code('Go', 'go', 'mdi-language-go'),
+  rs: code('Rust', 'rust', 'mdi-language-rust'),
+  rb: code('Ruby', 'ruby', 'mdi-language-ruby'),
+  php: code('PHP', 'php', 'mdi-language-php'),
+  swift: code('Swift', 'swift', 'mdi-language-swift'),
+  lua: code('Lua', 'lua', 'mdi-language-lua'),
+  r: code('R', 'r', 'mdi-language-r'),
+  sh: code('Shell', 'bash', 'mdi-console'),
+  bash: code('Shell', 'bash', 'mdi-console'),
+  zsh: code('Shell', 'bash', 'mdi-console'),
+  json: code('JSON', 'json', 'mdi-code-json'),
+  yaml: code('YAML', 'yaml'),
+  yml: code('YAML', 'yaml'),
+  toml: code('TOML', 'ini'),
+  ini: code('INI', 'ini'),
+  sql: code('SQL', 'sql', 'mdi-database-outline'),
+  css: code('CSS', 'css', 'mdi-language-css3'),
+  scss: code('SCSS', 'scss', 'mdi-language-css3'),
+  less: code('Less', 'less', 'mdi-language-css3'),
+  xml: code('XML', 'xml', 'mdi-xml'),
+  diff: code('Diff', 'diff'),
+  patch: code('Diff', 'diff'),
+  txt: named('text', { icon: 'mdi-file-document-outline', view: 'code' as const, language: 'plaintext' }),
+  log: named('text', { icon: 'mdi-file-document-outline', view: 'code' as const, language: 'plaintext' }),
 }
 
 /** 认得出的文档类型。读者能指着什么决定了 view，见 PanelPreview 的说明。 */
@@ -39,6 +101,13 @@ export const DOCUMENT_TYPES: Record<string, FileKind> = {
   tsv: { label: 'TSV', icon: 'mdi-file-delimited-outline', view: 'sheet', sheet: 'tsv' },
   md: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
   markdown: { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' },
+  ...CODE_TYPES,
+}
+
+/** 代码查看器按哪种语法高亮这一份。收后缀（`suffixOf` 的结果）；不是代码就是 null。 */
+export function codeLanguageOf(suffix: string): string | null {
+  const kind = DOCUMENT_TYPES[suffix]
+  return kind?.view === 'code' ? kind.language ?? null : null
 }
 
 /** 浏览器自己画不出来、要平台先转成 PDF 的那些。转换走的是 LibreOffice，一份约
@@ -52,6 +121,12 @@ export const NEEDS_CONVERSION = new Set(['docx', 'doc', 'odt', 'rtf', 'pptx', 'p
  *  那边是「不转」，在这边恰恰是要转的那一种——一张表失去单元格地址就不成其为表，
  *  而网页恰恰把地址留在元素上。 */
 export const PAGE_FORMATS = new Set(['docx', 'xlsx', 'pptx'])
+
+/** 幻灯片那一组。它们和文档一样转成 PDF、按页读（`view` 也是 `pages`），但页视图
+ *  那一档画不出评论标记：幻灯片上评的是**整页**（`slide-page`），不是页上的一点。
+ *  「按页读」和「页上能画评论」不是同一件事，所以「谁要按档位决定读不读评论」得问
+ *  这一张表，问 `view === 'pages'` 会把幻灯片一起圈进来。 */
+export const SLIDE_SUFFIXES = new Set(['pptx', 'ppt', 'odp'])
 
 /** 这一份能不能换成网页读。
  *
@@ -94,13 +169,22 @@ export function imageMimeOf(suffix: string): string {
   return IMAGE_MIME[suffix] ?? 'image/jpeg'
 }
 
+/** 这个格式允许带透明通道没有。PNG / WebP / GIF 都可能，JPEG 不会。
+ *
+ *  允许不等于这一张真有透明——PNG 也能整张不透明。所以只用来铺棋盘格：底下的图要是
+ *  实的，格纹被盖住看不见；真有透明的地方才露出来。 */
+const MAY_HAVE_ALPHA = new Set(['png', 'webp', 'gif'])
+export function imageMayHaveAlpha(suffix: string): boolean {
+  return MAY_HAVE_ALPHA.has(suffix.toLowerCase())
+}
+
 /** 预览面板自己显示得出这个文件吗。
  *
  *  一枚 `<&路径>` chip 只是一个路径，不带它在哪个库；要决定把它开在哪一格，先得
  *  知道预览显示不显示得了它。 */
 export function previewCanShow(path: string): boolean {
   const suffix = suffixOf(path)
-  return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix)
+  return !!DOCUMENT_TYPES[suffix] || IMAGE_SUFFIXES.has(suffix) || !!videoMimeOf(path)
 }
 
 /** 房间里这一份，预览面板画得出来吗。
@@ -185,4 +269,50 @@ const WEB_MIME: Record<string, string> = {
 export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
   return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
+}
+
+/** 预览最多读多大的一份：和后端整份读字节的上限（`app/domain/library/records.py` 的
+ *  `READ_WHOLE_MAX_BYTES`）是同一个数。超过的服务端不转 PDF，浏览器也不该整份取回，
+ *  所以不去读，直接说只能下载。资料库和题目页的预览都按它。 */
+export const PREVIEW_MAX_MB = 200
+
+export function tooLargeToPreview(bytes: number): boolean {
+  return bytes > PREVIEW_MAX_MB * 1024 * 1024
+}
+
+/** 一读进来的字节里摆多少给读者：和后端 `app/domain/textfile.py` 的
+ *  `PREVIEW_TEXT_BYTES` 是同一个数。超过就只摆开头、说清底下还有（下载看整份），
+ *  而不是一个字都不摆。这个数是怎么量出来的见后端那个常量的说明。 */
+export const PREVIEW_TEXT_BYTES = 256 * 1024
+
+/** 摆出来的最多几行，和后端 `PREVIEW_TEXT_LINES` 同一个数。行数才是这一格的开销，
+ *  短行的文件按字节卡不住（256 KB 的 4 字节行有五万行）。 */
+export const PREVIEW_TEXT_LINES = 4_000
+
+/** 按行预算把一段已经解码的文本切成给读者看的那些行；`cut` 说底下还有没有。
+ *
+ *  和后端 `head_text` 同一条规矩：落在行边界上，一行都没有（单行文件）就整段给。 */
+export function headOf(window: string, more: boolean): { head: string; cut: boolean } {
+  let at = 0
+  let end = 0
+  let lines = 0
+  while (lines < PREVIEW_TEXT_LINES) {
+    const next = window.indexOf('\n', at)
+    if (next < 0) break
+    end = next + 1
+    at = end
+    lines += 1
+  }
+  if (end === 0) return { head: window, cut: more }
+  return { head: window.slice(0, end), cut: more || end < window.length }
+}
+
+/** 读者该看到的那段文字：后端给了 `head` 就用它（超出编辑器上限时那是开头），
+ *  没给就退回 `content`（整份能装下的时候两者本来就一样）。
+ *
+ *  只认 `head` 会让所有只带 `content` 的调用方和夹具渲染成空白；所以这里统一
+ *  收口，别在组件里各自 `?.head ?? null`。 */
+export function readerText(file: { head?: string | null; content: string | null } | null | undefined): string | null {
+  if (!file) return null
+  return file.head ?? file.content
 }

@@ -20,8 +20,9 @@ import re
 import shutil
 import time
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +32,9 @@ from app.api.doc_access import require_role
 from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain import skill_library as native_skills
@@ -129,7 +132,7 @@ def _by_title(text: str, skills: list[ProjectSkill]) -> str:
     skill's title.
 
     A teammate knows the project's skills by the id at the end of each one
-    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    (it is what it passes to `cheese_skill(action=update)`), so the closest skill it
     names on a proposal card arrives as an id; the person deciding reads
     titles.
     """
@@ -319,23 +322,15 @@ class PersonSkillIn(BaseModel):
     imported: bool = False
 
 
-async def _person_in_project(
-    db: AsyncSession, resolver: ActorResolver, project_id: uuid.UUID, what: str
-) -> Actor:
-    actor = await _in_project(db, resolver, project_id, None)
-    _person(actor, what)
-    return actor
-
-
-@router.post("/projects/{project_id}/skills", dependencies=[ROUTE_DECIDES])
+@router.post("/projects/{project_id}/skills")
 async def add_skill(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: PersonSkillIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """A person writes a skill, or adds one read through the import preview."""
-    actor = await _person_in_project(db, resolver, project_id, say("skillAdd"))
+    project_id, actor = at.project.id, at.actor
+    _person(actor, say("skillAdd"))
     if body.imported:
         # What comes from outside reaches every later session and runs its
         # scripts on the work computer; the project's managers decide that.
@@ -362,14 +357,11 @@ class ImportSource(BaseModel):
     url: str = ""
 
 
-@router.post(
-    "/projects/{project_id}/skills/import-preview", dependencies=[ROUTE_DECIDES]
-)
+@router.post("/projects/{project_id}/skills/import-preview")
 async def preview_import(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     body: ImportSource,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay
     it out for a manager to look over. Nothing is saved.
@@ -379,8 +371,8 @@ async def preview_import(
     (``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,
     so 「预览 → 保存」 downstream does not know the difference.
     """
-    actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
-    await MemberService(db).require(project_id, actor, Permission.edit_settings)
+    _person(at.actor, say("skillImport"))
+    await MemberService(db).require(at.project.id, at.actor, Permission.edit_settings)
     if body.content:
         if len(body.content) > importer.MAX_TOTAL_BYTES * 4 // 3 + 4:
             raise ValidationError(say("skillImportTooLarge"))
@@ -678,6 +670,16 @@ async def project_skill_catalog(
     not room: which teammate carries what is a project setting (and only a
     manager may change it — `projects_agents.py`)."""
     await _in_project(db, resolver, project_id, None)
+    items = _platform_catalog()
+    return ok(page(items, len(items)))
+
+
+@router.get("/skill-catalog", **typed_response(SkillCatalogOut))
+async def skill_catalog(_: AuthUserInfo = Depends(require_auth_user)) -> dict:
+    """The shipped skills, for a 题目's publisher picking the ones every
+    teammate of its projects carries (`Teaching.skills`). It names no project:
+    the catalog is the platform's and the same for everyone, and a 题目 being
+    written has no project yet — signing in is the whole gate."""
     items = _platform_catalog()
     return ok(page(items, len(items)))
 

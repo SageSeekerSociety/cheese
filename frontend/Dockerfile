@@ -20,6 +20,9 @@ CMD ["pnpm", "dev"]
 
 FROM deps as build
 COPY . ./
+# The API generation the build bakes in (vite.config.ts) is the backend's file,
+# outside this context: it comes in through the named `api` context (build.yml).
+COPY --from=api api-generation /backend/api-generation
 ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__

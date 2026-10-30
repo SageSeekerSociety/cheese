@@ -64,6 +64,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
     MANAGING,
+    PERMISSION_ORDER,
     TEMPLATE_GRANTS,
     Builtin,
     Permission,
@@ -74,6 +75,9 @@ from app.domain.project_permissions import (
 from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
+
+#: What a role may be granted, by name.
+_ROLE_PERMISSION_NAMES = frozenset(p.value for p in PERMISSION_ORDER)
 
 
 async def _reject_execution_identity(session: AsyncSession, handle: str) -> None:
@@ -592,7 +596,8 @@ class RoleService:
 
     @staticmethod
     def _known(names: list[str]) -> frozenset[Permission]:
-        unknown = [n for n in names if n not in Permission._value2member_map_]
+        # A name nobody knows, or one only an AI teammate holds, is no role's.
+        unknown = [n for n in names if n not in _ROLE_PERMISSION_NAMES]
         if unknown:
             raise UnprocessableEntityError(say("permissionUnknown", name=unknown[0]))
         return frozenset(Permission(n) for n in names)

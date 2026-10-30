@@ -8,7 +8,7 @@ a token or a secret value.
 
 import json
 import uuid
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -21,8 +21,8 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep, session_in
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.write_access import ROUTE_DECIDES
-from app.auth.project_roles import require
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.core import credentials
 from app.core.config import settings
 from app.core.errors import (
     AppError,
@@ -69,21 +69,20 @@ async def member(
     return actor.handle
 
 
-async def manager(
-    db: AsyncSession, project_id: uuid.UUID, resolver: ActorResolver
-) -> str:
-    """:func:`member`, and a person in their own session: connecting a server,
-    dropping it or setting its secret changes what every room of the project
-    can reach, which no agent decides, prompted by whatever it last read."""
-    handle = await member(db, project_id, resolver)
-    await require(db, project_id, handle, Permission.configure_agents)
+async def manager(at: InProject, db: AsyncSession, resolver: ActorResolver) -> str:
+    """Whoever ``Can(Permission.configure_agents)`` let in, when they are signed
+    in and a person in their own session: connecting a server, dropping it or
+    setting its secret changes what every room of the project can reach, which
+    no agent decides, prompted by whatever it last read."""
+    if not at.actor.authenticated:
+        raise AuthenticationRequiredError(say("signInFirst"))
+    await resolver.refuse_unseated_agent(at.actor, project_id=at.project.id)
     refusal = await policy.refuse_management_action(
-        await resolver.resolve(project_id=project_id),
-        carries_agent_binding=IdentityService(db).is_agent,
+        at.actor, carries_agent_binding=IdentityService(db).is_agent
     )
     if refusal is not None:
         raise ForbiddenError(refusal)
-    return handle
+    return at.actor.handle
 
 
 @router.get("/projects/{project_id}/mcp/servers")
@@ -101,17 +100,16 @@ async def list_servers(
     )
 
 
-@router.post(
-    "/projects/{project_id}/mcp/servers/{name}/connect", dependencies=[ROUTE_DECIDES]
-)
+@router.post("/projects/{project_id}/mcp/servers/{name}/connect")
 async def connect(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     name: str,
     request: Request,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await manager(db, project_id, resolver)
+    handle = await manager(at, db, resolver)
+    project_id = at.project.id
     url = await service.begin_connect(
         db,
         project_id,
@@ -123,13 +121,15 @@ async def connect(
     return ok({"authorization_url": url})
 
 
-@router.delete(
-    "/projects/{project_id}/mcp/servers/{name}/connection", dependencies=[ROUTE_DECIDES]
-)
+@router.delete("/projects/{project_id}/mcp/servers/{name}/connection")
 async def disconnect(
-    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    name: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    await manager(db, project_id, resolver)
+    await manager(at, db, resolver)
+    project_id = at.project.id
     await service.disconnect(db, project_id, name)
     return ok(None)
 
@@ -166,14 +166,17 @@ class ServerChanged(BaseModel):
 
 @router.post(
     "/projects/{project_id}/mcp/servers",
-    dependencies=[ROUTE_DECIDES],
     **typed_response(ServerChanged),
 )
 async def add_server(
-    project_id: uuid.UUID, body: ServerIn, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    body: ServerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     """Add a server in project settings, beside the repository's."""
-    handle = await manager(db, project_id, resolver)
+    handle = await manager(at, db, resolver)
+    project_id = at.project.id
     if body.kind == "command":
         await service.add_command(
             db,
@@ -200,17 +203,17 @@ async def add_server(
 
 @router.put(
     "/projects/{project_id}/mcp/servers/{name}",
-    dependencies=[ROUTE_DECIDES],
     **typed_response(ServerChanged),
 )
 async def update_server(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     name: str,
     body: ServerIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await manager(db, project_id, resolver)
+    handle = await manager(at, db, resolver)
+    project_id = at.project.id
     if body.kind == "command":
         await service.update_command(
             db, project_id, name=name, line=body.command_line(), env=body.env
@@ -230,13 +233,16 @@ async def update_server(
 
 @router.delete(
     "/projects/{project_id}/mcp/servers/{name}",
-    dependencies=[ROUTE_DECIDES],
     **typed_response(ServerChanged),
 )
 async def remove_server(
-    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    name: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    await manager(db, project_id, resolver)
+    await manager(at, db, resolver)
+    project_id = at.project.id
     await service.remove_server(db, project_id, name)
     return ok({"name": name})
 
@@ -245,28 +251,31 @@ class SecretIn(BaseModel):
     value: str = Field(min_length=1, max_length=8192)
 
 
-@router.put("/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES])
+@router.put("/projects/{project_id}/mcp/secrets/{name}")
 async def set_secret(
-    project_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.configure_agents)],
     name: str,
     body: SecretIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await manager(db, project_id, resolver)
+    handle = await manager(at, db, resolver)
+    project_id = at.project.id
     await service.set_secret(
         db, project_id, name, body.value, handle, project_types=project_types
     )
     return ok(None)
 
 
-@router.delete(
-    "/projects/{project_id}/mcp/secrets/{name}", dependencies=[ROUTE_DECIDES]
-)
+@router.delete("/projects/{project_id}/mcp/secrets/{name}")
 async def clear_secret(
-    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    name: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    await manager(db, project_id, resolver)
+    await manager(at, db, resolver)
+    project_id = at.project.id
     await service.clear_secret(db, project_id, name)
     return ok(None)
 
@@ -297,6 +306,7 @@ def _failure(exc: AppError | BaseError) -> dict[str, str]:
 
 @router.get("/mcp/oauth/callback")
 async def callback(
+    request: Request,
     db: DbSession,
     state: str = "",
     code: str = "",
@@ -321,7 +331,7 @@ async def callback(
     else:
         query["mcp_result"] = "connected"
     landing = RedirectResponse(f"{back}?{urlencode(query)}#mcp", 302)
-    return back_in_app(landing) if flow.get("app") else landing
+    return back_in_app(request, landing) if flow.get("app") else landing
 
 
 class ProxyIn(BaseModel):
@@ -340,7 +350,7 @@ async def proxy(
     """A session's request to one of its project's remote servers. Authenticated
     by the room's credential; the credential for the server is attached here."""
     project_id, claims = await session_in(
-        db, request.headers.get("x-cheese-token", ""), topic_id
+        db, credentials.presented(request.headers), topic_id
     )
     try:
         result = await service.call(

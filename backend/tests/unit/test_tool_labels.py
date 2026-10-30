@@ -10,9 +10,8 @@ a verb should be.
 So the two ends are pinned here, from their real sources rather than from a
 second list written down next to the answer:
 
-- every tool on the platform's session-side table (`PLATFORM_TOOLS`), and every
-  command of the CLI **this repository ships**, read out of its argparse tree
-  the same way the pi catalog is built (`cli_worker._tools`);
+- every tool on the platform's session-side table (`PLATFORM_TOOLS`) and each
+  verb of its objects;
 - every tool the pi extension registers on its own, read out of the extension.
 
 A command added without a verb fails here, at the commit that adds it.
@@ -23,7 +22,6 @@ import re
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.agent import cli_worker
 from app.domain.session_record import tool_keys
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -61,21 +59,17 @@ def cli_tools() -> list[str]:
         # A person's 芝士 shares its objects' names with the room's (`cheese_task`),
         # and a verb only it has would otherwise go unnoticed.
         *(key for key in _keys(module.DELEGATED_TOOLS) if "." in key),
-        *(tool["name"] for tool in cli_worker._tools(module.build_parser())),
     ]
 
 
 def _keys(table) -> list[str]:
-    """What 现场 looks a call up by: a tool's name, or each of an object's
-    verbs (`cheese_task.close`)."""
+    """What 现场 looks a call up by: a tool's name, and each of an object's
+    verbs (`cheese_task.close`). An object's own name is what a step reads
+    before its `action` is written."""
     return [
         key
         for name in table.names()
-        for key in (
-            [name]
-            if table.actions(name) is None
-            else [f"{name}.{verb}" for verb in table.actions(name)]
-        )
+        for key in ([name, *(f"{name}.{verb}" for verb in table.actions(name) or ())])
     ]
 
 
@@ -83,7 +77,14 @@ def test_every_platform_command_has_a_verb():
     """A room reading 「cheese_accept_request」 is reading the thing it most
     needed a word for: the steps that changed something outside the machine."""
     verbs = labelled()
-    missing = [name for name in cli_tools() if name not in verbs]
+    # An object's name that is also an old tool's (`cheese_task`) reads as
+    # the verb it was before it took an action.
+    retired = _frontend_table("RETIRED")
+    missing = [
+        name
+        for name in cli_tools()
+        if name not in verbs and retired.get(name) not in verbs
+    ]
     assert not missing, f"现场 would render these raw: {missing}"
 
 

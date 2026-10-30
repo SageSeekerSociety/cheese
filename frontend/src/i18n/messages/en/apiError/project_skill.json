@@ -34,7 +34,7 @@
   "skillNotFound": "This skill doesn't exist",
   "skillNothingToDecline": "This skill has no change waiting to be confirmed",
   "skillProposalDeclined": "A person declined the skill \"{name}\". Do not propose it again; they will ask if they want it",
-  "skillProposalLimit": "This project already has {limit} skills. Do not add another; fold this into the closest one and propose the change with cheese_skill_update",
+  "skillProposalLimit": "This project already has {limit} skills. Do not add another; fold this into the closest one and propose the change with cheese_skill(action=update)",
   "skillProposalWaiting": "A skill you proposed in this conversation is still waiting for a person. Wait for that one before proposing another",
   "skillRestoreOld": "restore an older version of this skill",
   "skillRootNotAbsolute": "A workspace root has to be a full path on the machine, starting with /",

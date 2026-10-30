@@ -17,7 +17,7 @@ broker and not in the database.
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     DateTime,
@@ -62,6 +62,14 @@ from app.domain.run_record.models import RunRecord
 #: answered a week ago is not that any more, and without a bound these queries
 #: scan every message the project ever had.
 REPLY_LOOKBACK = timedelta(days=7)
+
+#: How long an unrecovered failure may hold a line red before it stops counting
+#: (`unresolved_failures`): three days. A dead branch — a 支线 whose turn blew up
+#: and which nobody came back to — otherwise holds its whole channel red for
+#: ever, since only a recovery ends a failure and silence is not one. Long
+#: enough that an overnight machine being down is not a fault to retire; a
+#: failure inside the window still counts, whatever else happens.
+FAILURE_GIVES_UP_AFTER = timedelta(hours=72)
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
@@ -175,7 +183,11 @@ class MemberWaits:
         return out
 
     async def unresolved_failures(
-        self, units: Mapping[uuid.UUID, Sequence[uuid.UUID]]
+        self,
+        units: Mapping[uuid.UUID, Sequence[uuid.UUID]],
+        *,
+        now: datetime | None = None,
+        within: timedelta | None = FAILURE_GIVES_UP_AFTER,
     ) -> dict[uuid.UUID, datetime]:
         """{row: when the earliest failure still unresolved in it began}.
 
@@ -205,9 +217,18 @@ class MemberWaits:
 
         Taking the earliest unresolved failure is what lets the sidebar count
         from the moment the row broke and stay red across a retry that failed
-        again — while a recovery, silent or not, clears it. There is deliberately
-        no time window here: recovery, not elapsed time, is what ends it, so a
-        row that nobody has picked up stays red however long ago it broke.
+        again — while a recovery, silent or not, clears it. Recovery, not
+        elapsed time, is what ends it, up to a point: `within` is how long an
+        untouched failure may hold a row, `FAILURE_GIVES_UP_AFTER` (three days)
+        by default. A red light is for something someone should pick up; a
+        failure nobody has come back to for three days is a dead branch, and a
+        dead branch must not hold its whole channel red for ever. ``now`` is the
+        moment that window is measured against (read here when not given).
+
+        ``within=None`` drops that bound, for the one caller that wants the
+        opposite answer — the sweeper looking for the failures that HAVE gone
+        past it (`thread.recycle`), which compares against the same window
+        itself. Every other caller wants the light as it is now.
 
         Row-level, not conversation-level: a channel is one row even though its
         line and its 支线 are separate conversations, so both are queried and
@@ -238,6 +259,9 @@ class MemberWaits:
         )
         spoke = await self._last_said(conversations, since, unit_of)
         read = await self._inputs_read(conversations, unit_of, since)
+        given_up_before = (
+            None if within is None else (now or datetime.now(UTC)) - within
+        )
         # 按 created_at 排好，所以每一行遇到的第一条失败就是它最早的那条；那一条没
         # 恢复就是答案，恢复了就继续往后看（它之后的下一条才是现在的这一条）。
         found: dict[uuid.UUID, datetime] = {}
@@ -250,6 +274,10 @@ class MemberWaits:
                 continue
             newest_read = read.get(unit)
             if newest_read is not None and newest_read > at:
+                continue
+            # 拖过了整段时限还是没人碰过：这条失败不再点亮这一行。往后看 —— 它之后
+            # 更晚的那条是新的一个钟，那时候坏掉了就照那时候算。
+            if given_up_before is not None and at < given_up_before:
                 continue
             found[unit] = at
         return found

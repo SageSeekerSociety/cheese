@@ -31,8 +31,8 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_library_get",
-          "arg": "招新安排.docx",
+          "tool": "Bash",
+          "arg": "cheese library get 招新安排.docx",
           "platform": true
         }
       ]

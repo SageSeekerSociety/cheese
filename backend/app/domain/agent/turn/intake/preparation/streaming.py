@@ -142,6 +142,8 @@ async def converse(
         overview_doc=overview_doc_text,
         overview_doc_id=prepared.overview_doc_id,
         teaching=teaching,
+        stages=prepared.stages,
+        package=prepared.task_package,
         environment=_session_opening_lines(
             unconnected_mcp=(
                 await unconnected_mcp(

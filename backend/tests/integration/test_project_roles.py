@@ -342,4 +342,3 @@ def test_a_role_people_joined_by_invitation_can_still_be_deleted(client):
     )
     assert moved.status_code == 200, moved.text
     assert _held(client, p["id"], "zhao") == "member"
-

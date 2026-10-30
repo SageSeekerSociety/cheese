@@ -299,10 +299,33 @@ def test_merging_file_descriptors_is_not_a_redirect_target():
 
 
 def test_a_platform_command_shows_the_argument_that_says_which_one():
-    accepted = tool_preview("cheese_accept_request", {"task": "t", "subject": "fix: x"})
+    accepted = tool_preview(
+        "cheese_card",
+        {"action": "request", "subject": "fix: x", "completes_task": True},
+    )
     assert accepted.text == "fix: x"
-    proposed = tool_preview("cheese_task", {"title": "数据清洗", "summary": "口径"})
+    proposed = tool_preview("cheese_task", {"action": "open", "title": "数据清洗"})
     assert proposed.text == "数据清洗"
+    closed = tool_preview(
+        "cheese_task", {"action": "close", "conclusion": "改用新口径"}
+    )
+    assert closed.text == "改用新口径"
+
+
+def test_a_call_recorded_under_a_retired_name_shows_the_argument_of_its_action():
+    """Records keep a call as it was made: one made before the task's tools
+    were folded into `cheese_task` and `cheese_card` still reads as what it
+    did."""
+    assert tool_preview("cheese_accept_request", {"subject": "fix: x"}).text == "fix: x"
+    assert tool_preview("cheese_close_task", {"conclusion": "不做了"}).text == "不做了"
+    assert (
+        tool_preview("cheese_task_state", {"state": "waiting", "note": "等 CI"}).text
+        == "等 CI"
+    )
+    assert (
+        tool_preview("cheese_task", {"title": "数据清洗", "summary": "口径"}).text
+        == "数据清洗"
+    )
 
 
 def test_a_platform_command_naming_a_file_is_cut_to_the_workspace():

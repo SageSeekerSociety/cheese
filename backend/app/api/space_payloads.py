@@ -108,6 +108,12 @@ class TeachingRequest(BaseModel):
             str, Field(pattern=r"^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$")
         ]
     ] = Field(default_factory=list, alias="documentIds")
+    #: Skills every AI teammate of the projects under this level carries on
+    #: every turn (`Teaching.skills`): names from the platform's skill catalog
+    #: (`GET /skill-catalog`), or a skill a participant's own machine holds.
+    skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        default_factory=list
+    )
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
@@ -130,6 +136,7 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
         "learningGoals": list(teaching.learning_goals),
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
+        "skills": list(teaching.skills),
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt

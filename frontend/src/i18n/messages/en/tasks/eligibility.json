@@ -1,15 +1,20 @@
 {
-  "ALREADY_PARTICIPATING": "You have already claimed this challenge",
-  "MEMBER_ALREADY_PARTICIPATING": "Someone in this team has already claimed this challenge with another team",
+  "ALREADY_PARTICIPATING": "You have already applied to this task",
+  "MEMBER_ALREADY_PARTICIPATING": "Someone in this team has already applied to this task with another team",
   "MISSING_REAL_NAME": "This challenge requires real-name information",
   "PARTICIPANT_LIMIT_REACHED": "This challenge has no places left",
-  "REGISTRATION_CLOSED": "Registration has closed",
-  "REGISTRATION_NOT_STARTED": "Registration has not opened yet",
-  "TASK_NOT_APPROVED": "This challenge has not been approved yet; it can be claimed once approved",
+  "REGISTRATION_NOT_STARTED": "Applications have not opened yet",
+  "TASK_NOT_APPROVED": "This task has not been approved yet; you can apply once it is",
   "TEAM_MEMBER_MISSING_REAL_NAME": "Some team members have not provided real-name information",
   "TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH": "Some team members do not have a high enough rank",
   "TEAM_TOO_LARGE": "The team is larger than this challenge allows",
   "TEAM_TOO_SMALL": "The team is smaller than this challenge requires",
   "USER_RANK_NOT_HIGH_ENOUGH": "Your rank is not high enough for this challenge",
-  "unknown": "You cannot take part in this challenge right now"
+  "unknown": "You cannot take part in this challenge right now",
+  "direct": {
+    "ALREADY_PARTICIPATING": "You have already started this task",
+    "MEMBER_ALREADY_PARTICIPATING": "Someone on this team has already started this task with another team",
+    "REGISTRATION_NOT_STARTED": "This task is not open yet",
+    "TASK_NOT_APPROVED": "This task has not been approved yet; it can be started once it is"
+  }
 }

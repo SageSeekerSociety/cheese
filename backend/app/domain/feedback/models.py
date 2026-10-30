@@ -270,9 +270,8 @@ class FeedbackAttachment(UuidPk, Base):
     ``POST /feedback`` hands the ids back with the report. The row is one
     kind of thing throughout: a file that exists for a report; only its
     ``feedback_id`` is not known yet. (The alternative — a link table beside
-    a generic attachment table — is what `task_attachment` does, and it
-    cannot work here: that table's bytes live under the public ``/uploads``
-    tree, see below.)
+    the generic attachment table — cannot work here: that table's bytes live
+    under the public ``/uploads`` tree, see below.)
 
     **Why not ``app.domain.attachment``.** The 1.0 attachment table stores no
     owner and hands out a URL served from the public uploads tree; image

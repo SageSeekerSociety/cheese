@@ -366,6 +366,8 @@ async def library_names(session: AsyncSession, project_id: uuid.UUID) -> list[st
     return [
         name
         for name, _, _ in await library_records.stored(
-            session, Shelf.of_project(project_id)
+            # 项目自己的文件；题目的材料（`题目/`）归题目。
+            session,
+            Shelf.of_project(project_id, with_task=False),
         )
     ]

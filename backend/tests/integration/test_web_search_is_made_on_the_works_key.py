@@ -43,7 +43,13 @@ def gateway(monkeypatch):
         return list(service.found)
 
     async def project_key(
-        self, project_id, *, dream=False, task_id=None, credit_owner_handle=None
+        self,
+        project_id,
+        *,
+        dream=False,
+        task_id=None,
+        credit_owner_handle=None,
+        machine_conversation_id=None,
     ):
         return f"sk-project-{project_id}"
 
@@ -69,7 +75,7 @@ def _own(client, handle: str, said: str) -> tuple[int, dict]:
             await s.commit()
 
     asyncio.run(remember())
-    return user_id, {"X-Cheese-Token": token}
+    return user_id, {"Authorization": f"Bearer {token}"}
 
 
 def test_a_persons_cheese_searches_on_their_own_key_without_its_gate(client, gateway):
@@ -97,7 +103,7 @@ def test_a_rooms_agent_searches_on_its_projects_key(client, gateway):
 
 def test_an_agent_holding_the_projects_credential_searches_on_its_key(client, gateway):
     project = _project(client, "alice")
-    headers = {"X-Cheese-Token": _issued_token(client, project)}
+    headers = {"Authorization": f"Bearer {_issued_token(client, project)}"}
 
     r = client.get(
         "/web-search", params={"q": "栅格布局", "project": project}, headers=headers
@@ -112,7 +118,7 @@ def test_a_project_out_of_credits_is_refused_before_the_gateway_is_asked(
 ):
     free_plan_credits(client, 0.0)
     project = _project(client, "alice")
-    headers = {"X-Cheese-Token": _issued_token(client, project)}
+    headers = {"Authorization": f"Bearer {_issued_token(client, project)}"}
 
     r = client.get(
         "/web-search", params={"q": "栅格布局", "project": project}, headers=headers

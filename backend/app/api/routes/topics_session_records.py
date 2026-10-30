@@ -28,11 +28,12 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.session_record_rows import no_platform_reminders
 from app.api.topics_deps import _actor_in_place
-from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.api.write_access import Can, InChannel
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.core.work_context import current_work_id
 from app.domain.conversation.services import rooms_of_inner
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.session_record import service
 from app.domain.session_record.views import lines
@@ -242,14 +243,12 @@ class MachineRecordOut(BaseModel):
 
 @router.post(
     "/{topic_id}/session-records",
-    dependencies=[CHEESE_ONLY_IN_ROOM],
     **typed_response(MachineRecordOut),
 )
 async def note_machine_record(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.record_machine_status, at="topic_id")],
     body: MachineRecordIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """Let the machine put one line in 现场, in its own voice.
 
@@ -262,10 +261,9 @@ async def note_machine_record(
     turn) 现场 draws it as a platform line of its own. A sibling task's branch
     may be what failed, and the text names it.
     """
-    place = await place_or_404(db, topic_id)
+    place, actor = at.place, at.actor
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    actor = await _actor_in_place(resolver, place)
     await service.note(
         db,
         place.conversation_id,

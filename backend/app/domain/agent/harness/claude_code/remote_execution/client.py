@@ -159,7 +159,7 @@ NATIVE_TOOLS = (
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese_doc_set and publish artifacts "
+    "Save finished documents through cheese_doc(action=set) and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
@@ -751,7 +751,7 @@ def transport(config, target_path):
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
     # 平台工具从会话直接打后端，不经过这台机器；只有要机器的那一样
-    # （`cheese_accept_request` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
+    # （`cheese_card(action=request)` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
     # 而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：

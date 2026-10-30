@@ -35,12 +35,10 @@
     "clearBody": "芝士会忘记这 {n} 条，清除后不能恢复。"
   },
   "routines": {
-    "title": "例行事务",
-    "desc": "芝士按时间或在某件事发生时自己运行，结果通知你。新建或修改，在面板中告诉芝士。",
-    "count": "{n}/{max}",
-    "empty": "暂无例行事务",
+    "title": "自动化",
+    "desc": "芝士按时间或在某件事发生时自己去做，结果通知你。新建或修改，在面板中告诉芝士。",
+    "empty": "暂无自动化",
     "next": "下次运行：{time}",
-    "ran": "已运行，3 天后自动删除",
     "paused": {
       "person": "已暂停",
       "credits": "额度已用完，已暂停",
@@ -59,9 +57,10 @@
     "pause": "暂停",
     "resume": "恢复",
     "delete": "删除",
-    "deleteTitle": "删除例行事务「{title}」？",
+    "deleteTitle": "删除自动化「{title}」？",
     "deleteBody": "删除后不再运行，已有的对话保留。",
-    "cancel": "取消"
+    "cancel": "取消",
+    "waiting": "等待中"
   },
   "recent": {
     "title": "最近的操作",

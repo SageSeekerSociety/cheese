@@ -469,9 +469,12 @@ class ChatService(
         dream: bool = False,
         task_id: uuid.UUID | None = None,
         credit_owner_handle: str | None = None,
+        machine_conversation_id: uuid.UUID | None = None,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
-        ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
+        ``dream``, the key its memory consolidation runs on, and with
+        ``machine_conversation_id`` the one that conversation's sandboxes
+        call on (gateway_usage.py)."""
         return await project_gateway_key(
             self,
             self._sessions,
@@ -480,6 +483,7 @@ class ChatService(
             dream=dream,
             task_id=task_id,
             credit_owner_handle=credit_owner_handle,
+            machine_conversation_id=machine_conversation_id,
         )
 
     async def _gateway_budget_target(

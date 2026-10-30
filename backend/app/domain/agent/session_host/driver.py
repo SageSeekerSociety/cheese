@@ -126,8 +126,13 @@ async def start_private_executor(
     harness: str,
 ) -> None:
     """A session whose tools work in a private scratch container has it started
-    before the session is: the container is the session's machine."""
+    before the session is: the container is the session's machine.
+
+    The container holds no credential (`CHEESE_TOKEN` is blank): the harness on
+    the host keeps the session's credential, and the container only runs the
+    commands the harness sends it."""
     if target is not None and target.get("kind") == "private":
+        env = {**env, "CHEESE_TOKEN": ""}
         await wire.run(
             host,
             executor.private_script(target, env),

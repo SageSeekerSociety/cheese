@@ -12,6 +12,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 
 import asyncio
 import subprocess
+import threading
 import time
 import uuid
 import uuid as _uuid
@@ -321,6 +322,9 @@ class FakeGitHubPrClient:
         self.status_error: Exception | None = None
         # How long GitHub takes to say where a PR stands.
         self.status_delay_s: float = 0.0
+        # (entered, release): a status read sets `entered` and then waits for
+        # `release`, so a test can act while a reading is in flight.
+        self.status_gate: tuple[threading.Event, threading.Event] | None = None
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -433,6 +437,10 @@ class FakeGitHubPrClient:
     async def pull_request_status(
         self, *, owner, repo, number, token
     ) -> PullRequestStatus:
+        if self.status_gate is not None:
+            entered, release = self.status_gate
+            entered.set()
+            await asyncio.to_thread(release.wait, 30)
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
@@ -822,6 +830,14 @@ def app_world(client, monkeypatch):
         }
 
     monkeypatch.setattr(project_forge, "provision_repository", provision)
+
+    # A project started from a task gets its repository prepared and then
+    # bound (`ProjectService.for_participation`), not provisioned: it joins
+    # this world the same way.
+    async def bind_repository(session, prepared):
+        return await provision(prepared.project_id, session)
+
+    monkeypatch.setattr(project_forge, "bind_repository", bind_repository)
     monkeypatch.setattr(project_forge, "default_branch", default_branch)
     monkeypatch.setattr(project_forge, "branch_head", branch_head)
     monkeypatch.setattr(pr_publish, "branch_head", branch_head)
@@ -1992,7 +2008,7 @@ def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land
 def test_accept_merges_again_once_the_card_says_the_line_the_pr_shows(
     client, app_world
 ):
-    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_describe` 会
+    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_card(action=describe)` 会
     同时把 PR 标题改掉（`pr_publish.sync_pr_text`），两行又成同一个字符串，合并照
     常 —— 这道闸拦住的是「分家」，不是这一次合并本身。"""
     fake = app_world["fake"]
@@ -3202,7 +3218,9 @@ def test_merge_anyway_is_for_humans_only(client, app_world):
     r = _merge_anyway(
         client,
         cid,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]

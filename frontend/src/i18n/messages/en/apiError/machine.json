@@ -46,5 +46,8 @@
   "workComputerPreparing": "The environment is still being prepared. Chat and platform tools are still available",
   "specTeamDevices": "Team devices",
   "specTeamDevicesAbout": "The environment runs on devices the team has connected, free of charge. A team admin connects them under Devices in the team's settings.",
-  "deviceTeamAdminOnly": "Only team administrators can manage devices"
+  "deviceTeamAdminOnly": "Only team administrators can manage devices",
+  "modelCallFromMachineNeedsSocket": "A credential held by an execution machine cannot call a model: in a sandbox, call it through the platform socket ($CHEESE_PLATFORM_SOCKET)",
+  "deviceCodeSpent": "This device code is no longer valid. Run cheesehost auth login on the machine again",
+  "deviceTokenNotReplaced": "Only a machine the platform opened can be given a new token. A member enrolled this one"
 }

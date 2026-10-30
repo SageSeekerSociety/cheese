@@ -173,7 +173,7 @@ macOS 的沙箱是系统自带的 `sandbox-exec`（`bootstrap.seatbelt_profile`�
 
 ## 六、已定但还没做完的
 
-**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_ready` 把它标成可评审、用 `cheese_accept_request` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
+**芝士自己提交、推送；PR 由平台开。** 平台不再替它写工作树。任务分支推上第一个提交后，平台开出这条任务的 draft PR（`review/pr_publish.py`），芝士用 `cheese_card(action=ready)` 把它标成可评审、用 `cheese_card(action=request)` 交给人验收；它自己开 PR 的命令（`gh pr create` 一类）在三个骨架里都被拒（`agent/pr_creation.py`）。详见[退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)。
 
 ## 七、归档退掉什么
 

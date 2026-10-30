@@ -9,21 +9,29 @@
       width="380"
       class="agent-host__dock"
       data-testid="agent-host"
+      data-agent-select="off"
     >
       <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
     </v-navigation-drawer>
     <!-- Desktop, floating: a card at the bottom right, over the page, which keeps its width. -->
     <Transition name="agent-host">
-      <div v-if="mdAndUp && agentOpen && !docked" class="agent-host__float" data-testid="agent-host">
+      <div
+        v-if="mdAndUp && agentOpen && !docked"
+        class="agent-host__float"
+        data-testid="agent-host"
+        data-agent-select="off"
+      >
         <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
       </div>
     </Transition>
     <!-- Phone: a sheet from the bottom; the page stays visible above it. -->
     <v-bottom-sheet v-if="!mdAndUp" v-model="agentOpen" class="agent-host__sheet">
-      <div class="agent-host__sheet-body" data-testid="agent-host">
+      <div class="agent-host__sheet-body" data-testid="agent-host" data-agent-select="off">
         <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
       </div>
     </v-bottom-sheet>
+    <!-- Selected text anywhere but an editor: 问芝士 beside it. -->
+    <AgentSelectionAsk :enabled="agentAvailable" :touch="!mdAndUp" @ask="selectForAgent" />
     <!-- Over the form the page registered: 芝士's pointer, the field it writes, the ones it filled. -->
     <Teleport v-if="formHost" :to="formHost">
       <AgentLayer
@@ -52,19 +60,23 @@
 // 这一页登记了表单（`AgentSurface.form`）时，芝士那一层也由这里画，送进表单的外框里：
 // 指针、正在写的那一格的描边、「芝士已填写」和撤销。
 import type { AssistantHanded } from '@/stores/agentThread'
+import type { Citable } from '@/types/citable'
 
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, onBeforeUnmount, provide, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
+import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
+import { useAgentRules } from '@/composables/useAgentRules'
 
 import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
 import AgentLayer from '@/components/agent/AgentLayer.vue'
+import AgentSelectionAsk from '@/components/assistant/AgentSelectionAsk.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { agentRulesKey } from '@/lib/agentRules'
 import { onAssistantChange } from '@/lib/inboxLive'
 import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
@@ -75,6 +87,9 @@ import {
   agentDocked,
   agentFiles,
   agentOpen,
+  agentPageOff,
+  agentPicked,
+  agentSelection,
   agentSurface,
   agentThread,
   agentView,
@@ -83,9 +98,11 @@ import {
   dismissProposal,
   earlierView,
   openAgentConversation,
+  pickForAgent,
   projectOfOpenedTask,
   removeAgentFile,
   resetAgent,
+  selectForAgent,
   sendingProposal,
   sendProposal,
   toggleAgent,
@@ -114,8 +131,17 @@ watch(
   { immediate: true }
 )
 
+// 芝士建的自动化：回答里那张卡片的状态和取消、暂停、恢复。
+const rules = useAgentRules(agentThread.current, agentThread.busy)
+provide(agentRulesKey, rules)
+
 // 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
-onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+onBeforeUnmount(
+  onAssistantChange((conversation) => {
+    void agentThread.heard(conversation).catch(() => undefined)
+    void rules.load()
+  })
+)
 
 // 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
 // 服务端只记几十秒，看着的时候隔一会儿说一次。
@@ -219,8 +245,21 @@ const panelProps = computed(() => {
     closable: true,
     dockable: mdAndUp.value,
     docked: docked.value,
+    pageLabel: context.page ? context.label ?? null : null,
+    pageOff: agentPageOff.value,
+    selection: agentSelection.value,
+    citable: citing.items.value,
+    recents: citing.recents(),
+    project: context.project?.name ?? null,
+    cited: Object.fromEntries(
+      Object.values(agentPicked.value).map((item) => [item.id, { kind: item.kind, title: item.title }])
+    ),
+    searchProblems: citing.searchProblems,
+    rules: agentThread.rules.value,
   }
 })
+
+const citing = useAgentCiting(() => agentContext.value?.project?.id ?? null)
 
 const panelEvents = {
   send: (text: string) => void askAgent(text),
@@ -229,10 +268,9 @@ const panelEvents = {
   older: () => void agentThread.older().catch(() => undefined),
   olderMessages: (topic: string | null) => void agentThread.earlierMessages(topic).catch(() => undefined),
   close: () => (agentOpen.value = false),
+  // 成功和失败的话都在 `downloadFile` 那一层说（`lib/download`），这里不再补一句。
   downloadFile: (file: AssistantHanded) =>
-    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>
-      toast.error(t('work.library.downloadFailed'))
-    ),
+    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)),
   dock: (next: boolean) => (docked.value = next),
   undo: (change: number, key: string) =>
     agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),
@@ -253,6 +291,10 @@ const panelEvents = {
     if (projectId) void router.push({ name: 'workspace-task', params: { projectId, taskId: task } })
   },
   removeFile: (index: number) => removeAgentFile(index),
+  togglePage: () => (agentPageOff.value = !agentPageOff.value),
+  clearSelection: () => (agentSelection.value = null),
+  citeOpen: () => void citing.load(),
+  cite: (item: Citable) => pickForAgent(item),
   openLink: (path: string) => void router.push(path),
 }
 </script>

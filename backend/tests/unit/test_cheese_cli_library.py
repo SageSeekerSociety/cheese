@@ -36,17 +36,16 @@ def test_get_lands_where_an_attached_file_lands(monkeypatch, tmp_path, capsys):
     cli = _load()
     monkeypatch.setattr(cli, "PROJECT", _PROJECT)
     monkeypatch.setattr(cli, "TOPIC", _TOPIC)
-    asked: list[tuple[str, str, str | None]] = []
+    asked: list[tuple[str, str, str]] = []
 
-    def _raw(method, path, data, out=None):
-        asked.append((method, path, out))
-        assert out is not None
+    def _fetch(project, name, out):
+        asked.append((project, name, out))
         Path(out).write_bytes(b"xlsx-bytes")
 
     home, workdir = tmp_path / "home", tmp_path / "room"
     workdir.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(cli, "_raw_request", _raw)
+    monkeypatch.setattr(cli, "_library_get", _fetch)
     monkeypatch.chdir(workdir)
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "library", "get", "预算表.xlsx"])
     cli.main()
@@ -55,10 +54,7 @@ def test_get_lands_where_an_attached_file_lands(monkeypatch, tmp_path, capsys):
     landed = home / "attachments" / "library" / "预算表.xlsx"
     assert landed.read_bytes() == b"xlsx-bytes"
     assert list(workdir.iterdir()) == [], "工作目录是被托管的检出,一个字节都不该多"
-    method, path, out = asked[0]
-    assert method == "GET"
-    assert f"/projects/{_PROJECT}/library/raw" in path
-    assert out == str(landed)
+    assert asked == [(_PROJECT, "预算表.xlsx", str(landed))]
 
 
 def test_get_can_write_somewhere_else(monkeypatch, tmp_path):
@@ -66,7 +62,7 @@ def test_get_can_write_somewhere_else(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "PROJECT", _PROJECT)
     monkeypatch.setattr(cli, "TOPIC", _TOPIC)
     monkeypatch.setattr(
-        cli, "_raw_request", lambda m, p, d, out=None: Path(out).write_bytes(b"x")
+        cli, "_library_get", lambda project, name, out: Path(out).write_bytes(b"x")
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(

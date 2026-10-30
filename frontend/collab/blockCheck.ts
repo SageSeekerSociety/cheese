@@ -22,7 +22,7 @@ const CONTAINERS: Record<string, string> = {
   canvas: '画布',
 }
 const APP_FORM =
-  '小程序写成 :::app 短号@版本 标题，下一行一句话说明，最后单独一行 :::；短号和版本照 cheese_app_save 给的抄'
+  '小程序写成 :::app 短号@版本 标题，下一行一句话说明，最后单独一行 :::；短号和版本照 cheese_app(action=save) 给的抄'
 const CHART_FORM =
   '图表写成 :::chart 类型，下一行起放一张 Markdown 表格（第一列是分类，其余每列一组数），最后单独一行 :::'
 const CONTAINER_LINE = /^\s*(:{3,})([a-z]*)/

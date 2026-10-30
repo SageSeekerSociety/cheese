@@ -6,12 +6,15 @@ user namespaces, as CI's runner has; elsewhere they are skipped. The macOS
 ones are in `test_device_sandbox_macos.py`. The rest holds anywhere.
 """
 
+import errno
 import json
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -450,3 +453,100 @@ def test_a_session_moved_from_a_sandbox_to_its_owners_machine_runs_outside_it(
     )
     assert cleanup.sandbox_release(room.home) is None
     assert environment_runner.sandbox_process(room.home) is None
+
+
+@sandboxed
+def test_a_room_dials_its_platform_socket_and_cannot_put_its_own_in_its_place(
+    rooms,
+):
+    """The connector serves a room's platform socket from outside its sandbox
+    (`cli/internal/host/machine.go`); the room is shown that directory
+    read-only. It reaches the socket, cannot unlink it or bind one of its own
+    there, and does not see another room's."""
+    room, other = rooms(), rooms()
+    socket_path = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"') == str(socket_path)
+
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(socket_path))
+    server.listen()
+
+    def answer():
+        conn, _ = server.accept()
+        with conn:
+            conn.sendall(b"outside heard " + conn.recv(64))
+
+    threading.Thread(target=answer, daemon=True).start()
+    try:
+        dial = (
+            "import os, socket; s = socket.socket(socket.AF_UNIX); "
+            's.connect(os.environ["CHEESE_PLATFORM_SOCKET"]); '
+            's.sendall(b"ping"); print(s.recv(64).decode())'
+        )
+        assert room.bash(f"python3 -c '{dial}'") == "outside heard ping"
+        replace = (
+            "import os, socket; p = os.environ['CHEESE_PLATFORM_SOCKET']\n"
+            "try:\n    os.unlink(p)\nexcept OSError as e:\n    print(e.errno)\n"
+            "try:\n    socket.socket(socket.AF_UNIX).bind(p + '.mine')\n"
+            "except OSError as e:\n    print(e.errno)\n"
+        )
+        assert room.bash(f'python3 -c "{replace}"').split() == [
+            str(errno.EROFS),
+            str(errno.EROFS),
+        ]
+        assert socket_path.exists()
+        assert (
+            other.bash(f'ls "{socket_path}" >/dev/null 2>&1 || echo hidden') == "hidden"
+        )
+    finally:
+        server.close()
+
+
+def test_a_platform_directory_someone_else_put_there_is_refused(tmp_path):
+    """The platform socket's directory has a fixed name in a shared /tmp; a
+    link planted there would put the socket where its maker can replace it."""
+    elsewhere = tmp_path / "theirs"
+    elsewhere.mkdir()
+    planted = tmp_path / "cheese-platform"
+    planted.symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="not this user's own directory"):
+        confinement.own_directory(planted)
+    mine = confinement.own_directory(tmp_path / "mine")
+    assert mine.is_dir() and (mine.stat().st_mode & 0o777) == 0o700
+
+
+@linux
+def test_a_room_on_a_whole_machine_is_given_its_platform_socket_too(rooms):
+    """A room without a sandbox (a VM that is its own, or a machine its owner
+    gave over) makes its model calls on the platform socket as well: the
+    install makes the directory and names the socket."""
+    room = rooms(sandbox=False)
+    expected = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"') == str(expected)
+    made = expected.parent.lstat()
+    assert expected.parent.is_dir() and made.st_uid == os.getuid()
+    assert (made.st_mode & 0o777) == 0o700
+
+
+def _holds_no_credential(room):
+    assert room.bash('printf %s "${CHEESE_TOKEN-unset}"') == ""
+    assert room.bash('printf %s "${CHEESE_PROXY_PROOF-unset}"') == "unset"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"')
+    assert room.bash('echo "$HTTPS_PROXY"').startswith("http://127.0.0.1:")
+    assert room.bash('echo "$SSL_CERT_FILE"').endswith("/ca-bundle.pem")
+    assert room.bash('echo "$NODE_EXTRA_CA_CERTS"').endswith("/ca.pem")
+    token_file = room.home / ".cheese" / "cheese-preview.token"
+    assert not token_file.exists() and not token_file.is_symlink()
+
+
+@sandboxed
+def test_an_isolated_room_holds_no_credential(rooms):
+    """Given its platform socket, a sandboxed room holds no credential of its
+    own: not in its environment, not in the file its preview helper could
+    read."""
+    _holds_no_credential(rooms(sandbox=True))
+
+
+def test_a_room_on_its_whole_machine_holds_no_credential(rooms):
+    """The same on a whole machine, which has the platform socket too."""
+    _holds_no_credential(rooms(sandbox=False))

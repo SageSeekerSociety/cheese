@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
+from app.api import machine_relay
 from app.api.admin_deps import PlatformAdminDep
 from app.api.deps import (
     get_consumptions,
@@ -37,6 +38,7 @@ from app.api.deps import (
 )
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
+from app.core.api_generation import OutdatedClientGuard
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
@@ -65,6 +67,7 @@ from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent import gateway_catalog
 from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.device_hub import machine as machine_streams
 from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
@@ -79,6 +82,7 @@ from app.domain.machine.runner import (
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
 from app.domain.room_cleanup.retire import sweep_retired_storage
+from app.domain.skill_market import close_market_connections
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -88,14 +92,6 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    # Move the startup heap (modules, routers, settings, the pool) out of the
-    # collector's scan set once, so every later gen-0/1 pass stops re-walking
-    # it. Nothing reachable at boot can become garbage, so this changes neither
-    # semantics nor peak memory — only how much the collector re-reads.
-    # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
-    # 20-concurrency burst.
-    gc.freeze()
-
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -547,6 +543,7 @@ async def lifespan(application: FastAPI):
         try:
             yield
         finally:
+            await close_market_connections()
             watching_jobs.cancel()
             await asyncio.gather(watching_jobs, return_exceptions=True)
             set_periodic_health(None)
@@ -681,6 +678,10 @@ app.add_middleware(RequestLimits)
 # Inside CORS for the same reason: a closed account's refusal must be readable.
 app.add_middleware(ClosedAccountGuard)
 
+# Inside CORS for the same reason: an open page built for an older API must be
+# able to read that it is out of date (app/core/api_generation.py).
+app.add_middleware(OutdatedClientGuard)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -690,13 +691,6 @@ app.add_middleware(
 )
 
 register_exception_handlers(app)
-
-# Wire the domain permission configs + role providers into the shared checker.
-# Without this every require_permission()-gated endpoint 403s (the providers
-# would otherwise be empty). Idempotent-enough for a single process start.
-from app.auth.domains import register_all_permissions  # noqa: E402
-
-register_all_permissions()
 
 
 _http_log = get_logger("http")
@@ -996,6 +990,23 @@ async def app_version() -> dict:
     )
 
 
+# A backend that owns its device links answers its sandboxes' platform sockets
+# itself; with a connection owner, the owner relays them here over HTTP.
+if not settings.device_connection_url:
+    machine_streams.serve(machine_relay.in_process(app))
+
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
 seal(app)
+
+# Move the startup heap (modules, routers, settings, the pool) out of the
+# collector's scan set, so every later gen-0/1 pass stops re-walking it.
+# `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
+# 20-concurrency burst. A frozen object is never collected, so this runs once
+# per process, here at import, and not in `lifespan`: a process that starts the
+# app more than once (the test suite enters it for every `client` test) froze
+# whatever was alive at each start — that test's engines, pools and connections
+# among them — and every such connection stayed open to Postgres until the
+# process exited. Collecting first leaves only what is reachable to freeze.
+gc.collect()
+gc.freeze()

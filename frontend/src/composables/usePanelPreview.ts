@@ -20,21 +20,22 @@ import type { McpAppMessage } from '@/lib/mcpAppBridge'
 import type { ChatAttachment } from '../cx_types'
 import type { ImageUpload, PanelPreviewOptions, PanelPreviewProps } from './panelPreview/types'
 
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, watch } from 'vue'
 
 import { attachmentRawUrl, downloadFile, uploadAttachment } from '../api'
 
+import { usePanelPreviewAppSleep } from './panelPreview/appWake'
 import { usePanelPreviewComments } from './panelPreview/comments'
 import { useCurrentPreview } from './panelPreview/currentPreview'
 import { usePanelPreviewDocument } from './panelPreview/documentBytes'
 import { usePanelPreviewEditing } from './panelPreview/editing'
+import { usePanelPreviewLiveEdit } from './panelPreview/liveEdit'
 import { usePanelNamedFile } from './panelPreview/namedFile'
 import { usePreviewPolling } from './panelPreview/polling'
 import { createPreviewState } from './panelPreview/previewState'
+import { usePanelPreviewVersions } from './panelPreview/versions'
 import { useDocPeople } from './useDocPeople'
 import { usePreviewFrames } from './usePreviewFrames'
-
-import { t } from '@/i18n'
 
 export type {
   AnnotateDraft,
@@ -68,11 +69,20 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onEscape: options.onEscape,
     onPick: options.onPick,
     onAppMessage: submitAppMessage,
+    // 应用那一帧拍的快照交给睡眠那一层存（它要用到下面才建的状态，所以晚一步接上）。
+    onSnapshot: (frame, shot) => sleep.keep(frame, shot),
   })
   const state = createPreviewState()
   const named = usePanelNamedFile({ props, state, frames })
   const target = useCurrentPreview({ props, options, state, frames, loadNamed: named.loadFile })
   const load = target.load
+  // 应用睡着时的快照和唤醒（`panelPreview/appWake.ts`）。
+  const sleep = usePanelPreviewAppSleep({
+    props,
+    state,
+    displayed: () => frames.displayed.value,
+    reload: () => load({ silent: true, reload: true }),
+  })
 
   watch(
     () => props.active,
@@ -128,16 +138,12 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
 
   // 下载当前这一份。地址由 api 那一层拼（房间里的文件走 attachment 那条路），文件名
   // 取路径最后那一段——判据都在这一层，所以展示组件只往上发一个「下载」。
-  const downloadError = ref('')
+  //
+  // 成没成由 `downloadFile` 那一层弹一句（`lib/download`），预览顶上不再留一行红字。
   async function downloadArtifact() {
-    downloadError.value = ''
     const path = state.previewFile.value?.path
     if (!props.topicId || !path) return
-    try {
-      await downloadFile(attachmentRawUrl(props.topicId, path), state.documentName.value || 'file')
-    } catch (e) {
-      downloadError.value = e instanceof Error ? e.message : t('work.room.preview.downloadFailed')
-    }
+    await downloadFile(attachmentRawUrl(props.topicId, path), state.documentName.value || 'file')
   }
 
   const doc = usePanelPreviewDocument({ props, state })
@@ -151,11 +157,26 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     agentHandle: () => props.agentHandle ?? null,
     agentName: () => props.agentName ?? '',
   })
-  const comments = usePanelPreviewComments({ props, state, people })
+  const comments = usePanelPreviewComments({ props, state, people, docPage: () => doc.docPage.value })
   const edits = usePanelPreviewEditing({
     props,
     state,
     onOpenFile: options.onOpenFile,
+    refreshDocument: doc.refreshDocument,
+  })
+  // 文档条上的版本：第几版、本版改了几处、两版对比、看旧版。清单就是上面那一栏历史。
+  const versions = usePanelPreviewVersions({
+    props,
+    state,
+    fileHistory: edits.fileHistory,
+    people,
+    editing: edits.editing,
+  })
+  // 在预览格里和几个人一起改一份 markdown：正文走协作服务，存回那一份房间文件本身
+  // （Office 那几种走 OnlyOffice，文本这一条不经过它）。
+  const liveEdit = usePanelPreviewLiveEdit({
+    props,
+    state,
     refreshDocument: doc.refreshDocument,
   })
 
@@ -186,6 +207,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     previewUrl: state.previewUrl,
     previewAppNote: state.previewAppNote,
     previewTunnelUp: state.previewTunnelUp,
+    previewAppUp: state.previewAppUp,
     previewNamedPath: state.previewNamedPath,
     autoReloaded: state.autoReloaded,
     previewError: state.previewError,
@@ -194,11 +216,11 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     documentType: state.documentType,
     documentName: state.documentName,
     isImageArtifact: state.isImageArtifact,
-    downloadError,
     docBytes: doc.docBytes,
     docIdentity: doc.docIdentity,
     docSnapshot: doc.docSnapshot,
     slideContext: doc.slideContext,
+    slideNotes: doc.slideNotes,
     docLoading: doc.docLoading,
     docError: doc.docError,
     docRendererMissing: doc.docRendererMissing,
@@ -214,6 +236,9 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     showHistory: edits.showHistory,
     editor: edits.editor,
     fileHistory: edits.fileHistory,
+    versions,
+    // 在预览格里直接改一份 markdown（存回房间文件本身）
+    liveEdit,
     // 动作
     load,
     downloadArtifact,
@@ -223,9 +248,18 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     closeEditor: edits.closeEditor,
     toggleHistory: edits.toggleHistory,
     toggleDocPage: doc.toggleDocPage,
+    setDocNarrow: doc.setNarrow,
     // 圈选：画的那一半按帧的类型选「递进帧」还是「宿主自己盖一层」，取数这一层只管把
     // 开关送到当前那一帧的桥。
     setPickMode: frames.setPickMode,
+    // 小浏览器：后退、前进、重载帧里那一页，跳到地址栏里敲的地址（帧里的桥执行）。
+    stepHistory: frames.stepHistory,
+    goTo: frames.goTo,
+    // 应用睡着时：最近一次的快照、唤醒的分步进度
+    appSnapshot: sleep.appSnapshot,
+    wakeSteps: sleep.wakeSteps,
+    wakeError: sleep.wakeError,
+    wakeApp: sleep.wake,
   }
 }
 

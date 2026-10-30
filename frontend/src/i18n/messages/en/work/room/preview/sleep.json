@@ -1,0 +1,22 @@
+{
+  "machineTitle": "The environment is asleep",
+  "appTitle": "The app is not answering",
+  "snapshotBody": "Showing the page as it last loaded successfully, {age} (no sandbox cost). You can browse and annotate it; wake the app to interact.",
+  "noSnapshot": "This app has no snapshot yet. Wake it to keep going; every successful load from now on keeps one.",
+  "snapshotTitle": "Static snapshot of the app",
+  "wake": "Wake and restart the app",
+  "restart": "Ask {agent} to restart the app",
+  "hint": "About 20–40 seconds, longer on a slow link; progress is shown step by step",
+  "stepMachine": "Start the computer",
+  "stepTunnel": "Connect the tunnel",
+  "stepAgent": "{agent} restarts the app",
+  "stepPort": "Wait for the port to answer",
+  "wakeFailed": "Waking did not work: {error}",
+  "wakeTimeout": "The app is still not up after {seconds} seconds. Try again, or ask {agent} in the conversation.",
+  "justNow": "just now",
+  "minutesAgo": "{n} min ago",
+  "hoursAgo": "{n} h ago",
+  "daysAgo": "{n} d ago",
+  "snapshotTag": " (showing a static snapshot)",
+  "snapshotWhere": "Frozen at \"{where}\""
+}

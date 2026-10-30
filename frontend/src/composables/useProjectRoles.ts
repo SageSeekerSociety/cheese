@@ -11,26 +11,35 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
-export function useProjectRoles(projectId: () => string) {
+export function useProjectRoles(projectId: () => string, options: { enabled?: () => boolean } = {}) {
+  const enabled = options.enabled ?? (() => true)
   const roles = ref<ProjectRoleRow[]>([])
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let version = 0
 
   async function load() {
     const id = projectId()
+    const current = ++version
     loading.value = true
     error.value = null
     try {
       const got = await listProjectRoles(id)
-      if (id !== projectId()) return
+      if (current !== version || id !== projectId()) return
       roles.value = got.roles
     } catch (e) {
-      error.value = messageOf(e)
+      if (current === version) error.value = messageOf(e)
     } finally {
-      loading.value = false
+      if (current === version) loading.value = false
     }
   }
-  watch(projectId, () => void load(), { immediate: true })
+  watch(
+    () => [projectId(), enabled()] as const,
+    ([, on]) => {
+      if (on) void load()
+    },
+    { immediate: true }
+  )
 
   function replace(row: ProjectRoleRow) {
     roles.value = roles.value.map((r) => (r.key === row.key ? row : r))

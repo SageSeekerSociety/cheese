@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
-from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
@@ -60,7 +59,7 @@ from app.api.topics_deps import (
     BlockRepository,
     ProjectRepository,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core.errors import (
     ConflictError,
@@ -347,7 +346,7 @@ async def report_progress(
     resolver: ActorResolverDep,
     run: str | None = Header(default=None, alias=RUN_HEADER),
 ) -> dict:
-    """The task's AI teammate says where its work stands (`cheese_task_state`):
+    """The task's AI teammate says where its work stands (`cheese_task(action=state)`):
     what the board shows for it until it says again, or until its session
     runs again in a run it has not reported in (`presentation.task_presentation`).
     Only the task's own session reports; a person reads it, and says what they
@@ -436,26 +435,18 @@ class TaskUpdateIn(BaseModel):
     contributor_handles: list[str] | None = Field(default=None, max_length=50)
 
 
-@router.post("/{topic_id}/tasks", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/tasks")
 async def create_task(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.tasks, at="topic_id")],
     body: TaskCreateIn,
     db: DbSession,
-    resolver: ActorResolverDep,
 ) -> dict:
     """新建任务：a task owned by whoever creates it, empty until they say what
     it is for. Its agent starts on the owner's first message; its owner
     reviews its changes (`TaskService.default_reviewer`)."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    place, actor = at.place, at.actor
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    await require_role(db, actor, place.project_id, Permission.tasks)
     task = await task_dispatch.create_task(
         db,
         room_id=place.room_id,
@@ -620,7 +611,7 @@ async def create_teammate_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """An AI teammate makes a task (`cheese_task`) on someone's word, from the
+    """An AI teammate makes a task (`cheese_task(action=open)`) on someone's word, from the
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
     under the message the 支线 is under. A teammate whose own idea it is asks
     first (`cheese_ask`), and the person who answers is who it does it for."""

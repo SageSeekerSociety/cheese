@@ -245,7 +245,7 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
 #: The ``route`` of a usage row that charges web searches the platform asked
-#: for (`cheese_web_search`): like a compute charge, credits and no call. The
+#: for (`cheese_web(action=search)`): like a compute charge, credits and no call. The
 #: searches are made on the caller's gateway key and drained with its model
 #: calls (``agent.gateway_spend``), which lands the gateway's search line
 #: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.
@@ -344,6 +344,30 @@ class TaskGatewayAccount(Base):
     gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class MachineGatewayAccount(Base):
+    """The gateway key a conversation's sandboxes call models on, for one
+    budget holder (``""`` when the project pays): apart from the session's own
+    key, with a daily cap on the gateway, so a machine whose owner relays its
+    platform socket spends that much a day at most. Kept, like the task's, so
+    late spend is still charged."""
+
+    __tablename__ = "machine_gateway_accounts"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_machine_gateway_accounts_project_id_projects",
+        ),
+        index=True,
+    )
+    gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    daily_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class ResourceUsage(UuidPk, Timestamps, Base):

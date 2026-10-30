@@ -139,6 +139,12 @@ async def test_card_poll_in_queue_runs_the_stall_watch(monkeypatch):
             async def flush():
                 return None
 
+            @staticmethod
+            async def refresh(instance, attribute_names=None, with_for_update=None):
+                # The mirror write re-reads the card under its row lock; here
+                # the card object is the only copy, so there is nothing newer.
+                return None
+
     svc, card, client = Svc(), _card(), Client(started=False)
     card.status = AcceptStatus.accepted
     card.pr_head_sha = "h"

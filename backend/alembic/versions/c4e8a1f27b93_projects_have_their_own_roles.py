@@ -1,7 +1,7 @@
 """Projects have their own roles; a channel may let only some speak
 
 Revision ID: c4e8a1f27b93
-Revises: b7d41e9c05af
+Revises: e3f9a1c62b47
 Create Date: 2026-10-25
 
 A project's roles are now admin and member, built in, plus any of its own
@@ -28,7 +28,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "c4e8a1f27b93"
-down_revision: str | Sequence[str] | None = "b7d41e9c05af"
+down_revision: str | Sequence[str] | None = "e3f9a1c62b47"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

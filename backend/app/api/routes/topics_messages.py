@@ -85,7 +85,7 @@ from app.api.topics_deps import (
     reply_preview,
     require_person_speaks,
 )
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core import raster_images
 from app.core.errors import (
@@ -94,7 +94,7 @@ from app.core.errors import (
     ForbiddenError,
     ValidationError,
 )
-from app.core.sentences import listing, say
+from app.core.sentences import listing, say, size_text
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
@@ -240,7 +240,7 @@ def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
             raise ValidationError(say("emptyFile"))
         if len(raw) > library.MAX_FILE_BYTES:
             raise ValidationError(
-                say("fileTooLarge", mb=library.MAX_FILE_BYTES // (1024 * 1024))
+                say("fileTooLarge", size=size_text(library.MAX_FILE_BYTES))
             )
         mime = raster_images.sniff(raw[:12])
         if mime is None:
@@ -456,12 +456,11 @@ async def _summon_the_named(
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
 
 
-@router.post("/{topic_id}/note", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/note")
 async def leave_a_note(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.note_own_threads, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """同 handle 便条的写侧（结论 11）：给自己的另一条线程留一句话。
@@ -474,12 +473,11 @@ async def leave_a_note(
     房间里的一条消息。那边这一刻没有在干活的会话就没人接住，如实回 `delivered: false`。
     """
 
-    place = await place_or_404(db, topic_id)
-    actor = await _actor_in_place(resolver, place)
+    place, actor = at.place, at.actor
     sender = actor.handle
     if not actor.authenticated:
         sender = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+            place.conversation_id, room_id=place.room_id
         )
     thread = (body.get("thread") or "").strip()
     try:

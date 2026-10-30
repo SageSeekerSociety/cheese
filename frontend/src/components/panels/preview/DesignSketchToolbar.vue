@@ -29,9 +29,6 @@ const props = defineProps<{
 }>()
 /** 图上的字说不清「改成什么」，所以那一句和「加入对话」摆在一起。 */
 const note = defineModel<string>('note', { default: '' })
-/** 区域选择是外面那颗按钮，它开着时按 Esc 取消之后焦点要回得来。 */
-const selectButton = ref<HTMLButtonElement | null>(null)
-defineExpose({ selectButton })
 const emit = defineEmits<{
   pick: [tool: SketchTool]
   recolor: [color: string]
@@ -124,7 +121,6 @@ const TOOL_ICON: Record<SketchTool, string> = {
          右边不跟着滚——它们是这一步的落点，滚出去就等于按不到。 -->
     <div class="sketch-toolbar__scroll">
       <button
-        ref="selectButton"
         type="button"
         class="sketch-toolbar__tool"
         :class="{ 'is-active': props.tool === 'select' }"

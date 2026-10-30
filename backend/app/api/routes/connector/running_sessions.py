@@ -1,11 +1,10 @@
 """Read-only running sessions for device viewers and the local connector."""
 
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, PresentedCredential
 from app.api.request_deps import DbSession
 from app.api.routes.connector.schemas import RunningDeviceSessionsOut
 from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
@@ -48,10 +47,8 @@ async def device_sessions(device_id: str, resolver: ActorResolverDep, db: DbSess
     response_model=None,
     responses={200: {"model": RunningDeviceSessionsOut}},
 )
-async def connector_sessions(
-    db: DbSession, token: Annotated[str | None, Header(alias="X-Cheese-Session")] = None
-):
-    device = await owner_reads.device_for_token(db, token or "")
+async def connector_sessions(db: DbSession, token: PresentedCredential):
+    device = await owner_reads.device_for_token(db, token)
     if device is None:
         raise UnauthorizedError()
     return {"sessions": [row for _, row in await running_on(db, device.device_id)]}

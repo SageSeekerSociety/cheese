@@ -10,6 +10,7 @@ export interface TaskEvents {
   'privacy-dialog-open': boolean // 隐私声明对话框开关状态
   'team-selection-dialog-open': boolean // 队伍选择对话框开关状态
   'leave-team-dialog-open': boolean // 退出队伍对话框开关状态
+  'start-dialog-open': boolean // 开始做这道题（申请已通过，用这道题新建项目）对话框开关状态
 
   // 用户操作事件
   'join-clicked': undefined // 点击加入按钮
@@ -29,6 +30,7 @@ export interface TaskEvents {
   'select-leave-team': number // 选择要离开的队伍
   'leave-team': number // 离开队伍
   'confirm-leave-team': undefined // 确认离开队伍
+  'start-confirmed': undefined // 开始做这道题对话框里按了「开始做」
   'reload-joined-teams': undefined // 重新加载已加入的队伍
   'review-participant': { id: number; name: string } // 领取者页签：打开某人的逐版评审
   // 谁的领取或提交变了（批准/拒绝领取、改截止、评审、交上一版）：题目页重读我那一份

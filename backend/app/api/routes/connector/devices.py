@@ -31,15 +31,14 @@ from typing import Annotated, Any
 from fastapi import (
     APIRouter,
     Depends,
-    Header,
-    Query,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import ActorResolverDep, PresentedCredential
 from app.api.request_deps import DbSession
 from app.api.routes.connector.schemas import (
     ConnectRequest,
@@ -51,7 +50,7 @@ from app.core import background
 from app.core.config import settings
 from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.sentences import say
-from app.domain.agent import checkout_sweep
+from app.domain.agent import checkout_sweep, device_link
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
@@ -66,6 +65,8 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.local_fs.enforcement import push_grants_on_connect
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.team import permissions as team_seats
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.services import team_service
 
 router = APIRouter(prefix="/connector", tags=["connector"])
@@ -227,11 +228,19 @@ async def device_start(
 
 @router.post("/auth/device/poll", dependencies=[ROUTE_DECIDES])
 async def device_poll(
-    body: DevicePollRequest, service: DeviceServiceDep
+    body: DevicePollRequest,
+    service: DeviceServiceDep,
+    db: DbSession,
+    response: Response,
 ) -> dict[str, Any]:
     """Poll a pending flow: ``{status}`` until approved, then the durable token +
-    device id the client persists."""
-    return await service.poll(body.device_code)
+    device id the client persists. The token's digest is committed before the
+    answer leaves: the cli dials in with it at once. No cache may keep the answer
+    (RFC 6749 §5.1)."""
+    polled = await service.poll(body.device_code)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return polled
 
 
 @router.get("/auth/device/proposed-name")
@@ -259,7 +268,9 @@ async def device_connect(
     team_id = body.team_id
     if team_id is None:
         team_id = (await team_service(db).ensure_personal_team(actor.user_id)).id
-    if not await team_service(db).is_team_at_least_admin(team_id, actor.user_id):
+    if not await team_seats.TEAM.allows(
+        db, team_id, actor.user_id, TeamPermission.manage_machines
+    ):
         raise ForbiddenError(say("deviceTeamAdminOnly"))
 
     # Approve binds the device to its owner + mints the durable token. The device is
@@ -303,16 +314,38 @@ class _WebSocketDeviceTransport:
             raise ConnectionError(str(exc)) from exc
 
 
+#: Where a connector built before credentials moved to ``Authorization`` puts
+#: its device token. Read on the control channel alone, and only to tell it to
+#: update (`_update_a_connector_too_old`); delete it, and that, once every
+#: enrolled machine runs a connector that sends ``Authorization``.
+_OLD_DEVICE_HEADER = "x-cheese-session"
+
+
+async def _update_a_connector_too_old(websocket: WebSocket, db: DbSession) -> bool:
+    """Tell a connector that still sends its token the old way to update, and
+    nothing else: it is let in for that one frame, which every connector ever
+    shipped understands (`device_link.update`), and hung up on. It updates in
+    the background whatever happens to the link, and its new build dials as
+    any other."""
+    old = websocket.headers.get(_OLD_DEVICE_HEADER) or ""
+    device = await owner_reads.device_for_token(db, old) if old else None
+    await db.commit()
+    if device is None:
+        return False
+    await websocket.accept()
+    with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+        await websocket.send_json(device_link.update())
+        await websocket.close(code=1000, reason="update this connector")
+    return True
+
+
 @router.get("/device/me")
-async def device_me(
-    db: DbSession,
-    x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
-) -> dict[str, Any]:
+async def device_me(db: DbSession, token: PresentedCredential) -> dict[str, Any]:
     """Which device a machine's stored token still names. A machine unbound
     since its approval keeps the token on disk, and `link connect` asks here
     before trusting it, rather than installing a connector the server will
     turn away on every dial."""
-    device = await owner_reads.device_for_token(db, x_cheese_session or "")
+    device = await owner_reads.device_for_token(db, token)
     if device is None:
         raise UnauthorizedError("unknown or missing device token")
     return {"device_id": device.device_id, "name": device.name}
@@ -320,15 +353,14 @@ async def device_me(
 
 @router.websocket("/agent")
 async def agent_socket(
-    websocket: WebSocket,
-    db: DbSession,
-    x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
-    token: str | None = Query(default=None),
+    websocket: WebSocket, db: DbSession, token: PresentedCredential
 ) -> None:
     """The device's dial-out control channel. Authenticates with the durable device
-    token (header, or ``?token=`` for browsers), then dispatches every inbound
-    ``link.Msg`` to the shared ``DeviceHub`` (which drives outbound messages)."""
-    device = await owner_reads.device_for_token(db, x_cheese_session or token or "")
+    token, then dispatches every inbound ``link.Msg`` to the shared ``DeviceHub``
+    (which drives outbound messages)."""
+    if not token and await _update_a_connector_too_old(websocket, db):
+        return
+    device = await owner_reads.device_for_token(db, token)
     # End the auth read-transaction NOW, before the (device-lifetime) receive loop.
     # A ``Depends(get_db)`` session injected into a WebSocket route is only finalized
     # when the socket CLOSES — so without this commit, the authentication transaction

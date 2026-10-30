@@ -18,7 +18,7 @@ import type { ChannelPin } from '@/types/channels'
 import type { ChapterRow } from '@/types/chapters'
 import type { ReviewComment } from '@/types/reviewComment'
 import type { TaskRelated } from '@/types/taskOrigin'
-import type { ThreadRow } from '@/types/threads'
+import type { ThreadLists } from '@/types/threads'
 
 import { hashKey } from '@tanstack/vue-query'
 
@@ -33,7 +33,7 @@ export interface RoomSnapshot {
   /** 频道才有。 */
   tasks?: { open: RoomTask[]; recent: RoomTask[] }
   pins?: ChannelPin[]
-  threads?: ThreadRow[]
+  threads?: ThreadLists
   /** 这段对话的章节：频道和任务都有。 */
   chapters?: ChapterRow[]
   /** 任务才有。 */
