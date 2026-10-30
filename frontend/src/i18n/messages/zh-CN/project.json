@@ -90,12 +90,28 @@
     "memoryProject": "项目记忆",
     "memoryDelete": "删除这条记忆",
     "memoryDeleteTitle": "删除这条记忆？",
-    "memoryDeleteBody": "删除后找不回来，{name}也不再记得它。",
+    "memoryDeleteBody": "删除后{name}不再记得它，30 天内可在「最近改动」里恢复。",
     "noCharter": "这个项目还没有可编辑的项目目标",
     "fromTopic": "来自频道",
     "weekliesEmpty": "暂无周报",
     "weekliesHint": "在「综合」里 {'@'} {name}，说「写一份这周的项目周报」，它写完会记到这里",
     "goToRoom": "去「综合」",
-    "recordedOn": "{date} 记录"
+    "recordedOn": "{date} 记录",
+    "memoryChanges": "最近改动",
+    "memoryChangesEmpty": "暂无改动",
+    "memoryChangeCreated": "新建",
+    "memoryChangeEdited": "修改",
+    "memoryChangeDeleted": "删除",
+    "memoryChangeShowDiff": "查看改动",
+    "memoryRestore": "恢复到改动前",
+    "memoryWriter": {
+      "turn": "对话中",
+      "dream_team": "整理",
+      "dream_private": "整理",
+      "panel": "手动",
+      "restore": "恢复",
+      "skill": "并入项目方法",
+      "migration": "旧记忆迁移"
+    }
   }
 }

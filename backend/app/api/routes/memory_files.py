@@ -25,6 +25,7 @@ from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.memory import history
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileError,
@@ -33,7 +34,6 @@ from app.domain.memory.files import (
     fit_index,
     parse_memory_file,
 )
-from app.domain.memory import history
 from app.domain.memory.files_store import MemoryFileMissing, MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
 from app.domain.memory.writers import MemoryWriter

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { MemoryEntryOut } from '../api'
+import type { MemoryChangeOut, MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
-import { computed, getCurrentInstance } from 'vue'
+import { computed, getCurrentInstance, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
@@ -10,7 +10,7 @@ import { usePageActive } from '@/composables/usePageActive'
 import { useProjectAgentName } from '@/composables/useProjectAgentName'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
+import { deleteMemory, getProjectWeeklies, listMemory, listMemoryChanges, restoreMemoryChange } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { mayIn } from '../lib/projectPermissions'
 import { refRoute } from '../lib/refDirectory'
@@ -21,12 +21,14 @@ import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import MemoryChangeList from '@/components/memory/MemoryChangeList.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import { patchQuery, queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { projectQuery, roomRowQuery } from '@/query/project'
+import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 项目级文档 (spec §7.1): 项目目标 / 周报集 / 记忆 — one address each
@@ -73,6 +75,8 @@ interface DocsPayload {
   overviewId: string | null
   weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
+  /** 最近改动：项目共享的那一份和这个人自己的那一份合在一起，新的在前。 */
+  memoryChanges: MemoryChangeOut[]
   /** 项目共享的那几条只有能配置 AI 队友的人删得动；自己的那几条自己删（#3830）。 */
   changesSharedMemory: boolean
 }
@@ -100,13 +104,22 @@ const docs = useQuery(
         overviewId: null,
         weeklies: [],
         memoryEntries: [],
+        memoryChanges: [],
         changesSharedMemory: mayIn(project, 'configure_agents'),
       }
       if (kind.value === 'charter' && overviewRead) {
         payload.overviewId = (await overviewRead).id
         if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
       } else if (kind.value === 'memory') {
-        payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
+        // 记忆和它的改动记录各问各的，并行去取。别人的 private 改动不在这里：后端
+        // 只给本人（和读那条记忆是同一道门）。
+        const [entries, team, mine] = await Promise.all([
+          listMemory(props.projectId, AUTHOR),
+          listMemoryChanges(props.projectId, 'team'),
+          listMemoryChanges(props.projectId, 'private', AUTHOR),
+        ])
+        payload.memoryEntries = entries.data
+        payload.memoryChanges = [...team.data, ...mine.data].sort((a, b) => b.created_at.localeCompare(a.created_at))
       } else if (kind.value === 'weeklies') {
         // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
         // 认，一个叫「周报怎么发」的房间也会出现在这儿。
@@ -125,6 +138,14 @@ const error = computed(() => (docs.data.value ? null : docs.error.value))
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
 const mayDelete = (e: MemoryEntryOut) => e.scope === 'private' || !!data.value?.changesSharedMemory
+const memoryChanges = computed<MemoryChangeOut[]>(() => data.value?.memoryChanges ?? [])
+// 恢复是一次写入，和删一条同一道门；一次新建没有「改之前」可恢复。
+const mayRestore = (c: MemoryChangeOut) => !c.created && (c.scope === 'private' || !!data.value?.changesSharedMemory)
+// 改动是谁做的：队友按名字，芝士按它在这个项目里的名字。
+const changeNames = computed<Record<string, string>>(() => ({
+  ...weeklyNames.value.mentionNames,
+  ...(workspace?.agentHandle ? { [workspace.agentHandle]: agentName.value } : {}),
+}))
 const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
@@ -175,7 +196,7 @@ function weeklyWindow(w: Block): string {
 const dialog = useDialog()
 
 // 删一条要写回缓存里的那份，不然离开这一页再回来它又出现了。
-// 删掉找不回，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
+// 删掉之后芝士就不再记得它，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function removeMemory(id: string) {
   const confirmed = await dialog
     .confirm(t('project.docs.memoryDeleteBody', { name: agentName.value }), {
@@ -191,6 +212,24 @@ async function removeMemory(id: string) {
     ...held,
     memoryEntries: held.memoryEntries.filter((e) => e.id !== id),
   }))
+  // 这一次删除也是一条改动，重读一次让它出现在「最近改动」里。
+  await queryClient.invalidateQueries({ queryKey: docsKey.value })
+}
+
+// 从一条改动恢复：后端把改之前那一份写回去，记忆和改动记录都变了，整份重读。不先
+// 确认：恢复本身也是一条改动，错了再从它恢复回来就是（决策方法 §2.5：能撤回、错了
+// 一眼看得出的，直接做）。
+const restoring = ref<string | null>(null)
+async function restoreChange(id: string) {
+  restoring.value = id
+  try {
+    await restoreMemoryChange(id)
+    await queryClient.invalidateQueries({ queryKey: docsKey.value })
+  } catch (err) {
+    void errorHandler.handle(err as Error)
+  } finally {
+    restoring.value = null
+  }
 }
 
 // A source-topic link: open that topic in the same project frame.
@@ -283,6 +322,13 @@ useCommands(() => {
             />
           </div>
         </v-card>
+        <MemoryChangeList
+          :changes="memoryChanges"
+          :names="changeNames"
+          :may-restore="mayRestore"
+          :restoring="restoring"
+          @restore="restoreChange"
+        />
       </template>
 
       <!-- ===== 项目目标: the project's own doc panel, on a page ===== -->

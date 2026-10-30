@@ -507,6 +507,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("task deadline sweep", 116),
         ("starter code pushes", 10),
         ("memory dream", 117),
+        ("memory history retention", 3600),
         ("platform model roles refresh", 121),
         ("model spend cap alert", 122),
         ("relay balance check", 126),
