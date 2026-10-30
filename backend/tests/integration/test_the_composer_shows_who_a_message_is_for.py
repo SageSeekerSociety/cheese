@@ -162,9 +162,7 @@ def test_a_closed_task_hears_only_whoever_names_its_teammate(client, stub_hooks)
     assert named["agent"]["handle"] == seat
 
 
-def test_asking_who_a_draft_is_for_writes_nothing_and_wakes_nobody(
-    client, stub_hooks
-):
+def test_asking_who_a_draft_is_for_writes_nothing_and_wakes_nobody(client, stub_hooks):
     _, _, room = _channel(client)
     seat = room_agent_seat(client, room)
     before = _written(client, room)

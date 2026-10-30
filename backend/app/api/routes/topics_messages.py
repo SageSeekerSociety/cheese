@@ -237,7 +237,13 @@ async def send_chat_message(
         "agent_recipient"
     ) or {}
     if not (may_summon and recipient.get("mentioned")):
-        people = await TopicMemberService(db).people_in(place.room, team=project_team)
+        # 综合's main line already read the project's roster to let them speak
+        # (`require_person_speaks`); that roster is its people.
+        people = (
+            [m.handle for m in members if not m.agent]
+            if members is not None
+            else await TopicMemberService(db).people_in(place.room, team=project_team)
+        )
         if set(people) == {actor.handle}:
             sent["alone"] = True
     # The sender's own copy may be the first one the client sees. It carries the
@@ -256,37 +262,30 @@ async def send_chat_message(
     return ok(sent)
 
 
-@router.post(
-    "/{topic_id}/messages/addressing",
-    operation_id="chat-addressing",
-    dependencies=[ROUTE_DECIDES],
-)
+@router.post("/{topic_id}/messages/addressing", operation_id="chat-addressing")
 async def preview_message_addressing(
-    topic_id: uuid.UUID,
     body: ChatAddressingIn,
     db: DbSession,
-    resolver: ActorResolverDep,
+    at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
 ) -> dict:
     """Who a person's message would be for if sent now: the AI teammate it
     would start a turn for and the rule that calls it, or none; and the people
-    it @-s. The composer shows it before the message is sent.
+    it @-s. The composer shows it before the message is sent, so it asks what
+    sending asks: someone who may speak in this channel.
 
     It reads the draft the way sending reads a message
     (`agent.turn.intake.human.preview_addressing`) and writes nothing: no
     block, no seat, no turn."""
-    place = await place_or_404(db, topic_id)
-    actor = await _actor_in_place(resolver, place)
-    if not actor.authenticated:
-        raise AuthenticationRequiredError("Sign in to send a message")
-    await require_person_speaks(db, actor, place)
     addressing = await preview_addressing(
         db,
-        place,
+        at.place,
         body.content.strip(),
-        actor.handle,
+        at.actor.handle,
         reply_to=body.reply_to,
         with_text=body.with_text,
-        may_summon=await may(db, place.project_id, actor.handle, Permission.ask_agent),
+        may_summon=await may(
+            db, at.place.project_id, at.actor.handle, Permission.ask_agent
+        ),
     )
     return ok(addressing.as_json())
 
