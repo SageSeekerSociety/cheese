@@ -42,6 +42,8 @@ from app.domain.routine.service._shared import (
 )
 from app.domain.thread.services import answered_in
 
+_OPEN = (RunStatus.queued.value, RunStatus.running.value)
+
 
 def run_prompt(routine: Routine, run: RoutineRun) -> str:
     lines = [
@@ -68,16 +70,37 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
 
 
 def _offered_before(routine_id: uuid.UUID):
-    """The feedback earlier runs of this rule already handed to a teammate.
+    """Each report earlier runs of this rule handed to a teammate: when it was
+    last handed out, and whether a run that has it is still going.
 
     A run that failed does not count: never delivered, never started, or the
-    work it was read into failed — those reports may be handed out again.
+    work it was read into failed. Nor does a run that ended: whatever the
+    teammate did that needs no second look is on the report itself (it holds
+    the claim, or the report moved on), so a report still waiting after its run
+    ended was given up on and is offered again (`feedback.triage.untriaged`).
     """
-    return select(
-        func.jsonb_array_elements_text(RoutineRun.feedback_offered).cast(Uuid)
-    ).where(
-        RoutineRun.routine_id == routine_id,
-        RoutineRun.status != RunStatus.failed.value,
+    runs = (
+        select(
+            func.jsonb_array_elements_text(RoutineRun.feedback_offered)
+            .cast(Uuid)
+            .label("feedback_id"),
+            RoutineRun.created_at.label("at"),
+            RoutineRun.status.in_(_OPEN).label("open"),
+        )
+        .where(
+            RoutineRun.routine_id == routine_id,
+            RoutineRun.status != RunStatus.failed.value,
+        )
+        .subquery()
+    )
+    return (
+        select(
+            runs.c.feedback_id,
+            func.max(runs.c.at).label("last_at"),
+            func.bool_or(runs.c.open).label("open"),
+        )
+        .group_by(runs.c.feedback_id)
+        .subquery()
     )
 
 
@@ -144,7 +167,7 @@ async def _fire(
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
         batch = await feedback_triage.untriaged(
-            session, batch_size, exclude=_offered_before(routine.id)
+            session, batch_size, offered=_offered_before(routine.id)
         )
         if not batch:
             # Nothing waiting is not news: no turn, no message, and no daily
