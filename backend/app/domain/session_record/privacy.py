@@ -127,9 +127,9 @@ def _calls_for(record: dict, reader: str | None) -> dict:
     )
     message = record["entry"] if nested else record
     body = message.get("message")
-    blocks = body.get("content") if isinstance(body, dict) else None
-    if not isinstance(blocks, list):
+    if not isinstance(body, dict) or not isinstance(body.get("content"), list):
         return record
+    blocks = body["content"]
     shown: list = []
     answered = False
     for block in blocks:
