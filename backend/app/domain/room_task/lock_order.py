@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import Delete, Select, Update, event, select
+from sqlalchemy import Delete, Select, Update, event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import ORMExecuteState, Session
 from sqlalchemy.sql import operators, visitors
@@ -57,11 +57,8 @@ async def lock_task_for_change(
     row FOR NO KEY UPDATE, read again from the database. None when there is no
     such task."""
     await hold_numbering(session, task_id)
-    return await session.scalar(
-        select(Task)
-        .where(Task.id == task_id)
-        .with_for_update(key_share=True)
-        .execution_options(populate_existing=True)
+    return await session.get(
+        Task, task_id, with_for_update={"key_share": True}, populate_existing=True
     )
 
 
