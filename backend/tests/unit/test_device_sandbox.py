@@ -598,6 +598,9 @@ def site_forge(tmp_path, monkeypatch):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
+            if self.path == "/":
+                self._send(200, b"site")
+                return
             if self.path == "/api/live":
                 if self.headers.get("Upgrade", "").lower() != "websocket":
                     self._send(400, b"missing upgrade")
@@ -784,3 +787,30 @@ def test_a_room_keeps_a_live_connection_to_the_site_beside_its_forge(site_forge,
     with _platform_socket_of(room):
         said = room.bash(f"{sys.executable} {check} 2>&1; echo exit=$?")
     assert said.endswith("live connection exchanged ping\nexit=0"), said
+
+
+def test_a_room_can_query_its_forge_after_reading_the_site(site_forge, rooms):
+    """A client reusing its HTTPS connection still gets its project
+    credential when a site request is followed by a private forge request."""
+    forward, _ = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    check = room.home / "site-then-forge.py"
+    check.write_text(
+        "import http.client, os, urllib.parse\n"
+        "proxy = urllib.parse.urlsplit(os.environ['HTTPS_PROXY'])\n"
+        "conn = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=5)\n"
+        f"conn.set_tunnel('{SITE}',443)\n"
+        "conn.request('GET','/')\n"
+        "response = conn.getresponse()\n"
+        "assert response.status == 200\n"
+        "assert response.read() == b'site'\n"
+        "conn.request('GET','/forge/api/v1/repos/o/r', headers={'Authorization':'token placeholder'})\n"
+        "response = conn.getresponse()\n"
+        "assert response.status == 200, response.status\n"
+        "assert b'o/r' in response.read()\n"
+        "conn.close()\n"
+        "print('site and private forge are reachable')\n"
+    )
+    with _platform_socket_of(room):
+        said = room.bash(f"{sys.executable} {check} 2>&1; echo exit=$?")
+    assert said.endswith("site and private forge are reachable\nexit=0"), said

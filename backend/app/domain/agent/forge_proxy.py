@@ -445,9 +445,11 @@ def _pipe(src: socket.socket, dst: socket.socket, reader=None) -> None:
             dst.shutdown(socket.SHUT_WR)
 
 
-def _splice(a: socket.socket, b: socket.socket, reader=None) -> None:
+def _splice(
+    a: socket.socket, b: socket.socket, reader=None, upstream_reader=None
+) -> None:
     t1 = threading.Thread(target=_pipe, args=(a, b, reader), daemon=True)
-    t2 = threading.Thread(target=_pipe, args=(b, a), daemon=True)
+    t2 = threading.Thread(target=_pipe, args=(b, a, upstream_reader), daemon=True)
     t1.start()
     t2.start()
     t1.join()
@@ -458,7 +460,6 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
     """Handles decrypted HTTP/1.1 requests inside a terminated TLS tunnel."""
 
     protocol_version = "HTTP/1.1"
-    raw_requestline: bytes
 
     def __init__(
         self,
@@ -516,18 +517,37 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
                 timeout=10,
             )
             try:
+                body = self._read_body()
+                headers = {
+                    key: value
+                    for key, value in self.headers.items()
+                    if key.lower() not in ("transfer-encoding", "content-length")
+                }
+                if not self.headers.get("Upgrade"):
+                    headers["Connection"] = "close"
                 connection.connect()
-                upstream = connection.sock
-                request_headers = "".join(
-                    f"{key}: {value}\r\n" for key, value in self.headers.items()
-                )
-                upstream.sendall(
-                    self.raw_requestline + request_headers.encode("latin-1") + b"\r\n"
-                )
-                self.request.settimeout(None)
-                upstream.settimeout(None)
-                # The HTTP reader may already hold bytes after the headers.
-                _splice(self.request, upstream, self.rfile)
+                connection.sock.settimeout(300)
+                connection.request(self.command, self.path, body=body, headers=headers)
+                response = connection.getresponse()
+                connection.sock.settimeout(None)
+                upgraded = response.status == 101
+                self.send_response_only(response.status, response.reason)
+                for key, value in response.getheaders():
+                    if key.lower() != "transfer-encoding" and (
+                        key.lower() != "connection" or upgraded
+                    ):
+                        self.send_header(key, value)
+                if not upgraded:
+                    self.send_header("Connection", "close")
+                self.end_headers()
+                if upgraded:
+                    self.request.settimeout(None)
+                    connection.sock.settimeout(None)
+                    # The HTTP readers may already hold bytes after the headers.
+                    _splice(self.request, connection.sock, self.rfile, response.fp)
+                else:
+                    while chunk := response.read1(65536):
+                        self.wfile.write(chunk)
             finally:
                 self.close_connection = True
                 connection.close()
