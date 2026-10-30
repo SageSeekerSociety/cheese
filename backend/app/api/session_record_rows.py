@@ -23,14 +23,29 @@ from app.domain.memory.instructions import without_others_private
 
 
 def hidden_private_memory(value: Any, reader: str | None) -> Any:
-    """``value`` (a row, a record, any JSON) with every private memory index
-    that is not ``reader``'s replaced (`without_others_private`)."""
+    """``value`` (a page of rows or records) with every private memory index
+    that is not ``reader``'s replaced (`without_others_private`), in place.
+
+    Walked with a stack rather than by recursion: a record is whatever the
+    harness wrote and can be nested deeper than the interpreter recurses."""
     if isinstance(value, str):
         return without_others_private(value, reader)
-    if isinstance(value, list):
-        return [hidden_private_memory(item, reader) for item in value]
-    if isinstance(value, dict):
-        return {key: hidden_private_memory(item, reader) for key, item in value.items()}
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        pairs = (
+            node.items()
+            if isinstance(node, dict)
+            else enumerate(node)
+            if isinstance(node, list)
+            else ()
+        )
+        for key, item in list(pairs):
+            if isinstance(item, str):
+                if "<private-memory" in item:
+                    node[key] = without_others_private(item, reader)
+            elif isinstance(item, (dict, list)):
+                stack.append(item)
     return value
 
 

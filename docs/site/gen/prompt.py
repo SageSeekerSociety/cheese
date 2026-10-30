@@ -280,12 +280,14 @@ INDEX_SECTIONS = [
     {
         "label": "项目共享（team）",
         "prefix": "team",
+        "owner": None,
         "text": "- [构建用 npm ci](build.md) — 不要用 npm install\n"
         "- [移动端发版前冻结合并](freeze.md) — 非关键 PR 排到发版之后",
     },
     {
         "label": "关于 zhangheng（private）",
         "prefix": "private/zhangheng",
+        "owner": "zhangheng",
         "text": "- [回答短一点](short.md) — 结尾不要总结刚做了什么",
     },
 ]
