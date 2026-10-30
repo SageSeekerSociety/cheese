@@ -18,6 +18,8 @@ const props = defineProps<{
   cropping: boolean
   /** 亮度、饱和度那半行摊开着没有。开着与否由上面拿着，按钮只照着画。 */
   toneOpen: boolean
+  /** 这张图有没有定高可适应：没有就不摆「适应视口」（见 DesignImage 的 `fitsHeight`）。 */
+  fitsHeight: boolean
 }>()
 const emit = defineEmits<{
   zoom: [factor: number]
@@ -32,7 +34,9 @@ const emit = defineEmits<{
 /** 调过色时按钮一直亮着，摊开着也亮——「改过」和「开着」是两件事，亮的是前面那件。 */
 const toneLit = computed(() => props.toneOpen || props.adjust.brightness !== 100 || props.adjust.saturation !== 100)
 
-const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
+const zoomModes = computed(() =>
+  props.fitsHeight ? (['fitv', 'fitw', 'actual'] as const) : (['fitw', 'actual'] as const)
+)
 </script>
 
 <template>
@@ -53,7 +57,7 @@ const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
         :aria-label="t('design.zoomMode')"
         @change="emit('mode', ($event.target as HTMLSelectElement).value as 'fitv' | 'fitw' | 'actual')"
       >
-        <option v-for="value in ZOOM_MODES" :key="value" :value="value">
+        <option v-for="value in zoomModes" :key="value" :value="value">
           {{ t(`design.zoomModeOption.${value}`) }}
         </option>
         <option v-if="mode === 'custom'" value="custom">{{ t('design.zoomModeOption.custom') }}</option>
@@ -112,7 +116,7 @@ const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
         <i class="mdi mdi-backup-restore" aria-hidden="true" />{{ t('design.restore') }}
       </button>
     </div>
-    <slot name="actions" />
+    <div class="design-view-tools__actions"><slot name="actions" /></div>
   </div>
 </template>
 
@@ -123,6 +127,14 @@ const ZOOM_MODES = ['fitv', 'fitw', 'actual'] as const
   gap: 4px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--line);
+}
+/* 这一行的落点（在新窗口打开）按自己的宽摆：不给它定宽，窄面板里横滚那一段把它挤到
+   一个字宽，字就一个一个竖着排下去，这一行被撑到一百多像素高，图没地方了。 */
+.design-view-tools__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  white-space: nowrap;
 }
 /* 只让这一行横滚；右边那几样（在新窗口打开）是这一行的落点，滚出去就按不到了。 */
 .design-view-tools__scroll {
