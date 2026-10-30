@@ -1,7 +1,10 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { deflateSync } from 'node:zlib'
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { apiLogin, openFirstProject } from './helpers'
+
+test.use({ deviceScaleFactor: 2 })
 
 // Real PNG decoding + PanelPreview's original-byte identity owner. Only the API
 // is substituted; pointer selection, layout, observers, focus and send are real.
@@ -429,6 +432,66 @@ test('a short real PanelPreview lets the reader reach every note control by scro
     await testInfo.attach(`parent-${height}`, { body: await page.screenshot(), contentType: 'image/png' })
   }
   await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toHaveValue('真实短面板草稿')
+})
+
+test('a short project window lets the reader edit, choose a recipient, cancel and send a region note', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 800 })
+  await apiLogin(page)
+  await page.route('**/preview/file?path=design.png', route => route.fulfill({ json: {
+    code: 200, data: { path: 'design.png', content: null, version, bytes: bytes.length, binary: true, too_large: false, source: 'committed' },
+  } }))
+  await page.route('**/attachments/raw?path=design.png&**', route => route.fulfill({ contentType: 'image/png', body: bytes }))
+  const topics = await openFirstProject(page)
+  await topics.first().click()
+  await page.waitForURL(/\/channels\//)
+  const url = new URL(page.url())
+  url.searchParams.set('tab', 'file:design.png')
+  await page.goto(url.toString())
+  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 30_000 })
+  await page.setViewportSize({ width: 1440, height: 280 })
+  await page.locator('.panel-preview').evaluate(element => element.scrollTop = element.scrollHeight)
+  await dragImage(page, true)
+  const card = page.locator('.locator')
+  const input = card.getByRole('textbox')
+  await reachable(input)
+  await input.fill('短窗口取消检查')
+  await reachable(card.getByRole('button', { name: '取消', exact: true }))
+  await input.press('Escape')
+  await expect(card).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('feed')).not.toContainText('短窗口取消检查')
+
+  await dragImage(page, true)
+  const note = `短窗口批注发送 ${randomUUID()}`
+  await reachable(input)
+  await input.fill(note)
+  const recipient = card.getByRole('button', { name: '批注投递目标', exact: true })
+  for (const height of [240, 340, 280]) {
+    await page.setViewportSize({ width: 1440, height })
+    await reachable(input)
+    await reachable(card.getByRole('button', { name: '发送', exact: true }))
+    await reachable(card.getByRole('button', { name: '取消', exact: true }))
+    await reachable(recipient)
+    await expect(input).toHaveValue(note)
+  }
+  await reachable(recipient)
+  await recipient.click()
+  await page.getByRole('option', { name: /发给任务芝士/ }).click()
+  const send = card.getByRole('button', { name: '发送', exact: true })
+  await reachable(send)
+  const boxes = await send.evaluate(element => ({
+    send: element.getBoundingClientRect().toJSON(),
+    card: element.closest('.locator')!.getBoundingClientRect().toJSON(),
+    panel: element.closest('.panel-preview')!.getBoundingClientRect().toJSON(),
+    viewportHeight: innerHeight,
+  }))
+  expect(boxes.send.top).toBeGreaterThanOrEqual(boxes.panel.top)
+  expect(boxes.send.bottom).toBeLessThanOrEqual(Math.min(boxes.panel.bottom, boxes.viewportHeight))
+  await testInfo.attach('short-project-window-geometry', { body: JSON.stringify(boxes), contentType: 'application/json' })
+  await page.screenshot({ path: testInfo.outputPath('short-project-window.png') })
+  await send.click()
+  await expect(card).toHaveCount(0)
+  await expect(page.getByRole('feed')).toContainText(note)
 })
 
 test('a real pointer on a comment mark opens the thread instead of starting a region', async ({ page }) => {
