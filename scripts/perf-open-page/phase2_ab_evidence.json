@@ -4,7 +4,7 @@
     "rounds": 3,
     "small_sample": true,
     "before_commit": "4938caef5184",
-    "after_commit": "HEAD",
+    "after_commit": "82ad3e676d01",
     "environment": {
       "base_url": "http://127.0.0.1:3000",
       "viewport": "1440x900",
@@ -27,7 +27,7 @@
       "cold"
     ],
     "guardrails_all_ok": true,
-    "timestamp_utc": "2026-10-30T15:35:05Z"
+    "timestamp_utc": "2026-10-30T15:36:07Z"
   },
   "comparison": {
     "project-library": {
