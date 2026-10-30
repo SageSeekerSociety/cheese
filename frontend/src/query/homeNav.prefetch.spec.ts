@@ -61,6 +61,7 @@ import { useWaitingList } from '@/composables/useWaitingList'
 import i18n from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import UserSettingsLayout from '@/layouts/user/Settings.vue'
+import { rememberProject } from '@/lib/addresses'
 import { queryClient } from '@/query/client'
 import * as homeNav from '@/query/homeNav'
 import { mySpacesQuery, myTeamsQuery } from '@/query/homeNav'
@@ -101,6 +102,8 @@ describe('personal and home route prefetching', () => {
     api.listSpaces.mockResolvedValue({ spaces: [] })
     api.listApplications.mockResolvedValue({ items: [] })
     api.getNotificationPreferences.mockResolvedValue({ events: {} })
+    api.getUserProfile.mockResolvedValue({ handle: 'alice' })
+    api.getUserTopics.mockResolvedValue({ topics: [] })
   })
 
   afterEach(() => {
@@ -177,14 +180,16 @@ describe('personal and home route prefetching', () => {
   })
 
   it('skips user-profile early reads when the profile page query is already fresh in queryClient', () => {
-    queryClient.setQueryData(['user', 'alice', 'profile', null], {
+    const pid = '90b0d70e-9288-40b1-949e-42ac2d04cf9b'
+    rememberProject(pid, 'cheese-slug')
+    queryClient.setQueryData(['user', 'alice', 'profile', pid], {
       profile: { handle: 'alice' },
       member: null,
       recent: [],
       agents: [],
     })
     if ('prefetchPersonalRoute' in homeNav) {
-      homeNav.prefetchPersonalRoute('UserPage', { handle: 'alice' })
+      homeNav.prefetchPersonalRoute('member', { projectId: 'cheese-slug', handle: 'alice' })
     }
     expect(api.getUserProfile).not.toHaveBeenCalled()
     expect(api.getUserTopics).not.toHaveBeenCalled()

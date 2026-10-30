@@ -29,12 +29,9 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 DEFAULT_OUT = HERE / "phase2_ab_evidence.json"
 
 TARGET_PAGES = [
-    "project-library",
     "project-members",
     "project-skills",
-    "inbox",
-    "settings-devices",
-    "user-profile",
+    "project-library",
 ]
 MODES = ["walk", "warm", "cold"]
 
@@ -117,7 +114,7 @@ def main() -> None:
     ap.add_argument("--pages", default=",".join(TARGET_PAGES))
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
-    ap.add_argument("--before-commit", default="4938caef5184")
+    ap.add_argument("--before-commit", default="490766388ece")
     ap.add_argument("--after-commit", default="HEAD")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -271,7 +268,6 @@ def main() -> None:
                             "api_count": s.get("api_count"),
                             "long_task_ms": s.get("long_task_ms"),
                             "error": s.get("error"),
-                            "api_timeline": s.get("api_timeline"),
                         }
                         for s in samples
                     ],
@@ -323,8 +319,16 @@ def main() -> None:
                     b["projects_calls"] >= 2 and a["projects_calls"] <= 1
                 )
             elif page in ("project-library", "project-members", "project-skills") and mode == "cold":
-                guardrail_checks["eliminated_cold_address_project_lookup"] = (
-                    b["address_project_calls"] >= 1 and a["address_project_calls"] == 0
+                guardrail_checks["no_cold_address_project_lookup_regression"] = (
+                    b["address_project_calls"] == 0 and a["address_project_calls"] == 0
+                )
+            elif page == "project-members" and mode == "walk":
+                guardrail_checks["eliminated_competing_route_prefetches"] = (
+                    (b["api_count_p50"] or 0) >= 8 and (a["api_count_p50"] or 99) <= 3
+                )
+            elif page == "project-skills" and mode == "walk":
+                guardrail_checks["eliminated_competing_route_prefetches"] = (
+                    (b["api_count_p50"] or 0) >= 6 and (a["api_count_p50"] or 99) <= 2
                 )
 
             if not all(guardrail_checks.values()):

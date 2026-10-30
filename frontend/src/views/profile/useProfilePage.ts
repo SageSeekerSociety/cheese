@@ -13,10 +13,11 @@ import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { getMemberSummary, getUserProfile, getUserTopics, listProjectAgents, setUserRemark } from '@/api'
+import { getMemberSummary, getUserProfile, getUserTopics, setUserRemark } from '@/api'
 import i18n, { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { agentsQuery } from '@/query/project'
 import { fromSnapshot } from '@/query/snapshot'
 
 /** 「最近参与的话题」列几个。 */
@@ -54,11 +55,7 @@ export function useProfilePage(handle: () => string, projectId: () => string | u
           fromSnapshot(keys.userRecentTopics(target), () => getUserTopics(target, { limit: RECENT_TOPICS }))
             .then((r) => r.topics)
             .catch(() => null),
-          projectId()
-            ? listProjectAgents(projectId()!)
-                .then((r) => r.data)
-                .catch(() => [])
-            : Promise.resolve([]),
+          projectId() ? queryClient.fetchQuery(agentsQuery(projectId()!)).catch(() => []) : Promise.resolve([]),
         ])
         return { profile, member, recent, agents }
       },

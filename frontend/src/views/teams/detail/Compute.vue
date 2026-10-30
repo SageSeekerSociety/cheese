@@ -33,20 +33,30 @@ const windowsCommand = computed(
     `irm ${window.location.origin}/connector/install.ps1 | iex\ncheesehost --profile team-${teamId.value} link connect ${window.location.origin}/connector`
 )
 
+let loadSeq = 0
 async function load(fresh = false) {
   const id = teamId.value
-  if (!id) return
+  const seq = ++loadSeq
+  if (!id) {
+    devices.value = []
+    canManage.value = false
+    loading.value = false
+    loadError.value = null
+    return
+  }
   loading.value = true
   loadError.value = null
   try {
     const read = () => listTeamDevices(id)
     const result = fresh ? await read() : await fromSnapshot(keys.teamDevices(id), read)
+    if (seq !== loadSeq || teamId.value !== id) return
     devices.value = result.devices
     canManage.value = result.can_manage
   } catch (cause) {
+    if (seq !== loadSeq || teamId.value !== id) return
     loadError.value = cause
   } finally {
-    loading.value = false
+    if (seq === loadSeq && teamId.value === id) loading.value = false
   }
 }
 async function rename(device: MyDevice, name: string) {

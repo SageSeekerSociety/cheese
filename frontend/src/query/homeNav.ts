@@ -10,6 +10,7 @@ import { getNotificationPreferences } from '@/api/notificationPreferences'
 import { NotificationsApi } from '@/api/notifications'
 import { SpacesApi } from '@/api/spaces'
 import { TeamsApi } from '@/api/teams'
+import { projectUuid } from '@/lib/addresses'
 import { storageGet } from '@/lib/browserStorage'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
@@ -86,7 +87,7 @@ export function prefetchPersonalRoute(
     case 'member': {
       const handle = typeof params.handle === 'string' ? params.handle : ''
       if (!handle) break
-      const projectId = typeof params.projectId === 'string' ? params.projectId : null
+      const projectId = typeof params.projectId === 'string' ? projectUuid(params.projectId) : null
       const state = queryClient.getQueryState(['user', handle, 'profile', projectId])
       if (state?.status === 'success' && Date.now() - state.dataUpdatedAt < 30_000) break
       readEarly(keys.userProfile(handle), () => getUserProfile(handle))

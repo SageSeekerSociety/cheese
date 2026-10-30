@@ -18,7 +18,6 @@ import {
   getTopicNotifyLevels,
   getTopicUnread,
   listProjectAgents,
-  listProjectInvitations,
   listProjectMembers,
   listProjectRoles,
   listTopics,
@@ -169,17 +168,12 @@ export function prefetchProjectSubpage(
   query: Record<string, unknown>
 ): void {
   if (!projectId || projectRefusal(projectId) || typeof routeName !== 'string') return
-  const prefetchMembers = () => void queryClient.prefetchQuery(membersQuery(projectId)).catch(() => {})
   switch (routeName) {
     case 'project-members':
-      prefetchMembers()
-      void queryClient.prefetchQuery(projectQuery(projectId)).catch(() => {})
-      void queryClient.prefetchQuery(agentsQuery(projectId)).catch(() => {})
-      readEarly(keys.projectInvitations(projectId), () => listProjectInvitations(projectId))
+      void queryClient.prefetchQuery(membersQuery(projectId)).catch(() => {})
       break
     case 'project-library': {
       if (typeof query.doc === 'string') break
-      prefetchMembers()
       const dir = typeof query.dir === 'string' ? query.dir : ''
       readEarly(keys.projectLibraryRoot(projectId, dir), () =>
         listProjectLibrary(projectId, { dir, cursor: null, limit: 50 })
@@ -190,22 +184,17 @@ export function prefetchProjectSubpage(
       break
     }
     case 'project-skills':
-      prefetchMembers()
-      void queryClient.prefetchQuery(projectQuery(projectId)).catch(() => {})
       readEarly(keys.projectSkills(projectId), () => listProjectSkills(projectId))
       break
     case 'project-tasks':
-      prefetchMembers()
       if (query.status !== 'closed') {
         void queryClient.prefetchQuery(openProjectTasksQuery(projectId)).catch(() => {})
       }
       break
     case 'project-channels':
-      prefetchMembers()
       readEarly(keys.projectChannels(projectId), () => listChannels(projectId))
       break
     case 'project-artifact':
-      prefetchMembers()
       if (params.artifactId) {
         readEarly(keys.projectArtifact(projectId, params.artifactId), () =>
           getProjectArtifact(projectId, params.artifactId)

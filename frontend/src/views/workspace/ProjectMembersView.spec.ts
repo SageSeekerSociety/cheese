@@ -567,4 +567,13 @@ describe('成员页：邀请', () => {
     await fireEvent.update(search, '前端组件')
     expect(container.textContent).toContain('前端组件-李工')
   })
+
+  it('名册已到货时立即放开显示闸并展示成员与队友，不等 /agents 和 /invitations 返回', () => {
+    listProjectAgents.mockReturnValue(new Promise(() => {}))
+    listProjectInvitations.mockReturnValue(new Promise(() => {}))
+    const { container } = mount()
+    expect(container.querySelector('.reveal-gate--waiting')).toBeNull()
+    expect(rowFor(container, 'alice')).toBeTruthy()
+    expect(container.querySelector('.agent-row')).toBeTruthy()
+  })
 })
