@@ -301,7 +301,7 @@ async def claude_code(tmp_path: Path, steps: list):
             "input": {"action": "list"},
         },
         # Words that reach no one: the fixture answers with plain text.
-        "say": lambda value: None,
+        "say": lambda value: {"text": value},
         # Only Claude Code's model starts a subagent here; the value is the
         # commands the subagent's own model runs, and it ends after them.
         "subagent": lambda value: {
@@ -805,3 +805,67 @@ async def test_a_turn_nobody_asked_for_ends_when_it_ends(tmp_path, harness):
 
         assert len(session.requests) == len(steps)
         assert session.backend.published == []
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_that_ends_on_words_nobody_was_sent_is_held_to_send_them(
+    tmp_path, harness
+):
+    """An early "on it" is not the answer: a turn that ends on a conclusion
+    only the session can see is held once more, and the person hears it."""
+    blocked = "blocked: a private chat cannot open tasks, please ask in a channel"
+    steps = [publish("on it"), say(blocked), publish(blocked), say("")]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please review the six PRs", owes_reply=True)
+        await session.finished(len(steps))
+
+        assert session.backend.published == ["on it", blocked]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_that_ends_on_its_reply_ends(tmp_path, harness):
+    steps = [publish("on it"), shell("touch WORK"), publish("done, all green"), say("")]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
+        # A turn held as it ends is held before `finished` saw it idle; this
+        # only gives a late one time to show.
+        await asyncio.sleep(1)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["on it", "done, all green"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_that_ends_on_blank_text_ends(tmp_path, harness):
+    steps = [
+        publish("on it"),
+        shell("touch WORK"),
+        publish("done, all green"),
+        say(" \n "),
+    ]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
+        await asyncio.sleep(1)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["on it", "done, all green"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_session_held_to_its_last_words_once_is_let_go(tmp_path, harness):
+    steps = [publish("on it"), say("all green"), say("all green")]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
+        await asyncio.sleep(1)
+
+        # Held once (the third request), and not again.
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["on it"]
+        assert not session.working(await session.call("ping", {}))

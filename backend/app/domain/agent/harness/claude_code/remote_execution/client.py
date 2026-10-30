@@ -196,14 +196,17 @@ def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) 
 def reply_hook(payload: dict) -> dict | None:
     """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
     `insist`), reached on the socket it gave this session. A session with no
-    runner, or one that does not answer, ends as it would have."""
+    runner, or one that does not answer, ends as it would have. The runner
+    is handed the text of the turn's final message, which the build puts in
+    the hook's input (`last_assistant_message`, absent when it has none)."""
     path = os.environ.get(SESSION_SOCKET)
     if not path or payload.get("stop_hook_active"):
         return None
+    ending = {"last_words": str(payload.get("last_assistant_message") or "")}
     try:
         with dial_runner(path, 10) as connection:
             connection.sendall(
-                json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
+                json.dumps({"method": "reply_check", "params": ending}).encode() + b"\n"
             )
             answer = json.loads(connection.makefile("rb").readline())
     except (OSError, ValueError):

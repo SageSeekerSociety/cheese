@@ -155,6 +155,15 @@ def socket_path(state: Path) -> str:
 # Codex, a turn of the session's own for pi — and the rule is here. Once is the
 # limit: a session that still does not answer is let go, and the runner's log
 # says so.
+#
+# One early reply is not the whole answer either. A session that says "on it"
+# with chat_send, works, and ends its turn on a message of plain text has told
+# the person nothing of how it went: that last message lands only in the
+# session's own record, and the person goes on waiting for the conclusion it
+# holds. So a turn that owed a reply and ends on words of its own (the text of
+# its final message, which each harness hands `insist`) is held once too
+# (`CLOSING_INSIST`): send them, or end without them. A turn that ends on a
+# reply, or on nothing, ends. The two holds share the one chance a message gets.
 
 #: The variable that names the file to the agent process and whatever it spawns.
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
@@ -185,6 +194,15 @@ REPLY_INSIST = (
     "had no reply there. Reply to them now with chat_send (or ask them with "
     "cheese_ask) before you finish; anything you only write here, they never "
     "see."
+)
+
+
+CLOSING_INSIST = (
+    "You are about to stop on a message the person who wrote to you in this "
+    "room will never see: only what you send with chat_send (or ask with "
+    "cheese_ask) reaches them. If it says anything they have not been sent "
+    "yet — a result, a blocker, a question — send it to them now; if you have "
+    "already said all of it there, stop without writing anything more."
 )
 
 
@@ -332,28 +350,31 @@ class Runner(Generic[J]):  # noqa: UP046
         reply_owed_path(self.state).unlink(missing_ok=True)
         reply_answered_path(self.state).unlink(missing_ok=True)
 
-    def insist(self) -> str | None:
-        """Asked as a turn is about to end: what to hold the session to, if
-        anything — `REPLY_INSIST` while a person is still unanswered, once per
-        message. A session that ends a second time without answering is let
-        go, and said so here, rather than kept going round."""
+    def insist(self, last_words: str) -> str | None:
+        """Asked as a turn is about to end, with the text of its final
+        message: what to hold the session to, if anything — `REPLY_INSIST`
+        while a person is still unanswered, `CLOSING_INSIST` when they were
+        answered but the turn ends on words only the session can see. Once per
+        message: a session that ends a second time is let go, and said so here,
+        rather than kept going round."""
         if self.owed is None:
             return None
         try:
-            answered = reply_answered_path(self.state).read_text().strip()
+            answered = reply_answered_path(self.state).read_text().strip() == self.owed
         except OSError:
-            answered = ""
-        if answered == self.owed:
+            answered = False
+        if answered and not last_words.strip():
             return None
         if self.owed in self.insisted:
-            print(
-                f"turn ended without a reply to {self.owed} after being held to it",
-                file=sys.stderr,
-                flush=True,
-            )
+            if not answered:
+                print(
+                    f"turn ended without a reply to {self.owed} after being held to it",
+                    file=sys.stderr,
+                    flush=True,
+                )
             return None
         self.insisted.add(self.owed)
-        return REPLY_INSIST
+        return CLOSING_INSIST if answered else REPLY_INSIST
 
     # --- a turn's checkpoint -------------------------------------------------
 

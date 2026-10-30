@@ -89,6 +89,9 @@ class Runner(runner.Runner[Journal]):
         self.syncing: asyncio.Future[bool] | None = None
         # A woken turn is being ended for a person's message (`_end_woken_turn`).
         self.ending_woken = False
+        #: The text of the thread's last message, until anything else happens
+        #: in its turn: what the turn ends on, if it ends now (`insist`).
+        self.last_words = ""
         self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
@@ -278,6 +281,16 @@ class Runner(runner.Runner[Journal]):
                 if self.session is not None:
                     self.session.observe(event)
                 return
+        if same_thread and method == "turn/started":
+            self.last_words = ""
+        elif same_thread and method in ("item/started", "item/completed"):
+            # A message the model writes is the turn's last words until it
+            # does anything else: a tool call, a command, a message read in.
+            if item.get("type") == "agentMessage":
+                if method == "item/completed":
+                    self.last_words = str(item.get("text") or "")
+            elif item.get("type") != "reasoning":
+                self.last_words = ""
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"
@@ -291,7 +304,7 @@ class Runner(runner.Runner[Journal]):
         # reply, and does not settle it: their own turn, next, owes it.
         handed_on = ends and self.ending_woken
         reason = (
-            self.insist()
+            self.insist(self.last_words)
             if ends
             and not handed_on
             and (params.get("turn") or {}).get("status") == "completed"

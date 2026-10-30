@@ -213,6 +213,9 @@ class Runner(runner.Runner[Journal]):
         #: had when the one shown now began: a pull whose snapshot counts more
         #: landed that message, and only then is what was shown of it taken off.
         self.messages_ended, self.showing = 0, 0
+        #: The text of the message the last run ended on (``agent_end``): what
+        #: the turn ends on when it settles (`insist`).
+        self.last_words = ""
 
     capabilities = (runner.LONG_POLL, runner.LIVE)
 
@@ -271,7 +274,7 @@ class Runner(runner.Runner[Journal]):
             # settles only once none is left, so nothing unread survives this.
             # A person it left unanswered gets one more turn, unless the
             # platform is the one that stopped it.
-            reason = None if self.aborting else self.insist()
+            reason = None if self.aborting else self.insist(self.last_words)
             if reason is None:
                 self.reply_settled()
                 self.turn_ended()
@@ -321,9 +324,10 @@ class Runner(runner.Runner[Journal]):
                 self.unretried = None
                 self.asked_again.add(self.last_failure)
         elif kind == "agent_end":
-            # The call that ended this run, if it failed. When pi is not trying
-            # again — a request it cannot retry, or the retries ran out — that
-            # failure is how the turn ends.
+            # The message that ended this run: its words are what the turn
+            # ends on, and if its call failed and pi is not trying again — a
+            # request it cannot retry, or the retries ran out — that failure
+            # is how the turn ends.
             last = next(
                 (
                     message
@@ -331,6 +335,11 @@ class Runner(runner.Runner[Journal]):
                     if isinstance(message, dict) and message.get("role") == "assistant"
                 ),
                 None,
+            )
+            self.last_words = "\n".join(
+                str(part.get("text") or "")
+                for part in (last or {}).get("content") or []
+                if isinstance(part, dict) and part.get("type") == "text"
             )
             if last is not None and last.get("stopReason") == "error":
                 self.last_failure = last.get("timestamp")
