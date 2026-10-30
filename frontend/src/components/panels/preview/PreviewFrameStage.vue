@@ -32,6 +32,7 @@ import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
 import { defaultViewport, fitScale, type PreviewViewport, VIEWPORT_WIDTH } from '@/lib/previewViewport'
+import { rovingStep } from '@/lib/roving'
 
 const props = defineProps<{
   topicId: string | null
@@ -337,6 +338,22 @@ const VIEWPORTS = [
   { key: 'tablet', icon: 'mdi-tablet', label: 'work.room.preview.viewportTablet' },
   { key: 'mobile', icon: 'mdi-cellphone', label: 'work.room.preview.viewportMobile' },
 ] as const
+/** 三档是一组单选，不是三个各走各的按钮：Tab 只停在这一组一次，方向键在档位之间走、
+ *  走到哪一档就切到哪一档（`lib/roving` 的 `rovingStep`，聊天时间线和页签条用的是同一套）。
+ *  以前三个都是 Tab 停点，键盘用户要按三下才能过去，而且按下的还会顺带切档。 */
+function onViewportKey(event: KeyboardEvent): void {
+  const keys = VIEWPORTS.map((mode) => mode.key)
+  const from = keys.indexOf(viewport.value)
+  if (from < 0) return
+  const to = rovingStep(event.key, from, keys.length, 'horizontal', true)
+  if (to === null) return
+  event.preventDefault()
+  viewport.value = keys[to]
+  // 焦点跟着走：按键落在这三颗之一上，换的是同一组里的另一颗。
+  const row = (event.currentTarget as HTMLElement | null)?.parentElement
+  row?.querySelectorAll<HTMLButtonElement>('button')[to]?.focus()
+}
+
 const actions = computed<BarAction[]>(() => {
   const list: BarAction[] = []
   if (props.path) {
@@ -481,7 +498,13 @@ watch(
       </template>
       <!-- 视口三键两档都平铺：窄的时候也一样。它说的是「现在按哪种宽度排版」，读者随时
            要看得见、按得到——收进「…」里等于手机上没法换一种宽度看。 -->
-      <div v-if="!showSource" class="preview-viewport" :class="compact ? 'ms-1' : 'ms-2'">
+      <div
+        v-if="!showSource"
+        class="preview-viewport"
+        :class="compact ? 'ms-1' : 'ms-2'"
+        role="group"
+        :aria-label="t('work.room.preview.viewportGroup')"
+      >
         <button
           v-for="mode in VIEWPORTS"
           :key="mode.key"
@@ -492,7 +515,9 @@ watch(
           :aria-pressed="viewport === mode.key"
           :title="t(mode.label)"
           :aria-label="t(mode.label)"
+          :tabindex="viewport === mode.key ? 0 : -1"
           @click="viewport = mode.key"
+          @keydown="onViewportKey"
         >
           <v-icon size="15">{{ mode.icon }}</v-icon>
         </button>

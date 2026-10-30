@@ -518,6 +518,25 @@ jobs:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
+      - name: Install the dev database backup writer from this release
+        if: steps.release.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ops="$HOME/ops"
+          saved="$ops/backup-rollouts/$(git rev-parse HEAD)"
+          mkdir -p "$saved"
+          # Install dependencies first; rename leaves any running writer's file intact.
+          for name in r2-common.py r2-prune-dumps.py r2-upload.py db-backup.sh; do
+            # Supported rollback releases predate some helpers; install their own file set.
+            [ -f "deploy/$name" ] || continue
+            if [ -f "$ops/$name" ] && [ ! -e "$saved/$name" ]; then
+              cp -p "$ops/$name" "$saved/$name"
+            fi
+            install -m 0755 "deploy/$name" "$ops/$name.next"
+            mv -f "$ops/$name.next" "$ops/$name"
+            sha256sum "$ops/$name"
+          done
+
       - name: Release the verified metering image
         if: steps.release.outputs.skip != 'true'
         env:
