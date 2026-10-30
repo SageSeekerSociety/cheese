@@ -4,6 +4,7 @@ import datetime as dt
 import gzip
 import hashlib
 import json
+import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -54,6 +55,11 @@ class Server(ThreadingHTTPServer):
         self.assert_healthy()
 
     def handle_error(self, request, client_address):
+        # A client that hangs up before the answer — a shell prefix the build
+        # stopped mid-request — did nothing wrong, as on the platform's route
+        # (`equivalence.py`'s relay); the fixture has nothing to report.
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
         error = traceback.format_exc()
         self.state.setdefault("handler_errors", []).append(error)
         log(self.state["dir"] / "handler-errors.jsonl", {"error": error})

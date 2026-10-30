@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import socketserver
+import struct
 import subprocess
 import sys
 import tempfile
@@ -134,6 +135,48 @@ def test_execution_endpoint_reaches_wire(tmp_path, monkeypatch):
         server.assert_healthy()
     finally:
         connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_a_client_that_hangs_up_before_the_answer_leaves_the_fixture_healthy(
+    tmp_path, monkeypatch
+):
+    # The build stops a shell prefix while its executor call is in flight: the
+    # prefix is gone by the time the answer is written. That is the client's
+    # doing, not a fixture failure.
+    monkeypatch.syspath_prepend(str(ROOT / "scripts/remote_execution"))
+    acceptance = load("acceptance")
+    asked, gone = threading.Event(), threading.Event()
+
+    class Wire:
+        async def call_executor(self, device, state, method, params):
+            asked.set()
+            assert gone.wait(3)
+            return {"stdout": "x" * 4_000_000}
+
+    server = acceptance.Server(("127.0.0.1", 0), acceptance.execution_handler())
+    server.state = {"dir": tmp_path, "wire": Wire(), "executor_state": "/state"}
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    client = socket.create_connection(("127.0.0.1", server.server_port), timeout=3)
+    try:
+        body = json.dumps({"method": "invoke", "params": {}}).encode()
+        client.sendall(
+            b"POST /execution HTTP/1.1\r\nHost: fixture\r\n"
+            b"Authorization: Bearer fixture-place-token\r\n"
+            + f"Content-Length: {len(body)}\r\n\r\n".encode()
+            + body
+        )
+        assert asked.wait(3)
+        # Closed with a reset, as a killed process's socket is.
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        client.close()
+        gone.set()
+    finally:
+        gone.set()
+        client.close()
         server.shutdown()
         server.server_close()
         thread.join()

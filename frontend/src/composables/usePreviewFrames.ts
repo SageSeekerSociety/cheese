@@ -35,6 +35,15 @@ export interface PreviewFrame {
   canForward?: boolean
   /** 这一份文档里有运行时桥在应答：地址栏、后退前进、快照都要它。 */
   bridged?: boolean
+  /** 页面自己抛出来的错（由帧里的桥收着报回来，最多 5 条）。 */
+  pageErrors?: PageError[]
+}
+
+/** 页面里一个未捕获的错误：说什么、哪个文件、第几行。 */
+export interface PageError {
+  message: string
+  source: string
+  line: number
 }
 
 /** 帧里那一页的静态快照：渲染后的 DOM，样式内联、脚本和外链拿掉（见运行时桥的
@@ -97,6 +106,15 @@ export function navigationTier(requested?: number): number {
   return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
     ? Math.min(requested, MAX_NAVIGATION_BUDGET_MS)
     : FILE_NAVIGATION_BUDGET_MS
+}
+
+/** 帧是另一个源上的文档，报上来的东西一律当数据看：认不出形状就丢掉。 */
+function pageError(value: unknown): PageError | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  const message = frameText(data.message, 300)
+  if (!message) return null
+  return { message, source: frameText(data.source, 200), line: frameNumber(data.line) }
 }
 
 /** 一次导航真正等多久，单位毫秒——档位，再加上最后那 2 秒余量（照 CC 的消费式）。
@@ -271,6 +289,16 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     } else if (data.type === 'error' && typeof data.message === 'string') {
       frame.runtime = 'failed'
       frame.runtimeError = data.message.slice(0, 1000)
+    } else if (data.type === 'errors' && Array.isArray(data.items)) {
+      // 页面自己抛的错：认得出形状的留下，最多 5 条（桥那边也是这个数）。换页时在
+      // `located` 里清掉——新一页的错归新一页。
+      // 先收成 `unknown[]`：`Array.isArray` 只收到 `any[]`，后面那条链子就一路是 any，
+      // 收错形状的东西也过得了闸门。
+      const items: unknown[] = data.items
+      frame.pageErrors = items
+        .map(pageError)
+        .filter((item): item is PageError => item !== null)
+        .slice(0, 5)
     }
   }
   window.addEventListener('message', runtimeMessage)
@@ -282,6 +310,8 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     frame.bridged = true
     frame.href = href
     frame.title = frameText(data.title, 200)
+    // 换了地址（应用里点链接、SPA 改路由）：上一页抛的错不归新的一页。
+    if (frame.pageErrors?.length) frame.pageErrors = []
     if (trail[trailAt] !== href) {
       if (trail[trailAt - 1] === href) trailAt -= 1
       else if (trail[trailAt + 1] === href) trailAt += 1

@@ -25,6 +25,31 @@ RUNTIME_SCRIPT = r"""(() => {
   let state = null;
   let keys = [];
   let escapeWindow = false;
+  let pageErrors = [];
+  const PAGE_ERROR_LIMIT = 5;
+  // 页面自己抛的错。宿主原来只认「应用说它 ready / failed」，页面里一个未捕获的异常它
+  // 看不见：读者看到的是页面照常显示、连通链三个绿勾，点提交却没反应。收最近几条、按内容
+  // 去重，报回宿主，由它摆出「N 个错误」并支持把这几条附进批注。
+  function noteError(message, source, line) {
+    const text = String(message == null ? '' : message).replace(/\s+/g, ' ').trim().slice(0, 300);
+    if (!text) return;
+    const where = String(source == null ? '' : source).slice(0, 200);
+    const at = Number(line) || 0;
+    if (pageErrors.some(function (item) { return item.message === text && item.source === where && item.line === at; })) {
+      return;
+    }
+    pageErrors = pageErrors.concat([{ message: text, source: where, line: at }]).slice(-PAGE_ERROR_LIMIT);
+    post({ type: 'errors', items: pageErrors });
+  }
+  // 捕获段挂：页面自己的 onerror 在冒泡段，不抢它的；setTimeout 里抛的、被拒的 promise
+  // 各走这两条。
+  window.addEventListener('error', function (event) {
+    if (event && event.message) noteError(event.message, event.filename, event.lineno);
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    const reason = event && event.reason;
+    noteError(reason && reason.message ? reason.message : reason, '', 0);
+  });
   function publish() {
     if (!hello || !state) return;
     window.parent.postMessage({
@@ -545,6 +570,9 @@ RUNTIME_SCRIPT = r"""(() => {
       keys = Array.isArray(data.keys) ? data.keys.filter(usableKey).slice(0, 16) : [];
       publish();
       publishLocation(true);
+      // 握手之前就抛出来的那些错（脚本插在文档开头，页面自己的脚本马上就跑）在这里补报：
+      // `post` 那时还没有会话，报出去没人收。
+      if (pageErrors.length) post({ type: 'errors', items: pageErrors });
       return;
     }
     // 圈选开关只认当前会话：换了一帧、上一个会话的迟到消息，都不算。

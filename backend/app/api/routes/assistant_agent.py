@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 
 from app.api.assistant_acts import (
     ASK,
-    RANK,
     ROLE,
     ActIn,
     Person,
@@ -56,7 +55,7 @@ from app.api.deps import get_consumptions
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.project_roles import standing
+from app.auth.project_roles import RoleDef, project_roles, standing
 from app.core.config import settings
 from app.core.errors import AuthenticationRequiredError, BadRequestError, NotFoundError
 from app.core.sentences import say
@@ -73,6 +72,7 @@ from app.domain.memory.files import MemoryFileError, parse_memory_file
 from app.domain.notification.preferences import local_time
 from app.domain.project import address
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import TEMPLATE_GRANTS, Template
 from app.domain.review.services import deliverable_revision
 from app.domain.room_task.awaiting import WaitingItem
 from app.domain.routine import personal as routine_personal
@@ -543,30 +543,37 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
     await access.project(project.id)
     pid = str(project.id)
     held = await standing(db, project.id, who)
+    roles = await project_roles(db, project.id)
+    current = roles.get(held.role) if held is not None else None
     seat = held.seat.value if held is not None else None
     if body.remove:
         return Plan(
             gate.Action(
                 "member",
-                f"将{ROLE.get(seat or '', '不在项目中的')} {shown} 移出项目「{project.name}」",
+                f"将{_role_name(current, held.role if held else None)} {shown} 移出项目「{project.name}」",
                 ("remove_member",),
             ),
             [{"method": "DELETE", "path": f"/projects/{pid}/members/{who}"}],
             card=("act", {}),
             done=f"已把 {shown} 移出项目「{project.name}」。",
         )
-    role = body.role or "member"
-    if role not in ("admin", "member", "mentor"):
+    role = _role_asked(roles, body.role or "member")
+    if role is None:
         raise BadRequestError(
-            say("assistantActNeeds", what="role: admin / member / mentor")
+            say(
+                "assistantActNeeds",
+                what="role: admin / member / mentor / 项目里的角色名",
+            )
         )
-    if seat is None:
+    wanted = roles.get(role)
+    named_role = _role_name(wanted, role)
+    if held is None:
         if role == "admin":
             raise BadRequestError(say("assistantInviteThenAdmin"))
         return Plan(
             gate.Action(
                 "member",
-                f"邀请 {shown} 以{ROLE[role]}身份加入项目「{project.name}」",
+                f"邀请 {shown} 以{named_role}身份加入项目「{project.name}」",
             ),
             [
                 {
@@ -578,11 +585,15 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
             card=("act", {}),
             done=f"已邀请 {shown} 加入项目「{project.name}」，等对方接受。",
         )
-    lowers = RANK.index(role) > RANK.index(seat)
+    # Lower: a step down from admin, or a role that may do less than theirs.
+    granted = (
+        wanted.permissions if wanted is not None else TEMPLATE_GRANTS[Template.mentor]
+    )
+    lowers = (seat == "admin" and role != "admin") or not granted >= held.permissions
     return Plan(
         gate.Action(
             "member",
-            f"将 {shown} 在项目「{project.name}」的角色从{ROLE[seat]}改为{ROLE[role]}",
+            f"将 {shown} 在项目「{project.name}」的角色从{_role_name(current, held.role)}改为{named_role}",
             ("lower_role",) if lowers else (),
         ),
         [
@@ -593,8 +604,34 @@ async def _member(db, access, body: ActIn, me: Person) -> Plan:
             }
         ],
         card=("act", {}),
-        done=f"已把 {shown} 改成{ROLE[role]}。",
+        done=f"已把 {shown} 改成{named_role}。",
     )
+
+
+def _role_name(role: RoleDef | None, key: str | None) -> str:
+    """How a role is named to the person: the project's own name, else the
+    built-in's or the template's."""
+    if role is None:
+        return ROLE.get(key or "", "不在项目中的")
+    if role.name:
+        return role.name
+    if role.builtin is not None:
+        return ROLE[role.builtin.value]
+    return ROLE[role.template.value] if role.template is not None else ""
+
+
+def _role_asked(roles: dict[str, RoleDef], asked: str) -> str | None:
+    """The key a role named by 芝士 goes by: ``admin``, ``member``, ``mentor``
+    (the project's mentor role, made if it has none), or one of the project's
+    own roles by its name or key."""
+    if asked in ("admin", "member", "mentor"):
+        return asked
+    for role in roles.values():
+        if asked in (role.key, role.name, _role_name(role, role.key)):
+            if role.template is not None and role.name is None:
+                return "mentor"
+            return role.key
+    return None
 
 
 async def _channel(db, access, body: ActIn, me: Person) -> Plan:

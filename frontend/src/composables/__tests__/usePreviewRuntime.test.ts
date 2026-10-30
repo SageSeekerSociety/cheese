@@ -344,3 +344,34 @@ it('a live frame is asked for a snapshot once it settles, and the snapshot is ha
     vi.useRealTimers()
   }
 })
+
+it('keeps only the errors it can read, and never more than five', async () => {
+  const { host, frame, hello } = await setup()
+  const shown = host.displayed.value!
+  const errors = (items: unknown) =>
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        origin: 'https://preview-fixed.example',
+        source: frame.contentWindow,
+        data: { ...hello, type: 'errors', items },
+      })
+    )
+  // 认得出形状的留下：位置和行号缺了就给默认值，没有 message 的丢掉。
+  errors([
+    { message: '签名炸了', source: 'signup.ts', line: 41 },
+    { message: '没有位置', source: '', line: 0 },
+    'not an object',
+    null,
+    { source: 'x.ts', line: 3 },
+  ])
+  expect(shown.pageErrors).toEqual([
+    { message: '签名炸了', source: 'signup.ts', line: 41 },
+    { message: '没有位置', source: '', line: 0 },
+  ])
+  // 整份 items 不是一个数组：不动，留着上一次的那几条。
+  errors('nope')
+  expect(shown.pageErrors).toHaveLength(2)
+  // 超过五条只留前五条。
+  errors(Array.from({ length: 9 }, (_, i) => ({ message: `e${i}`, source: '', line: i })))
+  expect(shown.pageErrors!.map((e) => e.message)).toEqual(['e0', 'e1', 'e2', 'e3', 'e4'])
+})

@@ -52,12 +52,40 @@ def set_periodic_health(read: Callable[[], dict[str, Any]] | None) -> None:
     _periodic_health = read
 
 
-async def health_report() -> dict[str, Any]:
+# Checks a domain answers — whether a product loop the platform ships is
+# actually wired up on this deployment — installed by the application lifespan
+# for the same reason as `_periodic_health`: core never imports a domain. Each
+# answers `{"status": ..., "error": "<why>"}`, reads the database, and so is
+# never run on behalf of the public `/readyz` (`health_report(domain=False)`).
+_domain_checks: dict[str, Callable[[], Awaitable[dict[str, Any]]]] = {}
+
+
+def set_domain_checks(
+    checks: dict[str, Callable[[], Awaitable[dict[str, Any]]]],
+) -> None:
+    _domain_checks.clear()
+    _domain_checks.update(checks)
+
+
+async def _run_domain_check(
+    check: Callable[[], Awaitable[dict[str, Any]]],
+) -> dict[str, Any]:
+    try:
+        return await asyncio.wait_for(check(), PROBE_BUDGET_S)
+    except TimeoutError:
+        return {"status": "down", "error": f"no answer in {PROBE_BUDGET_S:g} s"}
+    except Exception as e:  # a broken check reads as down, never as a 500
+        logger.warning("domain health check failed: %s", e)
+        return {"status": "down", "error": str(e) or type(e).__name__}
+
+
+async def health_report(*, domain: bool = True) -> dict[str, Any]:
     """Every check's status, in this process, with no caller behind it.
 
     `/readyz` reads it to decide readiness, and the admin dashboard's platform
     panel calls it in-process. Neither has a credential to present, so the gate
-    sits on the route rather than here.
+    sits on the route rather than here. `/readyz` passes `domain=False`: it is
+    public, and the domain checks read the database on every call.
     """
     checks: dict[str, Any] = {}
 
@@ -68,6 +96,9 @@ async def health_report() -> dict[str, Any]:
     checks["periodic_jobs"] = (
         _periodic_health() if _periodic_health is not None else {"status": "skipped"}
     )
+    if domain:
+        for name, check in list(_domain_checks.items()):
+            checks[name] = await _run_domain_check(check)
 
     overall = (
         "healthy"

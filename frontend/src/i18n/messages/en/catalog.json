@@ -476,13 +476,6 @@
       "note": "A freehand stroke and a rectangle annotation, laid back onto the image to scale."
     }
   },
-  "previewPanelRegionNote": {
-    "about": "The small card that appears when pointing at a region of an image: it says what it points at, then write what to change, send or cancel.",
-    "s1": {
-      "name": "Pointing at this region",
-      "note": "On top, what it points at (label + that sentence); below, the input and 'Send'. It says so when the region is outside the view."
-    }
-  },
   "previewPanelDesignImage": {
     "about": "Design preview: an image laid into the viewport, zoomable, pannable, region-selectable, annotation layer toggleable; scale and 'Fit to viewport' on top.",
     "s1": {

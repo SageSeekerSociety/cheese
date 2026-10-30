@@ -72,6 +72,11 @@ type PageSlot = {
   el: HTMLElement | null
   host: HTMLElement | null
   rendered: boolean
+  /** 这一页的文字层里有没有可选的文字。**画出来之后**才知道：扫描件整页就是一张图，
+   *  pdf.js 照样给一层文字层，里面一个字也没有。没有文字的页选不中、键盘也走不进去，
+   *  得让读者知道为什么（而不是按了没反应），所以这个判据要留下来。
+   *  `null` 是「还没画出来」——那一档不下结论。 */
+  hasText: boolean | null
   /** 这一页在 1 倍下的大小（PDF 的点）。还没取到这一页时先借第一页的：绝大多数文档每页
    *  一样大，页框先按它占好位置，缩放时的落点才算得准。 */
   base: { width: number; height: number } | null
@@ -213,6 +218,8 @@ async function renderPage(slot: PageSlot, mine: number) {
       viewport,
     })
     await layer.render()
+    // 画完才知道这一页有没有字：文字层建出来了，里面可能是空的（扫描件整页是一张图）。
+    slot.hasText = textLayer.textContent.trim().length > 0
   } catch (e) {
     if (mine !== renderGeneration || !slot.host) return
     showPageFailure(slot, e)
@@ -275,6 +282,7 @@ async function open(data: ArrayBuffer) {
       el: null,
       host: null,
       rendered: false,
+      hasText: null,
       base: { width: first.width, height: first.height },
     }))
     await nextTick()
@@ -309,6 +317,9 @@ function relayout() {
   }
   for (const slot of pages.value) {
     slot.rendered = false
+    // 文字层马上要被清掉，这一页「有没有字」的结论也跟着作废：不然读者从有字的版
+    // 换到扫描件（同一只组件、同一份页数）时，屏上会留着一句说错了的提示。
+    slot.hasText = null
     slot.host?.replaceChildren()
     sizeSlot(slot)
   }
@@ -478,7 +489,6 @@ const keptSelection = inject(KEPT_SELECTION, null)
 const highlight = useSelectionHighlight({
   sheets: () => pages.value.map((slot) => slot.el).filter((el): el is HTMLElement => !!el),
   layerClass: 'pv-text',
-  paintClass: 'pv-hl',
   // 批注卡开着时页面上的选区已经收了：照定位条留下的那份副本接着画。
   kept: () => keptSelection?.value ?? null,
 })
@@ -643,29 +653,43 @@ if (typeof document !== 'undefined') {
   document.addEventListener('pointerdown', noteInputKind, true)
 }
 
-/** Tab 落到这一页时，把光标放在第一行上——不然读者按了上下键才知道自己在哪儿。 */
+/** Tab 落到这一页时，把光标放在第一行上——不然读者按了上下键才知道自己在哪儿。
+ *
+ *  这一页没有文字（扫描件）就往后面找第一页有文字的：焦点停在空页上，读者按什么
+ *  都没反应，看着像坏了。前后都没有文字时停在原地——这时方向键本来也无处可去，
+ *  屏上那句「这一页是图片」就是说给他听的。 */
 function onPageFocus(_event: FocusEvent, slot: PageSlot) {
   if (caret.value?.page === slot.number) return
   if (!keyboardNav) return
   const lines = linesOf(slot)
-  if (!lines.length) return
-  caret.value = { page: slot.number, line: 0, anchor: 0 }
-  selectLines(slot, lines, 0, 0)
+  if (lines.length) {
+    caret.value = { page: slot.number, line: 0, anchor: 0 }
+    selectLines(slot, lines, 0, 0)
+    return
+  }
+  stepPage(slot, true)
 }
 
-/** 走到隔壁一页的第一行 / 最后一行。翻不过去时返回 false。 */
+/** 走到**有文字**的隔壁一页的第一行 / 最后一行。翻不过去时返回 false。
+ *
+ *  跳过没有文字的页：一份扫描件夹在中间是常事，卡在那儿不动比跳过更糟——读者按半天
+ *  不知道是到头了还是坏了。没有文字的页本来也没什么可选的。 */
 function stepPage(slot: PageSlot, down: boolean): boolean {
-  const next = pages.value.find((p) => p.number === slot.number + (down ? 1 : -1))
-  if (!next?.el) return false
-  const lines = linesOf(next)
-  if (!lines.length) return false
-  const line = down ? 0 : lines.length - 1
-  // 先记下光标再给焦点：焦点一落上去，`onPageFocus` 看到光标已经在这一页，就不会把它
-  // 重置成第一行。
-  caret.value = { page: next.number, line, anchor: line }
-  next.el.focus()
-  selectLines(next, lines, line, line)
-  return true
+  const ordered = pages.value.filter((p) => (down ? p.number > slot.number : p.number < slot.number))
+  if (!down) ordered.reverse()
+  for (const next of ordered) {
+    if (!next.el) continue
+    const lines = linesOf(next)
+    if (!lines.length) continue
+    const line = down ? 0 : lines.length - 1
+    // 先记下光标再给焦点：焦点一落上去，`onPageFocus` 看到光标已经在这一页，就不会把它
+    // 重置成第一行。
+    caret.value = { page: next.number, line, anchor: line }
+    next.el.focus()
+    selectLines(next, lines, line, line)
+    return true
+  }
+  return false
 }
 
 function onPageKey(event: KeyboardEvent, slot: PageSlot) {
@@ -705,6 +729,22 @@ function onPageKey(event: KeyboardEvent, slot: PageSlot) {
     window.getSelection()?.removeAllRanges()
   }
 }
+
+/** 放大 / 缩小一级，围绕这一格正中间那一处。
+ *
+ *  和捏合、双击走同一条路（`zoomTo`）：倍数、位图精度、底色的坐标都由它一处管。
+ *  一级一格半，按到边界就停在边界（`zoomTo` 自己夹）。 */
+const ZOOM_STEP = 1.5
+function zoomByStep(direction: 1 | -1) {
+  const host = container.value
+  if (!host) return
+  const box = host.getBoundingClientRect()
+  const at = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+  zoomTo(direction === 1 ? zoom.value * ZOOM_STEP : zoom.value / ZOOM_STEP, at)
+}
+
+/** 放大了才给「缩小」：比例回到 1 时那颗按钮不该还亮着。 */
+const canZoomOut = computed(() => zoom.value > MIN_ZOOM + 0.01)
 
 function setRef(slot: PageSlot, el: unknown) {
   slot.el = (el as HTMLElement) ?? null
@@ -831,6 +871,28 @@ onBeforeUnmount(() => {
     @click="onPoint"
   >
     <div class="pv__tools">
+      <!-- 放大的第二条路。手机上捏合和双击都在，桌面上一条都没有——鼠标没有「两指」，
+           双击在页上是选一个词。面板被对话挤窄时（拉到 80% 只剩 284px、正文 5.4px）
+           没有它就是读不了，所以一直在，不按宽窄藏。 -->
+      <BaseButton
+        size="sm"
+        kind="ghost"
+        prepend-icon="mdi-magnify-minus-outline"
+        :disabled="!canZoomOut"
+        :title="t('work.room.preview.zoomOut')"
+        :aria-label="t('work.room.preview.zoomOut')"
+        data-testid="pv-zoom-out"
+        @click.stop="zoomByStep(-1)"
+      />
+      <BaseButton
+        size="sm"
+        kind="ghost"
+        prepend-icon="mdi-magnify-plus-outline"
+        :title="t('work.room.preview.zoomIn')"
+        :aria-label="t('work.room.preview.zoomIn')"
+        data-testid="pv-zoom-in"
+        @click.stop="zoomByStep(1)"
+      />
       <BaseButton
         size="sm"
         :kind="pointing ? 'primary' : 'ghost'"
@@ -863,9 +925,13 @@ onBeforeUnmount(() => {
       :tabindex="tabbable(slot)"
       role="group"
       :aria-label="t('work.room.preview.page', { page: slot.number })"
+      :aria-description="slot.hasText === false ? t('work.room.preview.pageNoText') : undefined"
       @keydown="onPageKey($event, slot)"
       @focus="onPageFocus($event, slot)"
     >
+      <!-- 这一页是一张图（扫描件）：说清为什么选不中，并指出还能怎么办。
+           不说的话读者在纸上拖半天，屏幕一点反应都没有——分不出是不能选、还是坏了。 -->
+      <p v-if="slot.hasText === false" class="pv__notext">{{ t('work.room.preview.pageNoText') }}</p>
       <div :ref="(el) => setHost(slot, el)" class="pv__canvas" />
       <!-- Comment marks: one per thread whose page-pin lands on this page. Drawn inside
            the page box, not on the container, so they follow the page as it is scaled
@@ -945,6 +1011,23 @@ onBeforeUnmount(() => {
 .pv__page:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 3px;
+}
+
+/* 「这一页是图片」那一句：贴在纸的左上角，不盖住内容本身。浮在上面而不是插进版面，
+   是因为它不是文档的一部分——插进去会把纸撑高，读者看到的版面就不是这份文件了。 */
+.pv__notext {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: var(--z-raised-1, 1);
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--fill-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
 }
 
 /* 指位置的时候点的是纸，不是纸上的字：文字层整个让开，否则读者一点就选中一行字。 */
@@ -1070,15 +1153,8 @@ onBeforeUnmount(() => {
   color: transparent;
 }
 
-/* 自己画的那一层。位置和大小由 `selectionHighlight.ts` 算，这里只管它长什么样：一块
-   都别挡住选中、底色是一次填充（选区的每一块收在同一条 path 里，搭着也只落一层）。 */
-.pv__page :deep(.pv-hl) {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.pv__page :deep(.pv-hl path) {
-  fill: var(--selection-bg);
-}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和幻灯片共用一份，两档的选中
+   底色才不可能变成两个颜色。 */
 </style>
+
+<style src="./preview-selection-paint.css"></style>

@@ -40,6 +40,7 @@ from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
@@ -86,7 +87,9 @@ class LiveInput:
         ``True`` means transport acceptance was recorded. A reconciliation
         result holds the registered identity without authorizing a queued retry.
         ``False`` means a pre-send failure; ``None`` means no session of that
-        seat is working here.
+        seat is working here, or the conversation is a closed task: its work is
+        over and its session is being stopped (`close_task`), so what is said
+        there is answered as anything said in a closed task is.
 
         The text is labelled the same way `prompt_line` labels a pending block,
         so a message that arrives mid-work reads identically to one that came in
@@ -129,6 +132,9 @@ class LiveInput:
             # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
                 place = await PlaceResolver(session).conversation(topic_id)
+                task = place.task if place is not None else None
+                if task is not None and task.status == TaskStatus.closed:
+                    return None
                 archived = place is None or place.room.status == TopicStatus.archived
                 # The pictures are read here, and the lines written after: a line
                 # says whether its file arrives as a picture, and only reading

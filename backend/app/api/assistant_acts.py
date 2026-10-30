@@ -44,10 +44,8 @@ ASK = {
     "join_request": "申请加入团队",
 }
 
-#: How a role is named to the person.
+#: How a role with no name of its own is named to the person.
 ROLE = {"owner": "所有者", "admin": "管理员", "member": "成员", "mentor": "导师"}
-#: Roles from the highest: a move down the list lowers someone.
-RANK = ("owner", "admin", "member", "mentor")
 
 
 @dataclass

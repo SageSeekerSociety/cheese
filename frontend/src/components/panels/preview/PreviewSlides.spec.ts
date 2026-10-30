@@ -445,3 +445,50 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(ui.emitted().pageContext).toBeUndefined()
   })
 })
+
+describe('演讲者备注', () => {
+  /** 挂一份带备注的稿子：`notes` 下标即页码。 */
+  async function withNotes(notes: readonly string[], count = 3) {
+    const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context: identity, notes } })
+    await waitFor(() => expect(pdf.requests).toHaveLength(1))
+    pdf.requests[0]!.resolve(documentFixture(count))
+    await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
+    return ui
+  }
+
+  it('这一页的备注写在幻灯片下面，翻页跟着换', async () => {
+    const ui = await withNotes(['第一页的话', '第二页的话'], 3)
+    expect(ui.getByTestId('slides-notes').textContent).toContain('第一页的话')
+    await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
+    expect(ui.getByTestId('slides-notes').textContent).toContain('第二页的话')
+  })
+
+  it('某一页没有备注时说一句，而不是把这一块整个抽掉', async () => {
+    // 第三页没有备注：这一块还在，写的是「这一页没有备注」——抽掉了读者会以为这一档
+    // 没有备注这个功能，而不是这一页恰好没有。
+    const ui = await withNotes(['第一页的话'], 3)
+    await fireEvent.click(ui.getByRole('button', { name: '跳转到第 3 页' }))
+    expect(ui.getByTestId('slides-notes').textContent).toContain('这一页没有备注')
+  })
+
+  it('整份都没有备注时不摆这一块，也不摆工具栏上那颗开关', async () => {
+    const ui = await withNotes([], 3)
+    expect(ui.queryByTestId('slides-notes')).toBeNull()
+    expect(ui.queryByTestId('slides-notes-toggle')).toBeNull()
+  })
+
+  it('可以收起；收起来之后工具栏那颗开关还在', async () => {
+    const ui = await withNotes(['第一页的话'], 2)
+    await fireEvent.click(ui.getByTestId('slides-notes-toggle'))
+    expect(ui.queryByTestId('slides-notes')).toBeNull()
+    await fireEvent.click(ui.getByTestId('slides-notes-toggle'))
+    expect(ui.getByTestId('slides-notes').textContent).toContain('第一页的话')
+  })
+
+  it('放映时不出现：备注是给讲的人看的，不是给台下看的', async () => {
+    const ui = await withNotes(['只给讲的人看'], 2)
+    expect(ui.getByTestId('slides-notes')).toBeTruthy()
+    await fireEvent.click(ui.getByRole('button', { name: '放映' }))
+    expect(document.querySelector('[data-testid="slides-notes"]')).toBeNull()
+  })
+})

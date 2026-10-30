@@ -44,7 +44,7 @@ from app.core.db import async_session_factory
 from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.forge_http import reuse_forge_connections
-from app.core.health import set_periodic_health
+from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
 from app.core.metrics import active_requests, registry
@@ -72,6 +72,7 @@ from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.feedback import announce as feedback_announce
 from app.domain.identity.services import IdentityService
 from app.domain.machine.microcloud import reuse_connections
 from app.domain.machine.runner import (
@@ -82,6 +83,7 @@ from app.domain.machine.runner import (
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
 from app.domain.room_cleanup.retire import sweep_retired_storage
+from app.domain.routine import builtin_triage
 from app.domain.skill_market import close_market_connections
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
@@ -158,6 +160,25 @@ async def lifespan(application: FastAPI):
         get_logger("cheesex.runtime").warning(
             "agent identity backfill skipped", reason=str(exc)[:120]
         )
+
+    # Feedback triage ships with the product: its rule is installed here, on
+    # every start, in the room the deployment names (`builtin_triage`).
+    # Idempotent; a pause somebody set is kept. Never blocks boot: what kept it
+    # from installing is the `feedback_triage` entry of the health report.
+    try:
+        async with async_session_factory() as session:
+            await builtin_triage.install(session)
+            await session.commit()
+    except Exception as exc:  # same rule as the seed above
+        get_logger("cheesex.runtime").warning(
+            "feedback triage install skipped", reason=str(exc)[:120]
+        )
+    set_domain_checks(
+        {
+            "feedback_announce": feedback_announce.health,
+            "feedback_triage": lambda: builtin_triage.health(async_session_factory),
+        }
+    )
 
     # The `cheese` CLI is now staged into each topic's session dir from THIS
     # build (ws.session_dir) instead of an operator-maintained host checkout. A
@@ -547,6 +568,7 @@ async def lifespan(application: FastAPI):
             watching_jobs.cancel()
             await asyncio.gather(watching_jobs, return_exceptions=True)
             set_periodic_health(None)
+            set_domain_checks({})
             reading_questions.cancel()
             await asyncio.gather(reading_questions, return_exceptions=True)
             await get_consumptions().let_go()

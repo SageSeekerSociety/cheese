@@ -258,6 +258,26 @@ export async function previewDocumentPdf(
   return (await previewDocumentPdfSnapshot(topicId, path, task, source)).bytes
 }
 
+/** 一份演示稿每一页的演讲者备注。
+ *
+ *  备注不在幻灯片上，而这一格拿到的是**转换后的 PDF**——所以它是这一档唯一读不出来的
+ *  东西。从服务端要，是因为那一边本来就有这份 pptx 的字节（正在转它）；让浏览器为了
+ *  几 KB 的文本再下一次原稿（上限 200MB）不值当。
+ *
+ *  `readable` 为假是「这份不是读得开的演示稿」；`notes` 里那一页是空串是「这一页没有
+ *  备注」。两件事分开说，否则一份读不开的文件会和一份没有备注的稿子长得一样。 */
+export function previewSlideNotes(
+  topicId: string,
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<{ notes: string[]; readable: boolean; version: string }> {
+  const from = task ? `&task=${encodeURIComponent(task)}` : ''
+  return request<{ notes: string[]; readable: boolean; version: string }>(
+    `/topics/${encodeURIComponent(topicId)}/attachments/notes?path=${encodeURIComponent(path)}&source=${source}${from}`
+  )
+}
+
 // Downloads carry the same credentials as API requests, including token-only sessions.
 //
 // 成没成、失败了怎么说，都在 `lib/download` 那一层定：这里只负责带凭证取字节、把

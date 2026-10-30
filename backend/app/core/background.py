@@ -401,12 +401,25 @@ def periodic_health(
         for name, reading in readings.items()
         if reading["status"] in {"not_started", "stopped", "failed"}
     }
-    return {
+    report: dict[str, Any] = {
         "status": "down" if unhealthy else "up",
         "owns_work": owns_work,
         "unhealthy": unhealthy,
         "jobs": readings,
     }
+    if unhealthy:
+        # The one line every reader of the report shows (the admin overview
+        # keeps only status and `error`): which clock, in what state, and why.
+        report["error"] = "; ".join(
+            f"{name}: {status}"
+            + (
+                f" ({readings[name]['last_error']})"
+                if readings[name].get("last_error")
+                else ""
+            )
+            for name, status in unhealthy.items()
+        )
+    return report
 
 
 async def watch_periodic_jobs(
