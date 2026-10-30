@@ -331,4 +331,23 @@ describe('两个「连接」入口', () => {
 
     expect(container.querySelector('[data-testid="own-github"]')).toBeNull()
   })
+
+  it('打开 AI 队友分栏时不请求未打开的仓库与分支保护接口，且默认模型只读一次', async () => {
+    vi.mocked(api.getProjectDefaultModel).mockResolvedValue({
+      model: null,
+      subagent_model: null,
+      deployment_default: 'sonnet',
+      choices: [],
+    })
+    await openSettings('agents')
+    await waitFor(() => expect(api.listProjectAgents).toHaveBeenCalledWith('project'))
+
+    expect(api.getUpstream).not.toHaveBeenCalled()
+    expect(api.getForgeConnection).not.toHaveBeenCalled()
+    expect(api.getCommitCredit).not.toHaveBeenCalled()
+    expect(api.getBranchProtection).not.toHaveBeenCalled()
+    expect(api.getRoleGrants).not.toHaveBeenCalled()
+    expect(api.getProjectCreditBudget).not.toHaveBeenCalled()
+    expect(api.getProjectDefaultModel).toHaveBeenCalledTimes(1)
+  })
 })

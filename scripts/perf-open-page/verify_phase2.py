@@ -29,10 +29,11 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 DEFAULT_OUT = HERE / "phase2_ab_evidence.json"
 
 TARGET_PAGES = [
-    "project-document",
-    "project-docs-charter",
-    "channel",
-    "workspace-task",
+    "thread",
+    "project-settings",
+    "teams",
+    "team-detail",
+    "settings-connections",
 ]
 MODES = ["walk", "warm", "cold"]
 
@@ -50,11 +51,14 @@ def _switch_dist(target_dir: Path) -> None:
 def _restore_dist_copy(target_dir: Path) -> None:
     if not target_dir.is_dir():
         return
-    if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
-        FRONTEND_DIST.unlink()
-    elif FRONTEND_DIST.is_dir():
-        shutil.rmtree(FRONTEND_DIST)
-    shutil.copytree(target_dir, FRONTEND_DIST)
+    try:
+        if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
+            FRONTEND_DIST.unlink()
+        elif FRONTEND_DIST.is_dir():
+            shutil.rmtree(FRONTEND_DIST)
+        shutil.copytree(target_dir, FRONTEND_DIST)
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: failed to restore {FRONTEND_DIST} from {target_dir}: {exc}", file=sys.stderr)
 
 
 def _run_single_pass(
@@ -62,6 +66,7 @@ def _run_single_pass(
     variant: str,
     round_idx: int,
     out_path: Path,
+    pages: list[str],
 ) -> dict[str, Any]:
     cmd = [
         sys.executable,
@@ -73,7 +78,7 @@ def _run_single_pass(
         "--modes",
         ",".join(MODES),
         "--only",
-        ",".join(TARGET_PAGES),
+        ",".join(pages),
         "--out",
         str(out_path),
     ]
@@ -108,14 +113,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base-url", default="http://127.0.0.1:3000")
     ap.add_argument("--rounds", type=int, default=3)
+    ap.add_argument("--pages", default=",".join(TARGET_PAGES))
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
-    ap.add_argument("--before-commit", default="a9385f9c7153")
-    ap.add_argument("--after-commit", default="55f77bce9c21")
+    ap.add_argument("--before-commit", default="1ff126a64926")
+    ap.add_argument("--after-commit", default="HEAD")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     args = ap.parse_args()
 
+    target_pages = [p.strip() for p in args.pages.split(",") if p.strip()]
     dist_before = Path(args.dist_before).resolve()
     dist_after = Path(args.dist_after).resolve()
 
@@ -140,7 +147,7 @@ def main() -> None:
                     print(f"\n>>> Interleaved Round {r}/{args.rounds} [{variant.upper()}] <<<", flush=True)
                     _switch_dist(dist_path)
                     out_file = tmp_dir / f"pass_{variant}_r{r}.json"
-                    res = _run_single_pass(args.base_url, variant, r, out_file)
+                    res = _run_single_pass(args.base_url, variant, r, out_file, target_pages)
                     raw_passes[variant].append(res)
         finally:
             if dist_after.is_dir():
@@ -149,7 +156,7 @@ def main() -> None:
     comparison: dict[str, Any] = {}
     guardrails_all_ok = True
 
-    for page in TARGET_PAGES:
+    for page in target_pages:
         comparison[page] = {}
         for mode in MODES:
             var_summary: dict[str, Any] = {}
@@ -180,30 +187,57 @@ def main() -> None:
                 lt_vals = [float(s.get("long_task_ms", 0.0)) for s in ok_samples]
 
                 # Count specific redundant calls across all ok samples (median)
-                hidden_lib_list = [
+                unbatched_room_list = [
                     _count_matching_apis(
                         s.get("api_timeline", []),
-                        lambda u: "/library?limit=" in u or "/documents?limit=50" in u,
+                        lambda u: any(
+                            p in u
+                            for p in (
+                                "/threads?limit=100",
+                                "/tasks?limit=0&status=open",
+                                "/tasks?limit=0&status=closed",
+                                "/pins",
+                                "/chapters",
+                            )
+                        ),
                     )
                     for s in ok_samples
                 ]
-                single_topic_list = [
+                hidden_settings_list = [
                     _count_matching_apis(
                         s.get("api_timeline", []),
-                        lambda u: u.startswith("topics/") and u.count("/") == 1 and "?" not in u,
+                        lambda u: any(
+                            u.endswith(p)
+                            for p in (
+                                "/upstream",
+                                "/forge",
+                                "/commit-credit",
+                                "/branch-protection",
+                                "/roles",
+                                "/credit-budget",
+                            )
+                        ),
                     )
                     for s in ok_samples
                 ]
-                doc_about_list = [
-                    _count_matching_apis(
-                        s.get("api_timeline", []),
-                        lambda u: u.endswith("/about"),
-                    )
+                default_model_list = [
+                    _count_matching_apis(s.get("api_timeline", []), lambda u: u.endswith("/default-model"))
                     for s in ok_samples
                 ]
-                hidden_lib_calls = int(statistics.median(hidden_lib_list)) if hidden_lib_list else 0
-                single_topic_calls = int(statistics.median(single_topic_list)) if single_topic_list else 0
-                doc_about_calls = int(statistics.median(doc_about_list)) if doc_about_list else 0
+                my_teams_list = [
+                    _count_matching_apis(s.get("api_timeline", []), lambda u: u == "teams/my-teams")
+                    for s in ok_samples
+                ]
+                projects_list = [
+                    _count_matching_apis(s.get("api_timeline", []), lambda u: u == "projects")
+                    for s in ok_samples
+                ]
+
+                unbatched_room_calls = int(statistics.median(unbatched_room_list)) if unbatched_room_list else 0
+                hidden_settings_calls = int(statistics.median(hidden_settings_list)) if hidden_settings_list else 0
+                default_model_calls = int(statistics.median(default_model_list)) if default_model_list else 0
+                my_teams_calls = int(statistics.median(my_teams_list)) if my_teams_list else 0
+                projects_calls = int(statistics.median(projects_list)) if projects_list else 0
 
                 var_summary[variant] = {
                     "n_attempts": len(samples),
@@ -215,9 +249,11 @@ def main() -> None:
                     "critical_path_api_ms": _quantiles(crit_vals),
                     "api_count_p50": round(statistics.median(api_counts), 1) if api_counts else None,
                     "long_task_ms_p50": round(statistics.median(lt_vals), 1) if lt_vals else None,
-                    "hidden_library_list_calls": hidden_lib_calls,
-                    "redundant_single_topic_calls": single_topic_calls,
-                    "doc_about_calls": doc_about_calls,
+                    "unbatched_room_calls": unbatched_room_calls,
+                    "hidden_settings_calls": hidden_settings_calls,
+                    "default_model_calls": default_model_calls,
+                    "my_teams_calls": my_teams_calls,
+                    "projects_calls": projects_calls,
                     "raw_samples": [
                         {
                             "round": s.get("interleaved_round"),
@@ -260,36 +296,37 @@ def main() -> None:
                     (s["paint_ms"] is None) for s in a["raw_samples"] if s["outcome"] != "ready" and s["outcome"] != "ok"
                 ),
             }
-            if page == "project-document":
-                guardrail_checks["eliminated_hidden_library_list_fetches"] = (
-                    b["hidden_library_list_calls"] >= 2 and a["hidden_library_list_calls"] == 0
+            if page == "thread":
+                guardrail_checks["eliminated_unbatched_room_piece_fetches"] = (
+                    b["unbatched_room_calls"] >= 4 and a["unbatched_room_calls"] == 0
                 )
-            elif page == "project-docs-charter":
-                guardrail_checks["eliminated_serial_root_topic_fetch"] = (
-                    b["redundant_single_topic_calls"] >= 1 and a["redundant_single_topic_calls"] == 0
+            elif page == "project-settings":
+                guardrail_checks["eliminated_hidden_section_fetches"] = (
+                    b["hidden_settings_calls"] >= 5 and a["hidden_settings_calls"] == 0
                 )
-                guardrail_checks["eliminated_redundant_charter_about_fetch"] = (
-                    b["doc_about_calls"] >= 1 and a["doc_about_calls"] == 0
+                guardrail_checks["eliminated_duplicate_default_model_fetch"] = (
+                    b["default_model_calls"] >= 2 and a["default_model_calls"] == 1
                 )
-            elif page == "channel":
-                guardrail_checks["eliminated_redundant_room_row_fetch"] = (
-                    b["redundant_single_topic_calls"] >= 1 and a["redundant_single_topic_calls"] == 0
+            elif page == "teams":
+                guardrail_checks["eliminated_duplicate_my_teams_fetch"] = (
+                    b["my_teams_calls"] >= 2 and a["my_teams_calls"] <= 1
                 )
-            elif page == "workspace-task" and mode == "walk":
-                guardrail_checks["eliminated_redundant_room_row_fetch"] = (
-                    b["redundant_single_topic_calls"] >= 1 and a["redundant_single_topic_calls"] == 0
+            elif page == "settings-connections" and mode == "warm":
+                guardrail_checks["eliminated_duplicate_projects_fetch"] = (
+                    b["projects_calls"] >= 2 and a["projects_calls"] <= 1
                 )
 
             if not all(guardrail_checks.values()):
                 guardrails_all_ok = False
 
             noise_spread_ms = max(b["paint_ms"]["spread"] or 0.0, a["paint_ms"]["spread"] or 0.0)
-            if page == "channel":
-                claim_status = "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
-            elif delta_paint_ms is not None and delta_paint_ms < 0 and (b["paint_ms"]["min"] or 0) > (a["paint_ms"]["max"] or 0):
+            eliminated_guardrail = any(k.startswith("eliminated_") and v for k, v in guardrail_checks.items())
+            if delta_paint_ms is not None and delta_paint_ms < 0 and (b["paint_ms"]["min"] or 0) > (a["paint_ms"]["max"] or 0):
                 claim_status = "confirmed_non_overlapping_improvement"
             elif delta_crit_ms is not None and delta_crit_ms < -50:
                 claim_status = "confirmed_critical_path_api_improvement"
+            elif eliminated_guardrail and (delta_paint_ms is None or delta_paint_ms >= -noise_spread_ms):
+                claim_status = "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
             else:
                 claim_status = "within_noise_band"
 
@@ -323,7 +360,7 @@ def main() -> None:
                 "postgres_port": 5433,
                 "redis_port": 6379,
             },
-            "target_pages": TARGET_PAGES,
+            "target_pages": target_pages,
             "modes": MODES,
             "guardrails_all_ok": guardrails_all_ok,
             "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -332,7 +369,7 @@ def main() -> None:
     }
     Path(args.out).write_text(json.dumps(out_payload, ensure_ascii=False, indent=2) + "\n")
     print(f"\n=== Interleaved A/B Summary (N={args.rounds}) ===")
-    for page in TARGET_PAGES:
+    for page in target_pages:
         for mode in MODES:
             c = comparison[page][mode]
             b_p = c["before"]["paint_ms"]

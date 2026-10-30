@@ -39,6 +39,7 @@ export const keys = {
   projectSituation: (projectId: string) => ['project', projectId, 'situation'] as const,
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,
   projectSkills: (projectId: string) => ['project', projectId, 'skills'] as const,
+  projectDefaultModel: (projectId: string) => ['project', projectId, 'default-model'] as const,
 
   room: (roomId: string) => ['room', roomId] as const,
   /** 房间这一行本身（标题、状态、可见性）。 */
