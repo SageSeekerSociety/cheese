@@ -1279,6 +1279,7 @@ exit 0
                     expressions.add(step["env"]["CANDIDATE_SHA"])
                 if step.get("name", "").startswith("Check out the built commit"):
                     expressions.add(step["env"]["REF"])
+                    self.assertIn('"$REF"', step["run"], "the built commit's checkout fetches a ref other than REF")
         self.assertEqual(expressions, {"${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}"})
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
         self.assertIn("rebuilt", inputs)

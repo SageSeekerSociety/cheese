@@ -271,7 +271,7 @@ jobs:
       #
       # Both checkouts in this job are deploy/git-fetch.sh, not
       # actions/checkout: the box's link to github.com resets connections in
-      # bursts, and actions/checkout gives up after three fetches, 35-42 s
+      # bursts, and actions/checkout gives up after three fetches, 38-47 s
       # after the first (dev deploy runs 40112125458, 40154711336, 40315955795). The
       # script retries within the time budget the registry calls use and fails
       # at once on a refused token or a missing ref. It runs from the copy the
