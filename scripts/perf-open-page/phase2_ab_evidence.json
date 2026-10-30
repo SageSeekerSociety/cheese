@@ -4,7 +4,7 @@
     "rounds": 3,
     "small_sample": true,
     "before_commit": "490766388ece",
-    "after_commit": "2d422dc9c5bf",
+    "after_commit": "dcdda6386c0d",
     "environment": {
       "base_url": "http://127.0.0.1:3000",
       "viewport": "1440x900",
@@ -24,7 +24,7 @@
       "cold"
     ],
     "guardrails_all_ok": true,
-    "timestamp_utc": "2026-10-30T17:48:06Z"
+    "timestamp_utc": "2026-10-30T18:31:12Z"
   },
   "comparison": {
     "project-members": {
@@ -174,7 +174,8 @@
         },
         "guardrails": {
           "selector_and_action_control_verified": true,
-          "failures_preserved_not_zeroed": true
+          "failures_preserved_not_zeroed": true,
+          "eliminated_competing_route_prefetches": true
         }
       },
       "warm": {
@@ -468,12 +469,12 @@
           "critical_path_api_ms": 37.5,
           "api_count": 4,
           "noise_spread_ms": 204.7,
-          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
           "selector_and_action_control_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_cold_address_project_lookup": true
+          "no_cold_address_project_lookup_regression": true
         }
       }
     },
@@ -624,7 +625,8 @@
         },
         "guardrails": {
           "selector_and_action_control_verified": true,
-          "failures_preserved_not_zeroed": true
+          "failures_preserved_not_zeroed": true,
+          "eliminated_competing_route_prefetches": true
         }
       },
       "warm": {
@@ -918,12 +920,12 @@
           "critical_path_api_ms": 52.2,
           "api_count": 0,
           "noise_spread_ms": 515.9,
-          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
           "selector_and_action_control_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_cold_address_project_lookup": true
+          "no_cold_address_project_lookup_regression": true
         }
       }
     },
@@ -1368,12 +1370,12 @@
           "critical_path_api_ms": 131.6,
           "api_count": 0,
           "noise_spread_ms": 605.6,
-          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
           "selector_and_action_control_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_cold_address_project_lookup": true
+          "no_cold_address_project_lookup_regression": true
         }
       }
     }

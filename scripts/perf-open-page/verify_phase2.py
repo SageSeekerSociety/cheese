@@ -324,11 +324,11 @@ def main() -> None:
                 )
             elif page == "project-members" and mode == "walk":
                 guardrail_checks["eliminated_competing_route_prefetches"] = (
-                    b["api_count"]["median"] >= 8 and a["api_count"]["median"] <= 3
+                    (b["api_count_p50"] or 0) >= 8 and (a["api_count_p50"] or 99) <= 3
                 )
             elif page == "project-skills" and mode == "walk":
                 guardrail_checks["eliminated_competing_route_prefetches"] = (
-                    b["api_count"]["median"] >= 6 and a["api_count"]["median"] <= 2
+                    (b["api_count_p50"] or 0) >= 6 and (a["api_count_p50"] or 99) <= 2
                 )
 
             if not all(guardrail_checks.values()):
