@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import project_roles
 from app.core.errors import AuthenticationRequiredError, NotFoundError, ValidationError
@@ -116,7 +116,7 @@ class SpeakersIn(BaseModel):
     thread_replies_open: bool = True
 
 
-@router.put("/{topic_id}/speakers")
+@router.put("/{topic_id}/speakers", **typed_response(TopicOut))
 async def set_speakers(
     at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
     body: SpeakersIn,
@@ -129,7 +129,7 @@ async def set_speakers(
     if at.place.conversation_id != topic_id:
         raise NotFoundError(say("topicNotFound"))
     if not at.actor.authenticated:
-        raise AuthenticationRequiredError("A verified member identity is required")
+        raise AuthenticationRequiredError(say("signInForProject"))
     room = await TopicMemberService(db).require_manager(topic_id, at.actor.handle)
     if body.speaker_roles is not None:
         known = await project_roles(db, room.project_id)

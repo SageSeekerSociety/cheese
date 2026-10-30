@@ -37,6 +37,7 @@ from app.domain.membership.schemas import (
     ProjectRoleOut,
     ProjectRolesOut,
     RoleCreate,
+    RoleDeletedOut,
     RoleOut,
     RoleSet,
     RoleUpdate,
@@ -339,7 +340,7 @@ async def update_role(
     return ok(_role_out(role, await service.holders(at.project.id)))
 
 
-@router.delete("/projects/{project_id}/roles/{key}")
+@router.delete("/projects/{project_id}/roles/{key}", **typed_response(RoleDeletedOut))
 async def delete_role(
     at: Annotated[InProject, Can(Permission.change_roles)],
     key: str,

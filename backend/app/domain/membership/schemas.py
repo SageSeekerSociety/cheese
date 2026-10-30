@@ -117,6 +117,10 @@ class ProjectRolesOut(BaseModel):
     roles: list[ProjectRoleOut]
 
 
+class RoleDeletedOut(BaseModel):
+    deleted: bool
+
+
 class MovedOut(BaseModel):
     project_id: uuid.UUID
     team_id: int

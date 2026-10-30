@@ -165,6 +165,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     setJoined: actions.setJoined,
     describe: actions.describe,
     setMembersOnly: actions.setMembersOnly,
+    setSpeakers: actions.setSpeakers,
     markAllRead: actions.markAllRead,
     privateUnreadMap,
     activeTopicId,
