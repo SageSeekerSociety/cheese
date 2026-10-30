@@ -140,6 +140,16 @@ class NativeInput(UuidPk, Base):
     terminated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: 这条输入最后交给的那个会话进程：座位给它的 runner 发的登记号（worker
+    #: epoch）。登记时是座位当时的登记号，每次真正交出去（`hand_to`）和 runner
+    #: 报写进去（`InputWritten`）时改成那个进程的；只往大改。为空的是这一列之前
+    #: 的行，或者座位从没有登记过进程的 harness。
+    handed_epoch: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: 平台记下 ``handed_epoch`` 那个进程退出的时刻（数据库的时钟）。之后这条
+    #: 输入再也不会被读到；交给更新的进程时清空。
+    receiver_exited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: 为什么不会被读到：`dropped`、`exited`、`orphaned`、`task_closed`，或者
     #: 构建自己对它的结算（`cancelled`、`discarded`、`refused`、`completed`）。
     termination: Mapped[str | None] = mapped_column(String(32), nullable=True)

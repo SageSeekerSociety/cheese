@@ -56,28 +56,37 @@ SAID = [
     },
 ]
 
-# Starts work with a tool call open, takes the next input off stdin without
-# ever echoing it, writes one line too long to read, and keeps running.
-BUILD = f"""
-import json, sys, time
+
+def _build(before: str = "", after: str = "") -> str:
+    """Starts work with a tool call open, takes the next input off stdin without
+    ever echoing it, writes one line too long to read, and keeps running.
+
+    The runner answers that line by ending the session at once, so whatever the
+    stand-in is to do about being ended (``before``) is set up before it writes
+    the line; ``after`` is what it does once the line is written.
+    """
+    return f"""
+import json, signal, subprocess, sys, time
 for record in {SAID!r}:
     print(json.dumps(record), flush=True)
 sys.stdin.readline()
+{before}
 sys.stdout.write("x" * {LINE_LIMIT + 1} + "\\n")
 sys.stdout.flush()
+{after}
 time.sleep(120)
 """
 
-# The same, then it ignores SIGTERM and goes on writing well past what an
-# unread pipe holds.
-CHATTY_BUILD = BUILD.replace(
-    "time.sleep(120)",
-    f"""import signal
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-for _ in range(4):
+
+BUILD = _build()
+
+# The same, ignoring SIGTERM and going on writing well past what an unread pipe
+# holds.
+CHATTY_BUILD = _build(
+    before="signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+    after=f"""for _ in range(4):
     sys.stdout.write("y" * {LINE_LIMIT} + "\\n")
-    sys.stdout.flush()
-time.sleep(120)""",
+    sys.stdout.flush()""",
 )
 
 
@@ -135,18 +144,15 @@ async def test_a_session_its_runner_cannot_read_is_ended_and_its_inputs_dropped(
 
 # Answers SIGTERM by starting a process that inherits its stdout, then exits.
 # That process either stays in the session's process group or leaves it.
-LATE_CHILD_BUILD = BUILD.replace(
-    "time.sleep(120)",
-    """import signal, subprocess
-def leave(*_):
+LATE_CHILD_BUILD = _build(
+    before="""def leave(*_):
     child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(120)"],
         start_new_session=LEAVES_GROUP,
     )
     open(CHILD_PID, "w").write(str(child.pid))
     sys.exit(0)
-signal.signal(signal.SIGTERM, leave)
-time.sleep(120)""",
+signal.signal(signal.SIGTERM, leave)"""
 )
 
 

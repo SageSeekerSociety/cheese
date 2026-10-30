@@ -8,12 +8,13 @@ Nothing here resubmits an input whose outcome is uncertain.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, true, update
+from sqlalchemy import delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, mark_read_failed
 from app.domain.block.models import Block
+from app.domain.delivery.agent import seat_epoch_of
 from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
@@ -117,7 +118,16 @@ async def register_input(
     # edge. Validation failure requires caller rollback of this whole transaction.
     inserted = await session.scalar(
         insert(NativeInput)
-        .values(id=uuid.uuid4(), registered_at=datetime.now(UTC), **values)
+        .values(
+            id=uuid.uuid4(),
+            registered_at=datetime.now(UTC),
+            # The process this is about to be handed to: the seat's current
+            # registration. `hand_to` moves it if a restart hands it on.
+            handed_epoch=seat_epoch_of(
+                identity.conversation_id, identity.recipient_handle, identity.harness
+            ),
+            **values,
+        )
         .on_conflict_do_nothing(constraint="uq_native_input_identity")
         .returning(NativeInput.id)
     )
@@ -193,8 +203,8 @@ async def held_blocks(
     input given up on with its fate unknown keeps holding its batch, so nothing
     the session may have read is offered again.
 
-    One row is not a hold: an input nobody ever read whose work the platform has
-    already ended (:func:`unread_input_with_over_work`). Nothing can settle its
+    One row is not a hold: an input nobody ever read whose outcome can no longer
+    be reported (:func:`unread_input_with_over_work`). Nothing can settle its
     outcome, so continuing to hide its batch is what would lose it — the next
     prompt has to be able to carry it again (#416).
     """
@@ -264,6 +274,51 @@ async def withdraw_input(session, identity: InputIdentity, effects: InputEffects
             )
             .values(state="claimed")
         )
+
+
+async def hand_to(session, *, harness, native_session_id, input_id, epoch) -> None:
+    """This input is being handed to the process registered under ``epoch``.
+
+    Written before the call that hands it over, so that whatever happens to the
+    process it was handed to before is not taken for the fate of this one: an
+    exit of the earlier process applied after this no longer names the input,
+    and one applied before it is cleared. Only ever moves to a newer process.
+    """
+    await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
+            NativeInput.input_id == input_id,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            or_(NativeInput.handed_epoch.is_(None), NativeInput.handed_epoch < epoch),
+        )
+        .values(handed_epoch=epoch, receiver_exited_at=None)
+    )
+
+
+async def receiver_exited(
+    session, *, conversation_id, recipient_handle, harness, epoch
+) -> int:
+    """The process the seat registered under ``epoch`` has exited: every input
+    still unread that was last handed to it will never be read, and is marked
+    so (``input_holds.unread_input_with_over_work``). Stamped with the
+    database's clock. Returns how many."""
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.conversation_id == conversation_id,
+            NativeInput.recipient_handle == recipient_handle,
+            NativeInput.harness == harness,
+            NativeInput.handed_epoch == epoch,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            NativeInput.receiver_exited_at.is_(None),
+        )
+        .values(receiver_exited_at=func.now())
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 async def drop_input(

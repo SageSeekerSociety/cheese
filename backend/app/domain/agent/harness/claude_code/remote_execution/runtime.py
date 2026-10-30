@@ -184,18 +184,12 @@ class Executor:
             if forge_sock.exists() and ca_bundle.is_file():
                 self.forge_bridge = _start_forge_bridge(forge_sock)
                 proxy_url = f"http://127.0.0.1:{self.forge_bridge.server_address[1]}"
-                no_proxy_hosts = [
-                    "127.0.0.1",
-                    "localhost",
-                    "127.0.0.2",
-                    "platform.cheese",
-                ]
-                site_fwd = (self.env.get("CHEESE_SITE_FORWARD") or "").rpartition(":")[
-                    0
-                ]
-                if site_fwd:
-                    no_proxy_hosts.append(site_fwd)
-                no_proxy = ",".join(dict.fromkeys(no_proxy_hosts))
+                # Only names that can never be a forge: the site's name goes
+                # through the proxy too, which dials it over the machine's
+                # forward (`forge_proxy.ForgeProxyRuntime.dial`), since a
+                # project's forge may live on it and only the proxy holds the
+                # forge's credential.
+                no_proxy = "127.0.0.1,localhost,127.0.0.2,platform.cheese"
                 self.env.update(
                     HTTPS_PROXY=proxy_url,
                     https_proxy=proxy_url,

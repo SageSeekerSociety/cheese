@@ -1,8 +1,9 @@
 """A session at work that owes a person an answer, or whose checklist stopped,
 is reminded, whatever turn is open.
 
-A session that read a person's message and has said nothing since is told so;
-once it has answered it works on quietly. One whose own checklist stopped
+A session that read a person's message and has said nothing since is told to
+answer; one that answered and then went quiet is asked, every interval of
+silence, for one line on what it is doing now. One whose own checklist stopped
 moving is asked to write it again (`QuietSessionReminders`). What decides is the session — the seat this
 process holds whose runner says it is working, the input it read, the messages
 it wrote, the checklist its current work wrote — not a turn the platform holds
@@ -334,17 +335,20 @@ async def _silent_through_notices(client, room):
         await _put_down(channel, session)
 
 
-def test_a_session_that_answered_works_on_quietly_until_asked_again(
+def test_a_session_that_answered_and_works_on_silently_is_reminded_every_interval(
     client, room, monkeypatch
 ):
-    """The person was answered; the session keeps working and says nothing more
-    in the conversation. The process shows in 现场 and the board, so the
-    platform does not prod it to narrate — until someone speaks to it again."""
+    """The person was answered and the session keeps working without a word in
+    the conversation. People there cannot see 现场 from the chat, and a silent
+    teammate reads as a dead one: every interval of silence it is asked for one
+    short line on what it is doing now — never sooner than an interval after it
+    last spoke. A new question it has not answered gets the stronger reminder,
+    to answer, and only that one."""
     monkeypatch.setattr(settings, "chat_progress_reminder_after_s", THRESHOLD)
-    client.portal.call(_quiet_after_an_answer, client, room)
+    client.portal.call(_reminded_while_working_on, client, room)
 
 
-async def _quiet_after_an_answer(client, room):
+async def _reminded_while_working_on(client, room):
     project, topic, _seat = room
     channel = _KeepsWorking()
     service, session, work, acting = await _at_work(client, room, channel)
@@ -358,6 +362,7 @@ async def _quiet_after_an_answer(client, room):
     quiet = QuietSessionReminders(service, service.compute)
     try:
         asked_at = datetime.now(UTC)
+        answered_at = asked_at + timedelta(minutes=1)
 
         def message(author: str, content: str, at: datetime) -> Block:
             return Block(
@@ -385,35 +390,44 @@ async def _quiet_after_an_answer(client, room):
                 echoed_at=at,
             )
 
-        async with client.test_factory() as db:
-            asked = message("alice", "首页为什么这么慢？", asked_at)
-            db.add(asked)
-            await db.flush()
-            db.add(read([str(asked.id)], asked_at))
-            db.add(
-                message(
-                    acting,
-                    "我先查首页的查询，改完再说。",
-                    asked_at + timedelta(minutes=1),
-                )
-            )
-            await db.commit()
+        async def add(row) -> None:
+            async with client.test_factory() as db:
+                db.add(row)
+                await db.commit()
 
-        for n in range(1, 4):
-            later = asked_at + timedelta(seconds=n * THRESHOLD + 1)
-            assert await quiet.silence(later) == 0
-        assert told == []
+        asked = message("alice", "首页为什么这么慢？", asked_at)
+        await add(asked)
+        await add(read([str(asked.id)], asked_at))
+        await add(message(acting, "我先查首页的查询，改完再说。", answered_at))
 
-        again_at = asked_at + timedelta(seconds=3 * THRESHOLD + 10)
-        async with client.test_factory() as db:
-            again = message("alice", "现在到哪了？", again_at)
-            db.add(again)
-            await db.flush()
-            db.add(read([str(again.id)], again_at))
-            await db.commit()
+        # Answered: nothing until an interval of silence after the answer.
+        assert await quiet.silence(answered_at + timedelta(seconds=THRESHOLD - 1)) == 0
+        first = answered_at + timedelta(seconds=THRESHOLD + 1)
+        assert await quiet.silence(first) == 1
+        # Still silent: once per interval, not a stream.
+        assert await quiet.silence(first + timedelta(seconds=THRESHOLD - 1)) == 0
+        second = first + timedelta(seconds=THRESHOLD)
+        assert await quiet.silence(second) == 1
+        assert len(told) == 2
+        for said in told:
+            assert "chat_send" in said and "分钟没在对话里说话" in said
+            assert "还没回" not in said
 
+        # It posted a line: the next interval counts from that line.
+        posted_at = second + timedelta(seconds=30)
+        await add(
+            message(acting, "还在查：首页三次查询已经合成一次，正在跑压测。", posted_at)
+        )
+        assert await quiet.silence(posted_at + timedelta(seconds=THRESHOLD - 1)) == 0
+        assert len(told) == 2
+
+        # Someone asks again and is not answered: one reminder, to answer.
+        again_at = posted_at + timedelta(seconds=60)
+        again = message("alice", "现在到哪了？", again_at)
+        await add(again)
+        await add(read([str(again.id)], again_at))
         assert await quiet.silence(again_at + timedelta(seconds=THRESHOLD + 1)) == 1
-        assert len(told) == 1 and "chat_send" in told[0]
+        assert len(told) == 3 and "分钟了还没回" in told[2]
     finally:
         await _put_down(channel, session)
 

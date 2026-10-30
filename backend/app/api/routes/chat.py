@@ -100,6 +100,7 @@ from app.api.room_snapshot import room_snapshot
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sentences import error_frame
+from app.domain.agent import turn_resume
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import PREFIX, watched_by
 from app.domain.agent.realtime.broker import InProcessBroker
@@ -232,6 +233,11 @@ async def rooms_live(
                 # Not (yet) watching this room: nothing to sync or type into.
                 continue
             if kind == "sync":
+                # Taken before the read: a run record numbered after it may be
+                # missing from the read, and the page keeps what it heard.
+                read_at = broker.books_read()
+                async with chat_service.session_factory() as session:
+                    resumes = await turn_resume.waiting(session, topic_id)
                 await send(
                     {
                         "type": "room_state",
@@ -240,6 +246,9 @@ async def rooms_live(
                         "since": broker.active_turns_since(topic),
                         "agents": broker.activity.turn_agents(topic),
                         "members": broker.activity.snapshot(topic),
+                        "resumes": resumes,
+                        "at": read_at,
+                        "stream": broker.stream,
                     }
                 )
                 continue
