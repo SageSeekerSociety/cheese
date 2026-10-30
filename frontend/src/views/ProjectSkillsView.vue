@@ -32,7 +32,9 @@ import { t } from '@/i18n'
 import { mayIn } from '@/lib/projectPermissions'
 import { useDialog } from '@/plugins/dialog'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { projectQuery } from '@/query/project'
+import { fromSnapshot } from '@/query/snapshot'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -49,7 +51,7 @@ async function load() {
   loadError.value = ''
   try {
     const [listed, project] = await Promise.all([
-      listProjectSkills(projectId),
+      fromSnapshot(keys.projectSkills(projectId), () => listProjectSkills(projectId)),
       queryClient.fetchQuery(projectQuery(projectId)),
     ])
     if (props.projectId !== projectId) return

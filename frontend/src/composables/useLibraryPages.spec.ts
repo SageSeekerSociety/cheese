@@ -28,25 +28,41 @@ function doc(id: string, title: string, updated: string): ProjectDocument {
 
 const DOCS = [doc('d1', '组会记录', '2026-10-22T10:00:00Z'), doc('d2', '读书笔记', '2026-10-20T10:00:00Z')]
 
-vi.mock('../lib/libraryApi', () => ({ listProjectLibrary: servesLibrary(() => FILES) }))
+const listProjectLibraryMock = vi.fn(servesLibrary(() => FILES))
+const listProjectDocumentsMock = vi.fn(async () => ({ data: DOCS.map(listedDocument), next: null }))
+
+vi.mock('@/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api')>()),
+  listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
+}))
+vi.mock('../lib/libraryApi', () => ({
+  listProjectLibrary: (...args: Parameters<typeof listProjectLibraryMock>) => listProjectLibraryMock(...args),
+}))
 vi.mock('../api/teamDocuments', () => ({
   listTeamDocuments: async () => ({ data: DOCS.map(listedDocument), next: null }),
 }))
-vi.mock('../api/projectDocuments', () => ({ listProjectDocuments: async () => ({ data: [], next: null }) }))
+vi.mock('../api/projectDocuments', () => ({
+  listProjectDocuments: (...args: Parameters<typeof listProjectDocumentsMock>) => listProjectDocumentsMock(...args),
+  getDocumentText: vi.fn(),
+  getProjectOverview: vi.fn(),
+}))
 
 import { useLibraryPages } from './useLibraryPages'
+
+import * as projectQueries from '@/query/project'
+import { forgetRoomSnapshots, readEarly } from '@/query/snapshot'
 
 function names(rows: { file?: { path: string }; doc?: { title: string | null } }[]) {
   return rows.map((row) => row.file?.path ?? row.doc?.title)
 }
 
-function mountPages(q: string) {
+function mountPages(q: string, shelf: { team: number } | string = { team: 3 }) {
   let pages!: ReturnType<typeof useLibraryPages>
   render(
     defineComponent({
       setup() {
         pages = useLibraryPages(
-          () => ({ team: 3 }),
+          () => shelf,
           () => ({ dir: '', q, kind: 'all' }),
           ref(null)
         )
@@ -57,7 +73,12 @@ function mountPages(q: string) {
   return () => pages
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  forgetRoomSnapshots()
+  listProjectLibraryMock.mockClear()
+  listProjectDocumentsMock.mockClear()
+})
 
 describe('a team library', () => {
   it('lists the team documents with its files, the latest changed first', async () => {
@@ -69,5 +90,25 @@ describe('a team library', () => {
     const pages = mountPages('笔记')
     await waitFor(() => expect(pages().exhausted.value).toBe(true))
     expect(names(pages().rows.value)).toEqual(['读书笔记'])
+  })
+
+  it('reuses the root library and document requests prefetched by the route guard instead of fetching twice', async () => {
+    const projectId = '51d3aca0-ca5f-4648-98e3-90014dbd34e5'
+    if ('prefetchProjectSubpage' in projectQueries) {
+      projectQueries.prefetchProjectSubpage('project-library', projectId, { projectId }, {})
+    } else {
+      readEarly(['project', projectId, 'library-root', ''], () =>
+        listProjectLibraryMock(projectId, { dir: '', cursor: null, limit: 50 })
+      )
+      readEarly(['project', projectId, 'documents-root'], () => listProjectDocumentsMock())
+    }
+    expect(listProjectLibraryMock).toHaveBeenCalledTimes(1)
+    expect(listProjectDocumentsMock).toHaveBeenCalledTimes(1)
+
+    const pages = mountPages('', projectId)
+
+    await waitFor(() => expect(names(pages().rows.value)).toEqual(['组会记录', '课程大纲.pdf', '读书笔记', '成绩.csv']))
+    expect(listProjectLibraryMock).toHaveBeenCalledTimes(1)
+    expect(listProjectDocumentsMock).toHaveBeenCalledTimes(1)
   })
 })

@@ -56,7 +56,9 @@ import { isExternalMember } from '@/lib/externalMembers'
 import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { agentsQuery, projectQuery } from '@/query/project'
+import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectMembersView' })
@@ -124,7 +126,7 @@ const revoking = ref<string | null>(null)
 async function refreshInvitations() {
   const pid = props.projectId
   try {
-    const payload = await listProjectInvitations(pid)
+    const payload = await fromSnapshot(keys.projectInvitations(pid), () => listProjectInvitations(pid))
     if (props.projectId === pid) invitations.value = payload.data as PendingInvitation[]
   } catch {
     // 同上：拿不到就不显示这一段。

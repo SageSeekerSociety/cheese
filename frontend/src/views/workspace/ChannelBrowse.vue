@@ -10,6 +10,8 @@ import ChannelBrowseView from './ChannelBrowseView.vue'
 
 import { listChannels } from '@/api/channels'
 import { myHandle } from '@/me'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
@@ -27,7 +29,9 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    channels.value = (await listChannels(props.projectId)).items
+    channels.value = (
+      await fromSnapshot(keys.projectChannels(props.projectId), () => listChannels(props.projectId))
+    ).items
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {

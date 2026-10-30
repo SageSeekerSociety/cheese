@@ -40,6 +40,19 @@ export const keys = {
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,
   projectSkills: (projectId: string) => ['project', projectId, 'skills'] as const,
   projectDefaultModel: (projectId: string) => ['project', projectId, 'default-model'] as const,
+  projectInvitations: (projectId: string) => ['project', projectId, 'invitations'] as const,
+  projectChannels: (projectId: string) => ['project', projectId, 'channels'] as const,
+  projectArtifact: (projectId: string, artifactId: string) => ['project', projectId, 'artifact', artifactId] as const,
+  projectLibraryRoot: (projectId: string, dir: string) => ['project', projectId, 'library-root', dir] as const,
+  projectDocumentsRoot: (projectId: string) => ['project', projectId, 'documents-root'] as const,
+
+  awaitingMe: () => ['inbox', 'awaiting-me'] as const,
+  inboxNotifications: (unreadOnly: boolean) => ['inbox', 'notifications', unreadOnly] as const,
+  ownTeam: (handle: string) => ['teams', 'own', handle] as const,
+  teamDevices: (teamId: number) => ['teams', teamId, 'devices'] as const,
+  notificationPreferences: () => ['user', 'notification-preferences'] as const,
+  userProfile: (handle: string) => ['user', handle, 'profile-row'] as const,
+  userRecentTopics: (handle: string) => ['user', handle, 'recent-topics'] as const,
 
   room: (roomId: string) => ['room', roomId] as const,
   /** 房间这一行本身（标题、状态、可见性）。 */

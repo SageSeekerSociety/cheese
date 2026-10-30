@@ -27,6 +27,8 @@ import NotificationsView from './NotificationsView.vue'
 import { getNotificationPreferences, saveNotificationPreferences } from '@/api/notificationPreferences'
 import { t } from '@/i18n'
 import { eventCellKey } from '@/lib/notificationPreferences'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { disablePush, enablePush } from '@/services/webPush'
 
 const prefs = ref<NotificationPreferences | null>(null)
@@ -60,7 +62,7 @@ async function load() {
   failed.value = false
   failingReason.value = null
   try {
-    prefs.value = await getNotificationPreferences()
+    prefs.value = await fromSnapshot(keys.notificationPreferences(), () => getNotificationPreferences())
   } catch (e) {
     failed.value = true
     failingReason.value = e instanceof Error ? e.message : null

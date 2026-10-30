@@ -23,8 +23,9 @@ import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
 import { prefetchNewestBlocks } from '@/query/blocks'
+import { prefetchPersonalRoute } from '@/query/homeNav'
 import { keys } from '@/query/keys'
-import { prefetchProjectTopics } from '@/query/project'
+import { prefetchProjectSubpage, prefetchProjectTopics } from '@/query/project'
 import { prefetchPreview, prefetchThread } from '@/query/room'
 import { expectRoom, readEarly } from '@/query/snapshot'
 import { recoverNavigations } from '@/services/staleBuild'
@@ -211,9 +212,13 @@ router.afterEach((to, from, failure) => {
 // 在上面 `canonicalAddress` 那条守卫里已经换成了 UUID；换不出来的（没有这个项目、
 // 看不到）这里不发。
 router.beforeEach((to, from) => {
-  if (!myId() || !to.matched.some((record) => record.meta?.projectFrame === true)) return
-  const projectId = routeIds(to.params).projectId
+  if (!myId()) return
+  prefetchPersonalRoute(to.name, to.params)
+  if (!to.matched.some((record) => record.meta?.projectFrame === true)) return
+  const ids = routeIds(to.params)
+  const projectId = ids.projectId
   if (!projectId || !isUuid(projectId)) return
+  prefetchProjectSubpage(to.name, projectId, ids, to.query)
   const fromProjectId = from.matched.some((record) => record.meta?.projectFrame === true)
     ? routeIds(from.params).projectId
     : undefined

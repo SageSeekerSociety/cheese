@@ -11,6 +11,8 @@ import { teamDataInjectionKey } from '@/keys'
 import { desktopBridge, deviceFlow, requestConnecting } from '@/lib/desktop'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useDialog } from '@/plugins/dialog'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 const { confirm } = useDialog()
 const team = inject(teamDataInjectionKey, ref())
@@ -35,7 +37,8 @@ async function load() {
   loading.value = true
   loadError.value = null
   try {
-    const result = await listTeamDevices(teamId.value)
+    const id = teamId.value
+    const result = await fromSnapshot(keys.teamDevices(id), () => listTeamDevices(id))
     devices.value = result.devices
     canManage.value = result.can_manage
   } catch (cause) {
