@@ -134,9 +134,12 @@ async def test_a_session_its_runner_cannot_read_is_ended_and_its_inputs_dropped(
 
 
 # Answers SIGTERM by starting a process that inherits its stdout, then exits.
-# That process either stays in the session's process group or leaves it.
+# That process either stays in the session's process group or leaves it. The
+# handler is in place before the line that gets the session ended: installed
+# after it, a runner quick to end the session can land its SIGTERM first, and
+# the build dies with no child to report on.
 LATE_CHILD_BUILD = BUILD.replace(
-    "time.sleep(120)",
+    "sys.stdin.readline()",
     """import signal, subprocess
 def leave(*_):
     child = subprocess.Popen(
@@ -146,7 +149,7 @@ def leave(*_):
     open(CHILD_PID, "w").write(str(child.pid))
     sys.exit(0)
 signal.signal(signal.SIGTERM, leave)
-time.sleep(120)""",
+sys.stdin.readline()""",
 )
 
 
