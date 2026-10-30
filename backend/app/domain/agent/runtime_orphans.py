@@ -7,6 +7,8 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
+from sqlalchemy import func, select
+
 from app.core.background import hold
 from app.core.sentences import say
 from app.domain.addressing import Addressed
@@ -15,7 +17,9 @@ from app.domain.agent.pending_messages import resume_messages
 from app.domain.agent.queries import instance_of_handle
 from app.domain.agent.repositories import TurnRecord
 from app.domain.agent.turn_ledger import utcnow
+from app.domain.block.models import Block
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
+from app.domain.run_record.models import RunRecord
 from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
@@ -83,6 +87,85 @@ async def _wedged_turns(
                 round(frame_quiet_s),
             )
     return wedged
+
+
+async def _last_progress(
+    session_factory, turn_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """The newest thing each turn put on record: a block or a run record
+    carrying its id. A turn with neither is absent."""
+    newest: dict[uuid.UUID, datetime] = {}
+    async with session_factory() as session:
+        for model in (Block, RunRecord):
+            rows = await session.execute(
+                select(model.turn_id, func.max(model.created_at))
+                .where(model.turn_id.in_(turn_ids))
+                .group_by(model.turn_id)
+            )
+            for turn_id, at in rows:
+                if turn_id not in newest or at > newest[turn_id]:
+                    newest[turn_id] = at
+    return newest
+
+
+async def _silent_unknown_turns(
+    self,
+    chat_service,
+    open_turns: dict[uuid.UUID, TurnRecord],
+    silence_s: float,
+    now: datetime,
+) -> set[uuid.UUID]:
+    """Of the delivered turns no process holds and nothing has pronounced
+    dead (`death_evidence.unknown_row`), which have put nothing on record for
+    `silence_s`? Those are wedged too.
+
+    Unknown is not dead: a machine merely out of reach may still be working,
+    so such a row is never closed for being unreachable. But a turn whose
+    machine nobody can reach and which has said nothing for as long as a
+    healthy turn can be quiet is not one anybody is still waiting on — the
+    person is, and every message they send the seat queues behind it
+    (`pending_messages`: ``turn_open_in_db``). On 2026-10-11 one such row held
+    a thread for nineteen days: its sandbox was released, nothing was left to
+    report its end, and four follow-ups from the person it was answering never
+    became a turn.
+
+    Silence is read from what the turn itself put on record — its blocks and
+    run records — not from the room, because a person asking 「你卡了？」 is
+    not the turn making progress. The one signal this cannot see is a frame,
+    and frames only reach a process that holds the session; a row in this set
+    is by definition one no process holds.
+    """
+    candidates = {
+        tid: record
+        for tid, record in open_turns.items()
+        if record.delivered
+        and str(tid) not in self._live
+        and str(tid) not in self._last_frame_at
+        and not self._adopted(chat_service, record, set())
+        and death_evidence.unknown_row(chat_service, record)
+    }
+    if not candidates:
+        return set()
+    try:
+        progress = await _last_progress(chat_service.session_factory, set(candidates))
+    except Exception:  # a failed probe must not end turns
+        logger.exception("orphan sweep: turn progress probe failed")
+        return set()
+    silent: set[uuid.UUID] = set()
+    for tid, record in candidates.items():
+        latest = max(
+            [at for at in (progress.get(tid), record.delivered_at) if at is not None]
+        )
+        quiet_s = (now - latest).total_seconds()
+        if quiet_s > silence_s:
+            silent.add(tid)
+            logger.warning(
+                "turn %s is wedged: no session holds it and it put nothing on"
+                " record for %ss",
+                tid,
+                round(quiet_s),
+            )
+    return silent
 
 
 def _cancel_wedged(self, turn_id: str, topic_id: uuid.UUID) -> None:
@@ -207,7 +290,7 @@ async def sweep_orphans(
     if min_age_s is None:
         min_age_s = self.SWEEP_MIN_AGE_S
     if silence_s is None:
-        silence_s = self.SILENT_TURN_S
+        silence_s = float(self.SILENT_TURN_S)
     now = utcnow()
     old_enough = {
         tid: record
@@ -216,14 +299,26 @@ async def sweep_orphans(
         and chat_service.replaying(record.topic_id) is None
     }
     wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
-    # A row the process cannot judge is not a dead row (FB-56 legacy③):
-    # it stays open and is listed, never closed (`death_evidence.unknown_row`).
+    # Silence is judged on a clock, never at takeover: startup passes no
+    # `last_activity`, and a device's screens may dial in minutes after it.
+    silent = (
+        await _silent_unknown_turns(self, chat_service, old_enough, silence_s, now)
+        if last_activity is not None
+        else set()
+    )
+    wedged |= silent
+    # A row the process cannot judge is not a dead row (FB-56 legacy③): it
+    # stays open (`death_evidence.unknown_row`), unless no process holds it
+    # and it has been silent past the horizon (`_silent_unknown_turns`).
     orphans = {
         tid: record
         for tid, record in old_enough.items()
-        if (str(tid) not in self._live or tid in wedged)
-        and not self._adopted(chat_service, record, wedged)
-        and not death_evidence.unknown_row(chat_service, record)
+        if tid in silent
+        or (
+            (str(tid) not in self._live or tid in wedged)
+            and not self._adopted(chat_service, record, wedged)
+            and not death_evidence.unknown_row(chat_service, record)
+        )
     }
     if not orphans:
         return 0

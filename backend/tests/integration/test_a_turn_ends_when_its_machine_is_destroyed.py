@@ -11,10 +11,15 @@ as the row exists — the incident of 2026-10-23, where one turn sat open for 21
 hours after its sandbox was released.
 
 A machine out of reach is NOT that. It may be asleep, offline, or still being
-prepared, and the platform has no authority to end anything on it; its turns
-stay open and ``death_evidence.unknown_row`` keeps them so (FB-56 legacy③).
-That rule is what the second test here holds, and the change that closes
-destroyed machines must not touch it.
+prepared, and the platform has no authority to end anything on it for being out
+of reach; its turns stay open and ``death_evidence.unknown_row`` keeps them so
+(FB-56 legacy③). That rule is what the second test here holds, and the change
+that closes destroyed machines must not touch it. What ends such a turn is its
+own silence: once it has put nothing on record past the horizon, the clock
+sweep calls it wedged, tells the room, and the messages queued behind it get
+their turn — the fourth test, after a thread on 2026-10-11 whose sandbox was
+released before anything recorded that, and whose person's four follow-ups
+waited behind the open row for nineteen days.
 
 The turns are not all a destroyed machine was given. A person's message added
 into a working session (a mid-turn addition, `input_id` is not `work_id`) is no
@@ -38,11 +43,16 @@ from app.api.deps import get_chat_service
 from app.domain.agent import death_evidence, turn_inputs
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn, SessionState
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_session.models import AgentSession
+from app.domain.block.models import Block
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import NativeInput
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
+from app.domain.notice_meta import EVENT_TURN_TIMEOUT
+from app.domain.run_record.models import RunRecord
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
@@ -477,4 +487,101 @@ def test_destroying_the_machine_frees_the_seat_its_unread_inputs_held(client):
         _until(
             lambda: _inputs(client, task_id) > handed,
             "座位还按着：下一条消息没能交给会话",
+        )
+
+
+def _backdate_records(client, turn_id: uuid.UUID, at: datetime) -> None:
+    """Whatever the turn put on record, as old as the turn."""
+
+    async def write() -> None:
+        async with client.test_factory() as session:
+            for model in (Block, RunRecord):
+                await session.execute(
+                    update(model).where(model.turn_id == turn_id).values(created_at=at)
+                )
+            await session.commit()
+
+    client.portal.call(write)
+
+
+def _told_wedged(client, conversation: uuid.UUID, turn_id: uuid.UUID) -> bool:
+    """Whether the room was told this turn was stopped for producing nothing."""
+
+    async def read() -> bool:
+        async with client.test_factory() as session:
+            blocks = await session.scalars(
+                select(Block).where(
+                    Block.conversation_id == conversation, Block.turn_id == turn_id
+                )
+            )
+            records = await session.scalars(
+                select(RunRecord).where(
+                    RunRecord.conversation_id == conversation,
+                    RunRecord.turn_id == turn_id,
+                )
+            )
+            return any(
+                (row.meta or {}).get("event_type") == EVENT_TURN_TIMEOUT
+                for row in [*blocks, *records]
+            )
+
+    return client.portal.call(read)
+
+
+def test_a_turn_out_of_reach_and_silent_past_the_horizon_ends_and_the_room_moves_on(
+    client,
+):
+    """够不着、也没人说它死了的一轮，十九天什么都没写下：钟点扫描把它判卡死、关掉、
+    在房间里说一声，排在它后面那条人的消息随后起了自己的一轮。
+
+    接手时（`resume_orphans`）仍然不动它——那时设备的会话可能还没连回来。
+    """
+    with _working_task(client) as (channel, task, room, task_id):
+        runner = session_turn_deps.get_work_runner()
+        opened_at = datetime.now(UTC) - timedelta(days=19)
+        _backdate(client, task_id, opened_at)
+        (turn,) = [t for t in _turns(client, task_id) if t.stopped_at is None]
+        _backdate_records(client, turn.id, opened_at)
+
+        client.portal.call(runner.let_go)
+        client.portal.call(channel.runtime.stop_listening)
+        gone = Recycled()
+        gone.root = channel.root
+        gone.sessions = dict(channel.sessions)
+        for session in gone.sessions.values():
+            session.channel = gone
+        replaced = _backend(client, gone)
+        assert client.portal.call(replaced.recover_sessions) == 0
+        app.dependency_overrides[get_chat_service] = lambda: replaced
+        runner.start_turns()
+
+        client.portal.call(runner.resume_orphans, replaced)
+        assert _turns(client, task_id)[0].stopped_at is None, "接手那一刻就判了它"
+
+        followed_up = post_message(
+            client, task["id"], "alice", {"content": "你卡了？"}
+        )["id"]
+
+        async def room_just_spoke(topic_ids):
+            return {topic: datetime.now(UTC) for topic in topic_ids}
+
+        # The clock sweep of the process that owns the sessions now: it never
+        # ran this turn, as no process alive had on 2026-10-30.
+        owner = AgentWorkRunner(InProcessBroker())
+        client.portal.call(
+            lambda: owner.sweep_orphans(
+                replaced, last_activity=room_just_spoke, silence_s=1800.0
+            )
+        )
+
+        closed = next(t for t in _turns(client, task_id) if t.id == turn.id)
+        assert closed.stopped_at is not None, "十九天没写下任何东西的一轮还开着"
+        assert _told_wedged(client, task_id, turn.id), "房间里没人说这一轮停了"
+
+        client.portal.call(runner.resume_lost_messages, replaced)
+        _until(
+            lambda: any(
+                t.id == uuid.UUID(followed_up) for t in _turns(client, task_id)
+            ),
+            "排在那一轮后面的消息没有起自己的一轮",
         )
