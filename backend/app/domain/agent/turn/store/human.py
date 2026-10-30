@@ -13,9 +13,8 @@ from app.core.sentences import say
 from app.core.work_context import parse_work_id
 from app.domain.block.adapters import dump_blocks_json
 from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
-from app.domain.block.output_effects import append_output
+from app.domain.block.output_effects import append_output, hold_numbering
 from app.domain.block.queries import message_reply_target
-from app.domain.block.repositories import hold_numbering
 from app.domain.block.schemas import reply_preview
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem

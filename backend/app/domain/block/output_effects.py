@@ -8,6 +8,7 @@ refs before the caller serializes and commits it.
 import uuid
 from datetime import datetime
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
@@ -74,3 +75,21 @@ async def consume_prompt(
 ) -> None:
     """Consume a non-native prompt in the encompassing stop transaction."""
     await BlockRepository(session).mark_consumed(block_ids, turn_id)
+
+
+#: The first key of every conversation's numbering lock: the advisory lock the
+#: `block_numbered()` trigger takes on each new block (alembic `0dd66b328211`).
+NUMBERING_LOCK = 1_734_632_801
+
+
+async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> None:
+    """Take ``conversation_id``'s numbering lock now, ahead of the first block
+    this transaction writes there; held until it ends. The trigger takes the
+    same lock again on each block, which a transaction already holding it
+    passes straight through."""
+    await session.execute(
+        text(
+            "SELECT pg_advisory_xact_lock(:key, hashtext(CAST(:conversation AS text)))"
+        ),
+        {"key": NUMBERING_LOCK, "conversation": str(conversation_id)},
+    )
