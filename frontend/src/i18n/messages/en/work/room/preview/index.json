@@ -152,5 +152,6 @@
   "imageReading": "Reading the picture",
   "retry": "Retry",
   "offlineTitle": "This device is offline",
-  "offlineBody": "Reconnect and this pane retries on its own."
+  "offlineBody": "Reconnect and this pane retries on its own.",
+  "viewportGroup": "Preview width"
 }
