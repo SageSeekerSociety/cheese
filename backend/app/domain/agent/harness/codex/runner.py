@@ -298,7 +298,7 @@ class Runner(runner.Runner[Journal]):
                 self.last_words = ""
             if method == "item/started" and kind not in NOT_CALLS:
                 # A platform tool by its name in the table; Codex's own by kind.
-                self.called(str(item.get("tool") or kind))
+                self.called(str(item.get("tool") or kind), item.get("arguments"))
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"

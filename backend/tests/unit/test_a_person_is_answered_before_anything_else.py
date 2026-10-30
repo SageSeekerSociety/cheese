@@ -83,6 +83,11 @@ def say(text: str) -> tuple[str, str]:
     return ("say", text)
 
 
+def call(tool: str, arguments: dict) -> tuple[str, tuple[str, dict]]:
+    """The model calls the platform tool ``tool`` with ``arguments``."""
+    return ("call", (tool, arguments))
+
+
 def monitor(command: str) -> tuple[str, str]:
     """The model starts a `Monitor` on `command` (Codex and pi)."""
     return ("monitor", command)
@@ -302,6 +307,7 @@ async def claude_code(tmp_path: Path, steps: list):
         },
         # Words that reach no one: the fixture answers with plain text.
         "say": lambda value: {"text": value},
+        "call": lambda value: {"name": f"mcp__native__{value[0]}", "input": value[1]},
         # Only Claude Code's model starts a subagent here; the value is the
         # commands the subagent's own model runs, and it ends after them.
         "subagent": lambda value: {
@@ -481,6 +487,8 @@ async def codex(tmp_path: Path, steps: list):
                 if kind == "monitor"
                 else {"text": value}
                 if kind == "say"
+                else {"tool": value[0], "arguments": value[1]}
+                if kind == "call"
                 else {"tool": "cheese_chat", "arguments": {"action": "list"}}
                 if kind == "read"
                 else {"tool": "chat_send", "arguments": {"content": value}}
@@ -559,6 +567,8 @@ async def pi(tmp_path: Path, steps: list):
             if kind == "monitor"
             else {"text": value}
             if kind == "say"
+            else {"tool": value[0], "arguments": value[1]}
+            if kind == "call"
             else {"tool": "cheese_chat", "arguments": {"action": "list"}}
             if kind == "read"
             else {"tool": "chat_send", "arguments": {"content": value}}
@@ -844,6 +854,31 @@ async def test_words_straight_after_the_reply_restate_it(tmp_path, harness):
         await session.finished(len(steps))
         # A turn held as it ends is held before `finished` saw it idle; this
         # only gives a late one time to show.
+        await asyncio.sleep(1)
+
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["on it", "done, all green"]
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_keeping_its_own_books_after_the_reply_is_not_more_work(
+    tmp_path, harness
+):
+    """Ticking off the step list and setting the task's line on the board
+    after the reply tell the person nothing new: the recap after them is let
+    go like one straight after the reply."""
+    steps = [
+        publish("on it"),
+        shell("touch WORK"),
+        publish("done, all green"),
+        call("todo_write", {"todos": [{"content": "fix", "status": "completed"}]}),
+        call("cheese_task", {"action": "state", "state": "working"}),
+        say("Done: the build is green, and I told them so."),
+    ]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
         await asyncio.sleep(1)
 
         assert len(session.requests) == len(steps)

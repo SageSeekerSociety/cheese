@@ -160,13 +160,15 @@ def socket_path(state: Path) -> str:
 # with chat_send, goes on working, and ends its turn on a message of plain text
 # has told the person nothing of how it went: that last message lands only in
 # the session's own record, and the person goes on waiting for the conclusion
-# it holds. So a turn that owed a reply, called some other tool after its last
-# reply, and ends on words of its own (the text of its final message, which
-# each harness hands `insist`) is held once too (`CLOSING_INSIST`): send them,
-# or end without them. Words that come straight after the last reply restate
-# it, and the turn ends; so does a turn that ends on nothing. Each harness
-# tells the runner every tool the session itself calls (`called`). The two
-# reasons are held separately, each at most once per message.
+# it holds. So a turn that owed a reply, did more work after its last reply,
+# and ends on words of its own (the text of its final message, which each
+# harness hands `insist`) is held once too (`CLOSING_INSIST`): send them, or
+# end without them. Words that come straight after the last reply restate it,
+# and the turn ends; so does a turn that ends on nothing, and one whose only
+# calls since its reply kept its own books (`BOOKKEEPING`). Each harness tells
+# the runner every tool the session itself calls (`called`). The two reasons
+# are held separately, each at most once per message, and every hold for an
+# unsent conclusion is logged with the calls that came after the reply.
 
 #: The variable that names the file to the agent process and whatever it spawns.
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
@@ -181,6 +183,12 @@ REPLY_READS = (
     "cheese_chat.search",
     "cheese_chat.replies",
 )
+#: Calls that record the turn's own state — its step list, its line on the
+#: task board — and never produce anything the person has not been told: made
+#: after a reply, they are not more work it could owe them news of. By key, as
+#: `REPLY_READS`. A tool that can hit a blocker or produce a result (a command,
+#: a file, a document someone opens) is never one of these.
+BOOKKEEPING = ("todo_write", "cheese_task.state")
 REPLY_OWED = (
     "A person in this conversation has sent a message you have not answered yet. "
     "Reply to it in the conversation with chat_send first (or ask them with "
@@ -276,8 +284,8 @@ class Runner(Generic[J]):  # noqa: UP046
         # for no reply at all and for a conclusion it kept to itself.
         self.insisted: set[str] = set()
         self.held_closing: set[str] = set()
-        # The session called a tool other than a reply since its last reply.
-        self.worked = False
+        # The calls the session made since its last reply, by key.
+        self.since_reply: list[str] = []
         # 0 keeps the session however long it sits idle.
         self.idle_exit_s = idle_exit_s
         self.active_at = time.monotonic()
@@ -351,12 +359,18 @@ class Runner(Generic[J]):  # noqa: UP046
         )
         written.replace(path)
         self.owed = identifier
-        self.worked = False
+        self.since_reply = []
 
-    def called(self, tool: str) -> None:
+    def called(self, tool: str, arguments: object = None) -> None:
         """The session itself called ``tool``, by its name in the platform's
-        tool table (a subagent's calls are not the session's)."""
-        self.worked = tool not in REPLY_TOOLS
+        tool table, with ``arguments`` (a subagent's calls are not the
+        session's). A reply starts the count again."""
+        action = arguments.get("action") if isinstance(arguments, dict) else None
+        key = f"{tool}.{action}" if isinstance(action, str) and action else tool
+        if tool in REPLY_TOOLS:
+            self.since_reply = []
+        else:
+            self.since_reply.append(key)
 
     def reply_settled(self) -> None:
         """The turn is over: whatever it owed, it no longer holds a tool back."""
@@ -377,7 +391,8 @@ class Runner(Generic[J]):  # noqa: UP046
             answered = reply_answered_path(self.state).read_text().strip() == self.owed
         except OSError:
             answered = False
-        if answered and not (self.worked and last_words.strip()):
+        worked = any(key not in BOOKKEEPING for key in self.since_reply)
+        if answered and not (worked and last_words.strip()):
             return None
         held = self.held_closing if answered else self.insisted
         if self.owed in held:
@@ -390,6 +405,15 @@ class Runner(Generic[J]):  # noqa: UP046
             )
             return None
         held.add(self.owed)
+        if answered:
+            # One line per hold: how often it fires, and after what, is what
+            # says whether it catches conclusions or repeats replies.
+            print(
+                f"closing hold: message={self.owed} work={self.turn_work()} "
+                f"after_reply={','.join(self.since_reply)}",
+                file=sys.stderr,
+                flush=True,
+            )
         return CLOSING_INSIST if answered else REPLY_INSIST
 
     # --- a turn's checkpoint -------------------------------------------------

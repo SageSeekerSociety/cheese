@@ -1205,7 +1205,9 @@ class Runner(runner.Runner[Journal]):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
                         name = str(block.get("name") or "")
-                        self.called(name.removeprefix("mcp__native__"))
+                        self.called(
+                            name.removeprefix("mcp__native__"), block.get("input")
+                        )
             if returned := self._watch_marks(message):
                 stamp["calls"] = returned
         if kind == "system":
