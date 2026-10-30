@@ -12,7 +12,7 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
+from sqlalchemy import DateTime, String, Uuid, column, or_, select, table, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -74,38 +74,52 @@ _TURNS = table(
 )
 
 
-def work_interval_is_over(before: datetime | None = None):
-    """Whether this input's own work interval is one the platform ended — at or
-    before ``before``, when given.
+def work_interval_is_over():
+    """Whether this input's own work interval is one the platform ended.
 
     A correlated EXISTS over the turn intervals, anchored on the input row that
     names its work (``work_id``/``conversation_id``). A work the platform has no
     row for is NOT over — silence is not a conclusion. As a clause rather than a
     second question so the caller's query stays one query.
     """
-    ended = (
-        _TURNS.c.stopped_at.is_not(None)
-        if before is None
-        else _TURNS.c.stopped_at <= before
-    )
     return (
         select(_TURNS.c.id)
         .where(
             _TURNS.c.id == NativeInput.work_id,
             _TURNS.c.conversation_id == NativeInput.conversation_id,
-            ended,
+            _TURNS.c.stopped_at.is_not(None),
         )
         .exists()
     )
 
 
-def work_has_interval():
-    """Whether the platform has a turn interval for this input's work at all."""
+#: A seat's session as its runner declared it, read bare for the same reason
+#: as `_TURNS`: `session_states` is the agent domain's.
+_SEATS = table(
+    "session_states",
+    column("conversation_id", Uuid),
+    column("agent_handle", String),
+    column("harness", String),
+    column("exited_at", DateTime(timezone=True)),
+)
+
+
+def receiver_exited_since():
+    """Whether the session process this input was written to has ended since
+    it was registered: its runner reported the seat's process exited after the
+    input existed. That process is the only thing that could have read the
+    input, and a runner reports every input it still holds dropped as its
+    process exits, so an input still unread after that will never be read —
+    not by that process, and not by a later one, which is never given it.
+    A correlated EXISTS anchored on the input row, as `work_interval_is_over`.
+    """
     return (
-        select(_TURNS.c.id)
+        select(_SEATS.c.conversation_id)
         .where(
-            _TURNS.c.id == NativeInput.work_id,
-            _TURNS.c.conversation_id == NativeInput.conversation_id,
+            _SEATS.c.conversation_id == NativeInput.conversation_id,
+            _SEATS.c.agent_handle == NativeInput.recipient_handle,
+            _SEATS.c.harness == NativeInput.harness,
+            _SEATS.c.exited_at >= NativeInput.registered_at,
         )
         .exists()
     )

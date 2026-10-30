@@ -1,18 +1,17 @@
-"""An input nobody read stops holding its seat once its outcome can no longer be
-reported.
+"""An input nobody read stops holding its seat once nothing can read it any
+more: the process it was written to has ended since.
 
 The incident (2026-10-23 → 2026-10-30): a person's words were added into a
 teammate's working turn in a task. The turn stopped three minutes later with the
-addition unread, and the sandbox was released half an hour after that — before
-the release ended such inputs (#4783). Nothing could report the addition read or
-dropped any more, so it held the seat: from 2026-10-26 every message to that
-teammate in the task was turned away (``unfinished_input``) and none ever
-became a turn.
+addition unread, the session's process exited half an hour later, and the
+sandbox was released — before the release ended such inputs (#4783). Nothing
+would report the addition read or dropped any more, so it held the seat: from
+2026-10-26 every message to that teammate in the task was turned away
+(``unfinished_input``) and none ever became a turn.
 
-Right after its work ends, an unread addition may still be read, so it holds for
-a while. Not for good: once the work has been over for as long as a turn may
-produce nothing, it lets go, and so does an input whose work never got an
-interval at all.
+Time alone is not that knowledge. A runner keeps an addition it has not read
+past the end of its work and can still read it later; releasing the seat on a
+clock would hand the same message to a second input, and both could be read.
 """
 
 import uuid
@@ -21,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.core.config import settings
+from app.domain.agent.models import SessionState
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation
@@ -34,6 +33,7 @@ from tests.turn_log import a_topic, open_turn
 
 SEAT = "cheese-test"
 SESSION = "sess-released"
+HARNESS = "claude_code"
 
 
 async def _work_that_ended(factory, topic_id, *, ago: timedelta) -> uuid.UUID:
@@ -69,7 +69,7 @@ async def _added_unread(factory, topic_id, work_id, *, registered_ago=timedelta(
             conversation.project_id,
             topic_id,
             SEAT,
-            "claude_code",
+            HARNESS,
             SESSION,
             uuid.uuid4(),
             work_id,
@@ -98,46 +98,67 @@ async def _hidden(factory, project_id, topic_id) -> set[uuid.UUID]:
         )
 
 
+async def _process_exited(factory, topic_id, *, ago: timedelta) -> None:
+    """The seat's runner reported its session's process gone ``ago``."""
+    at = datetime.now(UTC) - ago
+    async with factory() as session:
+        session.add(
+            SessionState(
+                conversation_id=topic_id,
+                agent_handle=SEAT,
+                harness=HARNESS,
+                worker_epoch=1,
+                worker_status="idle",
+                changed_at=at,
+                exited_at=at,
+            )
+        )
+        await session.commit()
+
+
 @pytest.mark.anyio
-async def test_an_addition_to_a_work_over_for_days_no_longer_holds_its_seat(
+async def test_an_addition_whose_process_has_since_exited_no_longer_holds(
     db_factory,
 ):
-    """加进一轮里、没人读过的一条，那一轮已经停了七天：它不再按住座位，它带的那条
-    消息也不再藏着，下一轮能带上它。"""
+    """加进一轮里、没人读过的一条，那一轮停了，接收它的会话进程之后也退出了：
+    再没有谁能读到它，它不再按住座位，它带的那条消息也不再藏着，下一轮能带上它。"""
+    topic = await a_topic(db_factory)
+    work = await _work_that_ended(db_factory, topic, ago=timedelta(days=7))
+    project, message = await _added_unread(
+        db_factory, topic, work, registered_ago=timedelta(days=7, minutes=3)
+    )
+    await _process_exited(db_factory, topic, ago=timedelta(days=6, hours=23))
+
+    assert not await _holds(db_factory, topic), (
+        "接收它的进程已经退出，没人读过的那条还按着座位，之后点名这个队友的消息永远开始不了"
+    )
+    assert message not in await _hidden(db_factory, project, topic)
+
+
+@pytest.mark.anyio
+async def test_an_addition_its_process_may_still_read_holds_however_old(db_factory):
+    """那一轮停了七天，但接收它的会话进程从没报过退出：进程可能还留着它、之后还会读。
+    这时放开座位，同一条消息会进第二条输入，两条都可能被读到，所以照旧按住。"""
     topic = await a_topic(db_factory)
     work = await _work_that_ended(db_factory, topic, ago=timedelta(days=7))
     project, message = await _added_unread(
         db_factory, topic, work, registered_ago=timedelta(days=7, minutes=3)
     )
 
-    assert not await _holds(db_factory, topic), (
-        "那一轮停了七天，没人读过的那条还按着座位，之后点名这个队友的消息永远开始不了"
-    )
-    assert message not in await _hidden(db_factory, project, topic)
-
-
-@pytest.mark.anyio
-async def test_an_addition_to_a_work_that_just_ended_still_holds(db_factory):
-    """那一轮一分钟前才停：会话可能还在读它，座位照旧按住。"""
-    topic = await a_topic(db_factory)
-    work = await _work_that_ended(db_factory, topic, ago=timedelta(minutes=1))
-    project, message = await _added_unread(db_factory, topic, work)
-
     assert await _holds(db_factory, topic)
     assert message in await _hidden(db_factory, project, topic)
 
 
 @pytest.mark.anyio
-async def test_an_input_whose_work_never_got_an_interval_lets_go_in_time(db_factory):
-    """一条输入写给的那一轮平台从没记下区间：刚登记时照旧按住（区间可能还在路上），
-    过了时限就放开。"""
-    young = await a_topic(db_factory, title="young")
-    await _added_unread(db_factory, young, uuid.uuid4())
-    assert await _holds(db_factory, young)
-
-    old = await a_topic(db_factory, title="old")
-    bound = timedelta(seconds=settings.turn_silence_timeout_s)
-    await _added_unread(
-        db_factory, old, uuid.uuid4(), registered_ago=bound + timedelta(minutes=5)
+async def test_an_exit_before_the_input_was_written_does_not_release_it(db_factory):
+    """座位上的进程在这条输入写进去之前就退出过：那次退出说的是上一个进程，这条
+    输入是写给后来那个进程的，照旧按住。"""
+    topic = await a_topic(db_factory)
+    await _process_exited(db_factory, topic, ago=timedelta(hours=2))
+    work = await _work_that_ended(db_factory, topic, ago=timedelta(hours=1))
+    project, message = await _added_unread(
+        db_factory, topic, work, registered_ago=timedelta(hours=1, minutes=3)
     )
-    assert not await _holds(db_factory, old)
+
+    assert await _holds(db_factory, topic)
+    assert message in await _hidden(db_factory, project, topic)

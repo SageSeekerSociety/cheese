@@ -1,11 +1,8 @@
 """Which registered inputs still hold their seat, and which no longer can."""
 
-from datetime import UTC, datetime, timedelta
-
 from sqlalchemy import and_, or_, select
 
-from app.core.config import settings
-from app.domain.delivery.agent import work_has_interval, work_interval_is_over
+from app.domain.delivery.agent import receiver_exited_since, work_interval_is_over
 from app.domain.delivery.models import NativeInput
 
 
@@ -19,31 +16,26 @@ def unread_input_with_over_work():
     not allow.
 
     A batch that was an addition to another work (a mid-turn delivery) is
-    different at first: a transport error does not prove the working session
-    did not read it, and a session may still pick up what it was given as its
-    work ends, so for a while its outcome is unknown and it keeps holding the
-    seat. That while has an end. Once its work has been over for
-    ``turn_silence_timeout_s`` — as long as a working turn may produce nothing
-    at all — a read would long since have been reported, and nothing will
-    settle it any more: a machine released under it (before #4783 ended those
-    inputs at the release) left one holding a task's seat from 2026-10-23,
-    while every later message to that teammate waited behind it. The same
-    bound applies to an input whose work the platform never recorded an
-    interval for: right after registering, its interval may still be on its
-    way; long after, it never will be.
+    different: a transport error does not prove the working session did not
+    read it, and a runner keeps an addition it has not read past the end of the
+    work it was added to, so it may still be read and answered later. Its hold
+    ends when the process it was written to is known to have ended since
+    (:func:`app.domain.delivery.agent.receiver_exited_since`): then nothing can
+    read it any more. Elapsed time is not that knowledge. Without it, a machine
+    released under such an input before anything ended it (before #4783 did so
+    at the release) left it holding a task's seat from 2026-10-23, while every
+    later message to that teammate waited behind it.
 
     Whether a work is over is the turn interval's fact
     (:func:`app.domain.delivery.agent.work_interval_is_over`). An input that no
     longer holds also stops hiding its batch (``receipts.held_blocks``), so
     the next prompt carries what it held.
     """
-    settled_by = datetime.now(UTC) - timedelta(seconds=settings.turn_silence_timeout_s)
     return and_(
         NativeInput.echoed_at.is_(None),
         or_(
             and_(NativeInput.input_id == NativeInput.work_id, work_interval_is_over()),
-            work_interval_is_over(before=settled_by),
-            and_(NativeInput.registered_at <= settled_by, ~work_has_interval()),
+            receiver_exited_since(),
         ),
     )
 

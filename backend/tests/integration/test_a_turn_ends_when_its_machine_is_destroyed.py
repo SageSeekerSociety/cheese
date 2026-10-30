@@ -217,13 +217,12 @@ def _leave_an_unread_input(
     native: str,
     seat: str,
 ) -> uuid.UUID:
-    """One input added to a turn that ended 25 minutes ago, and never read.
+    """One input added to a turn that has already ended, and never read.
 
     A mid-turn addition: its ``input_id`` is not its ``work_id``, so it is not
-    its own work's, no turn's close accounts for it, and that soon after its
-    work ended ``unread_input_with_over_work`` does not free it yet. Long enough
-    ago, though, for the session to count as idle, which is what lets the idle
-    sweep destroy the machine. What it holds is the seat."""
+    its own work's, no turn's close accounts for it, and
+    ``unread_input_with_over_work`` cannot free it however long the work has
+    been over. What it holds is the seat."""
 
     async def write() -> uuid.UUID:
         async with client.test_factory() as session:
@@ -243,7 +242,7 @@ def _leave_an_unread_input(
                 content="这一句没人读到",
                 started_at=running.started_at,
                 delivered_at=running.delivered_at,
-                stopped_at=datetime.now(UTC) - timedelta(minutes=25),
+                stopped_at=running.started_at + timedelta(minutes=1),
                 session_id=running.session_id,
                 agent_handle=running.agent_handle,
             )
