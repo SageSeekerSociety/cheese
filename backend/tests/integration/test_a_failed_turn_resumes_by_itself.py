@@ -3,9 +3,13 @@
 Before, the seat stayed idle until a person or another agent poked it: on dev
 (2026-10-03..17) the next action after a rate-limited turn came a median 23
 minutes later, p90 nine hours. A failure that passes by itself now resumes once
-it has: after a backoff, or at the reset the service named. A failure no wait
-changes (an invalid request, a refused credential, a spent balance) does not,
-and a person speaking in the meantime takes the turn back.
+it has: after a backoff, or at the reset the service named, when that is soon.
+A failure no wait changes (an invalid request, a refused credential, a spent
+balance), or whose service comes back only days later, does not, and a person
+speaking in the meantime takes the turn back.
+
+Whichever it is, the person who asked is told in the conversation that the turn
+did not finish: when the platform retries it, or why it will not.
 """
 
 import asyncio
@@ -14,6 +18,7 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select, text
@@ -46,6 +51,7 @@ from app.domain.agent.turn_resume import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
+from app.domain.conversation.models import Conversation
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
@@ -177,6 +183,26 @@ async def _failure_cards(factory, conversation) -> int:
         )
 
 
+async def _turn_lines(factory, conversation, event_type: str) -> list[Block]:
+    """The lines the conversation shows for failed turns, of one kind."""
+    async with factory() as session:
+        return list(
+            await session.scalars(
+                select(Block)
+                .where(
+                    Block.conversation_id == conversation,
+                    Block.meta["event_type"].as_string() == event_type,
+                )
+                .order_by(Block.created_at)
+            )
+        )
+
+
+def _clock(at: datetime) -> str:
+    """A time as the room line says it: Beijing time, HH:MM."""
+    return at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%H:%M")
+
+
 async def _first_turn_fails(factory, tmp_path, failure: str, *, retrying=False):
     """A person gives the agent work and the turn ends on ``failure``."""
     _project, conversation, seat, _instance = await _room_with_agent(factory)
@@ -219,6 +245,11 @@ async def test_a_rate_limited_turn_resumes_by_itself(
     try:
         rows = await _owed_resumes(factory, conversation)
         assert len(rows) == 1, "the rate-limited turn left nothing to resume it"
+        # The person who asked is told the turn stopped and when it is retried,
+        # in the conversation, where a reload finds it again. Not a failure
+        # card: nobody has to step in.
+        [told] = await _turn_lines(factory, conversation, "turn_resume_wait")
+        assert _clock(rows[0].due_at) in told.content
         assert await _failure_cards(factory, conversation) == 0
         assert not [f for f in frames if f.get("type") == "error"]
         async with factory() as session:
@@ -271,9 +302,95 @@ async def test_a_rate_limited_turn_resumes_by_itself(
             "api_retry",
         ]
         assert await _failure_cards(factory, conversation) == 0
+        assert len(await _turn_lines(factory, conversation, "turn_resume_wait")) == 1
         assert not [f for f in frames if f.get("type") == "error"]
         # Handed over once: the clock running again sends nothing more.
         assert await hand_due(factory, now=owed.due_at + timedelta(hours=1)) == 0
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_the_same_failure_reported_again_is_told_once(
+    business_db_factory, tmp_path
+):
+    """The runner delivers a report again until everything that follows from
+    it is done, so the same failed turn can land twice. The conversation still
+    shows one line for it, with the retry time it first said."""
+    factory = business_db_factory
+    conversation, _seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    try:
+        [owed] = await _owed_resumes(factory, conversation)
+        [told] = await _turn_lines(factory, conversation, "turn_resume_wait")
+        async with factory() as session:
+            project = (await session.get(Conversation, conversation)).project_id
+        await chat.hook_events.accept(
+            project,
+            conversation,
+            told.turn_id,
+            AgentResult(
+                text=RATE_LIMITED,
+                session_id="s",
+                is_error=True,
+                agent_handle=owed.recipient_handle,
+            ),
+            None,
+            True,
+            False,
+        )
+        await runner.drain(timeout_s=10)
+
+        [again] = await _turn_lines(factory, conversation, "turn_resume_wait")
+        assert again.id == told.id
+        [still] = await _resumes(factory, conversation)
+        assert still.id == owed.id and still.due_at == owed.due_at
+        assert await _failure_cards(factory, conversation) == 0
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_service_back_only_days_later_fails_the_turn_and_says_so(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Every subscription account is cooling for three days. That is not a
+    passing fault: the turn fails now and the conversation says why and when
+    the service expects to be back, instead of a resume days later."""
+    factory = business_db_factory
+    back_at = time.time() + 3 * 86400
+    (tmp_path / "accounts.json").write_text(
+        json.dumps(
+            {
+                "written_at": time.time(),
+                "accounts": [{"name": "a", "state": "cooling", "until": back_at}],
+            }
+        )
+    )
+    monkeypatch.setattr(
+        settings, "subscription_usage_log", str(tmp_path / "usage.jsonl")
+    )
+    conversation, _seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, COOLING
+    )
+    try:
+        async with asyncio.timeout(HANG_S):
+            while not await _turn_lines(factory, conversation, "turn_failed"):
+                await asyncio.sleep(0.05)
+        [failed] = await _turn_lines(factory, conversation, "turn_failed")
+        back = datetime.fromtimestamp(back_at, UTC)
+        assert _clock(back) in failed.content
+        assert not await _turn_lines(factory, conversation, "turn_resume_wait")
+        # Nothing is owed: no clock, however late, starts the turn again.
+        assert all(
+            r.dropped_at is not None for r in await _resumes(factory, conversation)
+        )
+        assert await hand_due(factory, now=back + timedelta(hours=1)) == 0
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
+        assert len(screen.handed) == 1
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
@@ -732,7 +849,7 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
 ):
     factory = business_db_factory
     project, conversation, _seat, instance = await _room_with_agent(factory)
-    thaw_in = 2 * 3600
+    thaw_in = 20 * 60
     (tmp_path / "accounts.json").write_text(
         json.dumps(
             {
@@ -764,13 +881,15 @@ async def test_spent_subscription_accounts_resume_when_the_first_one_thaws(
     )
     wait = (row.due_at - now).total_seconds()
     # After the first account thaws, not on a short backoff that fails again.
+    assert row.dropped_at is None
     assert thaw_in <= wait <= thaw_in + 5 * 60
 
 
-#: A rate limit whose service names a reset hours away.
-LIMITED_FOR_HOURS = (
+#: A rate limit whose service names a reset a while away, but soon enough to
+#: wait for.
+LIMITED_FOR_A_WHILE = (
     "API Error: Server is temporarily limiting requests (not your usage limit)"
-    " · Rate limited. Please try again in 4 hours"
+    " · Rate limited. Please try again in 20 minutes"
 )
 
 
@@ -789,11 +908,12 @@ async def test_an_upgrade_after_a_wake_up_resumes_at_once(business_db_factory):
         conversation_id=conversation,
         seat=seat,
         failed_turn_id=uuid.uuid4(),
-        result=_failed(LIMITED_FOR_HOURS),
+        result=_failed(LIMITED_FOR_A_WHILE),
         route="subscription",
         now=t0,
     )
-    assert waiting is not None and waiting.due_at > t0 + timedelta(hours=1)
+    assert waiting is not None and waiting.dropped_at is None
+    assert waiting.due_at > t0 + timedelta(minutes=15)
     woken = uuid.uuid4()
     async with factory() as session:
         session.add(

@@ -3,9 +3,11 @@
 // 状态本身见 room/composables/useRoomActivity 和 useLiveSteps，拼成输入框下面那一行
 // 的数据见 useActivityLines。往上递给页面（`activity` 事件）是这里的事，所以三件一起
 // 建、一起递：页面拿到的那一行和面板自己画的那一行必须同源。
+import type { Ref } from 'vue'
 import type { useRoomRoster } from '../../components/room/composables/useRoomRoster'
 import type { useRoomTurns } from '../../components/room/composables/useRoomTurns'
 import type { useRunRecords } from '../../components/room/composables/useRunRecords'
+import type { Block } from '../../cx_types'
 import type { ChatPanelEmit } from '../chatPanelContract'
 import type { usePanelSocket } from './socket'
 
@@ -29,6 +31,8 @@ export function usePanelActivity(deps: {
   turns: ReturnType<typeof useRoomTurns>
   /** 排队等着跑的那几件（useRunRecords）：还没轮到也算在忙。 */
   runRecords: ReturnType<typeof useRunRecords>
+  /** 屏幕上的对话：平台排了自动重试的那几位从这里读。 */
+  messages: Ref<Block[]>
 }) {
   // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity；
   // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步）。
@@ -47,7 +51,10 @@ export function usePanelActivity(deps: {
   watch(
     () => {
       const busy = new Set(activityLines.value.map((l) => l.handle))
-      const queued = deps.runRecords.waitingLines((h) => deps.roster.agentNameOf(h) ?? deps.roster.agentDisplayName(h))
+      const queued = deps.runRecords.waitingLines(
+        (h) => deps.roster.agentNameOf(h) ?? deps.roster.agentDisplayName(h),
+        deps.messages.value
+      )
       return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
     },
     (v) => deps.emit('activity', v)
