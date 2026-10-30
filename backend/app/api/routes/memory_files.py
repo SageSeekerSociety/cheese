@@ -23,7 +23,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.memory.files import (
     INDEX_NAME,
@@ -33,8 +33,10 @@ from app.domain.memory.files import (
     fit_index,
     parse_memory_file,
 )
+from app.domain.memory import history
 from app.domain.memory.files_store import MemoryFileMissing, MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory/files", tags=["memory"])
@@ -193,6 +195,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=None if expected is None else expected,
+            writer=MemoryWriter.panel,
         )
         _, warning = fit_index(content)
         return ok({"file": _file_out(row), "warning": warning})
@@ -207,6 +210,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=expected if expected is not None else None,
+            writer=MemoryWriter.panel,
         )
         return ok({"file": _file_out(row), "warning": str(exc)})
     row = await store.write(
@@ -217,6 +221,7 @@ async def write_memory_file(
         content=content,
         updated_by=actor,
         expected_version=expected,
+        writer=MemoryWriter.panel,
     )
     warning = None
     if memory.description and len(memory.description) > 150:
@@ -262,7 +267,65 @@ async def delete_memory_file(
             owner_handle=owner,
             path=path,
             expected_version=expected,
+            updated_by=actor,
+            writer=MemoryWriter.panel,
         )
     except MemoryFileMissing as exc:
         raise ValidationError(str(exc)) from exc
     return ok({"deleted": path, "deleted_by": actor})
+
+
+def _change_out(row: history.Change) -> dict:
+    return {
+        "id": str(row.id),
+        "scope": row.scope.value,
+        "owner_handle": row.owner_handle,
+        "path": row.path,
+        "writer": row.writer.value,
+        "changed_by": row.changed_by,
+        "created_at": row.created_at.isoformat(),
+        # 是新建还是删除，面板据此说这一行做了什么、恢复按钮在不在（新建没有
+        # 「改之前」可恢复）。正文不整份给：一个改动很密的索引一个月能有几百版，
+        # 面板要画的只是差在哪。
+        "created": row.before is None,
+        "deleted": row.after is None,
+        "diff": history.diff_of(row),
+    }
+
+
+@router.get("/history")
+async def list_memory_changes(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    scope: str = Query("team"),
+    owner_handle: str | None = None,
+) -> dict:
+    """一个作用域最近的改动（`history.RETENTION` 之内，新的在前）。
+
+    谁读得到和读记忆文件同一道门（`_readable`）：team 是项目里的人，某个人的
+    private 只有他本人，管理员也一样答 403。
+    """
+    which = _scope_of(scope)
+    owner = _owner_of(which, owner_handle)
+    await _readable(db, resolver, project_id, owner)
+    rows = await history.changes(db, project_id, which, owner)
+    return ok(page([_change_out(r) for r in rows], len(rows)))
+
+
+@router.post("/history/{change_id}/restore", dependencies=[ROUTE_DECIDES])
+async def restore_memory_change(
+    change_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """把一条记忆写回这一次改动之前的样子（`history.restore`）。
+
+    和写入同一道门（`_writable`）：恢复就是一次写入，写不动这个作用域的人也恢复
+    不了它。恢复本身留下一条新的改动记录。
+    """
+    row = await history.change(db, change_id)
+    if row is None:
+        raise NotFoundError(say("memoryChangeNotFound"))
+    owner = row.owner_handle or None
+    actor = await _writable(db, resolver, row.project_id, owner)
+    written = await history.restore(db, row, by=actor)
+    return ok({"file": _file_out(written)})

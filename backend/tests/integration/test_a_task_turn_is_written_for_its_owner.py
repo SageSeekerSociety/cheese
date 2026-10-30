@@ -12,6 +12,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 
@@ -59,6 +60,7 @@ def _task(client) -> str:
                 content=hook,
                 updated_by="cheese",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
 
     _db(client, lay)

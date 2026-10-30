@@ -15,6 +15,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
@@ -28,9 +29,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
-from app.domain.common import Timestamps, UuidPk
+from app.domain.common import Timestamps, UuidPk, _now
 from app.domain.memory import scopes
 from app.domain.memory.files import MemoryFileScope
+from app.domain.memory.writers import MemoryWriter
 
 
 class MemoryLayer(enum.StrEnum):
@@ -243,6 +245,75 @@ class MemoryFileRecord(UuidPk, Timestamps, Base):
     # 谁改的。人做的和芝士做的走同一个字段——这一列回答的是「这一版是谁写的」，
     # 而两种写入在下面这条变更记录里长得一样。
     updated_by: Mapped[str] = mapped_column(String(64), default="")
+
+
+class MemoryFileChange(UuidPk, Base):
+    """一条项目记忆被改动的一次：谁、从哪条路、什么时候、改之前和改之后。
+
+    **一行一次改动，改之前和改之后的整份正文都在行上。** 撤销要的是「改之前那一
+    份」原样，而不是一段补丁：补丁要从最新那一版倒着一路打回去，中间任何一版被
+    清掉（保留期到了），更早的那几次就再也还原不出来。整份存，每一行自己就能还原。
+
+    ``before`` 是 NULL：这一次是新建。``after`` 是 NULL：这一次是删除。两者不会
+    同时是 NULL（`ck_memory_file_changes_something`）。
+
+    只记项目的记忆（team、private）。personal 不在任何项目里，有它自己那条撤销
+    （`assistant.memory.put` 交回改之前的那一份），也没有面板读它的改动。
+
+    保留 30 天（`history.RETENTION`），由周期任务清（`history.purge_expired`）。
+    """
+
+    __tablename__ = "memory_file_changes"
+
+    __table_args__ = (
+        # 面板按作用域倒序读最近的改动，周期任务按时间清：两条读法都从这里走。
+        Index(
+            "ix_memory_file_changes_scope_created",
+            "project_id",
+            "scope",
+            "owner_handle",
+            "created_at",
+        ),
+        Index("ix_memory_file_changes_created_at", "created_at"),
+        CheckConstraint(
+            "before IS NOT NULL OR after IS NOT NULL",
+            name="ck_memory_file_changes_something",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_memory_file_changes_project_id_projects",
+        )
+    )
+    scope: Mapped[MemoryFileScope] = mapped_column(
+        Enum(
+            MemoryFileScope,
+            native_enum=False,
+            length=8,
+            create_constraint=True,
+            name="ck_memory_file_changes_scope",
+        )
+    )
+    #: 和 `memory_files.owner_handle` 同一个约定：team 是空串。
+    owner_handle: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    path: Mapped[str] = mapped_column(String(200))
+    writer: Mapped[MemoryWriter] = mapped_column(
+        Enum(
+            MemoryWriter,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_memory_file_changes_writer",
+        )
+    )
+    #: 动手的那一个（人或芝士的 handle）。
+    changed_by: Mapped[str] = mapped_column(String(64), default="")
+    before: Mapped[str | None] = mapped_column(Text, nullable=True)
+    after: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class MemoryDreamRunStatus(enum.StrEnum):

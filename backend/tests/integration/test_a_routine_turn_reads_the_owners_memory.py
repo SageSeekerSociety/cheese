@@ -18,6 +18,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.delivery.models import Delivery
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.test_routines import (
     OWNER,
@@ -69,6 +70,7 @@ def _lay_indexes(client, project_id: str) -> None:
                 content=content,
                 updated_by="cheese",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
 
         await put(MemoryFileScope.team, None, TEAM_HOOK)

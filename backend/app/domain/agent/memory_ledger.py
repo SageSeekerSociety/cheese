@@ -62,6 +62,7 @@ from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import memory_index, private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
 from app.domain.memory.session import apply_tree, prefix_of_scope, read_tree
+from app.domain.memory.writers import MemoryWriter
 from app.domain.notice_meta import (
     EVENT_MEMORY_CHANGED,
     SEVERITY_INFO,
@@ -282,6 +283,9 @@ class MemoryLedger:
                 answer,
                 scopes=collected,
                 updated_by=updated_by,
+                writer=MemoryWriter.dream_team
+                if topic_id in self._dreams
+                else MemoryWriter.turn,
             )
             if change.is_empty() and not change.refused and not change.rejected:
                 # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
@@ -618,6 +622,7 @@ class MemoryLedger:
                 {"files": files},
                 scopes=scope,
                 updated_by=author,
+                writer=MemoryWriter.dream_private,
             )
             # 改动记在这个人的私聊里，和他自己的会话改了 private 时一样。没改
             # 就不说，也不为说一句话去开一间私聊。

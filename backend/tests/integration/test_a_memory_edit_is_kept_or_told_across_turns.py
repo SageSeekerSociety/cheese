@@ -27,6 +27,7 @@ from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
 
@@ -81,6 +82,7 @@ async def _setup(factory) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
             content=_INDEX,
             updated_by="someone",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
         assert project.root_topic_id is not None
@@ -291,6 +293,7 @@ async def _written_elsewhere(factory, project_id: uuid.UUID, content: str) -> No
             content=content,
             updated_by="another-room",
             expected_version=1,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 

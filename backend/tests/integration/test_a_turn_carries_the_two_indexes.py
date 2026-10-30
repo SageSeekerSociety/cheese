@@ -23,6 +23,7 @@ from app.domain.agent.harness import HARNESSES
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import project_service, registered
@@ -108,6 +109,7 @@ async def _turn_on(
                 content=content,
                 updated_by="cheese",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
 
         if team is not None:
