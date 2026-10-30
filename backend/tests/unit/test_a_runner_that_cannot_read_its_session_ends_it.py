@@ -12,7 +12,9 @@ for good.
 The session must end instead, the way any session that exits mid-work does:
 what it had not read is reported dropped (the platform offers it to the next
 session), the work it was doing ends with a failure that says why, and the
-process's exit is reported. Why is printed to the runner's log.
+process's exit is reported. Why is printed to the runner's log. That holds for
+a session that goes on writing after the line nobody can read, and that will
+not go when asked.
 
 A stand-in plays the build: the line it cannot be read past is the whole point,
 and the pinned binary does not write one on demand.
@@ -63,12 +65,29 @@ sys.stdout.flush()
 time.sleep(120)
 """
 
+# The same, then it ignores SIGTERM and goes on writing well past what an
+# unread pipe holds.
+CHATTY_BUILD = BUILD.replace(
+    "time.sleep(120)",
+    f"""import signal
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+for _ in range(4):
+    sys.stdout.write("y" * {LINE_LIMIT} + "\\n")
+    sys.stdout.flush()
+time.sleep(120)""",
+)
 
+
+@pytest.mark.parametrize(
+    ("build_source", "within"),
+    [(BUILD, 8), (CHATTY_BUILD, 20)],
+    ids=["goes-quiet", "keeps-writing-and-ignores-sigterm"],
+)
 async def test_a_session_its_runner_cannot_read_is_ended_and_its_inputs_dropped(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, build_source, within
 ):
     build = tmp_path / "build.py"
-    build.write_text(BUILD)
+    build.write_text(build_source)
     monkeypatch.chdir(tmp_path)
     runner = Runner(tmp_path / "state")
     runner.outbox.register(1)
@@ -87,7 +106,7 @@ async def test_a_session_its_runner_cannot_read_is_ended_and_its_inputs_dropped(
             message, "are you still there?", work_id=str(uuid.uuid4()), steering=True
         )
 
-        async with asyncio.timeout(8):
+        async with asyncio.timeout(within):
             while (await runner.dispatch("ping", {}))["alive"]:
                 await asyncio.sleep(0.05)
             events: list[dict] = []

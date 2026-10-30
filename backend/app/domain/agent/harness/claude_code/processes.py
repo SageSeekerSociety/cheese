@@ -20,6 +20,14 @@ if sys.platform == "win32":
 
 
 def end(pids: list[int]) -> None:
+    """End these processes: asked first and, where they do not go, killed.
+
+    Windows has no request a console-less process can answer, nor a SIGKILL,
+    so there each one is ended outright.
+    """
+    if sys.platform == "win32":
+        portable.terminate(pids)
+        return
     for number, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 1.0)):
         for pid in pids:
             with contextlib.suppress(ProcessLookupError, PermissionError):

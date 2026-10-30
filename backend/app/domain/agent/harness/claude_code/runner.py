@@ -886,7 +886,7 @@ class Runner(runner.Runner[Journal]):
         while every answer says it is alive. Ending it reports all of that the
         way any exit does (``_report_exit``), under its own failure.
         """
-        assert self.process is not None
+        assert self.process is not None and self.process.stdout is not None
         try:
             await self._take_lines()
         except Exception:
@@ -899,7 +899,15 @@ class Runner(runner.Runner[Journal]):
             traceback.print_exc(file=sys.stderr)
             self.reader_failed = True
             pid = self.process.pid
-            await asyncio.to_thread(end, [*started_by(pid), pid])
+            ending = asyncio.ensure_future(
+                asyncio.to_thread(end, [*started_by(pid), pid])
+            )
+            # Its exit is seen only once its stdout reaches its end
+            # (``process.wait`` waits for every pipe), and a pipe nobody reads
+            # stops at a full buffer: what it still writes is read and let go.
+            while await self.process.stdout.read(1 << 16):
+                pass
+            await ending
 
     async def _take_lines(self) -> None:
         assert self.process is not None and self.process.stdout is not None
