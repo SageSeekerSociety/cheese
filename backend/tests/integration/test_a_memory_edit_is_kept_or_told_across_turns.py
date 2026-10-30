@@ -346,6 +346,7 @@ async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers
                 content=f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
                 updated_by=owner,
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
         await session.commit()
     sessions = _Session(tmp_path)
