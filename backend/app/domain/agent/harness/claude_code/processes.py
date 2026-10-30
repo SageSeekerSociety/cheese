@@ -40,6 +40,27 @@ def end(pids: list[int]) -> None:
             return
 
 
+def end_session(session: int) -> None:
+    """End a session and everything it started, including what it starts while
+    it is being ended (a handler of its own SIGTERM can start more).
+
+    The runner starts a session in a session of its own (``Runner.start``), so
+    on Linux and macOS its process group is killed last, which reaches whatever
+    joined it after the first look. Only a process that left the group itself
+    (``setsid``) is out of reach. Windows has no group here: the tree is taken
+    again by parent and creation time once the session is gone, which finds
+    what it started in between, but not what something outside the tree did.
+    """
+    if sys.platform == "win32":
+        started = portable.created(session)
+        end([*started_by(session), session])
+        portable.terminate(portable.tree([(session, started)]))
+        return
+    end([*started_by(session), session])
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(session, signal.SIGKILL)
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

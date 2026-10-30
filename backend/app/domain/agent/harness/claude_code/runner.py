@@ -51,7 +51,11 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
-from app.domain.agent.harness.claude_code.processes import end, started_by
+from app.domain.agent.harness.claude_code.processes import (
+    end,
+    end_session,
+    started_by,
+)
 from app.domain.agent.harness.driven import lifecycle, runner
 
 if sys.platform == "win32":
@@ -76,6 +80,9 @@ from app.domain.memory.tree import (
 # cannot be read, and the runner ends the session that wrote it (``_read``), so
 # the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
+#: How long the output of a session the runner could not read is still read
+#: after the session is gone, before its pipe is closed (``_read``).
+DRAIN_AFTER_EXIT_S = 1.0
 #: How long a launch must keep running before a greeting takes it as started
 #: (``Runner.starting``). A failing bootstrap or a missing program ends well
 #: inside it; a session that comes up costs a greeting no more than this.
@@ -898,16 +905,27 @@ class Runner(runner.Runner[Journal]):
             )
             traceback.print_exc(file=sys.stderr)
             self.reader_failed = True
-            pid = self.process.pid
-            ending = asyncio.ensure_future(
-                asyncio.to_thread(end, [*started_by(pid), pid])
-            )
-            # Its exit is seen only once its stdout reaches its end
-            # (``process.wait`` waits for every pipe), and a pipe nobody reads
-            # stops at a full buffer: what it still writes is read and let go.
-            while await self.process.stdout.read(1 << 16):
-                pass
-            await ending
+            # ``process.wait`` settles only once stdout is closed, and a pipe
+            # nobody reads stops at a full buffer: what the session still writes
+            # is read and let go while it is ended.
+            drain = asyncio.ensure_future(self._discard_output())
+            await asyncio.to_thread(end_session, self.process.pid)
+            # The session's own exit settles it, not its stdout's end: a process
+            # that escaped being ended can hold the pipe open for good.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(drain), DRAIN_AFTER_EXIT_S)
+            if not drain.done():
+                # asyncio has no public handle on a subprocess's pipes; closing
+                # this one is what lets ``process.wait`` see the exit.
+                pipe = self.process._transport.get_pipe_transport(1)  # type: ignore[attr-defined]
+                if pipe is not None:
+                    pipe.close()
+                await drain
+
+    async def _discard_output(self) -> None:
+        assert self.process is not None and self.process.stdout is not None
+        while await self.process.stdout.read(1 << 16):
+            pass
 
     async def _take_lines(self) -> None:
         assert self.process is not None and self.process.stdout is not None
