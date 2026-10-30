@@ -292,3 +292,31 @@ it('快照没有标题时用路径，两者都没有就空着', () => {
   expect(snapshotWhere('', '')).toBe('')
   expect(snapshotWhere('not a url', '')).toBe('not a url')
 })
+
+it('a device on save-data does not fetch the kept snapshot on its own', async () => {
+  // 一份快照最大 2 MB，而它只是睡着时顶在底下给人看看。开了省流的人宁可看那句
+  // 「还没有留下快照」，也不该在没人要求的时候替他把这份字节拉下来。
+  api.getPreviewSnapshot.mockResolvedValue({ html: '<p>kept</p>', href: '', title: '', taken_at: 0 })
+  const saveData = vi.fn().mockReturnValue(true)
+  Object.defineProperty(navigator, 'connection', { configurable: true, get: () => ({ saveData: saveData() }) })
+  try {
+    const { state, sleep, scope } = setup()
+    state.previewAppUp.value = false
+    await flush()
+    expect(api.getPreviewSnapshot).not.toHaveBeenCalled()
+    expect(sleep.appSnapshot.value).toBeNull()
+
+    // 省流与否在挂载时读一次（和视频那一套一致：读一次、不跟着网络事件反复变）。
+    // 关掉省流后再开一次面板，就照常取回来。
+    saveData.mockReturnValue(false)
+    scope.stop()
+    const again = setup()
+    again.state.previewAppUp.value = false
+    await flush()
+    expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
+    expect(again.sleep.appSnapshot.value?.html).toBe('<p>kept</p>')
+    again.scope.stop()
+  } finally {
+    Reflect.deleteProperty(navigator, 'connection')
+  }
+})

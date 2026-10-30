@@ -758,3 +758,51 @@ it('断网时红条说设备断网、不给重试；网络回来按钮就回来'
   expect(ui.container.textContent).not.toContain('这台设备断网了')
   expect(ui.getByText('重试新内容')).toBeTruthy()
 })
+
+it('视口三档是一组单选：Tab 只停一次，方向键在档位之间走', async () => {
+  const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+
+  const group = ui.container.querySelector('.preview-viewport')!
+  expect(group.getAttribute('role')).toBe('group')
+  expect(group.getAttribute('aria-label')).toBe('预览宽度')
+  const buttons = [...group.querySelectorAll('button')]
+  expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['0', '-1', '-1'])
+
+  // 方向键换档，焦点跟着走；Tab 序列里始终只有当前那一档。
+  await fireEvent.keyDown(buttons[0], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-tablet').getAttribute('aria-pressed')).toBe('true')
+  expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['-1', '0', '-1'])
+  expect(document.activeElement).toBe(buttons[1])
+
+  // 一路向右，到头绕回第一档（三个档位是环形的一排）。键总是落在当前那一颗上，
+  // 因为焦点跟着走——这也是真实键盘的唯一情况。
+  await fireEvent.keyDown(buttons[1], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-mobile').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[2], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-desktop').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[0], { key: 'End' })
+  expect(ui.getByTestId('viewport-mobile').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[2], { key: 'Home' })
+  expect(ui.getByTestId('viewport-desktop').getAttribute('aria-pressed')).toBe('true')
+})

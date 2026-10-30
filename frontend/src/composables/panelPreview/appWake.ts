@@ -13,6 +13,7 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 import { getPreviewSnapshot, getPreviewWakeStatus, putPreviewSnapshot, wakePreviewApp } from '../../api'
 import { t } from '../../i18n'
 import { appAsleepFrom } from '../../lib/previewChain'
+import { connectionInfo, prefersLightVideo } from '../../lib/videoPlayback'
 import { frameArtifactId } from '../usePreviewFrames'
 
 /** 唤醒进度里的一步。 */
@@ -96,6 +97,10 @@ export function usePanelPreviewAppSleep(deps: {
   reload: () => Promise<void>
 }) {
   const { props, state } = deps
+  /** 这台设备是不是在省流（`lib/videoPlayback` 那一套判据：开了省流，或网差到 2G）。
+   *  开着就不主动去取那份快照——一份最大 2 MB，而它只是「睡着时顶在底下给你看看」，
+   *  省流的人多半宁可看一句「没有快照」。真需要时按唤醒。 */
+  const light = prefersLightVideo(connectionInfo())
   // 快照里还记着是哪一页（`href` / `title`）：一份应用只有一张快照，几个读者同时开着时
   // 后写的盖掉先写的——不说清是哪一页，读者会以为睡着前停在的就是自己那一页。
   const snapshot = ref<{ html: string; takenAt: number; href: string; title: string } | null>(null)
@@ -158,6 +163,8 @@ export function usePanelPreviewAppSleep(deps: {
       if (artifactId !== snapshotOf) snapshot.value = null
       const topicId = props.topicId
       if (!sleeping || !topicId || !artifactId || snapshot.value || fetchedFor === artifactId) return
+      // 省流：不替人下这份快照。卡上照样说「这个应用还没有留下快照」并给唤醒按钮。
+      if (light) return
       fetchedFor = artifactId
       try {
         const kept = await getPreviewSnapshot(topicId)
