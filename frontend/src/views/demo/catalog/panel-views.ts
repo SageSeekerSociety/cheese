@@ -220,6 +220,22 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '停在「提交确认」',
       },
       {
+        name: '页面太大，快照没存下',
+        note: '拍过、但那一页超过快照上限留不下。以前桥把 html 置空就完事，宿主分不出「还没人打开过」和「这一页太大」，卡上说的是前者——读者会以为应用从没成功加载过。现在如实说太大，唤醒按钮照在。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: true,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: false,
+          snapshotTooLarge: true,
+        }),
+        expect: '这一页太大',
+      },
+      {
         name: '页面自己抛了错',
         note: '应用照常显示、连通链三个绿勾，但页面里的脚本抛了异常：条上出一颗红的「2 个错误」，点开是报错清单，能把这几行一次附进批注。以前这一档只认「应用说它 ready / failed」，这种页面读者只能干瞪眼。',
         props: previewPanelProps({

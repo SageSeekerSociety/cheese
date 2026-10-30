@@ -25,6 +25,9 @@ const props = defineProps<{
   snapshotHtml: string | null
   /** 快照是多久以前留的，已经说成一句话（「4 分钟前」）。 */
   snapshotAge: string
+  /** 这一件拍过、但那一页太大留不下（超过快照上限）。和「从没留过」不是一回事：
+   *  后者听着像没人打开过，而这里的真相是页面太大、存不下来。 */
+  tooLarge?: boolean
   /** 快照停在哪一页（标题或路径）。一份应用只留一张快照，几个读者同开时后写的盖掉先写
    *  的，所以得说清是哪一页，否则另一个读者会以为自己那一页被冻住了。空串就不说。 */
   snapshotWhere?: string
@@ -47,8 +50,10 @@ const title = computed(
     (props.snapshotHtml ? t('work.room.preview.sleep.snapshotTag') : '')
 )
 const body = computed(() => {
-  if (!props.snapshotHtml) return t('work.room.preview.sleep.noSnapshot')
-  return t('work.room.preview.sleep.snapshotBody', { age: props.snapshotAge })
+  if (props.snapshotHtml) return t('work.room.preview.sleep.snapshotBody', { age: props.snapshotAge })
+  // 拍过、但太大留不下：说清是哪一种，别让它读成「还没人打开过」。
+  if (props.tooLarge) return t('work.room.preview.sleep.tooLarge')
+  return t('work.room.preview.sleep.noSnapshot')
 })
 /** 停在那一页：有就单独一行放在正文下面（一串路径混在正文里读不出来）。 */
 const where = computed(() => (props.snapshotHtml ? props.snapshotWhere ?? '' : ''))

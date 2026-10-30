@@ -18,5 +18,6 @@
   "hoursAgo": "{n} 小时前",
   "daysAgo": "{n} 天前",
   "snapshotTag": "（当前为静态快照）",
-  "snapshotWhere": "停在「{where}」"
+  "snapshotWhere": "停在「{where}」",
+  "tooLarge": "这一页太大，快照没存下来；唤醒后就能接着用。"
 }

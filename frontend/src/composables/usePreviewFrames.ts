@@ -141,6 +141,8 @@ export interface PreviewFrameOptions {
    * 由取数那一层定；只有实时的应用才取——静态文件不会睡着。
    */
   onSnapshot?: (frame: PreviewFrame, snapshot: FrameSnapshot) => void
+  /** 那一页拍下来了，但超过快照上限、留不下。和「还没有快照」是两种不同的原因。 */
+  onSnapshotTooLarge?: (frame: PreviewFrame) => void
   /**
    * 第三方 View 里的表单点提交（`ui/message`）时叫一次。这一层只把解出来的文本报上来，
    * 拼成哪一条消息、发去哪儿是取数那一层和宿主的事。
@@ -271,7 +273,11 @@ export function usePreviewFrames(frameName: string, options: PreviewFrameOptions
     } else if (data.type === 'location' && typeof data.href === 'string') {
       located(frame, data)
     } else if (data.type === 'snapshot' && typeof data.html === 'string') {
-      if (data.html && frame.live) {
+      if (frame.live && data.reason === 'too-large') {
+        // 拍成了、但这一页太大留不下（上限在桥和平台两边同值）：睡着时卡上该说的是
+        // 「这一页太大」，不是「还没有留下快照」——后者听着像还没人打开过。
+        options.onSnapshotTooLarge?.(frame)
+      } else if (data.html && frame.live) {
         options.onSnapshot?.(frame, {
           html: data.html,
           href: frameText(data.href, 2048),
