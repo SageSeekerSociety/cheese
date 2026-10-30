@@ -694,8 +694,10 @@ class CandidateCI(unittest.TestCase):
         steps = workflow["jobs"]["deploy"]["steps"]
         self.assertNotIn("uses", steps[0], "the repair must not be a checkout")
         self.assertEqual(steps[0]["name"], "Repair a sparse workspace")
-        self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"),
-                        "a checkout runs before the workspace is repaired")
+        checkouts = [i for i, step in enumerate(steps)
+                     if step.get("uses", "").startswith("actions/checkout@")
+                     or "git-fetch.sh" in step.get("run", "")]
+        self.assertEqual(checkouts[:1], [1], "a checkout runs before the workspace is repaired")
         body = steps[0]["run"]
         for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
                          "info/sparse-checkout", "::warning::"):
@@ -1276,7 +1278,7 @@ exit 0
                 if "CANDIDATE_SHA" in step.get("env", {}):
                     expressions.add(step["env"]["CANDIDATE_SHA"])
                 if step.get("name", "").startswith("Check out the built commit"):
-                    expressions.add(step["with"]["ref"])
+                    expressions.add(step["env"]["REF"])
         self.assertEqual(expressions, {"${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}"})
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
         self.assertIn("rebuilt", inputs)

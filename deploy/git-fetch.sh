@@ -3,9 +3,9 @@
 # deploy job's workspace), fetching it from GitHub the way the deploy's
 # registry calls are retried (registry-retry.sh). The dev box reaches
 # github.com over a link that resets connections in bursts: dev deploy runs
-# 40112125458 and 40154711336 (2026-10-24) and 40315955795 (2026-10-26) died in
-# actions/checkout on `Recv failure: Connection reset by peer`, its own three
-# fetch attempts spent within about 35 seconds.
+# 40112125458 (2026-10-24), 40154711336 (2026-10-25) and 40315955795
+# (2026-10-26, UTC) died in actions/checkout on `Recv failure: Connection reset
+# by peer`, its own three fetch attempts spent 35-42 seconds after the first.
 #
 # Usage: git-fetch.sh <ref> <depth>
 #   <ref>    a commit SHA, branch or tag; fetched from origin and checked out
