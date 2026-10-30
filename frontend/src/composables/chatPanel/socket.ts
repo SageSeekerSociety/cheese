@@ -112,7 +112,7 @@ export function usePanelSocket(deps: {
       }
       deps.tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
-      sendOnSocket({ type: 'sync' })
+      sendOnSocket({ type: 'sync', asked: deps.runRecords.asking() })
       deps.flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
@@ -137,7 +137,7 @@ export function usePanelSocket(deps: {
   }
   function verifyWorking() {
     // 没连上时 `send` 自己就不发；这条只决定「还有没有必要问」。
-    if (deps.awaitingReply.value) sendOnSocket({ type: 'sync' })
+    if (deps.awaitingReply.value) sendOnSocket({ type: 'sync', asked: deps.runRecords.asking() })
   }
   watch(deps.awaitingReply, (working) => {
     stopVerifier()

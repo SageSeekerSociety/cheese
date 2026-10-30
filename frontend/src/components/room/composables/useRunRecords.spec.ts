@@ -87,7 +87,7 @@ function said(id: string, author: string, createdAt: string): Block {
 describe('等自动重试的队友', () => {
   it('打开页面时服务端说它还欠着一次自动重试，输入框上方就说它约几点重试', () => {
     const records = useRunRecords()
-    records.resumesNow([owed()])
+    records.resumesNow([owed()], null)
     const [line] = records.waitingLines(() => '芝士')
     expect(line.name).toBe('芝士')
     expect(line.detail).toContain(clockTime(Date.parse(DUE)))
@@ -102,7 +102,7 @@ describe('等自动重试的队友', () => {
 
   it.each(['turn_resume_started', 'turn_resume_stopped'])('%s 之后不再说它在等', (event) => {
     const records = useRunRecords()
-    records.resumesNow([owed()])
+    records.resumesNow([owed()], null)
     records.receive(step(event))
     expect(records.waitingLines(() => '芝士')).toEqual([])
   })
@@ -110,20 +110,38 @@ describe('等自动重试的队友', () => {
   it('已经开始了的那一次，晚到的现场不会把它说回来', () => {
     const records = useRunRecords()
     records.receive(step('turn_resume_started'))
-    records.resumesNow([owed()])
+    records.resumesNow([owed()], null)
     expect(records.waitingLines(() => '芝士')).toEqual([])
   })
 
   it('服务端说已经不欠了，就不再说它在等', () => {
     const records = useRunRecords()
-    records.resumesNow([owed()])
-    records.resumesNow([])
+    records.resumesNow([owed()], null)
+    records.resumesNow([], null)
+    expect(records.waitingLines(() => '芝士')).toEqual([])
+  })
+
+  // 服务端答 sync 时先读库、再发现场；读完之后排上的那一次，它的运行记录先到页面，
+  // 那份读早了的现场里没有它。
+  it('问过现场之后才排上的那一次，晚到的现场不会把它抹掉', () => {
+    const records = useRunRecords()
+    const asked = records.asking()
+    records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE }))
+    records.resumesNow([], asked)
+    const [line] = records.waitingLines(() => '芝士')
+    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+  })
+
+  it('问之前就知道的那一次，现场说不欠了就不再说', () => {
+    const records = useRunRecords()
+    records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE }))
+    records.resumesNow([], records.asking())
     expect(records.waitingLines(() => '芝士')).toEqual([])
   })
 
   it('之后有人开口，平台就不再自动重试，也不再说它在等', () => {
     const records = useRunRecords()
-    records.resumesNow([owed()])
+    records.resumesNow([owed()], null)
     expect(records.waitingLines(() => '芝士', [said('b2', 'alice', '2026-10-29T07:31:00Z')])).toEqual([])
   })
 })

@@ -104,6 +104,24 @@ async function flush() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+const RESUME_DUE = '2026-10-30T19:20:00Z'
+const RESUME_HINT = () => `约 ${clockTime(Date.parse(RESUME_DUE))} 自动重试`
+
+/** 自动重试的一步（排上、开始），一条运行记录。 */
+function resumeRecord(event: string, id: string, meta: Record<string, unknown> = {}): Block {
+  return {
+    id,
+    conversation_id: topic.id,
+    kind: 'event',
+    author_type: 'platform',
+    author: 'cheese',
+    content: '自动重试',
+    turn_id: 'failing',
+    meta: { event_type: event, seat: 'cheese-a', resume_id: 'resume-1', ...meta },
+    created_at: '2026-10-30T19:00:05Z',
+  }
+}
+
 beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
@@ -163,16 +181,16 @@ describe('session activity', () => {
       // 一句话都没再说：结束帧不会来了，页面自己核一次。
       socket.sent.length = 0
       vi.advanceTimersByTime(30_000)
-      expect(socket.sent).toContainEqual({ type: 'sync' })
+      expect(socket.sent).toContainEqual(expect.objectContaining({ type: 'sync' }))
 
-      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [] })
+      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], asked: null })
       await flush()
       expect(view.emitted('working')?.at(-1)).toEqual([false])
 
       // 没有活在跑了，就不再问了。
       socket.sent.length = 0
       vi.advanceTimersByTime(60_000)
-      expect(socket.sent).not.toContainEqual({ type: 'sync' })
+      expect(socket.sent).not.toContainEqual(expect.objectContaining({ type: 'sync' }))
     } finally {
       vi.useRealTimers()
     }
@@ -284,7 +302,6 @@ describe('session activity', () => {
   // 一轮没完成、平台约好几点自动重试：输入框上方说这位队友在等、约几点重试，打开
   // 页面时（服务端答 sync 的 room_state）就说；重试开始了就不再说它在等。
   it('the composer shows a teammate waiting for its automatic retry until the retry starts', async () => {
-    const due = '2026-10-30T19:20:00Z'
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic], showComposer: true },
@@ -302,30 +319,53 @@ describe('session activity', () => {
           conversation_id: topic.id,
           seat: 'cheese-a',
           resume_id: 'resume-1',
-          due_at: due,
+          due_at: RESUME_DUE,
           since: '2026-10-30T19:00:00Z',
         },
       ],
+      asked: null,
     })
     await flush()
-    const waiting = `约 ${clockTime(Date.parse(due))} 自动重试`
-    expect(view.getByTestId('member-activity').textContent).toContain(waiting)
+    expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
 
-    socket.emit({
-      type: 'run_record',
-      record: {
-        id: 'started-1',
-        conversation_id: topic.id,
-        kind: 'event',
-        author_type: 'platform',
-        author: 'cheese',
-        content: '开始自动重试',
-        turn_id: 'resumed',
-        meta: { event_type: 'turn_resume_started', seat: 'cheese-a', resume_id: 'resume-1' },
-        created_at: '2026-10-30T19:20:05Z',
-      },
-    } as WsServerFrame)
+    socket.emit({ type: 'run_record', record: resumeRecord('turn_resume_started', 'started-1') })
     await flush()
-    expect(view.container.textContent).not.toContain(waiting)
+    expect(view.container.textContent).not.toContain(RESUME_HINT())
+  })
+
+  // 服务端答 sync 时先读库、再发现场。读库之后才排上的那一次自动重试，它的运行记录
+  // 先到页面；这一轮随后结束、不再定时核对，那份读早了的现场不能把它抹掉。
+  it('a room_state read before a retry was scheduled does not erase the wait heard after asking', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const vuetify = createVuetify({ components, directives })
+      const view = render(ChatPanel, {
+        props: { topic, topicList: [topic], showComposer: true },
+        global: { plugins: [vuetify, i18n] },
+      })
+      await flush()
+
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit({ type: 'turn_started', turn_id: 'failing' })
+      await flush()
+      socket.sent.length = 0
+      vi.advanceTimersByTime(30_000)
+      const sync = socket.sent.find((m) => m.type === 'sync') as { type: 'sync'; asked?: number } | undefined
+      expect(sync).toBeDefined()
+
+      socket.emit({ type: 'run_record', record: resumeRecord('turn_resume_wait', 'wait-1', { due_at: RESUME_DUE }) })
+      socket.emit({ type: 'turn_finished', turn_id: 'failing' })
+      socket.emit({
+        type: 'room_state',
+        turn_ids: [],
+        members: [],
+        resumes: [],
+        asked: sync?.asked ?? null,
+      })
+      await flush()
+      expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

@@ -85,10 +85,16 @@ export function useRunRecords() {
   const records = ref<Block[]>([])
   // 已经开始或结束了的轮次：它们的排队记录不再说「排队中」。
   const begun = ref<Set<string>>(new Set())
-  // 每位队友还欠着的那一次自动重试（按座位）。
-  const resumes = ref<Map<string, ResumeWait>>(new Map())
+  // 每位队友还欠着的那一次自动重试（按座位），连同是在听到第几件自动重试的事时知道的
+  // （`heard`；`room_state` 给的记 -1）。
+  const resumes = ref<Map<string, { wait: ResumeWait; heardAt: number }>>(new Map())
   // 已经开始或取消了的自动重试：晚到的那份 `room_state`、补发的排上记录不再把它说回来。
   let ended = new Set<string>()
+  // 到现在为止听到的自动重试的事（排上、开始、取消）有几件。
+  let heard = 0
+  // 还没回答的 `sync`：问的那一刻 `heard` 是几。
+  let asks = new Map<number, number>()
+  let lastAsk = 0
 
   function receive(record: Block) {
     const at = records.value.findIndex((r) => r.id === record.id)
@@ -97,17 +103,35 @@ export function useRunRecords() {
     else next.push(record)
     records.value = next.length > KEPT ? next.slice(next.length - KEPT) : next
     const wait = scheduled(record)
-    if (wait && !ended.has(wait.resume_id)) resumes.value = new Map(resumes.value).set(wait.seat, wait)
     const over = settled(record)
+    if (wait || over) heard += 1
+    if (wait && !ended.has(wait.resume_id))
+      resumes.value = new Map(resumes.value).set(wait.seat, { wait, heardAt: heard })
     if (over) {
       ended = new Set(ended).add(over)
-      resumes.value = new Map([...resumes.value].filter(([, w]) => w.resume_id !== over))
+      resumes.value = new Map([...resumes.value].filter(([, w]) => w.wait.resume_id !== over))
     }
   }
 
-  /** `room_state` 说的此刻还欠着的全部自动重试，换掉手上那一份。 */
-  function resumesNow(owed: ResumeWait[]) {
-    resumes.value = new Map(owed.filter((w) => !ended.has(w.resume_id)).map((w) => [w.seat, w]))
+  /** 要发一次 `sync` 了：它带的号，回答它的 `room_state` 会原样带回来。 */
+  function asking(): number {
+    lastAsk += 1
+    asks = new Map(asks).set(lastAsk, heard)
+    return lastAsk
+  }
+
+  /**
+   * `room_state` 说的此刻还欠着的全部自动重试，换掉手上那一份 —— 问过之后才听到的
+   * 不换：服务端读库在先、把这份现场发出来在后，中间排上的那一次已经先到了，这份
+   * 现场里还没有它。
+   */
+  function resumesNow(owed: ResumeWait[], asked: number | null) {
+    const mark = asked === null ? undefined : asks.get(asked)
+    if (asked !== null) asks = new Map([...asks].filter(([id]) => id > asked))
+    const next = new Map<string, { wait: ResumeWait; heardAt: number }>()
+    for (const wait of owed) if (!ended.has(wait.resume_id)) next.set(wait.seat, { wait, heardAt: -1 })
+    if (mark !== undefined) for (const [seat, w] of resumes.value) if (w.heardAt > mark) next.set(seat, w)
+    resumes.value = next
   }
 
   function turnBegan(id: string) {
@@ -120,6 +144,8 @@ export function useRunRecords() {
     begun.value = new Set()
     resumes.value = new Map()
     ended = new Set()
+    heard = 0
+    asks = new Map()
   }
 
   /**
@@ -157,7 +183,7 @@ export function useRunRecords() {
         detail: n ? t('work.room.site.status.queuedBehind', { ahead: n }) : t('work.room.site.status.queued'),
       }
     })
-    for (const [handle, wait] of resumes.value) {
+    for (const [handle, { wait }] of resumes.value) {
       if (waiting.value.has(handle) || takenBack(wait, blocks)) continue
       lines.push({
         handle,
@@ -170,5 +196,5 @@ export function useRunRecords() {
     return lines
   }
 
-  return { records, receive, resumesNow, turnBegan, reset, forgetWaiting, waitingLines }
+  return { records, receive, asking, resumesNow, turnBegan, reset, forgetWaiting, waitingLines }
 }

@@ -214,8 +214,8 @@ describe('a reconnect keeps the room on screen', () => {
 
     second.onopen?.()
     await flush()
-    expect(second.sent).toContainEqual({ type: 'sync' })
-    second.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [] })
+    expect(second.sent).toContainEqual(expect.objectContaining({ type: 'sync' }))
+    second.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], asked: null })
     await flush()
     expect(busyLines(view)).toEqual([])
   })

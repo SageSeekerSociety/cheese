@@ -246,10 +246,13 @@ def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client)
     answer, so it has to come whether or not anything is going on."""
     _, room, other = _two_rooms(client)
     with room_socket(client, room, "bob") as bob:
-        bob.send_json({"type": "sync"})
+        bob.send_json({"type": "sync", "asked": 7})
         idle = _until(bob, lambda f: f["type"] == "room_state")[-1]
         assert idle["turn_ids"] == []
         assert idle["members"] == []
+        # It names the question it answers: a frame published while it was
+        # being read can reach the client first (`useRunRecords.resumesNow`).
+        assert idle["asked"] == 7
 
         with room_socket(client, room, "alice") as alice:
             alice.send_json({"type": "typing"})
