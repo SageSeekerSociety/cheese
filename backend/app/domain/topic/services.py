@@ -659,9 +659,6 @@ class TopicService:
         events: PlatformLine,
         cascaded_from: str | None = None,
     ) -> None:
-        # Its open tasks' rows before anything is said in their conversations
-        # (the card notices below): the lock order `lock_open_tasks` names.
-        await self._repo.lock_open_tasks(topic.id)
         topic.status = TopicStatus.archived
         archived_at = datetime.now(UTC)
         topic.archived_at = archived_at

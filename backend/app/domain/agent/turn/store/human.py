@@ -15,6 +15,7 @@ from app.domain.block.adapters import dump_blocks_json
 from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import message_reply_target
+from app.domain.block.repositories import hold_numbering
 from app.domain.block.schemas import reply_preview
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
@@ -175,16 +176,21 @@ async def persist_human_message(
                 [uuid.UUID(value) for value in stored["block_ids"]],
                 True,
             )
+        # Who the message is for turns on its task as it is when the message
+        # is numbered: open or closed, its owner, collaborators and teammate
+        # (`prepare`). Whatever changes those also says so in this
+        # conversation, in the same transaction (`room_task.heard`, the close
+        # and reopen lines, archive's), so it holds this conversation's
+        # numbering until it commits. Taken first, before the task is read,
+        # that lock orders this message against every such change: one
+        # committed before it is read here, one after it lands after this
+        # message. The task row is read without a lock of its own: a lock on
+        # it would be a second one, which the changes take in the other order.
+        await hold_numbering(session, place.conversation_id)
         if place.task is not None:
-            # Whether the task's owner is speaking to its teammate turns on
-            # the task being open (`prepare`), and the place may be the
-            # request's copy, read before this transaction began. Read the
-            # task's committed row here, under a share lock: a close committed
-            # since is seen, and one still in flight lands after this message
-            # rather than between reading the task and storing what it said.
-            # Lock order: the task's row, then its conversation's block
-            # numbering (`topic.repositories.writes.lock_open_tasks`).
-            await session.refresh(place.task, with_for_update={"read": True})
+            # The place may be the request's copy, read before this
+            # transaction began.
+            await session.refresh(place.task)
         created_blocks: list[Block] = []
         # Written by the author's own 芝士: every block of the send says so.
         written_for = {BY_ASSISTANT_META_KEY: True} if by_assistant else {}

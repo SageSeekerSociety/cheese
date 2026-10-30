@@ -19,12 +19,14 @@ The rules a person can state without the code:
 import asyncio
 import uuid
 
+import pytest
 from sqlalchemy import func, select, update
 
 from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake import human
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.room_task import heard
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
@@ -325,6 +327,85 @@ def test_a_send_and_its_project_archived_at_once_both_go_through(
     assert not isinstance(archived, BaseException), repr(archived)
     assert sent.status_code in (200, 409), sent.text
     assert archived.status_code == 200, archived.text
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"agent_handle": None}, {"owner_handle": "bob"}],
+    ids=["teammate given back", "owner handed over"],
+)
+def test_a_send_and_its_task_handed_over_at_once_both_go_through(
+    client, stub_hooks, monkeypatch, change
+):
+    """Handing a task to another teammate or person says so in the task, then
+    changes it. A message sent in that task meanwhile lands before the change
+    or is read after it; neither request fails because the two waited on
+    each other."""
+    project, _, room = _channel(client)
+    task, seat = _task_with_a_turn(client, room)
+    join_project_team(client, project, "bob")
+
+    async def worked_by_its_teammate():
+        async with client.test_factory() as db:
+            await db.execute(
+                update(Task).where(Task.id == uuid.UUID(task)).values(agent_handle=seat)
+            )
+            await db.commit()
+
+    client.portal.call(worked_by_its_teammate)
+    prepare = human.prepare_human
+    inform = heard.inform
+
+    async def race():
+        reading = asyncio.Event()
+        changing = asyncio.Event()
+
+        async def send_waits_for_the_change(session, place, *args, **kwargs):
+            # The message has read its task; the change starts and goes as
+            # far as it can before the message is written.
+            if place.conversation_id == uuid.UUID(task):
+                reading.set()
+                await changing.wait()
+                await asyncio.sleep(0.5)
+            return await prepare(session, place, *args, **kwargs)
+
+        async def change_says_so(session, row, said):
+            changing.set()
+            return await inform(session, row, said)
+
+        monkeypatch.setattr(human, "prepare_human", send_waits_for_the_change)
+        monkeypatch.setattr(heard, "inform", change_says_so)
+        send = asyncio.create_task(
+            asyncio.to_thread(
+                client.post,
+                f"/topics/{task}/messages",
+                json={
+                    "request_id": str(uuid.uuid4()),
+                    "content": "转交时发的一句",
+                    "expects_agent": True,
+                },
+                headers=session_auth_headers("alice"),
+            )
+        )
+        await asyncio.wait_for(reading.wait(), 5)
+        update_task = asyncio.create_task(
+            asyncio.to_thread(
+                client.patch,
+                f"/topics/{task}/task",
+                json=change,
+                headers=session_auth_headers("alice"),
+            )
+        )
+        return await asyncio.wait_for(
+            asyncio.gather(send, update_task, return_exceptions=True), 15
+        )
+
+    sent, changed = client.portal.call(race)
+
+    assert not isinstance(sent, BaseException), repr(sent)
+    assert not isinstance(changed, BaseException), repr(changed)
+    assert sent.status_code in (200, 409), sent.text
+    assert changed.status_code == 200, changed.text
 
 
 def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):

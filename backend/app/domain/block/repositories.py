@@ -68,6 +68,23 @@ from app.domain.block.reactions import Reactions
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
+#: The first key of every conversation's numbering lock: the advisory lock the
+#: `block_numbered()` trigger takes on each new block (alembic `0dd66b328211`).
+NUMBERING_LOCK = 1_734_632_801
+
+
+async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> None:
+    """Take ``conversation_id``'s numbering lock now, ahead of the first block
+    this transaction writes there; held until it ends. The trigger takes the
+    same lock again on each block, which a transaction already holding it
+    passes straight through."""
+    await session.execute(
+        text(
+            "SELECT pg_advisory_xact_lock(:key, hashtext(CAST(:conversation AS text)))"
+        ),
+        {"key": NUMBERING_LOCK, "conversation": str(conversation_id)},
+    )
+
 
 class BlockRepository(
     AwaitingQueries,
