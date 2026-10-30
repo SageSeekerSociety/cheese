@@ -812,10 +812,17 @@ async def test_a_turn_nobody_asked_for_ends_when_it_ends(tmp_path, harness):
 async def test_a_turn_that_ends_on_words_nobody_was_sent_is_held_to_send_them(
     tmp_path, harness
 ):
-    """An early "on it" is not the answer: a turn that ends on a conclusion
-    only the session can see is held once more, and the person hears it."""
+    """An early "on it" is not the answer: a turn that went on working after
+    it and ends on a conclusion only the session can see is held once more,
+    and the person hears it."""
     blocked = "blocked: a private chat cannot open tasks, please ask in a channel"
-    steps = [publish("on it"), say(blocked), publish(blocked), say("")]
+    steps = [
+        publish("on it"),
+        shell("touch WORK"),
+        say(blocked),
+        publish(blocked),
+        say(""),
+    ]
     async with harness(tmp_path, steps) as session:
         await session.send("[someone]: please review the six PRs", owes_reply=True)
         await session.finished(len(steps))
@@ -825,8 +832,13 @@ async def test_a_turn_that_ends_on_words_nobody_was_sent_is_held_to_send_them(
 
 @pytest.mark.anyio
 @every_harness
-async def test_a_turn_that_ends_on_its_reply_ends(tmp_path, harness):
-    steps = [publish("on it"), shell("touch WORK"), publish("done, all green"), say("")]
+async def test_words_straight_after_the_reply_restate_it(tmp_path, harness):
+    steps = [
+        publish("on it"),
+        shell("touch WORK"),
+        publish("done, all green"),
+        say("Done: the build is green, and I told them so."),
+    ]
     async with harness(tmp_path, steps) as session:
         await session.send("[someone]: please fix the build", owes_reply=True)
         await session.finished(len(steps))
@@ -840,12 +852,13 @@ async def test_a_turn_that_ends_on_its_reply_ends(tmp_path, harness):
 
 @pytest.mark.anyio
 @every_harness
-async def test_a_turn_that_ends_on_blank_text_ends(tmp_path, harness):
+@pytest.mark.parametrize("ending", ["", " \n "], ids=["empty", "blank"])
+async def test_a_turn_that_ends_on_no_words_ends(tmp_path, harness, ending):
     steps = [
         publish("on it"),
         shell("touch WORK"),
         publish("done, all green"),
-        say(" \n "),
+        say(ending),
     ]
     async with harness(tmp_path, steps) as session:
         await session.send("[someone]: please fix the build", owes_reply=True)
@@ -859,13 +872,38 @@ async def test_a_turn_that_ends_on_blank_text_ends(tmp_path, harness):
 @pytest.mark.anyio
 @every_harness
 async def test_a_session_held_to_its_last_words_once_is_let_go(tmp_path, harness):
-    steps = [publish("on it"), say("all green"), say("all green")]
+    steps = [publish("on it"), shell("touch WORK"), say("all green"), say("all green")]
     async with harness(tmp_path, steps) as session:
         await session.send("[someone]: please fix the build", owes_reply=True)
         await session.finished(len(steps))
         await asyncio.sleep(1)
 
-        # Held once (the third request), and not again.
+        # Held once (the fourth request), and not again.
+        assert len(session.requests) == len(steps)
+        assert session.backend.published == ["on it"]
+        assert not session.working(await session.call("ping", {}))
+
+
+@pytest.mark.anyio
+@every_harness
+async def test_a_turn_held_for_its_reply_is_still_held_to_its_conclusion(
+    tmp_path, harness
+):
+    """Held for not answering, the session acks, works, and ends on its
+    conclusion as text: that is the same unsent conclusion, held once more,
+    and then the session is let go."""
+    steps = [
+        say("looking"),
+        publish("on it"),
+        shell("touch WORK"),
+        say("all green"),
+        say("all green"),
+    ]
+    async with harness(tmp_path, steps) as session:
+        await session.send("[someone]: please fix the build", owes_reply=True)
+        await session.finished(len(steps))
+        await asyncio.sleep(1)
+
         assert len(session.requests) == len(steps)
         assert session.backend.published == ["on it"]
         assert not session.working(await session.call("ping", {}))

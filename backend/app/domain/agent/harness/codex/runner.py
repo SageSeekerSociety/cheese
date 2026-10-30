@@ -25,6 +25,10 @@ WOKEN_TURN_END_S = 15.0
 # it starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
 
+# The thread's items that are not a call the session made: what it wrote and
+# thought, a message read in, and the thread's own compaction.
+NOT_CALLS = frozenset({"agentMessage", "reasoning", "userMessage", "contextCompaction"})
+
 
 class Skills(Protocol):
     """Where the project's skills are mirrored for Codex, and keeping them so."""
@@ -286,11 +290,15 @@ class Runner(runner.Runner[Journal]):
         elif same_thread and method in ("item/started", "item/completed"):
             # A message the model writes is the turn's last words until it
             # does anything else: a tool call, a command, a message read in.
-            if item.get("type") == "agentMessage":
+            kind = item.get("type")
+            if kind == "agentMessage":
                 if method == "item/completed":
                     self.last_words = str(item.get("text") or "")
-            elif item.get("type") != "reasoning":
+            elif kind != "reasoning":
                 self.last_words = ""
+            if method == "item/started" and kind not in NOT_CALLS:
+                # A platform tool by its name in the table; Codex's own by kind.
+                self.called(str(item.get("tool") or kind))
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"

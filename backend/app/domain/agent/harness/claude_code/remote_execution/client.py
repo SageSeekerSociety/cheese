@@ -198,9 +198,11 @@ def reply_hook(payload: dict) -> dict | None:
     `insist`), reached on the socket it gave this session. A session with no
     runner, or one that does not answer, ends as it would have. The runner
     is handed the text of the turn's final message, which the build puts in
-    the hook's input (`last_assistant_message`, absent when it has none)."""
+    the hook's input (`last_assistant_message`, absent when it has none).
+    It is asked again after a turn it held (`stop_hook_active`): it holds a
+    turn for each of its two reasons at most once, and says when it is done."""
     path = os.environ.get(SESSION_SOCKET)
-    if not path or payload.get("stop_hook_active"):
+    if not path:
         return None
     ending = {"last_words": str(payload.get("last_assistant_message") or "")}
     try:

@@ -239,6 +239,7 @@ class Runner(runner.Runner[Journal]):
             step["args"] = json.dumps(event.get("args") or {}, ensure_ascii=False)
             # pi's own tools on the session's own computer: what they do is
             # known by their name. A platform tool's is the table's (`tool`).
+            self.called(str(event.get("toolName") or ""))
             if (name := event.get("toolName")) in READING_TOOLS:
                 step.setdefault("effect", "reads")
             elif name in WORKING_TOOLS:
