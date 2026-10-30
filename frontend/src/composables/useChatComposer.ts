@@ -12,6 +12,7 @@
 // the awaiting-reply flag, the outbox restored into), and the `send` callback
 // that actually posts. Nothing here touches the room socket.
 import type { ComputedRef, Ref } from 'vue'
+import type { Addressing } from '../api/messages'
 import type { Block, ChatAttachment, Topic } from '../cx_types'
 import type { ComposerMemory, Outgoing, StoredComposerDraft } from '../lib/composerDrafts'
 import type { NoticeRow } from '../lib/platformNotice'
@@ -58,7 +59,13 @@ export interface ChatComposerDeps {
   editing: Set<string>
   isMine: (m: Block) => boolean
   displayName: (m: Block) => string
-  send: (content: string, summon: boolean, atts?: ChatAttachment[], quote?: QuotedContext) => boolean
+  send: (
+    content: string,
+    summon: boolean,
+    atts?: ChatAttachment[],
+    quote?: QuotedContext,
+    expectsAgent?: boolean
+  ) => boolean
   dropSend: (clientId: string) => void
 }
 
@@ -160,7 +167,13 @@ export function useChatComposer(deps: ChatComposerDeps) {
   function clearDraftQuote() {
     draftQuote.value = undefined
   }
-  const composerRef = ref<{ focus: () => void } | null>(null)
+  const composerRef = ref<{
+    focus: () => void
+    /** 「回复并 @芝士」：正文前面 @ 上平时交给的那位。 */
+    addAgentMention?: () => void
+    /** 送到时已经不交给队友了：就地问交给谁（见 RoomComposer）。 */
+    askRecipient?: (now: Addressing | null) => void
+  } | null>(null)
 
   const starterPrompts = computed(() =>
     (['tidy', 'research', 'build', 'plan'] as const).map((key) => ({
@@ -278,12 +291,20 @@ export function useChatComposer(deps: ChatComposerDeps) {
   // 有一枚没传上去就整条挡住：`uploaded()` 会把它跳过，发出去的话那一段话自带一个
   // 说得出口的理由（「带了 3 个附件」）却只带上去 2 个，而人不会知道少了哪个。挡住
   // 并说清怎么办，比悄悄少发一个安全。
-  function onComposerSend({ content, summon }: { content: string; summon: boolean }) {
+  function onComposerSend({
+    content,
+    summon,
+    expectsAgent,
+  }: {
+    content: string
+    summon: boolean
+    expectsAgent?: boolean
+  }) {
     if (pendingAtts.value.some((a) => a.error)) {
       errorMsg.value = t('work.room.attachments.sendBlocked')
       return
     }
-    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value ?? lookingAt(content))) {
+    if (send(content, summon, uploaded(pendingAtts.value), draftQuote.value ?? lookingAt(content), expectsAgent)) {
       draft.value = ''
       clearDraftQuote()
       clearPendingAtts()

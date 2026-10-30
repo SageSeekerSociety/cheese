@@ -69,6 +69,9 @@ export interface Outgoing {
   replyTo?: string
   atts?: ChatAttachment[]
   quotedContext?: QuotedContext
+  /** 发的人看到的是「交给」某位 AI 队友（输入框上那一行）。送到时已经不交给了，后端不发，
+   *  原样退回来让人再选一次（`expects_agent`）。 */
+  expectsAgent?: boolean
   /** queued = 还没送出去（排在前一条后面，或连不上在等重试）; sending = 请求在路上; failed = 后端拒了 */
   state: 'queued' | 'sending' | 'failed'
   /** 发送在路上已超过阈值（或曾中断重试）：此时才露出「发送中…」与半透明态。 */

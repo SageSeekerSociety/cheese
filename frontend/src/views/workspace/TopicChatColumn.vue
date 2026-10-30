@@ -266,6 +266,7 @@ defineExpose({
       :hint="hint"
       :ask-closed="askClosed"
       :always-summon="alwaysSummon"
+      :place-state="task?.status ?? null"
       :in-thread="beside"
       hide-header
       :show-composer="!rejecting"

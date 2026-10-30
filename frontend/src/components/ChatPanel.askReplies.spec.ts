@@ -148,7 +148,7 @@ beforeEach(() => {
         json: async () => ({ code: 200, data: { ...question('skipped', null, ['me'], ['me']), id } }),
       }
     }
-    if (String(url).includes('/messages') && init?.method === 'POST') {
+    if (String(url).endsWith('/messages') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
       sent.push({ url: String(url), body })
       // 停在路上的那一段：卡还没收起，题块也还没带着答案回来。

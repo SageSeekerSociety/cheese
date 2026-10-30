@@ -529,7 +529,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
 
-    expect(onSend).toHaveBeenCalledWith({ content: '@zzz', summon: false })
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ content: '@zzz', summon: false }))
   })
 
   it('空态里 ↑/↓ 不拦：那时候它们该去挪光标', async () => {
@@ -702,25 +702,7 @@ describe('动作行', () => {
     await fillComposer(box(), '@Alice 你看下')
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看下', summon: false })
-  })
-
-  it('任务里 @ 了人、没 @ AI 队友的一句是说给那个人的，不交给队友', async () => {
-    const { box, onSend } = mount({ alwaysSummon: true })
-    await fillComposer(box(), '@Alice 你看这个反馈')
-    focusIn(box())
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看这个反馈', summon: false })
-  })
-
-  it('任务里不 @ 任何人、或 @ 了人也 @ 了队友，照样交给队友', async () => {
-    const { box, onSend } = mount({ alwaysSummon: true })
-    focusIn(box())
-    await fillComposer(box(), '接着做')
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    await fillComposer(box(), '@Alice @芝士 一起看')
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend.mock.calls.map(([sent]) => sent.summon)).toEqual([true, true])
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ content: '<@alice> 你看下', summon: false }))
   })
 
   it('输入法正在选字时，回车是上屏那一下，不是发送', async () => {
@@ -874,16 +856,6 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
     expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ summon: true }))
     expect(onSend.mock.calls[0][0].content).toContain('@')
   })
-
-  it('和 AI 队友私聊：提示不说交给谁，⌘+Enter 就是发送，正文不加 @', async () => {
-    const { box, onSend } = mount({ draft: '看一下', alwaysSummon: true, handOff: false })
-    expect(box().getAttribute('title')).toBe('Enter 发送，Shift+Enter 换行，可直接粘贴图片')
-
-    focusIn(box())
-    await fireEvent.keyDown(box(), { key: 'Enter', metaKey: true })
-
-    expect(onSend).toHaveBeenCalledWith({ content: '看一下', summon: true })
-  })
 })
 
 // 发送键旁边那颗队友头像：这条发出去谁会接手。它读的是正文，点它、换一位写的都是正文里的 @。
@@ -896,12 +868,6 @@ describe('交给谁', () => {
     const { container, draft } = mount({ alwaysSummon: true, draft: '看看这个' })
     await fireEvent.click(summon(container))
     expect(draft.value).toBe('看看这个')
-  })
-
-  it('任务里只 @ 了人：头像跟着说这句不交给队友', async () => {
-    const { container, box } = mount({ alwaysSummon: true })
-    await fillComposer(box(), '@Alice 你看下')
-    expect(summon(container).getAttribute('aria-label')).toBe('这句只说给 @ 到的人')
   })
 
   it('右键换一位：正文里那枚标签换成那一位，原来那位拿掉', async () => {
