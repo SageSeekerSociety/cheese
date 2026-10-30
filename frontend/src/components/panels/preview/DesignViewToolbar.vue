@@ -34,7 +34,9 @@ const emit = defineEmits<{
 /** 调过色时按钮一直亮着，摊开着也亮——「改过」和「开着」是两件事，亮的是前面那件。 */
 const toneLit = computed(() => props.toneOpen || props.adjust.brightness !== 100 || props.adjust.saturation !== 100)
 
-const zoomModes = computed(() => (props.fitsHeight ? (['fitv', 'fitw', 'actual'] as const) : (['fitw', 'actual'] as const)))
+const zoomModes = computed(() =>
+  props.fitsHeight ? (['fitv', 'fitw', 'actual'] as const) : (['fitw', 'actual'] as const)
+)
 </script>
 
 <template>
