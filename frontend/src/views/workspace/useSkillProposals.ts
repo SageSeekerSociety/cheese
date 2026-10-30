@@ -8,6 +8,7 @@ import { ref } from 'vue'
 
 import { confirmProjectSkill, declineProjectSkill, listProjectSkills } from '@/api/projectSkills'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 
@@ -27,10 +28,15 @@ export function useSkillProposals(projectId: Ref<string>, conversationId: Ref<st
     proposals.value = lastSeen<ProjectSkill[]>(key) ?? []
     try {
       // 只有进这段对话时的第一次读用快照里那一块（query/snapshot），之后每次都问服务器。
+      const pid = projectId.value
       const got = await fromSnapshot(key, async () =>
-        (await listProjectSkills(projectId.value)).data.filter(
-          (s) => s.state === 'draft' && s.proposal && s.source_topic_id === conversation
-        )
+        (
+          await queryClient.fetchQuery({
+            queryKey: keys.projectSkills(pid),
+            queryFn: () => listProjectSkills(pid),
+            staleTime: 0,
+          })
+        ).data.filter((s) => s.state === 'draft' && s.proposal && s.source_topic_id === conversation)
       )
       seen(key, got)
       if (conversationId.value === conversation) proposals.value = got

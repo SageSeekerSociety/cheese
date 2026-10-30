@@ -54,6 +54,21 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
           backendMissing: false,
           loadError: null,
         }
+        // 两个补充数据与名册并行发起，且默认模型与 useProjectDefaultModelSettings 共用同一次在途请求。
+        const typesRead = listAgentTypes().then(
+          (r) => r.data,
+          () => [] as AgentType[]
+        )
+        const modelsRead = queryClient
+          .fetchQuery({
+            queryKey: keys.projectDefaultModel(id),
+            queryFn: () => getProjectDefaultModel(id),
+            staleTime: 0,
+          })
+          .then(
+            (r) => r.choices,
+            () => [] as AgentFieldChoice[]
+          )
         try {
           payload.agents = await queryClient.fetchQuery({ ...agentsQuery(id), staleTime: 0 })
         } catch (e) {
@@ -61,17 +76,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
           else payload.loadError = e instanceof Error ? e.message : t('work.projectSettings.agents.loadFailed')
           return payload
         }
-        // 两个补充数据，谁失败谁空着。
-        const [typeList, modelList] = await Promise.all([
-          listAgentTypes().then(
-            (r) => r.data,
-            () => [] as AgentType[]
-          ),
-          getProjectDefaultModel(id).then(
-            (r) => r.choices,
-            () => [] as AgentFieldChoice[]
-          ),
-        ])
+        const [typeList, modelList] = await Promise.all([typesRead, modelsRead])
         payload.types = typeList
         payload.models = modelList
         return payload

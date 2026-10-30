@@ -11,28 +11,37 @@ function empty(): Record<ProjectRole, string[]> {
   return { admin: [], member: [], mentor: [] }
 }
 
-export function useProjectRoles(projectId: () => string) {
+export function useProjectRoles(projectId: () => string, options: { enabled?: () => boolean } = {}) {
+  const enabled = options.enabled ?? (() => true)
   const grants = ref<Record<ProjectRole, string[]>>(empty())
   const isDefault = ref(true)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let version = 0
 
   async function load() {
     const id = projectId()
+    const current = ++version
     loading.value = true
     error.value = null
     try {
       const got = await getRoleGrants(id)
-      if (id !== projectId()) return
+      if (current !== version || id !== projectId()) return
       grants.value = got.grants
       isDefault.value = !got.changed
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (current === version) error.value = e instanceof Error ? e.message : String(e)
     } finally {
-      loading.value = false
+      if (current === version) loading.value = false
     }
   }
-  watch(projectId, () => void load(), { immediate: true })
+  watch(
+    () => [projectId(), enabled()] as const,
+    ([, on]) => {
+      if (on) void load()
+    },
+    { immediate: true }
+  )
 
   async function toggle(role: ProjectRole, permission: string, granted: boolean) {
     if (isLocked(permission)) return

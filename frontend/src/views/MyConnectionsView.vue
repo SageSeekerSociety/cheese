@@ -19,7 +19,6 @@ import {
   discardMailDraft,
   listMyIntegrations,
   listMyMailDrafts,
-  listProjects,
   sendMailDraft,
   updateIntegration,
 } from '../api'
@@ -30,6 +29,8 @@ import MyConnectionsViewView from './MyConnectionsViewView.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
+import { queryClient } from '@/query/client'
+import { projectsQuery } from '@/query/projects'
 
 const route = useRoute()
 const integrations = ref<Integration[]>([])
@@ -72,29 +73,33 @@ const busy = ref('')
 async function load() {
   loading.value = true
   error.value = ''
+  // 应用配没配与上面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
+  const feishuRead = feishuAvailability().then(
+    (got) => ({ ok: true as const, got }),
+    () => ({ ok: false as const })
+  )
   try {
     const [mine, waiting, projectList] = await Promise.all([
       listMyIntegrations(),
       listMyMailDrafts('drafted'),
-      listProjects(),
+      queryClient.fetchQuery({ ...projectsQuery(), staleTime: 0 }),
     ])
     integrations.value = mine.data
     drafts.value = waiting.data
-    projects.value = projectList.data
+    projects.value = projectList
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('account.connections.loadFailed')
   } finally {
     loading.value = false
   }
-  // 应用配没配是另一件事，单独问、单独失败：问不到不该把整页的连接一起掀掉。
-  try {
-    feishu.value = await feishuAvailability()
+  const feishuRes = await feishuRead
+  if (feishuRes.ok) {
+    feishu.value = feishuRes.got
     feishuKnown.value = true
-  } catch {
+  } else {
     feishuKnown.value = false
-  } finally {
-    feishuAsking.value = false
   }
+  feishuAsking.value = false
 }
 
 function replace(row: Integration) {
