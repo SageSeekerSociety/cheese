@@ -412,17 +412,21 @@ function personName(handle: string): string {
 // 草稿不能就这样悄悄降成讨论发出去：那个人一直看着「交给」那一行在打字。所以记住这份
 // 草稿是在「任务交给队友」时写的（`heldFor`），任务关了之后第一次发，先就地问一句：
 // 「@ 它」还是「仅发布讨论」。草稿、回复对象、附件都原样留着。
+//
+// 记的是**这个人看着的那一行**：草稿非空的每一刻，那一行说「任务里交给队友」就记下。所以
+// 第一个字落下时那一行（空草稿问到的那一次）已经说了交给队友，就从这一刻算起——不等这份
+// 草稿自己的回答；一路打字、它第一次问到时任务已经关了，也照样先问。
 const heldFor = ref<Mate | null>(null)
 const askingRecipient = ref(false)
-watch(addressing, (now) => {
+watch([addressing, () => !!draft.value.trim()], ([now, typed]) => {
+  if (!typed) {
+    heldFor.value = null
+    askingRecipient.value = false
+    return
+  }
   if (!now) return
-  if (now.reason === 'task' && now.agent && draft.value.trim()) heldFor.value = mateOf(now.agent)
+  if (now.reason === 'task' && now.agent) heldFor.value = mateOf(now.agent)
   else if (now.task_status !== 'closed') heldFor.value = null
-})
-watch(draft, (text) => {
-  if (text.trim()) return
-  heldFor.value = null
-  askingRecipient.value = false
 })
 watch(
   () => props.place,
@@ -613,10 +617,10 @@ function sendDraft(opts?: { summon?: boolean; to?: Mate | null }) {
   const content = expandMentions(
     opts?.summon ? withAgentMention(draft.value, opts.to ?? restingMate.value) : draft.value
   )
-  // 这一行此刻说的就是这份草稿时，它说交给谁，发出去就是在说「我要交给它」：送到时不
-  // 交给了，后端不发、退回来（`expects_agent`）。草稿刚改过、还没问到的那一下不带——
-  // 那时候屏幕上那一行说的不是这份草稿。
-  const expectsAgent = !opts?.summon && addressingFresh.value && !!addressing.value?.agent
+  // 那一行此刻写着交给谁，发出去就是在说「我要交给它」：送到时不交给了，后端不发、退回来
+  // （`expects_agent`），由后端按发送那一刻的状态再判一次。带的是屏幕上那一行，不论它是
+  // 不是对这份草稿问到的——刚改了一个字就按发送，那人看着的仍是那一行。
+  const expectsAgent = !opts?.summon && !!addressing.value?.agent
   emit('send', {
     content,
     summon: opts?.summon ? mentionsAgent(content) || summonOn.value : summonOn.value,

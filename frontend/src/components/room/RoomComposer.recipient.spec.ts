@@ -245,6 +245,35 @@ describe('打字时任务关了', () => {
     expect(onSend.mock.calls[0][0].summon).toBe(true)
   })
 
+  it('那一行还写着交给队友时，紧跟着一个字就按发送：发出去的仍是「我要交给队友」', async () => {
+    backend.task = 'open'
+    const { box, line, onSend } = mount({ place: 'task-1', alwaysSummon: true })
+    await fillComposer(box(), '再加一个导出接口')
+    await settle()
+    backend.task = 'closed'
+
+    await fillComposer(box(), '再加一个导出接口，带筛选')
+    await enter(box())
+
+    expect(line()).toBe('任务进行中｜交给：芝士')
+    expect(onSend).toHaveBeenCalledWith({ content: '再加一个导出接口，带筛选', summon: true, expectsAgent: true })
+  })
+
+  it('一直在打字、草稿第一次问到之前任务就关了：第一次发同样先问交给谁', async () => {
+    backend.task = 'open'
+    const { box, line, onSend } = mount({ place: 'task-1', alwaysSummon: true })
+    await settle()
+    expect(line()).toBe('任务进行中｜交给：芝士')
+
+    await fillComposer(box(), '再加一个导出接口')
+    backend.task = 'closed'
+    await settle()
+    await enter(box())
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByText('任务已关闭，这条不会再自动交给芝士')).toBeTruthy()
+  })
+
   it('任务还开着时发出去，说的是「我要交给队友」：送到时不交给了，后端会退回来', async () => {
     backend.task = 'open'
     const { box, onSend } = mount({ place: 'task-1', alwaysSummon: true })
