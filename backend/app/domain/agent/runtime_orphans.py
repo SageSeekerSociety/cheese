@@ -108,6 +108,34 @@ async def _last_progress(
     return newest
 
 
+def _unheld(self, chat_service, record: TurnRecord) -> bool:
+    """Is this delivered turn one no process holds and nothing has pronounced
+    dead? Synchronous on purpose: asked again right before the claim, with no
+    await in between, a session that came back meanwhile is seen."""
+    return (
+        record.delivered
+        and str(record.turn_id) not in self._live
+        and str(record.turn_id) not in self._last_frame_at
+        and chat_service.replaying(record.topic_id) is None
+        and not self._adopted(chat_service, record, set())
+        and death_evidence.unknown_row(chat_service, record)
+    )
+
+
+def _wedged_notice(record: TurnRecord, now: datetime) -> tuple[str, dict]:
+    """The room's line for a turn stopped for producing nothing: the platform
+    does not retry it, a person looks and asks again."""
+    return say("turnWedged", minutes=round(record.age_s(now) / 60)), notice(
+        EVENT_TURN_TIMEOUT,
+        severity=SEVERITY_WARN,
+        # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
+        who=WHO_HUMAN,
+        detail=say("turnWedgedDetail"),
+        detail_label=say("labelDetails"),
+        retryable=True,
+    )
+
+
 async def _silent_unknown_turns(
     self,
     chat_service,
@@ -138,11 +166,7 @@ async def _silent_unknown_turns(
     candidates = {
         tid: record
         for tid, record in open_turns.items()
-        if record.delivered
-        and str(tid) not in self._live
-        and str(tid) not in self._last_frame_at
-        and not self._adopted(chat_service, record, set())
-        and death_evidence.unknown_row(chat_service, record)
+        if _unheld(self, chat_service, record)
     }
     if not candidates:
         return set()
@@ -166,6 +190,36 @@ async def _silent_unknown_turns(
                 round(quiet_s),
             )
     return silent
+
+
+async def _close_silent(
+    self, chat_service, records: dict[uuid.UUID, TurnRecord], now: datetime
+) -> dict[uuid.UUID, TurnRecord]:
+    """Close these silent turns with their room's line, and publish the lines.
+    Returns the turns this sweep claimed."""
+    if not records:
+        return {}
+    try:
+        said = await turn_inputs.close_silent_turns(
+            chat_service.session_factory,
+            records,
+            lambda record: _wedged_notice(record, now),
+        )
+    except Exception:  # nothing committed: the next sweep finds them open
+        logger.exception("closing silent turns failed")
+        return {}
+    for turn_id, block in said.items():
+        logger.info("orphan turn %s closed as silent; no auto-retry", turn_id)
+        if block is None:
+            continue
+        topic_id = records[turn_id].topic_id
+        try:
+            await self._broker.publish(
+                str(topic_id), {"type": "event_block", "block": block}
+            )
+        except Exception:  # the line is stored; a reload shows it
+            logger.exception("publishing the silent-turn line failed for %s", topic_id)
+    return {turn_id: records[turn_id] for turn_id in said}
 
 
 def _cancel_wedged(self, turn_id: str, topic_id: uuid.UUID) -> None:
@@ -306,21 +360,31 @@ async def sweep_orphans(
         if last_activity is not None
         else set()
     )
-    wedged |= silent
+    # A session can come back while the probes above await. Ask again, with
+    # no await between this and the claim, and close with the room's line in
+    # the same transaction, so a closed silent turn is never left unannounced.
+    silenced = await _close_silent(
+        self,
+        chat_service,
+        {
+            tid: old_enough[tid]
+            for tid in silent
+            if _unheld(self, chat_service, old_enough[tid])
+        },
+        now,
+    )
     # A row the process cannot judge is not a dead row (FB-56 legacy③): it
     # stays open (`death_evidence.unknown_row`), unless no process holds it
     # and it has been silent past the horizon (`_silent_unknown_turns`).
     orphans = {
         tid: record
         for tid, record in old_enough.items()
-        if tid in silent
-        or (
-            (str(tid) not in self._live or tid in wedged)
-            and not self._adopted(chat_service, record, wedged)
-            and not death_evidence.unknown_row(chat_service, record)
-        )
+        if tid not in silent
+        and (str(tid) not in self._live or tid in wedged)
+        and not self._adopted(chat_service, record, wedged)
+        and not death_evidence.unknown_row(chat_service, record)
     }
-    if not orphans:
+    if not orphans and not silenced:
         return 0
 
     # Claim them by closing their intervals: a turn this sweep is deciding
@@ -332,7 +396,7 @@ async def sweep_orphans(
     # Startup and an overdue periodic tick can see the same open intervals.
     # Only the sweep whose UPDATE closed a turn may arrange its recovery.
     orphans = {tid: record for tid, record in orphans.items() if tid in claimed}
-    for turn_id in orphans:
+    for turn_id in [*orphans, *silenced]:
         # A turn with a coroutine gets its marks dropped by that coroutine's
         # own `finally`; one without (a self-started turn, or anything left
         # by a dead process generation) has nobody to do it, and a stale
@@ -344,7 +408,8 @@ async def sweep_orphans(
     # Cancel to release the topic lock, tell the room once, and stop —
     # re-running only re-enters the machine that just died, so a person
     # picks it up and re-@s 芝士 when the environment is back.
-    wedged_topics: set[uuid.UUID] = set()
+    # A topic whose silent turn was already announced gets no second line.
+    wedged_topics: set[uuid.UUID] = {record.topic_id for record in silenced.values()}
     for turn_id, record in orphans.items():
         if turn_id not in wedged:
             continue
@@ -359,22 +424,15 @@ async def sweep_orphans(
         if topic_id in wedged_topics:
             continue
         wedged_topics.add(topic_id)
+        text, meta = _wedged_notice(record, now)
         await self._post_orphan_event(
             chat_service,
             topic_id,
-            say("turnWedged", minutes=round(age_s / 60)),
+            text,
             # The turn this notice is about, so the run-record page can answer
             # "did this turn fail" from the event alone (turns.py).
             turn_id=turn_id,
-            meta=notice(
-                EVENT_TURN_TIMEOUT,
-                severity=SEVERITY_WARN,
-                # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
-                who=WHO_HUMAN,
-                detail=say("turnWedgedDetail"),
-                detail_label=say("labelDetails"),
-                retryable=True,
-            ),
+            meta=meta,
         )
         logger.info(
             "orphan turn %s cancelled as wedged (age=%ss); no auto-retry",
@@ -402,9 +460,9 @@ async def sweep_orphans(
     # 轮次也算进来：机器死在它手上，它正是那些悬着的调用的来源。
     by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
     since: dict[uuid.UUID, datetime] = {}
-    for turn_id, record in orphans.items():
+    for turn_id, record in [*orphans.items(), *silenced.items()]:
         entries = by_topic.setdefault(record.topic_id, [])
-        if turn_id not in wedged:
+        if turn_id not in wedged and turn_id not in silenced:
             entries.append(record)
         earliest = since.get(record.topic_id)
         if earliest is None or record.started_at < earliest:
