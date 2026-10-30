@@ -239,16 +239,18 @@ async def test_an_own_agent_whose_environment_is_its_owners_machine_works_there(
     assert response.json()["data"]["target"]["device_id"] == own.bobs_laptop
 
 
-async def test_an_own_agent_on_its_owners_machine_carries_nobodys_private_memory(
+async def test_an_own_agent_on_its_owners_machine_carries_only_its_owners_private_memory_in_their_chat(
     client,
 ):
-    """Bob's own Claude Code runs its session on Bob's laptop, where one account
-    runs everything, its commands may run unconfined, and Bob reads the disk.
-    A turn of it answering alice carries none of alice's private memory; the
-    room's own agent, on the platform's session host, carries hers."""
+    """Bob's own Claude Code runs its session on Bob's laptop, which is Bob's:
+    whatever is laid there, Bob reads. A turn of it carries Bob's private
+    memory in Bob's own chat with it, where every turn is Bob's; it carries
+    nobody's in a shared room, where the same session goes on to answer other
+    people on that laptop, and never anybody else's. The room's own agent,
+    on the platform's session host, carries whoever its turn answers."""
     own = await _own_session(client, environment_on="bob")
 
-    async def whose() -> tuple[str | None, str | None]:
+    async def given(speaker: str, chat_of: str | None) -> tuple[str | None, str | None]:
         async with client.test_request_factory() as db:
             instances = (
                 await db.execute(
@@ -259,17 +261,19 @@ async def test_an_own_agent_on_its_owners_machine_carries_nobodys_private_memory
             ).scalars()
             mine = room = None
             for instance in instances:
-                given = await private_memory_for(db, instance.id, "alice")
+                carried = await private_memory_for(
+                    db, instance.id, speaker, private_owner=chat_of
+                )
                 if instance.handle == own.handle:
-                    mine = given
+                    mine = carried
                 else:
-                    room = given
+                    room = carried
             return mine, room
 
-    mine, room = client.portal.call(whose)
-
-    assert mine is None
-    assert room == "alice"
+    assert client.portal.call(given, "bob", "bob") == ("bob", "bob")
+    assert client.portal.call(given, "bob", None) == (None, "bob")
+    assert client.portal.call(given, "alice", "alice") == (None, "alice")
+    assert client.portal.call(given, "alice", None) == (None, "alice")
 
 
 async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):

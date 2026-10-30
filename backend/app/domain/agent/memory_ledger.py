@@ -109,6 +109,9 @@ class _Turn:
     acting: str
     #: 这一轮那一位（`turn_speaker`）；None 时这一轮只有 team。
     speaker: str | None
+    #: 这一轮的注入里有没有那一位的 private 索引在哪
+    #: （`instructions.private_index_pointer`）：有，这一轮就该先读它。
+    pointed: bool = False
 
 
 class MemoryLedger:
@@ -141,6 +144,7 @@ class MemoryLedger:
         *,
         acting: str,
         speaker: str | None,
+        pointed: bool = False,
     ) -> None:
         """记下一个座位（对话, agent）这一轮的记忆账：署谁的名、算谁的 private。
 
@@ -149,7 +153,7 @@ class MemoryLedger:
         读过的那一位，所以「注入里看得见的」和「铺到会话目录里的」是同一份。
         """
         self._turns.pop(seat, None)
-        self._turns[seat] = _Turn(room_id, acting, speaker)
+        self._turns[seat] = _Turn(room_id, acting, speaker, pointed)
         while len(self._turns) > MEMORY_TURNS_KEPT:
             del self._turns[next(iter(self._turns))]
 
@@ -229,6 +233,20 @@ class MemoryLedger:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
             return
+        if (
+            turn is not None
+            and turn.pointed
+            and answer.get("worked")
+            and turn.speaker not in (answer.get("indexes_read") or ())
+        ):
+            # 这一轮替他干了活，却没读他的 private 索引（规矩说每一轮先读，
+            # `instructions.MEMORY_INSTRUCTIONS`）。记一行，好在生产上数跳过了多少。
+            logger.info(
+                "memory_private_index_unread room=%s agent=%s speaker=%s",
+                topic_id,
+                session.agent_handle,
+                turn.speaker,
+            )
         async with self._sessions() as db:
             change = await apply_tree(
                 db,

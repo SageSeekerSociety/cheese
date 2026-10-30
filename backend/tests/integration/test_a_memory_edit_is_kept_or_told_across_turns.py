@@ -26,7 +26,7 @@ from app.domain.agent.run_records import for_site
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
@@ -610,3 +610,51 @@ async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for
         await _records(factory, room), ensure_ascii=False
     )
     assert "alice-unique-edit-4985" not in told_room
+
+
+async def test_a_turn_that_worked_for_someone_without_reading_their_index_is_counted(
+    business_db_factory, tmp_path, monkeypatch, caplog
+):
+    """A turn that answers alice is told where her private index is, and the
+    rule is to read it before anything else. One line is logged for each turn
+    that worked for her and did not, so skips can be counted in production;
+    a turn that read it logs nothing."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id)
+    sessions = _Session(tmp_path)
+    sessions.runner = Runner(tmp_path / "state")
+    sessions.runner.session_id = "session-alice"
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice", pointed=True
+    )
+    await ledger.sync(seat)
+
+    def work(*blocks: dict) -> None:
+        for record in (
+            {"type": "assistant", "message": {"content": list(blocks)}},
+            {"type": "result", "result": "done"},
+        ):
+            sessions.runner.observe(
+                {**record, "session_id": "session-alice", "uuid": str(uuid.uuid4())}
+            )
+
+    caplog.set_level("INFO", logger="app.domain.agent.memory_ledger")
+    work(
+        {
+            "type": "tool_use",
+            "id": "read-index",
+            "name": "Read",
+            "input": {"file_path": prompt_path(f"private/alice/{INDEX_NAME}")},
+        }
+    )
+    await ledger.sync(seat)
+    assert "memory_private_index_unread" not in caplog.text
+
+    work({"type": "text", "text": "直接回答了"})
+    await ledger.sync(seat)
+    assert "memory_private_index_unread" in caplog.text
+    assert "speaker=alice" in caplog.text

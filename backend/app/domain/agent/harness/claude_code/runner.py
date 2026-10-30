@@ -602,6 +602,11 @@ class Runner(runner.Runner[Journal]):
         # The calls on someone's private memory file still waiting for their
         # result: call id → owner (``_private_calls``).
         self.private_calls: dict[str, str] = {}
+        # Since the platform last reconciled this tree (`sync_memory`): whether
+        # the session worked, and whose private index it read. The platform
+        # counts the turns that worked for someone without reading theirs.
+        self.worked_since_sync = False
+        self.indexes_read: set[str] = set()
         # Tool calls made on the main thread; an agent started by one of them
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
@@ -1184,6 +1189,11 @@ class Runner(runner.Runner[Journal]):
                 if owner is not None:
                     self.private_calls[str(block.get("id"))] = owner
                     marked[str(block.get("id"))] = owner
+                    path = arguments.get("file_path") or ""
+                    if block.get("name") == "Read" and str(path).endswith(
+                        f"/{INDEX_NAME}"
+                    ):
+                        self.indexes_read.add(owner)
             elif block.get("type") == "tool_result":
                 call = str(block.get("tool_use_id"))
                 if (owner := self.private_calls.pop(call, None)) is not None:
@@ -1390,6 +1400,8 @@ class Runner(runner.Runner[Journal]):
         """The session starts working, on the input that woke it (None: no
         input of ours)."""
         how, work = sent or ("", None)
+        if how != "internal":
+            self.worked_since_sync = True
         if how == "send":
             self.working, self.work, self.unsolicited = True, work, False
         elif how == "internal":
@@ -1660,7 +1672,22 @@ class Runner(runner.Runner[Journal]):
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
             "withdrawn": self._handed(root),
+            "worked": self._worked(),
+            "indexes_read": self._indexes_read(),
         }
+
+    def _worked(self) -> bool:
+        """Whether the session worked since the platform last asked; asking
+        starts the count again. A runner built without a session has none."""
+        worked = getattr(self, "worked_since_sync", False)
+        self.worked_since_sync = False
+        return worked
+
+    def _indexes_read(self) -> list[str]:
+        """Whose private index the session Read since the platform last asked."""
+        read = sorted(getattr(self, "indexes_read", set()))
+        self.indexes_read = set()
+        return read
 
     def _hand_over(
         self,

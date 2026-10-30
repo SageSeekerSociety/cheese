@@ -218,7 +218,9 @@ async def prepare(
                 task.owner_handle if task is not None and place.thread is None else None
             ),
         )
-        private_for = await private_memory_for(session, agent.instance_id, speaker)
+        private_for = await private_memory_for(
+            session, agent.instance_id, speaker, private_owner=private_owner
+        )
         memory = await memory_index(
             session,
             topic.project_id,
@@ -230,6 +232,7 @@ async def prepare(
             (place.conversation_id, agent.handle),
             acting=acting_agent,
             speaker=private_for,
+            pointed=any(section.prefix != "team" for section in memory.sections),
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)

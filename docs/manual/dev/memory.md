@@ -87,7 +87,9 @@ steps:
 
 注入的规矩：**`team/MEMORY.md` 的索引，加上这一轮那一位的 `private/<handle>/MEMORY.md` 在哪**，一轮只有一位（`files_store.memory_index`，`turn_speakers.turn_speaker`，只认 `names_a_person()` 认的人）。那一位按这个先后认：这一轮窗口里最后一位说话的人；没有人说话时，这一轮替谁在做事的那一位（周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人）；私聊里是那个人。多人的房间里别人的 private 不进这一轮：这一轮的 agent 说的话、做的事房间里的人都看得到。这一位的 private 索引也不注入正文，只注入它的路径和「先读它」（`instructions.private_index_pointer`）：注入是会话的输入，原样记进会话记录，房间里的人都读得到；由 agent 自己 Read，那一次调用就能按结构认出是谁的（见下一段）。代价是每一轮多一次 Read，agent 也可能不读。
 
-**在成员自己电脑上跑的会话不带任何人的 private**（`turn_speakers.private_memory_for`）：成员自己的 Claude Code 连接在他电脑上时，会话跑在那台电脑上（`owner_provider`），一个系统账号跑所有东西，执行环境可以就在那台机器上、不进沙箱，机器的主人读得到磁盘，平台在那里挡不住一个人的 private 被另一个人那一轮读到。所以那样的一轮只有 team：不注入 private 的路径，也不铺 private 的树。其余会话都跑在平台的会话主机上。
+**在成员自己电脑上跑的会话，只在他和自己的芝士的私聊里带他自己的 private**（`turn_speakers.private_memory_for`）：成员自己的 Claude Code 连接在他电脑上时，会话跑在那台电脑上（`owner_provider`），铺在那里的东西电脑的主人都读得到，所以别人的 private 一律不铺。他自己的那一份只在他的私聊里带：那里的每一轮都是他的；在多人的房间里，同一个会话接着会替别人干活，房间在那台电脑上的对话记录、会话自己的执行环境都够得着它为他读过的东西，所以那里只带 team。其余会话都跑在平台的会话主机上。
+
+规矩（`instructions.MEMORY_INSTRUCTIONS`）要求每一轮只要答的是某个人、平台给过他的 private 索引在哪，开工前先 Read 它，同一个人连着几轮也每轮都读。没读的那一轮记一行日志 `memory_private_index_unread`（`MemoryLedger.sync_once`：runner 每次对账报上自上次以来有没有干活、读过谁的索引），用来数生产上跳过了多少。
 
 会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。哪一段是谁的，只按平台自己记下的结构认，从不按记录里的文字认：文字谁都写得进去（team 的索引、消息、项目里的文件），一段说自己属于某人的文字什么都证明不了。会话碰到某人的 private 只有一条路：它的文件工具读写 `private/<handle>/` 下的文件；runner 看到这一次调用时就给调用和答它的结果记上主人（`cheese.private`，调用编号 → 主人，`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，把记着别人名字的调用和结果换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。现场还实时显示 agent 正在写的那个工具调用，参数一边流进来一边显示，这一帧发给房间里所有人：runner 用同一个判据认出落在某人 private 上的调用，参数换成存下的记录里那同一个占位（`privacy.hidden_input`），文件工具的路径还没写出来之前参数一个字都不显示（`runner.live_arguments`）；这一帧是广播，所以本人实时看到的也是占位，写完之后在会话记录里看原文。
 

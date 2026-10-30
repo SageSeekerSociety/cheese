@@ -25,8 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.own import owned_instance
 from app.domain.block.models import Block
 from app.domain.delivery.models import Delivery
+from app.domain.device.models import DeviceRow
 from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
+from app.domain.user.services import user_by_handle
 
 
 async def turn_speaker(
@@ -86,18 +88,36 @@ async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -
 
 
 async def private_memory_for(
-    session: AsyncSession, instance_id: uuid.UUID, speaker: str | None
+    session: AsyncSession,
+    instance_id: uuid.UUID,
+    speaker: str | None,
+    *,
+    private_owner: str | None,
 ) -> str | None:
     """Whose private memory this agent's turn may carry: ``speaker``'s, unless
-    the agent's session runs on a person's machine.
+    the agent's session runs on a person's machine and that is unsafe for it.
 
     A member's own agent whose model connection is on their machine runs its
     session there (`owner_provider`). That machine is a person's: one account
-    runs everything on it, a command the session runs may run on it with no
-    sandbox, and its owner reads its disk. Nothing there can keep one person's
-    private memory from another person's turn, so such an agent carries none,
-    neither the pointer to the index nor the tree, and the shared memory only.
+    runs everything on it, and its owner reads its disk. Laying somebody's
+    private memory there hands it to the machine's owner, so nobody's is,
+    with one exception: the machine's owner's own, in their private chat with
+    the agent (``private_owner`` is the person in a private chat). There the
+    owner reads nothing on their disk they could not read anyway, and every
+    turn of that conversation is theirs. In a shared room the same session
+    goes on to answer other people, and the room's transcripts and the
+    session's own execution environment on that machine reach what it read for
+    its owner, so a shared room carries the shared memory only.
+
     Every other session runs on the platform's session host, kept to its own
     seat (`remote_execution/namespace._keep_only`)."""
     owned = await owned_instance(session, instance_id)
-    return speaker if owned is None or owned.on_account else None
+    if owned is None or owned.on_account:
+        return speaker
+    if speaker is None or speaker != private_owner or owned.device_id is None:
+        return None
+    machine = await session.get(DeviceRow, owned.device_id)
+    person = await user_by_handle(session, speaker)
+    if machine is None or person is None or machine.owner_user_id != person.id:
+        return None
+    return speaker
