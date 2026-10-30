@@ -74,20 +74,38 @@ _TURNS = table(
 )
 
 
-def work_interval_is_over():
-    """Whether this input's own work interval is one the platform ended.
+def work_interval_is_over(before: datetime | None = None):
+    """Whether this input's own work interval is one the platform ended — at or
+    before ``before``, when given.
 
     A correlated EXISTS over the turn intervals, anchored on the input row that
     names its work (``work_id``/``conversation_id``). A work the platform has no
     row for is NOT over — silence is not a conclusion. As a clause rather than a
     second question so the caller's query stays one query.
     """
+    ended = (
+        _TURNS.c.stopped_at.is_not(None)
+        if before is None
+        else _TURNS.c.stopped_at <= before
+    )
     return (
         select(_TURNS.c.id)
         .where(
             _TURNS.c.id == NativeInput.work_id,
             _TURNS.c.conversation_id == NativeInput.conversation_id,
-            _TURNS.c.stopped_at.is_not(None),
+            ended,
+        )
+        .exists()
+    )
+
+
+def work_has_interval():
+    """Whether the platform has a turn interval for this input's work at all."""
+    return (
+        select(_TURNS.c.id)
+        .where(
+            _TURNS.c.id == NativeInput.work_id,
+            _TURNS.c.conversation_id == NativeInput.conversation_id,
         )
         .exists()
     )

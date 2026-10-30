@@ -1,8 +1,11 @@
 """Which registered inputs still hold their seat, and which no longer can."""
 
-from sqlalchemy import and_, select
+from datetime import UTC, datetime, timedelta
 
-from app.domain.delivery.agent import work_interval_is_over
+from sqlalchemy import and_, or_, select
+
+from app.core.config import settings
+from app.domain.delivery.agent import work_has_interval, work_interval_is_over
 from app.domain.delivery.models import NativeInput
 
 
@@ -13,17 +16,35 @@ def unread_input_with_over_work():
     same work): a turn that existed only to deliver this batch, ended by the
     platform with the batch never read, has nothing left to wait for — keeping
     its hold would swallow a person's message, which is the one thing #416 does
-    not allow. A batch that was an addition to another work (a mid-turn
-    delivery) is different: a transport error does not prove the working
-    session did not read it, so its outcome stays unknown and it keeps holding
-    and blocking the seat. Whether that work is over is the turn interval's
-    fact (:func:`app.domain.delivery.agent.work_interval_is_over`) — a work the
-    platform has no row for is not over, silence is not a conclusion.
+    not allow.
+
+    A batch that was an addition to another work (a mid-turn delivery) is
+    different at first: a transport error does not prove the working session
+    did not read it, and a session may still pick up what it was given as its
+    work ends, so for a while its outcome is unknown and it keeps holding the
+    seat. That while has an end. Once its work has been over for
+    ``turn_silence_timeout_s`` — as long as a working turn may produce nothing
+    at all — a read would long since have been reported, and nothing will
+    settle it any more: a machine released under it (before #4783 ended those
+    inputs at the release) left one holding a task's seat from 2026-10-23,
+    while every later message to that teammate waited behind it. The same
+    bound applies to an input whose work the platform never recorded an
+    interval for: right after registering, its interval may still be on its
+    way; long after, it never will be.
+
+    Whether a work is over is the turn interval's fact
+    (:func:`app.domain.delivery.agent.work_interval_is_over`). An input that no
+    longer holds also stops hiding its batch (``receipts.held_blocks``), so
+    the next prompt carries what it held.
     """
+    settled_by = datetime.now(UTC) - timedelta(seconds=settings.turn_silence_timeout_s)
     return and_(
         NativeInput.echoed_at.is_(None),
-        NativeInput.input_id == NativeInput.work_id,
-        work_interval_is_over(),
+        or_(
+            and_(NativeInput.input_id == NativeInput.work_id, work_interval_is_over()),
+            work_interval_is_over(before=settled_by),
+            and_(NativeInput.registered_at <= settled_by, ~work_has_interval()),
+        ),
     )
 
 
@@ -36,8 +57,8 @@ async def seat_has_unfinished_input(session, topic_id, recipient_handle):
     nothing — it is delivered, and a session that is working takes whatever it
     is given next at its next tool boundary. One given up on (its work dead,
     ``terminated_at``) holds the seat no longer either, though its batch stays
-    held. Nor does an unread batch whose own work the platform already ended
-    (:func:`unread_input_with_over_work`).
+    held. Nor does an unread input past the point its outcome could still be
+    reported (:func:`unread_input_with_over_work`).
     """
     return (topic_id, recipient_handle) in await seats_with_unfinished_input(
         session, [(topic_id, recipient_handle)]

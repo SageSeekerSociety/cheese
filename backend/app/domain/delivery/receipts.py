@@ -193,8 +193,8 @@ async def held_blocks(
     input given up on with its fate unknown keeps holding its batch, so nothing
     the session may have read is offered again.
 
-    One row is not a hold: an input nobody ever read whose work the platform has
-    already ended (:func:`unread_input_with_over_work`). Nothing can settle its
+    One row is not a hold: an input nobody ever read whose outcome can no longer
+    be reported (:func:`unread_input_with_over_work`). Nothing can settle its
     outcome, so continuing to hide its batch is what would lose it — the next
     prompt has to be able to carry it again (#416).
     """
