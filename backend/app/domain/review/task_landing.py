@@ -201,7 +201,9 @@ async def _go_on_if_asked(
         task = await session.scalar(
             select(Task)
             .where(Task.id == task_id, Task.closing_since.is_not(None))
-            .with_for_update(skip_locked=True)
+            # FOR NO KEY UPDATE, after its numbering: the task lock order
+            # (`room_task.lock_order`).
+            .with_for_update(skip_locked=True, key_share=True)
         )
         if task is None:
             return False

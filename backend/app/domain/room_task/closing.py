@@ -54,11 +54,11 @@ from app.core.db import after_own_commit
 from app.core.sentences import say
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import CONSUMED_TURN_META_KEY, Block, BlockKind
-from app.domain.block.output_effects import hold_numbering
 from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task import heard
 from app.domain.room_task.checkouts import after_close
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.room_task.services import said_title
@@ -408,13 +408,12 @@ async def close_after_summary(
     or asked for in it (`unfinished`, module docstring). Returns the task it
     closed; the pages showing it hear from `room_task.live`. ``machines`` is
     `close_task`'s."""
-    task = await session.get(Task, task_id, with_for_update=True)
+    # Under the task lock order (`lock_order`): a message being sent in the
+    # task holds its conversation's numbering until it commits, so it is seen
+    # waiting below rather than stopped by the close.
+    task = await lock_task_for_change(session, task_id)
     if task is None or task.closing_since is None:
         return None
-    # A message sent in the task now holds its conversation's numbering until
-    # it commits (`agent.turn.store.human`): wait for it before asking what is
-    # left, so it is seen waiting rather than stopped by the close.
-    await hold_numbering(session, task.id)
     if await unfinished(session, task.id):
         return None
     await heard.inform(session, task, heard.task_closed_unasked())
@@ -449,13 +448,13 @@ async def close_overdue(
         )
     )
     closed = []
-    for task_id in overdue:
-        task = await session.get(Task, task_id, with_for_update=True)
-        if task is None or task.closing_since is None:
-            continue
+    # Id order: the order `lock_order` takes several tasks' numbering in.
+    for task_id in sorted(overdue, key=str):
         # As `close_after_summary`: a message being sent in it is seen, not
         # stopped.
-        await hold_numbering(session, task.id)
+        task = await lock_task_for_change(session, task_id)
+        if task is None or task.closing_since is None:
+            continue
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue

@@ -6,10 +6,12 @@ refs before the caller serializes and commits it.
 """
 
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -81,15 +83,38 @@ async def consume_prompt(
 #: `block_numbered()` trigger takes on each new block (alembic `0dd66b328211`).
 NUMBERING_LOCK = 1_734_632_801
 
+#: `Session.info` key: the conversations whose numbering this transaction holds.
+NUMBERING_HELD = "numbering_held"
+
+_TAKE_NUMBERING = text(
+    "SELECT pg_advisory_xact_lock(:key, hashtext(CAST(:conversation AS text)))"
+)
+
+
+def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> None:
+    """Take these conversations' numbering locks on ``session``'s connection,
+    in id order, the ones this transaction does not hold yet; held until it
+    ends. Synchronous, for code already inside a flush or a statement's
+    execution (`room_task.lock_order`)."""
+    held: set[uuid.UUID] = session.info.setdefault(NUMBERING_HELD, set())
+    for conversation in sorted(set(conversations) - held, key=str):
+        session.connection().execute(
+            _TAKE_NUMBERING,
+            {"key": NUMBERING_LOCK, "conversation": str(conversation)},
+        )
+        held.add(conversation)
+
 
 async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> None:
     """Take ``conversation_id``'s numbering lock now, ahead of the first block
     this transaction writes there; held until it ends. The trigger takes the
     same lock again on each block, which a transaction already holding it
     passes straight through."""
-    await session.execute(
-        text(
-            "SELECT pg_advisory_xact_lock(:key, hashtext(CAST(:conversation AS text)))"
-        ),
-        {"key": NUMBERING_LOCK, "conversation": str(conversation_id)},
-    )
+    await session.run_sync(hold_numbering_now, [conversation_id])
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _numbering_released(session: Session, _transaction) -> None:
+    # A savepoint rolled back releases the locks taken inside it; forgetting on
+    # every end, savepoints included, only costs taking one again.
+    session.info.pop(NUMBERING_HELD, None)
