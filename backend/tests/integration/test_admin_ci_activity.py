@@ -14,8 +14,6 @@ Each rule here is one a person reading the page could state:
 * A run that passed only on a re-run is counted as fail-then-pass.
 * A day with nothing to measure has no median, not a median of 0.
 * The jobs and steps tables can be narrowed to one runner.
-* The page shows what the last finished sweep recorded: rows a sweep is still
-  writing appear once that sweep's record lands.
 """
 
 import asyncio
@@ -26,7 +24,6 @@ import pytest
 
 from app.core.config import settings
 from app.domain.ci_activity.models import (
-    CiActivitySweep,
     CiJob,
     CiJobStep,
     CiMergedPullRequest,
@@ -500,28 +497,3 @@ def test_same_job_name_in_different_workflows_stays_separate(client, as_admin):
     assert [
         (s["name"], s["duration_s"]["n"], s["duration_s"]["p50"]) for s in steps
     ] == [("Check", 1, 10)]
-
-
-def _sweep(at: datetime) -> CiActivitySweep:
-    return CiActivitySweep(repo=REPO, started_at=at, finished_at=at, report={})
-
-
-def test_the_page_shows_what_the_last_finished_sweep_recorded(client, as_admin):
-    seed_user(client, ADMIN)
-    run = _run()
-    _seed(client, [run, _job(run, wait_s=100), _sweep(T0)])
-
-    def waits() -> int:
-        board = _board(client)["headline"]["runner_wait_seconds"]["all"]["n"]
-        jobs = client.get(
-            "/admin/ci-activity/jobs?days=1", headers=session_auth_headers(ADMIN)
-        ).json()["data"]["jobs"]
-        assert sum(j["jobs"] for j in jobs) == board
-        return board
-
-    assert waits() == 1
-    # A sweep part-way through has committed a job but not its own record.
-    _seed(client, [_job(run, wait_s=300)])
-    assert waits() == 1
-    _seed(client, [_sweep(T0 + timedelta(minutes=5))])
-    assert waits() == 2

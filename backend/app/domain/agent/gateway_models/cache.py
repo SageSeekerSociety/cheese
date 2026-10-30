@@ -37,9 +37,7 @@ def reset_cache() -> None:
     _cache.clear()
 
 
-async def _cached(
-    key: str, loader: Callable[[], Awaitable[Any]], ttl: float = _TTL_SECONDS
-) -> Any:
+async def _cached(key: str, loader: Callable[[], Awaitable[Any]]) -> Any:
     """读网关答案的缓存，过期就重问。loader 抛异常时什么都不缓存 —— 一次失败不
     应该被记成 15 秒的「答案」。
 
@@ -47,7 +45,7 @@ async def _cached(
     答案，丢弃写回；仍照常返回给本次调用者 —— 我们手里没有比它更新的答案。
     """
     hit = _cache.get(key)
-    if hit is not None and time.monotonic() - hit[0] < ttl:
+    if hit is not None and time.monotonic() - hit[0] < _TTL_SECONDS:
         return hit[1]
     generation = _cache_generation
     value = await loader()

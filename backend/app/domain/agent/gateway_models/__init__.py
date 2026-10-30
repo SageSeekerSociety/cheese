@@ -65,7 +65,7 @@ acyclic``）把 ``app.domain`` 的孩子和它们各自的孩子都算作兄弟�
 """
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import date, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,7 +79,7 @@ from app.domain.agent.gateway_admin import (
     GatewayAdmin,
     GatewayAdminError,  # noqa: F401
     GatewayUnreachable,  # noqa: F401
-    ModelUsage,  # noqa: F401
+    ModelUsage,
     UsageWindow,
 )
 from app.domain.agent.gateway_models import (
@@ -216,11 +216,15 @@ class GatewayModelsService:
     async def _keys_raw(self) -> list[AdminKey]:
         return await answers._keys_raw(self)
 
-    async def _usage_window(self, start: date, end: date) -> UsageWindow:
-        return await answers._usage_window(self, start, end)
+    async def _usage_window(
+        self, start: date, end: date, *, upstream: str | None = None
+    ) -> UsageWindow:
+        return await answers._usage_window(self, start, end, upstream=upstream)
 
-    async def _ledger_window(self, start: date, end: date) -> UsageWindow:
-        return await answers._ledger_window(self, start, end)
+    async def _cap_spend(
+        self, models: list[AdminModel], end: date
+    ) -> dict[str, ModelUsage]:
+        return await answers._cap_spend(self, models, end)
 
     async def _require_models(self) -> list[AdminModel]:
         return await answers._require_models(self)
@@ -426,6 +430,9 @@ class GatewayModelsService:
     # 拼装
     # ------------------------------------------------------------------
     def _item(
-        self, model: AdminModel, usage: UsageWindow, ledger: UsageWindow | None = None
+        self,
+        model: AdminModel,
+        usage: UsageWindow,
+        ledger: Mapping[str, ModelUsage] | None = None,
     ) -> dict:
         return _shared._item(model, usage, ledger)

@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -56,6 +56,7 @@ from app.domain.ci_activity.models import (
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
+from app.domain.ci_activity.store import sweep_lock
 from app.domain.day_windows import utc_day_window
 
 REQUIRED_CI_PATH = ".github/workflows/required-ci.yml"
@@ -132,12 +133,15 @@ class Window:
 
 
 #: Every figure on the page is read from the tables the sweep fills, and only the
-#: sweep writes them (`store.py`), closing each pass with its `ci_activity_sweeps`
-#: row. An answer therefore stays right until the next sweep row lands or the UTC
-#: day turns, so a worker computes each one once per sweep rather than on every
+#: sweep writes them (`store.py`), under its sweep lock from its first write until
+#: its `ci_activity_sweeps` row has landed. Between sweeps the tables do not
+#: change, so an answer stays right until the next sweep row lands or the UTC day
+#: turns, and a worker computes each one once per sweep rather than on every
 #: open: a board over a week's ~25k jobs is two seconds of this worker's event
-#: loop, which every other request on the worker waits out. With no sweep
-#: recorded nothing marks the tables as settled, so nothing is kept.
+#: loop, which every other request on the worker waits out. While a sweep is
+#: writing, or before any sweep is recorded, every answer is computed from the
+#: tables as they stand and none is kept, so no two answers mix a kept state with
+#: a newer one.
 _per_sweep: dict[str, Any] = {"key": None, "answers": {}}
 
 
@@ -147,7 +151,15 @@ async def once_per_sweep(
     question: tuple,
     compute: Callable[[], Awaitable[Any]],
 ) -> Any:
-    """``compute()``'s answer to ``question``, computed once per finished sweep."""
+    """``compute()``'s answer to ``question``, computed once per finished sweep.
+
+    The sweep lock is held shared until ``session``'s transaction ends, so no
+    sweep starts writing while an answer is being computed for keeping."""
+    settled = await session.scalar(
+        select(func.pg_try_advisory_xact_lock_shared(sweep_lock(repo)))
+    )
+    if not settled:
+        return await compute()
     sweep = await session.scalar(
         select(CiActivitySweep.id)
         .where(CiActivitySweep.repo == repo)

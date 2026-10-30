@@ -19,11 +19,15 @@ Rules pinned here, each one a person could state without the code:
 * While the installation's quota is down to the share kept for people, the
   sweep makes no GitHub call and says why.
 * A quota refusal mid-sweep keeps what was already stored and says why.
+* The page never shows a figure kept from before a sweep beside one that sweep
+  has already changed: while a sweep is writing, the board and the jobs table
+  agree with the tables as they stand, and after it they agree again.
 
 GitHub is a fake `CiSource`; the credential lookup is real down to the App's
 token, which is a fake with a quota the test sets.
 """
 
+import asyncio
 import hashlib
 import json
 import time
@@ -38,6 +42,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import forge_etags, forge_quota
+from app.core.config import settings
 from app.domain.ci_activity import board, ingest
 from app.domain.ci_activity.github import (
     CiGitHubError,
@@ -57,7 +62,8 @@ from app.domain.ci_activity.models import (
 from app.domain.ci_activity.store import CiActivityStore
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectGitInstallation
-from tests.integration.conftest import a_team
+from tests.conftest import seed_user
+from tests.integration.conftest import a_team, session_auth_headers
 
 REPO = "owner/ci-activity-test"
 NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -1004,3 +1010,67 @@ def test_a_truncated_window_does_not_claim_complete_coverage(
         assert await _count(db_session, CiWorkflowRun) == 0
 
     _portal.call(run)
+
+
+def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
+    client, tokens, monkeypatch: pytest.MonkeyPatch
+):
+    admin = "ci-sweep-admin"
+    monkeypatch.setattr(settings, "platform_admin_handles", [admin])
+    monkeypatch.setattr(settings, "platform_repository", REPO)
+    seed_user(client, admin)
+
+    def board_jobs() -> int:
+        board = client.get(
+            "/admin/ci-activity?days=7", headers=session_auth_headers(admin)
+        ).json()["data"]
+        return board["headline"]["runner_wait_seconds"]["all"]["n"]
+
+    def table_jobs() -> int:
+        jobs = client.get(
+            "/admin/ci-activity/jobs?days=7", headers=session_auth_headers(admin)
+        ).json()["data"]["jobs"]
+        return sum(j["jobs"] for j in jobs)
+
+    now = datetime.now(UTC)
+
+    def run(run_id: int) -> dict:
+        created = _iso(now - timedelta(hours=1))
+        return _run(
+            run_id,
+            age=timedelta(0),
+            created_at=created,
+            run_started_at=created,
+            updated_at=created,
+        )
+
+    mid_sweep: list[tuple[int, int]] = []
+
+    class _Watching(_GitHub):
+        async def merged_pull_requests(self, **kwargs):
+            # A sweep reads merged PRs after storing jobs and before its record:
+            # in the second sweep, run 42's job is in and its record is not.
+            if 42 in self.runs and not mid_sweep:
+                mid_sweep.append((board_jobs(), table_jobs()))
+            return await super().merged_pull_requests(**kwargs)
+
+    github = _Watching()
+    first, second = run(41), run(42)
+    github.runs = {41: first}
+    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
+
+    async def sweep(at: datetime) -> None:
+        async with client.test_factory() as session:
+            if at == now:
+                await _connect(session)
+            report = await ingest.sweep_once(session, source=github, repo=REPO, now=at)
+            assert report["error"] == ""
+
+    asyncio.run(sweep(now))
+    assert board_jobs() == 1
+
+    github.runs[42] = second
+    asyncio.run(sweep(now + timedelta(minutes=5)))
+
+    assert mid_sweep == [(2, 2)]
+    assert (board_jobs(), table_jobs()) == (2, 2)

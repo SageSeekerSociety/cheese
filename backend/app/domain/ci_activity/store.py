@@ -10,12 +10,14 @@ this is a picture of recent CI, not an archive.
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import ColumnElement, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.domain.ci_activity.github import QueueEvent, parse_time
 from app.domain.ci_activity.models import (
@@ -43,6 +45,37 @@ UPSERT_BATCH = 500
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+def sweep_lock(repo: str) -> ColumnElement[int]:
+    """The advisory lock a sweep of ``repo`` holds exclusively from before its
+    first write until its record has landed (`sweeping`). A reader that holds it
+    shared sees tables no sweep is part-way through writing."""
+    return func.hashtextextended(f"ci-activity-sweep:{repo}", 0)
+
+
+@asynccontextmanager
+async def sweeping(session: AsyncSession, repo: str) -> AsyncIterator[None]:
+    """Hold ``repo``'s sweep lock for the whole of one sweep.
+
+    A sweep commits as it goes, so the lock cannot live in its transactions: it
+    is a session-level lock on a connection of its own, waiting out any reader
+    that holds it shared."""
+    bind = session.bind
+    assert bind is not None
+    engine = bind.engine if isinstance(bind, AsyncConnection) else bind
+    connection = await engine.connect()
+    try:
+        await connection.execute(select(func.pg_advisory_lock(sweep_lock(repo))))
+        await connection.commit()
+        yield
+    finally:
+        # Dropped rather than unlocked and pooled: a session-level lock outlives
+        # a pool's reset-on-return, so a failed unlock would leave the next
+        # sweep waiting on a pooled connection forever. Closing the connection
+        # always lets it go.
+        await connection.invalidate()
+        await connection.close()
 
 
 def pr_number_of(run: dict[str, Any]) -> int | None:

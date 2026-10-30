@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.ci_activity.github import CiGitHubError, GitHubCi, Listed
-from app.domain.ci_activity.store import CiActivityStore
+from app.domain.ci_activity.store import CiActivityStore, sweeping
 from app.domain.project.forge import github_read_token_for_repo
 
 WINDOW = timedelta(days=30)
@@ -94,7 +94,29 @@ async def sweep_once(
     jobs_budget: int | None = None,
     backfill_slices: int | None = None,
 ) -> dict[str, Any]:
+    """One sweep, under the repo's sweep lock: a reader that keeps answers per
+    sweep (`board.once_per_sweep`) can tell the tables are part-way written."""
     repo = repo or settings.platform_repository
+    async with sweeping(session, repo):
+        return await _sweep_once(
+            session,
+            source=source,
+            repo=repo,
+            now=now,
+            jobs_budget=jobs_budget,
+            backfill_slices=backfill_slices,
+        )
+
+
+async def _sweep_once(
+    session: AsyncSession,
+    *,
+    source: CiSource | None,
+    repo: str,
+    now: datetime | None,
+    jobs_budget: int | None,
+    backfill_slices: int | None,
+) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     jobs_budget = JOBS_PER_SWEEP if jobs_budget is None else jobs_budget
     backfill_slices = (

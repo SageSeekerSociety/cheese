@@ -29,6 +29,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.gateway_models import GatewayModelsService, reset_cache
+from app.domain.agent.gateway_models import cache as gateway_cache
 from app.domain.agent.models import PlatformModelRole
 from app.domain.agent.schemas import (
     ModelCreate,
@@ -105,7 +106,8 @@ class _Gateway:
         self.keys: dict[str, list[str]] = {}
         # The ledger by upstream model (`breakdown.models`) as spent today, the
         # same spent a month ago, and the start date of every usage window asked
-        # for. A usage read answers only the days it asks for, as LiteLLM does.
+        # for. A usage read answers only the days it asks for, and with `model`
+        # only that upstream's rows, as LiteLLM does.
         self.ledger: dict[str, float] = {}
         self.earlier_ledger: dict[str, float] = {}
         self.usage_starts: list[str] = []
@@ -124,6 +126,7 @@ class _Gateway:
         if path == "/user/daily/activity/aggregated":
             start = request.url.params["start_date"]
             end = request.url.params["end_date"]
+            only = request.url.params.get("model")
             self.usage_starts.append(start)
             today = datetime.now(UTC).date()
             results = [
@@ -133,6 +136,7 @@ class _Gateway:
                         "models": {
                             upstream: {"metrics": {"spend": spend}}
                             for upstream, spend in spent.items()
+                            if only is None or upstream == only
                         }
                     },
                 }
@@ -1091,6 +1095,34 @@ async def test_used_counts_spend_before_the_window_and_inside_it_once_each():
     assert sorted(
         (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
     ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
+
+
+@pytest.mark.anyio
+async def test_used_follows_a_late_ledger_write_to_an_earlier_day(monkeypatch):
+    """Spend the gateway records late against a day before the page's window
+    (its batch writer lags, a backfill) counts in Used as soon as the page's
+    own 15-second answers expire, not an hour later: Used is money the cap
+    will refuse on."""
+    clock = [1000.0]
+    monkeypatch.setattr(gateway_cache.time, "monotonic", lambda: clock[0])
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.earlier_ledger = {_ARGON: 2000.0}
+    gw.ledger = {_ARGON: 100.0}
+    assert {
+        s["spend_cap_used_usd"] for s in (await _listed(service, "argon"))["sources"]
+    } == {2100.0, None}
+
+    gw.earlier_ledger = {_ARGON: 2300.0}
+    clock[0] += 16
+    listing = await service.listing(days=7)
+
+    item = next(m for m in listing["models"] if m["name"] == "argon")
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2400.0), (_ARGON, 2400.0), ("gemini/other", None)]
 
 
 @pytest.mark.anyio
