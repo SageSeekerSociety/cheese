@@ -16,7 +16,7 @@ from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.delivery.models import Delivery
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.test_routines import (
@@ -33,6 +33,11 @@ TEAM_HOOK = "- [团队那条](team.md) — 项目那一份的钩子"
 OWNER_HOOK = "- [他要结论在最前面](conclusion-first.md) — 规则主人那一份的钩子"
 BOB_HOOK = "- [别人的](elsewhere.md) — 没交代这件事的那个人那一份的钩子"
 BOB = "user-2"
+
+
+def _index_of(person: str) -> str:
+    """一个人的 private 索引在会话里的路径：注入里有它，没有它的正文。"""
+    return prompt_path(f"private/{person}/{INDEX_NAME}")
 
 
 class Screen(StubChannel):
@@ -146,9 +151,11 @@ def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
 
     # The run is answered where the runner was told to: the run's own 支线.
     prompt = _prompt_of_the_routine_turn(client, tmp_path, conversation, submitted)
+    # 说话那个人的那一份注入的是它在哪，正文由会话自己读（`private_index_pointer`）。
     assert TEAM_HOOK in prompt
-    assert OWNER_HOOK in prompt, "规则主人那一份没有被读进来"
-    assert BOB_HOOK not in prompt, "读到了没交代这件事的人的私有偏好"
+    assert _index_of(OWNER) in prompt, "规则主人那一份没有被读进来"
+    assert OWNER_HOOK not in prompt
+    assert _index_of(BOB) not in prompt, "读到了没交代这件事的人的私有偏好"
 
 
 def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
@@ -182,5 +189,5 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
     client.portal.call(run)
     assert screen.last_system_prompt is not None
     assert TEAM_HOOK in screen.told
-    assert BOB_HOOK in screen.told
-    assert OWNER_HOOK not in screen.told
+    assert _index_of(BOB) in screen.told
+    assert _index_of(OWNER) not in screen.told

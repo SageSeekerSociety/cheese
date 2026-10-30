@@ -10,7 +10,7 @@ import uuid
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from tests.conftest import StubChannel, settle_turn
 from tests.integration.conftest import open_task, post_project, session_auth_headers
@@ -86,5 +86,8 @@ def test_a_task_turn_reads_its_silent_owners_memory(client, tmp_path):
 
     client.portal.call(run)
 
-    assert OWNER_HOOK in screen.told, "the owner's private memory was not in reach"
-    assert BOB_HOOK not in screen.told
+    # The owner's index is given as where it is; the session reads it.
+    owners = prompt_path(f"private/{OWNER}/{INDEX_NAME}")
+    assert owners in screen.told, "the owner's private memory was not in reach"
+    assert OWNER_HOOK not in screen.told
+    assert prompt_path(f"private/bob/{INDEX_NAME}") not in screen.told

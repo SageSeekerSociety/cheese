@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from app.core.config import settings
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     in_thread,
@@ -246,8 +246,11 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     prompt = stub_hooks.told
     assert "索引里那句钩子" in prompt
     assert "正文里才有的那句话" not in prompt
-    assert "说话这个人的索引钩子" in prompt
+    # The speaker's own index is given as where it is: the session reads it.
+    assert prompt_path(f"private/user-1/{INDEX_NAME}") in prompt
+    assert "说话这个人的索引钩子" not in prompt
     assert "没说话那个人的索引钩子" not in prompt
+    assert prompt_path(f"private/bob/{INDEX_NAME}") not in prompt
 
 
 def test_empty_content_rejected(client):
