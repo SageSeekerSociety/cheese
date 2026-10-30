@@ -601,6 +601,10 @@ def site_forge(tmp_path, monkeypatch):
             if self.path == "/":
                 self._send(200, b"site")
                 return
+            if self.path == "/close":
+                self._send(200, b"site", Connection="close")
+                self.close_connection = True
+                return
             if self.path == "/api/live":
                 if self.headers.get("Upgrade", "").lower() != "websocket":
                     self._send(400, b"missing upgrade")
@@ -789,7 +793,10 @@ def test_a_room_keeps_a_live_connection_to_the_site_beside_its_forge(site_forge,
     assert said.endswith("live connection exchanged ping\nexit=0"), said
 
 
-def test_a_room_can_query_its_forge_after_reading_the_site(site_forge, rooms):
+@pytest.mark.parametrize("close_response", [False, True])
+def test_a_room_can_query_its_forge_after_reading_the_site(
+    site_forge, rooms, close_response
+):
     """A client can access its private forge after reading the site."""
     forward, _ = site_forge
     room = rooms(sandbox=False, site_forward=forward)
@@ -799,7 +806,7 @@ def test_a_room_can_query_its_forge_after_reading_the_site(site_forge, rooms):
         "proxy = urllib.parse.urlsplit(os.environ['HTTPS_PROXY'])\n"
         "conn = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=5)\n"
         f"conn.set_tunnel('{SITE}',443)\n"
-        "conn.request('GET','/')\n"
+        f"conn.request('GET',{'/close' if close_response else '/'!r})\n"
         "response = conn.getresponse()\n"
         "assert response.status == 200\n"
         "assert response.read() == b'site'\n"

@@ -528,8 +528,8 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
                 connection.connect()
                 connection.sock.settimeout(300)
                 connection.request(self.command, self.path, body=body, headers=headers)
-                response = connection.getresponse()
                 connection.sock.settimeout(None)
+                response = connection.getresponse()
                 upgraded = response.status == 101
                 self.send_response_only(response.status, response.reason)
                 for key, value in response.getheaders():
@@ -542,7 +542,6 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 if upgraded:
                     self.request.settimeout(None)
-                    connection.sock.settimeout(None)
                     # The HTTP readers may already hold bytes after the headers.
                     _splice(self.request, connection.sock, self.rfile, response.fp)
                 else:
