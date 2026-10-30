@@ -185,15 +185,6 @@
   padding: 8px;
   padding-top: 48px;
 }
-/* 说明卡在这一层里：压过「取色 / 量距离」那一条，正在写的那一句不被它挡住。
-   比调色滑杆、裁剪条、动图控制条（6）和丢弃确认（8）低。 */
-.design-image__overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  overflow: clip;
-  pointer-events: none;
-}
 .design-image__sheet {
   position: relative;
 }

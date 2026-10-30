@@ -16,11 +16,12 @@ import type { DocumentIdentity } from '../../lib/documentIdentity'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
+import { previewSlideNotes } from '../../api/roomFiles'
 import { useDocumentBytes, useDocumentPage } from '../../lib/documentBytes'
 import { sameDocumentIdentity } from '../../lib/documentIdentity'
-import { pageViewOf, suffixOf } from '../../lib/fileKind'
+import { pageViewOf, SLIDE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { NARROW_PX } from '../../lib/previewNarrow'
 
 export interface DocumentBytesDeps {
@@ -117,11 +118,52 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     docNonce.value += 1
   }
 
+  // ---- 演示稿的演讲者备注 ----
+  //
+  // 备注不在幻灯片上，而这一格拿到的是转换后的 PDF，所以它读不出来，得单独要一次。
+  // 只有演示稿问；慢一步回来的那一份是上一份文件的备注，贴到眼前这一版上就是错的，
+  // 所以回来时再核一次身份（和 `slideContext` 同一条纪律）。
+  const slideNotes = ref<string[]>([])
+  let notesKey = ''
+  let notesGeneration = 0
+  const slidesIdentity = () =>
+    state.documentType.value?.view === 'pages' && SLIDE_SUFFIXES.has(suffixOf(docIdentity.value?.path ?? ''))
+      ? docIdentity.value
+      : null
+  watch(
+    [slidesIdentity, () => docNonce.value],
+    async ([identity]) => {
+      if (!identity) {
+        slideNotes.value = []
+        notesKey = ''
+        return
+      }
+      const key = JSON.stringify([identity, docNonce.value])
+      if (key === notesKey) return
+      // 换一份文件先清空：留着上一份的备注，读者会在新稿子上看到旧稿子说的话。
+      slideNotes.value = []
+      const mine = ++notesGeneration
+      try {
+        const got = await previewSlideNotes(identity.topicId, identity.path, identity.taskId, identity.source)
+        if (mine !== notesGeneration) return
+        const current = slidesIdentity()
+        if (!current || JSON.stringify([current, docNonce.value]) !== key) return
+        notesKey = key
+        slideNotes.value = got.readable ? got.notes : []
+      } catch {
+        // 备注要不到不影响读这一页：那一块不摆就是了，报错留给正文那边说。
+        if (mine === notesGeneration) slideNotes.value = []
+      }
+    },
+    { immediate: true, flush: 'sync' }
+  )
+
   return {
     docBytes,
     docIdentity,
     docSnapshot,
     slideContext,
+    slideNotes,
     docLoading,
     docError,
     docRendererMissing,

@@ -48,6 +48,7 @@ import {
   type LocatorAnchor,
   markPointer,
   measureAnchor,
+  measureElementAnchor,
   selectionIn,
 } from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
@@ -84,6 +85,7 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   docIdentity: null,
   docSnapshot: null,
   slideContext: undefined,
+  slideNotes: () => [],
   docPage: false,
   canPage: false,
   docPageHtml: null,
@@ -344,7 +346,14 @@ function placeLocator() {
   placing = requestAnimationFrame(() => {
     placing = 0
     const panel = panelElement.value
-    locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+    // 图上框出来的那一块没有文字选区，也没有「松手的那一点」那么窄：位置取那块选区
+    // 在屏幕上的实际矩形（`.design-image__selection`），卡片才落在这一块旁边而不是角上。
+    locatorAnchor.value =
+      panel && locator.value
+        ? imageRegion.target.value
+          ? measureElementAnchor(panel, panel.querySelector('.design-image__selection'))
+          : measureAnchor(panel, anchorRange, anchorPointer)
+        : null
     // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
     // 不能两样都不画。
     if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
@@ -700,6 +709,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
       :slide-context="slideContext"
+      :slide-notes="slideNotes"
       :revs="revs"
       :file-history="fileHistory"
       :versions="props.versions"
@@ -737,23 +747,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :active="active"
       :preview-full="previewFull"
       :image-region="imageRegion"
-      :locator-note="locatorNote"
-      :locator="locator"
       :doc-error="docError"
       :annotate-error="annotateError"
       :marks="imageAnchors"
       :active-mark="focusedThread"
-      :can-comment="!!commentTarget"
-      :busy="commenting"
-      :comment-error="commentError"
       @retry="emit('refresh')"
       @download="emit('download')"
       @region="onImageRegion"
       @annotate="onAnnotate"
-      @update:locator-note="locatorNote = $event"
-      @send="sendLocator"
-      @comment="commentHere"
-      @cancel="clearLocator"
       @mark="openAnchor"
     />
     <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
@@ -828,10 +829,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 
     <PreviewLocator
       v-model:note="locatorNote"
-      :target="imageRegion.target.value ? null : locator"
+      :target="locator"
       :queued-count="queuedCount"
       :pending-elsewhere="pendingElsewhere"
-      :can-queue="!pageLocator.pin.value"
+      :can-queue="!pageLocator.pin.value && !imageRegion.target.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :can-ask-personal="!!props.askPersonal"

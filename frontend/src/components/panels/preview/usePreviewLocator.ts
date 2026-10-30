@@ -364,9 +364,8 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     // 判据同一条（`queuedCount`，共享篮优先），不是本格自己那一条——共享篮时
     // `queued.value` 永远是空的，用它会只发当前这一处、把篮里那几条留成没发出去。
     //
-    // 图上框的那一块是例外：它的卡（`DesignRegionNote`）写的是「发送」，从来不带批注
-    // 计数，也不进待发篮（那一处要连同合成图走附件）。它这一下有自己的路（下面那一支），
-    // 篮里有几条与它无关——不分这一下，读者按「发送」会被换成一整批。
+    // 图上框的那一块是例外：它这一下有自己的路（下面那一支），进的是「结构化引用」
+    // 那条，篮里有几条与它无关——不分这一下，读者按「发送」会被换成一整批。
     if (!imageRegion.target.value && queuedCount.value > 0) {
       sendQueued()
       return

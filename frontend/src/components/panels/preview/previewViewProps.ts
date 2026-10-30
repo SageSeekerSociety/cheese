@@ -69,6 +69,8 @@ export interface PreviewViewProps {
   docSnapshot?: DocumentSnapshot | null
   /** Identity verified against the actual conversion response, not current metadata alone. */
   slideContext?: SlideSource
+  /** 演示稿每一页的演讲者备注，下标即页码。空数组是「这一份没有备注可显示」。 */
+  slideNotes?: readonly string[]
   docLoading: boolean
   docError: string
   docRendererMissing: boolean

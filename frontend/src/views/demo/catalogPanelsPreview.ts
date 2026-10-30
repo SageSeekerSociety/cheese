@@ -33,7 +33,6 @@ import {
 } from './catalogPanelsPreviewFixtures'
 
 import DesignImage from '@/components/panels/preview/DesignImage.vue'
-import DesignRegionNote from '@/components/panels/preview/DesignRegionNote.vue'
 import DesignSketchOverlay from '@/components/panels/preview/DesignSketchOverlay.vue'
 import DesignSketchToolbar from '@/components/panels/preview/DesignSketchToolbar.vue'
 import DesignViewportToolbar from '@/components/panels/preview/DesignViewportToolbar.vue'
@@ -500,7 +499,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           canComment: true,
           canAskPersonal: true,
         },
-        expect: '发给芝士',
+        expect: '发给任务芝士',
       },
       {
         get name() {
@@ -707,35 +706,6 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
         },
         props: { strokes: [SKETCH_PEN, SKETCH_RECT], scale: 1, naturalWidth: 480 },
         expectSelector: 'svg.sketch-overlay',
-      },
-    ],
-  },
-  {
-    id: 'preview-panel-region-note',
-    title: 'DesignRegionNote · 区域的说明',
-    get about() {
-      return t('catalog.previewPanelRegionNote.about')
-    },
-    file: 'src/components/panels/preview/DesignRegionNote.vue',
-    component: DesignRegionNote,
-    needs: T,
-    states: [
-      {
-        get name() {
-          return t('catalog.previewPanelRegionNote.s1.name')
-        },
-        get note() {
-          return t('catalog.previewPanelRegionNote.s1.note')
-        },
-        props: {
-          target: { label: '图片 #3 · 右上角', quote: '这块按钮' },
-          note: '',
-          geometry: null,
-          resourceKey: 'demo-region',
-          focusOrigin: null,
-          restoreFocus: () => {},
-        },
-        expect: '图片 #3 · 右上角',
       },
     ],
   },

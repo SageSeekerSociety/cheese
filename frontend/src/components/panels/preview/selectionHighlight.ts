@@ -154,13 +154,17 @@ function round(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+/** 画出来的那一层的类名。分页文档和幻灯片**用同一个**：样式只有一份
+ *  （`preview-selection-paint.css`），两处就不可能漂成两个颜色。 */
+export const SELECTION_PAINT_CLASS = 'preview-selection-paint'
+
 export type SelectionHighlightOptions = {
   /** 能选的纸：每一页、每一张幻灯片。底色画在纸里，跟着纸的坐标走。 */
   sheets: () => HTMLElement[]
   /** 纸上文字层的类名。文字层还没画出来的纸不画。 */
   layerClass: string
-  /** 画出来的那一层用的类名，位置和颜色由各自的样式给。 */
-  paintClass: string
+  /** 画出来的那一层用的类名。只有测试里要单独认这一层时才给，平时不用。 */
+  paintClass?: string
   /** 浏览器已经把选区收了、但读者还在写这一处批注时，按这一份（打开批注时留下的
    *  副本）继续画。点开批注卡会把光标交给输入框，浏览器随即把页面上的选区收起来——
    *  底色跟着灭掉的话，读者看不见自己在说哪一段。 */
@@ -253,7 +257,7 @@ export function useSelectionHighlight(options: SelectionHighlightOptions) {
     if (existing?.box.isConnected) return existing
     if (!layer) return null
     const box = document.createElement('div')
-    box.className = options.paintClass
+    box.className = options.paintClass ?? SELECTION_PAINT_CLASS
     const svg = document.createElementNS(SVG_NS, 'svg')
     svg.setAttribute('aria-hidden', 'true')
     svg.setAttribute('width', '100%')

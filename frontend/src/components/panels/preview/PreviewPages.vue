@@ -489,7 +489,6 @@ const keptSelection = inject(KEPT_SELECTION, null)
 const highlight = useSelectionHighlight({
   sheets: () => pages.value.map((slot) => slot.el).filter((el): el is HTMLElement => !!el),
   layerClass: 'pv-text',
-  paintClass: 'pv-hl',
   // 批注卡开着时页面上的选区已经收了：照定位条留下的那份副本接着画。
   kept: () => keptSelection?.value ?? null,
 })
@@ -1154,15 +1153,8 @@ onBeforeUnmount(() => {
   color: transparent;
 }
 
-/* 自己画的那一层。位置和大小由 `selectionHighlight.ts` 算，这里只管它长什么样：一块
-   都别挡住选中、底色是一次填充（选区的每一块收在同一条 path 里，搭着也只落一层）。 */
-.pv__page :deep(.pv-hl) {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.pv__page :deep(.pv-hl path) {
-  fill: var(--selection-bg);
-}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和幻灯片共用一份，两档的选中
+   底色才不可能变成两个颜色。 */
 </style>
+
+<style src="./preview-selection-paint.css"></style>
