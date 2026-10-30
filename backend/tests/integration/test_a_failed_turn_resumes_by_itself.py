@@ -48,6 +48,7 @@ from app.domain.agent.turn_resume import (
     RESUME_NOTE,
     after_failure,
     hand_due,
+    waiting,
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
@@ -220,8 +221,13 @@ async def _first_turn_fails(factory, tmp_path, failure: str, *, retrying=False):
     )
     await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
     screen.handed_one.clear()
-    # The failure lands through the session's reader, after the turn's input.
     await runner.drain(timeout_s=10)
+    # The failure lands through the session's reader, after the turn's input,
+    # and is acknowledged only once its intake is done: the resume committed,
+    # then the conversation's line about it posted. The runner's own tasks
+    # are not that reader, so wait on the report itself.
+    for room_id, _ in list(screen.sessions):
+        await drain_hooks(screen, room_id)
     return conversation, seat, screen, runner, chat
 
 
@@ -264,6 +270,11 @@ async def test_a_rate_limited_turn_resumes_by_itself(
             if r["meta"].get("event_type") in ("api_retry", "turn_resume_wait")
         ] == ["api_retry", "turn_resume_wait"]
         assert recovery_lines[0]["meta"]["reason"] == "rate_limited"
+        # The page following the room live learns when, as one reloading does.
+        assert (
+            datetime.fromisoformat(recovery_lines[0]["meta"]["due_at"])
+            == rows[0].due_at
+        )
         assert recovery_lines[0]["meta"]["i18n"]["content"]["params"]["minutes"] >= 1
         [owed] = rows
         # It waits first: a request limited a moment ago is limited now.
@@ -643,6 +654,38 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
             if r["meta"].get("event_type")
             in ("turn_resume_wait", "turn_resume_stopped")
         ] == ["turn_resume_wait", "turn_resume_stopped"]
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_room_hears_who_waits_for_a_retry_until_nothing_will_retry(
+    business_db_factory, tmp_path
+):
+    """A page that opens or reconnects asks the room for its state: a seat the
+    platform will retry is in it, with the time; once a person has taken the
+    turn back, it is not, though the clock has yet to drop the resume."""
+    factory = business_db_factory
+    conversation, seat, _screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    try:
+        [owed] = await _owed_resumes(factory, conversation)
+        async with factory() as session:
+            [wait] = await waiting(session, conversation)
+        assert wait["seat"] == seat
+        assert datetime.fromisoformat(wait["due_at"]) == owed.due_at
+
+        await runner.receive_message(
+            chat, conversation, author="u", content="hold on, I'll look first"
+        )
+        await runner.drain(timeout_s=10)
+        async with factory() as session:
+            assert await waiting(session, conversation) == []
+        assert await hand_due(factory, now=owed.due_at + timedelta(seconds=1)) == 0
+        async with factory() as session:
+            assert await waiting(session, conversation) == []
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)

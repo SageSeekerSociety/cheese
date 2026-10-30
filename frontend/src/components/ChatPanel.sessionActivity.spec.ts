@@ -27,6 +27,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { clockTime } from '@/lib/dateText'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { loadMarkdownReader } from '@/test/markdownReader'
@@ -164,7 +165,7 @@ describe('session activity', () => {
       vi.advanceTimersByTime(30_000)
       expect(socket.sent).toContainEqual({ type: 'sync' })
 
-      socket.emit({ type: 'room_state', turn_ids: [], members: [] })
+      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [] })
       await flush()
       expect(view.emitted('working')?.at(-1)).toEqual([false])
 
@@ -278,5 +279,53 @@ describe('session activity', () => {
     await flush()
 
     expect(queryClient.getQueryData<TopicProgress>(keys.roomProgress(topic.id))?.items).toEqual(items)
+  })
+
+  // 一轮没完成、平台约好几点自动重试：输入框上方说这位队友在等、约几点重试，打开
+  // 页面时（服务端答 sync 的 room_state）就说；重试开始了就不再说它在等。
+  it('the composer shows a teammate waiting for its automatic retry until the retry starts', async () => {
+    const due = '2026-10-30T19:20:00Z'
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({
+      type: 'room_state',
+      turn_ids: [],
+      members: [],
+      resumes: [
+        {
+          conversation_id: topic.id,
+          seat: 'cheese-a',
+          resume_id: 'resume-1',
+          due_at: due,
+          since: '2026-10-30T19:00:00Z',
+        },
+      ],
+    })
+    await flush()
+    const waiting = `约 ${clockTime(Date.parse(due))} 自动重试`
+    expect(view.getByTestId('member-activity').textContent).toContain(waiting)
+
+    socket.emit({
+      type: 'run_record',
+      record: {
+        id: 'started-1',
+        conversation_id: topic.id,
+        kind: 'event',
+        author_type: 'platform',
+        author: 'cheese',
+        content: '开始自动重试',
+        turn_id: 'resumed',
+        meta: { event_type: 'turn_resume_started', seat: 'cheese-a', resume_id: 'resume-1' },
+        created_at: '2026-10-30T19:20:05Z',
+      },
+    } as WsServerFrame)
+    await flush()
+    expect(view.container.textContent).not.toContain(waiting)
   })
 })

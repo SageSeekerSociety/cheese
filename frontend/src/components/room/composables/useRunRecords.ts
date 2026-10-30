@@ -3,9 +3,10 @@
  * 整理上下文、等机器。它们不进对话，只走 `run_record` 帧：现场把它们排在步骤之间，
  * 输入框上方那一行从这里读队友此刻在等什么。
  *
- * 只有一种等待不在运行记录里：一轮没完成、平台排了自动重试。那一句在对话里
- * （`turn_resume_wait`，带着重试时刻 `meta.due_at`），刷新、重连之后照样在，输入框上方
- * 那一行从对话读它（`resumeWaits`）。
+ * 一轮没完成、平台排了自动重试：等的是后端那一行待重试（turn_resume）。打开、重连
+ * 时 `room_state` 帧给出此刻还欠着的全部（`resumesNow`），之后它的每一步都是一条运行
+ * 记录：排上（`turn_resume_wait`，带重试时刻 `meta.due_at`）、开始重试
+ * （`turn_resume_started`）、取消（`turn_resume_stopped`）。
  *
  * 帧里的记录长得和一条事件块一样，改写过的（重试到第几次、整理完没有）用同一个 id
  * 再来一次，这里按 id 换掉旧的那一份。
@@ -13,6 +14,7 @@
 
 import type { Block } from '../../../cx_types'
 import type { MemberActivityLine } from '../../../lib/memberActivity'
+import type { ResumeWait } from '../../../types/roomSocket'
 
 import { computed, ref } from 'vue'
 
@@ -44,34 +46,49 @@ export function threadStatusOf(frame: unknown): { threadId: string; record: Bloc
   return { threadId: f.thread_id, record: f.record as Block }
 }
 
-/** 平台排好的自动重试在什么时刻（毫秒）；这一行没写就是 null。 */
-function resumeAt(block: Block): number | null {
-  const due = block.meta?.due_at
-  const at = typeof due === 'string' ? Date.parse(due) : Number.NaN
-  return Number.isFinite(at) ? at : null
+/** 排上了的那条运行记录说的那一次自动重试；别的记录、没写全的是 null。 */
+function scheduled(record: Block): ResumeWait | null {
+  const m = record.meta
+  if (m?.event_type !== 'turn_resume_wait') return null
+  if (typeof m.seat !== 'string' || typeof m.resume_id !== 'string' || typeof m.due_at !== 'string') return null
+  return {
+    conversation_id: record.conversation_id,
+    seat: m.seat,
+    resume_id: m.resume_id,
+    due_at: m.due_at,
+    since: record.created_at,
+  }
+}
+
+/** 结束了的那一次自动重试（开始了或取消了）的 id；别的记录是 null。 */
+function settled(record: Block): string | null {
+  const m = record.meta
+  if (m?.event_type !== 'turn_resume_started' && m?.event_type !== 'turn_resume_stopped') return null
+  return typeof m.resume_id === 'string' ? m.resume_id : null
 }
 
 /**
- * 对话里还在等自动重试的队友，各自最近的那一句（按座位）。之后同一段对话里有人
- * 开口（平台就不再自动重试）、这位队友又说了话，或者平台又为它说了一句，就不算在等。
+ * 这一次自动重试之后，对话里有人开口，或者这位队友自己又说了话：轮到重试时平台会
+ * 取消它（后端 `_no_longer_applies`），这一刻起就不再说它在等。
  */
-export function resumeWaits(blocks: Block[]): Map<string, Block> {
-  const waits = new Map<string, Block>()
-  for (const b of blocks) {
-    const seat = typeof b.meta?.seat === 'string' ? b.meta.seat : null
-    for (const [handle, wait] of waits) {
-      if (wait.conversation_id !== b.conversation_id) continue
-      if (isPersonBlock(b) || (isAgentBlock(b) ? b.author : seat) === handle) waits.delete(handle)
-    }
-    if (seat && b.meta?.event_type === 'turn_resume_wait' && resumeAt(b) !== null) waits.set(seat, b)
-  }
-  return waits
+function takenBack(wait: ResumeWait, blocks: Block[]): boolean {
+  const since = Date.parse(wait.since)
+  return blocks.some(
+    (b) =>
+      b.conversation_id === wait.conversation_id &&
+      Date.parse(b.created_at) > since &&
+      (isPersonBlock(b) || (isAgentBlock(b) && b.author === wait.seat))
+  )
 }
 
 export function useRunRecords() {
   const records = ref<Block[]>([])
   // 已经开始或结束了的轮次：它们的排队记录不再说「排队中」。
   const begun = ref<Set<string>>(new Set())
+  // 每位队友还欠着的那一次自动重试（按座位）。
+  const resumes = ref<Map<string, ResumeWait>>(new Map())
+  // 已经开始或取消了的自动重试：晚到的那份 `room_state`、补发的排上记录不再把它说回来。
+  let ended = new Set<string>()
 
   function receive(record: Block) {
     const at = records.value.findIndex((r) => r.id === record.id)
@@ -79,6 +96,18 @@ export function useRunRecords() {
     if (at >= 0) next[at] = record
     else next.push(record)
     records.value = next.length > KEPT ? next.slice(next.length - KEPT) : next
+    const wait = scheduled(record)
+    if (wait && !ended.has(wait.resume_id)) resumes.value = new Map(resumes.value).set(wait.seat, wait)
+    const over = settled(record)
+    if (over) {
+      ended = new Set(ended).add(over)
+      resumes.value = new Map([...resumes.value].filter(([, w]) => w.resume_id !== over))
+    }
+  }
+
+  /** `room_state` 说的此刻还欠着的全部自动重试，换掉手上那一份。 */
+  function resumesNow(owed: ResumeWait[]) {
+    resumes.value = new Map(owed.filter((w) => !ended.has(w.resume_id)).map((w) => [w.seat, w]))
   }
 
   function turnBegan(id: string) {
@@ -89,6 +118,8 @@ export function useRunRecords() {
   function reset() {
     records.value = []
     begun.value = new Set()
+    resumes.value = new Map()
+    ended = new Set()
   }
 
   /**
@@ -113,7 +144,7 @@ export function useRunRecords() {
 
   /**
    * 输入框上方那一行里，排队的队友、等自动重试的队友各一行（名字由房间给）。
-   * `blocks` 是屏幕上的对话：等自动重试的那几位从它读。
+   * `blocks` 是屏幕上的对话：之后有人开口、队友自己说了话的那次自动重试不再算在等。
    */
   function waitingLines(nameOf: (handle: string) => string, blocks: Block[] = []): MemberActivityLine[] {
     const lines: MemberActivityLine[] = [...waiting.value.entries()].map(([handle, r]) => {
@@ -126,18 +157,18 @@ export function useRunRecords() {
         detail: n ? t('work.room.site.status.queuedBehind', { ahead: n }) : t('work.room.site.status.queued'),
       }
     })
-    for (const [handle, b] of resumeWaits(blocks)) {
-      if (waiting.value.has(handle)) continue
+    for (const [handle, wait] of resumes.value) {
+      if (waiting.value.has(handle) || takenBack(wait, blocks)) continue
       lines.push({
         handle,
         name: nameOf(handle),
         kind: 'working',
-        since: Date.parse(b.created_at) / 1000,
-        detail: t('work.room.site.status.resumeAt', { time: clockTime(resumeAt(b) ?? Number.NaN) }),
+        since: Date.parse(wait.since) / 1000,
+        detail: t('work.room.site.status.resumeAt', { time: clockTime(Date.parse(wait.due_at)) }),
       })
     }
     return lines
   }
 
-  return { records, receive, turnBegan, reset, forgetWaiting, waitingLines }
+  return { records, receive, resumesNow, turnBegan, reset, forgetWaiting, waitingLines }
 }

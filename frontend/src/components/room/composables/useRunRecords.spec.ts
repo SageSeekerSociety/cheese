@@ -1,4 +1,5 @@
 import type { Block } from '../../../cx_types'
+import type { ResumeWait } from '../../../types/roomSocket'
 
 import { describe, expect, it } from 'vitest'
 
@@ -48,17 +49,25 @@ describe('排队中的队友', () => {
   })
 })
 
-function resumeLine(id: string, seat: string, dueAt: string, createdAt: string): Block {
+const DUE = '2026-10-29T07:42:00Z'
+
+/** 服务端答 sync 时说的那一项：这位队友还欠着一次自动重试。 */
+function owed(seat = 'cheese-a', resume = 'r1'): ResumeWait {
+  return { conversation_id: 'c1', seat, resume_id: resume, due_at: DUE, since: '2026-10-29T07:30:00Z' }
+}
+
+/** 自动重试的一步，一条运行记录（排上、开始、取消）。 */
+function step(event: string, resume = 'r1', seat = 'cheese-a', extra: Record<string, unknown> = {}): Block {
   return {
-    id,
+    id: `${event}-${resume}`,
     conversation_id: 'c1',
     kind: 'event',
     author_type: 'platform',
     author: 'cheese',
-    content: '这一轮没完成，约 15:42 自动重试（模型服务限流）',
+    content: '自动重试',
     turn_id: 't1',
-    meta: { event_type: 'turn_resume_wait', seat, due_at: dueAt },
-    created_at: createdAt,
+    meta: { event_type: event, seat, resume_id: resume, ...extra },
+    created_at: '2026-10-29T07:30:00Z',
   } as Block
 }
 
@@ -76,21 +85,45 @@ function said(id: string, author: string, createdAt: string): Block {
 }
 
 describe('等自动重试的队友', () => {
-  it('刷新之后，输入框上方照样说它约几点自动重试：那一句在对话里，不在运行记录里', () => {
-    const due = '2026-10-29T07:42:00Z'
-    // 刷新：运行记录从空的开始，对话从历史里读回来。
+  it('打开页面时服务端说它还欠着一次自动重试，输入框上方就说它约几点重试', () => {
     const records = useRunRecords()
-    const [line] = records.waitingLines(() => '芝士', [resumeLine('b1', 'cheese-a', due, '2026-10-29T07:30:00Z')])
+    records.resumesNow([owed()])
+    const [line] = records.waitingLines(() => '芝士')
     expect(line.name).toBe('芝士')
-    expect(line.detail).toContain(clockTime(Date.parse(due)))
+    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+  })
+
+  it('页面开着时排上的自动重试，当场就说', () => {
+    const records = useRunRecords()
+    records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE }))
+    const [line] = records.waitingLines(() => '芝士')
+    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+  })
+
+  it.each(['turn_resume_started', 'turn_resume_stopped'])('%s 之后不再说它在等', (event) => {
+    const records = useRunRecords()
+    records.resumesNow([owed()])
+    records.receive(step(event))
+    expect(records.waitingLines(() => '芝士')).toEqual([])
+  })
+
+  it('已经开始了的那一次，晚到的现场不会把它说回来', () => {
+    const records = useRunRecords()
+    records.receive(step('turn_resume_started'))
+    records.resumesNow([owed()])
+    expect(records.waitingLines(() => '芝士')).toEqual([])
+  })
+
+  it('服务端说已经不欠了，就不再说它在等', () => {
+    const records = useRunRecords()
+    records.resumesNow([owed()])
+    records.resumesNow([])
+    expect(records.waitingLines(() => '芝士')).toEqual([])
   })
 
   it('之后有人开口，平台就不再自动重试，也不再说它在等', () => {
     const records = useRunRecords()
-    const timeline = [
-      resumeLine('b1', 'cheese-a', '2026-10-29T07:42:00Z', '2026-10-29T07:30:00Z'),
-      said('b2', 'alice', '2026-10-29T07:31:00Z'),
-    ]
-    expect(records.waitingLines(() => '芝士', timeline)).toEqual([])
+    records.resumesNow([owed()])
+    expect(records.waitingLines(() => '芝士', [said('b2', 'alice', '2026-10-29T07:31:00Z')])).toEqual([])
   })
 })

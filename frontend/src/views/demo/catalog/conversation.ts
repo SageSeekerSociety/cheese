@@ -44,7 +44,6 @@ const UPGRADE_RESUME_WAIT: Block = {
     severity: 'warn',
     who: 'platform',
     reason: 'runner_replaced',
-    due_at: new Date('2026-10-19T14:33:00+08:00').toISOString(),
     i18n: {
       content: {
         key: 'turnResumeScheduled',

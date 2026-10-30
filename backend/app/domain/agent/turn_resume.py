@@ -340,6 +340,8 @@ async def _record_schedule(
             ),
             "reason": row.dropped_reason if dropped else row.reason,
             "resume_id": str(row.id),
+            # The composer shows the wait until then (`waiting`).
+            **({} if dropped else {"due_at": row.due_at.isoformat()}),
         },
         turn_id=row.failed_turn_id,
         seat=row.recipient_handle,
@@ -376,8 +378,8 @@ _REASON_KEYS: Final = {
 
 def scheduled_notice(row: TurnResume) -> tuple[str, dict]:
     """The conversation's line for a failed turn the platform will start again:
-    that it did not finish, why, and about when the retry comes. ``due_at`` is
-    in the line's meta for the composer, which shows the wait until then."""
+    that it did not finish, why, and about when the retry comes. The composer
+    shows the wait from the resume itself (`waiting`, the run records)."""
     local = row.due_at.astimezone(_CLOCK)
     return say(
         "turnResumeScheduled",
@@ -387,7 +389,6 @@ def scheduled_notice(row: TurnResume) -> tuple[str, dict]:
         **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
         "reason": row.reason,
         "resume_id": str(row.id),
-        "due_at": row.due_at.isoformat(),
     }
 
 
@@ -712,6 +713,34 @@ async def hand_due(
     for payload, room in stopped:
         await publish(payload, room=room)
     return handed
+
+
+async def waiting(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """The resumes this conversation is still owed, as the room is told them
+    when it asks for its state (the `room_state` frame): whose, when it is
+    due, and since when it has waited. A row the clock would drop when due
+    (`_no_longer_applies`) is not one: nothing will retry it."""
+    rows = list(
+        await session.scalars(
+            select(TurnResume)
+            .where(TurnResume.conversation_id == conversation_id, _owed())
+            .order_by(TurnResume.due_at)
+        )
+    )
+    if not rows:
+        return []
+    room = await room_of(session, conversation_id)
+    return [
+        {
+            "conversation_id": str(row.conversation_id),
+            "seat": row.recipient_handle,
+            "resume_id": str(row.id),
+            "due_at": row.due_at.isoformat(),
+            "since": row.failed_at.isoformat(),
+        }
+        for row in rows
+        if await _no_longer_applies(session, row, room) is None
+    ]
 
 
 async def _no_longer_applies(

@@ -11,7 +11,7 @@ import type { Block } from '../../cx_types'
 import type { ChatPanelEmit } from '../chatPanelContract'
 import type { usePanelSocket } from './socket'
 
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 
 import { useActivityLines } from '../../components/room/composables/useActivityLines'
 import { useLiveSteps } from '../../components/room/composables/useLiveSteps'
@@ -48,17 +48,16 @@ export function usePanelActivity(deps: {
         : deps.roster.memberByHandle.value.get(handle)?.name || handle),
     (handle) => deps.turns.faces.value[handle]?.status
   )
-  watch(
-    () => {
-      const busy = new Set(activityLines.value.map((l) => l.handle))
-      const queued = deps.runRecords.waitingLines(
-        (h) => deps.roster.agentNameOf(h) ?? deps.roster.agentDisplayName(h),
-        deps.messages.value
-      )
-      return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
-    },
-    (v) => deps.emit('activity', v)
-  )
+  // 在干活的、在排队的、等自动重试的：面板自己画的和递给页面的是这同一份。
+  const lines = computed(() => {
+    const busy = new Set(activityLines.value.map((l) => l.handle))
+    const queued = deps.runRecords.waitingLines(
+      (h) => deps.roster.agentNameOf(h) ?? deps.roster.agentDisplayName(h),
+      deps.messages.value
+    )
+    return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
+  })
+  watch(lines, (v) => deps.emit('activity', v))
 
-  return { activity, liveSteps, activityLines }
+  return { activity, liveSteps, activityLines: lines }
 }
