@@ -57,7 +57,7 @@ import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
-import { agentsQuery, projectQuery } from '@/query/project'
+import { agentsQuery, membersQuery, projectQuery } from '@/query/project'
 import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -70,11 +70,18 @@ const rowMenu = useRowMenu<string>()
 const gate = provideRevealGate()
 const { revealed } = gate
 
-// 名册由 store 去取；一个项目至少有它的所有者，名册非空就是到货了。
+// 名册由 store 去取；一个项目至少有它的所有者，名册非空或名册查询已落定即视为就绪。
+const membersState = useQuery(
+  computed(() => ({ ...membersQuery(props.projectId), enabled: false })),
+  queryClient
+)
+const rosterReady = computed(
+  () => store.members.length > 0 || membersState.isFetched.value || membersState.isError.value
+)
 const releaseRoster = gate.hold()
 watch(
-  () => store.members.length,
-  (n) => n > 0 && releaseRoster(),
+  rosterReady,
+  (ready) => ready && releaseRoster(),
   { immediate: true }
 )
 
@@ -85,7 +92,6 @@ const ownerHandle = computed<string>(() => String(project.value?.owner_handle ??
 // 我管不管这个项目的成员：和工作区别处读同一份项目（`query/project`）。
 // 首屏先等名册（store.members）落地画出行，再补问项目权限、队友详情与待答复邀请，免得
 // 4 个接口同时压向后端把名册这唯一阻塞首屏的一条拖慢。
-const rosterReady = computed(() => store.members.length > 0)
 const projectRead = useQuery(
   computed(() => ({ ...projectQuery(props.projectId), enabled: rosterReady.value })),
   queryClient
@@ -116,28 +122,22 @@ type RosterAgentRow = ProjectMemberRow & {
   project_default?: boolean
   active?: boolean
 }
-const teammates = computed<ProjectAgent[]>(() => {
+type TeammateRow = Pick<
+  ProjectAgent,
+  'handle' | 'seat_handle' | 'display_name' | 'name_source' | 'is_default' | 'is_active'
+>
+const teammates = computed<TeammateRow[]>(() => {
   if (agentsRead.data.value) return agentsRead.data.value.filter((a) => a.is_active)
   return (store.members as RosterAgentRow[])
     .filter((m) => m.agent && m.active !== false)
-    .map(
-      (m) =>
-        ({
-          id: m.id ?? m.user_handle,
-          project_id: props.projectId,
-          handle: m.instance_handle || m.user_handle,
-          seat_handle: m.user_handle,
-          display_name: m.name || m.user_handle,
-          name_source: m.name_source ?? 'human',
-          is_default: !!m.project_default,
-          is_active: m.active !== false,
-          type_name: null,
-          configuration: {},
-          version: 1,
-          created_at: m.created_at ?? '',
-          updated_at: m.created_at ?? '',
-        }) as ProjectAgent
-    )
+    .map((m) => ({
+      handle: m.instance_handle || m.user_handle,
+      seat_handle: m.user_handle,
+      display_name: m.name || m.user_handle,
+      name_source: m.name_source ?? 'human',
+      is_default: !!m.project_default,
+      is_active: m.active !== false,
+    }))
 })
 const releaseTeammates = gate.hold()
 watch(
@@ -254,13 +254,13 @@ function openDm(m: ProjectMemberRow) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: m.user_handle } })
 }
 
-function openAgentDm(a: ProjectAgent) {
+function openAgentDm(a: TeammateRow) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: agentDmKey(a.handle) } })
 }
 
 /** AI 队友也有资料页。它那一格只回答「带了哪几颗」，是只读的；改在项目设置里（`AgentTeamSettings`）。
  *  地址用**座位名**（`seat_handle`）——资料页拿它跟 `/projects/{id}/agents` 对得上（见 `ProfileView`）。 */
-function openAgentProfile(a: ProjectAgent) {
+function openAgentProfile(a: TeammateRow) {
   void router.push({ name: 'member', params: { projectId: props.projectId, handle: a.seat_handle } })
 }
 

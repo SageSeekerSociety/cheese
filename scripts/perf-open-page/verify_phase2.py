@@ -319,8 +319,16 @@ def main() -> None:
                     b["projects_calls"] >= 2 and a["projects_calls"] <= 1
                 )
             elif page in ("project-library", "project-members", "project-skills") and mode == "cold":
-                guardrail_checks["eliminated_cold_address_project_lookup"] = (
-                    a["address_project_calls"] == 0
+                guardrail_checks["no_cold_address_project_lookup_regression"] = (
+                    b["address_project_calls"] == 0 and a["address_project_calls"] == 0
+                )
+            elif page == "project-members" and mode == "walk":
+                guardrail_checks["eliminated_competing_route_prefetches"] = (
+                    b["api_count"]["median"] >= 8 and a["api_count"]["median"] <= 3
+                )
+            elif page == "project-skills" and mode == "walk":
+                guardrail_checks["eliminated_competing_route_prefetches"] = (
+                    b["api_count"]["median"] >= 6 and a["api_count"]["median"] <= 2
                 )
 
             if not all(guardrail_checks.values()):

@@ -285,6 +285,7 @@ watch(
   () => props.projectId,
   () => {
     skills.value = []
+    canImport.value = false
     close()
     void load()
   },
