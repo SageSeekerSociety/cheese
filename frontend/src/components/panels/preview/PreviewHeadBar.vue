@@ -47,11 +47,14 @@ const emit = defineEmits<{
     </BaseButton>
     <v-spacer />
     <template v-if="previewUrl || previewFile">
+      <!-- 这三颗只有图标：可读名字得自己给。`title` 能兜出名字，但它先是一句悬停提示，
+           而且按键板的人要等到悬停才听得见；`aria-label` 才是这一颗叫什么。 -->
       <BaseButton
         kind="ghost"
         icon="mdi-open-in-new"
         size="sm"
         :title="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
+        :aria-label="t(displayedFrame?.live ? 'work.room.preview.openLatestPreview' : 'work.room.preview.openInNewTab')"
         @click="openPreviewInNewTab(props.topicId, props.displayedFrame)"
       />
       <BaseButton
@@ -60,6 +63,7 @@ const emit = defineEmits<{
         :icon="previewFull ? 'mdi-fullscreen-exit' : 'mdi-arrow-expand-all'"
         size="sm"
         :title="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
+        :aria-label="previewFull ? t('work.room.preview.exitFullscreen') : t('work.room.preview.fullscreen')"
         @click="emit('fullscreen')"
       />
     </template>
@@ -69,6 +73,7 @@ const emit = defineEmits<{
       icon="mdi-refresh"
       size="sm"
       :title="t('work.room.preview.refresh')"
+      :aria-label="t('work.room.preview.refresh')"
       :loading="refreshing"
       @click="emit('refresh')"
     />

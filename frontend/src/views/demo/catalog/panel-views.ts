@@ -129,6 +129,28 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '课件和作业都在这里',
       },
       {
+        name: '网页太大，只摆了开头',
+        note: '一份超过读入上限的网页：切到「看原文」时，底下说清只摆了开头、整份在下载里。以前这一档什么都不说，读者滑到 `</html>` 会以为文件就这么长。判据是 `too_large`，和代码文件那一档同一个。',
+        props: previewPanelProps({
+          previewFile: {
+            path: 'site/index.html',
+            content: null,
+            head: '<!doctype html>\n<html>\n<head><title>课程网站</title></head>\n<body>\n  <h1>本周作业</h1>\n  <p>1. 读完第二章</p>\n',
+            version: 'v1',
+            bytes: 8_000_000,
+            binary: false,
+            too_large: true,
+          },
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: 'https://preview.example.test/site/index.html',
+          previewNamedPath: 'site/index.html',
+        }),
+        // 那条说明在「看原文」里：这一格先点进去，再看它。
+        click: 'toggle-frame-source',
+        expect: '只摆了开头',
+      },
+      {
         name: '这一份读不到了',
         note: '文件还在清单上、字节取不到：说的是「无法读取文件」，和「预览加载失败」不是同一件事。',
         props: previewPanelProps({

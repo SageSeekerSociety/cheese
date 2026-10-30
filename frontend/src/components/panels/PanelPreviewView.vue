@@ -28,7 +28,7 @@ import type { PreviewViewProps } from './preview/previewViewProps'
 
 import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useEventListener, useFullscreen } from '@vueuse/core'
+import { useEventListener, useFullscreen, useOnline } from '@vueuse/core'
 
 import {
   MODE_KEYS,
@@ -48,6 +48,7 @@ import {
   type LocatorAnchor,
   markPointer,
   measureAnchor,
+  measureElementAnchor,
   selectionIn,
 } from './preview/locatorAnchor'
 import PreviewComments from './preview/PreviewComments.vue'
@@ -84,6 +85,7 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   docIdentity: null,
   docSnapshot: null,
   slideContext: undefined,
+  slideNotes: () => [],
   docPage: false,
   canPage: false,
   docPageHtml: null,
@@ -183,6 +185,13 @@ const previewMode = usePreviewMode(
   () => props.previewFile?.path ?? props.previewUrl ?? ''
 )
 provide(PREVIEW_MODE, previewMode)
+
+// 读者自己这一台有没有网：断网时上面那条错误不能说成「预览加载失败」，而且连回来要
+// 自己重试一次——这一格没有别的入口会去重取。
+const online = useOnline()
+useEventListener(typeof window === 'undefined' ? null : window, 'online', () => {
+  if (props.active && (props.previewError || props.navigationError)) emit('refresh')
+})
 
 // 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
 // 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
@@ -337,7 +346,14 @@ function placeLocator() {
   placing = requestAnimationFrame(() => {
     placing = 0
     const panel = panelElement.value
-    locatorAnchor.value = panel && locator.value ? measureAnchor(panel, anchorRange, anchorPointer) : null
+    // 图上框出来的那一块没有文字选区，也没有「松手的那一点」那么窄：位置取那块选区
+    // 在屏幕上的实际矩形（`.design-image__selection`），卡片才落在这一块旁边而不是角上。
+    locatorAnchor.value =
+      panel && locator.value
+        ? imageRegion.target.value
+          ? measureElementAnchor(panel, panel.querySelector('.design-image__selection'))
+          : measureAnchor(panel, anchorRange, anchorPointer)
+        : null
     // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
     // 不能两样都不画。
     if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
@@ -626,18 +642,25 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @wake="emit('wake')"
       @annotate-errors="openPageErrors"
     />
+    <!-- 断网和「平台读不到」是两件事：能做的事不一样（先连上网 / 再去问平台），而且断网
+         这一条会自己恢复、不该催人按重试。原来两条共用「预览加载失败」加一句 fetch 错误，
+         读者看不出是自己没网。链上那一段说的也是同一件事（`lib/previewChain` 的 offline）。 -->
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
-      <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>{{ t('work.room.preview.loadFailed') }}</div>
-      <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
-      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+      <v-icon size="32" class="mb-2" :class="online ? 'text-error' : 'text-warning'">{{
+        online ? 'mdi-alert-circle-outline' : 'mdi-wifi-off'
+      }}</v-icon>
+      <div>{{ online ? t('work.room.preview.loadFailed') : t('work.room.preview.offlineTitle') }}</div>
+      <div class="text-caption mt-1">
+        {{ online ? previewError || navigationError : t('work.room.preview.offlineBody') }}
+      </div>
+      <div v-if="online && previewAppNote && !previewUrl" class="text-caption mt-1">
         {{
           t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
             agent: agentName,
           })
         }}
       </div>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <BaseButton v-if="online" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
@@ -686,6 +709,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
       :slide-context="slideContext"
+      :slide-notes="slideNotes"
       :revs="revs"
       :file-history="fileHistory"
       :versions="props.versions"
@@ -723,23 +747,14 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :active="active"
       :preview-full="previewFull"
       :image-region="imageRegion"
-      :locator-note="locatorNote"
-      :locator="locator"
       :doc-error="docError"
       :annotate-error="annotateError"
       :marks="imageAnchors"
       :active-mark="focusedThread"
-      :can-comment="!!commentTarget"
-      :busy="commenting"
-      :comment-error="commentError"
       @retry="emit('refresh')"
       @download="emit('download')"
       @region="onImageRegion"
       @annotate="onAnnotate"
-      @update:locator-note="locatorNote = $event"
-      @send="sendLocator"
-      @comment="commentHere"
-      @cancel="clearLocator"
       @mark="openAnchor"
     />
     <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
@@ -814,10 +829,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 
     <PreviewLocator
       v-model:note="locatorNote"
-      :target="imageRegion.target.value ? null : locator"
+      :target="locator"
       :queued-count="queuedCount"
       :pending-elsewhere="pendingElsewhere"
-      :can-queue="!pageLocator.pin.value"
+      :can-queue="!pageLocator.pin.value && !imageRegion.target.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :can-ask-personal="!!props.askPersonal"

@@ -14,7 +14,7 @@ import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { useElementSize, useOnline } from '@vueuse/core'
 
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
@@ -165,6 +165,19 @@ const stepLine = computed(() => {
   return t('work.room.preview.loadingStuck', { waited: waitedText, agent: props.agentName })
 })
 
+/** 读屏听到的那一句。可见那一行的秒数每两秒变一次；同一行挂着 `role="status"` 的话，
+ *  读屏会把整句重念一遍又一遍，念到读者去关掉屏幕阅读器。所以播报的是**阶段变化那一刻**
+ *  的同一句话：开始取、慢下来、再卡住，各说一次，中间的秒数不跟着念。可见那一行不带
+ *  `role`，想读它的读者照样读得到。 */
+const stepAnnouncement = ref('')
+watch(
+  [step, tone],
+  () => {
+    stepAnnouncement.value = step.value ? stepLine.value : ''
+  },
+  { immediate: true }
+)
+
 const showSource = ref(false)
 const viewport = ref<PreviewViewport>('desktop')
 
@@ -214,9 +227,13 @@ const { narrow: compact } = usePreviewNarrow(wrapRef)
 // 哪一段不通那段变灰，点开看原因。原来那颗「出问题才亮」的圆点就是这条链（见
 // `lib/previewChain`）。
 const live = computed(() => !!props.displayedFrame?.live || !!props.previewAppNote)
+/** 读者自己这一台有没有网。断网时链路第一段就说这件事（见 `lib/previewChain`），
+ *  不把一次 fetch 失败说成「平台读不到」。 */
+const online = useOnline()
 const segments = computed(() =>
   previewChain({
     platformError: props.previewError,
+    offline: !online.value,
     live: live.value,
     tunnelUp: props.previewTunnelUp,
     appAnswering: props.previewAppUp,
@@ -297,6 +314,9 @@ function openTab() {
 const canShowSource = computed(
   () => !props.previewAppNote && !props.displayedFrame?.live && !!readerText(props.previewFile)
 )
+/** 源码只摆了开头（文件超过读入上限，`content` 是 null、`head` 是前 256 KiB）。
+ *  和代码文件那一档同一个判据：只有超上限那一条会截。 */
+const sourceTruncated = computed(() => !!props.previewFile?.too_large && !!readerText(props.previewFile))
 
 /** 条上那几件动作：宽时平铺成 BaseButton，窄时收进「…」里的一行。一处写、两处画，
  *  两边不会再各写一遍同一组图标和文案（那正是它们以前对不上的原因）。 */
@@ -453,6 +473,7 @@ watch(
           :disabled="action.disabled"
           :data-testid="action.testid"
           :title="action.title ?? action.label"
+          :aria-label="action.iconOnly ? action.label : undefined"
           @click="action.run()"
         >
           <template v-if="!action.iconOnly">{{ action.label }}</template>
@@ -478,9 +499,13 @@ watch(
       </div>
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
-    <div v-if="step" role="status" class="px-3 py-2 text-caption">
+    <div v-if="step" class="px-3 py-2 text-caption">
       {{ stepLine }}
     </div>
+    <!-- 播报单独一条：跟着秒数变的那一行不挂 `role="status"`（理由见 `stepAnnouncement`）。 -->
+    <p v-if="step" class="visually-hidden" role="status" aria-live="polite" data-testid="preview-step-live">
+      {{ stepAnnouncement }}
+    </p>
     <!-- 链上断了的那一段：红条说的就是它，和点开链看到的是同一句。以前这里是第二个出处
          ——先一行原始错误、再一行「应用没起来」，链上那一段还有一套自己的说法，三种断法
          各说各的。现在四种断法都只在链上写一句，红条照它说。
@@ -490,7 +515,9 @@ watch(
     <div v-if="!sleepKind && (broken || previewReadError || handoff)" role="alert" class="px-3 py-2 text-error">
       {{ broken ? t(broken.reason, broken.params ?? {}) : previewReadError ?? handoff }}
       <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <!-- 断网那条不给「重试」：这会儿按下去只会再失败一次，网络回来这一格自己会重取
+           （`PanelPreviewView` 听着 `online`）。别的断法照旧给，它们按一下真有用。 -->
+      <BaseButton v-if="online" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
@@ -506,6 +533,22 @@ watch(
       language="xml"
       wrap
     />
+    <!-- 摆的是开头、底下的没读的时候说一句。网页源码走的是同一份 `head`（超上限的
+         文件只读前 256 KiB），但这一档以前什么都不说：读者滑到「</html>」以为整份就
+         这么长。代码文件那一档（`PreviewDocStage`）早就有这一句，两处说的是同一件事、
+         同一个入口，所以文案与按钮也共用。 -->
+    <div
+      v-if="showSource && canShowSource && sourceTruncated"
+      class="preview-source-cut"
+      role="status"
+      data-testid="frame-source-cut"
+    >
+      <v-icon size="16" aria-hidden="true">mdi-dots-horizontal</v-icon>
+      <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+      <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+        t('work.room.preview.download')
+      }}</BaseButton>
+    </div>
     <div v-show="!(showSource && canShowSource)" ref="framesRef" class="preview-slot">
       <div
         :data-viewport="viewport"
@@ -722,6 +765,26 @@ button.preview-errors {
 }
 .preview-source {
   min-height: var(--preview-min);
+}
+/* 源码只摆了开头那一条：和文档那一档的 `.doc__truncated` 同一副样子（同一条信息、
+   同一个入口，两处不该长得不一样）。它压在源码底下，不是盖在上面。 */
+.preview-source-cut {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+}
+.preview-source-cut > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* 冷启动那一阵摆的骨架：几根浅色的条，像一页还在路上。它只是占位，不接鼠标也不被读屏
    念（`aria-hidden`）——要说的话在顶上那行「正在加载…已等 N 秒」里。 */

@@ -10,8 +10,8 @@
  */
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
 
-import { ref } from 'vue'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { nextTick, ref } from 'vue'
+import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PreviewFrameStage from './PreviewFrameStage.vue'
@@ -579,4 +579,182 @@ it('冷启动那一段摆骨架：等的时候不是一片白', () => {
   cleanup()
   const withOldPage = mount('navigating', frame())
   expect(withOldPage.queryByTestId('preview-skeleton')).toBeNull()
+})
+
+it('看源码只摆了开头时说一句，再给一条下载整份的路', async () => {
+  // 一份超过读入上限的网页：`content` 是 null，`head` 是前 256 KiB。切到「看原文」
+  // 时读者看到的是开头，滑到底以为整份就这么长——原来那一页什么也不说。
+  const big = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [big],
+      displayedFrame: big,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'site/index.html',
+        content: null,
+        head: '<html><body><h1>开头</h1>',
+        version: 'v1',
+        bytes: 8_000_000,
+        binary: false,
+        too_large: true,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+
+  await fireEvent.click(ui.getByTestId('toggle-frame-source'))
+  const cut = ui.getByTestId('frame-source-cut')
+  expect(cut.textContent).toContain('site/index.html')
+  expect(cut.textContent).toContain('已经截断')
+  await fireEvent.click(within(cut).getByText('下载'))
+  expect(ui.emitted('download')).toHaveLength(1)
+
+  // 整份读得下来的网页：切到看原文时不该出现这一条。
+  await ui.rerender({
+    previewFile: {
+      path: 'site/index.html',
+      content: '<html><body><h1>整份</h1></body></html>',
+      head: '<html><body><h1>整份</h1></body></html>',
+      version: 'v2',
+      bytes: 40,
+      binary: false,
+      too_large: false,
+    },
+  })
+  expect(ui.queryByTestId('frame-source-cut')).toBeNull()
+})
+
+it('只有图标的按钮有可读名字，加载那一行不跟着秒数反复播报', async () => {
+  const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      path: 'site/index.html',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'site/index.html',
+        content: '<h1>hi</h1>',
+        head: '<h1>hi</h1>',
+        version: 'v1',
+        bytes: 12,
+        binary: false,
+        too_large: false,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  // 平铺档那几颗只有图标：`title` 能兜出名字，但它先是悬停提示，读屏按键板时要的是
+  // `aria-label`。窄档菜单里那几行本来就带字，不受影响。
+  // 这三颗以前只有 `title`：按键板的人要等悬停才听得见名字，读屏顺着名字找也找不到。
+  // 现在名字和提示各一份，名字说的是这一颗干什么。
+  for (const label of ['在新标签页打开', '下载']) {
+    const button = [...ui.container.querySelectorAll('button')].find(
+      (candidate) => candidate.getAttribute('aria-label') === label
+    )
+    expect(button, label).toBeTruthy()
+    expect(button!.getAttribute('title')).toBe(label)
+  }
+})
+
+it('加载时的播报是一条独立的、不随秒数变的信息', async () => {
+  const waiting = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [],
+      displayedFrame: null,
+      navigation: 'authorizing',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: null,
+      previewAppNote: '课程网站',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  void waiting
+  // 可见那一行说「正在获取预览授权」；播报那一条是同一个开头，但它是独立的一个
+  // `role="status"`——秒数在可见那一行里涨，播报这一条只在阶段变化时换。
+  const live = ui.getByTestId('preview-step-live')
+  expect(live.textContent).toContain('正在获取预览授权')
+  expect(live.getAttribute('role')).toBe('status')
+  // 可见那一行不再挂着 `role="status"`（挂了就会每两秒念一遍整句）。
+  const visible = ui.container.querySelector('.text-caption.px-3')
+  expect(visible?.getAttribute('role')).toBeNull()
+})
+
+it('断网时红条说设备断网、不给重试；网络回来按钮就回来', async () => {
+  // 断网时按「重试」只会再失败一次，而且这一格会在 `online` 那一下自己重取
+  // （见 `PanelPreviewView`）。所以这一条只说话，不给那颗按不动的按钮。
+  const offline = vi.fn()
+  Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: offline })
+  offline.mockReturnValue(false)
+  window.dispatchEvent(new Event('offline'))
+  const bad = { ...frame(), runtime: 'failed' as const, runtimeError: 'x', connection: 'online' as const }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 't',
+      frameName: 'frame',
+      frames: [bad],
+      displayedFrame: bad,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: '课程网站',
+      // 通道和设备都在、页面自己报错：这一档不会变成「睡着了」那张卡，红条一直摆着，
+      // 正好用它看按钮在不在。
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  const bar = ui.container.querySelector('[role=alert]')!
+  expect(bar.textContent).toContain('这台设备断网了')
+  expect(within(bar as HTMLElement).queryByText('重试新内容')).toBeNull()
+
+  offline.mockReturnValue(true)
+  window.dispatchEvent(new Event('online'))
+  await nextTick()
+  await nextTick()
+  expect(ui.container.textContent).not.toContain('这台设备断网了')
+  expect(ui.getByText('重试新内容')).toBeTruthy()
 })

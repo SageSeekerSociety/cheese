@@ -94,3 +94,28 @@ export function measureAnchor(
     viewBottom: panel.scrollTop + panel.clientHeight,
   }
 }
+
+/**
+ * 图上框出来的那一块：位置取它在屏幕上的实际矩形，坐标系和 `measureAnchor` 逐字一致
+ * （面板内容坐标、`viewTop`/`viewBottom`、面板窄了就返回 null 退回贴底）。
+ *
+ * 单独一支是因为框选不是一段文字选区（没有 Range），也不是只记下一个点（那一块有面积，
+ * 卡片要落在它旁边而不是某个角上）。元素随缩放、内部滚动一起动，所以每次重算都现读。
+ */
+export function measureElementAnchor(panel: HTMLElement, element: Element | null): LocatorAnchor | null {
+  if (panel.clientWidth < FLOATING_MIN_WIDTH) return null
+  const rect = element?.getBoundingClientRect()
+  if (!rect || (!rect.width && !rect.height)) return null
+  const box = panel.getBoundingClientRect()
+  const top = rect.top - box.top
+  const bottom = rect.bottom - box.top
+  if (bottom < 0 || top > panel.clientHeight) return null
+  return {
+    top: top + panel.scrollTop,
+    bottom: bottom + panel.scrollTop,
+    left: rect.left - box.left,
+    panelWidth: panel.clientWidth,
+    viewTop: panel.scrollTop,
+    viewBottom: panel.scrollTop + panel.clientHeight,
+  }
+}

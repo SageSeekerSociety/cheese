@@ -1,12 +1,9 @@
-// 视口那一半：适配比例、缩放、空格/中键平移，以及「选中的那块区域落在屏幕哪儿」的测量。
+// 视口那一半：适配比例、缩放、空格/中键平移。
 //
 // 从 DesignImage.vue 里搬出来的——那个组件贴着 file-size 闸门的边。这里只跟「图在屏幕上
-// 多大、滚到哪」有关，跟画了什么无关：测量结果 `geometry` 交给说明卡（region-note 插槽）
-// 定位，缩放与平移只改视图，不动笔画数据。
+// 多大、滚到哪」有关，跟画了什么无关；缩放与平移只改视图，不动笔画数据。
 import type { Ref } from 'vue'
 import type { CropBox, ImageAdjust } from '@/lib/imageEdit'
-import type { RasterRegion } from './designRegion'
-import type { NoteRect, RegionNoteGeometry } from './designRegionNotePosition'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -20,12 +17,6 @@ export interface DesignViewportOptions {
   zoomOnWheel: () => boolean
   natural: Ref<{ width: number; height: number }>
   image: Ref<HTMLImageElement | null>
-  /** 框出区域的那只盒子：测量拿它的边界。 */
-  selectedBox: Ref<HTMLElement | null>
-  /** 此刻选中的区域；没有就没得测。 */
-  selectedRegion: Ref<RasterRegion | null>
-  /** 按下的那一瞬：手上可能还挑着一笔，`.design-image__viewport` 的 pointerdown 先记焦点。 */
-  beforePanStart: () => void
   /** 屏幕上的图转过、翻过没有：转了 90° 时「适合视口」要按转完的宽度算。 */
   adjust?: () => Pick<ImageAdjust, 'rotate' | 'flip'>
   /** 裁掉了哪一块（按转好之后那张图的宽高比例）。版面只留裁完的那一块。 */
@@ -47,7 +38,7 @@ export interface DesignViewportOptions {
 const INSPECT_ROOM = 48
 
 export function useDesignViewport(options: DesignViewportOptions) {
-  const { natural, image, selectedBox, selectedRegion } = options
+  const { natural, image } = options
   /** 外面那一层：浮层的坐标以它为原点。 */
   const viewport = ref<HTMLElement | null>(null)
   /** 里面那一层：真的滚的是它，clientWidth 决定「适合视口」的比例。 */
@@ -66,7 +57,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
   const fitMode = () => (fitsHeight() ? 'fitv' : 'fitw')
   const zoomMode = ref<'fitv' | 'fitw' | 'actual' | 'custom'>(fitMode())
   const fitted = computed(() => zoomMode.value === 'fitv' || zoomMode.value === 'fitw')
-  const geometry = ref<RegionNoteGeometry | null>(null)
   const spaceHeld = ref(false)
   const panning = ref(false)
   /** 这一格滚到哪儿了、内容有多长——超长图右边那条定位用它。 */
@@ -114,7 +104,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
   let scrollCleanup: (() => void) | null = null
   /** 滚到哪儿、内容多长。 */
   let readScrollNow: (() => void) | null = null
-  let frame = 0
   // 内容多长变了不会触发 scroll 事件，也不会碰到 ResizeObserver（滚的那个元素自己没变，
   // 变的是里面的 sheet）。裁一刀、清掉裁剪、换一档缩放都会这样，所以要盯着版面重读一次：
   // 不重读，定位条那块窗口停在旧比例上，超长图裁短之后那条也还赖着不走。
@@ -128,62 +117,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
       if (horizontal || vertical) clips.push({ element: parent, horizontal, vertical })
     }
     return clips
-  }
-  function measure() {
-    frame = 0
-    readScrollNow?.()
-    const host = viewport.value
-    const element = pane.value
-    const selected = selectedBox.value
-    if (!host || !element || !selected || !selectedRegion.value) {
-      geometry.value = null
-      return
-    }
-    const origin = host.getBoundingClientRect()
-    const bounds = element.getBoundingClientRect()
-    const visual = window.visualViewport
-    let left = Math.max(bounds.left + element.clientLeft, visual?.offsetLeft ?? 0)
-    let top = Math.max(bounds.top + element.clientTop, visual?.offsetTop ?? 0)
-    let right = Math.min(
-      bounds.left + element.clientLeft + element.clientWidth,
-      (visual?.offsetLeft ?? 0) + (visual?.width ?? window.innerWidth)
-    )
-    let bottom = Math.min(
-      bounds.top + element.clientTop + element.clientHeight,
-      (visual?.offsetTop ?? 0) + (visual?.height ?? window.innerHeight)
-    )
-    for (const clip of clippingAncestors(element)) {
-      const box = clip.element.getBoundingClientRect()
-      if (clip.horizontal) {
-        left = Math.max(left, box.left + clip.element.clientLeft)
-        right = Math.min(right, box.left + clip.element.clientLeft + clip.element.clientWidth)
-      }
-      if (clip.vertical) {
-        top = Math.max(top, box.top + clip.element.clientTop)
-        bottom = Math.min(bottom, box.top + clip.element.clientTop + clip.element.clientHeight)
-      }
-    }
-    const region = selected.getBoundingClientRect()
-    const regionLeft = Math.max(region.left, left)
-    const regionTop = Math.max(region.top, top)
-    const regionRight = Math.min(region.right, right)
-    const regionBottom = Math.min(region.bottom, bottom)
-    const local = (x: number, y: number, width: number, height: number): NoteRect => ({
-      left: x - origin.left,
-      top: y - origin.top,
-      width,
-      height,
-    })
-    geometry.value = {
-      viewport: local(left, top, Math.max(0, right - left), Math.max(0, bottom - top)),
-      region:
-        regionRight > regionLeft && regionBottom > regionTop
-          ? local(regionLeft, regionTop, regionRight - regionLeft, regionBottom - regionTop)
-          : null,
-    }
-  }
-  function scheduleMeasure() {
-    if (!frame) frame = requestAnimationFrame(measure)
   }
   function setZoom(value: number) {
     zoom.value = Math.max(0.1, Math.min(3, value))
@@ -305,7 +238,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
   /** 空格或中键按住拖动＝平移，和画布类应用一套手感。 */
   let pan: { x: number; y: number; left: number; top: number } | null = null
   function panStart(event: PointerEvent) {
-    options.beforePanStart()
     const host = pane.value
     if (!host) return
     if (!spaceHeld.value && event.button !== 1) return
@@ -346,7 +278,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
         available.value = element.clientWidth
         availableHeight.value = element.clientHeight
         readScroll()
-        scheduleMeasure()
       })
       element.addEventListener('scroll', readScroll, { passive: true })
       scrollCleanup = () => element.removeEventListener('scroll', readScroll)
@@ -361,20 +292,11 @@ export function useDesignViewport(options: DesignViewportOptions) {
   )
 
   onMounted(() => {
-    document.addEventListener('scroll', scheduleMeasure, true)
-    window.addEventListener('resize', scheduleMeasure)
-    window.visualViewport?.addEventListener('resize', scheduleMeasure)
-    window.visualViewport?.addEventListener('scroll', scheduleMeasure)
     window.addEventListener('blur', blur)
   })
   onBeforeUnmount(() => {
     observer?.disconnect()
     scrollCleanup?.()
-    if (frame) cancelAnimationFrame(frame)
-    document.removeEventListener('scroll', scheduleMeasure, true)
-    window.removeEventListener('resize', scheduleMeasure)
-    window.visualViewport?.removeEventListener('resize', scheduleMeasure)
-    window.visualViewport?.removeEventListener('scroll', scheduleMeasure)
     window.removeEventListener('blur', blur)
   })
 
@@ -387,7 +309,6 @@ export function useDesignViewport(options: DesignViewportOptions) {
     fitted,
     dimensions,
     cropBox,
-    geometry,
     spaceHeld,
     panning,
     narrow,
@@ -407,6 +328,5 @@ export function useDesignViewport(options: DesignViewportOptions) {
     panMove,
     panEnd,
     blur,
-    scheduleMeasure,
   }
 }
