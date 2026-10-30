@@ -54,7 +54,7 @@ const UPGRADE_RESUME_WAIT: Block = {
   },
 }
 
-/** 同一件事没排上自动继续时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
+/** 同一件事没排上自动重试时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
 const UPGRADE_TURN_FAILED: Block = {
   id: 'catalog-upgrade-turn-failed',
   conversation_id: 'demo',
@@ -293,8 +293,8 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         expect: '约 14:33 自动重试',
       },
       {
-        name: '平台更新：没排上自动继续',
-        note: '自动继续没排上时，这一行说改动都还在，给一个「重试」。',
+        name: '平台更新：没排上自动重试',
+        note: '自动重试没排上时，这一行说改动都还在，给一个「重试」。',
         props: upgradeNotice(UPGRADE_TURN_FAILED),
         expect: '平台更新打断了',
       },
