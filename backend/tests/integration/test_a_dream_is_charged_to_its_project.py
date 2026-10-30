@@ -1,12 +1,9 @@
 """Consolidating a project's memory is work inside the project, so its team
 pays for it like any other call there, and the usage records it as the
-dream's: the dream runs on the project's dream key, whose spend is charged
-right after the dream as `memory_dream`. A room turn reads only the rooms'
-key, so one ending while the dream runs cannot take the dream's spend.
-
-The dream runs the way production runs it: on a channel that builds its own
-model environment (`builds_model_env`, as the central and owner channels do),
-so the turn's calls go through the project's key."""
+dream's: each of the dream's calls is made on the project's dream key, whose
+spend is charged right after the dream as `memory_dream`. A room turn reads
+only the rooms' key, so one ending while the dream runs cannot take the
+dream's spend."""
 
 import uuid
 
@@ -14,7 +11,6 @@ import pytest
 from sqlalchemy import select
 
 from app.api import deps as session_turn_deps
-from app.domain.agent import dream_usage
 from app.domain.agent import gateway as gw
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -29,6 +25,7 @@ from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
 from tests.integration.conftest import project_service, registered
 from tests.integration.test_gateway_usage import FakeGateway
+from tests.support.dream_gateway import answer_dream_calls
 
 pytestmark = pytest.mark.anyio
 
@@ -50,19 +47,12 @@ class KeyedGateway(FakeGateway):
         }
 
 
-class RemoteChannel(StubChannel):
-    """A machine channel as production has them: it builds the session's
-    model environment itself, so `_model_kwargs` hands it no key."""
-
-    builds_model_env = True
-
-
 def _note(name: str) -> str:
     return f"---\nname: {name}\ndescription: 一条\ntype: feedback\n---\n\n一条\n"
 
 
 async def _dreaming_project(factory, tmp_path, fake):
-    channel = RemoteChannel()
+    channel = StubChannel()
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
@@ -118,14 +108,15 @@ async def _rows(factory, pid) -> tuple[list[ResourceUsage], int]:
 
 
 async def test_what_a_dream_spends_is_charged_to_the_project_as_the_dream(
-    business_db_factory, tmp_path
+    business_db_factory, tmp_path, monkeypatch
 ):
+    answer_dream_calls(monkeypatch)
     fake = KeyedGateway()
     svc, channel, pid, root = await _dreaming_project(
         business_db_factory, tmp_path, fake
     )
-    # Both keys minted as admission hands them out: the rooms' to a room's
-    # call, the dream key to a call the overview makes while the dream runs.
+    # Both keys minted as they are handed out: the rooms' to a room's call,
+    # the dream key to the dream's own calls.
     room_key = await svc.project_gateway_key(pid)
     dream_key = await svc.project_gateway_key(pid, dream=True)
     assert room_key and dream_key and room_key != dream_key
@@ -157,8 +148,7 @@ async def test_what_a_dream_spends_is_charged_to_the_project_as_the_dream(
 async def test_a_dream_with_nothing_drained_says_it_ran_and_charges_nothing(
     business_db_factory, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(dream_usage, "TURN_RETRY_AFTER", ())
-    monkeypatch.setattr(dream_usage, "LATE_S", 0.0)
+    answer_dream_calls(monkeypatch)
     fake = KeyedGateway()
     svc, channel, pid, _root = await _dreaming_project(
         business_db_factory, tmp_path, fake

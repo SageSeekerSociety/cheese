@@ -1,22 +1,12 @@
-"""What a memory consolidation (dream) turn spent, charged to its project.
+"""What a memory consolidation (dream) spent, charged to its project.
 
 Consolidating a project's memory is work inside the project, so the project's
 team pays for it like any other turn there, and its usage says it was the
-dream. Its team pass runs as a turn of the project's overview room, and each
-of that turn's model calls is told apart where it is admitted
-(`routes/llm_proxy.py`, by `memory.dream.dreaming`): on the gateway it runs on
-the project's dream key, not the rooms' one, and on the subscription the
-metering proxy writes the dream's kind on its usage line, which
-`usage/subscription_ingest` keeps. Each person's private pass is one call the
-backend makes on the dream key itself.
-
-Right after the turn, the dream key's new spend is drained as the dream's
-(`DREAM_KIND`). No room turn reads that key, so none can take the dream's
-spend as its own. The consolidation trigger leaves that kind out of "this
-project wrote a lot" (`memory/dream.py`). What the session reports of itself is not
-charged: the gateway or the proxy already measured the same calls, and
-counting the report too would charge them twice (`turn/intake/completion.py`,
-`reported_usage`).
+dream. Each of its passes is one call the backend makes on the project's dream
+key (`memory_ledger._dream_scope`); right after them, the dream key's new spend
+is drained as the dream's (`DREAM_KIND`). No room turn reads that key, so none
+can take the dream's spend as its own. The consolidation trigger leaves that
+kind out of "this project wrote a lot" (`memory/dream.py`).
 """
 
 import uuid
@@ -66,9 +56,7 @@ async def record_dream_usage(
     *,
     project_id: uuid.UUID,
     root_topic_id: uuid.UUID,
-    usage: AgentUsage | None,
     turn_id: uuid.UUID,
-    route: str,
     drained: bool,
 ) -> None:
     """When nothing was drained for the dream, a row charging nothing that
@@ -78,21 +66,16 @@ async def record_dream_usage(
     written."""
     if drained:
         return
-    model = (
-        usage.model
-        if usage is not None and usage.model
-        else model_roles.model("agent_model")
-    )
     await Ledger(session).record(
         await payer_for_project(session, project_id),
         credits=0.0,
         kind=dream.DREAM_KIND,
-        model=model,
+        model=model_roles.model("agent_model"),
         input_tokens=0,
         output_tokens=0,
         cost_usd=0.0,
         topic_id=root_topic_id,
         turn_id=turn_id,
         metered=False,
-        route=route,
+        route="gateway",
     )

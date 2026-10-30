@@ -44,7 +44,7 @@ from app.domain.agent.turn.intake.preparation.gates import (
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
+from app.domain.agent.turn_speakers import is_routine_run, turn_speaker
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -200,19 +200,16 @@ async def prepare(
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         phases_ms["identity"] = (time.monotonic() - started) * 1000
-        # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
-        # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
-        #
-        # 只算**人**（`names_a_person`）：private 是「人 × 项目」的那一份，
-        # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
-        # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
-        # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
-        speakers = await turn_speakers(
+        # 只加载这一轮那一位的 private 索引（team 那一份每间房都有）：多人的
+        # 房间里别人的 private 不进这一轮，进了就是读给房间里所有人的 agent 听。
+        # 这一位同时也是这一轮对账要点名的那一位（`MemoryLedger.remember_turn`），
+        # 所以「注入里看得见的」和「铺到会话目录里的」是同一份（`turn_speaker`）。
+        speaker = await turn_speaker(
             session,
             delivery_id,
             pending,
             private_owner,
-            # 实况文档写给负责人看：任务自己的会话每一轮都读他那一份。
+            # 实况文档写给负责人看：没人说话的那一轮按他的习惯写。
             task_owner=(
                 task.owner_handle if task is not None and place.thread is None else None
             ),
@@ -220,14 +217,14 @@ async def prepare(
         memory = await memory_index(
             session,
             topic.project_id,
-            speaker_handles=list(speakers),
+            speaker=speaker,
             shared_read_only=seats_only(topic),
         )
         prep.memory.remember_turn(
             topic.id,
             (place.conversation_id, agent.handle),
             acting=acting_agent,
-            speakers=speakers,
+            speaker=speaker,
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)

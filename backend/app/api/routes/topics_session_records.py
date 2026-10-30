@@ -26,7 +26,7 @@ from pydantic import BaseModel, StringConstraints
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.session_record_rows import no_platform_reminders
+from app.api.session_record_rows import hidden_private_memory, no_platform_reminders
 from app.api.topics_deps import _actor_in_place
 from app.api.write_access import Can, InChannel
 from app.core.errors import NotFoundError
@@ -71,7 +71,7 @@ async def session_records(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     if channel:
         conversations = await rooms_of_inner(db, [place.room_id])
         result = await _channel_page(
@@ -85,7 +85,9 @@ async def session_records(
             turn_id=turn_id,
             limit=limit,
         )
-        return JSONResponse(ok(_shaped(result["items"], result["next"], lines)))
+        return JSONResponse(
+            ok(_shaped(result["items"], result["next"], lines, actor.handle))
+        )
     cursor = end = None
     if after is not None or before is not None:
         try:
@@ -107,11 +109,13 @@ async def session_records(
     # Rendered by the json module rather than the response model: a record
     # is whatever the harness wrote, and pydantic gives up on one nested
     # past about 250 levels, where json goes on.
-    return JSONResponse(ok(_shaped(page.items, page.next, lines)))
+    return JSONResponse(ok(_shaped(page.items, page.next, lines, actor.handle)))
 
 
-def _shaped(items: list[dict], following: str | None, lines: bool) -> dict:
-    """A page as the caller asked for it: raw records, or transcript rows."""
+def _shaped(items: list[dict], following: str | None, lines: bool, reader: str) -> dict:
+    """A page as the caller asked for it: raw records, or transcript rows,
+    either way without another person's private memory index."""
+    items = hidden_private_memory(items, reader)
     if not lines:
         return {"items": items, "next": following}
     return {

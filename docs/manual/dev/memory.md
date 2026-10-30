@@ -37,7 +37,7 @@ note: 右下角「幕后」是会话目录里的记忆文件树；上面那格�
 embed: memory
 steps:
   - label: 输入之前：铺好、注入索引
-    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 team/MEMORY.md 和本轮说话那个人的 private 索引。正文不注入，芝士要用时自己读。
+    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 team/MEMORY.md 和这一轮那一位的 private 索引。正文不注入，芝士要用时自己读。
     link: /dev/memory#scopes
   - label: 被纠正
     desc: 纠正的是做法倾向才值得记；纠正的是某一次的结果，改完就结束。
@@ -85,9 +85,9 @@ steps:
 
 `personal` 只有个人芝士在本人的面板里读写（见[个人芝士的记忆](/dev/assistant#memory)）。它的整理不走下面那套（个人芝士的会话没有文件树），是一次模型调用，见同一节。项目里的芝士读不到它：每一次项目里的读都带着项目，注入只铺 team 和 private，`/memory/files` 不认这个作用域（答 422），对账只认自己点过名的作用域。同类产品在多人场合也都不用个人记忆（ChatGPT 群聊、Copilot Studio 在群聊和频道里）。
 
-注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。这一轮替谁做事，他那一份也读，哪怕他这一轮没说话：周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人，实况文档写给他看（`turn_speakers`）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个和这一轮无关的人的偏好上是白付。
+注入的规矩：**`team/MEMORY.md` 加这一轮那一位的 `private/<handle>/MEMORY.md`**，一轮只有一位（`files_store.memory_index`，`turn_speakers.turn_speaker`，只认 `names_a_person()` 认的人）。那一位按这个先后认：这一轮窗口里最后一位说话的人；没有人说话时，这一轮替谁在做事的那一位（周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人）；私聊里是那个人。多人的房间里别人的 private 不进这一轮：这一轮的 agent 说的话、做的事房间里的人都看得到。
 
-这句话不是权限，是预算：`private` 的可见性是另一道闸，在 API 上（见下）。
+注入进去的 private 那一段在会话的输入里，而现场摊开的就是输入原文。所以它被圈起来（`instructions.PRIVATE_MEMORY_OPEN`），现场和会话记录两条读路按读的人换掉不是他本人的那一段（`session_record_rows.hidden_private_memory`），投影出来的正文和原始记录都换。
 
 ## 写入、更新、删除 {#write}
 
@@ -99,7 +99,7 @@ steps:
 1. **输入之前**：把数据库这一份铺进会话目录。agent 一睁眼读到的就是平台现在这一份，别人刚改的也在里面。
 2. **这一轮结束之后**：会话改过的收回来，写进 `memory_files`，并在房间里留一条折叠事件（带 diff）。
 
-两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。树是同一棵（会话的家是那间房的），所以同一间房的对账排队跑，点名的 private 是这间房里每个座位最近一轮的发言人合起来——只点这个座位的，会把另一个座位正在用的那个人的 private 从同一棵树上收走。
+两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。点名的是 team 加这个座位这一轮那一位的 private（`MemoryLedger._scopes`），不点同一间房别的座位的；上一轮铺下的别人那一份，会话那一侧会从目录里收走。同一间房的对账排队跑。
 
 两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，`$HOME/.cheese/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，会话的家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
 
@@ -152,8 +152,9 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 每次真的改了东西，记成一条运行记录，**不进对话、不点任何人的名**（`memory_changed`，`platform_notices.memory_changed_notice`，`run_record`）：
 
 - `team/` 的改动 → **写它的那段对话**的现场；
-- `private/<handle>/` 的改动 → **那个人的私聊**的现场（没有就现开一间）；
-- 整理（dream）改了 team 的哪几条 → 项目根房间「综合」的现场。
+- `private/<handle>/` 的改动 → **那个人的私聊**的现场（没有就现开一间）。
+
+整理（dream）的改动不记在任何房间里，见[整理](#dream)。
 
 一条记忆是 agent 写下的一份观察，没有人欠它一个动作，所以它只在现场里，改动本身收进 `meta.detail`（统一 diff，按路径分段、每段上限 200 行）。两棵树分开记，因为读它们的人不是一批：把某个人的 private diff 记进一间多人的房间，等于把一个人的偏好广播给房间里的人。
 
@@ -185,20 +186,18 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 - **不算 dream 自己花的。** 聚合按前缀剔掉 `kind = memory_dream` 的用量（`DREAM_KIND`）。网关的用量是延迟落库的，一条晚到的、时间戳落在新窗口里的 dream 用量只有 kind 认得出来；`last_dream_at` 在收尾时推进到整理结束的那一刻，两件事分开做。
 - **按项目一把锁。** 锁是 `memory_dream_states.claimed_at` 上的一次比较并交换（`dream.claim`），抢不到就跳过这一次，不排队——下一次巡检很快就到，排队只会让一个项目的整理堆成队列。
-- **跑在已有的巡检上**，不新开调度器：`PeriodicRunner` 里那条 `sweep_memory_dreams`（每 `settings.memory_dream_sweep_interval_s`，默认 600 秒）挨个项目问一句该不该，**串行**跑（一次整理里有一轮真会话，可能几分钟）。
+- **跑在已有的巡检上**，不新开调度器：`PeriodicRunner` 里那条 `sweep_memory_dreams`（每 `settings.memory_dream_sweep_interval_s`，默认 600 秒）挨个项目问一句该不该，**串行**跑（一次整理是几次可能各跑几分钟的模型调用）。
 - **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，判为「这不像是整理，更像是那棵树出了事」：那个作用域这一次一条都不写、平台上一条都不少（`dream.removal_refused`，数值和会话侧那次对账共用一份 `tree.BULK_DELETE_*`）。批量删除是个信号，不是一步操作。
-- **拒绝也记一次账。** 拒绝执行的那次照样推进 `last_dream_at`：不推进的话下一次巡检立刻再跑一遍，一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。拒绝本身记在 `memory_dream_runs`（`status=refused`），给人看。
+- **拒绝也记一次账。** 拒绝执行的那次照样推进 `last_dream_at`：不推进的话下一次巡检立刻再跑一遍，一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。拒绝本身记在 `memory_dream_runs`（`status=refused`），并报给平台的告警（`alerting`），不进任何房间。
 
-**怎么跑。** 按作用域分开跑，因为两种输入的读者不同：
+**怎么跑。** 按作用域分开跑，一次只读一个作用域，每一份是平台在项目的整理 key（`project.settings["llm_gateway_dream_key"]`）上发的一次模型调用（`MemoryLedger._dream_scope`），模型是平台默认的 `agent_model`。没有会话、没有工具、没有凭证、没有座位，所以整理不在任何房间里说话，也不在任何现场留下记录。
 
-- **team**：派法是 `platform_work` + `send`，跑在项目总览房间**默认芝士**的座位上，用它自己的模型。那个座位的会话、凭证（`CHEESE_TOPIC` 是总览）和现场全项目都看得见，所以读进来的只有共享的东西：team 的 L1 索引加 L2 正文、有新增对话且总览里的人都读得到的房间的发言（和一个在总览里回答的 agent 能读的房间同一个标准，`audience.rooms_its_audience_may_read`：私聊、私密频道不进来）、是代码项目的话还有仓库。这一轮对账只点 team 的名，会话目录里没有任何人的 private。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、修剪 team 要保守的那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。最后这段只给代码项目，由它自己在仓库里找 agent 会自动读进来的说明文件（`CLAUDE.md`、`AGENTS.md`、`.claude/rules/` 一类），一份都没有就跳过；和说明文件冲突时只做标注，不改说明文件。
-- **private**：每个有 private 的人一次模型调用（`MemoryLedger._dream_private`），没有会话、没有工具、没有凭证。输入是这个人的树加 team 的索引，答回来的是要写哪些文件、删哪些文件（`dream.private_answer`：漏写的文件原样保留，带目录的名字整份不认），平台只把它写回 `(private, 这个人)` 这一个作用域。只是重复了 team 某一条的 private 记忆在这里删掉。调用走项目的整理 key（`project.settings["llm_gateway_dream_key"]`），模型是平台默认的 `agent_model`。这几次调用在整理记录开出来之前做完：记录开着的那段时间里，从总览发出的模型调用都按整理计（见[计费](/dev/billing)）。
+- **team** 先跑：输入只有 team 的树（L1 索引加 L2 正文），不读任何房间的发言——整理只整理，不提取（#1336）。修剪 team 要保守，拿不准就留着。
+- **private** 每个有 private 的人一次：输入是这个人的树加 team（整理之后）的索引，只是重复了 team 某一条的 private 记忆在这里删掉。
 
-读过某个人 private 的计算只有一条写路：写回他自己的 private。
+两份的答案都是要写哪些文件、删哪些文件（`dream.dream_answer`：漏写的文件原样保留，带目录的名字整份不认），平台只把它写回那一个作用域。提示词的判断部分照搬 Claude Code 2.1.283 的 dream 段（见 `dream_prompt.py`）。读过某个人 private 的计算只有一条写路：写回他自己的 private。
 
-**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、运行记录都一样）：team 的改动记在「综合」的现场，某个人 private 的改动记在他的私聊里。收尾时在**「综合」**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。team 那一轮写的交代（它只读过共享的东西）和每个人那一次调用的交代都记在 `memory_dream_runs`（`files`、`summary`）；private 的文件名和交代不进总览。team 那一份被拒时，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里；某个人的 private 被拒只记在运行记录里。
-
-同一间房的两场对账排队跑（`ChatService._sync_memory`）：整理那一轮结束时，轮次钩子和整理收尾各要对一次账，交错时后一场读到的是前一场提交之前的数据库，整理算出的「改了哪些」就会是空的。
+**结果。** 写下去的就是普通的记忆文件（版本、冲突都一样），署项目默认芝士的名，在记忆面板上看得到。每一条改动和别的写入一样进 `memory_file_changes`，写入方记成 `dream_team` 或 `dream_private`：面板的“最近改动”列出它是谁、哪一轮、改了哪条、差在哪，有权写那个作用域的人可以把它恢复成整理之前的样子（`POST /memory/files/history/{id}/restore`，30 天内）。整理不发任何房间消息、不记任何运行记录、不点任何人的名。收尾时把判据那个计数器归零，并在 `memory_dream_runs` 里记一行：`files` 只列 team 改过的文件；`summary` 是 team 那一份的交代，private 那几份只写数（几个人、改几条、删几条、几份没写成），不写是谁的、改了什么。
 
 ## 旧表迁移（`memory_entries` → 文件树） {#migration}
 

@@ -22,8 +22,15 @@ from tests.integration.test_a_memory_edit_is_kept_or_told_across_turns import (
     _Session,
     _setup,
 )
-
-pytestmark = pytest.mark.anyio
+from tests.integration.test_what_a_dream_leaves_behind import (
+    SECRET,
+    TEAM_TIDIED,
+    TIDIED,
+    WorstScreen,
+    _dream,
+    _tidies,
+)
+from tests.support.dream_gateway import answer_dream_calls
 
 _ADDED = "- [测试连真库](tests-hit-a-real-db.md) — 集成测试不 mock 数据库\n"
 
@@ -33,6 +40,7 @@ async def _team_changes(factory, project_id):
         return await history.changes(session, project_id, MemoryFileScope.team, None)
 
 
+@pytest.mark.anyio
 async def test_what_a_session_wrote_is_recorded_as_that_turn(
     business_db_factory, tmp_path, monkeypatch
 ):
@@ -52,6 +60,7 @@ async def test_what_a_session_wrote_is_recorded_as_that_turn(
     assert (latest.before, latest.after) == (_INDEX, _INDEX + _ADDED)
 
 
+@pytest.mark.anyio
 async def test_changes_older_than_the_retention_window_are_gone(business_db_factory):
     factory = business_db_factory
     project_id, _, _ = await _setup(factory)
@@ -85,3 +94,23 @@ async def test_changes_older_than_the_retention_window_are_gone(business_db_fact
     await history.purge_expired(factory)
 
     assert [c.id for c in await _team_changes(factory, project_id)] == [recent.id]
+
+
+def test_each_pass_of_a_dream_is_recorded_as_that_pass(client, tmp_path, monkeypatch):
+    """The team pass and a person's private pass each leave their changes
+    under their own writer, in their own scope's history."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    answer_dream_calls(monkeypatch, _tidies)
+    result, ids = client.portal.call(lambda: _dream(client, WorstScreen(tmp_path)))
+    assert result["status"] == "completed", result
+
+    async def latest(scope, owner):
+        async with client.test_request_factory() as session:
+            return (await history.changes(session, ids["project"], scope, owner))[0]
+
+    team = client.portal.call(lambda: latest(MemoryFileScope.team, None))
+    assert (team.path, team.writer) == ("shared-rule.md", MemoryWriter.dream_team)
+    assert TEAM_TIDIED in (team.after or "")
+    bobs = client.portal.call(lambda: latest(MemoryFileScope.private, "bob"))
+    assert (bobs.path, bobs.writer) == (f"{SECRET}.md", MemoryWriter.dream_private)
+    assert TIDIED in (bobs.after or "")

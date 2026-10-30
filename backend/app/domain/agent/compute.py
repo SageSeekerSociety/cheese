@@ -73,11 +73,10 @@ class ComputePool:
             *self._owned.values(),
         ]
         # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
-        # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。没说骨架的平台工作
-        # 落在偏好的第一个上。
-        self._default = deployment_harnesses()[0]
-        if self._default not in self._backends:
-            raise ValueError(f"default backend {self._default!r} not registered")
+        # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。
+        first = deployment_harnesses()[0]
+        if first not in self._backends:
+            raise ValueError(f"default backend {first!r} not registered")
         # 归属按座位记（topic, agent_handle）：一间房坐着几个 agent，各有各的
         # 会话和它的属主 runtime。按房间记的那个版本里，B 的轮次一 activate 就
         # 把 A 的会话 interrupt+close 掉——多 agent 同房间在这一层就不可能。
@@ -131,9 +130,6 @@ class ComputePool:
             for seat in runtime.work
             if runtime.holding(seat) is not None
         }
-
-    def default(self) -> "RoomSessions":
-        return self._backends[self._default]
 
     def _runtimes(self) -> "list[RoomSessions]":
         """Every harness's sessions in the pool, on every machine pool."""
@@ -400,18 +396,6 @@ class ComputePool:
         """Land what a recovered session produced while nobody listened."""
         for runtime in self._runtimes():
             await runtime.replay(session)
-
-    def platform_work(self) -> "RoomSessions":
-        """The backend for work the PLATFORM starts — the memory
-        consolidation (dream).
-
-        No agent type stands behind it, so there is no harness to honour and
-        nothing to refuse: it runs on whatever the machine runs. Never None,
-        unlike ``select`` — a caller with no type to satisfy always has an
-        answer, and falling back to the default machine is a better one than
-        crashing on a wiring gap.
-        """
-        return self.default()
 
     def owned(self, harness: str, *, on_account: bool) -> "RoomSessions | None":
         """The backend for a member's own agent of ``harness``, never the

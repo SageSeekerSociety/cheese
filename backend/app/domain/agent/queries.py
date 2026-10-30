@@ -42,7 +42,6 @@ from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.session import MemoryChange, prefix_of_scope
 from app.domain.notice_meta import (
@@ -466,31 +465,7 @@ async def _bail_notice(
     return _block_payload(BlockOut.model_validate(block))
 
 
-# --- 记忆：这一轮该不该拦、这条改动说进哪间房 ---------------------------
-
-
-def _dream_refusal_phrase(before: dict[str, str], answer: dict) -> str:
-    """整理这一轮该不该拦；该拦就说一句为什么，不该拦就是空串。
-
-    两个判据取一个共同的形状：**会话那一侧挡下的**（`held`，会话自己那条兜底
-    已经把它们放回树里了，所以平台这一侧看不见）+ **回来的树里真的少了的**。
-    两句话合成一句，读的人要知道是哪个作用域、少了几条。
-    """
-    held = [str(path) for path in (answer.get("held") or [])]
-    if held:
-        return f"一次要删的太多，已拦下 {len(held)} 条删除：" + "、".join(
-            sorted(held)[:10]
-        )
-    files = {
-        str(path): content
-        for path, content in (answer.get("files") or {}).items()
-        if isinstance(content, str)
-    }
-    refused = dream.refused_scopes(before, files)
-    if not refused:
-        return ""
-    parts = [f"{prefix} 要删 {len(paths)} 条" for prefix, paths in refused.items()]
-    return "；".join(parts)
+# --- 记忆：这条改动说进哪间房 ---------------------------------------------
 
 
 async def _private_room(

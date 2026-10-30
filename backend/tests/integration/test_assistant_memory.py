@@ -186,9 +186,7 @@ def test_nothing_personal_reaches_a_project(client):
 
     async def index():
         async with client.test_factory() as db:
-            return await memory_index(
-                db, uuid.UUID(project["id"]), speaker_handles=["alice"]
-            )
+            return await memory_index(db, uuid.UUID(project["id"]), speaker="alice")
 
     got = asyncio.run(index())
     assert all(

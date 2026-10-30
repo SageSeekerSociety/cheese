@@ -197,20 +197,17 @@ async def _consume(
 ):
     if isinstance(event, AgentResult) and work in svc.closed:
         return
-    if queue := svc.queues.get(work):
-        await queue.put(event)
-    else:
-        await svc._hear(
-            svc._room(project, topic),
-            Read(
-                str(work),
-                event,
-                eid=eid,
-                text_seen=seen,
-                unsolicited=unsolicited,
-            ),
-            required=True,
-        )
+    await svc._hear(
+        svc._room(project, topic),
+        Read(
+            str(work),
+            event,
+            eid=eid,
+            text_seen=seen,
+            unsolicited=unsolicited,
+        ),
+        required=True,
+    )
 
 
 async def _activity(svc: pkg.RoomSessions, project, seat: Seat, work, active):
@@ -223,7 +220,6 @@ async def _activity(svc: pkg.RoomSessions, project, seat: Seat, work, active):
     elif svc.work.get(seat) == work:
         svc.work.pop(seat, None)
         svc.clocks.pop(seat, None)
-    if work not in svc.queues:
-        await svc._hear(
-            svc._room(project, seat[0], seat[1]), Read(str(work), Working(active))
-        )
+    await svc._hear(
+        svc._room(project, seat[0], seat[1]), Read(str(work), Working(active))
+    )

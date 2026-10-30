@@ -14,6 +14,8 @@ CC 的原文里，「记忆」不是一句话的授权，是一份完整的规�
    team。CC 面对一个人，这里的每间房都可能坐着好几个人。
 """
 
+import re
+
 #: 会话里那份记忆副本的根，按 agent 在文件工具里该写的那个样子写：`~` 是会话
 #: 自己的家，在会话机上，runner 就在那里对账（`runner.memory_root`）。不写成
 #: `$HOME`：agent 会去问 shell，而 shell 跑在执行机上，答的是那台机器的家，写到
@@ -259,8 +261,8 @@ type: user | feedback | project | reference
 - 需要拆步骤、记进度：用任务（`todo_write`、任务卡），不要写记忆。任务是给这个
   会话里的活用的，记忆是给以后的会话用的。
 - 这个项目要做成什么、什么时候做成、这阶段不做什么：写进项目目标，不要写记忆。
-  文档是人看得到、改得动、署了名的；记忆是只有你（和你的私聊对象）读得到的一份
-  观察。代码是什么写进仓库的 README，给 AI 的规矩写进仓库的 CLAUDE.md。
+  文档是人看得到、改得动、署了名的；记忆是写给以后的会话的一份观察：team 那一份
+  项目里的人在记忆面板上都看得到，private 那一份只有那个人自己看得到。代码是什么写进仓库的 README，给 AI 的规矩写进仓库的 CLAUDE.md。
 """
 
 
@@ -276,3 +278,36 @@ def memory_block(index_text: str, warnings: list[str] | None = None) -> str:
     for warning in warnings or []:
         parts.append(f"> ⚠️ {warning}")
     return "\n\n".join(parts)
+
+
+#: 注入里某个人 private 那一段的两头。现场摊开的是会话的输入原文，房间里的人都读
+#: 得到；private 只有本人看得见（`routes/memory_files._readable`），所以这一段圈
+#: 起来，现场按读的人把别人的那一段换掉（`without_others_private`）。agent 读到的
+#: 是原样的全文。
+PRIVATE_MEMORY_OPEN = '<private-memory owner="{owner}">'
+PRIVATE_MEMORY_CLOSE = "</private-memory>"
+_PRIVATE_MEMORY = re.compile(
+    r'<private-memory owner="([^"]*)">.*?</private-memory>', re.DOTALL
+)
+# copy: needs product sign-off — the line 现场 shows in place of another
+# person's private memory index.
+_PRIVATE_MEMORY_HIDDEN = "（{owner} 的 private 记忆索引，只有本人看得到）"
+
+
+def private_memory_section(owner: str, text: str) -> str:
+    """把某个人 private 那一段索引圈起来（见 `PRIVATE_MEMORY_OPEN`）。"""
+    return f"{PRIVATE_MEMORY_OPEN.format(owner=owner)}\n{text}\n{PRIVATE_MEMORY_CLOSE}"
+
+
+def without_others_private(text: str, reader: str | None) -> str:
+    """``text`` 里不是 ``reader`` 本人的 private 记忆那几段，换成一句占位。"""
+    if "<private-memory" not in text:
+        return text
+    return _PRIVATE_MEMORY.sub(
+        lambda m: (
+            m.group(0)
+            if reader and m.group(1) == reader
+            else _PRIVATE_MEMORY_HIDDEN.format(owner=m.group(1))
+        ),
+        text,
+    )

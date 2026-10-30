@@ -22,7 +22,6 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.runner import Runner, memory_root
 from app.domain.agent.memory_ledger import MemoryLedger
 from app.domain.agent.run_records import for_site
-from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
@@ -103,9 +102,7 @@ def _ledger(factory, sessions: _Session) -> MemoryLedger:
         sessions=factory,
         compute=sessions,  # type: ignore[arg-type]
         gateway=None,
-        base_prompt="",
         host=None,  # type: ignore[arg-type]
-        live=LiveWork(),
     )
 
 
@@ -328,3 +325,44 @@ async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
     await ledger.sync(_seat(project_id, private))
 
     assert await _index(factory, project_id) == (_INDEX, 1)
+
+
+async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Two teammates in one room answer two people. Each seat's session is
+    given the shared memory and the private memory of the person its turn
+    answers, never the other person's, though both share the room's tree."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    async with factory() as session:
+        for owner in ("alice", "bob"):
+            await MemoryFileStore(session).write(
+                project_id=project_id,
+                scope=MemoryFileScope.private,
+                owner_handle=owner,
+                path=INDEX_NAME,
+                content=f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
+                updated_by=owner,
+                expected_version=None,
+            )
+        await session.commit()
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    first = _seat(project_id, room)
+    second = SessionRef(project_id, room, "helper", harness=CLAUDE_CODE)
+    ledger.remember_turn(
+        room, (room, first.agent_handle), acting="cheese", speaker="alice"
+    )
+    ledger.remember_turn(
+        room, (room, second.agent_handle), acting="helper", speaker="bob"
+    )
+
+    await ledger.sync(first)
+    await ledger.sync(second)
+
+    tree = sessions.tree(room)
+    assert (tree / "private" / "bob" / INDEX_NAME).exists()
+    assert not (tree / "private" / "alice" / INDEX_NAME).exists()
+    assert (tree / "team" / INDEX_NAME).exists()

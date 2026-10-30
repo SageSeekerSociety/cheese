@@ -21,6 +21,9 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import HARNESSES
 from app.domain.agent_instance.adapters import named_teammate
+from app.domain.block.models import BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.writers import MemoryWriter
@@ -58,11 +61,13 @@ async def _turn_on(
     team: str | None = None,
     private: dict[str, str] | None = None,
     keeps_memory: bool = True,
+    spoke_before: str | None = None,
 ) -> str:
     """开一个项目、铺下索引、跑一轮，交回这一轮的 system prompt。
 
     ``team`` 是项目共看那个索引的内容；``private`` 是 {人: 内容}——这一轮说话的
-    人是 ``u``，所以真正该读到的是 ``private["u"]``。``dm`` 说的是这一轮落在私聊
+    人是 ``u``，所以真正该读到的是 ``private["u"]``。``spoke_before`` 是在 ``u``
+    之前、同一段还没回答的窗口里说过话的另一个人。``dm`` 说的是这一轮落在私聊
     里还是普通房间里。``keeps_memory`` 是这一轮跑的骨架会不会把记忆文件对账回平
     台——不会的时候，记忆那两段一个字都不该进去。
     """
@@ -112,6 +117,16 @@ async def _turn_on(
                 writer=MemoryWriter.panel,
             )
 
+        if spoke_before is not None:
+            await registered(session, spoke_before)
+            await BlockRepository(session).add(
+                project_id=project.id,
+                conversation_id=topic_id,
+                author=spoke_before,
+                author_type=AuthorType.participant,
+                content="我先说一句",
+                kind=BlockKind.message,
+            )
         if team is not None:
             await put(MemoryFileScope.team, None, team)
         for owner, content in (private or {}).items():
@@ -140,6 +155,27 @@ async def test_a_room_carries_the_projects_index_and_the_speakers(client, tmp_pa
             dm=False,
             team=TEAM_HOOK,
             private={"u": MINE_HOOK, "bob": SOMEONE_ELSE_HOOK},
+        )
+    )
+    assert TEAM_HOOK in prompt
+    assert MINE_HOOK in prompt
+    assert SOMEONE_ELSE_HOOK not in prompt
+
+
+async def test_a_shared_room_carries_only_the_person_the_turn_answers(client, tmp_path):
+    """两个人在同一段窗口里说过话，这一轮回答的是后说的那位：只带他那一份。
+
+    一间多人的房间里，这一轮的 agent 说的话、做的事房间里的人都看得到；先说话的
+    那个人的 private 不进这一轮。
+    """
+    prompt = client.portal.call(
+        lambda: _turn_in(
+            client.test_request_factory,
+            tmp_path,
+            dm=False,
+            team=TEAM_HOOK,
+            private={"u": MINE_HOOK, "bob": SOMEONE_ELSE_HOOK},
+            spoke_before="bob",
         )
     )
     assert TEAM_HOOK in prompt
