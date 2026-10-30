@@ -73,7 +73,7 @@ async def readiness_check() -> Any:
     failing dependency stays behind `/health/detailed`: this route is public,
     and that text can carry internal hosts and users.
     """
-    result = await health_report()
+    result = await health_report(domain=False)
     checks = result["checks"]
     unready = [
         name for name in _REQUIRED_CHECKS if checks.get(name, {}).get("status") != "up"

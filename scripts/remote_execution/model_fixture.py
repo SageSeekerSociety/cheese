@@ -4,6 +4,7 @@ import datetime as dt
 import gzip
 import hashlib
 import json
+import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -54,6 +55,11 @@ class Server(ThreadingHTTPServer):
         self.assert_healthy()
 
     def handle_error(self, request, client_address):
+        # A client that hangs up before the answer — a shell prefix the build
+        # stopped mid-request — did nothing wrong, as on the platform's route
+        # (`equivalence.py`'s relay); the fixture has nothing to report.
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
         error = traceback.format_exc()
         self.state.setdefault("handler_errors", []).append(error)
         log(self.state["dir"] / "handler-errors.jsonl", {"error": error})
@@ -199,10 +205,15 @@ class Handler(BaseHTTPRequestHandler):
             {"item": index + 1, "status": "received", "bytes": len(raw)},
         )
         dump(state["dir"] / f"action-{index + 1}.json", action)
+        # `{"text": ...}` answers with those words and ends the turn; any
+        # other action is a tool call, and none the fixture's own words.
+        said = "ACCEPTANCE_DONE"
+        if action and "text" in action:
+            said, action = action["text"], None
         block = (
             {"type": "tool_use", "id": f"toolu_acceptance_{index}", **action}
             if action
-            else {"type": "text", "text": "ACCEPTANCE_DONE"}
+            else {"type": "text", "text": said}
         )
         message = {
             "id": f"msg_{index}",
@@ -236,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                         "partial_json": json.dumps(action["input"]),
                     }
                     if action
-                    else {"type": "text_delta", "text": "ACCEPTANCE_DONE"},
+                    else {"type": "text_delta", "text": said},
                 },
             ),
             ("content_block_stop", {"type": "content_block_stop", "index": 0}),

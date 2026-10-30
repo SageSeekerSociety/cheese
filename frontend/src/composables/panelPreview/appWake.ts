@@ -13,6 +13,7 @@ import { computed, onScopeDispose, ref, watch } from 'vue'
 import { getPreviewSnapshot, getPreviewWakeStatus, putPreviewSnapshot, wakePreviewApp } from '../../api'
 import { t } from '../../i18n'
 import { appAsleepFrom } from '../../lib/previewChain'
+import { connectionInfo, prefersLightVideo } from '../../lib/videoPlayback'
 import { frameArtifactId } from '../usePreviewFrames'
 
 /** 唤醒进度里的一步。 */
@@ -24,7 +25,19 @@ export interface AppWakeStep {
 
 /** 等多久还没起来就认输、把按钮还回去：机器冷启动实测要两分多钟，再给一些余量。 */
 export const WAKE_BUDGET_MS = 180_000
-const WAKE_POLL_MS = 2_000
+
+/** 问到哪一步了，隔多久再问一次。
+ *
+ *  头几秒问得密（机器开机、端口应答都可能一两秒就过去），之后一格一格松开：慢网和机器
+ *  排队的时候，两秒一问会在同一段时间里堆出几十个请求，而且每一个都要等前面那个回来才
+ *  排下一个。松到八秒仍然漏不了状态——四步里每一步都还会被问到，只是不再每两秒一次。 */
+export const WAKE_POLL_STEPS_MS = [2_000, 2_000, 3_000, 5_000, 8_000] as const
+
+/** 第 n 次轮询之后隔多久（从 0 数起，最后那一档一直用下去）。 */
+export function wakePollDelay(round: number): number {
+  const last = WAKE_POLL_STEPS_MS.length - 1
+  return WAKE_POLL_STEPS_MS[Math.min(Math.max(round, 0), last)]
+}
 
 /** 快照是多久以前留的，说成一句话。 */
 export function snapshotAge(takenAtSeconds: number, now: number): string {
@@ -34,6 +47,23 @@ export function snapshotAge(takenAtSeconds: number, now: number): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return t('work.room.preview.sleep.hoursAgo', { n: hours })
   return t('work.room.preview.sleep.daysAgo', { n: Math.floor(hours / 24) })
+}
+
+/** 快照是哪一页：有标题就说标题，否则说路径。
+ *
+ *  一份应用只留一张快照，几个读者同时开着时**后写的盖掉先写的**（平台按应用存一份，
+ *  不按读者存）。所以卡上得说清停在哪一页，否则另一个读者会以为自己那一页被冻住了。
+ *  都没有就答空串，卡上那句不带这一截。 */
+export function snapshotWhere(href: string, title: string): string {
+  const name = (title || '').trim()
+  if (name) return name
+  if (!href) return ''
+  try {
+    const url = new URL(href)
+    return url.pathname + url.search
+  } catch {
+    return href
+  }
 }
 
 export interface WakeProgress {
@@ -67,7 +97,13 @@ export function usePanelPreviewAppSleep(deps: {
   reload: () => Promise<void>
 }) {
   const { props, state } = deps
-  const snapshot = ref<{ html: string; takenAt: number } | null>(null)
+  /** 这台设备是不是在省流（`lib/videoPlayback` 那一套判据：开了省流，或网差到 2G）。
+   *  开着就不主动去取那份快照——一份最大 2 MB，而它只是「睡着时顶在底下给你看看」，
+   *  省流的人多半宁可看一句「没有快照」。真需要时按唤醒。 */
+  const light = prefersLightVideo(connectionInfo())
+  // 快照里还记着是哪一页（`href` / `title`）：一份应用只有一张快照，几个读者同时开着时
+  // 后写的盖掉先写的——不说清是哪一页，读者会以为睡着前停在的就是自己那一页。
+  const snapshot = ref<{ html: string; takenAt: number; href: string; title: string } | null>(null)
   // 快照属于哪一件：换了产物，旧的那份就不归它了。
   let snapshotOf: string | null = null
   let fetchedFor: string | null = null
@@ -80,6 +116,8 @@ export function usePanelPreviewAppSleep(deps: {
   const wakeError = ref('')
   let poll: ReturnType<typeof setTimeout> | null = null
   let wakeStarted = 0
+  /** 这是第几次问（第 n 次之后隔多久见 `wakePollDelay`）。 */
+  let wakeRound = 0
   let sawWorking = false
   /** 四步走完、卡收掉之后，还在重新载入预览的这一段。 */
   let settling = false
@@ -97,7 +135,7 @@ export function usePanelPreviewAppSleep(deps: {
     // 照收就会署成新那一件的快照——那一件睡着时显示的会是上一件的页面。
     const shotFor = frameArtifactId(frame)
     if (shotFor && shotFor !== artifactId) return
-    snapshot.value = { html: shot.html, takenAt: Date.now() / 1000 }
+    snapshot.value = { html: shot.html, takenAt: Date.now() / 1000, href: shot.href, title: shot.title }
     snapshotOf = artifactId
     void putPreviewSnapshot(topicId, artifactId, { html: shot.html, href: shot.href, title: shot.title }).catch(
       () => {}
@@ -125,11 +163,13 @@ export function usePanelPreviewAppSleep(deps: {
       if (artifactId !== snapshotOf) snapshot.value = null
       const topicId = props.topicId
       if (!sleeping || !topicId || !artifactId || snapshot.value || fetchedFor === artifactId) return
+      // 省流：不替人下这份快照。卡上照样说「这个应用还没有留下快照」并给唤醒按钮。
+      if (light) return
       fetchedFor = artifactId
       try {
         const kept = await getPreviewSnapshot(topicId)
         if (kept && state.previewArtifactId.value === artifactId && !snapshot.value) {
-          snapshot.value = { html: kept.html, takenAt: kept.taken_at }
+          snapshot.value = { html: kept.html, takenAt: kept.taken_at, href: kept.href, title: kept.title }
           snapshotOf = artifactId
         }
       } catch {
@@ -144,7 +184,13 @@ export function usePanelPreviewAppSleep(deps: {
   )
 
   const appSnapshot = computed(() =>
-    snapshot.value ? { html: snapshot.value.html, age: snapshotAge(snapshot.value.takenAt, now.value) } : null
+    snapshot.value
+      ? {
+          html: snapshot.value.html,
+          age: snapshotAge(snapshot.value.takenAt, now.value),
+          where: snapshotWhere(snapshot.value.href, snapshot.value.title),
+        }
+      : null
   )
 
   function stopPolling() {
@@ -206,7 +252,8 @@ export function usePanelPreviewAppSleep(deps: {
       finish(t('work.room.preview.sleep.wakeTimeout', { seconds: WAKE_BUDGET_MS / 1000, agent: props.agentName ?? '' }))
       return
     }
-    poll = setTimeout(() => void check(), WAKE_POLL_MS)
+    wakeRound += 1
+    poll = setTimeout(() => void check(), wakePollDelay(wakeRound))
   }
 
   async function wake() {
@@ -214,6 +261,7 @@ export function usePanelPreviewAppSleep(deps: {
     if (!topicId || progress.value || settling) return
     wakeError.value = ''
     wakeStarted = Date.now()
+    wakeRound = 0
     sawWorking = false
     const tunnel = state.previewTunnelUp.value
     progress.value = { machine: tunnel, tunnel, agent: false, port: false }
@@ -228,7 +276,8 @@ export function usePanelPreviewAppSleep(deps: {
       return
     }
     // 起了一轮（或者刚有人按过、队友正忙着）：都等它，一步步问。
-    poll = setTimeout(() => void check(), WAKE_POLL_MS)
+    wakeRound = 1
+    poll = setTimeout(() => void check(), wakePollDelay(wakeRound))
   }
 
   // 应用醒了、新页面也装上了：进度走完，卡让开。

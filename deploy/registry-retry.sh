@@ -1,8 +1,11 @@
 # Retrying a registry operation until a time budget is spent. Sourced by
 # deploy-docker.sh (the image pulls), deploy/ghcr-login.sh (the login before
-# a deploy) and deploy/merge-deployment.sh (its scratch images). The sourcing script defines log, fail, log_disk <when> and
+# a deploy), deploy/merge-deployment.sh (its scratch images) and
+# deploy/git-fetch.sh (the dev deploy's fetches from github.com, which cross the
+# same link). The sourcing script defines log, fail, log_disk <when> and
 # reclaim_before_pull_retry (what to do before retrying an attempt that failed
-# on a full disk) before calling retry_pull.
+# on a full disk) before calling retry_pull. It may also set PULL_REFUSED_PATTERN
+# and PULL_REFUSED_BY (below) when its server words a refusal differently.
 #
 # Env:
 #   DEPLOY_PULL_BUDGET_SECONDS       how long retry_pull keeps retrying, counted
@@ -79,7 +82,11 @@ PULL_STARTED=""
 #
 # A registry that refuses the credential ("unauthorized", "denied") fails at
 # once: the same token is refused again on every later attempt, and waiting out
-# the budget would only delay the error by ten minutes.
+# the budget would only delay the error by ten minutes. PULL_REFUSED_PATTERN is
+# that test (an extended regex, matched case-insensitively against the
+# attempt's output) and PULL_REFUSED_BY names who refused, for the error.
+PULL_REFUSED_PATTERN="${PULL_REFUSED_PATTERN:-unauthorized|denied}"
+PULL_REFUSED_BY="${PULL_REFUSED_BY:-the registry}"
 retry_pull() {
   local what="$1"
   shift
@@ -97,9 +104,9 @@ retry_pull() {
       return 0
     fi
     errors="${errors:+$errors; }attempt $attempt exited $rc"
-    if grep -qiE 'unauthorized|denied' "$out"; then
+    if grep -qiE "$PULL_REFUSED_PATTERN" "$out"; then
       rm -f "$out"
-      fail "$what was refused by the registry on attempt $attempt (exit $rc); not retrying a rejected credential — see the docker output above"
+      fail "$what was refused by $PULL_REFUSED_BY on attempt $attempt (exit $rc); not retrying a refusal, which a later attempt gets again — see the output above"
     fi
     log_disk "$what failed, attempt $attempt"
     delay="$(pull_backoff_delay "$attempt")"

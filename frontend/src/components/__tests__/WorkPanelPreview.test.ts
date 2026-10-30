@@ -176,7 +176,8 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     const reasons = [...container.querySelectorAll('.browser-chain__seg[data-state="down"]')].map((el) =>
       el.getAttribute('title')
     )
-    expect(reasons.join(' ')).toContain('小 C的电脑没连上平台')
+    // 链上的话和卡上那几句同源（`chain.json`）：说的是「连不上」，不是「没连上平台」。
+    expect(reasons.join(' ')).toContain('连不上小 C的电脑')
     expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })
@@ -201,7 +202,7 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     const reasons = [...container.querySelectorAll('.browser-chain__seg[data-state="down"]')].map((el) =>
       el.getAttribute('title')
     )
-    expect(reasons.join(' ')).toContain('电脑连着，但应用没有应答')
+    expect(reasons.join(' ')).toContain('小 C的电脑连着，应用没有应答')
     expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })

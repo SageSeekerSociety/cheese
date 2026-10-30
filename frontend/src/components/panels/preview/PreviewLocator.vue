@@ -30,6 +30,7 @@ const props = withDefaults(
     /** 指的那一处在面板里的位置（面板内容坐标）。有就把框弹在它旁边；没有（键盘选中、
      *  那一处滚出了视野、面板太窄）就退回贴在可见区底边。 */
     anchor?: LocatorAnchor | null
+    maxHeight?: number
     /** 这一处是拖选出来的一段字。选字常常只是在读、在复制，不一定要写什么：这时先在
      *  选区下面浮一颗「添加批注」，点了才展开整张卡，不把刚选中的那段盖住。点一格、
      *  钉一点这类动作本身就是在指，直接出卡。 */
@@ -44,6 +45,7 @@ const props = withDefaults(
     canAskPersonal: false,
     commentError: undefined,
     anchor: null,
+    maxHeight: undefined,
     armFirst: false,
   }
 )
@@ -176,6 +178,7 @@ watch(
   }
 )
 const armed = computed(() => !!props.target && !expanded.value)
+
 const field = ref<HTMLTextAreaElement | null>(null)
 async function expand() {
   expanded.value = true
@@ -188,6 +191,36 @@ async function expand() {
 // 弹在指的那一处旁边：先放在它下面，下面放不下就翻到上面；左右夹在面板里。高度要等
 // 框画出来才量得到，量到之前先按一个常见的高度放，免得第一帧跳一下。
 const card = ref<HTMLElement | null>(null)
+
+/** 卡关掉时把焦点还给打开它的那一处。
+ *
+ *  卡自己不抢焦点（见 `send` 上面那段：一抢，页面上的选区就没了），所以「打开它的那一处」
+ *  是读者按下去那一刻拿着焦点的元素——图上那颗「选择图片区域」、表格里那一格、正文里那一段。
+ *  不还的话焦点掉到 body，键盘读者要按很多下 Tab 才能回到刚才的位置。
+ *
+ *  只在这一刻焦点**还在卡里**时才还：读者点去别处把卡关掉的那一下，焦点该留在他点的地方，
+ *  把他拽回来比不还更烦人。这一条是从图片那一档原来的自造卡里搬过来的，判据就是它原来的。
+ *
+ *  放在共用卡里而不是各档自己接：这段行为本来就该一样，而图片那档以前是自己接的（并进来
+ *  时差点丢掉；焦点看不见，掉了没人报错）。 */
+const returnFocus = ref<HTMLElement | null>(null)
+watch(
+  () => props.target,
+  (target, before) => {
+    if (target && !before) {
+      const active = document.activeElement
+      returnFocus.value = active instanceof HTMLElement && active !== document.body ? active : null
+      return
+    }
+    if (!target && before) {
+      const el = returnFocus.value
+      returnFocus.value = null
+      const active = document.activeElement
+      if (!el?.isConnected || !active || !card.value?.contains(active)) return
+      void nextTick(() => el.focus?.())
+    }
+  }
+)
 const height = ref(190)
 const GAP = 8
 const EDGE = 12
@@ -209,11 +242,13 @@ const placement = computed(() => {
   return { left, top, width, side: fitsBelow ? 'below' : 'above' }
 })
 const style = computed(() => {
-  if (!floating.value || !placement.value) return undefined
+  const bounds = props.maxHeight === undefined ? {} : { maxHeight: `${Math.max(0, props.maxHeight - EDGE * 2)}px` }
+  if (!floating.value || !placement.value) return bounds
   const { left, top, width } = placement.value
   const at = { left: `${left}px`, top: `${top}px` }
-  return armed.value ? at : { ...at, width: `${width}px` }
+  return armed.value ? at : { ...bounds, ...at, width: `${width}px` }
 })
+const scrolling = computed(() => props.maxHeight !== undefined && height.value >= props.maxHeight - EDGE * 2)
 // 框画出来以后量一次真实高度：量到之前先按一个常见的高度放，免得第一帧跳一下。
 function measureCard() {
   if (!armed.value && card.value?.offsetHeight) height.value = card.value.offsetHeight
@@ -303,7 +338,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       ref="card"
       class="locator"
       data-locator-ui
-      :class="{ 'locator--floating': floating }"
+      :class="{ 'locator--floating': floating, 'locator--scrolling': scrolling }"
       :data-side="placement?.side"
       :style="style"
     >
@@ -451,7 +486,8 @@ function send(event: KeyboardEvent | MouseEvent) {
 .locator {
   position: sticky;
   bottom: 12px;
-  z-index: var(--z-raised);
+  /* Keep note controls above image inspection tools (4), below image editing overlays (6). */
+  z-index: var(--z-raised-5);
   flex: none;
   margin: 0 12px 12px;
   display: flex;
@@ -462,6 +498,18 @@ function send(event: KeyboardEvent | MouseEvent) {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
+}
+.locator > * {
+  flex-shrink: 0;
+}
+.locator--scrolling {
+  overflow: auto;
+}
+/* Keep an expanded recipient menu in the card's scrollable content. */
+.locator--scrolling .locator__menu {
+  position: static;
+  max-width: 100%;
+  margin-top: 6px;
 }
 .locator--floating {
   position: absolute;

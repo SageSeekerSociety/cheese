@@ -78,6 +78,8 @@ const props = defineProps<{
   docError: string
   docRendererMissing: boolean
   slideContext?: SlideSource
+  /** 演示稿每一页的演讲者备注，下标即页码。 */
+  slideNotes?: readonly string[]
   revs: DocumentRevisionsBundle
   fileHistory: RoomFileHistoryBundle
   /** 文件名旁「第 N 版」、下面那条「本版共修改 N 处」、对比态和看旧版（`composables/panelPreview/versions.ts`）。
@@ -692,6 +694,7 @@ defineExpose({ snapshot, clearMark })
         :error="docError"
         :renderer-missing="docRendererMissing"
         :context="slideContext"
+        :notes="slideNotes"
         @quote="emit('quote', $event)"
         @page-context="emit('page-context', $event)"
       />

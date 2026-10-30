@@ -30,8 +30,18 @@ const props = withDefaults(
     rendererMissing?: boolean
     canDownload?: boolean
     context?: SlideSource
+    /** 每一页的演讲者备注，下标即页码（`notes[0]` 是第一页）。空的那几页是没有备注。 */
+    notes?: readonly string[]
   }>(),
-  { title: '', pending: false, error: '', rendererMissing: false, canDownload: false, context: undefined }
+  {
+    title: '',
+    pending: false,
+    error: '',
+    rendererMissing: false,
+    canDownload: false,
+    context: undefined,
+    notes: () => [],
+  }
 )
 const emit = defineEmits<{
   quote: [payload: { text: string; page: number }]
@@ -74,10 +84,27 @@ const frame = computed(() => {
   if (narrow.value) return { x: 8, top: 8, bottom: 8 }
   return { x: 16, top: 16, bottom: 16 }
 })
+// ---- 演讲者备注 ----
+//
+// 备注是**给讲的人看的**，摆在幻灯片**下面**那一条空闲里（原型也是这个位置）：一页 16:9
+// 的稿子按宽度缩到面板里之后，上下本来就空着，正好放一块不挤画面的正文。
+//
+// 放映时整块收掉，和工具栏一样：放映是把画面投给别人看，备注一旦跟着上屏，台下的每个
+// 人都读到了讲稿。真要在放映时自己看备注，那是「讲者视图」——另开一个窗口，不是这一层。
+//
+// 这一份有没有备注由「整份里有没有一段非空的」定：一份稿子只要有一页有备注，这一档就该
+// 让人找得到它在哪；某一页是空的，摆一句「这一页没有备注」，而不是把那一条整个抽掉——
+// 抽掉了读者不知道是这一页没有，还是这一档没有这个功能。
+const hasNotes = computed(() => props.notes.some((text) => text.trim()))
+const pageNote = computed(() => (props.notes[current.value - 1] ?? '').trim())
+const notesOpen = ref(true)
+const showNotes = computed(() => ready.value && hasNotes.value && notesOpen.value && !presenting.value)
+
 /** 读屏播报用：换页时说出来的是「第 4 页，共 6 页」，不是工具栏上那个数字框。 */
 const announcement = computed(() =>
   ready.value ? t('slides.pageOf', { page: current.value, count: count.value }) : ''
 )
+
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
 let textGeneration = 0
@@ -174,7 +201,6 @@ function keyboard(event: KeyboardEvent) {
 useSelectionHighlight({
   sheets: () => (sheet.value ? [sheet.value] : []),
   layerClass: 'slide-text-layer',
-  paintClass: 'slide-hl',
 })
 
 function quote() {
@@ -351,6 +377,16 @@ onBeforeUnmount(() => {
         <span v-if="title" class="slides__title t-body">{{ title }}</span>
         <span class="slides__spacer" />
         <button
+          v-if="ready && hasNotes"
+          type="button"
+          class="slides__tool"
+          :aria-pressed="showNotes"
+          data-testid="slides-notes-toggle"
+          @click="notesOpen = !notesOpen"
+        >
+          {{ t('slides.notes') }}
+        </button>
+        <button
           v-if="ready && !narrow"
           type="button"
           class="slides__tool"
@@ -462,13 +498,28 @@ onBeforeUnmount(() => {
           <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
           <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- a mouse selection on the slide is quoted and (while presenting) a click turns the page; the keyboard turns pages on the reader around it, which is why the stage itself is not focusable -->
           <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @click="pointAdvance">
-            <div
-              ref="sheet"
-              class="slides__sheet"
-              :class="{ 'is-dragging': dragX !== 0 }"
-              :data-page="current"
-              :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
-            />
+            <!-- 幻灯片和它下面那条备注是一个整体：一起居中、一起滚。分开摆的话备注会贴在
+                 这一格的下沿，离幻灯片很远——读者看不出它说的是这一页。宽度也跟着幻灯片
+                 走（下面那一列按内容撑开，页宽由 `useSlidesPdf` 写死在页自己身上）。 -->
+            <div class="slides__column">
+              <div
+                ref="sheet"
+                class="slides__sheet"
+                :class="{ 'is-dragging': dragX !== 0 }"
+                :data-page="current"
+                :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
+              />
+              <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
+              <section
+                v-if="showNotes"
+                class="slides__notes"
+                data-testid="slides-notes"
+                :aria-label="t('slides.notes')"
+              >
+                <p v-if="pageNote" class="slides__notes-text">{{ pageNote }}</p>
+                <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
+              </section>
+            </div>
           </div>
         </div>
       </div>
@@ -703,6 +754,44 @@ onBeforeUnmount(() => {
 .slides--narrow .slides__bar {
   padding: 4px 8px 0;
 }
+/* 幻灯片加它下面那条备注：一列，宽由幻灯片定（页宽写死在页自己身上，这一列跟着撑开）。
+   靠上摆，上下多出来的空间留在下面——原型也是这么摆的。 */
+.slides__column {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  /* 宽度由幻灯片说了算，不能被备注撑开：一段没有换行的长备注（中文里常见）会把这一列
+     撑到几千像素宽，幻灯片也跟着歪出屏幕。舞台的内容宽就是一页的宽（四周那圈 padding
+     之外正好留给页），所以卡在 100% 上即可。 */
+  min-width: 0;
+  max-width: 100%;
+}
+/* 幻灯片下面那一行：讲稿。不上边框、不铺底——它和幻灯片之间只隔一点空，读者一眼看得出
+   是同一条；画一条横贯面板的线会把这条绑到面板下沿上，离幻灯片太远。 */
+.slides__notes {
+  flex: none;
+  min-width: 0;
+  /* 一份备注可以很长，高度有个上限：再长就在自己里面滚，不把幻灯片挤小（读者是来看这一页
+     的）。上限按视口算，不用百分比——百分比要有一个定高祖先才生效，而这一列是内容撑开的。 */
+  max-height: 22vh;
+  overflow: auto;
+  margin-top: 10px;
+}
+.slides__notes-text {
+  margin: 0;
+  /* 13 / --muted：比正文小一档、比装饰色重一档。原型这一行用的是最淡的那个色和 12px，
+     一整段讲稿用那个色读起来吃力；讲的人和屏幕的距离也更远。 */
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.slides__notes-empty {
+  margin: 0;
+  color: var(--faint);
+}
 .slides__exit {
   position: fixed;
   top: 16px;
@@ -887,17 +976,12 @@ onBeforeUnmount(() => {
   background: transparent;
   color: transparent;
 }
-/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。 */
-.slides__sheet :deep(.slide-hl) {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.slides__sheet :deep(.slide-hl path) {
-  fill: var(--accent-wash);
-}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和分页文档共用一份，两档的
+   选中底色才不可能变成两个颜色。 */
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;
   color: var(--danger-ink);
 }
 </style>
+
+<style src="./preview-selection-paint.css"></style>

@@ -43,6 +43,7 @@ from app.domain.agent.harness.notices import (
     silence_reminder,  # noqa: F401
     stale_checklist_reminder,  # noqa: F401
     stale_progress_reminder,  # noqa: F401
+    still_working_reminder,  # noqa: F401
     strip_platform_notice,  # noqa: F401
 )
 from app.domain.agent.harness.opening import (

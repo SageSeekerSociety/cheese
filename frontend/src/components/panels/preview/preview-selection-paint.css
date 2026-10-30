@@ -1,0 +1,19 @@
+/* 选中一段原文的底色，由 `selectionHighlight.ts` 画。
+ *
+ * 分页文档（`PreviewPages`）和幻灯片（`PreviewSlides`）都往纸上放这一层，两处用的是同一个
+ * 类名、同一份样式——放在这里，是因为它们必须是同一个颜色：同一个「选中一段」的动作，在
+ * 两档里换一个颜色读者就会以为是两种意思。以前两边各写一条 `fill`，一处 `--selection-bg`、
+ * 一处 `--accent-wash`，谁也没发现；现在只有这一条，漂不了。
+ *
+ * 位置和大小由 `selectionHighlight.ts` 算，这里只管它长什么样：一块都别挡住选中，底色是
+ * 一次填充（选区的每一块收在同一条 path 里，搭着也只落一层）。`--selection-bg` 是半透明的，
+ * 压在字上还看得清字；不透明的底会把那一行字盖掉。 */
+.preview-selection-paint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.preview-selection-paint path {
+  fill: var(--selection-bg);
+}

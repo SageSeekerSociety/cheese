@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
 }))
 vi.mock('../../api', () => api)
 
-import { snapshotAge, usePanelPreviewAppSleep, wakeSteps } from './appWake'
+import { snapshotAge, snapshotWhere, usePanelPreviewAppSleep, wakePollDelay, wakeSteps } from './appWake'
 
 import { setLocale } from '@/i18n'
 
@@ -97,7 +97,8 @@ it('a sleeping app with no snapshot in hand reads the kept one once', async () =
   state.previewAppUp.value = false
   await flush()
   expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
-  expect(sleep.appSnapshot.value).toEqual({ html: '<p>kept</p>', age: '4 分钟前' })
+  // 没有 href/title 的那一份：「停在哪一页」是空串，卡上那句就不带这一截。
+  expect(sleep.appSnapshot.value).toEqual({ html: '<p>kept</p>', age: '4 分钟前', where: '' })
   scope.stop()
 })
 
@@ -110,11 +111,12 @@ it('waking polls the steps and reloads the preview once the app answers', async 
   await sleep.wake()
   expect(sleep.wakeSteps.value!.map((s) => s.state)).toEqual(['now', 'todo', 'todo', 'todo'])
   api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: true, app_up: false })
-  await vi.advanceTimersByTimeAsync(2_000)
+  // 轮询间隔是逐格放松的（见 `wakePollDelay`）：按表上的下一格推进，别写死 2 秒。
+  await vi.advanceTimersByTimeAsync(wakePollDelay(1))
   expect(sleep.wakeSteps.value!.map((s) => s.state)).toEqual(['done', 'done', 'now', 'todo'])
   expect(reload).not.toHaveBeenCalled()
   api.getPreviewWakeStatus.mockResolvedValue({ machine: 'ready', tunnel_up: true, agent_working: false, app_up: true })
-  await vi.advanceTimersByTimeAsync(2_000)
+  await vi.advanceTimersByTimeAsync(wakePollDelay(2))
   // 应用答了：重新载入一次，然后卡收起。收在载入之后、不管载入成不成——留在「四步
   // 全绿」上会把唤醒按钮一直挡住，读者只能重挂面板。
   expect(reload).toHaveBeenCalledTimes(1)
@@ -130,7 +132,7 @@ it('a reload that throws after the app answers still gives the card back', async
   state.previewAppUp.value = false
   reload.mockRejectedValueOnce(new Error('读预览失败'))
   await sleep.wake()
-  await vi.advanceTimersByTimeAsync(2_000)
+  await vi.advanceTimersByTimeAsync(wakePollDelay(1))
   expect(reload).toHaveBeenCalledTimes(1)
   expect(sleep.wakeSteps.value).toBeNull()
   // 还能再按一次：进度清掉了，判据不再挡。
@@ -240,7 +242,8 @@ it('a wake that does not get the app up in time gives the button back with a sen
   const { state, sleep, scope } = setup()
   state.previewTunnelUp.value = false
   await sleep.wake()
-  await vi.advanceTimersByTimeAsync(181_000)
+  // 预算 180 秒；轮询间隔越往后越大，多给一格，别让最后那一问卡在窗口外。
+  await vi.advanceTimersByTimeAsync(181_000 + wakePollDelay(99))
   expect(sleep.wakeSteps.value).toBeNull()
   expect(sleep.wakeError.value).toContain('180 秒')
   expect(sleep.wakeError.value).toContain('小 C')
@@ -254,4 +257,66 @@ it('a refused wake says why and keeps the button', async () => {
   expect(sleep.wakeSteps.value).toBeNull()
   expect(sleep.wakeError.value).toContain('没有权限')
   scope.stop()
+})
+
+it('轮询节奏逐格放松：头两问密，之后松开但封顶', () => {
+  expect(wakePollDelay(0)).toBe(2_000)
+  expect(wakePollDelay(1)).toBe(2_000)
+  expect(wakePollDelay(2)).toBe(3_000)
+  expect(wakePollDelay(3)).toBe(5_000)
+  expect(wakePollDelay(4)).toBe(8_000)
+  // 一直用最后一档，不会停问。
+  expect(wakePollDelay(50)).toBe(8_000)
+  expect(wakePollDelay(-1)).toBe(2_000)
+})
+
+it('一份应用几个读者同开：快照说得出停在哪一页，后写的盖掉先写的', async () => {
+  // 平台按应用存一份快照，不按读者存：两个读者同时开着，后加载的那一个写进去，另一个
+  // 读者再打开看到的就是**别人那一页**。卡上得说清是哪一页，否则会以为自己那页被冻住。
+  api.getPreviewSnapshot.mockResolvedValue({
+    html: '<p>other</p>',
+    href: 'https://preview.example.test/signup?step=3',
+    title: '提交确认',
+    taken_at: Date.now() / 1000 - 120,
+  })
+  const { state, sleep, scope } = setup()
+  state.previewAppUp.value = false
+  await flush()
+  expect(sleep.appSnapshot.value?.where).toBe('提交确认')
+  scope.stop()
+})
+
+it('快照没有标题时用路径，两者都没有就空着', () => {
+  expect(snapshotWhere('https://preview.example.test/signup?step=3', '')).toBe('/signup?step=3')
+  expect(snapshotWhere('https://preview.example.test/a', '关于')).toBe('关于')
+  expect(snapshotWhere('', '')).toBe('')
+  expect(snapshotWhere('not a url', '')).toBe('not a url')
+})
+
+it('a device on save-data does not fetch the kept snapshot on its own', async () => {
+  // 一份快照最大 2 MB，而它只是睡着时顶在底下给人看看。开了省流的人宁可看那句
+  // 「还没有留下快照」，也不该在没人要求的时候替他把这份字节拉下来。
+  api.getPreviewSnapshot.mockResolvedValue({ html: '<p>kept</p>', href: '', title: '', taken_at: 0 })
+  const saveData = vi.fn().mockReturnValue(true)
+  Object.defineProperty(navigator, 'connection', { configurable: true, get: () => ({ saveData: saveData() }) })
+  try {
+    const { state, sleep, scope } = setup()
+    state.previewAppUp.value = false
+    await flush()
+    expect(api.getPreviewSnapshot).not.toHaveBeenCalled()
+    expect(sleep.appSnapshot.value).toBeNull()
+
+    // 省流与否在挂载时读一次（和视频那一套一致：读一次、不跟着网络事件反复变）。
+    // 关掉省流后再开一次面板，就照常取回来。
+    saveData.mockReturnValue(false)
+    scope.stop()
+    const again = setup()
+    again.state.previewAppUp.value = false
+    await flush()
+    expect(api.getPreviewSnapshot).toHaveBeenCalledTimes(1)
+    expect(again.sleep.appSnapshot.value?.html).toBe('<p>kept</p>')
+    again.scope.stop()
+  } finally {
+    Reflect.deleteProperty(navigator, 'connection')
+  }
 })

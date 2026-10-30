@@ -2,8 +2,9 @@
 做到哪了的那一句（`StaleProgressReminder`）。
 
 两句话问的是两件事。`QuietSessionReminders.silence` 问话：有人对它说了话，它读到
-以后一句没回。回过一句它就安心干活，不再催它说话：干活的过程在现场看得到，做到哪了
-看清单和任务状态，对话里只说要人出手的事、大家该知道的变化和做完的结果。
+以后一句没回，就叫它回；回过了、之后在对话里又太久没出声，就叫它发一句短话说在做
+什么、还在做。干活的过程在现场看得到，但对话里的人看不到现场时，久不出声的队友和
+死了分不出来；所以不叫它播报每一步，只隔一阵要一句。
 `QuietSessionReminders.checklist` 问清单：会话在干活，清单却停在原地。它们能分开停：
 会话可以回过话而清单从开工起就是那一版（2026-10-11 报上来的正是这一种），反过来也成立。
 
@@ -42,6 +43,7 @@ from app.domain.agent.harness.prompt import (
     silence_reminder,
     stale_checklist_reminder,
     stale_progress_reminder,
+    still_working_reminder,
 )
 from app.domain.agent.session_state import reports_lifecycle
 from app.domain.block.authorship import participant_blocks
@@ -150,19 +152,16 @@ async def _asked(
 
 async def _said_since(
     session: AsyncSession, conversation: uuid.UUID, acting: str, since: datetime
-) -> bool:
-    """``acting`` 在 ``since`` 之后有没有在这里说过话：别的队友说话不算它说了。"""
-    return bool(
-        await session.scalar(
-            select(
-                exists().where(
-                    Block.conversation_id == conversation,
-                    Block.kind == BlockKind.message,
-                    participant_blocks(),
-                    Block.author == acting,
-                    Block.created_at > since,
-                )
-            )
+) -> datetime | None:
+    """``acting`` 在这里最近一次说话的时刻，只算 ``since`` 之后的：别的队友说话
+    不算它说了。"""
+    return await session.scalar(
+        select(func.max(Block.created_at)).where(
+            Block.conversation_id == conversation,
+            Block.kind == BlockKind.message,
+            participant_blocks(),
+            Block.author == acting,
+            Block.created_at > since,
         )
     )
 
@@ -212,7 +211,7 @@ async def _spoken_for(
 
 
 class QuietSessionReminders:
-    """会话在干活，有人的话没回、或者清单停在原地，叫它一声。
+    """会话在干活，有人的话没回、太久没说话、或者清单停在原地，叫它一声。
 
     按座位算（会话所在的对话、它署名用的那一席）：一间房里几位队友并行在干，各
     有各的沉默，别人说话不算它说了。两样记在这台进程里（上一次为话提醒、上一次为
@@ -263,14 +262,17 @@ class QuietSessionReminders:
             return False
 
     async def silence(self, now: datetime) -> int:
-        """读到一个人的话之后一句都没回的座位，每过 `chat_progress_reminder_after_s`
-        听到一次。回过以后不再叫它：之后它在干活时不出声是该有的样子。读进去的不是
-        人话的会话（平台叫它做的检查、别的队友的话）有它自己的通知规矩，这里不管。"""
+        """为手上这段工作读进过一句人话、之后在对话里每沉默
+        `chat_progress_reminder_after_s` 就听到一次的座位。沉默从它读到那句话、或
+        之后最近一次说话算起。还没回那句话的，叫它回（`silence_reminder`）；回过的，
+        叫它发一句短话说在做什么、还在做（`still_working_reminder`）。一次只说一句：
+        没回是更要紧的那件。读进去的不是人话的会话（平台叫它做的检查、别的队友的话）
+        有它自己的通知规矩，这里不管。"""
         threshold = settings.chat_progress_reminder_after_s
         seats = self._at_work()
         if not seats:
             return 0
-        due: list[tuple[Seat, int, str | None]] = []
+        due: list[tuple[Seat, int, str]] = []
         async with self._chat.session_factory() as session:
             spoken_for = await _spoken_for(
                 session, {conversation for conversation, _s, _a in seats}
@@ -283,27 +285,26 @@ class QuietSessionReminders:
                 asked = await _asked(session, conversation, acting, work)
                 if asked is None:
                     continue
-                if await _said_since(session, conversation, acting, asked.read_at):
-                    continue
-                since = max(
-                    asked.read_at, self._silence_reminded.get(seat, asked.read_at)
-                )
+                spoke = await _said_since(session, conversation, acting, asked.read_at)
+                quiet_since = spoke or asked.read_at
+                since = max(quiet_since, self._silence_reminded.get(seat, quiet_since))
                 if (now - since).total_seconds() < threshold:
                     continue
-                minutes = int((now - asked.read_at).total_seconds() // 60)
-                due.append((seat, minutes, await language_of(session, asked.author)))
+                minutes = int((now - quiet_since).total_seconds() // 60)
+                language = await language_of(session, asked.author)
+                text = (
+                    silence_reminder(minutes, language)
+                    if spoke is None
+                    else still_working_reminder(minutes, language)
+                )
+                due.append((seat, minutes, text))
 
-        async def remind(seat: Seat, minutes: int, language: str | None) -> bool:
-            # 那句话里已经点了清单（`silence_reminder` 的末句），别让清单那条在
-            # 同一次沉默里又说一遍。
+        async def remind(seat: Seat, minutes: int, text: str) -> bool:
+            # 两句话里都已经点了清单（末句的 todo_write），别让清单那条在同一次
+            # 沉默里又说一遍。
             self._silence_reminded[seat] = now
             self._checklist_reminded[seat] = now
-            return await self._tell(
-                seat,
-                silence_reminder(minutes, language),
-                "chat progress reminder",
-                minutes,
-            )
+            return await self._tell(seat, text, "chat progress reminder", minutes)
 
         return sum(await asyncio.gather(*(remind(*item) for item in due)))
 

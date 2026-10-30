@@ -181,8 +181,17 @@ def project(client: TestClient) -> Project:
 
 
 def _roster(p: Project) -> dict[str, str | None]:
+    """Each person's role, a mentor's named ``mentor`` whatever its key."""
+    mentor = next(
+        (r["key"] for r in p.owner_get(f"{p.base}/roles")["roles"] if r["template"]),
+        None,
+    )
     rows = p.owner_get(f"{p.base}/members")["data"]
-    return {r["user_handle"]: r.get("role") for r in rows if not r["agent"]}
+    return {
+        r["user_handle"]: "mentor" if r.get("role") == mentor else r.get("role")
+        for r in rows
+        if not r["agent"]
+    }
 
 
 def _invitees(p: Project) -> set[str]:
@@ -224,12 +233,21 @@ def _a_second_admin(p: Project) -> None:
     assert resp.status_code == 200, resp.text
 
 
+def _member(p: Project) -> dict:
+    return next(
+        r for r in p.owner_get(f"{p.base}/roles")["roles"] if r["key"] == "member"
+    )
+
+
 def _roles_reset(p: Project) -> None:
-    assert p.as_owner("DELETE", f"{p.base}/roles").status_code == 200
+    back = p.as_owner(
+        "PATCH", f"{p.base}/roles/member", json={"permissions": _member(p)["defaults"]}
+    )
+    assert back.status_code == 200, back.text
 
 
 def _member_grants(p: Project) -> set[str]:
-    return set(p.owner_get(f"{p.base}/roles")["grants"]["member"])
+    return set(_member(p)["permissions"])
 
 
 def _naming_auto(p: Project) -> None:
@@ -447,13 +465,9 @@ CHANGES = [
     Change(
         "only a manager changes what a role may do",
         "change_roles",
-        lambda p, h, s: p.client.put(
-            f"{p.base}/roles",
-            json={
-                "grants": {
-                    "member": sorted(_member_grants(p) - {"create_channels"}),
-                }
-            },
+        lambda p, h, s: p.client.patch(
+            f"{p.base}/roles/member",
+            json={"permissions": sorted(_member_grants(p) - {"create_channels"})},
             headers=h,
         ),
         _answers(**_MANAGERS_ONLY),

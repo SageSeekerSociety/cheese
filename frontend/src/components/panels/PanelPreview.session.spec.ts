@@ -471,14 +471,17 @@ it('waits for navigation load rather than treating a grant as readiness', async 
   vi.mocked(HTMLFormElement.prototype.submit).mockImplementation(function (this: HTMLFormElement) {
     submissions.push({ action: this.action, target: this.target, body: '' })
   })
-  const { container, findByRole, queryByText } = mount()
+  const { container, findByRole } = mount()
   await waitFor(() => expect(submissions).toHaveLength(1))
+  // 这句话现在有两份：可见那一行（数着秒）和读屏那条只在阶段变化时换的播报。
+  // 查「有没有说」要看可见那一行；`queryByText` 会把两份都找出来。
+  const visible = () => container.querySelector('.text-caption.px-3')
   expect((await findByRole('status')).textContent).toContain('正在加载新页面')
   const frame = container.querySelector('iframe')!
   await fireEvent.load(frame)
-  expect(queryByText(/正在加载新页面/)).toBeTruthy()
+  expect(visible()?.textContent).toContain('正在加载新页面')
   opaqueNavigation(frame)
-  await waitFor(() => expect(queryByText(/正在加载新页面/)).toBeNull())
+  await waitFor(() => expect(visible()).toBeNull())
 })
 
 it('keeps the old frame during replacement, rejects failed navigation and ignores its late load', async () => {

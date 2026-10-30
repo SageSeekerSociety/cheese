@@ -12,6 +12,8 @@
   "channelManagerOnly": "只有频道管理者和项目管理员能管理这个频道",
   "channelManagerPersonOnly": "频道管理者只能是项目里的人",
   "channelPublicProjectManagerOnly": "只有项目管理员能把私密频道设为公开",
+  "channelSpeakersNone": "至少选择一个角色",
+  "channelSpeakersOnly": "这个频道的主线只有部分角色能发言",
   "contributorMustBeUser": "贡献署名必须指向真实用户：{handle}",
   "cursorEventNotFound": "游标事件不存在",
   "cursorMessageNotFound": "游标消息不存在",

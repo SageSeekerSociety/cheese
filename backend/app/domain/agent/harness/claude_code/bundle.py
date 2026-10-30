@@ -30,6 +30,7 @@ def build() -> bytes:
             "domain/agent/harness/claude_code/journal.py",
             "domain/agent/harness/driven/lifecycle.py",
             "domain/agent/harness/claude_code/stuck.py",
+            "domain/agent/harness/claude_code/processes.py",
             "domain/agent/harness/claude_code/runner.py",
             "domain/agent/harness/claude_code/entry.py",
         ),

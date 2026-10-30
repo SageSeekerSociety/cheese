@@ -40,6 +40,8 @@ import { teamDataInjectionKey } from '@/keys'
 import { closeOverlay } from '@/lib/backOut'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { usePageTitleStore } from '@/stores/title'
 
 const route = useRoute()
@@ -164,12 +166,22 @@ const fetchTeamData = async (handle: string) => {
   notFound.value = false
   // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
   loadError.value = null
+  // 侧栏已经读过「我的小队」且这支小队在里面时，先拿它把外框和子页（项目列表）挂起来，
+  // 让子页的请求和下面的详情查询并排走，不必串着等一跳。
+  const cached = queryClient
+    .getQueryData<Team[]>(keys.myTeams())
+    ?.find((t) => t.handle.toLowerCase() === handle.toLowerCase())
+  if (cached && cached.joinStatus === 'member') {
+    teamData.value = cached
+    titles.setDynamicTitle(cached.name, 'TeamsDetail')
+  }
   try {
     const { team } = await TeamsApi.detailByHandle(handle)
     teamData.value = team
     // 标签页上写这个团队（自己名下就是自己的昵称），不写笼统的「团队」。
     titles.setDynamicTitle(team.name, 'TeamsDetail')
   } catch (error) {
+    teamData.value = undefined
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
     if (error instanceof ApiError && error.status === 404) notFound.value = true
     // 其余的留在这里画出来。原来这里 `throw`，抛出去就没人接 —— 页面一片空白，

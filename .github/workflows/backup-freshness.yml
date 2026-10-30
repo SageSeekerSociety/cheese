@@ -53,9 +53,13 @@ jobs:
       - name: Record the dev uploads service's actual successful exit time
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
         run: python3 deploy/r2-check.py mirror-receipt
-      - name: Fail if off-site DB or uploads mirror success is missing or older than 6h
+      - name: Check dev off-site DB at its interval plus 2h, uploads at 6h
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
-        run: python3 deploy/r2-check.py local --max-age-hours 6
+        run: |
+          if [ -f "$HOME/ops/backup.env" ]; then
+            set -a; . "$HOME/ops/backup.env"; set +a
+          fi
+          python3 deploy/r2-check.py local --max-age-hours 6
       - name: Prepare read-only R2 check dependencies
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
       # uv, not `python3 -m venv`: the box's python3 has no ensurepip (no
@@ -65,6 +69,10 @@ jobs:
         run: |
           [ -x "$UV" ] || { echo "::error::uv is not at $UV on this runner"; exit 1; }
           "$UV" run --no-project --with boto3==1.40.61 python3 -c 'import boto3'
-      - name: Fail if dev, prod, or either etrip DB or etrip uploads tar is stale (> 6h)
+      - name: Check dev R2 DB at its interval plus 2h, other boxes at 6h
         if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
-        run: '"$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-check.py remote --max-age-hours 6'
+        run: |
+          if [ -f "$HOME/ops/backup.env" ]; then
+            set -a; . "$HOME/ops/backup.env"; set +a
+          fi
+          "$UV" run --no-project --with boto3==1.40.61 python3 deploy/r2-check.py remote --max-age-hours 6

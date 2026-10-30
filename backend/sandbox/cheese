@@ -683,7 +683,10 @@ PLATFORM_TOOLS = ToolTable(
             "work turning "
             "out bigger or smaller than expected), or are done. Starting, "
             "checking or finishing one step is not announced; people watch "
-            "the work live. "
+            "the work live. When reminded after a long silence while still "
+            "working, send one short line saying concretely what you are doing "
+            "now and what is next (not just that you are still working), with "
+            "no @-mention, so people know you have not stopped. "
             "Ordinary model output is not published. "
             "Pictures go out with the message through `attachments`, shown in the "
             "conversation itself — no page to open.",
@@ -2062,7 +2065,8 @@ DELEGATED_TOOLS = ToolTable(
             "以用户的名义管一处的人：项目、频道、团队或空间里加人、改角色、移出。where 给"
             "项目短名、频道编号、teams/9 或 spaces/4，who 给对方的 handle 或名字（不用先读"
             "名单，重名时结果会列出各人的 handle）。项目里：不在项目的人发邀请（role 为 "
-            "member 或 mentor），已在的人改角色（admin / member / mentor）。频道里：加进来。"
+            "member、mentor 或项目里的角色名），已在的人改角色（admin、member、mentor 或项目"
+            "里的角色名）。频道里：加进来。"
             "团队里：不在团队的人发邀请，已在的人改角色（admin / member）。空间里：加为成员，"
             "role 为 admin 设为管理员，已是管理员的人 role 为 member 撤掉管理员。remove 为 "
             "true 时从这一处移出。只能做用户自己有权限做的；移出、降低权限默认要用户确认。",
@@ -2072,7 +2076,7 @@ DELEGATED_TOOLS = ToolTable(
                     "cheese_read 读 teams 或 spaces"
                 ),
                 "who": _text("对方的 handle 或名字"),
-                "role": {"type": "string", "enum": ["admin", "member", "mentor"]},
+                "role": _text("admin、member、mentor，或项目里的角色名"),
                 "remove": {"type": "boolean", "description": "true 时移出"},
                 "confirm": _CONFIRM,
             },
