@@ -51,15 +51,14 @@ async function load(fresh = false) {
   loadError.value = ''
   try {
     const readSkills = () => listProjectSkills(projectId)
-    const [listed, project] = await Promise.all([
-      fresh ? readSkills() : fromSnapshot(keys.projectSkills(projectId), readSkills),
-      queryClient.fetchQuery(projectQuery(projectId)),
-    ])
+    const listed = await (fresh ? readSkills() : fromSnapshot(keys.projectSkills(projectId), readSkills))
     if (props.projectId !== projectId) return
     skills.value = listed.data
-    canImport.value = mayIn(project, 'edit_settings')
+    loading.value = false
     const focus = typeof route.query.skill === 'string' ? route.query.skill : null
     if (focus && skills.value.some((s) => s.id === focus)) open(focus)
+    const project = await queryClient.fetchQuery(projectQuery(projectId))
+    if (props.projectId === projectId) canImport.value = mayIn(project, 'edit_settings')
   } catch (e) {
     if (props.projectId !== projectId) return
     loadError.value = e instanceof Error ? e.message : t('work.skills.loadFailed')

@@ -83,8 +83,11 @@ const me = computed(() => myHandle())
 const project = computed(() => store.projects.find((p) => p.id === props.projectId) ?? null)
 const ownerHandle = computed<string>(() => String(project.value?.owner_handle ?? ''))
 // 我管不管这个项目的成员：和工作区别处读同一份项目（`query/project`）。
+// 首屏先等名册（store.members）落地画出行，再补问项目权限、队友详情与待答复邀请，免得
+// 4 个接口同时压向后端把名册这唯一阻塞首屏的一条拖慢。
+const rosterReady = computed(() => store.members.length > 0)
 const projectRead = useQuery(
-  computed(() => projectQuery(props.projectId)),
+  computed(() => ({ ...projectQuery(props.projectId), enabled: rosterReady.value })),
   queryClient
 )
 const myRole = computed(() => projectRead.data.value?.my_role ?? null)
@@ -104,15 +107,43 @@ function countLabel(n: number): string {
 // 问的都是队友本身，名册行给不出来。停用的队友不列。
 // 拿不到就不显示这一段，名册不该被一个可选接口拖垮。
 const agentsRead = useQuery(
-  computed(() => agentsQuery(props.projectId)),
+  computed(() => ({ ...agentsQuery(props.projectId), enabled: rosterReady.value })),
   queryClient
 )
-const teammates = computed<ProjectAgent[]>(() => (agentsRead.data.value ?? []).filter((a) => a.is_active))
+type RosterAgentRow = ProjectMemberRow & {
+  instance_handle?: string | null
+  name_source?: 'default' | 'human'
+  project_default?: boolean
+  active?: boolean
+}
+const teammates = computed<ProjectAgent[]>(() => {
+  if (agentsRead.data.value) return agentsRead.data.value.filter((a) => a.is_active)
+  return (store.members as RosterAgentRow[])
+    .filter((m) => m.agent && m.active !== false)
+    .map(
+      (m) =>
+        ({
+          id: m.id ?? m.user_handle,
+          project_id: props.projectId,
+          handle: m.instance_handle || m.user_handle,
+          seat_handle: m.user_handle,
+          display_name: m.name || m.user_handle,
+          name_source: m.name_source ?? 'human',
+          is_default: !!m.project_default,
+          is_active: m.active !== false,
+          type_name: null,
+          configuration: {},
+          version: 1,
+          created_at: m.created_at ?? '',
+          updated_at: m.created_at ?? '',
+        }) as ProjectAgent
+    )
+})
 const releaseTeammates = gate.hold()
 watch(
-  () => agentsRead.isPending.value,
-  (pending) => {
-    if (!pending) releaseTeammates()
+  () => !agentsRead.isPending.value || rosterReady.value,
+  (ready) => {
+    if (ready) releaseTeammates()
   },
   { immediate: true }
 )
@@ -135,8 +166,18 @@ async function refreshInvitations(fresh = false) {
 }
 const releaseInvitations = gate.hold()
 watch(
-  () => props.projectId,
-  () => refreshInvitations().finally(releaseInvitations),
+  rosterReady,
+  (ready) => {
+    if (ready) releaseInvitations()
+  },
+  { immediate: true }
+)
+watch(
+  [() => props.projectId, rosterReady] as const,
+  ([, ready]) => {
+    if (!ready) return
+    void refreshInvitations().finally(releaseInvitations)
+  },
   { immediate: true }
 )
 

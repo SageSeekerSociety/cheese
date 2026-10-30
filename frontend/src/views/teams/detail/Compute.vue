@@ -35,18 +35,26 @@ const windowsCommand = computed(
 
 async function load(fresh = false) {
   const id = teamId.value
-  if (!id) return
+  if (!id) {
+    devices.value = []
+    canManage.value = false
+    loading.value = false
+    loadError.value = null
+    return
+  }
   loading.value = true
   loadError.value = null
   try {
     const read = () => listTeamDevices(id)
     const result = fresh ? await read() : await fromSnapshot(keys.teamDevices(id), read)
+    if (teamId.value !== id) return
     devices.value = result.devices
     canManage.value = result.can_manage
   } catch (cause) {
+    if (teamId.value !== id) return
     loadError.value = cause
   } finally {
-    loading.value = false
+    if (teamId.value === id) loading.value = false
   }
 }
 async function rename(device: MyDevice, name: string) {
