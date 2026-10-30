@@ -57,6 +57,13 @@ const props = withDefaults(
     transparent?: boolean
     /** 这一张的原始字节：是动图时用它逐帧解，交给浏览器自己放就只能看不能翻。 */
     gifBytes?: ArrayBuffer | null
+    /**
+     * 宿主给了这张图一块定高的地方（工作面板的预览格）。
+     *
+     * 给了才有「适应视口」这一档、打开时也落在这一档；嵌在一段按内容长高的正文里
+     * （文件详情、版本对比）没有高可适应，只摆「适应宽度」和「实际像素」。
+     */
+    fitsHeight?: boolean
   }>(),
   {
     selectionEnabled: true,
@@ -67,6 +74,7 @@ const props = withDefaults(
     activeMark: null,
     transparent: false,
     gifBytes: null,
+    fitsHeight: false,
   }
 )
 const emit = defineEmits<{
@@ -87,13 +95,10 @@ const emit = defineEmits<{
 }>()
 
 const image = ref<HTMLImageElement | null>(null)
-const toolbar = ref<InstanceType<typeof DesignSketchToolbar> | null>(null)
 /** 画布只在用着会画的工具时挂着，所以这一格多半是空的——Esc 要作废手里的这一笔时用它。 */
 const canvas = ref<InstanceType<typeof DesignSketchCanvas> | null>(null)
-const focusOrigin = ref<Element | null>(null)
 const natural = ref({ width: 0, height: 0 })
 const standaloneRegion = ref<RasterRegion | null>(null)
-const selectedBox = ref<HTMLElement | null>(null)
 
 const tool = ref<SketchTool>('select')
 const color = ref<string>(SKETCH_COLORS[0])
@@ -128,7 +133,6 @@ const {
   available,
   scale,
   dimensions,
-  geometry,
   spaceHeld,
   panning,
   narrow,
@@ -146,16 +150,13 @@ const {
   panMove,
   panEnd,
   blur,
-  scheduleMeasure,
 } = useDesignViewport({
   zoomOnWheel: () => props.zoomOnWheel,
   natural,
   image,
-  selectedBox,
-  selectedRegion,
-  beforePanStart: () => rememberFocus(),
   adjust: () => adjust.adjust.value,
   crop: () => layoutCrop.value,
+  fitsHeight: () => props.fitsHeight,
 })
 
 /** 读这张图那两件：取色、量距离。 */
@@ -363,16 +364,6 @@ const { discardPrompt, discardKeep, discardCard, answerDiscard, trapDiscardFocus
 function cancelSelection() {
   tool.value = 'select'
 }
-function rememberFocus() {
-  if (selecting.value) focusOrigin.value = pane.value?.ownerDocument.activeElement ?? null
-}
-function restoreFocus(resourceKey: string) {
-  const button = toolbar.value?.selectButton
-  if (!button?.isConnected || button.disabled || resourceKey !== props.identity) return
-  const document = button.ownerDocument
-  if (!document.hasFocus() || (document.activeElement && document.activeElement !== document.body)) return
-  button.focus({ preventScroll: true })
-}
 function loaded(event: Event) {
   const current = image.value
   if (!current || event.currentTarget !== current || current.getAttribute('src') !== props.src) return
@@ -400,7 +391,6 @@ watch(
   () => {
     natural.value = { width: 0, height: 0 }
     standaloneRegion.value = null
-    geometry.value = null
     fit()
     resetAnnotations()
   },
@@ -410,7 +400,6 @@ watch(
   () => props.selectionEnabled,
   () => {
     standaloneRegion.value = null
-    geometry.value = null
   },
   { flush: 'sync' }
 )
@@ -437,7 +426,6 @@ watch(
     if (!on) blur()
   }
 )
-watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush: 'post' })
 </script>
 
 <template>
@@ -445,6 +433,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
     <DesignViewToolbar
       :scale="scale"
       :mode="zoomMode"
+      :fits-height="fitsHeight"
       :adjust="adjust.adjust.value"
       :edited="adjust.edited.value"
       :cropping="adjust.cropping.value"
@@ -460,7 +449,6 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
       <template #actions><slot name="actions" /></template>
     </DesignViewToolbar>
     <DesignSketchToolbar
-      ref="toolbar"
       v-model:note="note"
       :tool="tool"
       :color="color"
@@ -483,8 +471,10 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
     />
     <!-- Status lines, not a form's result: a <p> with the live-region role says so, where <output> would want a label. -->
     <p v-if="sendError" class="design-image__error" role="alert">{{ sendError }}</p>
-    <p v-if="selectedRegion" class="t-meta design-image__region" role="status">
-      {{ t('design.selectedRegion', selectedRegion) }}
+    <!-- 没选的时候也占着这一行：选中一块时这行要是才长出来，下面的图格就矮一截，「适应视口」
+         跟着把图缩一档，刚框好的那块和旁边的说明卡都挪了位。 -->
+    <p class="t-meta design-image__region" role="status">
+      <template v-if="selectedRegion">{{ t('design.selectedRegion', selectedRegion) }}</template>
     </p>
     <div
       ref="viewport"
@@ -542,13 +532,7 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
               :selected="selectedStroke"
               :editing="editingText ? editingText.index : null"
             />
-            <div
-              v-if="selectedRegion"
-              ref="selectedBox"
-              class="design-image__selection"
-              :style="selectedStyle"
-              aria-hidden="true"
-            />
+            <div v-if="selectedRegion" class="design-image__selection" :style="selectedStyle" aria-hidden="true" />
             <DesignRasterRegion
               :image="image"
               :enabled="selecting && selectionEnabled && !textEditing && !adjust.cropping.value"
@@ -697,9 +681,6 @@ watch([scale, available, selectedRegion, selectedBox], scheduleMeasure, { flush:
             {{ Math.round(inspect.measure.value.to.x) }}、y {{ Math.round(inspect.measure.value.to.y) }}
           </span>
         </template>
-      </div>
-      <div class="design-image__overlay">
-        <slot name="region-note" :geometry="geometry" :restore-focus="restoreFocus" :focus-origin="focusOrigin" />
       </div>
     </div>
     <!-- 亮度饱和度两根滑杆：收在「调色」后面，摊开时浮在这一格右上。 -->

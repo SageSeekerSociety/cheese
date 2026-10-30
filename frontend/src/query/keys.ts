@@ -39,6 +39,7 @@ export const keys = {
   projectSituation: (projectId: string) => ['project', projectId, 'situation'] as const,
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,
   projectSkills: (projectId: string) => ['project', projectId, 'skills'] as const,
+  projectDefaultModel: (projectId: string) => ['project', projectId, 'default-model'] as const,
 
   room: (roomId: string) => ['room', roomId] as const,
   /** 房间这一行本身（标题、状态、可见性）。 */
@@ -66,4 +67,7 @@ export const keys = {
   taskReviewComments: (taskId: string) => ['room', taskId, 'review-comments'] as const,
   /** 对话最新的那一页：打开房间先画它，预取也是取它。 */
   roomNewestBlocks: (roomId: string) => ['room', roomId, 'blocks', 'newest'] as const,
+
+  /** 文档元数据（标题、创建人）。 */
+  documentAbout: (documentId: string) => ['document', documentId, 'about'] as const,
 }

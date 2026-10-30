@@ -134,6 +134,8 @@
 /* 「原图像素：x=…」这行在 240px 宽的面板里会折成两行、白吃掉 30 多像素，
    把图挤到面板外面去。它是状态行，一行放不下就省略，不要换行。 */
 .design-image__region {
+  /* 空着也是一行高（见 DesignImage 里这一行的注释）。 */
+  min-height: var(--lh-12);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -175,15 +177,13 @@
      宽度就不随滚动条变。 */
   scrollbar-gutter: stable;
   padding: 16px;
+  /* 上边让过左上角那条「取色 / 量距离」（离边 8px、高 32px，再空 8px）：图从它底下
+     开始，左上角拖得出框。和 useDesignViewport 的 INSPECT_ROOM 是同一个数。 */
+  padding-top: 48px;
 }
 .design-image__pane.is-narrow {
   padding: 8px;
-}
-.design-image__overlay {
-  position: absolute;
-  inset: 0;
-  overflow: clip;
-  pointer-events: none;
+  padding-top: 48px;
 }
 .design-image__sheet {
   position: relative;

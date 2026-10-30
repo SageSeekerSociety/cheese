@@ -13,7 +13,8 @@ import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFr
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { useElementSize, useOnline } from '@vueuse/core'
 
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
@@ -27,8 +28,10 @@ import { t } from '@/i18n'
 import { readerText } from '@/lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
+import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 import { previewStage } from '@/lib/previewStage'
+import { defaultViewport, fitScale, type PreviewViewport, VIEWPORT_WIDTH } from '@/lib/previewViewport'
 
 const props = defineProps<{
   topicId: string | null
@@ -51,7 +54,7 @@ const props = defineProps<{
   /** 应用的端口有应答（后端给了地址）：连通链「应用」那一段。 */
   previewAppUp: boolean
   /** 这个应用最近一次成功加载时留的静态快照，和它是多久以前留的。 */
-  appSnapshot?: { html: string; age: string } | null
+  appSnapshot?: { html: string; age: string; where?: string } | null
   /** 唤醒的分步进度（没在唤醒是 null）和没成时那一句。 */
   wakeSteps?: AppWakeStep[] | null
   wakeError?: string
@@ -79,6 +82,8 @@ const emit = defineEmits<{
   /** 地址栏里敲了一个地址。 */
   navigate: [path: string]
   wake: []
+  /** 把页面抛的这几条错附进一处批注：宿主开定位条并预填这几行。 */
+  'annotate-errors': [text: string]
 }>()
 
 // 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
@@ -116,8 +121,101 @@ const step = computed(() => {
   return now.stage === 'waiting' ? now.step : null
 })
 
+/** 这一轮「在取」从什么时候开始的：换了一步就重新数。
+ *
+ *  冷启动（第一次连上、机器还在起）能等一两分钟，热启动几秒就完。两处原来只有一句
+ *  「正在加载新页面…」，读者等四十秒之后分不出「快好了」和「卡住了」，也不知道等了多久。
+ *  秒数从「开始取」那一刻数：`step` 从 null 变成有值、或者换了一步，就重来一次。 */
+const loadingStartedAt = ref(0)
+const nowTick = ref(0)
+let ticker: ReturnType<typeof setInterval> | null = null
+watch(
+  step,
+  (value) => {
+    loadingStartedAt.value = value ? Date.now() : 0
+    nowTick.value = Date.now()
+    if (ticker) clearInterval(ticker)
+    ticker = null
+    if (!value) return
+    // 两秒一跳：这一行说的是「等了几十秒」，不必每秒重排一次。
+    ticker = setInterval(() => {
+      nowTick.value = Date.now()
+    }, 2_000)
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  if (ticker) clearInterval(ticker)
+})
+const elapsedSeconds = computed(() =>
+  loadingStartedAt.value ? Math.max(0, Math.floor((nowTick.value - loadingStartedAt.value) / 1000)) : 0
+)
+const tone = computed(() => loadingTone(elapsedSeconds.value))
+const waited = computed(() => elapsedLabel(elapsedSeconds.value))
+/** 那一行说成什么：正常只报在做什么，慢了就带上等了多少，卡住了还要给下一步。 */
+const stepLine = computed(() => {
+  if (!step.value) return ''
+  const doing = t(step.value === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating')
+  if (tone.value === 'normal') return doing
+  const waitedText = t(
+    waited.value.unit === 'minute' ? 'work.room.preview.waitedMinutes' : 'work.room.preview.waitedSeconds',
+    { n: waited.value.n }
+  )
+  if (tone.value === 'slow') return t('work.room.preview.loadingSlow', { doing, waited: waitedText })
+  return t('work.room.preview.loadingStuck', { waited: waitedText, agent: props.agentName })
+})
+
+/** 读屏听到的那一句。可见那一行的秒数每两秒变一次；同一行挂着 `role="status"` 的话，
+ *  读屏会把整句重念一遍又一遍，念到读者去关掉屏幕阅读器。所以播报的是**阶段变化那一刻**
+ *  的同一句话：开始取、慢下来、再卡住，各说一次，中间的秒数不跟着念。可见那一行不带
+ *  `role`，想读它的读者照样读得到。 */
+const stepAnnouncement = ref('')
+watch(
+  [step, tone],
+  () => {
+    stepAnnouncement.value = step.value ? stepLine.value : ''
+  },
+  { immediate: true }
+)
+
 const showSource = ref(false)
-const viewport = ref<'desktop' | 'tablet' | 'mobile'>('desktop')
+const viewport = ref<PreviewViewport>('desktop')
+
+/** 这一块画面的实际大小：三档里放不下的那两档按它等比缩小。
+ *
+ *  量的是画面这一块，不是整个面板：上面的小浏览器一行占了多高，画面就少多高。 */
+const framesRef = ref<HTMLElement | null>(null)
+const { width: paneWidth, height: paneHeight } = useElementSize(
+  framesRef,
+  { width: 0, height: 0 },
+  { box: 'border-box' }
+)
+/** 这一档的内容视口宽度：`null` 是「铺满面板」。 */
+const tierWidth = computed(() => VIEWPORT_WIDTH[viewport.value])
+const scale = computed(() => fitScale(paneWidth.value, viewport.value))
+/** 固定档那一块的尺寸和缩放。
+ *
+ *  它是**绝对定位**在槽里的：缩小之后的布局尺寸（`paneHeight / scale`）比看得见的那块
+ *  大，留在流里的话槽会跟着一起长高，下一帧量到的就更高，比例一路往下追（实测长到
+ *  1.7 亿 px）。绝对定位把它从流里摘出去，槽的高度只由外面给。 */
+const surfaceStyle = computed(() => {
+  const target = tierWidth.value
+  if (!target) return {}
+  const s = scale.value
+  const height = s < 1 && paneHeight.value > 0 ? paneHeight.value / s : null
+  return {
+    width: `${target}px`,
+    ...(s < 1 && height ? { height: `${height}px` } : {}),
+    ...(s < 1
+      ? {
+          transform: `scale(${s})`,
+          transformOrigin: 'top left',
+          left: '50%',
+          marginLeft: `-${(target * s) / 2}px`,
+        }
+      : { left: '50%', marginLeft: `-${target / 2}px` }),
+  }
+})
 
 // 「窄」按这一格自己的宽度算，不看窗口：预览在右栏里可以是 466px，或者手机上整页的
 // 一格里——那两种都得把这一条收成一行。还没量到宽度（挂载前、测试里没有布局）按宽处
@@ -129,9 +227,13 @@ const { narrow: compact } = usePreviewNarrow(wrapRef)
 // 哪一段不通那段变灰，点开看原因。原来那颗「出问题才亮」的圆点就是这条链（见
 // `lib/previewChain`）。
 const live = computed(() => !!props.displayedFrame?.live || !!props.previewAppNote)
+/** 读者自己这一台有没有网。断网时链路第一段就说这件事（见 `lib/previewChain`），
+ *  不把一次 fetch 失败说成「平台读不到」。 */
+const online = useOnline()
 const segments = computed(() =>
   previewChain({
     platformError: props.previewError,
+    offline: !online.value,
     live: live.value,
     tunnelUp: props.previewTunnelUp,
     appAnswering: props.previewAppUp,
@@ -155,6 +257,26 @@ const framesClass = computed(() => ({
   'preview-frames--asleep': !!sleepKind.value && !props.appSnapshot,
   'preview-frames--covered': !!sleepKind.value && !!props.appSnapshot,
 }))
+
+/** 页面自己抛的错（帧的桥收着报回来）。 */
+const pageErrors = computed(() => props.displayedFrame?.pageErrors ?? [])
+
+/** 「将这几条附入批注」：拼成一段给芝士的话，交给宿主开定位条。 */
+function annotateErrors() {
+  const lines = pageErrors.value.map(
+    (item) => `${item.source ? `${item.source}${item.line ? ':' + item.line : ''} ` : ''}${item.message}`
+  )
+  emit('annotate-errors', [t('work.room.preview.errorsIntro'), ...lines].join('\n'))
+}
+
+/** 「跟不过新实例」那一句：它不算链上断了（应用还在、新的一帧没就绪，是「等」），
+ *  但屏幕上确实什么都换不了，得把「重试」这条路还给读者（定时器认输那一步设的）。 */
+const handoff = computed(() => props.navigationError || null)
+
+/** 链上第一段**断**了的：红条和链读的是同一句，不再各写一套。
+ *
+ *  「等」不算断：重连中、跟着重启后的新实例走都还会自己好，不该弹一条红的。 */
+const broken = computed(() => segments.value.find((segment) => segment.state === 'down') ?? null)
 
 /** 链点开后最下面那几行：资源、实例、读到的版本、就绪与否。平时不读，要查时还在。 */
 const details = computed(() => {
@@ -192,6 +314,9 @@ function openTab() {
 const canShowSource = computed(
   () => !props.previewAppNote && !props.displayedFrame?.live && !!readerText(props.previewFile)
 )
+/** 源码只摆了开头（文件超过读入上限，`content` 是 null、`head` 是前 256 KiB）。
+ *  和代码文件那一档同一个判据：只有超上限那一条会截。 */
+const sourceTruncated = computed(() => !!props.previewFile?.too_large && !!readerText(props.previewFile))
 
 /** 条上那几件动作：宽时平铺成 BaseButton，窄时收进「…」里的一行。一处写、两处画，
  *  两边不会再各写一遍同一组图标和文案（那正是它们以前对不上的原因）。 */
@@ -205,8 +330,6 @@ type BarAction = {
   /** 平铺那颗按钮的 data-testid（窄时的菜单行不挂它）。 */
   testid?: string
   disabled?: boolean
-  /** 菜单里那一行是不是当前选中的那一档（视口三档）；不是单选的那几行不给。 */
-  active?: boolean
   run: () => void
 }
 const VIEWPORTS = [
@@ -243,20 +366,6 @@ const actions = computed<BarAction[]>(() => {
       },
     })
   }
-  // 窄时条上放不下视口三键，它们进菜单，照样能切。
-  if (compact.value && !showSource.value) {
-    for (const mode of VIEWPORTS) {
-      list.push({
-        key: `viewport-${mode.key}`,
-        icon: mode.icon,
-        label: t(mode.label),
-        active: viewport.value === mode.key,
-        run: () => {
-          viewport.value = mode.key
-        },
-      })
-    }
-  }
   return list
 })
 
@@ -264,8 +373,21 @@ watch(
   () => props.previewFile?.path,
   () => {
     showSource.value = false
-    viewport.value = 'desktop'
+    // 换了一份文件就回到那一份的默认档：窄面板按手机、其余按桌面（`defaultViewport`）。
+    viewport.value = defaultViewport(paneWidth.value)
   }
+)
+
+// 宽度第一次量到（挂载后）时把默认档摆正：挂载那一刻还没有布局，只能先按桌面画。
+let settledDefault = false
+watch(
+  paneWidth,
+  (width) => {
+    if (settledDefault || width <= 0) return
+    settledDefault = true
+    viewport.value = defaultViewport(width)
+  },
+  { immediate: true }
 )
 </script>
 
@@ -286,6 +408,32 @@ watch(
         @reload="reload"
         @navigate="emit('navigate', $event)"
       />
+      <!-- 页面自己抛的错：那颗「N 个错误」和条上别的按钮并排。以前这一档只认「应用说它
+           ready / failed」，页面抛了异常而应用仍报就绪时，读者看到的是照常显示的页面加
+           三个绿勾，点提交却没反应。 -->
+      <v-menu v-if="pageErrors.length && !showSource" location="bottom end" :close-on-content-click="false">
+        <template #activator="{ props: menuProps }">
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="preview-errors"
+            data-testid="preview-errors"
+            :title="t('work.room.preview.pageErrors', { count: pageErrors.length })"
+          >
+            <v-icon size="14" aria-hidden="true">mdi-alert-circle-outline</v-icon>
+            {{ t('work.room.preview.pageErrors', { count: pageErrors.length }) }}
+          </button>
+        </template>
+        <div class="preview-errors__panel" role="status" data-testid="preview-errors-detail">
+          <div v-for="(item, index) in pageErrors" :key="index" class="preview-errors__row">
+            {{ item.source ? `${item.source}${item.line ? ':' + item.line : ''}` : t('work.room.preview.pageErrorAt') }}
+            <div class="preview-errors__message">{{ item.message }}</div>
+          </div>
+          <BaseButton kind="primary" size="sm" data-testid="preview-errors-annotate" @click="annotateErrors">
+            {{ t('work.room.preview.annotateErrors', { count: pageErrors.length }) }}
+          </BaseButton>
+        </div>
+      </v-menu>
       <template v-if="compact">
         <v-menu v-if="actions.length" location="bottom end">
           <template #activator="{ props: menuProps }">
@@ -304,10 +452,8 @@ watch(
             <v-list-item
               v-for="action in actions"
               :key="action.key"
-              :role="action.active === undefined ? 'menuitem' : 'menuitemradio'"
-              :aria-checked="action.active"
+              role="menuitem"
               :prepend-icon="action.icon"
-              :active="action.active"
               :disabled="action.disabled"
               @click="action.run()"
             >
@@ -327,47 +473,51 @@ watch(
           :disabled="action.disabled"
           :data-testid="action.testid"
           :title="action.title ?? action.label"
+          :aria-label="action.iconOnly ? action.label : undefined"
           @click="action.run()"
         >
           <template v-if="!action.iconOnly">{{ action.label }}</template>
         </BaseButton>
-        <div v-if="!showSource" class="preview-viewport ms-2">
-          <button
-            v-for="mode in VIEWPORTS"
-            :key="mode.key"
-            type="button"
-            class="preview-viewport__btn"
-            :class="{ 'preview-viewport__btn--active': viewport === mode.key }"
-            :data-testid="`viewport-${mode.key}`"
-            :aria-pressed="viewport === mode.key"
-            :title="t(mode.label)"
-            :aria-label="t(mode.label)"
-            @click="viewport = mode.key"
-          >
-            <v-icon size="15">{{ mode.icon }}</v-icon>
-          </button>
-        </div>
       </template>
+      <!-- 视口三键两档都平铺：窄的时候也一样。它说的是「现在按哪种宽度排版」，读者随时
+           要看得见、按得到——收进「…」里等于手机上没法换一种宽度看。 -->
+      <div v-if="!showSource" class="preview-viewport" :class="compact ? 'ms-1' : 'ms-2'">
+        <button
+          v-for="mode in VIEWPORTS"
+          :key="mode.key"
+          type="button"
+          class="preview-viewport__btn"
+          :class="{ 'preview-viewport__btn--active': viewport === mode.key }"
+          :data-testid="`viewport-${mode.key}`"
+          :aria-pressed="viewport === mode.key"
+          :title="t(mode.label)"
+          :aria-label="t(mode.label)"
+          @click="viewport = mode.key"
+        >
+          <v-icon size="15">{{ mode.icon }}</v-icon>
+        </button>
+      </div>
       <PreviewPickToggle v-if="pickTarget && !showSource" :on="pickOn" @toggle="emit('toggle-pick')" />
     </div>
-    <div v-if="step" role="status" class="px-3 py-2 text-caption">
-      {{ t(step === 'auth' ? 'work.room.preview.authorizing' : 'work.room.preview.navigating') }}
+    <div v-if="step" class="px-3 py-2 text-caption">
+      {{ stepLine }}
     </div>
-    <div
-      v-if="!sleepKind && (navigationError || previewError || previewReadError)"
-      role="alert"
-      class="px-3 py-2 text-error"
-    >
-      {{ navigationError || previewError || previewReadError }}
-      <div v-if="previewAppNote && !previewUrl">
-        {{
-          t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
-            agent: agentName,
-          })
-        }}
-      </div>
+    <!-- 播报单独一条：跟着秒数变的那一行不挂 `role="status"`（理由见 `stepAnnouncement`）。 -->
+    <p v-if="step" class="visually-hidden" role="status" aria-live="polite" data-testid="preview-step-live">
+      {{ stepAnnouncement }}
+    </p>
+    <!-- 链上断了的那一段：红条说的就是它，和点开链看到的是同一句。以前这里是第二个出处
+         ——先一行原始错误、再一行「应用没起来」，链上那一段还有一套自己的说法，三种断法
+         各说各的。现在四种断法都只在链上写一句，红条照它说。
+         另有两条链上没有、但同样挡住了读者的：这一份读不出来（`previewReadError`），
+         以及跟不过新实例之后那句「刷新以打开当前实例」——后者链上是「等」（应用还在、
+         新的一帧没就绪），没有哪一段算「断」。这两条也各有「重试」这一条出路。 -->
+    <div v-if="!sleepKind && (broken || previewReadError || handoff)" role="alert" class="px-3 py-2 text-error">
+      {{ broken ? t(broken.reason, broken.params ?? {}) : previewReadError ?? handoff }}
       <span v-if="displayedFrame">{{ t('work.room.preview.retainedPage') }}</span>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <!-- 断网那条不给「重试」：这会儿按下去只会再失败一次，网络回来这一格自己会重取
+           （`PanelPreviewView` 听着 `online`）。别的断法照旧给，它们按一下真有用。 -->
+      <BaseButton v-if="online" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
@@ -383,47 +533,89 @@ watch(
       language="xml"
       wrap
     />
+    <!-- 摆的是开头、底下的没读的时候说一句。网页源码走的是同一份 `head`（超上限的
+         文件只读前 256 KiB），但这一档以前什么都不说：读者滑到「</html>」以为整份就
+         这么长。代码文件那一档（`PreviewDocStage`）早就有这一句，两处说的是同一件事、
+         同一个入口，所以文案与按钮也共用。 -->
     <div
-      v-show="!(showSource && canShowSource)"
-      :data-viewport="viewport"
-      :class="['preview-frames', `preview-frames--${viewport}`, framesClass]"
+      v-if="showSource && canShowSource && sourceTruncated"
+      class="preview-source-cut"
+      role="status"
+      data-testid="frame-source-cut"
     >
-      <template v-if="frames">
+      <v-icon size="16" aria-hidden="true">mdi-dots-horizontal</v-icon>
+      <span>{{ t('work.room.preview.headOnly', { path: previewFile?.path ?? '' }) }}</span>
+      <BaseButton kind="secondary" size="sm" @click="emit('download')">{{
+        t('work.room.preview.download')
+      }}</BaseButton>
+    </div>
+    <div v-show="!(showSource && canShowSource)" ref="framesRef" class="preview-slot">
+      <div
+        :data-viewport="viewport"
+        :data-scale="scale"
+        :style="{ ...surfaceStyle, '--preview-scale': scale }"
+        :class="[
+          'preview-frames',
+          `preview-frames--${viewport}`,
+          framesClass,
+          { 'preview-frames--fixed': !!tierWidth, 'preview-frames--scaled': scale < 1 },
+        ]"
+      >
+        <template v-if="frames">
+          <iframe
+            v-for="frame in frames"
+            :key="frame.id"
+            :name="frame.name"
+            class="preview-frame"
+            :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
+            :inert="!!sleepKind || frame.id !== displayedFrame?.id"
+            :aria-hidden="frame.id !== displayedFrame?.id"
+            :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
+            :title="t('work.room.preview.frameTitle')"
+            :sandbox="sandboxFor(frame.mime)"
+            @load="emit('frame-load', frame.id, $event)"
+            @error="emit('frame-error', frame.id, $event)"
+          />
+        </template>
         <iframe
-          v-for="frame in frames"
-          :key="frame.id"
-          :name="frame.name"
+          v-else
+          :name="frameName"
           class="preview-frame"
-          :class="{ 'preview-frame--incoming': frame.id !== displayedFrame?.id }"
-          :inert="!!sleepKind || frame.id !== displayedFrame?.id"
-          :aria-hidden="frame.id !== displayedFrame?.id"
-          :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
           :title="t('work.room.preview.frameTitle')"
-          :sandbox="sandboxFor(frame.mime)"
-          @load="emit('frame-load', frame.id, $event)"
-          @error="emit('frame-error', frame.id, $event)"
+          :sandbox="DEFAULT_SANDBOX"
         />
-      </template>
-      <iframe
-        v-else
-        :name="frameName"
-        class="preview-frame"
-        :title="t('work.room.preview.frameTitle')"
-        :sandbox="DEFAULT_SANDBOX"
-      />
-      <PreviewAppSleep
-        v-if="sleepKind"
-        :kind="sleepKind"
-        :snapshot-html="appSnapshot?.html ?? null"
-        :snapshot-age="appSnapshot?.age ?? ''"
-        :bare="!appSnapshot && !displayedFrame"
-        :steps="wakeSteps ?? null"
-        :wake-error="wakeError ?? ''"
-        :picking="pickOn"
-        :agent-name="agentName"
-        @wake="emit('wake')"
-      />
-      <PreviewRegionPick v-if="pickTarget === 'region' && pickOn" @pick="emit('pick-region', $event)" />
+        <!-- 冷启动那一段的骨架：先在屏幕上占出页面大概的样子（标题、几行正文），等它
+             到了再换成真的。原来这里是一片白，加上顶上那行秒数，读者还是在盯着空框。
+             只在**真没有内容可看**时摆：换一页时上一帧还在（那是另一件事，不能盖）。 -->
+        <div
+          v-if="step && !displayedFrame && !sleepKind"
+          class="preview-skeleton"
+          data-testid="preview-skeleton"
+          aria-hidden="true"
+        >
+          <div class="preview-skeleton__bar preview-skeleton__bar--title" />
+          <div v-for="i in 4" :key="i" class="preview-skeleton__bar" :style="{ width: `${92 - i * 7}%` }" />
+          <div class="preview-skeleton__block" />
+        </div>
+        <PreviewAppSleep
+          v-if="sleepKind"
+          :kind="sleepKind"
+          :snapshot-html="appSnapshot?.html ?? null"
+          :snapshot-age="appSnapshot?.age ?? ''"
+          :snapshot-where="appSnapshot?.where ?? ''"
+          :bare="!appSnapshot && !displayedFrame"
+          :steps="wakeSteps ?? null"
+          :wake-error="wakeError ?? ''"
+          :picking="pickOn"
+          :agent-name="agentName"
+          @wake="emit('wake')"
+        />
+        <PreviewRegionPick
+          v-if="pickTarget === 'region' && pickOn"
+          :scale="scale"
+          @pick="emit('pick-region', $event)"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -504,19 +696,62 @@ button.preview-viewport__btn.preview-viewport__btn--active {
 .preview-frames--covered .preview-frame {
   visibility: hidden;
 }
-.preview-frames {
+/* 画面那一槽：宽度永远等于面板，量的是它。里面那一块（`.preview-frames`）才按视口档
+   变宽窄、变缩放——分开两级是为了**别量自己改过的东西**：量自己的话，缩到 0.78 之后
+   量出来的宽度又变了，比例会一直往下追。 */
+.preview-slot {
   position: relative;
   flex: 1 1 auto;
   width: 100%;
   min-height: var(--preview-min);
 }
-.preview-frames--tablet {
-  width: min(100%, 768px);
-  margin-inline: auto;
+.preview-frames {
+  position: relative;
+  width: 100%;
+  min-height: var(--preview-min);
 }
-.preview-frames--mobile {
-  width: min(100%, 375px);
-  margin-inline: auto;
+/* 固定档（平板 768、手机 375）的宽度和缩放由行内样式给（见 `surfaceStyle`）：
+   放得下就是那一档的原宽，放不下整块等比缩小，中心对齐。绝对定位是为了把缩小后那个
+   更大的布局尺寸挡在槽外面（理由见 `surfaceStyle`）。 */
+.preview-frames--fixed {
+  position: absolute;
+  top: 0;
+}
+/* 页面报错那颗：条上唯一一颗会变红的按钮，和「更新/失败」那几段的颜色同一档。 */
+button.preview-errors {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--danger-ink);
+  background: var(--danger-wash);
+  border-radius: var(--radius-md);
+}
+.preview-errors__panel {
+  display: flex;
+  flex-direction: column;
+  /* 按钮不拉满宽：这里是几行报错加一个动作，拉满看着像一块面板。 */
+  align-items: flex-start;
+  gap: 8px;
+  width: min(420px, 90vw);
+  padding: 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.preview-errors__row {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.preview-errors__message {
+  color: var(--text);
 }
 .preview-frames .preview-frame {
   position: absolute;
@@ -530,5 +765,70 @@ button.preview-viewport__btn.preview-viewport__btn--active {
 }
 .preview-source {
   min-height: var(--preview-min);
+}
+/* 源码只摆了开头那一条：和文档那一档的 `.doc__truncated` 同一副样子（同一条信息、
+   同一个入口，两处不该长得不一样）。它压在源码底下，不是盖在上面。 */
+.preview-source-cut {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+}
+.preview-source-cut > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 冷启动那一阵摆的骨架：几根浅色的条，像一页还在路上。它只是占位，不接鼠标也不被读屏
+   念（`aria-hidden`）——要说的话在顶上那行「正在加载…已等 N 秒」里。 */
+.preview-skeleton {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  background: var(--raised);
+  pointer-events: none;
+}
+.preview-skeleton__bar,
+.preview-skeleton__block {
+  background: var(--fill);
+  border-radius: 6px;
+}
+.preview-skeleton__bar {
+  height: 12px;
+}
+.preview-skeleton__bar--title {
+  width: 46%;
+  height: 20px;
+  margin-bottom: 4px;
+}
+.preview-skeleton__block {
+  height: 96px;
+  margin-top: 8px;
+}
+/* 关掉动效时不给它闪：静态的几条照样说得出「还在等」。 */
+@media (prefers-reduced-motion: no-preference) {
+  .preview-skeleton__bar,
+  .preview-skeleton__block {
+    animation: preview-skeleton-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes preview-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 </style>

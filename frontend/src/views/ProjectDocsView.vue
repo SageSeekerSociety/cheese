@@ -27,7 +27,7 @@ import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
 import { patchQuery, queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
-import { projectQuery, roomRowQuery } from '@/query/project'
+import { projectQuery, readProjectTopic } from '@/query/project'
 import errorHandler from '@/services/ErrorHandler'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -109,7 +109,7 @@ const docs = useQuery(
       }
       if (kind.value === 'charter' && overviewRead) {
         payload.overviewId = (await overviewRead).id
-        if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
+        if (project.root_topic_id) payload.rootTopic = await readProjectTopic(props.projectId, project.root_topic_id)
       } else if (kind.value === 'memory') {
         // 记忆和它的改动记录各问各的，并行去取。别人的 private 改动不在这里：后端
         // 只给本人（和读那条记忆是同一道门）。
@@ -157,7 +157,9 @@ const errorMessage = computed<string | null>(() =>
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
 const rootTopic = computed<Topic | null>(() => data.value?.rootTopic ?? null)
 const overviewDoc = computed(() =>
-  data.value?.overviewId ? { id: data.value.overviewId, projectId: props.projectId, title: '' } : null
+  data.value?.overviewId
+    ? { id: data.value.overviewId, projectId: props.projectId, title: t('project.docs.kind.charter') }
+    : null
 )
 
 function fmtDate(d: string | null): string {

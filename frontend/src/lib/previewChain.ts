@@ -32,6 +32,9 @@ export interface ChainSegment {
 export interface ChainInput {
   /** 读预览信息那一下失败了（平台连不上、接口报错）。 */
   platformError: string | null
+  /** 读者自己这台设备没有网络（`navigator.onLine === false`）。这一条排在最前：
+   *  设备断网时后面几段都无从判断，而且能做的事也不同（先连上网）。 */
+  offline?: boolean
   /** 这是一个跑着的应用（不是静态文件）。 */
   live: boolean
   tunnelUp: boolean
@@ -56,6 +59,12 @@ export function previewChain(input: ChainInput): ChainSegment[] {
 }
 
 function platformSegment(input: ChainInput): ChainSegment {
+  // 读者自己这一台断网了：这时候「预览信息读不到」说的是这台设备，不是平台。两条分开
+  // 写，因为能做的事不一样——设备断网是先连上网（而且连上就自己恢复），平台读不到才
+  // 该去问平台。原来的错误串是一句 fetch 失败，两条看起来一模一样。
+  if (input.offline) {
+    return { key: 'platform', state: 'down', reason: 'work.room.preview.chain.offline' }
+  }
   if (input.platformError) {
     return {
       key: 'platform',
@@ -89,7 +98,12 @@ function tunnelSegment(input: ChainInput, reachable: boolean): ChainSegment {
 function appSegment(input: ChainInput, reachable: boolean): ChainSegment {
   const { frame } = input
   if (!reachable) return { key: 'app', state: 'wait', reason: UNKNOWN }
-  if (input.live && !input.appAnswering) return { key: 'app', state: 'down', reason: APP_SILENT }
+  if (input.live && !input.appAnswering) {
+    // 这一句里有 `{agent}`：通道那一段说的是谁的电脑，应用这一段也要说同一个人的电脑
+    // （「电脑连着，但应用没有应答」里那个「电脑」是哪一台）。漏传就渲染成一个光秃秃的
+    // 「的电脑」，所以两边一起给。
+    return { key: 'app', state: 'down', reason: APP_SILENT, params: { agent: input.agentName } }
+  }
   if (frame?.connection === 'gone') return { key: 'app', state: 'wait', reason: 'work.room.preview.chain.appRestarted' }
   if (frame?.runtime === 'failed' || frame?.runtimeError) {
     return { key: 'app', state: 'down', reason: PAGE_ERROR, params: { error: frame.runtimeError || '' } }

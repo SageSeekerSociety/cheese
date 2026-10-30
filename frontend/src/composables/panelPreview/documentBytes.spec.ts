@@ -11,6 +11,10 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { usePanelPreviewDocument } from './documentBytes'
 import { createPreviewState } from './previewState'
 
+vi.mock('../../api/roomFiles', () => ({
+  previewSlideNotes: async () => ({ notes: [], readable: true, version: 'v1' }),
+}))
+
 vi.mock('../../lib/documentBytes', async () => {
   const { computed, ref } = await import('vue')
   return {

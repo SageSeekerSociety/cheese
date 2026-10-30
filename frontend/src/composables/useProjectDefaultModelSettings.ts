@@ -23,6 +23,8 @@ import { useSaveState } from '@/composables/useSaveState'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '@/api'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 export interface UseProjectDefaultModelSettingsOptions {
   /** 这一栏此刻在不在屏幕上：第一次为真才读。不给就是挂上即读。 */
@@ -59,7 +61,12 @@ export function useProjectDefaultModelSettings(
     loadError.value = ''
     reset()
     try {
-      const result = await getProjectDefaultModel(projectId())
+      const id = projectId()
+      const result = await queryClient.fetchQuery({
+        queryKey: keys.projectDefaultModel(id),
+        queryFn: () => getProjectDefaultModel(id),
+        staleTime: 0,
+      })
       if (current === generation) state.value = result
     } catch (e) {
       if (current === generation)
@@ -87,13 +94,15 @@ export function useProjectDefaultModelSettings(
     if (on) void load()
     else {
       generation++
+      void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(projectId()), exact: true })
       settled.value = false
       state.value = null
       loadError.value = ''
       reset()
     }
   })
-  watch(projectId, () => {
+  watch(projectId, (_next, prev) => {
+    if (prev) void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(prev), exact: true })
     if (enabled()) void load()
   })
 
