@@ -175,4 +175,18 @@ describe('personal and home route prefetching', () => {
     const mounted = await screen.findByTestId('compute-mounted')
     expect(mounted.textContent).toBe('team:42')
   })
+
+  it('skips user-profile early reads when the profile page query is already fresh in queryClient', () => {
+    queryClient.setQueryData(['user', 'alice', 'profile', null], {
+      profile: { handle: 'alice' },
+      member: null,
+      recent: [],
+      agents: [],
+    })
+    if ('prefetchPersonalRoute' in homeNav) {
+      homeNav.prefetchPersonalRoute('UserPage', { handle: 'alice' })
+    }
+    expect(api.getUserProfile).not.toHaveBeenCalled()
+    expect(api.getUserTopics).not.toHaveBeenCalled()
+  })
 })

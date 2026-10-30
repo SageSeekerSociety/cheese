@@ -213,15 +213,25 @@ router.afterEach((to, from, failure) => {
 // 看不到）这里不发。
 router.beforeEach((to, from) => {
   if (!myId()) return
-  prefetchPersonalRoute(to.name, to.params)
+  if (to.path !== from.path) {
+    prefetchPersonalRoute(to.name, to.params)
+  }
   if (!to.matched.some((record) => record.meta?.projectFrame === true)) return
   const ids = routeIds(to.params)
   const projectId = ids.projectId
   if (!projectId || !isUuid(projectId)) return
-  prefetchProjectSubpage(to.name, projectId, ids, to.query)
+  const fromIds = routeIds(from.params)
   const fromProjectId = from.matched.some((record) => record.meta?.projectFrame === true)
-    ? routeIds(from.params).projectId
+    ? fromIds.projectId
     : undefined
+  const subpageChanged =
+    to.name !== from.name ||
+    projectId !== fromProjectId ||
+    (to.name === 'project-library' && (to.query.dir ?? '') !== (from.query.dir ?? '')) ||
+    (to.name === 'project-artifact' && ids.artifactId !== fromIds.artifactId)
+  if (subpageChanged) {
+    prefetchProjectSubpage(to.name, projectId, ids, to.query)
+  }
   if (fromProjectId === projectId) return
   prefetchProjectTopics(projectId)
 })

@@ -86,6 +86,9 @@ export function prefetchPersonalRoute(
     case 'member': {
       const handle = typeof params.handle === 'string' ? params.handle : ''
       if (!handle) break
+      const projectId = typeof params.projectId === 'string' ? params.projectId : null
+      const state = queryClient.getQueryState(['user', handle, 'profile', projectId])
+      if (state?.status === 'success' && Date.now() - state.dataUpdatedAt < 30_000) break
       readEarly(keys.userProfile(handle), () => getUserProfile(handle))
       readEarly(keys.userRecentTopics(handle), () => getUserTopics(handle, { limit: 8 }))
       break

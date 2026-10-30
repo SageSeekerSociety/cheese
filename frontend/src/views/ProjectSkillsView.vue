@@ -45,13 +45,14 @@ const loading = ref(false)
 const loadError = ref('')
 const canImport = ref(false)
 
-async function load() {
+async function load(fresh = false) {
   const projectId = props.projectId
   loading.value = true
   loadError.value = ''
   try {
+    const readSkills = () => listProjectSkills(projectId)
     const [listed, project] = await Promise.all([
-      fromSnapshot(keys.projectSkills(projectId), () => listProjectSkills(projectId)),
+      fresh ? readSkills() : fromSnapshot(keys.projectSkills(projectId), readSkills),
       queryClient.fetchQuery(projectQuery(projectId)),
     ])
     if (props.projectId !== projectId) return
@@ -300,7 +301,7 @@ useCommands(() => [
     icon: 'mdi-refresh',
     loading: loading.value,
     header: {},
-    run: load,
+    run: () => load(true),
   },
   ...(canImport.value
     ? [
