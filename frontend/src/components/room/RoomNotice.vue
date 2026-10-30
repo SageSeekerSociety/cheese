@@ -3,8 +3,8 @@
 //
 // 一条通知和一条消息长得不一样是有意的——它不是谁说的话。它按「是什么」分成两类：
 // - **谁做了一件事**（芝士改了文件、检查没过、工作电脑就绪、平台记下一次报错）：
-//   一种行，记号在头像列、正文在消息的正文轴上、时间在行尾（`AgentNoticeFrame`）。
-//   档位之间只差那一行里装什么；轻重只改底色和状态字的颜色，不改形状。
+//   一种行，记号在头像列、事件装在左沿对齐消息正文的底色块里（`AgentNoticeFrame`）。
+//   档位之间只差块里装什么；轻重只改块的底色和状态字的颜色，不改形状。
 // - **房间里发生的事**（有人加入、话题归档）：没有署名的一行淡字，居中。
 //
 // 这里只画已经判好档的东西：判档在 lib/platformNotice.ts，署名和时间由房间算好
@@ -98,6 +98,15 @@ const happening = computed(() => {
   return own?.mode === 'plain' && !props.agent
 })
 
+// 这件事有多重，外框的底色块按它上色：事故是 danger，等人处理的折叠行是 warn。
+const tone = computed(() =>
+  props.notice.mode === 'incident'
+    ? 'danger'
+    : props.notice.mode === 'fold' && props.notice.who === 'human'
+      ? 'warn'
+      : null
+)
+
 // 外框（头像、名字、时间）；合成一行里的一条没有自己的外框。
 const frame = computed(() =>
   props.inline
@@ -111,6 +120,7 @@ const frame = computed(() =>
         faceLabel: props.faceLabel ?? null,
         faceStatus: props.faceStatus ?? null,
         time: props.time,
+        tone: tone.value,
       }
 )
 
@@ -460,7 +470,7 @@ const ACTION_META: Record<string, { btn: string }> = {
 
 <style scoped>
 /* ---------------------------------------------------------------------------
-   事件行里装的东西。几何（记号列、正文轴、行尾时间）归外框 AgentNoticeFrame，
+   事件行里装的东西。几何（记号列、底色块、时间）归外框 AgentNoticeFrame，
    这里只管那一行字：正文、数字、状态、按钮、展开区。
    --------------------------------------------------------------------------- */
 details.sys-row > summary {
@@ -686,22 +696,9 @@ details[open]::details-content {
 .sys-sep {
   color: var(--faint);
 }
-/* 轻重只改底色和状态字的颜色。底色块往左多出一截（外框给的 --notice-wash-inset，
-   默认 8px），字仍在正文那条竖线上。 */
-.sys-row--warn,
-.sys-row--danger {
-  margin-left: calc(-1 * var(--notice-wash-inset, 8px));
-  padding: 4px 8px 4px var(--notice-wash-inset, 8px);
-  border-radius: var(--radius-md);
-}
-.sys-row--warn {
-  background: var(--warn-wash);
-}
+/* 轻重的底色归外框的底色块（`tone`）；这里只给状态字上同一档颜色。 */
 .sys-row--warn .sys-who {
   color: var(--warn-ink);
-}
-.sys-row--danger {
-  background: var(--danger-wash);
 }
 .sys-row--danger .sys-who {
   color: var(--danger-ink);
