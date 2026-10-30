@@ -58,7 +58,9 @@ import { isExternalMember } from '@/lib/externalMembers'
 import { mayIn, roleName } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { agentsQuery, projectQuery } from '@/query/project'
+import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectMembersView' })
@@ -123,10 +125,11 @@ watch(
 type PendingInvitation = ProjectInvitation & { invitee_name?: string; invitee_avatar_id?: number | null }
 const invitations = ref<PendingInvitation[]>([])
 const revoking = ref<string | null>(null)
-async function refreshInvitations() {
+async function refreshInvitations(fresh = false) {
   const pid = props.projectId
   try {
-    const payload = await listProjectInvitations(pid)
+    const read = () => listProjectInvitations(pid)
+    const payload = fresh ? await read() : await fromSnapshot(keys.projectInvitations(pid), read)
     if (props.projectId === pid) invitations.value = payload.data as PendingInvitation[]
   } catch {
     // 同上：拿不到就不显示这一段。
@@ -301,7 +304,7 @@ async function takeBack(inv: ProjectInvitation) {
   error.value = null
   try {
     await revokeInvitation(inv.id)
-    await refreshInvitations()
+    await refreshInvitations(true)
   } catch (e) {
     error.value = messageOf(e, t('work.members.revokeFailed'))
   } finally {
@@ -399,7 +402,7 @@ async function submitInvite() {
   error.value = null
   try {
     await inviteExternalMember(props.projectId, user.handle, inviteRole.value)
-    await Promise.all([refreshInvitations(), projectRoles.load()])
+    await Promise.all([refreshInvitations(true), projectRoles.load()])
     resetInvite()
   } catch (e) {
     lookupError.value = messageOf(e, t('work.members.inviteFailed'))

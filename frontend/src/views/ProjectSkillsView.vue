@@ -32,7 +32,9 @@ import { t } from '@/i18n'
 import { mayIn } from '@/lib/projectPermissions'
 import { useDialog } from '@/plugins/dialog'
 import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { projectQuery } from '@/query/project'
+import { fromSnapshot } from '@/query/snapshot'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
@@ -43,13 +45,14 @@ const loading = ref(false)
 const loadError = ref('')
 const canImport = ref(false)
 
-async function load() {
+async function load(fresh = false) {
   const projectId = props.projectId
   loading.value = true
   loadError.value = ''
   try {
+    const readSkills = () => listProjectSkills(projectId)
     const [listed, project] = await Promise.all([
-      listProjectSkills(projectId),
+      fresh ? readSkills() : fromSnapshot(keys.projectSkills(projectId), readSkills),
       queryClient.fetchQuery(projectQuery(projectId)),
     ])
     if (props.projectId !== projectId) return
@@ -298,7 +301,7 @@ useCommands(() => [
     icon: 'mdi-refresh',
     loading: loading.value,
     header: {},
-    run: load,
+    run: () => load(true),
   },
   ...(canImport.value
     ? [

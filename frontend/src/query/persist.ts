@@ -9,6 +9,7 @@ import { persistQueryClient } from '@tanstack/query-persist-client-core'
 
 import { rememberProjects } from '@/lib/addresses'
 import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
+import { peekEarlyProjects } from '@/lib/earlyProjects'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -60,6 +61,9 @@ function seedKnownProjects(): void {
 /** 打开页面时调一次：先把存着的那份放回缓存，之后清单一变就存一份。 */
 export function persistProjectList(): void {
   seedKnownProjects()
+  void peekEarlyProjects().then((payload) => {
+    if (payload) rememberProjects(payload.data)
+  })
   persistQueryClient({
     queryClient,
     persister,

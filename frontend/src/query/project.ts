@@ -13,20 +13,27 @@ import { queryOptions, useQuery } from '@tanstack/vue-query'
 import {
   getPrivateUnread,
   getProject,
+  getProjectArtifact,
   getTopic,
   getTopicNotifyLevels,
   getTopicUnread,
   listProjectAgents,
+  listProjectInvitations,
   listProjectMembers,
   listProjectRoles,
   listTopics,
 } from '@/api'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
+import { listChannels } from '@/api/channels'
+import { getDocumentText, getProjectOverview, listProjectDocuments } from '@/api/projectDocuments'
 import { getProjectSituation, listProjectProgress } from '@/api/projectProgress'
+import { listProjectSkills } from '@/api/projectSkills'
 import { projectRefusal, rememberNumbered, rememberProjects } from '@/lib/addresses'
+import { listProjectLibrary } from '@/lib/libraryApi'
 import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
 import { patchQuery, queryClient, settled } from '@/query/client'
 import { keys } from '@/query/keys'
+import { readEarly } from '@/query/snapshot'
+import { openProjectTasksQuery } from '@/query/tasks'
 
 // 最近有动静的在前，不可调：侧栏用位置本身说这个顺序。
 const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
@@ -149,6 +156,63 @@ export function notifyLevelsQuery(projectId: string) {
 export function prefetchProjectTopics(projectId: string): void {
   if (!projectId || projectRefusal(projectId)) return
   void queryClient.prefetchQuery(topicsQuery(projectId)).catch(() => {})
+}
+
+/**
+ * 项目子页（成员、资料库、技能、任务、全部频道、产物）自己的首屏数据，趁该页代码块
+ * 还在下载时和外框并行出发，免得代码块下完才发出第一波接口请求。
+ */
+export function prefetchProjectSubpage(
+  routeName: string | symbol | null | undefined,
+  projectId: string,
+  params: Record<string, string>,
+  query: Record<string, unknown>
+): void {
+  if (!projectId || projectRefusal(projectId) || typeof routeName !== 'string') return
+  const prefetchMembers = () => void queryClient.prefetchQuery(membersQuery(projectId)).catch(() => {})
+  switch (routeName) {
+    case 'project-members':
+      prefetchMembers()
+      void queryClient.prefetchQuery(projectQuery(projectId)).catch(() => {})
+      void queryClient.prefetchQuery(agentsQuery(projectId)).catch(() => {})
+      readEarly(keys.projectInvitations(projectId), () => listProjectInvitations(projectId))
+      break
+    case 'project-library': {
+      if (typeof query.doc === 'string') break
+      prefetchMembers()
+      const dir = typeof query.dir === 'string' ? query.dir : ''
+      readEarly(keys.projectLibraryRoot(projectId, dir), () =>
+        listProjectLibrary(projectId, { dir, cursor: null, limit: 50 })
+      )
+      if (!dir) {
+        readEarly(keys.projectDocumentsRoot(projectId), () => listProjectDocuments(projectId, null, 50))
+      }
+      break
+    }
+    case 'project-skills':
+      prefetchMembers()
+      void queryClient.prefetchQuery(projectQuery(projectId)).catch(() => {})
+      readEarly(keys.projectSkills(projectId), () => listProjectSkills(projectId))
+      break
+    case 'project-tasks':
+      prefetchMembers()
+      if (query.status !== 'closed') {
+        void queryClient.prefetchQuery(openProjectTasksQuery(projectId)).catch(() => {})
+      }
+      break
+    case 'project-channels':
+      prefetchMembers()
+      readEarly(keys.projectChannels(projectId), () => listChannels(projectId))
+      break
+    case 'project-artifact':
+      prefetchMembers()
+      if (params.artifactId) {
+        readEarly(keys.projectArtifact(projectId, params.artifactId), () =>
+          getProjectArtifact(projectId, params.artifactId)
+        )
+      }
+      break
+  }
 }
 
 /** 项目总览是哪一份文档、现在写着什么。读不到就按「还没写」：那一块的入口（写一份）仍然在。 */

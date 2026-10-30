@@ -11,6 +11,8 @@ import { teamDataInjectionKey } from '@/keys'
 import { desktopBridge, deviceFlow, requestConnecting } from '@/lib/desktop'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { useDialog } from '@/plugins/dialog'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 const { confirm } = useDialog()
 const team = inject(teamDataInjectionKey, ref())
@@ -31,11 +33,14 @@ const windowsCommand = computed(
     `irm ${window.location.origin}/connector/install.ps1 | iex\ncheesehost --profile team-${teamId.value} link connect ${window.location.origin}/connector`
 )
 
-async function load() {
+async function load(fresh = false) {
+  const id = teamId.value
+  if (!id) return
   loading.value = true
   loadError.value = null
   try {
-    const result = await listTeamDevices(teamId.value)
+    const read = () => listTeamDevices(id)
+    const result = fresh ? await read() : await fromSnapshot(keys.teamDevices(id), read)
     devices.value = result.devices
     canManage.value = result.can_manage
   } catch (cause) {
@@ -51,7 +56,7 @@ async function rename(device: MyDevice, name: string) {
   busy.value = device.device_id
   try {
     await renameMyDevice(device.device_id, name.trim())
-    await load()
+    await load(true)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('account.devices.renameFailed')
   } finally {
@@ -69,19 +74,19 @@ async function remove(device: MyDevice) {
   busy.value = device.device_id
   try {
     await unbindMyDevice(device.device_id)
-    await load()
+    await load(true)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : t('teams.compute.removeMachineFailed')
   } finally {
     busy.value = null
   }
 }
-onMounted(load)
-watch(teamId, load)
+onMounted(() => void load())
+watch(teamId, () => void load())
 watch(
   () => deviceFlow.stage,
   (stage) => {
-    if (stage === 'done') void load()
+    if (stage === 'done') void load(true)
   }
 )
 </script>
@@ -100,7 +105,7 @@ watch(
     :desktop="desktop"
     :command="command"
     :windows-command="windowsCommand"
-    @load="load"
+    @load="load(true)"
     @rename="rename"
     @remove-machine="remove"
     @connect="requestConnecting(teamId)"

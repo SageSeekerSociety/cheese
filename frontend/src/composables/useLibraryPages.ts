@@ -18,6 +18,9 @@ import { listTeamDocuments } from '../api/teamDocuments'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { type MergeSource, starving, takeReady } from '../lib/rankMerge'
 
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
+
 /** 一次往下摆这么多行。 */
 const PAGE = 50
 /** 离底还有这么远（px）就去取下一页。 */
@@ -72,11 +75,16 @@ export function useLibraryPages(
       done: false,
       next: null,
       fetch: async (cursor) => {
-        const page = await listProjectLibrary(pid, {
-          ...(flat ? { flat: true, q: query, kind: kind === 'all' ? undefined : kind } : { dir }),
-          cursor,
-          limit: PAGE,
-        })
+        const read = () =>
+          listProjectLibrary(pid, {
+            ...(flat ? { flat: true, q: query, kind: kind === 'all' ? undefined : kind } : { dir }),
+            cursor,
+            limit: PAGE,
+          })
+        const page =
+          typeof pid === 'string' && !flat && cursor === null
+            ? await fromSnapshot(keys.projectLibraryRoot(pid, dir), read)
+            : await read()
         return { rows: page.data, next: page.next }
       },
     }
@@ -104,7 +112,8 @@ export function useLibraryPages(
       done: false,
       next: null,
       fetch: async (cursor) => {
-        const page = await listProjectDocuments(pid, cursor, PAGE)
+        const read = () => listProjectDocuments(pid, cursor, PAGE)
+        const page = cursor === null ? await fromSnapshot(keys.projectDocumentsRoot(pid), read) : await read()
         return { rows: page.data.map((doc) => ({ ...doc, type: 'doc' as const })), next: page.next }
       },
     }
