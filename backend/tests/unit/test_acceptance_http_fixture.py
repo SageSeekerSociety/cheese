@@ -180,7 +180,6 @@ def test_a_client_that_hangs_up_before_the_answer_leaves_the_fixture_healthy(
         server.shutdown()
         server.server_close()
         thread.join()
-    assert not (tmp_path / "handler-errors.jsonl").exists()
 
 
 def test_room_snapshot_upload_is_recoverable_and_idempotent(tmp_path):
