@@ -182,6 +182,8 @@ async def persist_human_message(
             # task's committed row here, under a share lock: a close committed
             # since is seen, and one still in flight lands after this message
             # rather than between reading the task and storing what it said.
+            # Lock order: the task's row, then its conversation's block
+            # numbering (`topic.repositories.writes.lock_open_tasks`).
             await session.refresh(place.task, with_for_update={"read": True})
         created_blocks: list[Block] = []
         # Written by the author's own 芝士: every block of the send says so.

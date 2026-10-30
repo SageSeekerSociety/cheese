@@ -21,6 +21,7 @@ from app.domain.topic.models import (
     new_private_chat,
     private_chat,
 )
+from app.domain.topic.repositories.statements import _tasks
 
 if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
@@ -85,6 +86,25 @@ async def lock_all_in_project(
                 .execution_options(populate_existing=True)
             )
         ).all()
+    )
+
+
+async def lock_open_tasks(repo: pkg.TopicRepository, room_id: uuid.UUID) -> None:
+    """Lock the room's open tasks' rows, in id order, the way closing them
+    will (FOR NO KEY UPDATE).
+
+    Lock order: a task's row before the block numbering of its conversation.
+    Everything that writes into a task's conversation and decides on the
+    task does it in that order — a message read against its task
+    (`agent.turn.store.human`), a task closed with a line said in it
+    (`room_task.closing`). Archiving says things in its tasks' conversations
+    (a card's notice) before it closes them, so it takes these rows first;
+    taken later, archive and a send each hold what the other waits for."""
+    await repo._session.execute(
+        select(_tasks.c.id)
+        .where(_tasks.c.room_id == room_id, _tasks.c.status == "open")
+        .order_by(_tasks.c.id)
+        .with_for_update(key_share=True)
     )
 
 

@@ -65,6 +65,9 @@ class TopicRepository:
     async def lock_all_in_project(self, project_id: uuid.UUID) -> list[Topic]:
         return await writes.lock_all_in_project(self, project_id=project_id)
 
+    async def lock_open_tasks(self, room_id: uuid.UUID) -> None:
+        await writes.lock_open_tasks(self, room_id=room_id)
+
     async def get_or_create_private(
         self,
         *,

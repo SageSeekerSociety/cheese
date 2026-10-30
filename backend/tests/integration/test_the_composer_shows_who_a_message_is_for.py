@@ -16,13 +16,17 @@ The rules a person can state without the code:
   opened it.
 """
 
+import asyncio
 import uuid
 
 from sqlalchemy import func, select, update
 
 from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.turn.intake import human
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -242,6 +246,85 @@ def test_a_task_closed_while_the_send_is_on_its_way_refuses_it(
     assert r.json()["error"]["data"]["agent"] is None
     # Lines only: the task's first turn may still be settling in the background.
     assert _written(client, task)[0] == lines_before
+
+
+def test_a_send_and_its_project_archived_at_once_both_go_through(
+    client, stub_hooks, monkeypatch
+):
+    """Archiving the project closes the task and, for a card riding an
+    unmerged PR, says so in the task. A message sent in that task meanwhile
+    either lands before the close or is refused after it; neither request
+    fails because the two waited on each other."""
+    project, _, room = _channel(client)
+    task, _ = _task_with_a_turn(client, room)
+
+    async def a_card_on_an_open_pr():
+        async with client.test_factory() as db:
+            db.add(
+                AcceptCard(
+                    topic_id=uuid.UUID(room),
+                    task_id=uuid.UUID(task),
+                    status=AcceptStatus.pending,
+                    pr_number=1,
+                    pr_url="https://example.invalid/pr/1",
+                )
+            )
+            await db.commit()
+
+    client.portal.call(a_card_on_an_open_pr)
+    prepare = human.prepare_human
+    archive_one = TopicService._archive_one
+
+    async def race():
+        reading = asyncio.Event()
+        archiving = asyncio.Event()
+
+        async def send_waits_for_archive(session, place, *args, **kwargs):
+            # The message has read its task; archive starts and goes as far as
+            # it can before the message is written.
+            if place.conversation_id == uuid.UUID(task):
+                reading.set()
+                await archiving.wait()
+                await asyncio.sleep(0.5)
+            return await prepare(session, place, *args, **kwargs)
+
+        async def archive_starts(self, topic, *args, **kwargs):
+            archiving.set()
+            return await archive_one(self, topic, *args, **kwargs)
+
+        monkeypatch.setattr(human, "prepare_human", send_waits_for_archive)
+        monkeypatch.setattr(TopicService, "_archive_one", archive_starts)
+        send = asyncio.create_task(
+            asyncio.to_thread(
+                client.post,
+                f"/topics/{task}/messages",
+                json={
+                    "request_id": str(uuid.uuid4()),
+                    "content": "归档时发的一句",
+                    "expects_agent": True,
+                },
+                headers=session_auth_headers("alice"),
+            )
+        )
+        await asyncio.wait_for(reading.wait(), 5)
+        archive = asyncio.create_task(
+            asyncio.to_thread(
+                client.post,
+                f"/projects/{project}/archive",
+                json={},
+                headers=session_auth_headers("alice"),
+            )
+        )
+        return await asyncio.wait_for(
+            asyncio.gather(send, archive, return_exceptions=True), 15
+        )
+
+    sent, archived = client.portal.call(race)
+
+    assert not isinstance(sent, BaseException), repr(sent)
+    assert not isinstance(archived, BaseException), repr(archived)
+    assert sent.status_code in (200, 409), sent.text
+    assert archived.status_code == 200, archived.text
 
 
 def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
