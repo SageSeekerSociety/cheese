@@ -15,13 +15,15 @@ record for as long as a healthy turn can be quiet is wedged, like a silent turn
 this process runs.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.domain.agent import runtime_orphans
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import Block, BlockKind
@@ -151,6 +153,70 @@ async def test_a_session_that_comes_back_while_the_sweep_reads_keeps_its_turn(
     row = await turn_row(db_factory, turn)
     assert row is not None and row.stopped_at is None, (
         "会话在扫描读记录时连了回来，它正在跑的这一轮还是被关了"
+    )
+    assert await _lines_about(db_factory, turn) == []
+
+
+async def _blocked_on_agent_turns(factory) -> bool:
+    """Whether some statement on ``agent_turns`` is waiting for a row lock."""
+    async with factory() as observer:
+        return bool(
+            (
+                await observer.execute(
+                    text(
+                        "SELECT 1 FROM pg_stat_activity"
+                        " WHERE datname = current_database()"
+                        " AND pid <> pg_backend_pid()"
+                        " AND cardinality(pg_blocking_pids(pid)) > 0"
+                        " AND query ILIKE '%agent_turns%'"
+                    )
+                )
+            ).all()
+        )
+
+
+@pytest.mark.anyio
+async def test_a_session_that_comes_back_while_the_close_waits_keeps_its_turn(
+    db_factory,
+):
+    """关闭这一轮的语句在等这一行的锁时，会话连了回来：等到锁之后，这一轮已经有人
+    接着，不能关，也不能在房间里说它停了。"""
+    topic = await a_topic(db_factory)
+    turn = await open_turn(
+        db_factory,
+        topic,
+        delivered=True,
+        age_s=NINETEEN_DAYS_S,
+        resendable=False,
+        session_id="sess-back-late",
+    )
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=False, seat_state="unknown")
+    async with db_factory() as holder:
+        await holder.execute(
+            select(AgentTurn).where(AgentTurn.id == turn).with_for_update()
+        )
+        sweeping = asyncio.create_task(
+            runner.sweep_orphans(
+                chat, last_activity=_room_just_spoke(topic), silence_s=SILENCE_S
+            )
+        )
+        try:
+            async with asyncio.timeout(10):
+                while not await _blocked_on_agent_turns(db_factory):
+                    await asyncio.sleep(0.01)
+            chat._live_screen = True
+            chat._seat_state = "live"
+            await holder.rollback()
+            await asyncio.wait_for(sweeping, 10)
+        finally:
+            if not sweeping.done():
+                sweeping.cancel()
+                await asyncio.gather(sweeping, return_exceptions=True)
+
+    row = await turn_row(db_factory, turn)
+    assert row is not None and row.stopped_at is None, (
+        "关闭在等锁的时候会话连了回来，它正在跑的这一轮还是被关了"
     )
     assert await _lines_about(db_factory, turn) == []
 

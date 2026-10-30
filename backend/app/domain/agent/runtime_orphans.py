@@ -204,6 +204,7 @@ async def _close_silent(
             chat_service.session_factory,
             records,
             lambda record: _wedged_notice(record, now),
+            lambda record: _unheld(self, chat_service, record),
         )
     except Exception:  # nothing committed: the next sweep finds them open
         logger.exception("closing silent turns failed")
@@ -360,9 +361,11 @@ async def sweep_orphans(
         if last_activity is not None
         else set()
     )
-    # A session can come back while the probes above await. Ask again, with
-    # no await between this and the claim, and close with the room's line in
-    # the same transaction, so a closed silent turn is never left unannounced.
+    # A session can come back while the probes above await, or while the close
+    # waits for its rows: it is asked again here, and once more under the row
+    # locks recovery also takes (`turn_inputs.close_silent_turns`). The close
+    # and the room's line are one transaction, so a closed silent turn is never
+    # left unannounced.
     silenced = await _close_silent(
         self,
         chat_service,

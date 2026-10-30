@@ -615,9 +615,15 @@ async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
         return claimed
 
 
-async def close_silent_turns(session_factory, records, notice) -> dict:
+async def close_silent_turns(session_factory, records, notice, still_unheld) -> dict:
     """Close turns the sweep found silent with nothing holding them, end the
     inputs they held, and say so in each one's conversation — one transaction.
+
+    The rows are locked first and ``still_unheld`` is asked of each again once
+    the lock is held: recovery takes the same row before it picks a turn up
+    (``native_turns.begin``), so a session that came back while this waited is
+    seen here and its turn left open, and one that comes back after the lock
+    finds the turn closed and does not take it up.
 
     The room's line is the only way the person waiting learns the turn is over,
     so it may not be lost to a failure between the close and the line: either
@@ -630,9 +636,10 @@ async def close_silent_turns(session_factory, records, notice) -> dict:
     from app.domain.agent.room_events import say_in
 
     async with session_factory() as session:
-        claimed = await AgentTurnRepository(session).close(
-            records, datetime.now(UTC), reason=STOP_SWEEP
-        )
+        turns = AgentTurnRepository(session)
+        locked = await turns.lock_open(records)
+        closing = [turn_id for turn_id in locked if still_unheld(records[turn_id])]
+        claimed = await turns.close(closing, datetime.now(UTC), reason=STOP_SWEEP)
         await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
         said = {}
         for turn_id in claimed:
