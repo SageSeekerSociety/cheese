@@ -54,6 +54,7 @@ from app.core.db import after_own_commit
 from app.core.sentences import say
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import CONSUMED_TURN_META_KEY, Block, BlockKind
+from app.domain.block.output_effects import hold_numbering
 from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task import heard
@@ -410,6 +411,10 @@ async def close_after_summary(
     task = await session.get(Task, task_id, with_for_update=True)
     if task is None or task.closing_since is None:
         return None
+    # A message sent in the task now holds its conversation's numbering until
+    # it commits (`agent.turn.store.human`): wait for it before asking what is
+    # left, so it is seen waiting rather than stopped by the close.
+    await hold_numbering(session, task.id)
     if await unfinished(session, task.id):
         return None
     await heard.inform(session, task, heard.task_closed_unasked())
@@ -448,6 +453,9 @@ async def close_overdue(
         task = await session.get(Task, task_id, with_for_update=True)
         if task is None or task.closing_since is None:
             continue
+        # As `close_after_summary`: a message being sent in it is seen, not
+        # stopped.
+        await hold_numbering(session, task.id)
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue

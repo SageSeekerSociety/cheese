@@ -18,6 +18,7 @@ The rules a person can state without the code:
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select, update
@@ -27,6 +28,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake import human
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task import heard
+from app.domain.room_task.closing import close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
@@ -406,6 +408,81 @@ def test_a_send_and_its_task_handed_over_at_once_both_go_through(
     assert not isinstance(changed, BaseException), repr(changed)
     assert sent.status_code in (200, 409), sent.text
     assert changed.status_code == 200, changed.text
+
+
+def test_a_task_waiting_for_its_write_up_is_not_closed_over_a_message_being_sent(
+    client, stub_hooks, monkeypatch
+):
+    """A task whose write-up was given up on closes only while nothing else is
+    asked in it. A message being sent in it as that close runs is either seen
+    waiting, and the task stays open, or lands after the close; it is never
+    stored for the teammate and then closed over."""
+    _, _, room = _channel(client)
+    task, _ = _task_with_a_turn(client, room)
+    runner = get_work_runner()
+    # The message stays waiting to be read: its turn is not started here.
+    monkeypatch.setattr(runner._intake, "_schedule_message", lambda *a, **k: None)
+
+    async def waiting_for_its_write_up():
+        async with client.test_factory() as db:
+            await db.execute(
+                update(Task)
+                .where(Task.id == uuid.UUID(task))
+                .values(closing_since=datetime.now(UTC))
+            )
+            await db.commit()
+
+    client.portal.call(waiting_for_its_write_up)
+    prepare = human.prepare_human
+
+    async def race():
+        reading = asyncio.Event()
+        closing = asyncio.Event()
+
+        async def send_waits_for_the_close(session, place, *args, **kwargs):
+            # The message has read its task; the close starts and goes as far
+            # as it can before the message is written.
+            if place.conversation_id == uuid.UUID(task):
+                reading.set()
+                await closing.wait()
+                await asyncio.sleep(0.5)
+            return await prepare(session, place, *args, **kwargs)
+
+        async def give_up_on_the_write_up():
+            async with client.test_factory() as db:
+                closing.set()
+                closed = await close_after_summary(db, uuid.UUID(task), None)
+                await db.commit()
+                return closed
+
+        monkeypatch.setattr(human, "prepare_human", send_waits_for_the_close)
+        send = asyncio.create_task(
+            asyncio.to_thread(
+                client.post,
+                f"/topics/{task}/messages",
+                json={
+                    "request_id": str(uuid.uuid4()),
+                    "content": "收尾前再改一处",
+                    "expects_agent": True,
+                },
+                headers=session_auth_headers("alice"),
+            )
+        )
+        await asyncio.wait_for(reading.wait(), 5)
+        close = asyncio.create_task(give_up_on_the_write_up())
+        return await asyncio.wait_for(
+            asyncio.gather(send, close, return_exceptions=True), 15
+        )
+
+    sent, closed = client.portal.call(race)
+
+    assert not isinstance(sent, BaseException), repr(sent)
+    assert not isinstance(closed, BaseException), repr(closed)
+    if sent.status_code == 200:
+        assert sent.json()["data"]["meta"]["agent_recipient"]["mentioned"] is True
+        assert closed is None
+    else:
+        assert sent.status_code == 409, sent.text
 
 
 def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
