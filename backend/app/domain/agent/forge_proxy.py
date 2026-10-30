@@ -458,6 +458,7 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
     """Handles decrypted HTTP/1.1 requests inside a terminated TLS tunnel."""
 
     protocol_version = "HTTP/1.1"
+    raw_requestline: bytes
 
     def __init__(
         self,
