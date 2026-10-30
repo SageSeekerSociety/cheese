@@ -317,3 +317,18 @@ class ChatAddressingIn(BaseModel):
     reply_to: uuid.UUID | None = None
     # False for a send of attachments alone: no @ or reply calls anyone by it.
     with_text: bool = True
+
+
+class AddressedAgentOut(BaseModel):
+    handle: str
+    name: str
+
+
+class ChatAddressingOut(BaseModel):
+    """Who a draft would be for if sent now (`preview_addressing`)."""
+
+    agent: AddressedAgentOut | None
+    reason: Literal["mention", "reply", "task", "private"] | None
+    people: list[str]
+    place: Literal["channel", "task", "private"]
+    task_status: Literal["open", "closed"] | None

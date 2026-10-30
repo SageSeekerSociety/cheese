@@ -77,7 +77,7 @@ from fastapi import APIRouter, Depends
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.topics_deps import (
     BlockOut,
     BlockRepository,
@@ -104,6 +104,7 @@ from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import (
     ChatAddressingIn,
+    ChatAddressingOut,
     ChatAttachmentIn,
     ChatMessageIn,
 )
@@ -262,7 +263,11 @@ async def send_chat_message(
     return ok(sent)
 
 
-@router.post("/{topic_id}/messages/addressing", operation_id="chat-addressing")
+@router.post(
+    "/{topic_id}/messages/addressing",
+    operation_id="chat-addressing",
+    **typed_response(ChatAddressingOut),
+)
 async def preview_message_addressing(
     body: ChatAddressingIn,
     db: DbSession,
