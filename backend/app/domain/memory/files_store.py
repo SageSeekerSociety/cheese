@@ -77,6 +77,9 @@ class IndexSection:
     label: str
     prefix: str
     text: str
+    #: private 那一份的主人；team 的是 None。注入时按它把这一段圈起来，现场只给
+    #: 本人看（`opening.PRIVATE_MEMORY_OPEN`）。
+    owner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -321,8 +324,8 @@ class MemoryFileStore:
 async def private_owners(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
     """这个项目里有哪些人的 private 树，人名序。
 
-    一轮会话只铺在场的几个人的 private（`memory_index` 的预算那一段），而整理要
-    看的是**这个项目全部**的私人记忆：它是唯一一个把整棵树放在一起看的时刻，漏掉
+    一轮会话只铺这一轮那一位的 private（`memory_index`），而整理要看的是**这个
+    项目全部**的私人记忆：它是唯一一个把整棵树放在一起看的时刻，漏掉
     一个没说过话的人，等于他的记忆没有人整理。所以这里不问「谁在场」，问「谁有」。
     """
     rows = await session.scalars(
@@ -341,18 +344,19 @@ async def memory_index(
     session: AsyncSession,
     project_id: uuid.UUID,
     *,
-    speaker_handles: list[str],
+    speaker: str | None,
     shared_read_only: bool = False,
 ) -> MemoryIndex:
-    """这一轮注入的 L1 索引：team 一份，本轮发言人一人一份。
+    """这一轮注入的 L1 索引：team 一份，这一轮那一位（`turn_speaker`）的 private 一份。
 
     ``shared_read_only``：私聊和私密频道里 team 只读（#3830）。在那里听到的话
     只有在场的人能读，写进全项目共看的 team 就成了别人的后门，所以记忆对账不收
     team 的改动（`memory_ledger`），这里把这件事说给 agent 听。
 
-    **只读在场的这几个人。** 项目里的人可以很多，而每一轮要用的只是同席这几位
-    ——这不是权限（private 记忆只有本人和管理员看得见，另有一道闸），是预算：
-    索引是每一轮都要付的，付在一个没说话的人的偏好上是白付。
+    **只读这一位的。** 一间多人的房间里，这一轮的 agent 说的话、做的事房间里的人都
+    看得到，所以别人的 private 不进来（产品决定，2026-10-30）。private 只有本人看得
+    见（`routes/memory_files._readable`），注入进来的这一段在现场里也只给本人看
+    （`opening.PRIVATE_MEMORY_OPEN`）。
 
     超预算照样注入（截断后），并在注入块里说清截断过：静默截断读起来就是「索引
     就这么长」，于是没有人会去修它。
@@ -363,11 +367,8 @@ async def memory_index(
     wanted: list[tuple[MemoryFileScope, str | None, str]] = [
         (MemoryFileScope.team, None, "项目共享（team）")
     ]
-    for handle in dict.fromkeys(speaker_handles):
-        if handle:
-            wanted.append(
-                (MemoryFileScope.private, handle, f"关于 {handle}（private）")
-            )
+    if speaker:
+        wanted.append((MemoryFileScope.private, speaker, f"关于 {speaker}（private）"))
     for scope, owner, label in wanted:
         text = await store.index_text(project_id, scope, owner)
         if text is None:
@@ -376,7 +377,9 @@ async def memory_index(
         if warning:
             warnings.append(f"{prefix_of(scope, owner)}/{INDEX_NAME}：{warning}")
         sections.append(
-            IndexSection(label=label, prefix=prefix_of(scope, owner), text=fitted)
+            IndexSection(
+                label=label, prefix=prefix_of(scope, owner), text=fitted, owner=owner
+            )
         )
     if shared_read_only:
         warnings.append(SHARED_READ_ONLY)

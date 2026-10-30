@@ -1,10 +1,13 @@
-"""一轮的点名：这一轮读的是谁的口味，轮末对账就收谁那一棵。
+"""一轮的点名：这一轮替谁在做事，记忆就读谁的 private、轮末对账也只收谁那一棵。
 
-名单在 `_assemble_turn` 里定：窗口里说话的这几位，加上这一轮**替谁在做事的**
-那一位。周期任务那一轮的主人就是后者 —— 他本人没在窗口里说过话（那一轮的内容
-是平台写完塞进投递的，没有一条他自己署名的消息），可这一轮跑的是他交代的活。
-只读不收的话，他这一轮改过的偏好下一轮还是旧的。任务自己的会话里，任务的负责人
-也是后者：实况文档写给他看，按他的习惯写，而他不一定在这一轮说过话。
+一轮只有一位：多人的房间里，别人的 private 不进这一轮（产品决定，2026-10-30）。
+是谁按这个先后认：
+
+- 这一轮窗口里**最后一位说话的人**——这一轮回答的是他；
+- 没有人说话时，这一轮**替谁在做事的**那一位：周期任务那一轮的主人（他本人没在
+  窗口里说过话，那一轮的内容是平台写完塞进投递的），任务自己的会话里任务的负责人
+  （实况文档写给他看，按他的习惯写）；
+- 私聊里那个人。
 
 这个域不必认识周期任务：写投递的调度器知道主人是谁，把 `routineOwner` 留在
 payload 里，认这一个键就够了。
@@ -25,31 +28,26 @@ from app.domain.identity.handles import names_a_person
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
 
 
-async def turn_speakers(
+async def turn_speaker(
     session: AsyncSession,
     delivery_id: uuid.UUID | None,
     pending: Sequence[Block],
     private_owner: str | None,
     task_owner: str | None = None,
-) -> tuple[str, ...]:
-    """本轮说话的这几位（去重，按第一次出现的先后），记忆按这份名单读、也按它收。
+) -> str | None:
+    """这一轮的那一位（见模块开头）；一位都认不出时 None，这一轮只有 team。
 
     只算**人**：private 是「人 × 项目」的那一份，队友手里的句柄在这里不是一个
     作用域，问了也只会问到一棵不存在的树（`names_a_person`）。
     """
+    spoke = [b.author for b in pending if names_a_person(b.author)]
+    if spoke:
+        return spoke[-1]
     owner = await routine_owner(session, delivery_id)
-    return tuple(
-        dict.fromkeys(
-            handle
-            for handle in (
-                *(b.author for b in pending),
-                *((private_owner,) if private_owner else ()),
-                *((owner,) if owner else ()),
-                *((task_owner,) if task_owner else ()),
-            )
-            if names_a_person(handle)
-        )
-    )
+    for handle in (owner, task_owner, private_owner):
+        if handle and names_a_person(handle):
+            return handle
+    return None
 
 
 async def routine_owner(

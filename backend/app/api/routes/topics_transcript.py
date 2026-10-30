@@ -9,7 +9,11 @@ from fastapi.responses import JSONResponse
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.session_record_rows import no_platform_reminders, text_of
+from app.api.session_record_rows import (
+    hidden_private_memory,
+    no_platform_reminders,
+    text_of,
+)
 from app.api.topics_deps import _actor_in_place
 from app.core.errors import NotFoundError
 from app.core.sentences import say
@@ -88,6 +92,7 @@ async def _newer_page(
     author: str | None,
     forward: service.Key,
     limit: int,
+    reader: str,
 ) -> JSONResponse:
     """The rows written after `forward`, oldest first.
 
@@ -140,7 +145,7 @@ async def _newer_page(
     # 一条都没有（读者已经追上了）时把进来的那个游标原样还回去：不还的话读者手上
     # 的游标就被清空了，下一次只能整页重读——正是这一路要消掉的那件事。
     newest = taken[-1]["meta"]["cursor"] if taken else service.encode_cursor(forward)
-    shown = hide_platform_reminders(taken)
+    shown = hidden_private_memory(hide_platform_reminders(taken), reader)
     starts = await turn_starts(
         db,
         place.conversation_id,
@@ -193,7 +198,7 @@ async def topic_transcript(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     instances = await AgentInstanceService(db).list_for_project(place.project_id)
     authors = {
         instance.handle: agent_instance_handle(instance.id) for instance in instances
@@ -207,7 +212,7 @@ async def topic_transcript(
     forward = _read_cursor(after)
     if forward is not None:
         return await _newer_page(
-            db, place, authors, native_author, author, forward, limit
+            db, place, authors, native_author, author, forward, limit, actor.handle
         )
     raw = await service.read(
         db,
@@ -266,7 +271,7 @@ async def topic_transcript(
     # 交出去的那几条里最后一条的游标：读者接着问「从这儿往后有什么」用的就是它。
     # 藏在平台提醒后面取，理由同 `_newer_page`：一页全是提醒时游标就不动了。
     newest = taken[-1]["meta"]["cursor"] if taken else None
-    items = hide_platform_reminders(taken)
+    items = hidden_private_memory(hide_platform_reminders(taken), actor.handle)
     starts = await turn_starts(
         db,
         place.conversation_id,

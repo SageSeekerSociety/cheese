@@ -208,9 +208,7 @@ class ChatService(
             sessions=session_factory,
             compute=compute,
             gateway=gateway,
-            base_prompt=base_system_prompt,
             host=self,
-            live=self.live,
         )
         #: Brings a seat that went quiet up to date (`agent.prewarm`).
         self.prewarm = SeatPrewarm(self)
