@@ -47,7 +47,7 @@ def _turn_failure_notice(
     if code == RUNNER_REPLACED_CODE and isinstance(text, NoticeText):
         # The platform's own upgrade cut the turn short. When the platform
         # starts it again by itself the room hears that instead
-        # (`turnResumeWaitRunnerReplaced`); this line is for the case it did
+        # (`turn_resume.scheduled_notice`); this line is for the case it did
         # not, so it says the work is safe and one retry carries on — one line,
         # not 「这次没做完」 wrapped around a sentence that already says so.
         return text, notice(

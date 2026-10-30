@@ -432,6 +432,9 @@ export type WsServerFrame =
   // The room's session state moved (a task started or finished, or the session
   // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
+  // 平台运行中记下的一件事（运行记录）：不进对话，现场和输入框上方那一行读它。
+  // `at`/`stream`：它在这个后端进程发出的帧里排第几（`room_state` 同一套数）。
+  | { type: 'run_record'; record: Block; at: number; stream: string }
   | import('./types/live').LiveFrame
   | import('./types/roomSocket').RoomStateFrame
   | import('./types/threads').ThreadActivityFrame

@@ -28,6 +28,8 @@ Finish a decided change completely: no expiry note, compatibility path, deprecat
 
 A change a page built against the old API cannot talk to — an operation removed; a request field removed, renamed, narrowed or newly required; a response field removed, renamed, or now possibly missing or of a type it never had; an enum value removed — raises the number in `backend/api-generation` in the same pull request, and the `api` job of Required CI fails one that does not. The backend then refuses pages still open on the old frontend and they ask to be refreshed, so changing both halves together needs no compatibility path for those pages.
 
+CI only sees OpenAPI shape changes; the author answers the PR template's required question about changes to existing API or push-message meaning (including defaults and realtime/WebSocket messages) and raises `backend/api-generation` in the same PR when the answer is yes.
+
 Judge a mechanism by what it does now, not by why it was created. A check written after an incident points at where that incident surfaced; the code that causes it moves on.
 
 ## Prefer a mature library to a hand-rolled copy

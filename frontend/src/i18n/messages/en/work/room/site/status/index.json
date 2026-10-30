@@ -5,6 +5,7 @@
   "elapsed": "{span} so far",
   "queued": "Queued",
   "queuedBehind": "Queued, {ahead} ahead",
+  "resumeAt": "Retrying automatically around {time}",
   "retrying": "Retrying",
   "retryingCount": "Retrying (attempt {attempt})",
   "sync_failed": "Sync failed",
