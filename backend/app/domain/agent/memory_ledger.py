@@ -28,7 +28,8 @@ from typing import Protocol
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.audience import seats_only
+from app.auth.audience import rooms_its_audience_may_read, seats_only
+from app.core import model_roles
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -40,6 +41,7 @@ from app.domain.agent.harness.prompt import build_session_opening, build_system_
 from app.domain.agent.queries import (
     _agent_handle,
     _dream_refusal_phrase,
+    _private_room,
     _say_memory_change,
 )
 from app.domain.agent.room.sessions import RoomSessions
@@ -49,12 +51,17 @@ from app.domain.agent.turn.state.live import LiveWork
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
+from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.memory import dream
-from app.domain.memory.dream_prompt import dream_prompt
-from app.domain.memory.files import MemoryFileScope
+from app.domain.memory.dream_prompt import (
+    PRIVATE_DREAM_SYSTEM,
+    dream_prompt,
+    private_dream_prompt,
+)
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import memory_index, private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
-from app.domain.memory.session import apply_tree, read_tree
+from app.domain.memory.session import apply_tree, prefix_of_scope, read_tree
 from app.domain.notice_meta import (
     EVENT_MEMORY_CHANGED,
     SEVERITY_INFO,
@@ -75,6 +82,11 @@ logger = logging.getLogger(__name__)
 #: to, and a bounded map is what keeps a long-lived process from growing one
 #: entry per room it has ever seen.
 MEMORY_TURNS_KEPT = 512
+
+#: How long one person's private consolidation call may take, and how much it
+#: may answer: the files it rewrites come back whole.
+PRIVATE_DREAM_S = 300.0
+PRIVATE_DREAM_TOKENS = 16_000
 
 
 class _MemoryHost(Protocol):
@@ -99,6 +111,23 @@ class _MemoryHost(Protocol):
         provider: RoomSessions | None,
         topic_id: uuid.UUID | None = None,
     ) -> tuple[dict, str]: ...
+
+    async def project_gateway_key(
+        self, project_id: uuid.UUID, *, dream: bool = False
+    ) -> str | None: ...
+
+
+@dataclass(frozen=True)
+class _PrivateDream:
+    """一个人的 private 整理的结局：改了哪些、它自己那句交代，或者为什么没写。"""
+
+    owner: str
+    changed: tuple[str, ...] = ()
+    summary: str = ""
+    #: 要删的太多、整份没写时那句话。
+    refusal: str = ""
+    #: 没问成（没有网关、调用失败、答回来的不是一份改动）时的原因。
+    failure: str = ""
 
 
 @dataclass(frozen=True)
@@ -134,8 +163,9 @@ class MemoryLedger:
         # 那个座位的会话，所以这份点名只能从别的时刻留下来。没记过的座位按「只
         # 有 team」对、署 system。
         self._turns: dict[tuple[uuid.UUID, str], _Turn] = {}
-        # 正在跑整理的那几间房（一场整理一次，跑完就撤）。它只改一件事：这一轮
-        # 结束时的对账多问一句「这次是不是要删掉一大半」——见 `sync_once`。
+        # 正在跑整理（team 那一轮）的那几间房（一场整理一次，跑完就撤）。它改两
+        # 件事：这间房的对账只点 team 的名（`_scopes`），以及这一轮结束时的对账
+        # 多问一句「这次是不是要删掉一大半」——见 `sync_once`。
         # 会话自己有一条同样的兜底（`tree._too_many_to_delete`），但那条只会把
         # 删除放回去，不会说出「这一次不算数」；整理要的是后者。
         self._dreams: set[uuid.UUID] = set()
@@ -172,7 +202,12 @@ class MemoryLedger:
         没点到的 private 既不铺也不收，别人的偏好不会被这一间房的一次对账碰掉。
         按房间合起来，因为记忆树是一间房一棵（会话的家是那间房的）：只点这个座
         位的发言人，会把另一个座位正在用的那个人的 private 从同一棵树上收走。
+
+        整理占着这间房的时候只点 team：那一轮的会话、凭证、记录全项目都看得见，
+        这棵树上就不能有任何一个人的 private。
         """
+        if room_id in self._dreams:
+            return [(MemoryFileScope.team, None)]
         speakers: dict[str, None] = {}
         for turn in self._turns.values():
             if turn.room_id == room_id:
@@ -296,11 +331,18 @@ class MemoryLedger:
         """跑一次记忆整理（dream）；不该跑就什么都不做。
 
         判据、锁、拒绝执行的判据和那两行账都在 `app.domain.memory.dream` 里。这里
-        做的是它做不了的那一半：读这个项目的花销和房间记录、把这一轮派到项目默认
-        芝士的会话上、把结果收回来。
+        做的是它做不了的那一半：读这个项目的花销和房间记录、把两种整理派出去、把
+        结果收回来。
 
-        **派法**是 `platform_work` + `send`（结论 28）：整理是平台自己起的活，
-        跑在这个项目默认芝士的会话上，用它自己的模型。
+        **按作用域分开跑**（`memory.dream` 的开头那一段）：
+
+        - 每一个有 private 的人，平台替他发一次模型调用（`_dream_private`）。没有
+          会话、没有工具、没有凭证，读过他 private 的这一次计算没有任何能写到共享
+          地方的手。这几次调用在整理记录开出来之前做完：记录开着的那段时间里，总
+          览发出的模型调用都算整理的（`dream.dreaming`），而这几次不经过总览。
+        - team 那一轮是 `platform_work` + `send`（结论 28）：跑在总览房间的座位
+          上、用项目默认芝士自己的模型。那个座位的会话、凭证和记录全项目都看得
+          见，所以它读到的只有 team 的树和总览里的人都读得到的房间。
         """
         now = datetime.now(UTC)
         async with self._sessions() as session:
@@ -328,39 +370,48 @@ class MemoryLedger:
                 }
             if await dream.claim(session, project_id, now=now) is None:
                 return {"status": "locked"}
-            run = await dream.open_run(
-                session, project_id, tokens_at_start=tokens, now=now
-            )
-            run_id = run.id
             agent_handle = await _agent_handle(session, root_topic_id)
             await session.commit()
-        logger.info(
-            "memory dream starting project=%s tokens=%s run=%s",
-            project_id,
-            tokens,
-            run_id,
-        )
+        logger.info("memory dream starting project=%s tokens=%s", project_id, tokens)
 
-        # 铺给它的那一份：team 加**这个项目全部**的 private。不是「本轮在场的几
-        # 个人」——整理是唯一一个把整棵树放在一起看的时刻，漏掉一个没说过话的人，
-        # 等于他的记忆没有人整理（`private_owners` 的开头那一段）。
+        team_scope: list[tuple[MemoryFileScope, str | None]] = [
+            (MemoryFileScope.team, None)
+        ]
         async with self._sessions() as session:
+            # 每个人的 private 都要整理，不只是本轮在场的几个人——整理是唯一一个
+            # 把整棵树放在一起看的时刻，漏掉一个没说过话的人，等于他的记忆没有人
+            # 整理（`private_owners` 的开头那一段）。
             owners = await private_owners(session, project_id)
-            scopes: list[tuple[MemoryFileScope, str | None]] = [
-                (MemoryFileScope.team, None),
-                *[(MemoryFileScope.private, owner) for owner in owners],
-            ]
-            stored = await read_tree(session, project_id, scopes)
-            rooms = await _dream_rooms(session, project_id, since=since)
+            stored = await read_tree(session, project_id, team_scope)
+            rooms = await _dream_rooms(
+                session, project_id, since=since, overview=root_topic_id
+            )
             index = await memory_index(session, project_id, speaker_handles=[])
             binding = await binding_for_project(project_id, session)
             code_project = binding is not None
             await session.commit()
-        prompt = dream_prompt(
-            dream.briefing(stored.scopes, rooms, code_project=code_project)
-        )
+        team_tree = stored.scopes.get(prefix_of_scope(MemoryFileScope.team, None), {})
 
-        self._dreams.add(root_topic_id)
+        privates = [
+            await self._dream_private(
+                project_id,
+                owner,
+                team_index=team_tree.get(INDEX_NAME, ""),
+                author=agent_handle,
+            )
+            for owner in owners
+        ]
+
+        async with self._sessions() as session:
+            run = await dream.open_run(
+                session, project_id, tokens_at_start=tokens, now=datetime.now(UTC)
+            )
+            run_id = run.id
+            await session.commit()
+
+        prompt = dream_prompt(
+            dream.briefing(team_tree, rooms, code_project=code_project)
+        )
         runtime = self._compute.platform_work()
         system_prompt = build_system_prompt(
             self._base_prompt,
@@ -380,6 +431,9 @@ class MemoryLedger:
         failed = False
         try:
             async with self._live.lock_for(root_topic_id):
+                # 拿到房间锁之后才标上：在那之前这间房里可能还有一轮普通对话在
+                # 收尾，它的对账要照常点它自己的发言人。
+                self._dreams.add(root_topic_id)
                 model_kwargs, route = await self._host._model_kwargs(
                     project_id, runtime, root_topic_id
                 )
@@ -389,13 +443,13 @@ class MemoryLedger:
                     model_kwargs["session_agent"],
                     harness=runtime.harness,
                 )
-                # 这一轮点名的作用域也在这里定下来：`send` 会在输入之前按它铺一遍
-                # （记忆那时才落到会话的磁盘上），会话停下来时又按它收回来。
+                # 这一轮的账署谁的名；点名的作用域只有 team（`_scopes`）：`send`
+                # 会在输入之前按它铺一遍，会话停下来时又按它收回来。
                 self.remember_turn(
                     root_topic_id,
                     (root_topic_id, dreamer.agent_handle),
                     acting=agent_handle,
-                    speakers=tuple(owners),
+                    speakers=(),
                 )
                 # Read here rather than heard by the room: nobody waits on it
                 # in a timeline, and the run is worth exactly as much as this
@@ -431,8 +485,8 @@ class MemoryLedger:
             # 按「删多了就整轮作废」处理。
             self._dreams.discard(root_topic_id)
         refusal = self._refusals.pop(root_topic_id, None)
-        # 这一轮花的钱在项目的 key 上：当场按 dream 记下，不留给下一轮对话当成
-        # 它自己的花费收走。
+        # 这一次花的钱（team 那一轮和每个人的那一次调用）都在项目的整理 key 上：
+        # 当场按 dream 记下，不留给下一轮对话当成它自己的花费收走。
         drained = await drain_dream_spend(
             self._sessions,
             self._gateway,
@@ -442,13 +496,19 @@ class MemoryLedger:
         )
 
         async with self._sessions() as session:
-            after = await read_tree(session, project_id, scopes)
-            # 「改了哪些文件」由前后两份树比出来，不用另一条回执：`stored` 是铺下
-            # 去之前的，`after` 是收回来之后的，中间那些就是这一轮的成果。
-            changed = sorted(
+            after = await read_tree(session, project_id, team_scope)
+            # 「team 改了哪些文件」由前后两份树比出来，不用另一条回执：`stored` 是
+            # 铺下去之前的，`after` 是收回来之后的，中间那些就是这一轮的成果。
+            team_changed = sorted(
                 path
                 for path in set(stored.contents) | set(after.contents)
                 if stored.contents.get(path) != after.contents.get(path)
+            )
+            changed: list[str] = sorted(
+                {
+                    *([] if refusal else team_changed),
+                    *(path for p in privates for path in p.changed),
+                }
             )
             state = await dream.state_of(session, project_id)
             if state is not None:
@@ -456,29 +516,22 @@ class MemoryLedger:
                     await dream.release(session, state)
                 else:
                     await dream.finish(session, state, now=datetime.now(UTC))
-            status = (
-                MemoryDreamRunStatus.failed
-                if failed
-                else (
-                    MemoryDreamRunStatus.refused
-                    if refusal
-                    else MemoryDreamRunStatus.completed
-                )
-            )
-            if refusal:
-                summary = f"拒绝执行：{refusal}"
-            elif failed:
-                summary = "这次整理没做完"
+            if failed:
+                status = MemoryDreamRunStatus.failed
+            elif refusal or any(p.refusal for p in privates):
+                status = MemoryDreamRunStatus.refused
             else:
-                summary = dream.clip(final_text, 1000)
+                status = MemoryDreamRunStatus.completed
             run = await dream.run_of(session, run_id)
             if run is not None:
                 await dream.close_run(
                     session,
                     run,
                     status=status,
-                    summary=summary,
-                    files=[] if refusal else changed,
+                    summary=_dream_summary(
+                        final_text, refusal=refusal, failed=failed, privates=privates
+                    ),
+                    files=changed,
                     now=datetime.now(UTC),
                 )
             await record_dream_usage(
@@ -497,8 +550,7 @@ class MemoryLedger:
             project_id,
             len(changed),
         )
-        team_changed = [path for path in changed if path.startswith("team/")]
-        if status is MemoryDreamRunStatus.completed and team_changed:
+        if not failed and not refusal and team_changed:
             await self._say_dream(project_id, team_changed)
         if refusal:
             await self._say_dream_refused(project_id, run_id)
@@ -509,6 +561,83 @@ class MemoryLedger:
             "summary": final_text,
         }
 
+    async def _dream_private(
+        self,
+        project_id: uuid.UUID,
+        owner: str,
+        *,
+        team_index: str,
+        author: str,
+    ) -> _PrivateDream:
+        """整理一个人的 private：一次模型调用，平台核过它的答案再写。
+
+        调用发在项目的整理 key 上（`project_gateway_key(dream=True)`），花费和 team
+        那一轮一起按 dream 结算。输入是这个人的树和 team 的索引，没有会话、没有
+        工具、没有凭证，所以它读到的东西只能落回这个人自己的树：写的只有
+        `(private, owner)` 这一个作用域，改动记在他的私聊里（`_say_memory_change`），
+        那句交代只进 `memory_dream_runs`。
+
+        要删的超过一半且超过 3 条，整份不写（和 team 那一轮同一条规矩，
+        `_dream_refusal_phrase`）。
+        """
+        scope: list[tuple[MemoryFileScope, str | None]] = [
+            (MemoryFileScope.private, owner)
+        ]
+        prefix = prefix_of_scope(MemoryFileScope.private, owner)
+        async with self._sessions() as session:
+            stored = await read_tree(session, project_id, scope)
+        before = stored.scopes.get(prefix, {})
+        key = await self._host.project_gateway_key(project_id, dream=True)
+        if not key:
+            return _PrivateDream(owner, failure="no_gateway")
+        chat = GatewayChat(
+            key, model_roles.model("agent_model"), max_tokens=PRIVATE_DREAM_TOKENS
+        )
+        try:
+            said = await chat.complete(
+                system=PRIVATE_DREAM_SYSTEM,
+                prompt=private_dream_prompt(dream.trim_tree(before), team_index),
+                timeout=PRIVATE_DREAM_S,
+                json_response=True,
+            )
+            answer = dream.private_answer(before, said.content)
+        except (GatewayCallError, dream.PrivateAnswerError) as exc:
+            logger.warning(
+                "private memory dream not applied project=%s: %s", project_id, exc
+            )
+            return _PrivateDream(owner, failure=str(exc))
+        files = {f"{prefix}/{name}": content for name, content in answer.tree.items()}
+        if refusal := _dream_refusal_phrase(stored.contents, {"files": files}):
+            logger.warning("private memory dream refused a bulk delete")
+            return _PrivateDream(owner, summary=answer.summary, refusal=refusal)
+        async with self._sessions() as session:
+            change = await apply_tree(
+                session,
+                project_id,
+                stored,
+                {"files": files},
+                scopes=scope,
+                updated_by=author,
+            )
+            # 改动记在这个人的私聊里，和他自己的会话改了 private 时一样。没改
+            # 就不说，也不为说一句话去开一间私聊。
+            worth_saying = not change.is_empty() or change.rejected
+            room = (
+                await _private_room(session, project_id, owner)
+                if worth_saying
+                else None
+            )
+            if room is not None:
+                await _say_memory_change(
+                    session, project_id, change, scope, writer_room=room
+                )
+            await session.commit()
+        return _PrivateDream(
+            owner,
+            changed=tuple(sorted({*change.added, *change.updated, *change.removed})),
+            summary=answer.summary,
+        )
+
     async def _say_dream(self, project_id: uuid.UUID, changed: list[str]) -> None:
         """整理跑完了：在项目总览的现场里记一条 team 改了哪几条（运行记录）。
 
@@ -518,8 +647,7 @@ class MemoryLedger:
         一条说的是**这一次整理本身**动了 team 的哪些文件。
 
         总览是全项目都看得见的房间，所以只说 team：某个人 private 里的文件名也是
-        他的内容。整理的人自己写的那段交代不进来——它是看着所有人的 private 写的，
-        留在 `memory_dream_runs.summary` 里。
+        他的内容，那几份整理各自的交代留在 `memory_dream_runs.summary` 里。
         """
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -542,14 +670,14 @@ class MemoryLedger:
     async def _say_dream_refused(
         self, project_id: uuid.UUID, run_id: uuid.UUID
     ) -> None:
-        """整理要删掉一大半，整轮作废：说进总览。
+        """team 那一轮要删掉一大半，没写：说进总览。
 
         这条必须说话，因为它说的是一次**什么都没发生**：记忆一条都没少，而人会
         以为整理跑过了。说给谁听也是这次的一部分——没人被点名（`who=platform`），
         要动手的是人：去看那棵树到底怎么了。
 
-        拦下的是哪个作用域、哪几条不在这里说：那可能是某个人 private 里的文件，而
-        总览全项目都看得见。它们记在 `memory_dream_runs` 这一条的 summary 里。
+        拦下的是哪几条不在这里说，它们记在 `memory_dream_runs` 这一条的 summary
+        里。某个人 private 那一份被拦下也只记在那里：总览全项目都看得见。
         """
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
@@ -589,13 +717,47 @@ async def _output_tokens_since(
     return int(total or 0)
 
 
+def _dream_summary(
+    final_text: str,
+    *,
+    refusal: str | None,
+    failed: bool,
+    privates: list[_PrivateDream],
+) -> str:
+    """`memory_dream_runs.summary`：team 那一轮的交代，加每个人那一份的结局。"""
+    if refusal:
+        lines = [f"team 拒绝执行：{refusal}"]
+    elif failed:
+        lines = ["team 这次整理没做完"]
+    else:
+        lines = [dream.clip(final_text, 1000)]
+    for private in privates:
+        said = (
+            f"拒绝执行：{private.refusal}"
+            if private.refusal
+            else f"没有写：{private.failure}"
+            if private.failure
+            else private.summary or "没有改动"
+        )
+        lines.append(f"private/{private.owner}：{dream.clip(said, 300)}")
+    return "\n".join(line for line in lines if line)
+
+
 async def _dream_rooms(
-    session: AsyncSession, project_id: uuid.UUID, *, since: datetime
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    since: datetime,
+    overview: uuid.UUID,
 ) -> list[str]:
-    """上次整理之后有新内容的房间：标题、实况文档、这段时间的发言。
+    """上次整理之后有新内容、且总览里的人都读得到的房间：标题和这段时间的发言。
 
     按最后动静排序取前几间。一间房上一整个窗口一个字都没说过，进来只是噪音——
     整理要的是「这段时间发生了什么」，不是「这个项目有哪些房间」。
+
+    读得到的标准和一个在总览里回答的 agent 一样（`rooms_its_audience_may_read`）：
+    team 那一轮跑在总览的座位上，它读到的东西会出现在全项目都看得见的地方，所以私
+    聊和私密频道的发言不进来。
     """
     newest = func.max(Block.created_at).label("newest")
     room = room_column(Block.conversation_id).label("room")
@@ -605,11 +767,20 @@ async def _dream_rooms(
             .where(Block.project_id == project_id, Block.created_at > since)
             .group_by(room)
             .order_by(newest.desc())
-            .limit(dream.ROOMS_LIMIT)
         )
     ).all()
+    readable = await rooms_its_audience_may_read(
+        session,
+        project_id=project_id,
+        answer_room=overview,
+        room_ids=[topic_id for topic_id, _newest in rows],
+    )
     out: list[str] = []
     for topic_id, _newest in rows:
+        if topic_id not in readable:
+            continue
+        if len(out) >= dream.ROOMS_LIMIT:
+            break
         topic = await TopicRepository(session).get(topic_id)
         if topic is None:
             continue

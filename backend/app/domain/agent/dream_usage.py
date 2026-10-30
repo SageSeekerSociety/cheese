@@ -2,11 +2,13 @@
 
 Consolidating a project's memory is work inside the project, so the project's
 team pays for it like any other turn there, and its usage says it was the
-dream. The turn runs as a turn of the project's overview room, and each of its
-model calls is told apart where it is admitted (`routes/llm_proxy.py`, by
-`memory.dream.dreaming`): on the gateway it runs on the project's dream key,
-not the rooms' one, and on the subscription the metering proxy writes the
-dream's kind on its usage line, which `usage/subscription_ingest` keeps.
+dream. Its team pass runs as a turn of the project's overview room, and each
+of that turn's model calls is told apart where it is admitted
+(`routes/llm_proxy.py`, by `memory.dream.dreaming`): on the gateway it runs on
+the project's dream key, not the rooms' one, and on the subscription the
+metering proxy writes the dream's kind on its usage line, which
+`usage/subscription_ingest` keeps. Each person's private pass is one call the
+backend makes on the dream key itself.
 
 Right after the turn, the dream key's new spend is drained as the dream's
 (`DREAM_KIND`). No room turn reads that key, so none can take the dream's

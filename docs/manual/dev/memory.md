@@ -185,13 +185,18 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 - **不算 dream 自己花的。** 聚合按前缀剔掉 `kind = memory_dream` 的用量（`DREAM_KIND`）。网关的用量是延迟落库的，一条晚到的、时间戳落在新窗口里的 dream 用量只有 kind 认得出来；`last_dream_at` 在收尾时推进到整理结束的那一刻，两件事分开做。
 - **按项目一把锁。** 锁是 `memory_dream_states.claimed_at` 上的一次比较并交换（`dream.claim`），抢不到就跳过这一次，不排队——下一次巡检很快就到，排队只会让一个项目的整理堆成队列。
-- **跑在已有的巡检上**，不新开调度器：`PeriodicRunner` 里那条 `sweep_memory_dreams`（每 `settings.memory_dream_sweep_interval_s`，默认 600 秒）挨个项目问一句该不该，**串行**跑（一次整理是一轮真会话，可能几分钟）。
-- **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，判为「这不像是整理，更像是那棵树出了事」：整轮作废、平台上一条都不少（`dream.removal_refused`，数值和会话侧那次对账共用一份 `tree.BULK_DELETE_*`）。批量删除是个信号，不是一步操作。
+- **跑在已有的巡检上**，不新开调度器：`PeriodicRunner` 里那条 `sweep_memory_dreams`（每 `settings.memory_dream_sweep_interval_s`，默认 600 秒）挨个项目问一句该不该，**串行**跑（一次整理里有一轮真会话，可能几分钟）。
+- **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，判为「这不像是整理，更像是那棵树出了事」：那个作用域这一次一条都不写、平台上一条都不少（`dream.removal_refused`，数值和会话侧那次对账共用一份 `tree.BULK_DELETE_*`）。批量删除是个信号，不是一步操作。
 - **拒绝也记一次账。** 拒绝执行的那次照样推进 `last_dream_at`：不推进的话下一次巡检立刻再跑一遍，一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。拒绝本身记在 `memory_dream_runs`（`status=refused`），给人看。
 
-**怎么跑。** 派法是 `platform_work` + `send`：跑在这个项目**默认芝士**的会话上，用它自己的模型。读进来的是 team 和每个人的 private 的 L1 索引加 L2 正文、有新增对话的房间的记录与活文档、是代码项目的话还有仓库。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、团队记忆那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。最后这段只给代码项目，由它自己在仓库里找 agent 会自动读进来的说明文件（`CLAUDE.md`、`AGENTS.md`、`.claude/rules/` 一类），一份都没有就跳过。**两条规矩写死**：private 的内容永远不许升级进 team；和说明文件冲突时只做标注，不改说明文件。
+**怎么跑。** 按作用域分开跑，因为两种输入的读者不同：
 
-**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、房间事件都一样）。收尾时在**「综合」**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。private 的文件名和整理的人写下的那段交代都不进总览：总览全项目都看得见，而那段交代是看着所有人的 private 写的；它们留在 `memory_dream_runs`（`files`、`summary`）。拒绝执行时也一样，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里。
+- **team**：派法是 `platform_work` + `send`，跑在项目总览房间**默认芝士**的座位上，用它自己的模型。那个座位的会话、凭证（`CHEESE_TOPIC` 是总览）和现场全项目都看得见，所以读进来的只有共享的东西：team 的 L1 索引加 L2 正文、有新增对话且总览里的人都读得到的房间的发言（和一个在总览里回答的 agent 能读的房间同一个标准，`audience.rooms_its_audience_may_read`：私聊、私密频道不进来）、是代码项目的话还有仓库。这一轮对账只点 team 的名，会话目录里没有任何人的 private。工具只有只读的那些，加一只能在记忆目录里写和删的手。提示词照搬 Claude Code 2.1.283 的 dream 段（`strings` 从二进制里取出来，见 `dream_prompt.py`），翻成中文、按芝士的量纲改过：四段（Orient / Gather / Consolidate / Prune-and-index）、修剪 team 要保守的那一段、以及「拿记忆和 `CLAUDE.md` 对一遍」都在。最后这段只给代码项目，由它自己在仓库里找 agent 会自动读进来的说明文件（`CLAUDE.md`、`AGENTS.md`、`.claude/rules/` 一类），一份都没有就跳过；和说明文件冲突时只做标注，不改说明文件。
+- **private**：每个有 private 的人一次模型调用（`MemoryLedger._dream_private`），没有会话、没有工具、没有凭证。输入是这个人的树加 team 的索引，答回来的是要写哪些文件、删哪些文件（`dream.private_answer`：漏写的文件原样保留，带目录的名字整份不认），平台只把它写回 `(private, 这个人)` 这一个作用域。只是重复了 team 某一条的 private 记忆在这里删掉。调用走项目的整理 key（`project.settings["llm_gateway_dream_key"]`），模型是平台默认的 `agent_model`。这几次调用在整理记录开出来之前做完：记录开着的那段时间里，从总览发出的模型调用都按整理计（见[计费](/dev/billing)）。
+
+读过某个人 private 的计算只有一条写路：写回他自己的 private。
+
+**结果。** 写下去的就是普通的记忆文件，走 `memory_files` 那条路（版本、冲突、运行记录都一样）：team 的改动记在「综合」的现场，某个人 private 的改动记在他的私聊里。收尾时在**「综合」**发一条折叠事件，只列 team 里改动的文件，**不点任何人的名**，然后把判据那个计数器归零。team 那一轮写的交代（它只读过共享的东西）和每个人那一次调用的交代都记在 `memory_dream_runs`（`files`、`summary`）；private 的文件名和交代不进总览。team 那一份被拒时，总览只说「这一次没做」，拦下的是哪几条记在那一条运行记录里；某个人的 private 被拒只记在运行记录里。
 
 同一间房的两场对账排队跑（`ChatService._sync_memory`）：整理那一轮结束时，轮次钩子和整理收尾各要对一次账，交错时后一场读到的是前一场提交之前的数据库，整理算出的「改了哪些」就会是空的。
 

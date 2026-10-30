@@ -11,9 +11,14 @@
 4 小时。两个数写进 settings 而不是散在代码里，是因为它们量的是**这个项目**的
 节奏：一个一天到晚在跑的代码项目和一个一周动两次的文档项目，同一个数没有意义。
 
-**按项目一把锁。** 整理是一轮真会话，可能跑几分钟；两次整理同时起来只会互相
-覆盖。锁是 `memory_dream_states.claimed_at` 上的一次比较并交换（`claim`），抢不到
-就跳过这一次——不是排队，因为下一次巡检很快就到，而排队意味着一个项目的整理会
+**按作用域分开跑。** team 那一份是总览房间座位上的一轮真会话：那个座位的会话、
+凭证、记录全项目都看得见，所以它只读共享的东西（team 的树、总览里的人都读得到的
+房间）。每个人的 private 是平台单独发的一次模型调用：没有会话、没有工具、没有凭证，
+读的是这个人的树加 team 的索引，答回来的改动由平台核过再写（`private_answer`）。一份
+读过某个人 private 的计算，手上就没有任何一条通往共享地方的写路。
+
+**按项目一把锁。** 整理可能跑几分钟；两次整理同时起来只会互相覆盖。锁是
+`memory_dream_states.claimed_at` 上的一次比较并交换（`claim`），抢不到就跳过这一次——不是排队，因为下一次巡检很快就到，而排队意味着一个项目的整理会
 堆成队列。
 
 **dream 自己花的不算。** 判据只数「上次整理之后」的 `output_tokens`，而收尾时
@@ -23,8 +28,8 @@
 出来。
 
 **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，
-判为「这不像是整理，更像是那棵树出了事」，整轮作废、平台上一条都不少
-（`removal_refused`）。规矩的数值和会话侧那次对账共用一份（`tree.BULK_DELETE_*`）
+判为「这不像是整理，更像是那棵树出了事」，那个作用域这一次一条都不写、平台上
+一条都不少（`removal_refused`）。规矩的数值和会话侧那次对账共用一份（`tree.BULK_DELETE_*`）
 ——两处要防的是同一件事，两个数就会漂开。
 
 **拒绝也记一次账。** 拒绝执行的那次整理照样推进 `last_dream_at`：不推进的话，
@@ -38,6 +43,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -253,25 +259,21 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def trim_scopes(scopes: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
-    """把一个项目的树压进 prompt 预算：先留索引，再按路径序留正文。
+def trim_tree(files: dict[str, str]) -> dict[str, str]:
+    """把一个作用域的树压进 prompt 预算：先留索引，再按路径序留正文。
 
-    每个作用域一个预算，按路径序取到用完为止。抽掉一条正文只损失一次「看得见
-    正文」，而索引（`MEMORY.md`）永远留着——整理至少知道有这条记忆、它讲什么，
-    要正文它自己去读。
+    按路径序取到用完为止。抽掉一条正文只损失一次「看得见正文」，而索引
+    （`MEMORY.md`）永远留着——整理至少知道有这条记忆、它讲什么。
     """
-    out: dict[str, dict[str, str]] = {}
-    for name, files in scopes.items():
-        kept: dict[str, str] = {}
-        used = 0
-        for path in sorted(files, key=lambda p: (p != INDEX_NAME, p)):
-            content = files[path]
-            if path != INDEX_NAME and used + len(content) > PROMPT_SCOPE_MAX:
-                continue
-            kept[path] = content
-            used += len(content)
-        out[name] = kept
-    return out
+    kept: dict[str, str] = {}
+    used = 0
+    for path in sorted(files, key=lambda p: (p != INDEX_NAME, p)):
+        content = files[path]
+        if path != INDEX_NAME and used + len(content) > PROMPT_SCOPE_MAX:
+            continue
+        kept[path] = content
+        used += len(content)
+    return kept
 
 
 def clip(text: str, limit: int) -> str:
@@ -280,14 +282,73 @@ def clip(text: str, limit: int) -> str:
 
 
 def briefing(
-    scopes: dict[str, dict[str, str]],
+    team: dict[str, str],
     rooms: list[str],
     *,
     code_project: bool,
 ) -> DreamBriefing:
-    """把取好的输入装成提示词要的那一份。"""
-    return DreamBriefing(
-        scopes=trim_scopes(scopes), rooms=rooms, code_project=code_project
+    """把 team 那一轮取好的输入装成提示词要的那一份。"""
+    return DreamBriefing(team=trim_tree(team), rooms=rooms, code_project=code_project)
+
+
+class PrivateAnswerError(ValueError):
+    """private 那一次调用答回来的不是一份平台能照着写的改动：为什么，一个代号。"""
+
+
+@dataclass(frozen=True)
+class PrivateAnswer:
+    """private 那一次调用答回来的、核过的那一份。"""
+
+    #: 改动套上去之后的整棵树（文件名 → 正文）。
+    tree: dict[str, str]
+    #: 它自己写的那句交代。
+    summary: str
+
+
+def private_answer(before: dict[str, str], answer: str) -> PrivateAnswer:
+    """private 那一次调用答回来的改动，套在 ``before`` 上。
+
+    答案是 `{"write": {名: 正文}, "delete": [名], "summary": …}`（`dream_prompt.
+    PRIVATE_DREAM_SYSTEM`）。只认改动、不认整棵树：模型漏写一个文件不等于删了它。
+    名字只认一层、以 `.md` 结尾的：答案里的路径带目录，就可能落到别人的树里。
+    形状不对就整份不认（`PrivateAnswerError`）。
+    """
+    text = answer.strip()
+    if text.startswith("```"):
+        # 要的是 JSON，较弱的模型仍时不时给它套一层代码块。
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        raise PrivateAnswerError("not_json") from exc
+    if not isinstance(parsed, dict):
+        raise PrivateAnswerError("not_an_object")
+    write = parsed.get("write") or {}
+    delete = parsed.get("delete") or []
+    summary = parsed.get("summary")
+    if not isinstance(write, dict) or not isinstance(delete, list):
+        raise PrivateAnswerError("bad_shape")
+    tree = dict(before)
+    for name, content in write.items():
+        if not _flat_name(name) or not isinstance(content, str) or not content.strip():
+            raise PrivateAnswerError("bad_write")
+        tree[name] = content
+    for name in delete:
+        if not _flat_name(name) or name in write:
+            raise PrivateAnswerError("bad_delete")
+        tree.pop(name, None)
+    return PrivateAnswer(
+        tree=tree, summary=summary.strip() if isinstance(summary, str) else ""
+    )
+
+
+def _flat_name(name: object) -> bool:
+    return (
+        isinstance(name, str)
+        and name.endswith(".md")
+        and "/" not in name
+        and "\\" not in name
+        and not name.startswith(".")
     )
 
 
@@ -346,9 +407,10 @@ async def dreaming(
 ) -> bool:
     """Whether the project's memory is being consolidated now.
 
-    A dream runs as a turn of the project's overview room and holds that
-    room's turn lock for as long as it runs (`agent/memory_ledger.py`), so
-    while a run is open every model call the overview makes is the dream's;
+    A dream's team pass runs as a turn of the project's overview room and
+    holds that room's turn lock for as long as it runs; the private passes
+    are made before the run is opened (`agent/memory_ledger.py`). So while a
+    run is open every model call the overview makes is the dream's;
     the caller compares the call's place with the overview. A run still open
     past `CLAIM_TTL` is one whose process went away, and is not counted: the
     claim it held has expired too.
@@ -380,6 +442,8 @@ __all__ = [
     "ROOM_LOG_MAX",
     "DreamDue",
     "DreamSettings",
+    "PrivateAnswer",
+    "PrivateAnswerError",
     "briefing",
     "claim",
     "clip",
@@ -389,11 +453,12 @@ __all__ = [
     "due_decision",
     "finish",
     "open_run",
+    "private_answer",
     "refused_scopes",
     "release",
     "removal_refused",
     "run_of",
     "since_of",
     "state_of",
-    "trim_scopes",
+    "trim_tree",
 ]
