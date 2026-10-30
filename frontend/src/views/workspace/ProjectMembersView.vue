@@ -79,11 +79,7 @@ const rosterReady = computed(
   () => store.members.length > 0 || membersState.isFetched.value || membersState.isError.value
 )
 const releaseRoster = gate.hold()
-watch(
-  rosterReady,
-  (ready) => ready && releaseRoster(),
-  { immediate: true }
-)
+watch(rosterReady, (ready) => ready && releaseRoster(), { immediate: true })
 
 // 名册就是侧栏和 @ 补全读的那一份（store.members），不是这一页自己再拉一次的副本。
 const me = computed(() => myHandle())
