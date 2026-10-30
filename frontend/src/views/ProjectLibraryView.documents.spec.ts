@@ -230,11 +230,20 @@ describe('资料库里的文档', () => {
     const { container, router } = await mount('/projects/p1/docs/d1')
 
     expect(container.querySelector('[data-open-document="d1"]')).not.toBeNull()
+    expect(vi.mocked(getDocumentAbout)).toHaveBeenCalledTimes(1)
     expect(vi.mocked(listProjectLibrary)).not.toHaveBeenCalled()
     expect(vi.mocked(listProjectDocuments)).not.toHaveBeenCalled()
 
     resolveAbout(doc('d1', '竞品定价对比', '2026-09-21T10:00:00Z'))
     await router.push('/projects/p1/library')
     await waitFor(() => expect(rowNames(container)).toEqual(['竞品定价对比', '预算表.xlsx', '旧方案']))
+    expect(vi.mocked(listProjectLibrary)).toHaveBeenCalledTimes(1)
+
+    // 从列表再点进文档并返回列表时，保留已加载的列表行，不清空重拉第一页。
+    await router.push('/projects/p1/docs/d1')
+    await waitFor(() => expect(container.querySelector('[data-open-document="d1"]')).not.toBeNull())
+    await router.push('/projects/p1/library')
+    await waitFor(() => expect(rowNames(container)).toEqual(['竞品定价对比', '预算表.xlsx', '旧方案']))
+    expect(vi.mocked(listProjectLibrary)).toHaveBeenCalledTimes(1)
   })
 })

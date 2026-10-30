@@ -186,7 +186,7 @@ watch(doc.renames, readTitle)
 watch(
   () => props.document?.id,
   (id) => {
-    if (id && !props.document?.title && !props.bare) void readTitle()
+    if (id && !props.document?.title) void readTitle()
   },
   { immediate: true }
 )

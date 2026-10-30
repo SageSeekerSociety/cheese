@@ -2,6 +2,17 @@
   "_meta": {
     "protocol": "interleaved_ab_alternating_order",
     "rounds": 3,
+    "small_sample": true,
+    "before_commit": "a9385f9c7153",
+    "after_commit": "55f77bce9c21",
+    "environment": {
+      "base_url": "http://127.0.0.1:3000",
+      "viewport": "1440x900",
+      "backend_port": 8081,
+      "collab_port": 8902,
+      "postgres_port": 5433,
+      "redis_port": 6379
+    },
     "target_pages": [
       "project-document",
       "project-docs-charter",
@@ -626,7 +637,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -1073,19 +1085,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -206.9,
           "paint_ms": -206.9,
           "paint_pct": -19.9,
           "critical_path_api_ms": -94.9,
-          "api_count": -7
+          "api_count": -7,
+          "noise_spread_ms": 356.6,
+          "claim_status": "confirmed_non_overlapping_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_hidden_library_list_fetches": true
+          "eliminated_hidden_library_list_fetches": true,
+          "selector_and_action_control_verified": true
         }
       },
       "warm": {
@@ -1939,7 +1954,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -2413,19 +2429,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -437.1,
           "paint_ms": -442.2,
           "paint_pct": -25.6,
           "critical_path_api_ms": -386.4,
-          "api_count": -14
+          "api_count": -14,
+          "noise_spread_ms": 424.9,
+          "claim_status": "confirmed_critical_path_api_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_hidden_library_list_fetches": true
+          "eliminated_hidden_library_list_fetches": true,
+          "selector_and_action_control_verified": true
         }
       },
       "cold": {
@@ -3126,7 +3145,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -3600,19 +3620,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": 7.7,
           "paint_ms": 4.1,
           "paint_pct": 0.2,
           "critical_path_api_ms": -83.0,
-          "api_count": -7
+          "api_count": -7,
+          "noise_spread_ms": 277.1,
+          "claim_status": "confirmed_critical_path_api_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_hidden_library_list_fetches": true
+          "eliminated_hidden_library_list_fetches": true,
+          "selector_and_action_control_verified": true
         }
       }
     },
@@ -4171,7 +4194,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -4672,20 +4696,23 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -150.7,
           "paint_ms": -147.8,
           "paint_pct": -13.0,
           "critical_path_api_ms": -142.2,
-          "api_count": -2
+          "api_count": -2,
+          "noise_spread_ms": 176.0,
+          "claim_status": "confirmed_non_overlapping_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
           "eliminated_serial_root_topic_fetch": true,
-          "eliminated_redundant_charter_about_fetch": true
+          "eliminated_redundant_charter_about_fetch": true,
+          "selector_and_action_control_verified": true
         }
       },
       "warm": {
@@ -5485,7 +5512,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -6166,20 +6194,23 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -288.9,
           "paint_ms": -289.6,
           "paint_pct": -16.1,
           "critical_path_api_ms": -156.5,
-          "api_count": -2
+          "api_count": -2,
+          "noise_spread_ms": 268.2,
+          "claim_status": "confirmed_non_overlapping_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
           "eliminated_serial_root_topic_fetch": true,
-          "eliminated_redundant_charter_about_fetch": true
+          "eliminated_redundant_charter_about_fetch": true,
+          "selector_and_action_control_verified": true
         }
       },
       "cold": {
@@ -7006,7 +7037,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -7660,20 +7692,23 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -134.7,
           "paint_ms": -71.4,
           "paint_pct": -2.6,
           "critical_path_api_ms": 78.8,
-          "api_count": -6
+          "api_count": -6,
+          "noise_spread_ms": 498.3,
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
           "eliminated_serial_root_topic_fetch": true,
-          "eliminated_redundant_charter_about_fetch": true
+          "eliminated_redundant_charter_about_fetch": true,
+          "selector_and_action_control_verified": true
         }
       }
     },
@@ -8034,7 +8069,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -8463,19 +8499,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": 286.6,
           "paint_ms": 288.4,
           "paint_pct": 34.7,
           "critical_path_api_ms": 121.1,
-          "api_count": 3
+          "api_count": 3,
+          "noise_spread_ms": 388.3,
+          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_redundant_room_row_fetch": true
+          "eliminated_redundant_room_row_fetch": true,
+          "selector_and_action_control_verified": true
         }
       },
       "warm": {
@@ -8906,7 +8945,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -9299,19 +9339,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": 220.2,
           "paint_ms": 186.6,
           "paint_pct": 13.4,
           "critical_path_api_ms": -116.2,
-          "api_count": -1
+          "api_count": -1,
+          "noise_spread_ms": 239.6,
+          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_redundant_room_row_fetch": true
+          "eliminated_redundant_room_row_fetch": true,
+          "selector_and_action_control_verified": true
         }
       },
       "cold": {
@@ -9742,7 +9785,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -10189,19 +10233,22 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": 127.3,
           "paint_ms": 125.2,
           "paint_pct": 5.5,
           "critical_path_api_ms": 99.9,
-          "api_count": 0
+          "api_count": 0,
+          "noise_spread_ms": 324.7,
+          "claim_status": "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_redundant_room_row_fetch": true
+          "eliminated_redundant_room_row_fetch": true,
+          "selector_and_action_control_verified": true
         }
       }
     },
@@ -10697,7 +10744,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -10999,19 +11047,22 @@
               "error": "run#1[error]: Page.evaluate: Error: Vue router instance not found on #app\n    at window.__nav (eval at evaluate (:370:30), <anonymous>:41:22)\n    at eval (eval at evaluate (:370:30), <anonymous>:1:15)\n    at Utilit",
               "api_timeline": []
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -96.0,
           "paint_ms": -91.9,
           "paint_pct": -10.0,
           "critical_path_api_ms": -192.6,
-          "api_count": -5.0
+          "api_count": -5.0,
+          "noise_spread_ms": 169.1,
+          "claim_status": "confirmed_critical_path_api_improvement"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
           "failures_preserved_not_zeroed": true,
-          "eliminated_redundant_room_row_fetch": true
+          "eliminated_redundant_room_row_fetch": true,
+          "selector_and_action_control_verified": true
         }
       },
       "warm": {
@@ -11343,7 +11394,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -11754,18 +11806,21 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -47.2,
           "paint_ms": -32.8,
           "paint_pct": -2.2,
           "critical_path_api_ms": 85.8,
-          "api_count": 3
+          "api_count": 3,
+          "noise_spread_ms": 200.0,
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
-          "failures_preserved_not_zeroed": true
+          "failures_preserved_not_zeroed": true,
+          "selector_and_action_control_verified": true
         }
       },
       "cold": {
@@ -12241,7 +12296,8 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "after": {
           "n_attempts": 3,
@@ -12715,18 +12771,21 @@
                 ]
               ]
             }
-          ]
+          ],
+          "small_sample": true
         },
         "delta": {
           "dom_ready_ms": -132.2,
           "paint_ms": -204.8,
           "paint_pct": -8.4,
           "critical_path_api_ms": -9.7,
-          "api_count": 0
+          "api_count": 0,
+          "noise_spread_ms": 789.6,
+          "claim_status": "within_noise_band"
         },
         "guardrails": {
-          "target_content_and_controls_verified": true,
-          "failures_preserved_not_zeroed": true
+          "failures_preserved_not_zeroed": true,
+          "selector_and_action_control_verified": true
         }
       }
     }

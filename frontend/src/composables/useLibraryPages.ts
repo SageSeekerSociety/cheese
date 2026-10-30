@@ -174,13 +174,20 @@ export function useLibraryPages(
 
   watch(
     // 团队的书架每次是一个新对象：按它是哪一个来比，不按是不是同一个对象。
-    () => [active(), JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
-    ([isActive]) => {
-      if (isActive) reset()
-      else generation++
-    },
+    () => [JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
+    () => reset(),
     { immediate: true }
   )
+
+  watch(active, (isActive) => {
+    if (!isActive) {
+      generation++
+      loading.value = false
+      return
+    }
+    if (!rows.value.length && !loading.value && !exhausted.value && !loadFailed.value) void more()
+    else void nextTick(fillIfShort)
+  })
 
   /** 一份文档在别处改了名：表里那一行跟着改，不必从头取。 */
   function renameDoc(id: string, title: string) {

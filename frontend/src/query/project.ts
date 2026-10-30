@@ -273,14 +273,18 @@ export function usePlace(
   loadingList?: Ref<boolean>
 ) {
   const cacheTick = ref(0)
-  const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
-    const pid = projectId.value
-    const key = event.query.queryKey
-    if (pid && key[0] === 'project' && key[1] === pid && key[2] === 'topics') {
-      cacheTick.value++
-    }
-  })
-  if (getCurrentScope()) onScopeDispose(unsubscribe)
+  if (getCurrentScope()) {
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      const pid = projectId.value
+      if (!pid) return
+      const target = keys.projectTopics(pid)
+      const key = event.query.queryKey
+      if (key.length === target.length && target.every((part, i) => key[i] === part)) {
+        cacheTick.value++
+      }
+    })
+    onScopeDispose(unsubscribe)
+  }
 
   const inList = computed(() => {
     void cacheTick.value

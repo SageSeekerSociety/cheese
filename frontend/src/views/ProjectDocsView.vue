@@ -136,7 +136,9 @@ const errorMessage = computed<string | null>(() =>
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
 const rootTopic = computed<Topic | null>(() => data.value?.rootTopic ?? null)
 const overviewDoc = computed(() =>
-  data.value?.overviewId ? { id: data.value.overviewId, projectId: props.projectId, title: '' } : null
+  data.value?.overviewId
+    ? { id: data.value.overviewId, projectId: props.projectId, title: t('project.docs.kind.charter') }
+    : null
 )
 
 function fmtDate(d: string | null): string {

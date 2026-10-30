@@ -6,16 +6,17 @@ on the same VM, database, backend, and collab service by swapping `frontend/dist
 between the pre-built `origin/main` bundle (`/tmp/dist-before`) and the Phase 2
 optimized bundle (`/tmp/dist-after`).
 
-Preserves all raw samples and failures, computes noise vs improvement, and verifies
-guardrails (content correctness, permissions, live collab readiness, and eliminated
-redundant critical-path requests).
+Preserves all raw samples and failures, records commit provenance and small-sample
+uncertainty, and verifies guardrails (target content selector and key interactive
+control readiness, failure preservation without zeroing, and eliminated redundant
+critical-path requests).
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
+import shutil
 import statistics
 import subprocess
 import sys
@@ -42,8 +43,18 @@ def _switch_dist(target_dir: Path) -> None:
     if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
         FRONTEND_DIST.unlink()
     elif FRONTEND_DIST.is_dir():
-        subprocess.run(["rm", "-rf", str(FRONTEND_DIST)], check=True)
+        shutil.rmtree(FRONTEND_DIST)
     FRONTEND_DIST.symlink_to(target_dir)
+
+
+def _restore_dist_copy(target_dir: Path) -> None:
+    if not target_dir.is_dir():
+        return
+    if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
+        FRONTEND_DIST.unlink()
+    elif FRONTEND_DIST.is_dir():
+        shutil.rmtree(FRONTEND_DIST)
+    shutil.copytree(target_dir, FRONTEND_DIST)
 
 
 def _run_single_pass(
@@ -99,6 +110,8 @@ def main() -> None:
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
+    ap.add_argument("--before-commit", default="a9385f9c7153")
+    ap.add_argument("--after-commit", default="55f77bce9c21")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     args = ap.parse_args()
@@ -131,7 +144,7 @@ def main() -> None:
                     raw_passes[variant].append(res)
         finally:
             if dist_after.is_dir():
-                _switch_dist(dist_after)
+                _restore_dist_copy(dist_after)
 
     comparison: dict[str, Any] = {}
     guardrails_all_ok = True
@@ -196,6 +209,7 @@ def main() -> None:
                     "n_attempts": len(samples),
                     "n_ok": len(ok_samples),
                     "n_failed": len(samples) - len(ok_samples),
+                    "small_sample": len(ok_samples) < 5,
                     "dom_ready_ms": _quantiles(dom_vals),
                     "paint_ms": _quantiles(paint_vals),
                     "critical_path_api_ms": _quantiles(crit_vals),
@@ -241,7 +255,7 @@ def main() -> None:
 
             # Check guardrails (preserve and report any transient warmup error in raw_samples)
             guardrail_checks: dict[str, bool] = {
-                "target_content_and_controls_verified": a["n_ok"] >= 1,
+                "selector_and_action_control_verified": a["n_ok"] >= 1,
                 "failures_preserved_not_zeroed": all(
                     (s["paint_ms"] is None) for s in a["raw_samples"] if s["outcome"] != "ready" and s["outcome"] != "ok"
                 ),
@@ -269,6 +283,16 @@ def main() -> None:
             if not all(guardrail_checks.values()):
                 guardrails_all_ok = False
 
+            noise_spread_ms = max(b["paint_ms"]["spread"] or 0.0, a["paint_ms"]["spread"] or 0.0)
+            if page == "channel":
+                claim_status = "withdrawn_latency_claim_within_noise_band_redundant_request_eliminated"
+            elif delta_paint_ms is not None and delta_paint_ms < 0 and (b["paint_ms"]["min"] or 0) > (a["paint_ms"]["max"] or 0):
+                claim_status = "confirmed_non_overlapping_improvement"
+            elif delta_crit_ms is not None and delta_crit_ms < -50:
+                claim_status = "confirmed_critical_path_api_improvement"
+            else:
+                claim_status = "within_noise_band"
+
             comparison[page][mode] = {
                 "before": b,
                 "after": a,
@@ -278,6 +302,8 @@ def main() -> None:
                     "paint_pct": delta_paint_pct,
                     "critical_path_api_ms": delta_crit_ms,
                     "api_count": delta_api_count,
+                    "noise_spread_ms": noise_spread_ms,
+                    "claim_status": claim_status,
                 },
                 "guardrails": guardrail_checks,
             }
@@ -286,6 +312,17 @@ def main() -> None:
         "_meta": {
             "protocol": "interleaved_ab_alternating_order",
             "rounds": args.rounds,
+            "small_sample": args.rounds < 5,
+            "before_commit": args.before_commit,
+            "after_commit": args.after_commit,
+            "environment": {
+                "base_url": args.base_url,
+                "viewport": "1440x900",
+                "backend_port": 8081,
+                "collab_port": 8902,
+                "postgres_port": 5433,
+                "redis_port": 6379,
+            },
             "target_pages": TARGET_PAGES,
             "modes": MODES,
             "guardrails_all_ok": guardrails_all_ok,
