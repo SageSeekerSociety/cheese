@@ -646,6 +646,16 @@ class Runner(runner.Runner[Journal]):
         await self.listen(LINE_LIMIT)
         return self.session_id
 
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        """The build asks a model that ends its turn with no visible text to
+        write some ("no visible output"), unless the call just before was one
+        of the tools named here. A reply in the room is how a turn here ends,
+        so the reply tools are those: without this, a session could not stop
+        right after chat_send, and every turn would be made to write closing
+        words only the session sees."""
+        terminal = ",".join(f"mcp__native__{tool}" for tool in runner.REPLY_TOOLS)
+        return {**super().agent_env(env), "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
+
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.
 
@@ -1171,6 +1181,10 @@ class Runner(runner.Runner[Journal]):
                 for block in (message.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
+                        name = str(block.get("name") or "")
+                        self.called(
+                            name.removeprefix("mcp__native__"), block.get("input")
+                        )
             if returned := self._watch_marks(message):
                 stamp["calls"] = returned
         if kind == "system":
@@ -1850,7 +1864,7 @@ class Runner(runner.Runner[Journal]):
             # of its own, and is that work's to answer.
             if self.interrupting or (self.owed is not None and self.owed in self.sent):
                 return {}
-            reason = self.insist()
+            reason = self.insist(str(params.get("last_words") or ""))
             return {"reason": reason} if reason else {}
         if method == "run":
             # The session's own helper making a platform tool call
