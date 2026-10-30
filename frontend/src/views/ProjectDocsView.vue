@@ -68,6 +68,9 @@ function openKind(next: unknown) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: k } })
 }
 
+type ChangeCursors = Record<'team' | 'private', string | null>
+const newestFirst = (rows: MemoryChangeOut[]) => [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at))
+
 interface DocsPayload {
   rootTopicId: string | null
   /** 项目目标那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
@@ -77,6 +80,8 @@ interface DocsPayload {
   memoryEntries: MemoryEntryOut[]
   /** 最近改动：项目共享的那一份和这个人自己的那一份合在一起，新的在前。 */
   memoryChanges: MemoryChangeOut[]
+  /** 两份各自翻到哪儿了：下一页的 `before`，读到头了为空。保留期内的每一条都翻得到。 */
+  memoryChangesNext: ChangeCursors
   /** 项目共享的那几条只有能配置 AI 队友的人删得动；自己的那几条自己删（#3830）。 */
   changesSharedMemory: boolean
 }
@@ -105,6 +110,7 @@ const docs = useQuery(
         weeklies: [],
         memoryEntries: [],
         memoryChanges: [],
+        memoryChangesNext: { team: null, private: null },
         changesSharedMemory: mayIn(project, 'configure_agents'),
       }
       if (kind.value === 'charter' && overviewRead) {
@@ -119,7 +125,8 @@ const docs = useQuery(
           listMemoryChanges(props.projectId, 'private', AUTHOR),
         ])
         payload.memoryEntries = entries.data
-        payload.memoryChanges = [...team.data, ...mine.data].sort((a, b) => b.created_at.localeCompare(a.created_at))
+        payload.memoryChanges = newestFirst([...team.data, ...mine.data])
+        payload.memoryChangesNext = { team: team.next, private: mine.next }
       } else if (kind.value === 'weeklies') {
         // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
         // 认，一个叫「周报怎么发」的房间也会出现在这儿。
@@ -139,6 +146,8 @@ const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
 const mayDelete = (e: MemoryEntryOut) => e.scope === 'private' || !!data.value?.changesSharedMemory
 const memoryChanges = computed<MemoryChangeOut[]>(() => data.value?.memoryChanges ?? [])
+const changesNext = computed<ChangeCursors>(() => data.value?.memoryChangesNext ?? { team: null, private: null })
+const moreChanges = computed(() => !!changesNext.value.team || !!changesNext.value.private)
 // 恢复是一次写入，和删一条同一道门；一次新建没有「改之前」可恢复。
 const mayRestore = (c: MemoryChangeOut) => !c.created && (c.scope === 'private' || !!data.value?.changesSharedMemory)
 // 改动是谁做的：队友按名字，芝士按它在这个项目里的名字。
@@ -231,6 +240,31 @@ async function restoreChange(id: string) {
     void errorHandler.handle(err as Error)
   } finally {
     restoring.value = null
+  }
+}
+
+// 更早的改动：两份里还没读到头的各再读一页，并进缓存里那一份。
+const loadingMoreChanges = ref(false)
+async function loadOlderChanges() {
+  const next = changesNext.value
+  loadingMoreChanges.value = true
+  try {
+    const [team, mine] = await Promise.all([
+      next.team ? listMemoryChanges(props.projectId, 'team', undefined, next.team) : null,
+      next.private ? listMemoryChanges(props.projectId, 'private', AUTHOR, next.private) : null,
+    ])
+    await patchQuery<DocsPayload>(docsKey.value, (held) => ({
+      ...held,
+      memoryChanges: newestFirst([...held.memoryChanges, ...(team?.data ?? []), ...(mine?.data ?? [])]),
+      memoryChangesNext: {
+        team: team ? team.next : held.memoryChangesNext.team,
+        private: mine ? mine.next : held.memoryChangesNext.private,
+      },
+    }))
+  } catch (err) {
+    void errorHandler.handle(err as Error)
+  } finally {
+    loadingMoreChanges.value = false
   }
 }
 
@@ -329,7 +363,10 @@ useCommands(() => {
           :names="changeNames"
           :may-restore="mayRestore"
           :restoring="restoring"
+          :more="moreChanges"
+          :loading-more="loadingMoreChanges"
           @restore="restoreChange"
+          @more="loadOlderChanges"
         />
       </template>
 

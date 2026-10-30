@@ -18,6 +18,7 @@ Create Date: 2026-10-30 10:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -42,6 +43,9 @@ _WRITERS = (
 
 
 def upgrade() -> None:
+    # The new table's foreign key locks `projects`, which the serving backend
+    # writes.
+    with_lock_retries("projects")
     op.create_table(
         "memory_file_changes",
         sa.Column("id", sa.Uuid(), primary_key=True),

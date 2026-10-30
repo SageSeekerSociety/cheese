@@ -37,7 +37,7 @@ vi.mock('../api', async () => {
     restoreMemoryChange: vi.fn(),
     // 删除、恢复之后面板重读记忆和改动记录；这几个用例看的是点下去之后发了什么。
     listMemory: vi.fn(async () => ({ data: [] })),
-    listMemoryChanges: vi.fn(async () => ({ data: [] })),
+    listMemoryChanges: vi.fn(async () => ({ data: [], next: null })),
     getProject: vi.fn(),
     getTopic: vi.fn(),
   }
@@ -58,7 +58,7 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import { deleteMemory, getProject, getTopic, restoreMemoryChange } from '../api'
+import { deleteMemory, getProject, getTopic, listMemoryChanges, restoreMemoryChange } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
@@ -90,6 +90,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.mocked(deleteMemory).mockReset()
   vi.mocked(restoreMemoryChange).mockReset()
+  vi.mocked(listMemoryChanges).mockImplementation(async () => ({ data: [], next: null }))
   dialogMock.confirm.mockReset()
   // 默认「点了确定」：取消那一格在下面的用例里单独摆。
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
@@ -338,6 +339,29 @@ describe('记忆', () => {
     expect(buttons).toHaveLength(1)
     await fireEvent.click(buttons[0] as Element)
 
+    await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('p', 'c-deleted'))
+    view.unmount()
+  })
+
+  it('第一页之外更早的改动也翻得到、恢复得了', async () => {
+    // 第一页只有一条新建；项目那一份后面还有，删除在下一页。
+    vi.mocked(listMemoryChanges).mockImplementation(async (_project, scope, _owner, before) =>
+      scope === 'team' && before === 'team-page-2' ? { data: [deletion], next: null } : { data: [], next: null }
+    )
+    const view = show('memory', {
+      memoryChanges: [creation],
+      memoryChangesNext: { team: 'team-page-2', private: null },
+      changesSharedMemory: true,
+    })
+    await waitFor(() => expect(view.getByText('prefers-pnpm.md')).toBeTruthy())
+    expect(view.queryByText('deploy-script.md')).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: /更早的改动/ }))
+    await waitFor(() => expect(view.getByText('deploy-script.md')).toBeTruthy())
+    // 读到头了，就不再给翻页的按钮。
+    expect(view.queryByRole('button', { name: /更早的改动/ })).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: /恢复到改动前/ }))
     await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('p', 'c-deleted'))
     view.unmount()
   })

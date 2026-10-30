@@ -37,14 +37,21 @@ export interface MemoryChangeOut {
   /** 改之前 → 改之后的统一 diff。 */
   diff: string
 }
+/** 一页改动，新的在前；`next` 是下一页的 `before`，读到头了为空。 */
+export interface MemoryChangesPage {
+  data: MemoryChangeOut[]
+  next: string | null
+}
 export function listMemoryChanges(
   projectId: string,
   scope: 'team' | 'private',
-  ownerHandle?: string
-): Promise<ListPayload<MemoryChangeOut>> {
+  ownerHandle?: string,
+  before?: string
+): Promise<MemoryChangesPage> {
   const owner = ownerHandle ? `&owner_handle=${encodeURIComponent(ownerHandle)}` : ''
-  return request<ListPayload<MemoryChangeOut>>(
-    `/memory/files/history?project_id=${encodeURIComponent(projectId)}&scope=${scope}${owner}`
+  const page = before ? `&before=${encodeURIComponent(before)}` : ''
+  return request<MemoryChangesPage>(
+    `/memory/files/history?project_id=${encodeURIComponent(projectId)}&scope=${scope}${owner}${page}`
   )
 }
 export function restoreMemoryChange(

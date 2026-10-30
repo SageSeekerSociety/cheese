@@ -197,7 +197,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 两份的答案都是要写哪些文件、删哪些文件（`dream.dream_answer`：漏写的文件原样保留，带目录的名字整份不认），平台只把它写回那一个作用域。提示词的判断部分照搬 Claude Code 2.1.283 的 dream 段（见 `dream_prompt.py`）。读过某个人 private 的计算只有一条写路：写回他自己的 private。
 
-**结果。** 写下去的就是普通的记忆文件（版本、冲突都一样），署项目默认芝士的名，在记忆面板上看得到。每一条改动和别的写入一样进 `memory_file_changes`，写入方记成 `dream_team` 或 `dream_private`：面板的“最近改动”列出它是谁、哪一轮、改了哪条、差在哪，有权写那个作用域的人可以把它恢复成整理之前的样子（`POST /memory/files/history/{id}/restore`，30 天内）。整理不发任何房间消息、不记任何运行记录、不点任何人的名。收尾时把判据那个计数器归零，并在 `memory_dream_runs` 里记一行：`files` 只列 team 改过的文件；`summary` 是 team 那一份的交代，private 那几份只写数（几个人、改几条、删几条、几份没写成），不写是谁的、改了什么。
+**结果。** 写下去的就是普通的记忆文件（版本、冲突都一样），署项目默认芝士的名，在记忆面板上看得到。每一条改动和别的写入一样进 `memory_file_changes`，写入方记成 `dream_team` 或 `dream_private`：面板的“最近改动”列出它是谁、哪一轮、改了哪条、差在哪，有权写那个作用域的人可以把它恢复成整理之前的样子（`POST /memory/files/projects/{project_id}/history/{id}/restore`，30 天内的每一条都翻得到：`GET /memory/files/history` 一页一页地读，`before` 是上一页的 `next`）。整理不发任何房间消息、不记任何运行记录、不点任何人的名。收尾时把判据那个计数器归零，并在 `memory_dream_runs` 里记一行：`files` 只列 team 改过的文件；`summary` 是 team 那一份的交代，private 那几份只写数（几个人、改几条、删几条、几份没写成），不写是谁的、改了什么。
 
 ## 旧表迁移（`memory_entries` → 文件树） {#migration}
 

@@ -99,6 +99,7 @@
     "recordedOn": "{date} 记录",
     "memoryChanges": "最近改动",
     "memoryChangesEmpty": "暂无改动",
+    "memoryChangesMore": "更早的改动",
     "memoryChangeCreated": "新建",
     "memoryChangeEdited": "修改",
     "memoryChangeDeleted": "删除",

@@ -99,6 +99,7 @@
     "recordedOn": "Recorded {date}",
     "memoryChanges": "Recent changes",
     "memoryChangesEmpty": "No changes yet",
+    "memoryChangesMore": "Earlier changes",
     "memoryChangeCreated": "Created",
     "memoryChangeEdited": "Edited",
     "memoryChangeDeleted": "Deleted",

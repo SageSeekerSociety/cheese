@@ -19,9 +19,12 @@ const props = defineProps<{
   mayRestore: (change: MemoryChangeOut) => boolean
   /** 正在恢复的那一条：按钮转圈，别的不动。 */
   restoring?: string | null
+  /** 还有更早的改动没读到：保留期内的每一条都翻得到。 */
+  more?: boolean
+  loadingMore?: boolean
 }>()
 
-const emit = defineEmits<{ restore: [id: string] }>()
+const emit = defineEmits<{ restore: [id: string]; more: [] }>()
 
 function who(change: MemoryChangeOut): string {
   return props.names[change.changed_by] || change.changed_by
@@ -72,6 +75,17 @@ function action(change: MemoryChangeOut): string {
         <ChangesDiff :lines="parseDiffLines(change.diff)" inline />
       </details>
     </div>
+    <BaseButton
+      v-if="more"
+      kind="ghost"
+      size="sm"
+      class="memory-changes__more"
+      :loading="loadingMore"
+      @click="emit('more')"
+    >
+      <!-- copy: needs product sign-off -->
+      {{ t('project.docs.memoryChangesMore') }}
+    </BaseButton>
   </section>
 </template>
 
@@ -93,6 +107,9 @@ function action(change: MemoryChangeOut): string {
   overflow-wrap: anywhere;
 }
 .memory-change__more {
+  margin-top: 8px;
+}
+.memory-changes__more {
   margin-top: 8px;
 }
 .memory-change__more > summary {

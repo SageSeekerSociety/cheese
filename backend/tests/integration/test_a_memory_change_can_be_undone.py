@@ -201,3 +201,86 @@ def test_a_change_that_created_a_memory_has_nothing_to_restore(client):
     refused = _restore(client, project_id, creation["id"], "alice")
     assert refused.status_code == 422, refused.text
     assert _files(client, project_id, "alice")["answer-first.md"] == _NOTE
+
+
+def _every_change(client, project_id, handle) -> list[dict]:
+    """Every retained change, following the list a page at a time."""
+    params = {"project_id": project_id, "scope": "team"}
+    rows: list[dict] = []
+    cursor = None
+    while True:
+        response = client.get(
+            "/memory/files/history",
+            params=params if cursor is None else {**params, "before": cursor},
+            headers=session_auth_headers(handle),
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()["data"]
+        rows += body["data"]
+        cursor = body.get("next")
+        if cursor is None:
+            return rows
+
+
+def test_a_deletion_stays_reachable_however_many_changes_follow_it(client):
+    project_id = _project(client)
+    _put(client, project_id, "alice", path="answer-first.md", content=_NOTE)
+    deleted = client.post(
+        "/memory/files/delete",
+        json={"project_id": project_id, "scope": "team", "path": "answer-first.md"},
+        headers=session_auth_headers("alice"),
+    )
+    assert deleted.status_code == 200, deleted.text
+    for number in range(101):
+        _put(
+            client,
+            project_id,
+            "alice",
+            path=f"later-{number}.md",
+            content=_NOTE.replace("answer-first", f"later-{number}"),
+        )
+
+    # Seconds old and well inside the retention window: the panel can still
+    # reach it, and restore it.
+    changes = _every_change(client, project_id, "alice")
+    assert len(changes) == 103
+    assert len({c["id"] for c in changes}) == 103
+    deletion = next(
+        c for c in changes if c["path"] == "answer-first.md" and c["deleted"]
+    )
+    restored = _restore(client, project_id, deletion["id"], "alice")
+    assert restored.status_code == 200, restored.text
+    assert _files(client, project_id, "alice")["answer-first.md"] == _NOTE
+
+
+def test_a_deleted_memory_comes_back_with_the_index_line_it_had(client):
+    project_id = _project(client)
+    # A valid name near the path limit, indexed under a short title: the line
+    # it had fits the index's line budget, one rebuilt from its name would not.
+    slug = "n" * 80
+    path = f"{slug}.md"
+    note = _NOTE.replace("answer-first", slug)
+    line = f"- [回答先给结论]({path}) — 回答先给结论"
+    _put(client, project_id, "alice", path=path, content=note)
+    _put(client, project_id, "alice", path="MEMORY.md", content=f"{line}\n")
+    listed = client.get(
+        f"/memory?project_id={project_id}", headers=session_auth_headers("alice")
+    )
+    assert listed.status_code == 200, listed.text
+    (entry,) = listed.json()["data"]["data"]
+    gone = client.delete(
+        f"/memory/{entry['id']}", headers=session_auth_headers("alice")
+    )
+    assert gone.status_code == 200, gone.text
+
+    deletion = next(
+        c
+        for c in _changes(client, project_id, "alice")
+        if c["path"] == path and c["deleted"]
+    )
+    restored = _restore(client, project_id, deletion["id"], "alice")
+    assert restored.status_code == 200, restored.text
+    files = _files(client, project_id, "alice")
+    assert files[path] == note
+    # The line it had, word for word, not one rebuilt from the file.
+    assert [ln for ln in files["MEMORY.md"].splitlines() if ln] == [line]

@@ -37,7 +37,8 @@ _ADDED = "- [测试连真库](tests-hit-a-real-db.md) — 集成测试不 mock �
 
 async def _team_changes(factory, project_id):
     async with factory() as session:
-        return await history.changes(session, project_id, MemoryFileScope.team, None)
+        rows, _ = await history.changes(session, project_id, MemoryFileScope.team, None)
+        return rows
 
 
 @pytest.mark.anyio
@@ -106,7 +107,8 @@ def test_each_pass_of_a_dream_is_recorded_as_that_pass(client, tmp_path, monkeyp
 
     async def latest(scope, owner):
         async with client.test_request_factory() as session:
-            return (await history.changes(session, ids["project"], scope, owner))[0]
+            rows, _ = await history.changes(session, ids["project"], scope, owner)
+            return rows[0]
 
     team = client.portal.call(lambda: latest(MemoryFileScope.team, None))
     assert (team.path, team.writer) == ("shared-rule.md", MemoryWriter.dream_team)

@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from difflib import unified_diff
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, literal, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
@@ -24,10 +24,8 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.memory.files import (
     INDEX_NAME,
-    MemoryFileError,
     MemoryFileScope,
     parse_index,
-    parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.models import MemoryFileChange, MemoryFileRecord
@@ -40,9 +38,13 @@ from app.domain.memory.writers import MemoryWriter
 #: 就叫「最近改动」。
 RETENTION = timedelta(days=30)
 
-#: 面板一次读多少条。保留期已经给了上限，这一条只是不让一个改动很密的项目一次
-#: 把一个月的记录全倒给页面。
-LIST_LIMIT = 100
+#: 面板一页读多少条。保留期内的每一条都翻得到（`changes` 的 ``before``），这一条
+#: 只是不让一个改动很密的项目一次把一个月的记录全倒给页面。
+PAGE = 50
+
+#: 翻页的位置：上一页最后一条的 `(created_at, id)`。同一个事务里的几条改动
+#: `created_at` 相同（`now()` 是事务开始的时刻），所以要带上 id 才排得出先后。
+Cursor = tuple[datetime, uuid.UUID]
 
 
 async def changes(
@@ -51,21 +53,36 @@ async def changes(
     scope: MemoryFileScope,
     owner_handle: str | None,
     *,
-    limit: int = LIST_LIMIT,
-) -> list[MemoryFileChange]:
-    """一个作用域最近的改动，新的在前。谁能读由调用方先判过。"""
-    rows = await session.scalars(
-        select(MemoryFileChange)
-        .where(
-            MemoryFileChange.project_id == project_id,
-            MemoryFileChange.scope == scope,
-            MemoryFileChange.owner_handle
-            == ("" if scope is MemoryFileScope.team else (owner_handle or "")),
-        )
-        .order_by(MemoryFileChange.created_at.desc(), MemoryFileChange.id)
-        .limit(limit)
+    before: Cursor | None = None,
+    limit: int = PAGE,
+) -> tuple[list[MemoryFileChange], bool]:
+    """一个作用域的改动，新的在前，一页 ``limit`` 条；``before`` 是上一页最后
+    一条的位置。返回这一页和后面还有没有。谁能读由调用方先判过。"""
+    query = select(MemoryFileChange).where(
+        MemoryFileChange.project_id == project_id,
+        MemoryFileChange.scope == scope,
+        MemoryFileChange.owner_handle
+        == ("" if scope is MemoryFileScope.team else (owner_handle or "")),
     )
-    return list(rows.all())
+    if before is not None:
+        query = query.where(
+            tuple_(MemoryFileChange.created_at, MemoryFileChange.id)
+            < tuple_(literal(before[0]), literal(before[1]))
+        )
+    rows = list(
+        (
+            await session.scalars(
+                query.order_by(
+                    MemoryFileChange.created_at.desc(), MemoryFileChange.id.desc()
+                ).limit(limit + 1)
+            )
+        ).all()
+    )
+    return rows[:limit], len(rows) > limit
+
+
+def cursor_of(row: MemoryFileChange) -> Cursor:
+    return row.created_at, row.id
 
 
 async def change(
@@ -93,7 +110,8 @@ async def restore(
 
     恢复一条被删掉的记忆时，索引里指着它的那一行也一起补回来（被删时 `forget`
     把那一行一并拿掉了）：只回来一个文件、索引里没有它，下一轮注入的索引里就没
-    有这条记忆，芝士读不到它，等于没恢复。
+    有这条记忆，芝士读不到它，等于没恢复。补回来的是原来那一行，一字不改
+    （`_removed_index_line`）。
     """
     if row.before is None:
         raise ValidationError(say("memoryChangeWasCreation", path=row.path))
@@ -115,24 +133,24 @@ async def restore(
         writer=MemoryWriter.restore,
     )
     if row.path != INDEX_NAME:
-        await _point_index_at(store, row, by=by)
+        await _point_index_at(session, store, row, by=by)
     return written
 
 
 async def _point_index_at(
-    store: MemoryFileStore, row: MemoryFileChange, *, by: str
+    session: AsyncSession, store: MemoryFileStore, row: MemoryFileChange, *, by: str
 ) -> None:
-    """索引里没有指向 ``row.path`` 的那一行就补在末尾；读不成记忆的正文不补。"""
-    try:
-        memory = parse_memory_file(row.before or "")
-    except MemoryFileError:
-        return
+    """把删掉 ``row.path`` 时从索引里拿掉的那一行补回末尾；索引里已经有指向它的
+    行，或者它被删时索引里本来就没有它，什么都不补。"""
     owner = row.owner_handle or None
     index = await store.get(
         row.project_id, row.scope, owner, INDEX_NAME, for_update=True
     )
     text = index.content if index is not None else ""
     if any(entry.path == row.path for entry in parse_index(text)):
+        return
+    line = await _removed_index_line(session, row)
+    if line is None:
         return
     if text and not text.endswith("\n"):
         text += "\n"
@@ -141,11 +159,42 @@ async def _point_index_at(
         scope=row.scope,
         owner_handle=owner,
         path=INDEX_NAME,
-        content=f"{text}{memory.index_line(row.path)}\n",
+        content=f"{text}{line}\n",
         updated_by=by,
         expected_version=None if index is None else index.version,
         writer=MemoryWriter.restore,
     )
+
+
+async def _removed_index_line(
+    session: AsyncSession, row: MemoryFileChange
+) -> str | None:
+    """删掉 ``row`` 那条记忆的同时从索引里拿掉的、指向它的那一行，原样。
+
+    索引的每一次改动也在这张表里，删记忆的 `forget` 和拿掉那一行在同一个事务、
+    同一个 `created_at`。所以找的是这次删除那一刻或之后、索引里第一次拿掉指向
+    它的行的那条记录，取它改之前的那一行。不从记忆正文重新生成：那一行的标题
+    是写它的人挑的，重新生成的未必是原样，也未必放得进一行的上限。
+    """
+    edits = await session.scalars(
+        select(MemoryFileChange)
+        .where(
+            MemoryFileChange.project_id == row.project_id,
+            MemoryFileChange.scope == row.scope,
+            MemoryFileChange.owner_handle == row.owner_handle,
+            MemoryFileChange.path == INDEX_NAME,
+            MemoryFileChange.created_at >= row.created_at,
+        )
+        .order_by(MemoryFileChange.created_at, MemoryFileChange.id)
+    )
+    for edit in edits:
+        kept = {entry.path for entry in parse_index(edit.after or "")}
+        if row.path in kept:
+            continue
+        for line in (edit.before or "").splitlines():
+            if any(entry.path == row.path for entry in parse_index(line)):
+                return line
+    return None
 
 
 async def purge_expired(sessions: SessionFactory) -> int:

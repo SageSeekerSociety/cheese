@@ -15,16 +15,23 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can, InProject
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.memory import history
 from app.domain.memory.files import (
@@ -276,6 +283,46 @@ async def delete_memory_file(
     return ok({"deleted": path, "deleted_by": actor})
 
 
+class MemoryChangeOut(BaseModel):
+    """一次改动：谁、从哪条路、什么时候、哪一条，和它的 diff。"""
+
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    writer: str
+    changed_by: str
+    created_at: str
+    created: bool
+    deleted: bool
+    diff: str
+
+
+class MemoryChangesOut(BaseModel):
+    """一页改动，新的在前；``next`` 是下一页的 ``before``，读到头了为空。"""
+
+    data: list[MemoryChangeOut]
+    next: str | None = None
+
+
+class MemoryFileOut(BaseModel):
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    content: str
+    version: int
+    updated_by: str
+    created_at: str
+    updated_at: str
+
+
+class MemoryRestoredOut(BaseModel):
+    """恢复之后那条记忆现在的样子。"""
+
+    file: MemoryFileOut
+
+
 def _change_out(row: history.Change) -> dict:
     return {
         "id": str(row.id),
@@ -294,15 +341,31 @@ def _change_out(row: history.Change) -> dict:
     }
 
 
-@router.get("/history")
+def _change_cursor(row: history.Change) -> str:
+    return f"{row.created_at.isoformat()}|{row.id}"
+
+
+def _read_change_cursor(cursor: str) -> history.Cursor:
+    try:
+        at, _, of = cursor.partition("|")
+        return datetime.fromisoformat(at), uuid.UUID(of)
+    except ValueError as error:
+        raise BadRequestError(say("listCursorUnreadable")) from error
+
+
+@router.get("/history", **typed_response(MemoryChangesOut))
 async def list_memory_changes(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     scope: str = Query("team"),
     owner_handle: str | None = None,
+    before: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = history.PAGE,
 ) -> dict:
-    """一个作用域最近的改动（`history.RETENTION` 之内，新的在前）。
+    """一个作用域的改动（`history.RETENTION` 之内，新的在前），一页一页地读：
+    ``before`` 是上一页的 ``next``，``next`` 为空就是读到头了。保留期内的每一条
+    都翻得到。
 
     谁读得到和读记忆文件同一道门（`_readable`）：team 是项目里的人，某个人的
     private 只有他本人，管理员也一样答 403。
@@ -310,11 +373,26 @@ async def list_memory_changes(
     which = _scope_of(scope)
     owner = _owner_of(which, owner_handle)
     await _readable(db, resolver, project_id, owner)
-    rows = await history.changes(db, project_id, which, owner)
-    return ok(page([_change_out(r) for r in rows], len(rows)))
+    rows, more = await history.changes(
+        db,
+        project_id,
+        which,
+        owner,
+        before=None if before is None else _read_change_cursor(before),
+        limit=limit,
+    )
+    return ok(
+        {
+            "data": [_change_out(r) for r in rows],
+            "next": _change_cursor(rows[-1]) if more and rows else None,
+        }
+    )
 
 
-@router.post("/projects/{project_id}/history/{change_id}/restore")
+@router.post(
+    "/projects/{project_id}/history/{change_id}/restore",
+    **typed_response(MemoryRestoredOut),
+)
 async def restore_memory_change(
     change_id: uuid.UUID,
     at: Annotated[InProject, Can(Permission.ask_agent)],
