@@ -21,9 +21,9 @@ def unread_input_with_over_work():
     work it was added to, so it may still be read and answered later. Its hold
     ends when the platform has recorded that nothing can read it any more
     (:func:`app.domain.delivery.agent.receiver_gone`): the process it was last
-    handed to exited, or the machine under its session was destroyed. Elapsed
-    time is not that knowledge, and neither is an exit of the seat that names
-    no process. Without it, a machine released under such an input before
+    handed to exited. Elapsed time is not that knowledge, an exit of the seat
+    that names no process is not, and neither is the session's work host being
+    given up: the session process may run elsewhere and still hold it. Without it, a machine released under such an input before
     anything ended it (before #4783 did so at the release) left it holding a
     task's seat from 2026-10-23, while every later message to that teammate
     waited behind it.

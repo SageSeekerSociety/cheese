@@ -9,8 +9,8 @@ Rules a person can state without the code:
   one that replaced it a moment later and even if the exit is stamped by a
   runner whose clock runs ahead: that input stays held, or the same message
   would go into a second input while the first can still be read;
-- an input on a session whose machine the platform destroyed will never be
-  read either, whichever process it was handed to.
+- giving up the host a session works on is not its process ending: the
+  session process runs on its own host and still holds what it was handed.
 
 Real PostgreSQL; the reports are built as the reading builds them, and the
 handing goes through the session host's own send path.
@@ -34,6 +34,7 @@ from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.receipts import held_blocks, register_input
 from app.domain.event_author import AuthorType
+from app.domain.machine.services import HostPool
 from tests.integration.test_a_runner_report_is_applied_once import (
     HARNESS,
     SEAT,
@@ -41,6 +42,7 @@ from tests.integration.test_a_runner_report_is_applied_once import (
     _Seat,
 )
 from tests.turn_log import a_topic, open_turn
+from tests.unit.test_a_host_that_stopped_answering_is_left import _host, _Hub, _Repo
 
 
 async def _seat(factory) -> _Seat:
@@ -183,21 +185,38 @@ async def test_an_input_whose_process_exited_no_longer_holds(business_db_factory
 
 
 @pytest.mark.anyio
-async def test_an_input_on_a_destroyed_machine_no_longer_holds(business_db_factory):
-    """会话所在的机器被平台销毁、之后再没放到别的机器上：那条没读的输入再也读
-    不到，座位放开。"""
+async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_factory):
+    """会话进程跑在会话机上，干活用的那台机器不应答、被平台换掉（不是销毁）：会话
+    进程还在，还留着这条没读的输入，座位照旧按住。"""
     seat = await _seat(business_db_factory)
+    await seat.register()
     _, message = await _registered(seat)
+    quiet, other = _host("work-host-gone-quiet"), _host("work-host-answering")
     async with seat.factory() as session:
-        session.add(
-            AgentSession(
-                conversation_id=seat.topic,
-                agent_handle="cheese",
-                harness=HARNESS,
-                resume_token=SESSION,
-                execution_request={"sandbox_lost": True},
-            )
+        pointer = AgentSession(
+            conversation_id=seat.topic,
+            agent_handle=SEAT,
+            harness=HARNESS,
+            resume_token=SESSION,
+            work_lease={"status": "ready", "device_id": quiet.device_id},
+            runtime_location={
+                "device_id": "session-host",
+                "channel": "device",
+                "resource_id": str(seat.topic),
+            },
         )
+        session.add(pointer)
+        await session.commit()
+        pointer_id = pointer.id
+    home = SimpleNamespace(id=uuid.uuid4(), host_id=quiet.id, session_id=pointer_id)
+    async with seat.factory() as session:
+        pool = HostPool.__new__(HostPool)
+        pool._session = session
+        pool._repo = _Repo(home, [quiet, other])
+        pool._hub = _Hub({other.device_id})
+        assert await pool.leave_unusable(pointer_id, quiet.id)
         await session.commit()
 
-    assert await _held(seat, message) == (False, False)
+    assert await _held(seat, message) == (True, True), (
+        "只是换掉了干活的机器，会话进程还在，那条没读的输入却被放开了"
+    )
