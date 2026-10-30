@@ -145,7 +145,7 @@ const shownFiles = computed(
 /** 「另 N 个文件」里的 N：没列出来的，包括后端就没有发过来的那几个。 */
 const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
 
-// 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
+// 同类事件又来了一次：不加新行，这一行的计数滚一格、底色块亮一下，说「又一次」。
 const repeats = computed(() => (props.notice.mode === 'fold' ? props.notice.count : 0))
 const bumped = ref(false)
 watch(repeats, async (next, prev) => {
@@ -565,13 +565,13 @@ details[open]::details-content {
     height var(--dur-base) var(--ease-out),
     content-visibility var(--dur-base) allow-discrete;
 }
-/* 又来了一次：整行从 --fill 褪回去。 */
-.notice-bump {
+/* 又来了一次：外框的底色块从 --line-2 褪回它自己那一档的底色。 */
+.notice-bump :deep(.notice-row__box) {
   animation: notice-bump var(--dur-slow) var(--ease-out);
 }
 @keyframes notice-bump {
   from {
-    background-color: var(--fill-2);
+    background-color: var(--line-2);
   }
 }
 /* 这一列里要人动手的那一步，全是这一种中性小按钮。琥珀只留给发送和审阅。 */
@@ -634,8 +634,10 @@ details[open]::details-content {
   padding: 8px 10px;
   max-height: 240px;
   overflow: auto;
+  /* 原文放在一张白底、细边的纸上：外框的底色块已经是灰的，同色的底会把它融进去。 */
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--fill);
+  background: var(--surface);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: var(--lh-12);
