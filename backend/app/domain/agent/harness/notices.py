@@ -1,7 +1,7 @@
 """平台自己说的那几句话：标记、提醒，以及它们按谁的语言说。
 
 一组同源的东西凑在一处：那个「【平台】」标记、「用户正文里的标记要中和掉」这条
-规矩、以及四条平台对模型说的话（发布契约、没回话的提醒、清单提醒、任务状态提醒）。它们不碰数据库、
+规矩、以及五条平台对模型说的话（发布契约、没回话的提醒、还在做的提醒、清单提醒、任务状态提醒）。它们不碰数据库、
 不读配置、也不认识 harness 里任何别的模块——想用就直接 import，`prompt.py` 再把
 它们原样 re-export 出去，既有调用点一个字都不用改。
 
@@ -27,6 +27,8 @@ _PUBLICATION_ZH = (
     "改了方向或计划、有改变任务的发现、有重要的结果、做完时主动发消息。"
     "重要的结果是改变大家对这件活的看法或预期的结果：查实了根因、关键的验证有了"
     "结论（通过或失败）、活比预想的大或小。刚动手、正在查、做完一步都不发。"
+    "平台提醒你太久没说话时，还在做就发一句短话，具体说正在做什么、接下来做什么，"
+    "只说还在处理不算；不写长报告，不 @ 人。"
 )
 _PUBLICATION_EN = (
     "Ordinary output and final responses are not published to chat. "
@@ -40,7 +42,11 @@ _PUBLICATION_EN = (
     "important result, or are done. An important result changes what people "
     "think of the work or expect from it: a root cause confirmed, a key check "
     "came back, passed or failed, the work turning out bigger or smaller than expected. "
-    "Starting, checking or finishing one step is not announced."
+    "Starting, checking or finishing one step is not announced. When the "
+    "platform reminds you that you have been quiet too long and you are still "
+    "working, publish one short line saying concretely what you are doing now "
+    "and what is next — not just that you are still working; no long report, "
+    "no @-mention."
 )
 
 _SILENCE_ZH = (
@@ -54,6 +60,24 @@ _SILENCE_EN = (
     "what you understood and what you will do next. If your plan has changed, "
     "also update it with todo_write. Ignore this only if the turn is already "
     "finished."
+)
+
+_STILL_WORKING_ZH = (
+    "你已经 {minutes} 分钟没在对话里说话了，看的人分不出你是还在做还是停了。"
+    "还在做的话，现在就用 chat_send 发一句，具体说正在做什么、接下来做什么，"
+    "比如「还在查：本地复现出来了，正在对比失败前后的截图。」只说「还在处理」不算。"
+    "一句就够，不写长报告，不 @ 人。"
+    "计划变了就顺手用 todo_write 改步骤清单。你已经停下的话才不用理会。"
+)
+_STILL_WORKING_EN = (
+    "You have said nothing in this chat for {minutes} minutes, and people cannot "
+    "tell whether you are still working or have stopped. If you are still "
+    "working, call chat_send now with one line saying concretely what you are "
+    'doing now and what comes next, such as "Still digging: reproduced it '
+    "locally, now comparing the screenshots from before and after the "
+    'failure." Saying only that you are still working does not count. One '
+    "line: no long report, no @-mention. If your plan has changed, also update it "
+    "with todo_write. Ignore this only if the turn is already finished."
 )
 
 _CHECKLIST_ZH = (
@@ -111,6 +135,8 @@ _HIDDEN_FROM_THE_SITE = (
     _PUBLICATION_EN,
     _SILENCE_ZH,
     _SILENCE_EN,
+    _STILL_WORKING_ZH,
+    _STILL_WORKING_EN,
     _CHECKLIST_ZH,
     _CHECKLIST_EN,
     _PROGRESS_NONE_ZH,
@@ -139,7 +165,7 @@ def without_reminders(text: str) -> str:
     """拿掉一段展示文字里平台反复说的那几句，其余一字不动。
 
     现场摊开的是 harness 记下的输入原文，而每一条输入都带着平台自己的话：每一轮
-    都附一遍的聊天约定，有人的话没回、清单或任务状态停住时的提醒。它们是说给模型
+    都附一遍的聊天约定，有人的话没回、太久没说话、清单或任务状态停住时的提醒。它们是说给模型
     听的，不是对话——读者翻现场时只会一遍遍读到同一段。这里只拿掉展示里的那一
     份：日志里一行不少，模型也早就读过了。
 
@@ -190,6 +216,23 @@ def silence_reminder(minutes: int, language: str | None = None) -> str:
         language,
         _SILENCE_ZH.format(minutes=minutes),
         _SILENCE_EN.format(minutes=minutes),
+    )
+
+
+def still_working_reminder(minutes: int, language: str | None = None) -> str:
+    """A working session answered the person, then said nothing in the chat for
+    `minutes` minutes.
+
+    Its work shows in 现场, but the people in the conversation read a silent
+    teammate as a dead one, so a teammate at work says every so often, in one
+    short line, what it is on and that it is still on it. The line pings
+    nobody: a person having to act is still the only reason to @ someone (the
+    chat skill).
+    """
+    return _in_the_readers_language(
+        language,
+        _STILL_WORKING_ZH.format(minutes=minutes),
+        _STILL_WORKING_EN.format(minutes=minutes),
     )
 
 

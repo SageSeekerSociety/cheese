@@ -310,9 +310,10 @@ def test_a_message_through_any_harness_silences_the_reminder(
     client, stub_hooks, room, harness, monkeypatch
 ):
     """`QuietSessionReminders.silence` picks the sessions that owe a person an
-    answer: read their message, said nothing since. The answer is a `chat_send`
-    landing, so it has to land the same way from every harness — or one
-    harness is reminded forever, or never."""
+    answer (read their message, said nothing since) and those silent an
+    interval after their last word. Both clocks move when `chat_send` lands,
+    so it has to land the same way from every harness — or one harness is
+    reminded forever, or never."""
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
     quiet = QuietSessionReminders(chat, chat.compute)
@@ -342,8 +343,6 @@ def test_a_message_through_any_harness_silences_the_reminder(
         assert "chat_send" in notices[0] and "todo_write" in notices[0]
 
         harness("chat_send", {"content": "我先核对一下当前流程。"})
-        assert client.portal.call(quiet.silence, clock) == 0
-        clock += timedelta(seconds=threshold)
         assert client.portal.call(quiet.silence, clock) == 0
         assert len(notices) == 1
 
