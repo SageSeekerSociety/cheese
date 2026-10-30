@@ -4,6 +4,7 @@ kind: 参考
 summary: 平台级收件箱：提案卡、提交、作者与提交者、可见性并集、状态时间线与后台分诊。
 covers:
   - backend/app/domain/feedback/
+  - backend/app/domain/routine/builtin_triage.py
   - backend/app/api/routes/feedback.py
   - backend/app/api/routes/feedback_proposals.py
   - backend/app/api/routes/admin_feedback.py
@@ -158,19 +159,35 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 
 ## 新反馈推到团队的飞书群 {#announce}
 
-每条新反馈（直接提交的和从提案卡发出的都算）在事务提交之后往一个飞书群推一条消息，只推一次（`feedback/announce.py`）。群由 `FEISHU_FEEDBACK_WEBHOOK`（`settings.feishu_feedback_webhook`）指定，是那个群里自定义机器人的 webhook；不配就什么都不发。发送借用告警的那条投递（`alerting.post`）：不阻塞请求，失败只记日志；但不走告警的限额和去重，因为每一条都是一件不同的事。
+每条新反馈（直接提交的和从提案卡发出的都算）在事务提交之后往一个飞书群推一条消息，只推一次（`feedback/announce.py`）。群由 `FEISHU_FEEDBACK_WEBHOOK`（`settings.feishu_feedback_webhook`）指定，是那个群里自定义机器人的 webhook。没配时什么都不发，而在部署上（`DEPLOYED_VIA_COMPOSE`）这不算正常的安静：健康报告里 `feedback_announce` 一项是 `down`，原因写着缺的是这个变量，管理看板的平台健康那一行照样显示（见[配置](#triage-config)）。开发机和测试上没配时是 `skipped`。发送借用告警的那条投递（`alerting.post`）：不阻塞请求，失败只记日志；但不走告警的限额和去重，因为每一条都是一件不同的事。
 
 消息里放什么，由这条反馈自己的可见性决定。公开的带编号、类型、标题、提交人、正文开头 300 字和链接：这些登录的人本来都看得到。私密的只带编号和链接：群里的人比 `may_see` 放行的人多，链接对其他人是 404。安全标记是分诊时才打的，提交那一刻还没有。
 
-## 每日分诊：定时规则带一批没人处理的反馈 {#triage}
+## 每日分诊：平台自带的那条规则 {#triage}
 
-一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、存下来就在跑，结果交回给规则的主人。
+反馈的入口对所有人一直开着，处理它的那一步也随平台一起上线，不靠谁记得去建。平台启动时装一条内置的分诊规则（`routine/builtin_triage.py`，`main.py` 的 `lifespan` 里调 `install`）：每天 10:00（Asia/Shanghai）把 5 条「没人处理」的反馈（没发过的在前，同一档里早提交的在前）连同分诊步骤附在工作说明后面，交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套，结果交回给规则的主人。
 
-- **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，放弃领取又把它退回「已收录」，和从来没领过一样。同一批不会发两次：规则自己记着发过哪几条（`routine_runs.feedback_offered`），那次执行失败或没能开始的不算，下一轮照常发。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
+- **只有一条。** 它的 id 是固定的（`BUILTIN_ID`），每次启动、每台机器都是同一个，重复部署或滚动发布时两个进程同时装，找到的都是同一行，不会多出第二条。
+- **谁定什么。** 名字、目标、钟点和每批几条是产品的，每次启动都写回这几样，规则页上改了也会在下次部署时回到产品的值。在哪个房间、主人是谁、哪个队友干活，由部署的配置决定（见下一节），配置变了，下次启动时跟着改。**开关是人的**：有人在规则页暂停了它，重新部署不会把它打开，健康报告里一直显示「已暂停」，直到有人恢复。删掉它，下次启动会重新装上，所以要停用就暂停，不要删。
+- **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，放弃领取又把它退回「已收录」，和从来没领过一样。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
+- **按有没有后续去重，不按发过没有。** 一条反馈的后续都记在它自己身上：队友建了任务、在等主人回答、写了建议在等主人决定的，领取一直留在它名下（步骤里这样写）；主人决定之后状态会变。所以那一轮跑完之后，还是「没人处理」的，就是被放下了，下一轮照常发。规则自己记着发过哪几条（`routine_runs.feedback_offered`），只用来做两件事：那一轮还没结束时，同一条不进另一批；排队时没发过的排在前面，发过的按上次发的时间往后排，一条反复被跳过的不会把新来的一直挤出去。失败或没能开始的那一轮不算发过。
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。
-- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。
-- **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据），别处建或改成这样的规则会被拒：那里的队友领不了反馈。
-- 前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine(action=create)` 起草或直接调 `POST /topics/{id}/routines`。
+- **队友不改状态。** 步骤里写的是：读全文、领取（领不到就跳过）、调查；能修的先问规则的主人要不要建任务，他选了「建任务」才另开一件，任务里的提交写 `Fixes-feedback:`，上线后由部署推状态（执行那一轮本身不改代码，见[支线的会话](/dev/session#scratch)）；该不修复或要别人拍板的，把建议写进交回的结果，由规则的主人（反馈管理员）决定。什么后续都没有的，放掉领取，它回到队列。
+- **只有做平台本身的项目里的房间能用**（`claims.is_platform_project`，和领取同一个判据）：那里的队友才领得了反馈。内置规则的房间不在这样的项目里时不装，健康报告说明原因；别人在别处手建带 `feedback_batch` 的规则会被拒。
+
+### 部署要给的配置 {#triage-config}
+
+| 变量 | 是什么 |
+| --- | --- |
+| `FEEDBACK_TRIAGE_TOPIC_ID` | 内置规则所在的房间（topic id），要在做平台本身的项目里（`DOCS_DEV_REPOSITORIES`） |
+| `FEEDBACK_TRIAGE_OWNER_HANDLE` | 规则的主人，结果交给他；要在 `FEEDBACK_TRIAGE_HANDLES` 里，也要在那个房间里 |
+| `FEEDBACK_TRIAGE_AGENT_HANDLE` | 干活的 AI 队友，是那个房间里的队友席位，且没有停用 |
+| `FEEDBACK_TRIAGE_HANDLES` | 反馈管理员名单（已有，见[谁能看见](#visibility)） |
+| `FEISHU_FEEDBACK_WEBHOOK` | 新反馈推送的飞书群机器人 webhook（已有，见[上一节](#announce)） |
+
+在部署上，这几样缺一个、指向不存在或不合格的东西、内置规则不存在、被暂停、或最近一次执行失败，健康报告（`/health/detailed`，管理看板的平台健康那一行）里 `feedback_triage` 一项都是 `down`，带一句说明缺什么、哪里不对。这几项由领域注册进健康报告（`core/health.py` 的 `set_domain_checks`），要读数据库，所以公开的 `/readyz` 不跑它们，也不会因为它们把进程拿出流量。开发机和测试上什么都没配时是 `skipped`。
+
+手建的分诊规则照旧能用：定时规则的 `spec` 里加 `feedback_batch: N`（1–10）。前端的规则表单没有这一格，但改钟点时会原样带着它（`RoutineCompose.vue` 的 `keptFromRoutine`）；要建这种规则，用 `cheese_routine(action=create)` 起草或直接调 `POST /topics/{id}/routines`。
 
 ## 栏位是过滤器，不是分区 {#tabs}
 
