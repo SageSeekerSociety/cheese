@@ -35,6 +35,7 @@ vi.mock('../api', async () => {
     getDocNodes: async () => ({ data: [] }),
     deleteMemory: vi.fn(),
     getProject: vi.fn(),
+    getTopic: vi.fn(),
   }
 })
 // 项目目标开的是那一份文档，面板会读它叫什么。
@@ -53,7 +54,7 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import { deleteMemory, getProject } from '../api'
+import { deleteMemory, getProject, getTopic } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
@@ -165,6 +166,30 @@ describe('项目目标', () => {
       global: { plugins: [createVuetify()] },
     })
     await waitFor(() => expect(getProjectOverview).toHaveBeenCalledWith('cold'))
+  })
+
+  it('项目话题清单里已经有根房间时直接复用，不再单独请求一次根房间', async () => {
+    seedRoom('overview-cached', '复用已缓存的根房间。')
+    vi.mocked(getTopic).mockReset()
+    vi.mocked(getProject).mockResolvedValue({
+      id: 'p-cached',
+      name: '项目',
+      root_topic_id: 'root-cached',
+    } as never)
+    vi.mocked(getProjectOverview).mockResolvedValue({ id: 'overview-cached' })
+    queryClient.setQueryData(keys.projectTopics('p-cached'), {
+      data: [{ id: 'root-cached', kind: 'root', title: '综合', project_id: 'p-cached' }],
+      total: 1,
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p-cached', kind: 'charter' },
+      global: { plugins: [createVuetify()] },
+    })
+
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('复用已缓存的根房间'))
+    expect(getTopic).not.toHaveBeenCalled()
+    view.unmount()
   })
 })
 

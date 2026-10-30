@@ -26,40 +26,62 @@ export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
   })
 }
 
-// ---- 角色、权限表与转让（#3830）-----------------------------------------------
+// ---- 角色与转让（#3830、#4795）-------------------------------------------------
 
-export type ProjectRoleName = 'admin' | 'member' | 'mentor'
+/** 项目里的一个角色。`key` 是 `admin`、`member` 或项目自己那个角色的编号。 */
+export interface ProjectRoleRow {
+  key: string
+  /** 项目给它起的名字；内置角色和没改过名的模板角色为空，由界面按 builtin / template 写。 */
+  name: string | null
+  builtin: 'admin' | 'member' | null
+  template: 'mentor' | null
+  permissions: string[]
+  /** 内置角色的默认权限，用来恢复默认；别的角色为空。 */
+  defaults: string[] | null
+  holders: number
+}
 
-// 把比自己低的人设为管理员、成员或导师。
-export function setMemberRole(projectId: string, handle: string, role: ProjectRoleName): Promise<{ role: string }> {
+// 给比自己低的人换一个角色：`admin`、`member`、项目自己的角色，或 `mentor`（项目的导师角色）。
+export function setMemberRole(projectId: string, handle: string, role: string): Promise<{ role: string }> {
   return request<{ role: string }>(
     `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}/role`,
     { method: 'PUT', body: JSON.stringify({ role }) }
   )
 }
 
-export interface RoleGrants {
-  grants: Record<ProjectRoleName, string[]>
-  /** 有没有哪个角色和默认值不一样。 */
-  changed: boolean
+export function listProjectRoles(projectId: string): Promise<{ roles: ProjectRoleRow[] }> {
+  return request<{ roles: ProjectRoleRow[] }>(`/projects/${encodeURIComponent(projectId)}/roles`)
 }
 
-export function getRoleGrants(projectId: string): Promise<RoleGrants> {
-  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`)
-}
-
-export function setRoleGrants(
+/** 新增一个角色：权限从另一个角色复制（`copy_from`），或从模板来（`template`，可以不起名）。 */
+export function createProjectRole(
   projectId: string,
-  grants: Partial<Record<ProjectRoleName, string[]>>
-): Promise<RoleGrants> {
-  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`, {
-    method: 'PUT',
-    body: JSON.stringify({ grants }),
+  body: { name: string | null; copy_from?: string; template?: 'mentor' }
+): Promise<ProjectRoleRow> {
+  return request<ProjectRoleRow>(`/projects/${encodeURIComponent(projectId)}/roles`, {
+    method: 'POST',
+    body: JSON.stringify(body),
   })
 }
 
-export function resetRoleGrants(projectId: string): Promise<RoleGrants> {
-  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`, { method: 'DELETE' })
+export function updateProjectRole(
+  projectId: string,
+  key: string,
+  body: { name?: string; permissions?: string[] }
+): Promise<ProjectRoleRow> {
+  return request<ProjectRoleRow>(`/projects/${encodeURIComponent(projectId)}/roles/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+/** 删除项目自己的一个角色；还有人在用时先把他们改为 `moveTo`。 */
+export function deleteProjectRole(projectId: string, key: string, moveTo?: string): Promise<{ deleted: boolean }> {
+  const query = moveTo ? `?move_to=${encodeURIComponent(moveTo)}` : ''
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/roles/${encodeURIComponent(key)}${query}`,
+    { method: 'DELETE' }
+  )
 }
 
 export interface ProjectTransfer {
@@ -106,11 +128,8 @@ export function moveProjectToTeam(projectId: string, teamId: number): Promise<{ 
 // 团队里的人自动就在团队的每个项目里；项目自己能加的只有团队以外的人。进来之后他
 // 看得见这个项目的话题，所以要由他本人点头——邀请发出去，他接受了才算数。
 
-export function inviteExternalMember(
-  projectId: string,
-  handle: string,
-  role: 'member' | 'mentor' = 'member'
-): Promise<ProjectInvitation> {
+// `role` 是一个角色的 key，或 `mentor`：项目还没有导师角色时，后端照模板建出来。
+export function inviteExternalMember(projectId: string, handle: string, role = 'member'): Promise<ProjectInvitation> {
   return request<ProjectInvitation>(`/projects/${encodeURIComponent(projectId)}/invitations`, {
     method: 'POST',
     body: JSON.stringify({ user_handle: handle, role }),

@@ -10,8 +10,8 @@
  */
 import type { PreviewFrame } from '@/composables/usePreviewFrames'
 
-import { ref } from 'vue'
-import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { nextTick, ref } from 'vue'
+import { cleanup, fireEvent, render, within } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import PreviewFrameStage from './PreviewFrameStage.vue'
@@ -198,7 +198,8 @@ it('页面报错时链上「应用」那段变红，点开看得到原因', () =
   const alert = ui.getByTestId('preview-runtime-alert')
   expect(alert.querySelector('[data-state="down"]')?.textContent).toContain('应用')
   const detail = ui.getByTestId('preview-chain-detail')
-  expect(detail.textContent).toContain('页面报错：端口没起来')
+  // 四种断法都是同一套句子（`chain.json`）：这一段说的是「页面自己报了错」。
+  expect(detail.textContent).toContain('页面自己报了错：端口没起来')
   expect(detail.textContent).toContain('应用报告失败')
 })
 
@@ -214,8 +215,8 @@ it('宽面板平铺：视口三键在，「…」菜单不在，刷新是一颗�
 it('窄面板把「在新标签页打开」「下载」收进「…」菜单；刷新留在地址栏旁边', async () => {
   panelWidth.value = 390
   const ui = staticFileMount()
-  // 视口三键在窄面板上藏起来。
-  expect(ui.queryByTestId('viewport-desktop')).toBeNull()
+  // 视口三键不跟着进菜单：它说的是「现在按哪种宽度排」，窄的时候更要看得见（下一条）。
+  expect(ui.queryByTestId('viewport-desktop')).not.toBeNull()
   const more = ui.getByTestId('preview-more')
   expect(ui.container.textContent).toContain('下载')
   expect(ui.getByTestId('refresh-preview')).not.toBeNull()
@@ -225,16 +226,48 @@ it('窄面板把「在新标签页打开」「下载」收进「…」菜单；�
   expect(ui.container.textContent).toContain('在新标签页打开')
 })
 
-it('窄面板上视口三档进了「…」菜单，照样能切', async () => {
+it('视口三键在窄面板上也平铺在条上，窄的时候照样能换一种宽度看', async () => {
   panelWidth.value = 390
   const ui = staticFileMount()
-  const text = ui.container.textContent ?? ''
-  expect(text).toContain('桌面')
-  expect(text).toContain('手机')
-  const items = ui.getAllByRole('menuitemradio')
-  const mobile = items.find((el) => (el.textContent ?? '').includes('手机'))!
+  expect(ui.queryByTestId('viewport-tablet')).not.toBeNull()
+  const mobile = ui.getByTestId('viewport-mobile')
   await fireEvent.click(mobile)
   expect(ui.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+})
+
+it('窄面板默认按手机档打开；宽面板默认桌面档', () => {
+  panelWidth.value = 390
+  const narrow = staticFileMount()
+  expect(narrow.container.querySelector('[data-viewport="mobile"]')).not.toBeNull()
+
+  cleanup()
+  panelWidth.value = 1200
+  const wide = staticFileMount()
+  expect(wide.container.querySelector('[data-viewport="desktop"]')).not.toBeNull()
+})
+
+it('固定档按那一档的原宽排：面板比它宽时就是 768 / 375', async () => {
+  panelWidth.value = 1200
+  const ui = staticFileMount()
+  const surface = () => ui.container.querySelector('.preview-frames') as HTMLElement
+  // 桌面档没有固定宽度：铺满面板。
+  expect(surface().style.width).toBe('')
+  await fireEvent.click(ui.getByTestId('viewport-tablet'))
+  expect(surface().style.width).toBe('768px')
+  expect(surface().style.transform).toBe('')
+  await fireEvent.click(ui.getByTestId('viewport-mobile'))
+  expect(surface().style.width).toBe('375px')
+})
+
+it('面板装不下那一档时整块等比缩小，而不是压成面板宽再管它叫那一档', async () => {
+  panelWidth.value = 600
+  const ui = staticFileMount()
+  await fireEvent.click(ui.getByTestId('viewport-tablet'))
+  const surface = ui.container.querySelector('.preview-frames') as HTMLElement
+  // 宽度还是 768（排版按平板走），画出来按 600/768 缩。
+  expect(surface.style.width).toBe('768px')
+  expect(surface.style.transform).toBe('scale(0.78125)')
+  expect(surface.getAttribute('data-scale')).toBe('0.78125')
 })
 
 it('换一页时上一帧还摆着：加载那一句照样说得出口', () => {
@@ -313,7 +346,7 @@ it('静态 SVG 或网页支持在网页视图与看原文之间切换，换文�
   expect(ui.queryByTestId('frame-source')).toBeNull()
 })
 
-it('支持在桌面、平板、手机视口宽度之间切换，换文件时恢复为桌面视口', async () => {
+it('支持在桌面、平板、手机视口宽度之间切换，换文件时回到默认档', async () => {
   const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
   const ui = render(PreviewFrameStage, {
     props: {
@@ -535,4 +568,241 @@ it('唤醒中：卡变成分步进度，按钮收起；圈选打开时卡让开'
   await ui.rerender({ pickOn: true })
   expect((ui.container.querySelector('.app-sleep__card') as HTMLElement).style.display).toBe('none')
   expect(ui.getByTestId('preview-region-pick')).toBeTruthy()
+})
+
+it('冷启动那一段摆骨架：等的时候不是一片白', () => {
+  // 第一次连上（机器还在起）能等一两分钟，原来内容区是一片白。骨架只在真没有内容可看时
+  // 摆：换一页时上一帧还在屏幕上，那不是「空的」，不能盖。
+  const waiting = mount('navigating', null)
+  expect(waiting.queryByTestId('preview-skeleton')).not.toBeNull()
+
+  cleanup()
+  const withOldPage = mount('navigating', frame())
+  expect(withOldPage.queryByTestId('preview-skeleton')).toBeNull()
+})
+
+it('看源码只摆了开头时说一句，再给一条下载整份的路', async () => {
+  // 一份超过读入上限的网页：`content` 是 null，`head` 是前 256 KiB。切到「看原文」
+  // 时读者看到的是开头，滑到底以为整份就这么长——原来那一页什么也不说。
+  const big = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [big],
+      displayedFrame: big,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'site/index.html',
+        content: null,
+        head: '<html><body><h1>开头</h1>',
+        version: 'v1',
+        bytes: 8_000_000,
+        binary: false,
+        too_large: true,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+
+  await fireEvent.click(ui.getByTestId('toggle-frame-source'))
+  const cut = ui.getByTestId('frame-source-cut')
+  expect(cut.textContent).toContain('site/index.html')
+  expect(cut.textContent).toContain('已经截断')
+  await fireEvent.click(within(cut).getByText('下载'))
+  expect(ui.emitted('download')).toHaveLength(1)
+
+  // 整份读得下来的网页：切到看原文时不该出现这一条。
+  await ui.rerender({
+    previewFile: {
+      path: 'site/index.html',
+      content: '<html><body><h1>整份</h1></body></html>',
+      head: '<html><body><h1>整份</h1></body></html>',
+      version: 'v2',
+      bytes: 40,
+      binary: false,
+      too_large: false,
+    },
+  })
+  expect(ui.queryByTestId('frame-source-cut')).toBeNull()
+})
+
+it('只有图标的按钮有可读名字，加载那一行不跟着秒数反复播报', async () => {
+  const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      path: 'site/index.html',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: {
+        path: 'site/index.html',
+        content: '<h1>hi</h1>',
+        head: '<h1>hi</h1>',
+        version: 'v1',
+        bytes: 12,
+        binary: false,
+        too_large: false,
+      },
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  // 平铺档那几颗只有图标：`title` 能兜出名字，但它先是悬停提示，读屏按键板时要的是
+  // `aria-label`。窄档菜单里那几行本来就带字，不受影响。
+  // 这三颗以前只有 `title`：按键板的人要等悬停才听得见名字，读屏顺着名字找也找不到。
+  // 现在名字和提示各一份，名字说的是这一颗干什么。
+  for (const label of ['在新标签页打开', '下载']) {
+    const button = [...ui.container.querySelectorAll('button')].find(
+      (candidate) => candidate.getAttribute('aria-label') === label
+    )
+    expect(button, label).toBeTruthy()
+    expect(button!.getAttribute('title')).toBe(label)
+  }
+})
+
+it('加载时的播报是一条独立的、不随秒数变的信息', async () => {
+  const waiting = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [],
+      displayedFrame: null,
+      navigation: 'authorizing',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: null,
+      previewAppNote: '课程网站',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  void waiting
+  // 可见那一行说「正在获取预览授权」；播报那一条是同一个开头，但它是独立的一个
+  // `role="status"`——秒数在可见那一行里涨，播报这一条只在阶段变化时换。
+  const live = ui.getByTestId('preview-step-live')
+  expect(live.textContent).toContain('正在获取预览授权')
+  expect(live.getAttribute('role')).toBe('status')
+  // 可见那一行不再挂着 `role="status"`（挂了就会每两秒念一遍整句）。
+  const visible = ui.container.querySelector('.text-caption.px-3')
+  expect(visible?.getAttribute('role')).toBeNull()
+})
+
+it('断网时红条说设备断网、不给重试；网络回来按钮就回来', async () => {
+  // 断网时按「重试」只会再失败一次，而且这一格会在 `online` 那一下自己重取
+  // （见 `PanelPreviewView`）。所以这一条只说话，不给那颗按不动的按钮。
+  const offline = vi.fn()
+  Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: offline })
+  offline.mockReturnValue(false)
+  window.dispatchEvent(new Event('offline'))
+  const bad = { ...frame(), runtime: 'failed' as const, runtimeError: 'x', connection: 'online' as const }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 't',
+      frameName: 'frame',
+      frames: [bad],
+      displayedFrame: bad,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/',
+      previewAppNote: '课程网站',
+      // 通道和设备都在、页面自己报错：这一档不会变成「睡着了」那张卡，红条一直摆着，
+      // 正好用它看按钮在不在。
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  const bar = ui.container.querySelector('[role=alert]')!
+  expect(bar.textContent).toContain('这台设备断网了')
+  expect(within(bar as HTMLElement).queryByText('重试新内容')).toBeNull()
+
+  offline.mockReturnValue(true)
+  window.dispatchEvent(new Event('online'))
+  await nextTick()
+  await nextTick()
+  expect(ui.container.textContent).not.toContain('这台设备断网了')
+  expect(ui.getByText('重试新内容')).toBeTruthy()
+})
+
+it('视口三档是一组单选：Tab 只停一次，方向键在档位之间走', async () => {
+  const staticFrame = { ...frame(), label: 'index.html', mime: 'text/html', live: false }
+  const ui = render(PreviewFrameStage, {
+    props: {
+      topicId: 'topic-1',
+      frameName: 'frame',
+      frames: [staticFrame],
+      displayedFrame: staticFrame,
+      navigation: 'loaded',
+      previewFile: null,
+      previewMime: 'text/html',
+      previewUrl: 'https://example.test/index.html',
+      previewAppNote: '',
+      previewTunnelUp: true,
+      previewAppUp: true,
+      previewError: null,
+      previewReadError: null,
+      pickTarget: null,
+      pickOn: false,
+      agentName: '芝士',
+    },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+
+  const group = ui.container.querySelector('.preview-viewport')!
+  expect(group.getAttribute('role')).toBe('group')
+  expect(group.getAttribute('aria-label')).toBe('预览宽度')
+  const buttons = [...group.querySelectorAll('button')]
+  expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['0', '-1', '-1'])
+
+  // 方向键换档，焦点跟着走；Tab 序列里始终只有当前那一档。
+  await fireEvent.keyDown(buttons[0], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-tablet').getAttribute('aria-pressed')).toBe('true')
+  expect(buttons.map((b) => b.getAttribute('tabindex'))).toEqual(['-1', '0', '-1'])
+  expect(document.activeElement).toBe(buttons[1])
+
+  // 一路向右，到头绕回第一档（三个档位是环形的一排）。键总是落在当前那一颗上，
+  // 因为焦点跟着走——这也是真实键盘的唯一情况。
+  await fireEvent.keyDown(buttons[1], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-mobile').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[2], { key: 'ArrowRight' })
+  expect(ui.getByTestId('viewport-desktop').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[0], { key: 'End' })
+  expect(ui.getByTestId('viewport-mobile').getAttribute('aria-pressed')).toBe('true')
+  await fireEvent.keyDown(buttons[2], { key: 'Home' })
+  expect(ui.getByTestId('viewport-desktop').getAttribute('aria-pressed')).toBe('true')
 })

@@ -39,11 +39,11 @@ import contextlib
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +51,11 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.processes import (
+    end,
+    end_session,
+    started_by,
+)
 from app.domain.agent.harness.driven import lifecycle, runner
 
 if sys.platform == "win32":
@@ -72,8 +77,12 @@ from app.domain.memory.tree import (
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
-# kills the reader, so the limit is a ceiling nothing legitimate reaches.
+# cannot be read, and the runner ends the session that wrote it (``_read``), so
+# the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
+#: How long the output of a session the runner could not read is still read
+#: after the session is gone, before its pipe is closed (``_read``).
+DRAIN_AFTER_EXIT_S = 1.0
 #: How long a launch must keep running before a greeting takes it as started
 #: (``Runner.starting``). A failing bootstrap or a missing program ends well
 #: inside it; a session that comes up costs a greeting no more than this.
@@ -233,86 +242,6 @@ def end_left_agent(state: Path) -> None:
         # The pid names a later process now; only what the agent left counts.
         pids = [p for p in pids if p != pid]
     portable.terminate(pids)
-
-
-def end(pids: list[int]) -> None:
-    for number, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 1.0)):
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(pid, number)
-        deadline = time.monotonic() + wait
-        while pids and time.monotonic() < deadline:
-            time.sleep(0.1)
-            pids = [pid for pid in pids if _alive(pid)]
-        if not pids:
-            return
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def started_by(session: int) -> list[int]:
-    """What a session started and could still be running: its descendants.
-
-    A session's work is under it — the shell it started a command in, what that
-    shell runs, and the helpers it started for itself — so its descendants are
-    what has to be stopped for it to be let go of work it would otherwise wait
-    out (``Runner.release``). Its own process is not in the list: it is the one
-    being ended, and it should be the one to exit.
-    """
-    if sys.platform == "win32":
-        return [
-            pid
-            for pid in portable.tree([(session, portable.created(session))])
-            if pid != session
-        ]
-    children: dict[int, list[int]] = {}
-    for pid, parent in _processes():
-        children.setdefault(parent, []).append(pid)
-    found: list[int] = []
-    queue = [session]
-    while queue:
-        for child in children.get(queue.pop(), []):
-            found.append(child)
-            queue.append(child)
-    return found
-
-
-def _processes() -> list[tuple[int, int]]:
-    """Every process on this machine as (pid, parent), from /proc where there is
-    one and from ``ps`` where there is not."""
-    proc = Path("/proc")
-    if proc.is_dir():
-        pairs = []
-        for entry in proc.iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                # Past the name, which may itself hold a ')'.
-                _, parent = (entry / "stat").read_bytes().split(b")")[-1].split()[:2]
-            except (OSError, ValueError):
-                continue
-            pairs.append((int(entry.name), int(parent)))
-        return pairs
-    try:
-        listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
-        ).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pairs = []
-    for line in listing.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
-            pairs.append((int(fields[0]), int(fields[1])))
-    return pairs
 
 
 def transcript(config_dir: Path, session_id: str) -> Path | None:
@@ -614,6 +543,8 @@ class Runner(runner.Runner[Journal]):
         self.ran = False
         self.settling: asyncio.Future | None = None
         self.exit_reported = False
+        # The session's stdout could no longer be read, and the runner ended it.
+        self.reader_failed = False
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
@@ -707,13 +638,23 @@ class Runner(runner.Runner[Journal]):
         )
         if sys.platform == "win32":
             remember_agent(self.state, self.process.pid)
-        self.listener = asyncio.create_task(self._read())
+        self.listener = runner.watched(self._read())
         self.helpers = [
-            asyncio.create_task(self._tail()),
-            asyncio.create_task(self._expire()),
+            runner.watched(self._tail()),
+            runner.watched(self._expire()),
         ]
         await self.listen(LINE_LIMIT)
         return self.session_id
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        """The build asks a model that ends its turn with no visible text to
+        write some ("no visible output"), unless the call just before was one
+        of the tools named here. A reply in the room is how a turn here ends,
+        so the reply tools are those: without this, a session could not stop
+        right after chat_send, and every turn would be made to write closing
+        words only the session sees."""
+        terminal = ",".join(f"mcp__native__{tool}" for tool in runner.REPLY_TOOLS)
+        return {**super().agent_env(env), "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
 
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.
@@ -790,6 +731,7 @@ class Runner(runner.Runner[Journal]):
             process is not None
             and process.returncode not in (None, 0)
             and not self.proven
+            and not self.reader_failed
         )
         # Whatever the process still wrote is read before its ending is told.
         await self.stopped()
@@ -810,11 +752,14 @@ class Runner(runner.Runner[Journal]):
         if self.exit_reported:
             return
         self.exit_reported = True
-        self._drop_unread("exited")
+        kind = (
+            lifecycle.READER_FAILED if self.reader_failed else lifecycle.EXITED_MIDWAY
+        )
+        self._drop_unread(kind)
         if self.working:
             self._finish(
                 failure={
-                    "kind": lifecycle.EXITED_MIDWAY,
+                    "kind": kind,
                     "status": status,
                     "said": said,
                 },
@@ -945,12 +890,54 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
+            self.helpers.append(runner.watched(stuck.settle(self, fired)))
         self._watching()
 
     # --- stdout --------------------------------------------------------------
 
     async def _read(self) -> None:
+        """Read the session's stdout for as long as it writes, or end it.
+
+        A session this runner can no longer read would go on taking inputs it
+        is never seen to read, its work open with nothing left to close it,
+        while every answer says it is alive. Ending it reports all of that the
+        way any exit does (``_report_exit``), under its own failure.
+        """
+        assert self.process is not None and self.process.stdout is not None
+        try:
+            await self._take_lines()
+        except Exception:
+            print(
+                f"cheese-runner {self.launch}: the session's output can no longer "
+                "be read; ending the session",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc(file=sys.stderr)
+            self.reader_failed = True
+            # ``process.wait`` settles only once stdout is closed, and a pipe
+            # nobody reads stops at a full buffer: what the session still writes
+            # is read and let go while it is ended.
+            drain = asyncio.ensure_future(self._discard_output())
+            await asyncio.to_thread(end_session, self.process.pid)
+            # The session's own exit settles it, not its stdout's end: a process
+            # that escaped being ended can hold the pipe open for good.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(drain), DRAIN_AFTER_EXIT_S)
+            if not drain.done():
+                # asyncio has no public handle on a subprocess's pipes; closing
+                # this one is what lets ``process.wait`` see the exit.
+                pipe = self.process._transport.get_pipe_transport(1)  # type: ignore[attr-defined]
+                if pipe is not None:
+                    pipe.close()
+                await drain
+
+    async def _discard_output(self) -> None:
+        assert self.process is not None and self.process.stdout is not None
+        while await self.process.stdout.read(1 << 16):
+            pass
+
+    async def _take_lines(self) -> None:
         assert self.process is not None and self.process.stdout is not None
         while line := await self.process.stdout.readline():
             text = line.decode("utf-8", "replace").strip()
@@ -1194,6 +1181,10 @@ class Runner(runner.Runner[Journal]):
                 for block in (message.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
+                        name = str(block.get("name") or "")
+                        self.called(
+                            name.removeprefix("mcp__native__"), block.get("input")
+                        )
             if returned := self._watch_marks(message):
                 stamp["calls"] = returned
         if kind == "system":
@@ -1353,7 +1344,7 @@ class Runner(runner.Runner[Journal]):
             self.reply_settled()
         if self.compact_when_idle and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+            self.helpers.append(runner.watched(self._compact_now()))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1370,7 +1361,7 @@ class Runner(runner.Runner[Journal]):
             # was not the build's to move yet, and the message would wait for
             # it: move it too, as long as the message is still unread.
             if self.owed is not None and self.owed in self.sent:
-                self.helpers.append(asyncio.create_task(self._yield_again()))
+                self.helpers.append(runner.watched(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -1795,7 +1786,7 @@ class Runner(runner.Runner[Journal]):
         # normally goes. A session already idle has no turn coming.
         if not self.working and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+            self.helpers.append(runner.watched(self._compact_now()))
         return {"requested": True, "already": False}
 
     async def _compact_now(self) -> None:
@@ -1873,7 +1864,7 @@ class Runner(runner.Runner[Journal]):
             # of its own, and is that work's to answer.
             if self.interrupting or (self.owed is not None and self.owed in self.sent):
                 return {}
-            reason = self.insist()
+            reason = self.insist(str(params.get("last_words") or ""))
             return {"reason": reason} if reason else {}
         if method == "run":
             # The session's own helper making a platform tool call

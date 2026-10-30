@@ -162,7 +162,7 @@ covers:
 | notification email drain / push drain | `notification_email_drain_interval_s` / `notification_push_drain_interval_s` | 那两条 Redis 队列的唯一消费者，不跑就一封邮件、一条推送都不发 |
 | delivery resend | `delivery_resend_interval_s` | 投递账本上「记下了没发出去」的行 |
 | docs question retention | 固定 86400s | 清过期的问芝士记录 |
-| turn resumes | 固定 30s | 因模型服务临时故障（`agent/resumable_failures.py` 认得的那几类：限流、过载和 5xx、流中断、连不上、订阅出口离线、订阅账号冷却、说明了恢复时刻的额度）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
+| turn resumes | 固定 30s | 因模型服务临时故障（`agent/resumable_failures.py` 认得的那几类：限流、过载和 5xx、流中断、连不上、订阅出口离线、订阅账号冷却、说明了恢复时刻的额度，预计恢复不超过 30 分钟）失败的轮次，到点把「接着做」记上投递账本（`agent/turn_resume.py`），由下一项派发 |
 | timed deliveries | 固定 30s | 定时投递到点派发 |
 | overdue deliveries | `delivery_overdue_check_interval_s` | 给 AI 的投递记下超过 30 分钟还没送出去，就发告警（同一个问题一小时一条） |
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |

@@ -50,7 +50,7 @@ export interface PreviewViewProps {
   /** 应用的端口有应答：连通链「应用」那一段。 */
   previewAppUp?: boolean
   /** 应用睡着时顶上的静态快照，和它是多久以前留的。 */
-  appSnapshot?: { html: string; age: string } | null
+  appSnapshot?: { html: string; age: string; where?: string } | null
   /** 唤醒的分步进度（没在唤醒是 null），和没成时那一句。 */
   wakeSteps?: AppWakeStep[] | null
   wakeError?: string
@@ -69,6 +69,8 @@ export interface PreviewViewProps {
   docSnapshot?: DocumentSnapshot | null
   /** Identity verified against the actual conversion response, not current metadata alone. */
   slideContext?: SlideSource
+  /** 演示稿每一页的演讲者备注，下标即页码。空数组是「这一份没有备注可显示」。 */
+  slideNotes?: readonly string[]
   docLoading: boolean
   docError: string
   docRendererMissing: boolean

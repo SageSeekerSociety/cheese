@@ -144,6 +144,12 @@ describe('「连接飞书」这颗按钮', () => {
     expect((await readyConnectButton()).disabled).toBe(false)
   })
 
+  it('加载连接列表时同步发起飞书可用性查询，不串行排在列表后面', async () => {
+    listMyIntegrations.mockReturnValue(new Promise(() => {}))
+    await mount()
+    expect(feishuAvailability).toHaveBeenCalledTimes(1)
+  })
+
   it('问不到「配没配」时既不谎报没配，也不把整页连接一起掀掉', async () => {
     // 「没读到」和「没配」是两件事。前者的正确画法是照旧让人按，由服务端回那句实话 ——
     // 把没读到画成没配，是在替管理员说一句他可能没做过的事。

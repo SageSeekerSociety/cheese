@@ -194,6 +194,15 @@ describe('组件预览站', () => {
           })
           // 浮层（底部动作面板）画在 body 上，别的地方就在容器里。
           const scope = entry.teleport ? document.body : container
+          // 这一格要点的那个开关（比如「看原文」）：不点就看不到它要展出的状态。
+          if (state.click) {
+            const trigger = await waitFor(() => {
+              const found = scope.querySelector<HTMLElement>(`[data-testid="${state.click}"]`)
+              expect(found).not.toBeNull()
+              return found!
+            })
+            await fireEvent.click(trigger)
+          }
           // 有几件自己去取数（验收卡），所以「画出来了」要等一等，不是同步的事。
           await waitFor(() => {
             if (state.expect) expect(scope.textContent).toContain(state.expect)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
@@ -23,6 +23,7 @@ import { provideRevealGate } from '@/composables/useRevealGate'
 import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
 import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
@@ -43,12 +44,16 @@ import ProjectAddressSection from '@/components/settings/ProjectAddressSection.v
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
-import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
+import ProjectRoleDetail from '@/components/settings/ProjectRoleDetail.vue'
+import ProjectRoleList from '@/components/settings/ProjectRoleList.vue'
+import RoleCreateDialog from '@/components/settings/RoleCreateDialog.vue'
+import RoleDeleteDialog from '@/components/settings/RoleDeleteDialog.vue'
+import RoleRenameDialog from '@/components/settings/RoleRenameDialog.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
 import { ownGithub } from '@/lib/githubAccount'
-import { mayIn } from '@/lib/projectPermissions'
+import { mayIn, roleName } from '@/lib/projectPermissions'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { queryClient } from '@/query/client'
 import { projectQuery } from '@/query/project'
@@ -83,7 +88,6 @@ const ownsProject = computed(() => projectRead.data.value?.my_role === 'owner')
 const managesChannels = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
 const editsSettings = computed(() => mayIn(projectRead.data.value, 'edit_settings'))
 const changesRoles = computed(() => mayIn(projectRead.data.value, 'change_roles'))
-const creditBudget = useProjectCreditBudget(() => props.projectId)
 const editsCreditBudget = computed(() => ownsProject.value || projectRead.data.value?.my_role === 'admin')
 
 const {
@@ -131,19 +135,6 @@ const { exporting, exportProject } = useProjectExport(
   () => projectName.value
 )
 
-onMounted(() => {
-  consumeGithubCallbackNotice()
-  load()
-  void loadBranchProtection().finally(gate.hold())
-  void loadGithubAccountConnection().finally(gate.hold())
-})
-watch(
-  () => props.projectId,
-  () => {
-    load()
-    loadBranchProtection()
-  }
-)
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 
@@ -162,7 +153,75 @@ const { archiving, archiveError, archiveProject } = useProjectArchive(
 )
 
 const address = useProjectAddress(() => props.projectId)
-const roles = useProjectRoles(() => props.projectId)
+// 「角色和权限」：一张角色清单，点开一个角色是它自己那一页（地址上的 `?role=`），页上
+// 拨它的权限，⋯ 里改名、删除，内置角色改过权限的可以恢复默认（#4795）。
+const roleKey = computed(() => {
+  const asked = router.currentRoute.value.query.role
+  return section.value === 'roles' && typeof asked === 'string' ? asked : null
+})
+const openRole = computed(() => roles.roles.value.find((r) => r.key === roleKey.value) ?? null)
+function showRole(key: string | null) {
+  void router.push({ query: key ? { role: key } : {} })
+}
+const roleBusy = ref(false)
+const creatingRole = ref(false)
+const renamingRole = ref(false)
+const deletingRole = ref(false)
+watch([creatingRole, renamingRole, deletingRole], () => {
+  roles.error.value = null
+})
+async function createRole(name: string | null, from: string) {
+  roleBusy.value = true
+  const made = await roles.create(name, from)
+  roleBusy.value = false
+  if (made) {
+    creatingRole.value = false
+    showRole(made.key)
+  }
+}
+async function renameRole(name: string) {
+  if (!openRole.value) return
+  roleBusy.value = true
+  if (await roles.rename(openRole.value.key, name)) renamingRole.value = false
+  roleBusy.value = false
+}
+async function deleteRole(moveTo: string | undefined) {
+  if (!openRole.value) return
+  roleBusy.value = true
+  const done = await roles.remove(openRole.value.key, moveTo)
+  roleBusy.value = false
+  if (done) {
+    deletingRole.value = false
+    showRole(null)
+  }
+}
+const roleActions = computed(() => {
+  const role = openRole.value
+  if (!role || !changesRoles.value) return []
+  if (role.builtin) {
+    const changed =
+      !!role.defaults &&
+      (role.defaults.length !== role.permissions.length || role.defaults.some((p) => !role.permissions.includes(p)))
+    return changed
+      ? [{ key: 'reset', label: t('work.projectSettings.roles.reset'), onSelect: () => void roles.reset(role.key) }]
+      : []
+  }
+  return [
+    {
+      key: 'rename',
+      label: t('work.projectSettings.roles.rename'),
+      icon: 'mdi-pencil-outline',
+      onSelect: () => (renamingRole.value = true),
+    },
+    {
+      key: 'delete',
+      label: t('work.projectSettings.roles.delete'),
+      icon: 'mdi-delete-outline',
+      danger: true,
+      onSelect: () => (deletingRole.value = true),
+    },
+  ]
+})
 const agentName = computed(() => workspace.agentName || t('work.room.defaultAgentName'))
 
 /** 九栏；归档只有所有者看得到。 */
@@ -214,6 +273,30 @@ const section = computed(() => {
 // 同一 setup 的 composable 显式接收 gate；provide 留给子组件。
 const gate = provideRevealGate()
 const { revealed } = gate
+
+const creditBudget = useProjectCreditBudget(() => props.projectId, {
+  enabled: () => section.value === 'environment',
+})
+const roles = useProjectRoles(() => props.projectId, {
+  enabled: () => section.value === 'roles',
+})
+
+function syncActiveSectionLoads() {
+  if (section.value === 'repository') {
+    void load()
+    void loadGithubAccountConnection().finally(gate.hold())
+  } else if (section.value === 'merge') {
+    void loadBranchProtection().finally(gate.hold())
+  }
+}
+
+onMounted(() => {
+  consumeGithubCallbackNotice()
+  syncActiveSectionLoads()
+})
+watch([() => props.projectId, () => section.value], () => {
+  syncActiveSectionLoads()
+})
 
 // 这五栏的数据与动作。组件只吃 props、只往上发事件；取数、保存、错误、busy / 显示闸、
 // 环境状态轮询与重试/采用、MCP 授权回跳都在各自那一个 composable 里。`enabled` 说的是
@@ -280,8 +363,37 @@ function close() {
     </template>
 
     <div class="settings-page-body">
+      <BaseButton
+        v-if="openRole"
+        kind="ghost"
+        size="sm"
+        prepend-icon="mdi-chevron-left"
+        class="settings-crumb"
+        @click="showRole(null)"
+      >
+        {{ sectionLabel }}
+      </BaseButton>
       <header class="settings-head">
-        <h1 class="t-page-title">{{ sectionLabel }}</h1>
+        <h1 class="t-page-title">{{ openRole ? roleName(openRole) : sectionLabel }}</h1>
+        <AdaptiveMenu v-if="openRole && roleActions.length" :actions="roleActions" :title="roleName(openRole)">
+          <template #activator="{ props: menuProps }">
+            <BaseButton
+              v-bind="menuProps"
+              size="sm"
+              icon="mdi-dots-horizontal"
+              :aria-label="t('work.projectSettings.roles.actions', { name: roleName(openRole) })"
+            />
+          </template>
+        </AdaptiveMenu>
+        <BaseButton
+          v-if="section === 'roles' && !roleKey && changesRoles"
+          kind="primary"
+          size="sm"
+          prepend-icon="mdi-plus"
+          @click="creatingRole = true"
+        >
+          {{ t('work.projectSettings.roles.create') }}
+        </BaseButton>
         <!-- 队友可以从市场里挑：这一颗原来在整页的页头上，拆开后跟着队友那一栏。 -->
         <BaseButton
           v-if="section === 'agents'"
@@ -294,10 +406,10 @@ function close() {
         </BaseButton>
       </header>
 
-      <div v-if="loading" class="d-flex justify-center py-10">
+      <div v-if="section === 'repository' && loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
-      <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4">
+      <v-alert v-else-if="section === 'repository' && error" type="error" density="comfortable" class="mb-4">
         {{ error }}
       </v-alert>
       <!-- 各块各自取数；全部首次到齐之前藏在一个转圈后面，到齐后一起出现，不然每到
@@ -324,16 +436,42 @@ function close() {
           </section>
         </template>
 
-        <ProjectRolesSettings
-          v-else-if="section === 'roles'"
-          :grants="roles.grants.value"
-          :editable="changesRoles"
-          :agent-name="agentName"
-          :is-default="roles.isDefault.value"
-          :error="roles.error.value"
-          @toggle="roles.toggle"
-          @reset="roles.reset"
-        />
+        <template v-else-if="section === 'roles'">
+          <ProjectRoleDetail
+            v-if="openRole"
+            :role="openRole"
+            :editable="changesRoles"
+            :agent-name="agentName"
+            :error="creatingRole || renamingRole || deletingRole ? null : roles.error.value"
+            @toggle="(permission, granted) => openRole && roles.toggle(openRole.key, permission, granted)"
+          />
+          <ProjectRoleList v-else :roles="roles.roles.value" @open="showRole" />
+          <RoleCreateDialog
+            v-model="creatingRole"
+            :roles="roles.roles.value"
+            :saving="roleBusy"
+            :error="roles.error.value"
+            @create="createRole"
+          />
+          <RoleRenameDialog
+            v-if="openRole"
+            v-model="renamingRole"
+            :current="roleName(openRole)"
+            :saving="roleBusy"
+            :error="roles.error.value"
+            @rename="renameRole"
+          />
+          <RoleDeleteDialog
+            v-if="openRole && !openRole.builtin"
+            v-model="deletingRole"
+            :role="openRole"
+            :roles="roles.roles.value"
+            :makes-admins="ownsProject"
+            :saving="roleBusy"
+            :error="roles.error.value"
+            @delete="deleteRole"
+          />
+        </template>
         <ProjectChannelSettings
           v-else-if="section === 'channels'"
           :project-id="projectId"
@@ -527,6 +665,11 @@ function close() {
   flex-direction: column;
   gap: 20px;
   padding: 24px 0 48px;
+}
+.settings-crumb {
+  align-self: flex-start;
+  margin: 0 0 4px -8px;
+  color: var(--muted);
 }
 .settings-head {
   display: flex;

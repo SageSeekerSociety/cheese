@@ -346,7 +346,8 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
     room only through chat_send, a silent private chat is exactly the room that
     shows nothing while someone waits. What is measured: the session at work
     read a person's message, and has published nothing since. Once it has
-    answered, it is not prodded to narrate the rest of its work.
+    answered, an interval of silence after its last word asks it for one line
+    on what it is doing now.
     """
     topic, headers = make_room(client)
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -404,12 +405,15 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         sent = publish(client, topic, headers).json()["data"]
         assert next_block(ws)["id"] == sent["id"]
         _said_at(client, sent["id"], clock)
-        # It answered: from here it works quietly, however long the work takes.
-        # The process shows in 现场 and the board, not in the conversation.
-        for _ in range(3):
-            clock += timedelta(seconds=threshold)
-            assert client.portal.call(quiet.silence, clock) == 0
-        assert len(notices) == 2
+        # It answered: the silence counts from what it said.
+        assert client.portal.call(quiet.silence, clock) == 0
+        clock += timedelta(seconds=threshold - 1)
+        assert client.portal.call(quiet.silence, clock) == 0
+        # Silent a whole interval after answering: asked for a line on what it
+        # is doing now, not to answer again.
+        clock += timedelta(seconds=1)
+        assert client.portal.call(quiet.silence, clock) == 1
+        assert len(notices) == 3 and "分钟没在对话里说话" in notices[2]
         system_event.assert_not_called()
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished internally")
         while ws.receive_json()["type"] != "done":

@@ -174,6 +174,9 @@ def _with_standing(payload: dict, held: Standing | None) -> None:
     """Where the caller sits and what that lets them do: every screen shows or
     hides its controls by these, never by working the rules out."""
     payload["my_role"] = held.seat.value if held is not None else None
+    # The key of the role held (``owner`` for the owner): a channel that lets
+    # only some roles speak is read against it.
+    payload["my_role_key"] = held.role if held is not None else None
     payload["my_permissions"] = (
         [p.value for p in PERMISSION_ORDER if p in held.permissions]
         if held is not None

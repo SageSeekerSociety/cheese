@@ -117,8 +117,9 @@ covers:
 | 脚本 | 一句话 |
 |---|---|
 | `deploy-docker.sh` | dev 与 prod 共用的统一发版；滚动替换 app 层，健康检查失败会回滚 |
-| `registry-retry.sh` | 被 source 的 `retry_pull`：registry 操作重试到时间预算用完，凭证被拒不重试；`deploy-docker.sh` 的 pull 和 `ghcr-login.sh` 共用 |
+| `registry-retry.sh` | 被 source 的 `retry_pull`：重试到时间预算用完，被拒（凭证、不存在的 ref）不重试；`deploy-docker.sh` 的 pull、`ghcr-login.sh` 和 `git-fetch.sh` 共用 |
 | `ghcr-login.sh` | 发版前登录 ghcr，token 走 stdin，用 `retry_pull` 重试；dev 的 workflow 在检出要发布的提交之前用 main 的这份 |
+| `git-fetch.sh` | dev 发版 job 的两次检出（main 的发版策略、要发布的提交）：从 github.com 取一个提交，用 `retry_pull` 重试，token 走凭证助手，不进命令行、配置和日志；跑的是 eligibility job 从 main 交过来的那份，放在工作区之外 |
 | `deploy.sh` | etrip 盒子的发版入口（`.github/workflows/deploy.yml` 调 `./deploy.sh <sha>`）：拉镜像、迁移、重启、健康检查 |
 | `image-tag.sh` | 打印某个 rev 的镜像 tag（完整 sha 前 7 位） |
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
@@ -193,7 +194,7 @@ covers:
 
 | 组 | 套房 |
 |---|---|
-| 发版契约 | `test-app-tier-health.sh`、`test_auto_deploy.py`、`test-workspace-ownership.sh` |
+| 发版契约 | `test-app-tier-health.sh`、`test_auto_deploy.py`、`test-workspace-ownership.sh`、`test-git-fetch.sh` |
 | 常驻 ingress | `test_reserved_port.py`、`test_ingress_lifecycle.py`、`test_front_door_tls.py`、`deploy/llm-tunnel/verify-sites.py` |
 | 网关与计量 | `test_metering_release.py`、`test_metering_health.py`、`test_gateway_release.py`、`test_gateway_health_workflow.py`、`test_claude_login.py`、`backend/scripts/test_gateway_supply_probe.py`、`.github/scripts/test-plan-image-builds.sh` |
 | Forge 配置 | `test_forge_config.py`、`test_forge_workspace_writers.py` |

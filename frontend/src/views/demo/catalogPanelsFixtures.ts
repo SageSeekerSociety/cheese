@@ -325,8 +325,10 @@ type PreviewDerived =
   | 'canPage'
   | 'previewAppUp'
 
-/** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。 */
-type PreviewFixed = 'frames' | 'navigation' | 'autoReloaded' | 'docPage' | 'docPageHtml'
+/** 预览那一包里写死成取数初值的几样（这一份是 markdown，用不上）：传进来也不会生效。
+ *  帧、导航、快照不在此列 —— 目录里那几格（骨架屏、休眠两态、页面报错）靠它们才画得出来，
+ *  写了就从 props 取。 */
+type PreviewFixed = 'autoReloaded' | 'docPage' | 'docPageHtml'
 
 /** 「文档条上的版本」那一包（`usePanelPreviewVersions` 的返回）。预览站不连后端、也没有
  *  保存历史，所以给一份空的：`PreviewDocStage` 只在 `current` 有值时才摆版本行。 */
@@ -363,9 +365,9 @@ export function previewBundle(
     ? { topicId: DEMO_TOPIC, path: file.path, taskId: null, source: file.source ?? 'live', version: file.version }
     : null
   return {
-    frames: computed(() => []),
-    displayedFrame: ref(null),
-    navigation: ref('idle'),
+    frames: computed(() => v.frames ?? []),
+    displayedFrame: ref(v.displayedFrame ?? null),
+    navigation: ref(v.navigation ?? 'idle'),
     navigationError: ref(''),
     frameLoaded: noop,
     frameFailed: noop,
@@ -390,6 +392,7 @@ export function previewBundle(
     docIdentity: computed(() => identity),
     docSnapshot: ref(null),
     slideContext: computed(() => undefined),
+    slideNotes: computed(() => []),
     docLoading: computed(() => v.docLoading),
     docError: computed(() => v.docError),
     docRendererMissing: computed(() => v.docRendererMissing),
@@ -429,7 +432,7 @@ export function previewBundle(
     setPickMode: noop,
     stepHistory: () => false,
     goTo: () => false,
-    appSnapshot: computed(() => null),
+    appSnapshot: computed(() => v.appSnapshot ?? null),
     wakeSteps: computed(() => null),
     wakeError: ref(''),
     wakeApp: noopAsync,

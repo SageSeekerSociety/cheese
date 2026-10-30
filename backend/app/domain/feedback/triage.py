@@ -9,10 +9,19 @@ means, and a day with nothing waiting runs no turn at all.
 **Untriaged** is 已收录 with no assignee: assigning and claiming both move a
 report to 处理中 (`FeedbackService.advance`), and a claim that is let go of puts
 it back at 已收录 (`FeedbackService.release`) — releasing means 「as if it had
-never been claimed」, so the report carries no trace of it. A batch is still not
-handed out twice: the caller passes what that rule already handed out on an
-earlier run (`RoutineRun.feedback_offered`), because that record belongs to the
-rule, not to the report. Only reports the teammate could read are handed out —
+never been claimed」, so the report carries no trace of it.
+
+**A report is handed out until somebody follows it up, not once.** Every
+follow-up a run can leave is on the report itself: the teammate keeps the claim
+while a task, a question to the rule's owner or a proposal awaits its outcome
+(see `STEPS`), and a decision moves the status. So a report still untriaged
+once the run that had it is over was given up on, and is offered again. What
+the caller passes (`offered`, from the rule's runs) only keeps a report out of
+a second batch while a run that has it is still going, and puts the reports
+handed out longest ago behind the ones never handed out — so a report that
+keeps being skipped does not crowd the newer ones out of every batch. That
+record belongs to the rule, not to the report. Only reports the teammate could
+read are handed out —
 public and not flagged as a security matter, the arm `may_see` opens to a
 non-admin. The private and security queues stay with the people on the triage
 roster.
@@ -28,7 +37,7 @@ task.
 
 from __future__ import annotations
 
-from sqlalchemy import Select, select
+from sqlalchemy import Subquery, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.feedback.announce import KIND_LABELS
@@ -51,20 +60,25 @@ STEPS = "\n".join(
         "这次不改代码。",
         "5. 修不了或不该修（设计如此、复现不了、要别人拍板）：不要改它的状态。"
         "把你的判断和建议（例如「建议标为不修复，因为……」）写进交回结果的 summary，"
-        "由规则的主人决定；不再跟进的用 cheese_feedback(action=release) 放掉。",
+        "由规则的主人决定。",
+        "6. 有了后续（建了任务、问题在等回答、建议在等主人决定）的，领取留在你名下，"
+        "别放掉：领取就是这条反馈有人跟进的记录。什么后续都没有的（没查完、查不下去），"
+        "用 cheese_feedback(action=release) 放掉，它会回到队列，之后再交给队友。",
         "交回结果时逐条写清：编号、结论（创建的任务 / 建议 / 跳过）和理由。",
     )
 )
 
 
 async def untriaged(
-    session: AsyncSession, limit: int, *, exclude: Select | None = None
+    session: AsyncSession, limit: int, *, offered: Subquery | None = None
 ) -> list[Feedback]:
-    """The oldest public reports nobody has picked up, at most `limit`.
+    """The public reports nobody has picked up, at most `limit`: never handed
+    out first, then those handed out longest ago, oldest report first.
 
-    `exclude`, when given, selects feedback ids this rule already handed out
-    on an earlier run. It comes from the caller because that record lives on
-    the rule's runs, not on the report.
+    `offered`, when given, has one row per report this rule handed out
+    (`feedback_id`, `last_at`, `open` — whether a run that has it is still
+    going). It comes from the caller because that record lives on the rule's
+    runs, not on the report.
     """
     query = select(Feedback).where(
         Feedback.deleted_at.is_(None),
@@ -73,13 +87,13 @@ async def untriaged(
         Feedback.visibility == FeedbackVisibility.public,
         Feedback.security.is_(False),
     )
-    if exclude is not None:
-        query = query.where(Feedback.id.not_in(exclude))
-    return list(
-        await session.scalars(
-            query.order_by(Feedback.created_at, Feedback.display_no).limit(limit)
+    order = [Feedback.created_at, Feedback.display_no]
+    if offered is not None:
+        query = query.outerjoin(offered, offered.c.feedback_id == Feedback.id).where(
+            offered.c.open.is_not(True)
         )
-    )
+        order.insert(0, offered.c.last_at.asc().nulls_first())
+    return list(await session.scalars(query.order_by(*order).limit(limit)))
 
 
 def batch_prompt(rows: list[Feedback]) -> str:

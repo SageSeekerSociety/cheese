@@ -61,6 +61,18 @@ export function setChannelDescription(topicId: string, description: string): Pro
   })
 }
 
+/** 谁能在频道的主线发言（#4795）：几个角色的 key，空着是所有人；另外定支线是否人人能回。 */
+export function setChannelSpeakers(
+  topicId: string,
+  speakerRoles: string[] | null,
+  threadRepliesOpen: boolean
+): Promise<Topic> {
+  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/speakers`, {
+    method: 'PUT',
+    body: JSON.stringify({ speaker_roles: speakerRoles, thread_replies_open: threadRepliesOpen }),
+  })
+}
+
 /** 把频道设为私密，或重新公开。设为私密的人留在频道里。 */
 export function setChannelMembersOnly(topicId: string, membersOnly: boolean): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/members-only`, {
