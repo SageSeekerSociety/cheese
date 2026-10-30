@@ -4,7 +4,7 @@
     "rounds": 3,
     "small_sample": true,
     "before_commit": "1ff126a64926",
-    "after_commit": "task/039b7cad-3",
+    "after_commit": "a3bd035e546f",
     "environment": {
       "base_url": "http://127.0.0.1:3000",
       "viewport": "1440x900",

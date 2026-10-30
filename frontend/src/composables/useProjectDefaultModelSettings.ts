@@ -94,13 +94,15 @@ export function useProjectDefaultModelSettings(
     if (on) void load()
     else {
       generation++
+      void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(projectId()), exact: true })
       settled.value = false
       state.value = null
       loadError.value = ''
       reset()
     }
   })
-  watch(projectId, () => {
+  watch(projectId, (_next, prev) => {
+    if (prev) void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(prev), exact: true })
     if (enabled()) void load()
   })
 

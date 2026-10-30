@@ -17,20 +17,22 @@ export function useProjectRoles(projectId: () => string, options: { enabled?: ()
   const isDefault = ref(true)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  let version = 0
 
   async function load() {
     const id = projectId()
+    const current = ++version
     loading.value = true
     error.value = null
     try {
       const got = await getRoleGrants(id)
-      if (id !== projectId()) return
+      if (current !== version || id !== projectId()) return
       grants.value = got.grants
       isDefault.value = !got.changed
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e)
+      if (current === version) error.value = e instanceof Error ? e.message : String(e)
     } finally {
-      loading.value = false
+      if (current === version) loading.value = false
     }
   }
   watch(
