@@ -28,7 +28,7 @@ import type { PreviewViewProps } from './preview/previewViewProps'
 
 import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { useEventListener, useFullscreen } from '@vueuse/core'
+import { useEventListener, useFullscreen, useOnline } from '@vueuse/core'
 
 import {
   MODE_KEYS,
@@ -183,6 +183,13 @@ const previewMode = usePreviewMode(
   () => props.previewFile?.path ?? props.previewUrl ?? ''
 )
 provide(PREVIEW_MODE, previewMode)
+
+// 读者自己这一台有没有网：断网时上面那条错误不能说成「预览加载失败」，而且连回来要
+// 自己重试一次——这一格没有别的入口会去重取。
+const online = useOnline()
+useEventListener(typeof window === 'undefined' ? null : window, 'online', () => {
+  if (props.active && (props.previewError || props.navigationError)) emit('refresh')
+})
 
 // 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
 // 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
@@ -626,18 +633,25 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       @wake="emit('wake')"
       @annotate-errors="openPageErrors"
     />
+    <!-- 断网和「平台读不到」是两件事：能做的事不一样（先连上网 / 再去问平台），而且断网
+         这一条会自己恢复、不该催人按重试。原来两条共用「预览加载失败」加一句 fetch 错误，
+         读者看不出是自己没网。链上那一段说的也是同一件事（`lib/previewChain` 的 offline）。 -->
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
-      <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>{{ t('work.room.preview.loadFailed') }}</div>
-      <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
-      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+      <v-icon size="32" class="mb-2" :class="online ? 'text-error' : 'text-warning'">{{
+        online ? 'mdi-alert-circle-outline' : 'mdi-wifi-off'
+      }}</v-icon>
+      <div>{{ online ? t('work.room.preview.loadFailed') : t('work.room.preview.offlineTitle') }}</div>
+      <div class="text-caption mt-1">
+        {{ online ? previewError || navigationError : t('work.room.preview.offlineBody') }}
+      </div>
+      <div v-if="online && previewAppNote && !previewUrl" class="text-caption mt-1">
         {{
           t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
             agent: agentName,
           })
         }}
       </div>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <BaseButton v-if="online" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>

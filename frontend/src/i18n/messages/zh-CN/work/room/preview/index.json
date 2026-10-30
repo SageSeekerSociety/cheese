@@ -150,5 +150,7 @@
   "zoomOut": "缩小",
   "imageFailed": "这张图没能打开",
   "imageReading": "正在读取这张图",
-  "retry": "重试"
+  "retry": "重试",
+  "offlineTitle": "这台设备断网了",
+  "offlineBody": "连上网络后这一格会自己重试，不用手动刷新。"
 }
