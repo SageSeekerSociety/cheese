@@ -12,7 +12,18 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    String,
+    Uuid,
+    column,
+    or_,
+    select,
+    table,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -91,6 +102,41 @@ def work_interval_is_over():
         )
         .exists()
     )
+
+
+#: A seat's runner registration, read bare for the same reason as `_TURNS`:
+#: `session_states` is the agent domain's.
+_SEATS = table(
+    "session_states",
+    column("conversation_id", Uuid),
+    column("agent_handle", String),
+    column("harness", String),
+    column("worker_epoch", BigInteger),
+)
+
+
+def seat_epoch_of(conversation_id, recipient_handle, harness):
+    """``seat_epoch_now`` for one seat, as a scalar subquery."""
+    return (
+        select(_SEATS.c.worker_epoch)
+        .where(
+            _SEATS.c.conversation_id == conversation_id,
+            _SEATS.c.agent_handle == recipient_handle,
+            _SEATS.c.harness == harness,
+        )
+        .scalar_subquery()
+    )
+
+
+def receiver_gone():
+    """Whether nothing can read this input any more, as the platform itself
+    recorded it: the one process it was last handed to has exited
+    (``receiver_exited_at``, written when that process's exit is applied and
+    cleared when the input is handed to a newer one). It reads no clock of
+    another host, and no placement of the session's work: a work host given up
+    or replaced leaves the session process, and what it holds, where it is.
+    """
+    return NativeInput.receiver_exited_at.is_not(None)
 
 
 async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
