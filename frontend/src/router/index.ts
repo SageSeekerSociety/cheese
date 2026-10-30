@@ -241,7 +241,6 @@ router.beforeEach((to, from) => {
     .finally(() => preloadPdfViewer())
   if (to.name === 'workspace-thread' && ids.threadId && isUuid(ids.threadId)) {
     void prefetchThread(ids.threadId)
-    void import('@/views/workspace/ThreadPane.vue').catch(() => {})
   }
   // 房间的名册、任务、置顶这些随订阅一起来（query/snapshot）：页面上读它们的先等快照。
   if (ids.topicId && isUuid(ids.topicId)) expectRoom(conversation, ids.topicId)
