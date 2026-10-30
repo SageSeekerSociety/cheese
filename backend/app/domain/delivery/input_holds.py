@@ -2,7 +2,7 @@
 
 from sqlalchemy import and_, or_, select
 
-from app.domain.delivery.agent import receiver_exited_since, work_interval_is_over
+from app.domain.delivery.agent import receiver_gone, work_interval_is_over
 from app.domain.delivery.models import NativeInput
 
 
@@ -19,12 +19,14 @@ def unread_input_with_over_work():
     different: a transport error does not prove the working session did not
     read it, and a runner keeps an addition it has not read past the end of the
     work it was added to, so it may still be read and answered later. Its hold
-    ends when the process it was written to is known to have ended since
-    (:func:`app.domain.delivery.agent.receiver_exited_since`): then nothing can
-    read it any more. Elapsed time is not that knowledge. Without it, a machine
-    released under such an input before anything ended it (before #4783 did so
-    at the release) left it holding a task's seat from 2026-10-23, while every
-    later message to that teammate waited behind it.
+    ends when the platform has recorded that nothing can read it any more
+    (:func:`app.domain.delivery.agent.receiver_gone`): the process it was last
+    handed to exited, or the machine under its session was destroyed. Elapsed
+    time is not that knowledge, and neither is an exit of the seat that names
+    no process. Without it, a machine released under such an input before
+    anything ended it (before #4783 did so at the release) left it holding a
+    task's seat from 2026-10-23, while every later message to that teammate
+    waited behind it.
 
     Whether a work is over is the turn interval's fact
     (:func:`app.domain.delivery.agent.work_interval_is_over`). An input that no
@@ -35,7 +37,7 @@ def unread_input_with_over_work():
         NativeInput.echoed_at.is_(None),
         or_(
             and_(NativeInput.input_id == NativeInput.work_id, work_interval_is_over()),
-            receiver_exited_since(),
+            receiver_gone(),
         ),
     )
 

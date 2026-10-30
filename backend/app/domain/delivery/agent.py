@@ -12,7 +12,19 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, String, Uuid, column, or_, select, table, true, update
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    String,
+    Uuid,
+    column,
+    or_,
+    select,
+    table,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -93,36 +105,59 @@ def work_interval_is_over():
     )
 
 
-#: A seat's session as its runner declared it, read bare for the same reason
-#: as `_TURNS`: `session_states` is the agent domain's.
+#: A seat's runner registration, read bare for the same reason as `_TURNS`:
+#: `session_states` is the agent domain's.
 _SEATS = table(
     "session_states",
     column("conversation_id", Uuid),
     column("agent_handle", String),
     column("harness", String),
-    column("exited_at", DateTime(timezone=True)),
+    column("worker_epoch", BigInteger),
+)
+
+#: Where a conversation's agent session lives, read bare as `_SEATS` is: its
+#: native conversation id, and whether the platform took that machine away.
+_POINTERS = table(
+    "agent_sessions",
+    column("conversation_id", Uuid),
+    column("resume_token", String),
+    column("execution_request", JSON),
 )
 
 
-def receiver_exited_since():
-    """Whether the session process this input was written to has ended since
-    it was registered: its runner reported the seat's process exited after the
-    input existed. That process is the only thing that could have read the
-    input, and a runner reports every input it still holds dropped as its
-    process exits, so an input still unread after that will never be read —
-    not by that process, and not by a later one, which is never given it.
-    A correlated EXISTS anchored on the input row, as `work_interval_is_over`.
-    """
+def seat_epoch_of(conversation_id, recipient_handle, harness):
+    """``seat_epoch_now`` for one seat, as a scalar subquery."""
     return (
-        select(_SEATS.c.conversation_id)
+        select(_SEATS.c.worker_epoch)
         .where(
-            _SEATS.c.conversation_id == NativeInput.conversation_id,
-            _SEATS.c.agent_handle == NativeInput.recipient_handle,
-            _SEATS.c.harness == NativeInput.harness,
-            _SEATS.c.exited_at >= NativeInput.registered_at,
+            _SEATS.c.conversation_id == conversation_id,
+            _SEATS.c.agent_handle == recipient_handle,
+            _SEATS.c.harness == harness,
+        )
+        .scalar_subquery()
+    )
+
+
+def receiver_gone():
+    """Whether nothing can read this input any more, as the platform itself
+    recorded it: the one process it was last handed to has exited
+    (``receiver_exited_at``, written when that process's exit is applied and
+    cleared when the input is handed to a newer one), or the machine its
+    native session lived on was taken away by the platform and the session
+    never placed again (``agent_sessions.execution_request.sandbox_lost``, set
+    by the destroy and cleared by the next placement). Neither reads a clock
+    of another host.
+    """
+    destroyed = (
+        select(_POINTERS.c.resume_token)
+        .where(
+            _POINTERS.c.conversation_id == NativeInput.conversation_id,
+            _POINTERS.c.resume_token == NativeInput.native_session_id,
+            _POINTERS.c.execution_request.op("->>")("sandbox_lost") == "true",
         )
         .exists()
     )
+    return or_(NativeInput.receiver_exited_at.is_not(None), destroyed)
 
 
 async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
