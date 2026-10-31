@@ -39,6 +39,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant
@@ -184,10 +185,31 @@ class BlockRepository(
         # (`seq`, from `FetchedValue`) on the row at flush, and `created_at` /
         # `updated_at` are Python-side defaults. Re-reading the row here bought
         # nothing and cost a whole-row SELECT on every block written.
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("block_row", block.id),
+                block,
+                tables=frozenset({"blocks"}),
+            )
         return block
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
-        return await self._session.get(Block, block_id)
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("block_row", block_id))
+            if found:
+                return cached
+        block = await self._session.get(Block, block_id)
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("block_row", block_id),
+                block,
+                tables=frozenset({"blocks"}),
+            )
+        return block
 
     async def many(self, block_ids: Collection[uuid.UUID]) -> list[Block]:
         """These blocks, those that exist, in no particular order."""

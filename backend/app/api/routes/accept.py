@@ -111,7 +111,7 @@ async def _card_actor(
     topic = await service._topic_or_404(card.topic_id)
     actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic.id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic.id
+        actor, project_id=topic.project_id, topic_id=topic.id, room=topic
     )
     # Deciding a review is the task side of the project (#3830).
     await require_role(db, actor, topic.project_id, Permission.tasks)
