@@ -92,8 +92,6 @@ async def _converge_card(
     状态、收件箱、留痕、决议时间都在这一处写，两边不各写一份会走散的规矩。
     """
     card.status = AcceptStatus.revoked
-    # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。
-    await room_notices._settle_the_card(session, card, outcome, settle_card=settle_card)
     notes.record(card, note_code, prefix_note(card.note, note))
     # 只在空的时候补：已有的决议痕迹不覆盖。
     if card.decided_by is None and by is not None:
@@ -101,6 +99,8 @@ async def _converge_card(
         card.decided_by_assistant = False
     if card.decided_at is None:
         card.decided_at = now
+    # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。
+    await room_notices._settle_the_card(session, card, outcome, settle_card=settle_card)
 
 
 async def close_cards_for_archived_topic(

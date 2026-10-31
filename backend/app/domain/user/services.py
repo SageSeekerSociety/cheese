@@ -141,17 +141,8 @@ async def timezones_by_handles(
 ) -> dict[str, str]:
     """handle -> 他浏览器报上来的时区；没报过的人不在结果里。"""
 
-    wanted = set(handles)
-    if not wanted:
-        return {}
-    rows = await session.execute(
-        select(User.username, User.timezone).where(
-            User.username.in_(wanted),
-            User.timezone.is_not(None),
-            User.deleted_at.is_(None),
-        )
-    )
-    return {handle: zone for handle, zone in rows.all() if zone}
+    users = await UserRepository(session).get_by_handles(list(set(handles)))
+    return {handle: user.timezone for handle, user in users.items() if user.timezone}
 
 
 REMARK_MAX_LENGTH = 32

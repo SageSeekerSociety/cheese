@@ -873,8 +873,9 @@ async def archive_project(
     await InvitationService(
         db, deliver=deliver, settle=settle, team=project_team
     ).revoke_all_pending(project_id)
+    payload = await _project_payload(db, project)
     await db.commit()
-    return ok(await _project_payload(db, project))
+    return ok(payload)
 
 
 @router.post("/{project_id}/unarchive", dependencies=[ROUTE_DECIDES])
@@ -886,8 +887,9 @@ async def unarchive_project(
     project = await ProjectService(
         db, sessions=AgentSessionService(db), events=platform_line
     ).unarchive(project_id, by=owner.handle)
+    payload = await _project_payload(db, project)
     await db.commit()
-    return ok(await _project_payload(db, project))
+    return ok(payload)
 
 
 def _branch_protection_payload(bp: BranchProtection) -> dict:

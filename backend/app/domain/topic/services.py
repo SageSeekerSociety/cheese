@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import overload
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -628,6 +629,8 @@ class TopicService:
         settle_card: SettleCard | None,
         cards: ArchivedCards,
         events: PlatformLine,
+        children_by_parent: dict[uuid.UUID, list[Topic]] | None = None,
+        overview_room: uuid.UUID | None = None,
     ) -> None:
         """Closing a place closes the rooms inside it: rooms nest one level
         under the root, so the recursion below still applies there. Their
@@ -635,7 +638,11 @@ class TopicService:
         # 卡上还开着的验收卡由 `_archive_one` 一并收：它们和房间自己的卡挂在同一
         # 个房间上，一次问清比每条活问一次少一半的往返，也不会漏掉一条活被收工
         # 之后才归档的房间。
-        children = await self._repo.list_children(topic.id)
+        children = (
+            children_by_parent.get(topic.id, [])
+            if children_by_parent is not None
+            else await self._repo.list_children(topic.id)
+        )
         for child in children:
             if child.status == TopicStatus.archived:
                 continue
@@ -646,6 +653,7 @@ class TopicService:
                 settle_card=settle_card,
                 cards=cards,
                 events=events,
+                overview_room=(child.id if child.members_only else overview_room),
             )
             await self._archive_children(
                 child,
@@ -653,6 +661,8 @@ class TopicService:
                 settle_card=settle_card,
                 cards=cards,
                 events=events,
+                children_by_parent=children_by_parent,
+                overview_room=overview_room,
             )
 
     async def _rooms_to_archive(self, topic: Topic) -> list[Topic]:
@@ -740,8 +750,10 @@ class TopicService:
         cards: ArchivedCards,
         events: PlatformLine,
         cascaded_from: str | None = None,
+        overview_room: uuid.UUID | None = None,
     ) -> None:
-        overview_room = await self._where_said(topic)
+        if overview_room is None:
+            overview_room = await self._where_said(topic)
         topic.status = TopicStatus.archived
         archived_at = datetime.now(UTC)
         topic.archived_at = archived_at
@@ -793,6 +805,10 @@ class TopicService:
         by: str,
         sessions: SessionStore,
         events: PlatformLine,
+        locked_topic: Topic | None = None,
+        cleanup: RoomCleanup | None = None,
+        overview_room: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers
         are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
@@ -801,7 +817,11 @@ class TopicService:
         ``sessions`` 是递进来的口子：一间房回到项目里，它那台工作机还在原地
         （如果停到一半被按住了），得把记着的那张令牌忘掉，让下一轮重新开一张。
         会话在第 5 层，本包在第 2 层。"""
-        topic = await self._repo.lock(topic_id)
+        topic = (
+            locked_topic
+            if locked_topic is not None
+            else await self._repo.lock(topic_id)
+        )
         if topic is None:
             raise NotFoundError(say("topicNotFound"))
         if topic.deleted_at is not None:
@@ -809,11 +829,16 @@ class TopicService:
         if topic.status != TopicStatus.archived:
             return topic
         operation = (
-            await self._session.get(RoomCleanup, topic.cleanup_id)
-            if topic.cleanup_id
-            else None
+            cleanup
+            if cleanup is not None
+            else (
+                await self._session.get(RoomCleanup, topic.cleanup_id)
+                if topic.cleanup_id
+                else None
+            )
         )
-        overview_room = await self._where_said(topic)
+        if overview_room is None:
+            overview_room = await self._where_said(topic)
         if operation is not None:
             if operation.state == "preparing":
                 raise ConflictError(say("unarchiveWhileSessionStopping"))
@@ -836,7 +861,8 @@ class TopicService:
             author=by,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
         )
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
         return topic
 
     # ---- 删除 (归档的去向，清单第 2 条) ---------------------------------
@@ -934,11 +960,19 @@ class TopicService:
         nothing running. The rooms are marked so unarchiving the project brings
         back these and only these.
         """
-        rooms = [
-            topic
-            for topic in await self._repo.lock_all_in_project(project_id)
-            if topic.status != TopicStatus.archived
-        ]
+        all_topics = await self._repo.lock_all_in_project(project_id)
+        rooms = [topic for topic in all_topics if topic.status != TopicStatus.archived]
+        if not rooms:
+            return
+        root_room_id = next(
+            (t.id for t in all_topics if t.kind == TopicKind.root), None
+        ) or await self._overview_room(project_id)
+        children_by_parent: dict[uuid.UUID, list[Topic]] = {}
+        for t in all_topics:
+            if t.parent_id is not None:
+                children_by_parent.setdefault(t.parent_id, []).append(t)
+        for topic in rooms:
+            topic.archived_with_project = True
         await self._close_tasks_of(rooms, by=by, close_tasks=close_tasks, events=events)
         for topic in rooms:
             # The overview's children were already taken along with it.
@@ -949,6 +983,7 @@ class TopicService:
                     settle_card=settle_card,
                     cards=cards,
                     events=events,
+                    overview_room=topic.id if topic.members_only else root_room_id,
                 )
                 await self._archive_children(
                     topic,
@@ -956,8 +991,9 @@ class TopicService:
                     settle_card=settle_card,
                     cards=cards,
                     events=events,
+                    children_by_parent=children_by_parent,
+                    overview_room=root_room_id,
                 )
-            topic.archived_with_project = True
         await self._session.flush()
 
     async def unarchive_with_project(
@@ -969,11 +1005,36 @@ class TopicService:
         events: PlatformLine,
     ) -> None:
         """Bring back the rooms :meth:`archive_with_project` took along."""
-        for topic in await self._repo.lock_all_in_project(project_id):
-            if not topic.archived_with_project:
-                continue
-            await self.unarchive(topic.id, by=by, sessions=sessions, events=events)
+        all_topics = await self._repo.lock_all_in_project(project_id)
+        targets = [t for t in all_topics if t.archived_with_project]
+        if not targets:
+            return
+        root_room_id = next(
+            (t.id for t in all_topics if t.kind == TopicKind.root), None
+        ) or await self._overview_room(project_id)
+        cleanup_ids = [t.cleanup_id for t in targets if t.cleanup_id is not None]
+        cleanups_by_id: dict[uuid.UUID, RoomCleanup] = {}
+        if cleanup_ids:
+            rows = await self._session.scalars(
+                select(RoomCleanup).where(RoomCleanup.id.in_(cleanup_ids))
+            )
+            cleanups_by_id = {c.id: c for c in rows}
+        for topic in targets:
             topic.archived_with_project = False
+            await self.unarchive(
+                topic.id,
+                by=by,
+                sessions=sessions,
+                events=events,
+                locked_topic=topic,
+                cleanup=(
+                    cleanups_by_id.get(topic.cleanup_id)
+                    if topic.cleanup_id is not None
+                    else None
+                ),
+                overview_room=topic.id if topic.members_only else root_room_id,
+                flush=False,
+            )
         await self._session.flush()
 
     async def clone_from(
