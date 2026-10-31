@@ -27,6 +27,8 @@ module holds it there:
   with ``key_share=True``.
 - A task write that names no task by id is refused: whose numbering it needs
   cannot be told.
+- A task this transaction inserted is left out: nobody else sees its row until
+  it commits.
 
 Several tasks in one transaction (archiving a project, the overdue sweep) take
 every one of their numbering locks at once, in conversation id order, before
@@ -153,19 +155,46 @@ def _numbering_before_task_statements(state: ORMExecuteState) -> None:
             "a write or lock of tasks must name its tasks by id "
             "(tasks.id = … or tasks.id IN …) to take their numbering first"
         )
-    hold_numbering_now(state.session, ids)
+    hold_numbering_now(state.session, _not_inserted_here(state.session, ids))
 
 
 @event.listens_for(Session, "before_flush")
 def _numbering_before_task_rows(session: Session, _context, _instances) -> None:
     hold_numbering_now(
         session,
-        [
-            *(
-                row.id
-                for row in session.dirty
-                if isinstance(row, Task) and session.is_modified(row)
-            ),
-            *(row.id for row in session.deleted if isinstance(row, Task)),
-        ],
+        _not_inserted_here(
+            session,
+            [
+                *(
+                    row.id
+                    for row in session.dirty
+                    if isinstance(row, Task) and session.is_modified(row)
+                ),
+                *(row.id for row in session.deleted if isinstance(row, Task)),
+            ],
+        ),
     )
+
+
+#: `Session.info` key: the tasks this transaction inserted. Nobody else sees
+#: their rows until it commits, so writing them waits on nobody and needs no
+#: numbering first.
+_INSERTED = "tasks_inserted"
+
+
+def _not_inserted_here(session: Session, ids: Iterable[uuid.UUID]) -> list[uuid.UUID]:
+    inserted = session.info.get(_INSERTED, ())
+    return [task_id for task_id in ids if task_id not in inserted]
+
+
+@event.listens_for(Session, "after_flush")
+def _note_inserted_tasks(session: Session, _context) -> None:
+    new = [row.id for row in session.new if isinstance(row, Task)]
+    if new:
+        session.info.setdefault(_INSERTED, set()).update(new)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_inserted_tasks(session: Session, transaction) -> None:
+    if transaction.parent is None:
+        session.info.pop(_INSERTED, None)
