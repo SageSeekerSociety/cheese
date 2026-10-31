@@ -551,9 +551,9 @@ async def get_topic(
     service = TopicService(db)
     place = await place_or_404(db, topic_id)
     if place.task is not None:
-        # A task is read as `GET /topics/{task}/task`.
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
+    await TopicMemberService(db)._repo.list_for_topics([topic.id])
     actor = await _actor_in_place(resolver, place)
     # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
@@ -769,20 +769,17 @@ async def list_topic_blocks(
         has_more, has_newer = page_result.has_more, older_than is not None
     total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
-    # Scoped to THIS page's ids, so paging saves the database work too, not just
-    # the bytes on the wire.
-    reactions = await repo.reactions_for_blocks([b.id for b in blocks])
-    # The line under each main-line message that has a 支线: same batch shape.
-    threads = (
-        await thread_reads.under_messages(
-            db, [b.id for b in blocks], replying=_answering_in
-        )
-        if place.inner_id is None
-        else {}
-    )
+    by_id = {b.id: b for b in blocks}
+    block_ids = list(by_id)
+    reactions = await repo.reactions_for_blocks(block_ids)
     # A routine's runs are messages of its teammate's: how each went.
     runs = (
-        await routine_reads.runs_under(db, [b.id for b in blocks])
+        await routine_reads.runs_under(db, block_ids) if place.inner_id is None else {}
+    )
+    threads = (
+        await thread_reads.under_messages(
+            db, block_ids, replying=_answering_in, roots=by_id
+        )
         if place.inner_id is None
         else {}
     )
