@@ -106,12 +106,16 @@ export function usePanelPreviewAppSleep(deps: {
   const snapshot = ref<{ html: string; takenAt: number; href: string; title: string } | null>(null)
   // 快照属于哪一件：换了产物，旧的那份就不归它了。
   let snapshotOf: string | null = null
+  /** 「太大」这条记号归哪一件。 */
+  let tooLargeFor: string | null = null
   let fetchedFor: string | null = null
   const now = ref(Date.now())
   const ticker = setInterval(() => {
     now.value = Date.now()
   }, 30_000)
 
+  /** 这一件拍过、但超过快照上限（`keepTooLarge`）：睡着时卡上说的不是「还没有快照」。 */
+  const tooLarge = ref(false)
   const progress = ref<WakeProgress | null>(null)
   const wakeError = ref('')
   let poll: ReturnType<typeof setTimeout> | null = null
@@ -137,9 +141,19 @@ export function usePanelPreviewAppSleep(deps: {
     if (shotFor && shotFor !== artifactId) return
     snapshot.value = { html: shot.html, takenAt: Date.now() / 1000, href: shot.href, title: shot.title }
     snapshotOf = artifactId
+    tooLarge.value = false
     void putPreviewSnapshot(topicId, artifactId, { html: shot.html, href: shot.href, title: shot.title }).catch(
       () => {}
     )
+  }
+
+  /** 帧报来「这一页太大、快照留不下」。和 `keep` 一样先认件：换件时旧帧的话不算。 */
+  function keepTooLarge(frame: PreviewFrame) {
+    const artifactId = state.previewArtifactId.value
+    const shotFor = frameArtifactId(frame)
+    if (!artifactId || (shotFor && shotFor !== artifactId)) return
+    tooLarge.value = true
+    snapshot.value = null
   }
 
   // 「睡着了」的判据和画那一半是同一个（`lib/previewChain` 的 `appAsleepFrom`）：这里
@@ -161,6 +175,9 @@ export function usePanelPreviewAppSleep(deps: {
     () => [asleep.value, state.previewArtifactId.value] as const,
     async ([sleeping, artifactId]) => {
       if (artifactId !== snapshotOf) snapshot.value = null
+      // 「太大」说的是那一件；换了一件就从它重新算。
+      if (artifactId !== tooLargeFor) tooLarge.value = false
+      tooLargeFor = artifactId
       const topicId = props.topicId
       if (!sleeping || !topicId || !artifactId || snapshot.value || fetchedFor === artifactId) return
       // 省流：不替人下这份快照。卡上照样说「这个应用还没有留下快照」并给唤醒按钮。
@@ -305,6 +322,8 @@ export function usePanelPreviewAppSleep(deps: {
 
   return {
     keep,
+    keepTooLarge,
+    snapshotTooLarge: tooLarge,
     appSnapshot,
     wakeSteps: computed(() => (progress.value ? wakeSteps(progress.value) : null)),
     wakeError,

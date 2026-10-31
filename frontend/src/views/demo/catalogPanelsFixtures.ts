@@ -433,6 +433,7 @@ export function previewBundle(
     stepHistory: () => false,
     goTo: () => false,
     appSnapshot: computed(() => v.appSnapshot ?? null),
+    snapshotTooLarge: computed(() => !!v.snapshotTooLarge),
     wakeSteps: computed(() => null),
     wakeError: ref(''),
     wakeApp: noopAsync,

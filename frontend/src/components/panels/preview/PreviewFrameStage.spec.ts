@@ -806,3 +806,41 @@ it('视口三档是一组单选：Tab 只停一次，方向键在档位之间走
   await fireEvent.keyDown(buttons[2], { key: 'Home' })
   expect(ui.getByTestId('viewport-desktop').getAttribute('aria-pressed')).toBe('true')
 })
+
+it('睡着时，快照太大留不下和从没留过说的是两回事', async () => {
+  const sleeping = { ...frame(), live: true, connection: 'online' as const }
+  // 只给需要收窄的那几样加 `as const`：整个对象加会把 `frames` 一起变成只读元组，
+  // 和组件的 props 类型对不上（CI 就是这么红的）。
+  const base = {
+    topicId: 't',
+    frameName: 'frame',
+    frames: [sleeping],
+    displayedFrame: sleeping,
+    navigation: 'loaded' as const,
+    previewFile: null,
+    previewMime: 'text/html',
+    previewUrl: 'https://example.test/',
+    previewAppNote: '课程网站',
+    // 通道断了 → 机器那一档，卡一定出来。
+    previewTunnelUp: false,
+    previewAppUp: false,
+    previewError: null,
+    previewReadError: null,
+    pickTarget: null as null,
+    pickOn: false,
+    agentName: '芝士',
+  }
+  const ui = render(PreviewFrameStage, {
+    props: { ...base },
+    global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
+  })
+  const card = () => ui.getByTestId('preview-app-sleep')
+  // 从没留过：说「还没有留下快照」。
+  expect(card().textContent).toContain('还没有留下快照')
+  expect(card().textContent).not.toContain('太大')
+
+  // 拍过、太大：换一句话，别再读成「没人打开过」。
+  await ui.rerender({ ...base, snapshotTooLarge: true })
+  expect(card().textContent).toContain('太大')
+  expect(card().textContent).not.toContain('还没有留下快照')
+})

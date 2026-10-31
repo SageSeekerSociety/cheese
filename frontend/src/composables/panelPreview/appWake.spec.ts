@@ -320,3 +320,33 @@ it('a device on save-data does not fetch the kept snapshot on its own', async ()
     Reflect.deleteProperty(navigator, 'connection')
   }
 })
+
+it('a page too large for a snapshot says so, instead of claiming none was ever taken', async () => {
+  // 桥拍成了、但超过上限留不下。以前它把 html 置空就算完，宿主分不出「没人打开过」和
+  // 「这一页太大」——卡上说的是前者，而真相是后者。
+  const { state, sleep, scope } = setup()
+  const frame = { id: 1, live: true } as PreviewFrame
+  state.previewAppUp.value = false
+  sleep.keepTooLarge(frame)
+  await flush()
+  expect(sleep.snapshotTooLarge.value).toBe(true)
+  expect(sleep.appSnapshot.value).toBeNull()
+
+  // 换一件：旧的那句不归新的一件。
+  state.previewArtifactId.value = 'art-2'
+  await flush()
+  expect(sleep.snapshotTooLarge.value).toBe(false)
+  scope.stop()
+})
+
+it('a snapshot that does fit clears the too-large note', async () => {
+  const { state, sleep, scope } = setup()
+  const frame = { id: 1, live: true } as PreviewFrame
+  sleep.keepTooLarge(frame)
+  expect(sleep.snapshotTooLarge.value).toBe(true)
+  sleep.keep(frame, { html: '<p>ok</p>', href: '', title: '', viewport: { w: 1, h: 1 } })
+  expect(sleep.snapshotTooLarge.value).toBe(false)
+  expect(sleep.appSnapshot.value?.html).toBe('<p>ok</p>')
+  state.previewAppUp.value = false
+  scope.stop()
+})

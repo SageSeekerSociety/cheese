@@ -540,15 +540,27 @@ RUNTIME_SCRIPT = r"""(() => {
     csp.setAttribute('content', "__SNAPSHOT_CSP__");
     head.insertBefore(csp, head.firstChild);
     const html = '<!DOCTYPE html>' + clone.outerHTML;
-    return encodedLength(html) <= SNAPSHOT_MAX ? html : '';
+    // 太大就留不下——但要说清是哪一种：一张空快照和「这一页太大」在面板上不是一回事。
+    return encodedLength(html) <= SNAPSHOT_MAX ? html : null;
   }
   function postSnapshot() {
+    // `reason` 只有「太大」这一种：拍不出（异常）和留不下（超上限）分开报，卡上照实说。
     let html = '';
-    try { html = snapshotHtml(); } catch (e) { html = ''; }
+    let reason = '';
+    try {
+      const shot = snapshotHtml();
+      if (shot === null) reason = 'too-large';
+      else html = shot;
+    } catch (e) {
+      html = '';
+    }
     const doc = frameDocument();
     let title = '';
     try { title = String((doc && doc.title) || '').slice(0, 200); } catch (e) { title = ''; }
-    post({ type: 'snapshot', html: html, href: currentHref().slice(0, 2048), title: title, viewport: viewportOf() });
+    post({
+      type: 'snapshot', html: html, reason: reason,
+      href: currentHref().slice(0, 2048), title: title, viewport: viewportOf(),
+    });
   }
   try {
     if (window.navigation && typeof window.navigation.addEventListener === 'function') {

@@ -71,6 +71,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     onAppMessage: submitAppMessage,
     // 应用那一帧拍的快照交给睡眠那一层存（它要用到下面才建的状态，所以晚一步接上）。
     onSnapshot: (frame, shot) => sleep.keep(frame, shot),
+    onSnapshotTooLarge: (frame) => sleep.keepTooLarge(frame),
   })
   const state = createPreviewState()
   const named = usePanelNamedFile({ props, state, frames })
@@ -257,6 +258,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
     goTo: frames.goTo,
     // 应用睡着时：最近一次的快照、唤醒的分步进度
     appSnapshot: sleep.appSnapshot,
+    snapshotTooLarge: sleep.snapshotTooLarge,
     wakeSteps: sleep.wakeSteps,
     wakeError: sleep.wakeError,
     wakeApp: sleep.wake,

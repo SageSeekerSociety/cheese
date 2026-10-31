@@ -56,6 +56,8 @@ const props = defineProps<{
   previewAppUp: boolean
   /** 这个应用最近一次成功加载时留的静态快照，和它是多久以前留的。 */
   appSnapshot?: { html: string; age: string; where?: string } | null
+  /** 拍过、但那一页超过快照上限留不下。 */
+  snapshotTooLarge?: boolean
   /** 唤醒的分步进度（没在唤醒是 null）和没成时那一句。 */
   wakeSteps?: AppWakeStep[] | null
   wakeError?: string
@@ -628,6 +630,7 @@ watch(
           :snapshot-html="appSnapshot?.html ?? null"
           :snapshot-age="appSnapshot?.age ?? ''"
           :snapshot-where="appSnapshot?.where ?? ''"
+          :too-large="snapshotTooLarge"
           :bare="!appSnapshot && !displayedFrame"
           :steps="wakeSteps ?? null"
           :wake-error="wakeError ?? ''"

@@ -18,5 +18,6 @@
   "hoursAgo": "{n} h ago",
   "daysAgo": "{n} d ago",
   "snapshotTag": " (showing a static snapshot)",
-  "snapshotWhere": "Frozen at \"{where}\""
+  "snapshotWhere": "Frozen at \"{where}\"",
+  "tooLarge": "This page is too large to keep a snapshot of. Wake it to carry on."
 }

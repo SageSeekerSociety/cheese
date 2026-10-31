@@ -51,6 +51,8 @@ export interface PreviewViewProps {
   previewAppUp?: boolean
   /** 应用睡着时顶上的静态快照，和它是多久以前留的。 */
   appSnapshot?: { html: string; age: string; where?: string } | null
+  /** 这一件拍过、但超过快照上限留不下（不是「还没有快照」）。 */
+  snapshotTooLarge?: boolean
   /** 唤醒的分步进度（没在唤醒是 null），和没成时那一句。 */
   wakeSteps?: AppWakeStep[] | null
   wakeError?: string
