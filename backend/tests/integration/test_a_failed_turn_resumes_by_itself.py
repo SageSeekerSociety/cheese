@@ -395,6 +395,43 @@ async def test_a_failed_resume_delivery_keeps_wait_and_appends_failure(
 
 
 @pytest.mark.anyio
+async def test_failed_resume_deliveries_in_two_conversations_are_reported_in_one_pass(
+    business_db_factory,
+):
+    """One pass reports every resume instruction that can no longer start,
+    however many conversations they are in."""
+    from app.domain.agent.turn_resume import report_failed_deliveries
+
+    factory = business_db_factory
+    conversations = []
+    for _ in range(2):
+        project, conversation, seat, _instance = await _room_with_agent(factory)
+        row = await after_failure(
+            factory,
+            project_id=project,
+            conversation_id=conversation,
+            seat=seat,
+            failed_turn_id=uuid.uuid4(),
+            result=_failed(RATE_LIMITED),
+            route="subscription",
+        )
+        assert row is not None
+        assert await hand_due(factory, now=row.due_at + timedelta(seconds=1)) == 1
+        async with factory() as session:
+            room = await room_of(session, conversation)
+            await TopicMemberService(session).remove(
+                topic_id=room, handle=seat, actor="u"
+            )
+            await session.commit()
+        conversations.append(conversation)
+
+    assert await dispatch_pending(factory, chat=None, runner=None) == 0
+    assert await report_failed_deliveries(factory) == 2
+    for conversation in conversations:
+        assert await _failure_cards(factory, conversation) == 1
+
+
+@pytest.mark.anyio
 async def test_an_unread_joined_resume_is_not_recorded_as_started(business_db_factory):
     factory = business_db_factory
     project, conversation, seat, _instance = await _room_with_agent(factory)

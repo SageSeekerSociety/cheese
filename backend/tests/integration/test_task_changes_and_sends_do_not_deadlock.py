@@ -27,8 +27,12 @@ from sqlalchemy import update
 from app.api.deps import get_work_runner
 from app.api.routes import topics_tasks
 from app.domain.agent.turn.intake import human
+from app.domain.block.adapters import platform_line
+from app.domain.block.output_effects import NumberingOutOfOrder
+from app.domain.event_about import EventAbout
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task import closing, heard
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
@@ -341,3 +345,32 @@ def test_archiving_a_project_and_the_overdue_sweep_both_finish(
 
     for result in client.portal.call(race):
         _finished(result)
+
+
+def test_a_task_is_not_locked_after_a_line_was_written_elsewhere(client, stub_hooks):
+    """A line written into a conversation takes that conversation's numbering
+    lock. A transaction that wrote into the room and then reaches for a task's
+    lock takes the two in the order a close takes the other way round (the
+    task, then the room), so it is refused before it waits."""
+    _, _, room = _channel(client)
+    task, _ = _task_with_a_turn(client, room)
+
+    async def room_line_then_task():
+        async with client.test_factory() as db:
+            await platform_line(
+                db,
+                about=EventAbout.room,
+                project_id=(await db.get(Task, uuid.UUID(task))).project_id,
+                room_id=uuid.UUID(room),
+                author="system",
+                content="频道里先说一句",
+            )
+            try:
+                await lock_task_for_change(db, uuid.UUID(task))
+            except NumberingOutOfOrder:
+                return "refused"
+            finally:
+                await db.rollback()
+            return "locked"
+
+    assert client.portal.call(room_line_then_task) == "refused"

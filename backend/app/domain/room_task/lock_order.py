@@ -37,7 +37,16 @@ transactions over overlapping tasks then meet at the first task they share,
 and the one that waits holds nothing the other needs. A transaction that holds
 some numbering and then asks for another is refused
 (`block.output_effects.NumberingOutOfOrder`), wherever the ask comes from: the
-helpers, or a task row written later in the transaction.
+helpers, or a task row written later in the transaction. A line already
+written into any conversation counts as held: the insert took that
+conversation's numbering in the trigger. So a task is locked before anything
+is said anywhere else in its transaction (a close says how it ended in the
+room after locking the task; the reverse order is the one refused).
+
+A transaction that only writes lines, into several conversations and touching
+no task row, names them all first too where it can reach tasks' conversations
+(the failed-resume report, `agent.turn_resume`). Lines into several rooms'
+main lines in an order of their own are outside this rule.
 """
 
 import uuid

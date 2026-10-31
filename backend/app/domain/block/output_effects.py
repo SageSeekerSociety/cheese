@@ -142,6 +142,25 @@ async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> N
     await session.run_sync(hold_numbering_now, [conversation_id])
 
 
+@event.listens_for(Session, "after_flush")
+def _numbering_taken_by_inserts(session: Session, _context) -> None:
+    # A block inserted took its conversation's numbering in the trigger
+    # (`block_numbered()`): recorded as held, so a later ask for another
+    # conversation's numbering in this transaction is refused like one after
+    # `hold_numbering_now`.
+    numbered = {
+        row.conversation_id
+        for row in session.new
+        if isinstance(row, Block) and row.conversation_id is not None
+    }
+    if not numbered:
+        return
+    held: dict[uuid.UUID, object] = session.info.setdefault(NUMBERING_HELD, {})
+    savepoint = session.get_nested_transaction()
+    for conversation in numbered:
+        held.setdefault(conversation, savepoint)
+
+
 @event.listens_for(Session, "after_rollback")
 def _numbering_rolled_back(session: Session) -> None:
     # Fired while the transaction rolling back is still the innermost one.
