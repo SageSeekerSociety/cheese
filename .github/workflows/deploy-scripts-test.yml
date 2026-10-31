@@ -88,6 +88,7 @@ jobs:
           python3 deploy/tests/test_ingress_lifecycle.py
           python3 deploy/tests/test_front_door_tls.py
           python3 deploy/llm-tunnel/verify-sites.py
+          python3 deploy/tests/test_llm_tunnel_validation.py
 
   # Everything else: 120 s here, led by the gateway group (72 s) and the failover
   # image pull. 8 minutes is 4x — the mount that can grow on its own is the pull,
