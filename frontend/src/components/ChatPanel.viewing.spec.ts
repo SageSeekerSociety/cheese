@@ -14,6 +14,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { createQuestionSubmit } from '@/lib/previewQuestion'
 import { useShareViewing, VIEWING_CONTEXT } from '@/lib/viewingContext'
 import { fillComposer } from '@/test/composerInput'
 import { loadMarkdownReader } from '@/test/markdownReader'
@@ -126,5 +127,67 @@ describe('发消息时带上右栏开着的那一份', () => {
     const frame = await send('这句话别带上', true)
     expect(frame).toBeTruthy()
     expect(frame?.quoted_context ?? null).toBeNull()
+  })
+
+  it('任务对话中点「发给任务芝士」按任务自己的 conversationId 走结构化引用，且被动 viewing 引用不在时间线画引用框', async () => {
+    const view = render(Panel, {
+      props: {
+        topic: { id: 'room-1', project_id: 'p1', title: 'room', kind: 'topic' } as Topic,
+        conversationId: 'task-99',
+        agentHandle: 'cheese-bot',
+        members: [{ user_handle: 'cheese-bot', nickname: '芝士', role: 'agent' } as never],
+        showComposer: true,
+      },
+      global: {
+        plugins: [vuetify, i18n],
+        provide: {
+          [VIEWING_CONTEXT as symbol]: computed(() => ({
+            kind: 'viewing' as const,
+            path: 'output/招募方案.docx',
+            task_id: 'task-99',
+          })),
+        },
+      },
+    })
+    await settle()
+    const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    box.focus()
+    await fillComposer(box, '普通消息不画引用框')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await settle()
+    expect(view.container.querySelector('.message-quote')).toBeNull()
+
+    view.unmount()
+
+    const dispatched: unknown[] = []
+    const submit = createQuestionSubmit({
+      topic: () => ({ id: 'room-1', project_id: 'p1', title: 'room', kind: 'topic' }) as Topic,
+      conversationId: () => 'task-99',
+      agentSeat: () => ({ handle: 'cheese-a1b2c3d4e5f6', label: '芝士' }),
+      mentionPool: () => [],
+      topicList: () => [],
+      send: (content, summon, atts, quoted) => {
+        dispatched.push({ content, summon, atts, quoted })
+        return true
+      },
+    })
+    const ok = submit({
+      intent: 'ask-agent',
+      topicId: 'task-99',
+      content: '把这里改短',
+      quotedContext: {
+        kind: 'text-range',
+        path: 'docs/a.md',
+        source: 'live',
+        version: 'v1',
+        task_id: 'task-99',
+        text: '原文',
+        heading: null,
+        prefix: '前',
+        suffix: '后',
+      },
+    })
+    expect(ok).toBe(true)
+    expect(dispatched).toHaveLength(1)
   })
 })

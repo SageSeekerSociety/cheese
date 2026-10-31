@@ -47,6 +47,7 @@
   "openInNewWindow": "在新窗口打开",
   "openLatestPreview": "在新标签页打开最新预览",
   "page": "第 {page} 页",
+  "pageSection": "第 {page} 页 · {section}",
   "pageFailed": "第 {page} 页无法显示：{error}",
   "pathError": "{path}：{error}",
   "pick": "圈选",
