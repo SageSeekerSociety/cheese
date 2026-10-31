@@ -1,5 +1,7 @@
 """B1 Phase 1: markdown ⇄ doc-node bridge (pure, no DB)."""
 
+import pytest
+
 from app.domain.living_doc.doc_tree import (
     CODE,
     HEADING,
@@ -70,6 +72,26 @@ def test_code_fence_with_blank_lines_is_one_node():
     assert nodes[0].node_type == CODE
     # the blank line inside the fence is preserved, not used as a separator
     assert "line1\n\nline2" in nodes[0].content
+
+
+@pytest.mark.parametrize(
+    ("opening", "inside", "closing"),
+    [
+        ("````markdown", "```", "````"),
+        ("~~~markdown", "```", "~~~"),
+        ("```markdown", "```python", "```"),
+    ],
+)
+def test_fence_like_code_does_not_split_the_code_block(opening, inside, closing):
+    """Literal fence examples stay inside code; the next paragraph anchors separately."""
+    code = f"{opening}\n{inside}\n\n# literal code\n{closing}"
+
+    nodes = markdown_to_nodes(f"{code}\n\nFollowing paragraph.")
+
+    assert [(n.node_type, n.content) for n in nodes] == [
+        (CODE, code),
+        (PARAGRAPH, "Following paragraph."),
+    ]
 
 
 def test_roundtrip_is_idempotent():
