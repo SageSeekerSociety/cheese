@@ -67,6 +67,7 @@ from app.domain.block.paging import BlockPage, PagingQueries  # noqa: F401
 from app.domain.block.reactions import Reactions
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
+from app.domain.notice_meta import shaped
 
 
 class BlockRepository(
@@ -134,6 +135,11 @@ class BlockRepository(
             and not (looks_like_agent_handle(author) and turn_id is not None)
         ):
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
+        # A platform line nobody needs to read is kept out of the room as it is
+        # written (`notice_meta.shown_as`), so the conversation's pages hold
+        # only lines that are drawn.
+        if kind == BlockKind.event:
+            meta = shaped(meta, in_turn=turn_id is not None)
         # A platform sentence carries its key; the reader's screen renders it
         # in the reader's language (`app/core/sentences.py`).
         meta = with_keys(meta, content=content)

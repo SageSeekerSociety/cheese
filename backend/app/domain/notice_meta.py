@@ -305,6 +305,138 @@ RUN_RECORD_EVENTS: Final = frozenset(
 )
 
 
+# --- 给人看不看、看成什么样 ---------------------------------------------------
+#
+# 频道里只放三样东西：人和 AI 队友说的话，AI 队友交出来的东西，AI 队友没法开口时
+# 平台替它说的话。判据是「一个人类同事做同样的事，会不会把这句话发到频道里」；平台
+# 自己能处理的，一律不说。这张表在写下一行的时候答「给不给人看」（不给看的写成
+# `meta.in_room = false`，记录照写：侧栏的「卡住」、去重、原地更新都按类型读它），
+# 在读出的时候答「看成什么样」（`BlockOut.shown_as`），前端只照这个码画，不再自己
+# 按类型分。旧的行不迁移：读出时按同一张表算，和新写的一样。
+
+#: 不在对话里给人看。
+SHOWN_NOT: Final = "hidden"
+#: 附在 AI 队友这次工作的消息下面：这次改了什么。
+SHOWN_RESULT: Final = "result"
+#: AI 队友交出来的一样东西，画成卡片放在这次回复的最后。
+SHOWN_CARD: Final = "card"
+#: 平台替 AI 队友说：它没法开口，而这件事要人来处理。
+SHOWN_FOR_AGENT: Final = "for_agent"
+#: 频道里发生的事：人做的操作，和人关心的最终结果。居中一行。
+SHOWN_HAPPENING: Final = "happening"
+#: 一个人说的话：退回时写下的理由，画成那个人的一条消息。
+SHOWN_PERSON: Final = "person"
+
+#: 下一步在谁手上，就看成什么：等人的由平台替 AI 队友说出来，AI 队友或平台自己会处
+#: 理的不说（状态在采纳横条、工作状态行上）。
+_BY_WHO: Final = frozenset(
+    {
+        EVENT_CI_FAILED,
+        EVENT_GATE_FAILED,
+        EVENT_GATE_BLOCKED,
+        EVENT_GATE_ABANDONED,
+        EVENT_MERGE_REFUSED,
+        EVENT_ACCEPT_CONFLICT,
+        EVENT_UPSTREAM_CONFLICT,
+        EVENT_PR_REVIEW,
+        EVENT_PR_CONFLICT,
+        EVENT_MIGRATION_COLLISION,
+        EVENT_MAIN_CHECKS_FAILED,
+        EVENT_ROOM_MERGE,
+        EVENT_DEPLOY_INTERRUPTED,
+    }
+)
+
+#: 平台正在自己处理的事故（`platform_error` 的 `code`）：处理完不用人做什么。
+_PLATFORM_HANDLING: Final = frozenset({"storage_exhausted", "runtime_image_missing"})
+
+#: 其余类别码各自看成什么。不在表里的类别码（别处新加的）按「频道里发生的事」画。
+_SHOWN_AS: Final[dict[str, str]] = {
+    # 平台自己的运行：排队、重试、整理上下文、环境起停、送达核对。
+    **dict.fromkeys(RUN_RECORD_EVENTS, SHOWN_NOT),
+    EVENT_MACHINE_PROVISIONING: SHOWN_NOT,
+    EVENT_ENVIRONMENT_REPAIRED: SHOWN_NOT,
+    EVENT_SANDBOX_REBUILT: SHOWN_NOT,
+    EVENT_EXECUTOR_INSTALL: SHOWN_NOT,
+    EVENT_MEMORY_ORGANIZING: SHOWN_NOT,
+    EVENT_TURN_RESUME_WAIT: SHOWN_NOT,
+    EVENT_TURN_RESUME_STARTED: SHOWN_NOT,
+    EVENT_MENTION_FUSED: SHOWN_NOT,
+    EVENT_ROOM_FILES_KEPT: SHOWN_NOT,
+    "sandbox_archives_kept": SHOWN_NOT,
+    EVENT_ROUTINE_RUN: SHOWN_NOT,
+    EVENT_ROUTINE_STOPPED: SHOWN_NOT,
+    EVENT_DOC_MISSING: SHOWN_NOT,
+    "unresolved_reference": SHOWN_NOT,
+    # 交付流程上的状态：在采纳横条上，不在对话里。
+    EVENT_CARD_FILED: SHOWN_NOT,
+    EVENT_ACCEPT_READY: SHOWN_NOT,
+    EVENT_ACCEPT_DISMISSED: SHOWN_NOT,
+    EVENT_ARTIFACT_DECLARED: SHOWN_NOT,
+    EVENT_DEPENDENCY_CLOSED: SHOWN_NOT,
+    EVENT_DEPENDENCY_REJECTED: SHOWN_NOT,
+    # 草稿的下落画在草稿卡片上。
+    EVENT_MAIL_RESULT: SHOWN_NOT,
+    # AI 队友交出来、等人读过再定的东西。
+    EVENT_SKILL_PROPOSED: SHOWN_CARD,
+    EVENT_ROUTINE_PROPOSED: SHOWN_CARD,
+    EVENT_MAIL_DRAFTED: SHOWN_CARD,
+    # AI 队友停下了，要人来。
+    EVENT_TURN_FAILED: SHOWN_FOR_AGENT,
+    EVENT_TURN_TIMEOUT: SHOWN_FOR_AGENT,
+    EVENT_TURN_RESUME_STOPPED: SHOWN_FOR_AGENT,
+    EVENT_DISPATCH_UNKNOWN: SHOWN_FOR_AGENT,
+    EVENT_HOST_FAILURE: SHOWN_FOR_AGENT,
+    EVENT_ENVIRONMENT_FAILED: SHOWN_FOR_AGENT,
+    EVENT_MCP_NOT_CONNECTED: SHOWN_FOR_AGENT,
+    EVENT_POLICY_PROPOSAL: SHOWN_FOR_AGENT,
+    EVENT_ACCEPT_STOPPED: SHOWN_FOR_AGENT,
+    EVENT_MERGE_WITHHELD: SHOWN_FOR_AGENT,
+    EVENT_DEPLOY_FAILED: SHOWN_FOR_AGENT,
+    "platform_error": SHOWN_FOR_AGENT,
+}
+
+#: 旧的动作行里只记了一笔、现在不再给人看的那几种（`meta.action`）。
+_UNSHOWN_ACTIONS: Final = frozenset({"decision", "milestone"})
+
+
+def shown_as(meta: dict | None, *, in_turn: bool) -> str:
+    """一行平台事件在对话里看成什么（上面那几个 `SHOWN_*` 码）。
+
+    ``in_turn``：这一行落在一位 AI 队友的某一次工作里（带轮次号）。一份文档的改动
+    在它自己那次工作里是那次工作的结果，不在哪一次工作里（人改的）是频道里发生的事。
+    """
+    m = meta or {}
+    event_type = m.get("event_type")
+    if event_type in _BY_WHO:
+        return SHOWN_FOR_AGENT if m.get("who") == WHO_HUMAN else SHOWN_NOT
+    if event_type == "platform_error" and m.get("code") in _PLATFORM_HANDLING:
+        return SHOWN_NOT
+    if event_type == EVENT_CARD_REJECTED:
+        return SHOWN_PERSON if m.get("detail") else SHOWN_HAPPENING
+    if isinstance(event_type, str) and event_type in _SHOWN_AS:
+        return _SHOWN_AS[event_type]
+    action = m.get("action")
+    if action == "doc":
+        if m.get("doc_created") is True:
+            return SHOWN_CARD
+        return SHOWN_RESULT if in_turn else SHOWN_HAPPENING
+    if action in _UNSHOWN_ACTIONS:
+        return SHOWN_NOT
+    if m.get("changeset") is not None:
+        return SHOWN_RESULT
+    return SHOWN_HAPPENING
+
+
+def shaped(meta: dict | None, *, in_turn: bool) -> dict | None:
+    """写下一行平台事件之前：不给人看的打上 `in_room = false`。
+
+    只往「不给看」那边打：调用方自己说了不露面的照旧不露面。"""
+    if shown_as(meta, in_turn=in_turn) != SHOWN_NOT:
+        return meta
+    return {**(meta or {}), "in_room": False}
+
+
 def notice(
     event_type: str,
     *,

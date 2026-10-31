@@ -47,7 +47,10 @@ from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.session import MemoryChange, prefix_of_scope
 from app.domain.notice_meta import (
     EVENT_MEMORY_CHANGED,
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
     SEVERITY_INFO,
+    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
@@ -460,7 +463,12 @@ async def _bail_notice(
         content=text,
         kind=BlockKind.event,
         turn_id=turn_id,
-        meta={"platform": True},
+        # It did not start, and it will not until somebody changes what the
+        # machine runs: a failed turn that is the people's to fix.
+        meta={
+            "platform": True,
+            **notice(EVENT_TURN_FAILED, severity=SEVERITY_ERROR, who=WHO_HUMAN),
+        },
     )
     await session.commit()
     return _block_payload(BlockOut.model_validate(block))
