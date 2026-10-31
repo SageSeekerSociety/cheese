@@ -1,5 +1,6 @@
 """查人，以及一个人的提问 / 回答 / 关注列表。"""
 
+import asyncio
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import (
@@ -12,6 +13,7 @@ from fastapi import (
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import (
     NotFoundError,
     QuotaExceededError,
@@ -49,17 +51,23 @@ _LOOKUP_KEY = "cheesex:users-lookup:{}"
 async def _spend_a_lookup(user_id: int) -> None:
     """Count one lookup against the caller's hourly budget; refuse past it.
 
-    A Redis that is down lets the lookup through, as `request_limits` does: a
-    broken brake must not stop people inviting each other.
+    A Redis that is down or silent lets the lookup through, within the same
+    wait `request_limits` gives it: a broken brake must not stop people
+    inviting each other.
     """
     redis = get_redis_client()
     if redis is None:
         return
     key = _LOOKUP_KEY.format(user_id)
     try:
-        used = await redis.incr(key)
-        if used == 1:
-            await redis.expire(key, LOOKUP_WINDOW_S)
+        async with asyncio.timeout(settings.request_limit_redis_timeout_s):
+            used = await redis.incr(key)
+            # On every call, not only the one that created the key: a key whose
+            # EXPIRE was lost (the connection dropped after INCR, or the process
+            # died in between) would otherwise refuse this account long after
+            # the window, for good. `nx` keeps the window fixed at the first
+            # lookup instead of sliding it forward on every call.
+            await redis.expire(key, LOOKUP_WINDOW_S, nx=True)
     except Exception:  # a broken brake lets it through, see the docstring
         return
     if used > LOOKUPS_PER_WINDOW:
