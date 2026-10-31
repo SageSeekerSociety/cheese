@@ -70,9 +70,7 @@ async def get_many(repo: pkg.TopicRepository, topic_ids: set[uuid.UUID]) -> list
             missing.append(tid)
     if not missing:
         return known
-    rows = list(
-        await repo._session.scalars(select(Topic).where(Topic.id.in_(missing)))
-    )
+    rows = list(await repo._session.scalars(select(Topic).where(Topic.id.in_(missing))))
     fetched = {t.id: t for t in rows}
     for tid in missing:
         t = fetched.get(tid)
