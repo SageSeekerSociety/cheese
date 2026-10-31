@@ -213,6 +213,7 @@ class ProjectRepository:
         patch: Mapping[str, object],
         *,
         remove: Iterable[str] = (),
+        locked: bool = False,
     ) -> dict[str, object]:
         """Change a few keys of the settings blob, atomically.
 
@@ -226,7 +227,8 @@ class ProjectRepository:
         and silently never persists. Mutations made after this call still need
         that.
         """
-        await self.lock_settings(project)
+        if not locked:
+            await self.lock_settings(project)
         merged = {**(project.settings or {}), **patch}
         for key in remove:
             merged.pop(key, None)

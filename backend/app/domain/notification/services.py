@@ -32,7 +32,7 @@ from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.services import user_by_handle
+from app.domain.user.services import users_by_handle
 
 
 @dataclass(slots=True)
@@ -388,14 +388,16 @@ class ProjectNotificationService:
             # `cheese_notify` 把返回值整个丢掉 —— 发的人和收的人都不会知道。一条
             # 到不了任何人的通知不是成功。
             raise ValidationError(say("notificationNoRecipients"))
+        users = await users_by_handle(self._session, recipients)
+        prefs = await self._prefs.for_users([u.id for u in users.values()])
         rows: list[Notification] = []
         for handle in recipients:
-            user = await user_by_handle(self._session, handle)
+            user = users.get(handle)
             # 站内也是收件人的选择：这一类他关掉了就不写进他的收件箱。没有账号行
             # 的收件人（`receiver_id` 为空）读不到偏好，按默认（进站内）。
             if user is not None:
-                pref = await self._prefs.for_user(user.id)
-                if not in_app_allowed(pref, kind):
+                pref = prefs.get(user.id)
+                if pref is not None and not in_app_allowed(pref, kind):
                     continue
             rows.append(
                 await self._repo.add(
@@ -408,8 +410,11 @@ class ProjectNotificationService:
                     body=body,
                     conversation_id=conversation_id,
                     payload=payload,
+                    flush=False,
                 )
             )
+        if rows:
+            await self._session.flush()
         return rows
 
     async def _broadcast_roster(
@@ -470,6 +475,8 @@ class ProjectNotificationService:
             limit=page_size + 1,
             at_or_before=cursor,
         )
+        if cursor is None and len(rows) <= page_size:
+            return rows, len(rows), None
         total = await self._repo.count_for_project(
             project_id, recipient_handle=target_handle, unread_only=unread_only
         )
