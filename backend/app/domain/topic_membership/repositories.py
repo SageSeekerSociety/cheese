@@ -27,12 +27,19 @@ class TopicMembershipRepository:
         )
         self._session.add(member)
         await self._session.flush()
-        await self._session.refresh(member)
         return member
 
     async def get(
         self, *, topic_id: uuid.UUID, member_handle: str
     ) -> TopicMembership | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("topic_member_rows", topic_id))
+            if found:
+                return next(
+                    (r for r in cached if r.member_handle == member_handle), None
+                )
         stmt = select(TopicMembership).where(
             TopicMembership.topic_id == topic_id,
             TopicMembership.member_handle == member_handle,

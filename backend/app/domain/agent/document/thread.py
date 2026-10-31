@@ -98,8 +98,11 @@ async def mentioned_seat(
     db: AsyncSession, asked: Asked, actor: Actor, content: str
 ) -> str | None:
     """The document's agent this comment names, when a person wrote it."""
+    handles = mentioned_handles(content)
+    if not handles:
+        return None
     seats = await question.seats(db, asked)
-    named = [handle for handle in mentioned_handles(content) if handle in seats]
+    named = [handle for handle in handles if handle in seats]
     if not named or await IdentityService(db).is_agent(actor.handle):
         return None
     return named[0]

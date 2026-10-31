@@ -64,17 +64,20 @@ class TurnLifecycle:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
         refused. What it wrote so far stays."""
+        if not seat or not seat.startswith("cheese-"):
+            return
         async with self._sessions() as session:
             topic = await load_topic(session, topic_id)
             project = topic and await load_project(session, topic.project_id)
             agent = project and await AgentInstanceService(session).for_seat_handle(
                 project, seat
             )
+            if agent is None:
+                return
             # It sat in the room for the room's 支线 too: their work stops as well.
             threads = list(await threads_of_rooms(session, [topic_id]))
-        if agent is not None:
-            for conversation in (topic_id, *threads):
-                await self._compute.dismiss(conversation, agent.handle)
+        for conversation in (topic_id, *threads):
+            await self._compute.dismiss(conversation, agent.handle)
 
     async def stop_work(self, conversation_id: uuid.UUID) -> None:
         """Stop whatever a teammate is still doing in this conversation, a

@@ -1477,3 +1477,120 @@ def test_task_close_reopen_and_topic_children_avoid_redundant_lock_and_card_quer
     assert len(child_sql) <= 4, (
         f"expected <= 4 SQL statements on GET /topics/{{id}}/children, got {len(child_sql)}: {child_sql}"
     )
+
+
+_NOTIFICATION_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM notification\b",
+    re.IGNORECASE,
+)
+
+
+def test_add_document_comment_without_mention_skips_project_roster_and_seat_lookup(
+    client,
+):
+    """`POST /documents/{id}/comments` without `@` mentions skips loading the
+    project roster (`project_members`, `team_user_relation`, `agent_instances`)
+    and skips querying `question.seats`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    doc = client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "Doc 1", "content": "hello world"},
+        headers=headers,
+    ).json()["data"]
+    doc_id = doc["id"]
+
+    with counting_sql(client) as c_sql:
+        r_c = client.post(
+            f"/documents/{doc_id}/comments",
+            json={"content": "plain comment without mention", "quote": "hello"},
+            headers=headers,
+        )
+    assert r_c.status_code == 200, r_c.text
+    assert _count(c_sql, _PROJECT_MEMBERS_SELECT) == 0, [
+        s for s in c_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert _count(c_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in c_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(c_sql) <= 9, (
+        f"expected <= 9 SQL statements on POST /documents/{{id}}/comments, got {len(c_sql)}: {c_sql}"
+    )
+
+
+def test_create_topic_skips_redundant_refreshes_card_queries_and_post_flush_role_reads(
+    client,
+):
+    """`POST /topics` reads `projects` once, avoids refreshing newly inserted
+    `topics` and `topic_memberships` rows, and skips querying `accept_cards`
+    and `notification` on a brand-new room."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            "/topics",
+            json={"project_id": pid, "title": "Fresh Channel"},
+            headers=headers,
+        )
+    assert r_create.status_code == 200, r_create.text
+    assert _count(create_sql, _PROJECTS_SELECT) == 1, [
+        s for s in create_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(create_sql, _TOPICS_SELECT) == 1, [
+        s for s in create_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(create_sql, _ACCEPT_CARDS_SELECT) == 0, [
+        s for s in create_sql if _ACCEPT_CARDS_SELECT.search(s)
+    ]
+    assert _count(create_sql, _NOTIFICATION_SELECT) == 0, [
+        s for s in create_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 12, (
+        f"expected <= 12 SQL statements on POST /topics, got {len(create_sql)}: {create_sql}"
+    )
+
+
+def test_add_and_remove_topic_member_deduplicate_membership_and_non_agent_dismiss_queries(
+    client,
+):
+    """`POST /topics/{id}/members` and `DELETE /topics/{id}/members/{handle}`
+    pre-load `topic` and `list_for_topic` so `resolve` and `_repo.get` reuse
+    cached facts, and `DELETE` skips opening a `dismiss` session for a human handle."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as add_sql:
+        r_add = client.post(
+            f"/topics/{ch}/members",
+            json={"handle": "bob"},
+            headers=headers,
+        )
+    assert r_add.status_code == 200, r_add.text
+    assert _count(add_sql, _CONVERSATIONS_KIND_SELECT) == 0
+    assert _count(add_sql, _TOPICS_SELECT) == 1, [
+        s for s in add_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert len(add_sql) <= 17, (
+        f"expected <= 17 SQL statements on POST /topics/{{id}}/members, got {len(add_sql)}: {add_sql}"
+    )
+
+    with counting_sql(client) as del_sql:
+        r_del = client.delete(
+            f"/topics/{ch}/members/bob",
+            headers=headers,
+        )
+    assert r_del.status_code == 200, r_del.text
+    assert _count(del_sql, _TOPICS_SELECT) == 1, [
+        s for s in del_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(del_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in del_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(del_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in del_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(del_sql) <= 5, (
+        f"expected <= 5 SQL statements on DELETE /topics/{{id}}/members/bob, got {len(del_sql)}: {del_sql}"
+    )

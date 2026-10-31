@@ -537,20 +537,20 @@ async def announce_comment_mentions(
     The delivery is keyed by the comment, so delivering it again tells
     nobody twice; :func:`comment_notified` reads the same key back."""
     author = comment.author
+    mentioned = [
+        h
+        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
+        if h != author
+    ]
+    if not mentioned or project_id is None:
+        return CommentMentions([], None)
     # What an AI teammate writes into a comment refers to people; it calls
     # nobody (its answer is read where it was asked).
     if await IdentityService(session).is_agent(author):
         return CommentMentions([], None)
-    if project_id is None:
-        # A team's own document tells nobody yet (`api.doc_mentions`).
-        return CommentMentions([], None)
     members = TopicMemberService(session)
     people = set(await members.project_people(project_id, team=project_team))
-    named = [
-        h
-        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
-        if h != author and h in people
-    ]
+    named = [h for h in mentioned if h in people]
     if not named:
         return CommentMentions([], None)
     outside = None

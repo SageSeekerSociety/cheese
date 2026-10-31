@@ -59,7 +59,7 @@ async def owned_by_seat(
     """The owner of the agent that sits on rosters as ``seat_handle`` in this
     project, or None when that agent is not anyone's own (the project's 芝士,
     another teammate, a person)."""
-    if not seat_handle:
+    if not seat_handle or not seat_handle.startswith("cheese-"):
         return None
     rows = await db.execute(
         select(*_OWNED)

@@ -32,6 +32,7 @@ from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.session_record.tail import SessionTail, tails, working_seats
 from app.domain.topic.models import (
     NotifyLevel,
@@ -197,12 +198,12 @@ class TopicService:
             number=number,
             environment=environment,
             title=title,
+            description=(description or "").strip() or None,
+            members_only=members_only,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
         )
-        topic.description = (description or "").strip() or None
-        topic.members_only = members_only
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
         # root a fork point, which nothing has ever wanted.
@@ -230,8 +231,40 @@ class TopicService:
                 project_owner=project.owner_handle,
                 project_team=project.team_id,
             ),
+            agent_handle=(
+                agent_instance_handle(project.default_agent_instance_id)
+                if project.default_agent_instance_id is not None
+                else None
+            ),
         )
         return topic
+
+    async def created_topic_state(
+        self,
+        topic: Topic,
+        viewer_handle: str | None,
+        actor: str,
+        can_manage: bool,
+        team: ProjectTeam,
+    ) -> tuple[dict[uuid.UUID, TopicRelevance], set[uuid.UUID]]:
+        """Relevance and management flags for a newly created channel, which
+        starts with no open cards and no pending decision notifications."""
+        joined = (
+            await self._members.joined_topic_ids([topic], viewer_handle, team=team)
+            if viewer_handle is not None
+            else set()
+        )
+        relevance = (
+            {topic.id: TopicRelevance(joined=topic.id in joined, awaits_me=False)}
+            if viewer_handle is not None
+            else {}
+        )
+        managed = (
+            {topic.id}
+            if can_manage
+            else await self._members.managed_topic_ids([topic], actor)
+        )
+        return relevance, managed
 
     async def get_or_create_private(
         self,
