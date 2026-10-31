@@ -47,6 +47,7 @@
   "openInNewWindow": "Open in a new window",
   "openLatestPreview": "Open the latest preview in a new tab",
   "page": "Page {page}",
+  "pageSection": "Page {page} · {section}",
   "pageFailed": "Couldn't display page {page}: {error}",
   "pathError": "{path}: {error}",
   "pick": "Pick",

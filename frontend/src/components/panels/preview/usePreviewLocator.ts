@@ -20,6 +20,7 @@ import type { SlidePageContext } from './slidesContext'
 
 import { computed, inject, ref, watch } from 'vue'
 
+import { pageLabel } from './pageLabel'
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
 import { usePreviewPick } from './usePreviewPick'
@@ -137,7 +138,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
 
   function onPageContext(payload: SlidePageContext) {
     if (!pageLocator.canUse(payload.context)) return
-    const page = t('work.room.preview.page', { page: payload.page })
+    // 位置写成「第 2 页 · 报名截止」：原型就是这么写的（`第 1 页 · 二、时间安排`）。
+    // 一页里的节比页码细一档，而同一句话在同一份文档里出现好几处是常事，那句话本身还
+    // 可能被改掉——节名才是能分辨「说的是哪一节」的那个东西。认不出节就只写页码。
+    const page = pageLabel(payload.page, payload.section)
     openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : firstCodePoints(payload.text, 200), page)
     quoted.page.value = { ...payload, context: { ...payload.context } }
   }
