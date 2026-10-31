@@ -86,7 +86,7 @@ try {
   await page.screenshot({ path: path.join(output, 'light.png') })
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   assert.equal(await page.getByRole('spinbutton', { name: '页码' }).inputValue(), '2')
-  await page.getByRole('button', { name: '对整页提问' }).click()
+  await page.getByRole('button', { name: '标一处' }).click()
   await page.waitForFunction(() => window.events.length === 1)
   const context = await page.evaluate(() => window.events[0])
   assert.equal(context.page, 2)
