@@ -690,8 +690,18 @@ class AgentInstanceService:
         instance.is_active = True
         project.default_agent_instance_id = instance.id
         if project.root_topic_id is not None:
+            seat = agent_instance_handle(instance.id)
+            if existing is None and isinstance(self._session, AsyncSession):
+                if self._session.autoflush:
+                    await self._session.flush()
+                remember(
+                    self._session,
+                    ("topic_member_row", project.root_topic_id, seat),
+                    None,
+                    tables=frozenset({"topic_memberships"}),
+                )
             await TopicMemberService(self._session).ensure_agent_seat(
-                project.root_topic_id, agent_instance_handle(instance.id)
+                project.root_topic_id, seat
             )
         await self._session.flush()
         return instance

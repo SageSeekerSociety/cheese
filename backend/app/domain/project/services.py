@@ -174,6 +174,7 @@ class ProjectService:
         self._close_tasks = close_tasks
         self._events = events
         self._seat_mentors = seat_mentors
+        self._pinned_rows: tuple[object, ...] = ()
 
     async def _seed_default_teammate(
         self,
@@ -296,6 +297,7 @@ class ProjectService:
             external_task_id=external_task_id,
             intent=intent,
             project_id=project_id,
+            settings={"forge_kind": forge_kind},
         )
         project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         number, environment = await self.channel_start(project)
@@ -307,7 +309,7 @@ class ProjectService:
             kind=TopicKind.root,
             created_by=owner_handle,
         )
-        await self._repo.set_root_topic(project, root.id)
+        await self._repo.set_root_topic(project, root.id, is_new_project=True)
         # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
@@ -361,6 +363,10 @@ class ProjectService:
         brief = _intent_brief(intent)
         if brief:
             await self._seed_overview(project, brief)
+        if self._pinned_rows:
+            self._session.sync_session.info.setdefault("_pinned_rows", []).extend(
+                self._pinned_rows
+            )
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -373,6 +379,7 @@ class ProjectService:
         if user is None:
             return None
         team = await team_service(self._session).ensure_personal_team(user.id)
+        self._pinned_rows = (user, team)
         return team.id
 
     async def for_participation(

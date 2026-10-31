@@ -282,7 +282,49 @@ class UserRepository:
         that keep naming them (``app.domain.account.deletion``)."""
         if not user_ids:
             return {}
-        stmt: Select[tuple[User]] = select(User).where(User.id.in_(list(user_ids)))
+        if not include_closed and isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[int, User] = {}
+            missing: list[int] = []
+            for uid in dict.fromkeys(user_ids):
+                found, cached = recall(self._session, ("user_by_id", uid))
+                if found:
+                    if cached is not None:
+                        by_id[uid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(User, (uid,))
+                )
+                if in_map is not None and in_map.deleted_at is None:
+                    by_id[uid] = in_map
+                    remember(
+                        self._session,
+                        ("user_by_id", uid),
+                        in_map,
+                        tables=frozenset({"user"}),
+                    )
+                else:
+                    missing.append(uid)
+            if not missing:
+                return by_id
+            stmt: Select[tuple[User]] = select(User).where(
+                User.id.in_(missing), User.deleted_at.is_(None)
+            )
+            result = await self._session.execute(stmt)
+            fetched = {u.id: u for u in result.scalars().all()}
+            for uid in missing:
+                u = fetched.get(uid)
+                if u is not None:
+                    by_id[uid] = u
+                remember(
+                    self._session,
+                    ("user_by_id", uid),
+                    u,
+                    tables=frozenset({"user"}),
+                )
+            return by_id
+        stmt = select(User).where(User.id.in_(list(user_ids)))
         if not include_closed:
             stmt = stmt.where(User.deleted_at.is_(None))
         result = await self._session.execute(stmt)
