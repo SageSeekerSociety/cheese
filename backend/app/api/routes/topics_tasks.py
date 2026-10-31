@@ -249,7 +249,9 @@ async def conclude_task(
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
-    teammate acts on (`TaskService.takes_part`); reopening is wider.
+    teammate acts on (`TaskService.takes_part`); reopening is wider. Its own
+    session is refused while a card waits on the task's review: voiding that
+    card is its reviewer's decision.
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     # Before anything else is locked: the task lock order (`lock_order`); the
@@ -259,6 +261,13 @@ async def conclude_task(
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
+        # A card waiting on the task's review is its reviewer's to decide, and
+        # closing voids it and closes its pull request. The teammate may not
+        # make that decision by closing: a person saying 采纳 in the task is
+        # not the card accepted. A person closing their own task still may.
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
+        if card is not None and card.status in OPEN_CARD_STATUSES:
+            raise ConflictError(say("taskCloseWhileInReview"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set

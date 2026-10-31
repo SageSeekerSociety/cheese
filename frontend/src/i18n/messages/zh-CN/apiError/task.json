@@ -57,6 +57,7 @@
   "taskLockingPolicyInvalid": "队伍成员变更的设置无效",
   "taskStartModeInvalid": "开始方式只能是直接开始或申请制",
   "taskOpeningNotFailed": "AI 队友接手这个任务时没有失败，不用重试",
+  "taskCloseWhileInReview": "这件任务有一张卡在等验收人决定。关闭任务会作废这张卡、关掉它的 PR，这个决定不归你，所以没有关闭。采纳或退回由验收人在卡上操作；对方在对话里说了要采纳，就请他在卡上点采纳。卡有了结果之后再收尾。",
   "taskOwnSessionCloses": "只有任务的负责人、协作者，或者在这个任务对话里工作的 AI 队友，可以关闭它",
   "taskOwnSessionReopens": "只有角色有「新建任务和审阅」权限的项目成员，或者在这个任务对话里工作的 AI 队友，可以重新打开它",
   "taskOwnSessionReportsProgress": "只有在这个任务对话里工作的 AI 队友可以报它的进度",
