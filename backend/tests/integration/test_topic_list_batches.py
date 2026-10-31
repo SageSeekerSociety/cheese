@@ -195,7 +195,7 @@ _ROOM_OF_UNION_SELECT = re.compile(
     re.IGNORECASE,
 )
 _TOPIC_MEMBERSHIPS_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM topic_memberships\b",
+    r"^\s*SELECT topic_memberships\b[^;]*?\bFROM topic_memberships\b",
     re.IGNORECASE,
 )
 _USER_PROFILE_SELECT = re.compile(
