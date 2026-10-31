@@ -1,7 +1,7 @@
 """Private trees a seat handed back that the platform has merged
 
 Revision ID: a7c3e9d1b204
-Revises: c4e8a1f27b93
+Revises: b81e4d7c2a95
 Create Date: 2026-10-30
 
 A seat keeps a handed-back private tree until it hears the platform took it;
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a7c3e9d1b204"
-down_revision: str | Sequence[str] | None = "c4e8a1f27b93"
+down_revision: str | Sequence[str] | None = "b81e4d7c2a95"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
