@@ -594,11 +594,13 @@ class TopicService:
             return topic
         if await self._repo.has_open_tasks(topic.id):
             raise ValidationError(say("channelArchiveOpenTasks"))
+        rooms = await self._rooms_to_archive(topic)
         await self._close_tasks_of(
-            await self._rooms_to_archive(topic),
+            rooms,
             by=by,
             close_tasks=close_tasks,
             events=events,
+            has_tasks=len(rooms) > 1,
         )
         await self._archive_one(
             topic,
@@ -607,13 +609,14 @@ class TopicService:
             cards=cards,
             events=events,
         )
-        await self._archive_children(
-            topic,
-            by=by,
-            settle_card=settle_card,
-            cards=cards,
-            events=events,
-        )
+        if len(rooms) > 1:
+            await self._archive_children(
+                topic,
+                by=by,
+                settle_card=settle_card,
+                cards=cards,
+                events=events,
+            )
         await self._session.flush()
         return topic
 
@@ -668,6 +671,7 @@ class TopicService:
         by: str,
         close_tasks: CloseRoomTasks,
         events: PlatformLine,
+        has_tasks: bool = True,
     ) -> None:
         """Close the tasks of every room this archiving takes, in one call and
         before anything else of theirs: the tasks' locks are taken together, in
@@ -686,10 +690,13 @@ class TopicService:
         said_in = {room.id for room in rooms}
         for room in rooms:
             said_in.add(await self._where_said(room))
-        said_in.update(
-            await self._repo.task_conversations_in([room.id for room in rooms])
-        )
+        if has_tasks:
+            said_in.update(
+                await self._repo.task_conversations_in([room.id for room in rooms])
+            )
         await lock_conversations(self._session, said_in)
+        if not has_tasks:
+            return
         titles = {room.id: room for room in rooms}
         for task_id, room_id in await close_tasks(
             self._session, [room.id for room in rooms]
@@ -734,6 +741,7 @@ class TopicService:
         events: PlatformLine,
         cascaded_from: str | None = None,
     ) -> None:
+        overview_room = await self._where_said(topic)
         topic.status = TopicStatus.archived
         archived_at = datetime.now(UTC)
         topic.archived_at = archived_at
@@ -753,7 +761,6 @@ class TopicService:
         # 一张骑着 PR 的卡不是"停着"——轮询器每 60 秒还在拿 GitHub 凭据跟进它。
         # 去向与理由见 review/archive.py 的模块 docstring。
 
-        overview_room = await self._where_said(topic)
         await cards(
             self._session,
             topic_id=topic.id,
@@ -806,6 +813,7 @@ class TopicService:
             if topic.cleanup_id
             else None
         )
+        overview_room = await self._where_said(topic)
         if operation is not None:
             if operation.state == "preparing":
                 raise ConflictError(say("unarchiveWhileSessionStopping"))
@@ -824,7 +832,7 @@ class TopicService:
             self._session,
             about=EventAbout.project,
             project_id=topic.project_id,
-            room_id=await self._where_said(topic),
+            room_id=overview_room,
             author=by,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
         )
