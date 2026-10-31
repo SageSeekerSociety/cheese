@@ -102,6 +102,10 @@ def test_only_plain_reads_go_to_the_pool():
     assert not served_by_pool("POST", "/topics/x/messages")
     assert not served_by_pool("GET", "/rooms/live", upgrade=True)
     assert not served_by_pool("GET", "/topics/x/status")
+    # What a process reports of itself — its jobs, its ownership, its
+    # counters — is the realtime process's report, not a pool worker's.
+    for own in ("/health/detailed", "/readyz", "/metrics", "/admin/stats/platform"):
+        assert not served_by_pool("GET", own), own
 
 
 APP_ROUTER = Path(__file__).resolve().parents[3] / "deploy/llm-tunnel/app-router.conf"

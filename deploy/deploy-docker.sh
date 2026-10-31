@@ -1411,6 +1411,12 @@ write_pool_upstream() {
   mv -f "$tmp" "$file"
 }
 
+# Whether container $1 runs the api pool: its image starts through
+# backend/app/serve.py, which runs the pool when API_POOL_WORKERS asks.
+runs_api_pool() {
+  docker inspect --format '{{json .Config.Cmd}}' "$1" 2>/dev/null | grep -q 'app\.serve'
+}
+
 # The backend port backend.conf names now.
 serving_backend_port() {
   sed -n 's/.*server 127\.0\.0\.1:\([0-9]*\);.*/\1/p' "$ACTIVE_BACKEND_DIR/backend.conf" | head -n 1
@@ -1693,7 +1699,12 @@ rollout_app() {
     dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "$backend_to was not ready within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
-  if [ "$API_POOL_WORKERS" -gt 0 ] && ! wait_for_ready "$(pool_port_of "$backend_port")" "$backend_to api pool"; then
+  # Only an image that runs app/serve.py has a pool to wait for. A rollback to a
+  # release from before it starts a backend with no pool at all; app-router
+  # then sends its reads to the backup, that backend itself.
+  if [ "$API_POOL_WORKERS" -gt 0 ] && ! runs_api_pool "$(service_container "$backend_to")"; then
+    log "$backend_to's image runs no api pool; plain reads go to its realtime process"
+  elif [ "$API_POOL_WORKERS" -gt 0 ] && ! wait_for_ready "$(pool_port_of "$backend_port")" "$backend_to api pool"; then
     docker logs --tail 40 "$(service_container "$backend_to")" 2>&1 | sed 's/^/  next| /' || true
     dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "$backend_to's api pool was not ready within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
