@@ -27,6 +27,18 @@ import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 
+/** 一份很长的网页源码：正文行数超过一个窗口（`PreviewCode` 的 1000 行），底下那条
+ * 「还能接着看」因此露出来。内容不重要，行数才重要。 */
+const LONG_PAGE = [
+  '<!doctype html>',
+  '<html>',
+  '<head><title>每周进度</title></head>',
+  '<body>',
+  ...Array.from({ length: 1_200 }, (_, i) => `  <p>第 ${i + 1} 条：本周进度</p>`),
+  '</body>',
+  '</html>',
+].join('\n')
+
 /** 一个跑着、页面里抛过两个错的帧：给「页面自己抛了错」那一格用。 */
 const DEMO_APP_FRAME = {
   id: 1,
@@ -149,6 +161,28 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         // 那条说明在「看原文」里：这一格先点进去，再看它。
         click: 'toggle-frame-source',
         expect: '只摆了开头',
+      },
+      {
+        name: '网页很长，底下还能接着看',
+        note: '一份整份都在、但很长的网页：切到「看原文」先摆前 1000 行，底下说清共多少行并可接着看。这一档的开销在行上——实测 700 KB、14 866 行的源码一整份摆出来，每个滚动帧 134 ms（546 px 面板、CPU 降到 1/4），先摆 1000 行是 261 ms 出画面、帧 16.7 ms。',
+        props: previewPanelProps({
+          previewFile: {
+            path: 'site/周报.html',
+            content: LONG_PAGE,
+            head: null,
+            version: 'v3',
+            bytes: LONG_PAGE.length,
+            binary: false,
+            too_large: false,
+          },
+          previewMime: 'text/html',
+          previewNamed: true,
+          previewUrl: 'https://preview.example.test/site/周报.html',
+          previewNamedPath: 'site/周报.html',
+        }),
+        // 那一条在「看原文」里：这一格先点进去，再看它。
+        click: 'toggle-frame-source',
+        expect: '已摆了前',
       },
       {
         name: '这一份读不到了',

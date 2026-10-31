@@ -457,6 +457,7 @@ const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 // keeps its own input bar for the root topic), so it stays exposed.
 const submitQuestion = createQuestionSubmit({
   topic: () => props.topic,
+  conversationId: () => props.conversationId,
   agentSeat: () => agentSeat.value,
   mentionPool: () => mentionPool.value,
   topicList: () => props.topicList,
