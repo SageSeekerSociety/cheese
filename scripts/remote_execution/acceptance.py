@@ -641,10 +641,13 @@ def case(folder, options):
                 runner_fixture.session_dir(room) / "remote-session/forwarded-project"
                 for room in rooms
             ),
-            # The room-level pair a run under the layout before seats mounted,
-            # so a machine that still carries one of those is cleared too — and
-            # the `device-home` one, which the layout before a room lived below
-            # its home left where this case no longer puts it.
+            # Where runs under the earlier layouts left the same mount, so a
+            # machine that still carries one of those is cleared too: the room
+            # at the case's own `home`, and at `device-home`, which is beside
+            # the owner's home — where a device case's room sat before it moved
+            # below it (`case_home`).
+            runner_fixture.session_dir(folder / "device-home")
+            / "remote-session/forwarded-project",
             folder / "home/.cheese/remote-session/forwarded-project",
             folder / "device-home/.cheese/remote-session/forwarded-project",
         ):
