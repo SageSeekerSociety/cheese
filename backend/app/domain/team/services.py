@@ -145,13 +145,13 @@ class TeamService:
         A personal team's handle is its owner's username.
         """
         teams = await self._repo.get_by_ids(list(team_ids))
-        names = await usernames_by_ids(
-            self._repo._session,
-            {
-                t.personal_owner_user_id
-                for t in teams.values()
-                if t.personal_owner_user_id is not None
-            },
+        owner_ids = {
+            t.personal_owner_user_id
+            for t in teams.values()
+            if t.personal_owner_user_id is not None
+        }
+        names = (
+            await usernames_by_ids(self._repo._session, owner_ids) if owner_ids else {}
         )
         out: dict[int, TeamLabel] = {}
         for tid, team in teams.items():
