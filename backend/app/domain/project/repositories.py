@@ -7,6 +7,7 @@ from sqlalchemy import BigInteger, and_, column, func, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
@@ -58,7 +59,15 @@ class ProjectRepository:
         return project
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
-        return await self._session.get(Project, project_id)
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("project", project_id)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
+        project = await self._session.get(Project, project_id)
+        remember(self._session, key, project, tables=frozenset({"projects"}))
+        return project
 
     async def get_by_ids(
         self, project_ids: Sequence[uuid.UUID]

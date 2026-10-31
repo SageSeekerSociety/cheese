@@ -6,6 +6,7 @@ the connection that row names and what its owner is called.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -112,12 +113,35 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
 
 
 async def owned_in_project(
-    db: AsyncSession, project_id: uuid.UUID
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    instances: Sequence[AgentInstance] | None = None,
 ) -> list[tuple[AgentInstance, int]]:
     """The project's personal agents and their owners, including inactive ones."""
     owner_id = func.coalesce(
         AccountConnection.owner_user_id, DeviceClaudeLoginRow.owner_user_id
     )
+    if instances is not None:
+        by_id = {instance.id: instance for instance in instances}
+        if not by_id:
+            return []
+        rows = await db.execute(
+            select(OwnAgent.instance_id, owner_id)
+            .outerjoin(
+                AccountConnection,
+                AccountConnection.id == OwnAgent.account_connection_id,
+            )
+            .outerjoin(
+                DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id
+            )
+            .where(OwnAgent.instance_id.in_(list(by_id)), owner_id.is_not(None))
+        )
+        return [
+            (by_id[instance_id], owner)
+            for instance_id, owner in rows
+            if instance_id in by_id
+        ]
     rows = await db.execute(
         select(AgentInstance, owner_id)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)

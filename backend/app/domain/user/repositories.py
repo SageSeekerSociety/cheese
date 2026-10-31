@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from sqlalchemy import Select, and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.avatars.models import Avatar
 from app.domain.day_windows import utc_day
 from app.domain.identity.models import AgentBinding
@@ -27,11 +28,19 @@ class UserRepository:
         return await self.get_by_username(handle)
 
     async def get_by_username(self, username: str) -> User | None:
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("user_by_username", username)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
         stmt: Select[tuple[User]] = select(User).where(
             User.username == username, User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        remember(self._session, key, user, tables=frozenset({"user"}))
+        return user
 
     async def search_accounts(self, q: str, limit: int) -> Sequence[tuple[str, str]]:
         """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
@@ -117,11 +126,34 @@ class UserRepository:
         names = {h for h in handles if h}
         if not names:
             return {}
-        stmt: Select[tuple[User]] = select(User).where(
-            User.username.in_(names), User.deleted_at.is_(None)
-        )
-        result = await self._session.execute(stmt)
-        return {u.username: u for u in result.scalars()}
+        if self._session.autoflush:
+            await self._session.flush()
+        users: dict[str, User] = {}
+        missing: list[str] = []
+        for h in names:
+            found, cached = recall(self._session, ("user_by_username", h))
+            if found:
+                if cached is not None:
+                    users[h] = cached
+            else:
+                missing.append(h)
+        if missing:
+            stmt: Select[tuple[User]] = select(User).where(
+                User.username.in_(missing), User.deleted_at.is_(None)
+            )
+            result = await self._session.execute(stmt)
+            fetched = {u.username: u for u in result.scalars()}
+            for h in missing:
+                u = fetched.get(h)
+                if u is not None:
+                    users[h] = u
+                remember(
+                    self._session,
+                    ("user_by_username", h),
+                    u,
+                    tables=frozenset({"user"}),
+                )
+        return users
 
     async def get_by_id(self, user_id: int) -> User | None:
         stmt: Select[tuple[User]] = select(User).where(

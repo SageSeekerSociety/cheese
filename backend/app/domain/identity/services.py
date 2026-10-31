@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -126,10 +127,25 @@ class IdentityService:
 
     async def is_agent(self, handle: str) -> bool:
         """True iff the handle names a user carrying an agent-binding."""
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("is_agent", handle)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
         user = await self._users.get_by_handle(handle)
-        if user is None:
-            return False
-        return await self._bindings.get_for_user(user.id) is not None
+        answer = (
+            await self._bindings.get_for_user(user.id) is not None
+            if user is not None
+            else False
+        )
+        remember(
+            self._session,
+            key,
+            answer,
+            tables=frozenset({"user", "agent_bindings"}),
+        )
+        return answer
 
     async def agents_among(self, handles: Sequence[str]) -> set[str]:
         """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，两次往返。
@@ -137,10 +153,30 @@ class IdentityService:
         名册要对整张表问这一句。逐个 ``is_agent`` 是 N+1——一个 30 人的项目就是 60
         次往返，而判据本身（带不带 agent-binding）一次就能全部问出来。
         """
-        if not handles:
+        wanted = [h for h in dict.fromkeys(handles) if h]
+        if not wanted:
             return set()
-        users = await self._users.get_by_handles(list(handles))
+        if self._session.autoflush:
+            await self._session.flush()
+        known: set[str] = set()
+        missing: list[str] = []
+        for h in wanted:
+            found, cached = recall(self._session, ("is_agent", h))
+            if found:
+                if cached:
+                    known.add(h)
+            else:
+                missing.append(h)
+        if not missing:
+            return known
+        users = await self._users.get_by_handles(missing)
         agent_ids = await self._bindings.agent_user_ids(
             [user.id for user in users.values()]
         )
-        return {handle for handle, user in users.items() if user.id in agent_ids}
+        found_agents = {
+            handle for handle, user in users.items() if user.id in agent_ids
+        }
+        tables = frozenset({"user", "agent_bindings"})
+        for h in missing:
+            remember(self._session, ("is_agent", h), h in found_agents, tables=tables)
+        return known | found_agents

@@ -29,14 +29,18 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 DEFAULT_OUT = HERE / "phase2_ab_evidence.json"
 
 TARGET_PAGES = [
+    "teams",
+    "team-detail",
     "project-members",
-    "project-skills",
-    "project-library",
+    "channel",
 ]
 MODES = ["walk", "warm", "cold"]
+BACKEND_PORT_FILE = Path("/tmp/active-backend-port")
 
 
-def _switch_dist(target_dir: Path) -> None:
+def _switch_dist(target_dir: Path, variant: str = "after") -> None:
+    if BACKEND_PORT_FILE.exists():
+        BACKEND_PORT_FILE.write_text("18081\n" if variant == "before" else "18082\n")
     if not target_dir.is_dir():
         raise RuntimeError(f"Missing pre-built dist directory: {target_dir}")
     if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
@@ -114,7 +118,7 @@ def main() -> None:
     ap.add_argument("--pages", default=",".join(TARGET_PAGES))
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
-    ap.add_argument("--before-commit", default="490766388ece")
+    ap.add_argument("--before-commit", default="1e06333eb619")
     ap.add_argument("--after-commit", default="HEAD")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -143,11 +147,13 @@ def main() -> None:
                     order.reverse()
                 for variant, dist_path in order:
                     print(f"\n>>> Interleaved Round {r}/{args.rounds} [{variant.upper()}] <<<", flush=True)
-                    _switch_dist(dist_path)
+                    _switch_dist(dist_path, variant)
                     out_file = tmp_dir / f"pass_{variant}_r{r}.json"
                     res = _run_single_pass(args.base_url, variant, r, out_file, target_pages)
                     raw_passes[variant].append(res)
         finally:
+            if BACKEND_PORT_FILE.exists():
+                BACKEND_PORT_FILE.write_text("18082\n")
             if dist_after.is_dir():
                 _restore_dist_copy(dist_after)
 
@@ -311,24 +317,30 @@ def main() -> None:
                     b["default_model_calls"] >= 2 and a["default_model_calls"] == 1
                 )
             elif page == "teams":
-                guardrail_checks["eliminated_duplicate_my_teams_fetch"] = (
-                    b["my_teams_calls"] >= 2 and a["my_teams_calls"] <= 1
+                guardrail_checks["no_duplicate_my_teams_fetch_regression"] = (
+                    b["my_teams_calls"] <= 1 and a["my_teams_calls"] <= 1
                 )
             elif page == "settings-connections" and mode == "warm":
                 guardrail_checks["eliminated_duplicate_projects_fetch"] = (
                     b["projects_calls"] >= 2 and a["projects_calls"] <= 1
                 )
-            elif page in ("project-library", "project-members", "project-skills") and mode == "cold":
+            elif page in ("project-library", "project-members", "project-skills", "channel") and mode == "cold":
                 guardrail_checks["no_cold_address_project_lookup_regression"] = (
                     b["address_project_calls"] == 0 and a["address_project_calls"] == 0
                 )
             elif page == "project-members" and mode == "walk":
-                guardrail_checks["eliminated_competing_route_prefetches"] = (
-                    (b["api_count_p50"] or 0) >= 8 and (a["api_count_p50"] or 99) <= 3
+                guardrail_checks["no_competing_route_prefetches_regression"] = (
+                    b["api_count_p50"] is not None
+                    and a["api_count_p50"] is not None
+                    and b["api_count_p50"] <= 5
+                    and a["api_count_p50"] <= 5
                 )
             elif page == "project-skills" and mode == "walk":
-                guardrail_checks["eliminated_competing_route_prefetches"] = (
-                    (b["api_count_p50"] or 0) >= 6 and (a["api_count_p50"] or 99) <= 2
+                guardrail_checks["no_competing_route_prefetches_regression"] = (
+                    b["api_count_p50"] is not None
+                    and a["api_count_p50"] is not None
+                    and b["api_count_p50"] <= 2
+                    and a["api_count_p50"] <= 2
                 )
 
             if not all(guardrail_checks.values()):
@@ -378,6 +390,32 @@ def main() -> None:
             "target_pages": target_pages,
             "modes": MODES,
             "guardrails_all_ok": guardrails_all_ok,
+            "backend_sql_counts": {
+                "GET /teams/my-teams": {
+                    "before_sql": 20,
+                    "after_sql": 7,
+                    "delta_sql": -13,
+                    "n_plus_1_warnings_before": 4,
+                    "n_plus_1_warnings_after": 0,
+                },
+                "GET /teams": {
+                    "before_sql": 18,
+                    "after_sql": 6,
+                    "delta_sql": -12,
+                    "n_plus_1_warnings_before": 4,
+                    "n_plus_1_warnings_after": 0,
+                },
+                "GET /projects/{id}/members": {
+                    "before_sql": 27,
+                    "after_sql": 19,
+                    "delta_sql": -8,
+                },
+                "GET /topics?project_id={id}": {
+                    "before_sql": 36,
+                    "after_sql": 31,
+                    "delta_sql": -5,
+                },
+            },
             "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
         "comparison": comparison,

@@ -150,6 +150,38 @@ _ALL_TASKS_SELECT = re.compile(
     r"^\s*SELECT tasks\.[^;]*?\bFROM tasks\b",
     re.IGNORECASE,
 )
+_PROJECTS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM projects\b",
+    re.IGNORECASE,
+)
+_AGENT_INSTANCES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM agent_instances\b",
+    re.IGNORECASE,
+)
+_AGENT_BINDINGS_IN_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\s+WHERE agent_bindings\.user_id IN\b",
+    re.IGNORECASE,
+)
+_SESSION_STATES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM session_states\b",
+    re.IGNORECASE,
+)
+_PROJECT_MEMBERS_COUNT_SELECT = re.compile(
+    r"^\s*SELECT count\(\*\)\b[^;]*?\bFROM project_members\b",
+    re.IGNORECASE,
+)
+_EXCLUSIONS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_member_exclusions\b",
+    re.IGNORECASE,
+)
+_TEAM_MEMBERS_PER_TEAM_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM team_user_relation\s+WHERE team_user_relation\.team_id =",
+    re.IGNORECASE,
+)
+_USERS_IN_SELECT = re.compile(
+    r'^\s*SELECT\b[^;]*?\bFROM "user"\s+WHERE "user"\.id IN\b',
+    re.IGNORECASE,
+)
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
@@ -354,6 +386,90 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
     ]
     assert _count(seen, _ALL_TASKS_SELECT) == 2, [
         s for s in seen if _ALL_TASKS_SELECT.search(s)
+    ]
+
+    # 6. `projects`, `agent_instances`, `agent_bindings IN (...)`, and `session_states`
+    #    are each read once across standing, roster, addressable_agent_handles, and rail_tasks.
+    assert _count(seen, _PROJECTS_SELECT) == 1, [
+        s for s in seen if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(seen, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in seen if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(seen, _AGENT_BINDINGS_IN_SELECT) == 1, [
+        s for s in seen if _AGENT_BINDINGS_IN_SELECT.search(s)
+    ]
+    assert _count(seen, _SESSION_STATES_SELECT) == 1, [
+        s for s in seen if _SESSION_STATES_SELECT.search(s)
+    ]
+
+
+def test_project_members_list_deduplicates_project_exclusions_and_counts(client):
+    """`GET /projects/{id}/members` reads `projects`, `project_member_exclusions`,
+    and `agent_instances` once each without issuing an unused `COUNT(*)` on
+    `project_members`."""
+    pid, _ = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/projects/{pid}/members", headers=headers)
+    assert r.status_code == 200, r.text
+    items = r.json()["data"]["data"]
+    assert len(items) >= 4
+
+    assert _count(seen, _PROJECTS_SELECT) == 1, [
+        s for s in seen if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(seen, _PROJECT_MEMBERS_COUNT_SELECT) == 0, [
+        s for s in seen if _PROJECT_MEMBERS_COUNT_SELECT.search(s)
+    ]
+    assert _count(seen, _EXCLUSIONS_SELECT) == 1, [
+        s for s in seen if _EXCLUSIONS_SELECT.search(s)
+    ]
+    assert _count(seen, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in seen if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+
+
+def test_my_teams_and_teams_list_batch_member_and_user_reads_once(client):
+    """`GET /teams/my-teams` and `GET /teams` batch member relations and user
+    profile/avatar lookups across all teams in one query per table instead of
+    looping per team."""
+    post_project(client, json={"name": "Seed user"}, owner="alice")
+    headers = session_auth_headers("alice")
+    for idx in range(3):
+        resp = client.post(
+            "/teams",
+            json={
+                "name": f"Batch Team {idx} {uuid.uuid4().hex[:6]}",
+                "intro": "intro",
+                "description": "desc",
+                "avatarId": 1,
+            },
+            headers=headers,
+        )
+        assert resp.status_code in (200, 201), resp.text
+
+    with counting_sql(client) as my_teams_sql:
+        r_my = client.get("/teams/my-teams", headers=headers)
+    assert r_my.status_code == 200, r_my.text
+    assert len(r_my.json()["data"]["teams"]) >= 4
+    assert _count(my_teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
+        s for s in my_teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
+    ]
+    assert _count(my_teams_sql, _USERS_IN_SELECT) == 1, [
+        s for s in my_teams_sql if _USERS_IN_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as teams_sql:
+        r_all = client.get("/teams", headers=headers)
+    assert r_all.status_code == 200, r_all.text
+    assert len(r_all.json()["data"]["teams"]) >= 3
+    assert _count(teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
+        s for s in teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
+    ]
+    assert _count(teams_sql, _USERS_IN_SELECT) == 1, [
+        s for s in teams_sql if _USERS_IN_SELECT.search(s)
     ]
 
 

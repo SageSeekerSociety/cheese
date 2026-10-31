@@ -306,6 +306,24 @@ class TeamRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_members_of_teams(
+        self, team_ids: Sequence[int]
+    ) -> dict[int, list[TeamUserRelation]]:
+        """Return membership rows grouped by team_id in a single query."""
+        if not team_ids:
+            return {}
+        stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation).where(
+            and_(
+                TeamUserRelation.team_id.in_(list(team_ids)),
+                TeamUserRelation.deleted_at.is_(None),
+            )
+        )
+        result = await self._session.execute(stmt)
+        by_team: dict[int, list[TeamUserRelation]] = {tid: [] for tid in team_ids}
+        for rel in result.scalars().all():
+            by_team.setdefault(rel.team_id, []).append(rel)
+        return by_team
+
     async def get_member_relation(
         self, team_id: int, user_id: int
     ) -> TeamUserRelation | None:
