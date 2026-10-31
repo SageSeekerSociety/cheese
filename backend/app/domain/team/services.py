@@ -329,6 +329,12 @@ class TeamService:
         """Return raw membership records for a team."""
         return await self._repo.list_members_of_team(team_id=team_id)
 
+    async def get_teams_members(
+        self, team_ids: Sequence[int]
+    ) -> dict[int, list[TeamUserRelation]]:
+        """Return raw membership records grouped by team_id in one query."""
+        return await self._repo.list_members_of_teams(team_ids)
+
     async def list_teams_of_user(self, user_id: int) -> list[Team]:
         """Every team ``user_id`` is in, their personal team included."""
         return list(await self._repo.list_teams_of_user(user_id=user_id))

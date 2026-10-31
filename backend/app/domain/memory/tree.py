@@ -94,23 +94,27 @@ class TreeSync:
     unindexed: tuple[str, ...] = ()
 
 
-def prefixes_of(
+def withdrawn_prefixes(
     scopes: dict[str, dict[str, str]], baseline: dict[str, str]
 ) -> set[str]:
-    """这一次对账管哪些作用域。
+    """上一次铺下去、这一次平台没点名的那几个作用域：多半是上一轮那一位的
+    private，这一轮说话的换了人。
 
-    平台点名的那些，加上 baseline 里出现过的那些——上一次铺下去、这一次平台没提
-    的（有人把这棵树关了），也要按同一套规矩收回来，否则会话里留下一个平台不再
-    认的副本，agent 照着它做事。其余前缀的文件一个都不碰：那不是这棵树的东西。
+    它们不在这一次的合并里（`sync_tree` 只合点了名的）：会话把它们原样交回去，
+    由平台替它们的主人按同一条规矩合进数据库（`memory.session.apply_withdrawn`），
+    再从会话目录里拿走。在会话这一侧合，平台这一份不在手上，会话改过的东西只能
+    留在磁盘上等，而这棵树下一次点它的名时会把「和基线一样」读成「平台删了」；
+    留着它，这一轮替别人干活的会话又读得到它。
     """
-    managed = set(scopes)
+    withdrawn: set[str] = set()
     for path in baseline:
         try:
             prefix, _ = _split(path)
         except ValueError:
             continue
-        managed.add(prefix)
-    return managed
+        if prefix not in scopes:
+            withdrawn.add(prefix)
+    return withdrawn
 
 
 def _split(path: str) -> tuple[str, str]:
@@ -135,11 +139,12 @@ def sync_tree(
 ) -> TreeSync:
     """三方合成一份。
 
-    `disk` 只放**受管作用域**里的文件；传进来的其余路径会被忽略（不是这棵树的东
-    西，不碰）。返回的 `files` 同样只含受管作用域。`bases` 是上一次留下的索引底
-    稿（`TreeSync.bases`）；没有它，索引两边都动过时照普通文件处理。
+    只合 `scopes` 点了名的作用域：`disk`、`baseline` 里的其余路径一律忽略，返回
+    的 `files` 和 `baseline` 里也没有它们（没点名的那几棵见 `withdrawn_prefixes`）。
+    `bases` 是上一次留下的索引底稿（`TreeSync.bases`）；没有它，索引两边都动过时
+    照普通文件处理。
     """
-    managed = prefixes_of(scopes, baseline)
+    managed = set(scopes)
     requested: dict[str, str] = {
         f"{prefix}/{name}": content
         for prefix, files in scopes.items()

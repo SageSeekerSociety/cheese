@@ -71,7 +71,7 @@ async def session_records(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     if channel:
         conversations = await rooms_of_inner(db, [place.room_id])
         result = await _channel_page(
@@ -84,6 +84,7 @@ async def session_records(
             search=q,
             turn_id=turn_id,
             limit=limit,
+            reader=actor.handle,
         )
         return JSONResponse(ok(_shaped(result["items"], result["next"], lines)))
     cursor = end = None
@@ -103,6 +104,7 @@ async def session_records(
         author=author,
         search=q,
         limit=limit,
+        reader=actor.handle,
     )
     # Rendered by the json module rather than the response model: a record
     # is whatever the harness wrote, and pydantic gives up on one nested
@@ -136,7 +138,7 @@ def _rows(items: list[dict]) -> list[dict]:
 
 
 async def _channel_page(
-    db, conversations, *, after, before, newest, author, search, turn_id, limit
+    db, conversations, *, after, before, newest, author, search, turn_id, limit, reader
 ):
     def position(token):
         if token is None:
@@ -175,6 +177,7 @@ async def _channel_page(
             search=search,
             turn_id=turn_id,
             limit=limit + 1,
+            reader=reader,
         )
         for item in page.items:
             item["conversation_id"] = str(conversation)
@@ -210,13 +213,17 @@ async def session_record(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     try:
         at, harness, agent, sequence = service.decode_cursor(cursor)
     except ValueError:
         raise NotFoundError(say("cursorEventNotFound")) from None
     result = await service.read(
-        db, place.conversation_id, after=(at, harness, agent, sequence - 1), limit=1
+        db,
+        place.conversation_id,
+        after=(at, harness, agent, sequence - 1),
+        limit=1,
+        reader=actor.handle,
     )
     if not result.items or (
         result.items[0]["at"],

@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.day_windows import utc_now
 from app.domain.usage.compute import SANDBOX, VM
 from app.domain.usage.ledger import (
     _TZ,
@@ -183,7 +184,7 @@ class UsageReport:
             if line is not None:
                 by_line[line] += credits
             by_day[day][line or "all"] += credits
-        today = datetime.now(UTC).astimezone(_TZ).date()
+        today = utc_now().astimezone(_TZ).date()
         days = []
         day = month
         while day < end.date():

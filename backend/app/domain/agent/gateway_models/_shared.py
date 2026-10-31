@@ -32,6 +32,7 @@ from app.domain.agent.gateway_models_helpers import (
     _usage_to_dict,
 )
 from app.domain.agent.models import GatewayAdminAudit
+from app.domain.day_windows import utc_now
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -53,7 +54,7 @@ _WRITE_ERRORS = (GatewayAdminError, BadRequestError, NotFoundError)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return utc_now()
 
 
 def _today(service: pkg.GatewayModelsService) -> date:

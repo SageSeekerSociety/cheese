@@ -37,6 +37,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import RUN_RECORD_EVENTS
+from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,34 @@ async def post_system_event(
         payload = _block_payload(BlockOut.model_validate(block))
         await session.commit()
     return payload
+
+
+async def say_in(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    content: str,
+    turn_id: uuid.UUID,
+    *,
+    meta: dict,
+) -> dict | None:
+    """`post_system_event` for one turn, written in the caller's transaction,
+    so the line lands with whatever the caller decides with it or not at all.
+    The caller commits and publishes the returned payload; None when the
+    conversation is gone."""
+    place = await PlaceResolver(session).conversation(conversation_id)
+    if place is None:
+        return None
+    seat = await _turn_seat(session, turn_id)
+    block = await announce(
+        session,
+        place_id=place.room_id,
+        content=content,
+        meta={**meta, "seat": seat} if seat else meta,
+        turn_id=turn_id,
+        task_id=place.inner_id,
+        published_by_caller=True,
+    )
+    return None if block is None else _block_payload(BlockOut.model_validate(block))
 
 
 async def _keep_run_record(

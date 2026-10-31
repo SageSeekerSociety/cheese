@@ -84,11 +84,7 @@ covers:
 任务命名、旧记忆搬迁、环境准备失败时的「让芝士看看」和记忆整理（dream）都是平台为某个项目做的事，和项目里的其他调用一样记到项目上、扣项目所在团队的额度，团队的用量页把它们算进「协作」。每一行带 `project_id` 和团队，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`environment_diagnosis`、`memory_dream`）。
 
 - 任务命名、旧记忆搬迁和「让芝士看看」各走平台的一把服务 key（各带一份平台设的预算），`cost_usd` 取网关在响应头里给的价格，由 `Ledger.record_project_call` 按项目的付款方写一行并扣额度。
-- 记忆整理是总览房间的一轮会话，整理期间它一直占着总览的轮次锁，所以这段时间里从总览发出的模型调用都是整理的。准入逐个调用认出它们（`llm_proxy._dreams`：调用的凭证指向总览，且项目有一次正在跑、没超过 `CLAIM_TTL` 的整理）：
-  - 走网关的，准入交给它项目的第二把 key（`project.settings["llm_gateway_dream_key"]`，同样由项目付费、同样带项目的预算），一轮结束后当场按 `memory_dream` 结算这把 key 的新增花费（读不到时 20 秒后再读一次）。房间的轮次只结算第一把 key，所以整理期间结束的对话拿不走整理的花费；什么都没收到时写一行 `memory_dream:unmetered`，说明这一轮跑过。
-  - 走订阅的，准入在回答里带上 `supply.kind = "memory_dream"`，计量代理把它写在 `usage.jsonl` 那一行的 `kind` 上，收取时按它记账（`subscription_ingest.LINE_KINDS`，名单外的一律按 `chat`）。
-  - 计量代理按（项目、频道、凭证）缓存准入的回答 30 秒（`CHEESE_ADMISSION_CACHE_S`），所以整理开始和结束前后最多这么久的调用沿用上一个回答。走 `/llm` 转发的 Codex 和 pi 每次都问，没有这段。
-  - 会话自报的用量不计，否则同一批调用会被网关或计量代理和自报各算一次。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
+- 记忆整理的每一份（team 一份，每个有 private 的人一份）都是后端在项目的整理 key（`project.settings["llm_gateway_dream_key"]`，同样由项目付费、同样带项目的预算）上直接发的一次调用。几份都跑完后当场按 `memory_dream` 结算这把 key 的新增花费（读不到时 20 秒后再读一次）；什么都没收到时写一行 `memory_dream:unmetered`，说明这一次跑过。房间的轮次只结算项目的第一把 key，所以拿不走整理的花费。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
 
 ## 三处计量 {#metering}
 

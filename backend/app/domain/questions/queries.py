@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.day_windows import utc_now
 from app.domain.discussion.models import DiscussableModelType, Discussion
 from app.domain.questions.models import (
     Attitude,
@@ -215,7 +216,7 @@ class QuestionQueries:
     async def get_trending_questions(
         self, *, limit: int = 10, days: int = 7
     ) -> list[Question]:
-        cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        cutoff = utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
 
         cutoff = cutoff - timedelta(days=days)
         subq = (

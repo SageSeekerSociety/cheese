@@ -127,7 +127,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
-            kept = await read(session, topic_id)
+            kept = await read(session, topic_id, reader=None)
         stopped = [
             item for item in kept.items if item["record"].get("type") == "result"
         ]

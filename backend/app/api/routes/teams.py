@@ -336,6 +336,37 @@ def _parse_role(role_value: str | None, *, allow_owner: bool = False) -> int:
     return mapped
 
 
+async def _emit_team_models(
+    db,
+    service: TeamService,
+    teams: Sequence[Team],
+    *,
+    current_user_id: int | None = None,
+) -> list[dict]:
+    """Batch-load members and user/profile/avatar maps across all teams in one round."""
+    if not teams:
+        return []
+    if hasattr(service, "get_teams_members"):
+        members_by_team = await service.get_teams_members([t.id for t in teams])
+    else:
+        members_by_team = {
+            t.id: list(await service.get_team_members(team_id=t.id)) for t in teams
+        }
+    all_members = [m for rels in members_by_team.values() for m in rels]
+    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, all_members)
+    return [
+        _team_to_api_model(
+            team,
+            members=members_by_team.get(team.id, []),
+            current_user_id=current_user_id,
+            users_map=users_map,
+            profiles_map=profiles_map,
+            avatars_map=avatars_map,
+        )
+        for team in teams
+    ]
+
+
 @router.get(
     "",
     summary="Get Teams",
@@ -356,19 +387,7 @@ async def get_teams(
     )
     has_more = len(teams) > page_size
     teams_to_emit = teams[:page_size]
-    items: list[dict] = []
-    for team in teams_to_emit:
-        members = list(await service.get_team_members(team_id=team.id))
-        users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-        items.append(
-            _team_to_api_model(
-                team,
-                members=members,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        )
+    items = await _emit_team_models(db, service, teams_to_emit)
     next_start = str(offset + page_size) if has_more else None
     return ok(
         {
@@ -394,24 +413,16 @@ async def get_my_teams(
 ) -> dict:
     # Every user has a personal single-member team (个人 = 单人真团队, v4) — provision
     # it lazily here so it always shows in 我的小队 (first), with its own device page.
-    await service.ensure_personal_team(auth_user.user_id)
     teams = list(await service.get_teams_of_user(user_id=auth_user.user_id))
+    if not any(t.personal_owner_user_id == auth_user.user_id for t in teams):
+        personal = await service.ensure_personal_team(auth_user.user_id)
+        if personal is not None and all(t.id != personal.id for t in teams):
+            teams.append(personal)
     # Personal team first, then the rest by recency (stable for the sidebar).
     teams.sort(key=lambda t: (t.personal_owner_user_id is None, -t.id))
-    items = []
-    for team in teams:
-        members = list(await service.get_team_members(team_id=team.id))
-        users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-        items.append(
-            _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        )
+    items = await _emit_team_models(
+        db, service, teams, current_user_id=auth_user.user_id
+    )
     return ok({"teams": items})
 
 

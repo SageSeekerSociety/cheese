@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, BinaryIO
 
 from app.core import blob_store, raster_images
@@ -33,6 +32,7 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say, size_text
+from app.domain.day_windows import utc_now
 from app.domain.feedback.models import FeedbackAttachment
 from app.domain.library import service as library
 
@@ -162,4 +162,4 @@ async def read_bytes(row: FeedbackAttachment) -> bytes:
 def as_download_name(row: FeedbackAttachment) -> str:
     """下载时给浏览器的文件名。行里存的就是上传时的那个名字（已清洗），这里只补
     一个兜底：名字为空时给个能认出来的。"""
-    return row.name or f"attachment-{datetime.now(UTC).strftime('%Y%m%d')}"
+    return row.name or f"attachment-{utc_now().strftime('%Y%m%d')}"

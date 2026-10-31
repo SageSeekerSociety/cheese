@@ -268,6 +268,10 @@ class TurnLifecycle:
         # 给的会话座位。
         state = self.live.hook_work.get((topic_id, work_id))
         agent = (state.acting_agent if state is not None else None) or agent_handle
+        if active and state is None and await self._interval_closed(work_id):
+            # A session still talking about a turn whose interval was closed
+            # (the sweep stopped it, and said so): it is not running again.
+            return
         if active:
             # A Working event is a session SPEAKING about a turn, not the step
             # that opened it: the mark belongs to that step, after its own await
@@ -287,6 +291,13 @@ class TurnLifecycle:
             naming.nudge(topic_id, "idle")
 
             nudge_messages(self, topic_id)
+
+    async def _interval_closed(self, work_id: uuid.UUID) -> bool:
+        """Whether ``work_id`` has an interval and it is closed. A turn with
+        no interval yet (a session starting one of its own) is not."""
+        async with self._sessions() as session:
+            row = await AgentTurnRepository(session).get(work_id)
+            return row is not None and row.stopped_at is not None
 
     async def _note_reachability(
         self,

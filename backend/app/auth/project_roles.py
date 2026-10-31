@@ -151,6 +151,11 @@ async def is_personal(session: AsyncSession, project: Project) -> bool:
     ) is not None
 
 
+_OWNER_TABLES = frozenset(
+    {"projects", "user", "team_user_relation", "project_members", "team"}
+)
+
+
 async def owner_of(session: AsyncSession, project: Project) -> str | None:
     """Who holds the project: its owner while they are still on its team, else
     the team's owner. A personal project's owner is its team's one person. A
@@ -159,6 +164,20 @@ async def owner_of(session: AsyncSession, project: Project) -> str | None:
     owner = project.owner_handle
     if project.team_id is None:
         return owner
+    if session.autoflush:
+        await session.flush()
+    key = ("owner_of", project.id, owner, project.team_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    resolved = await _resolve_owner_of(session, project, owner)
+    remember(session, key, resolved, tables=_OWNER_TABLES)
+    return resolved
+
+
+async def _resolve_owner_of(
+    session: AsyncSession, project: Project, owner: str | None
+) -> str | None:
     if owner:
         user = await UserRepository(session).get_by_username(owner)
         if (

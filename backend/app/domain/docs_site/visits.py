@@ -31,7 +31,7 @@ day as it was going to be anyway.
 import logging
 import re
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from redis.asyncio import Redis
 from sqlalchemy import delete
@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.day_windows import utc_now
 from app.domain.docs_site.models import DocsVisit
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ def visitor_id(user_id: int | None, visitor: str | None) -> str | None:
 
 
 def _utc_day(at: datetime | None = None) -> date:
-    return (at or datetime.now(UTC)).date()
+    return (at or utc_now()).date()
 
 
 async def record(

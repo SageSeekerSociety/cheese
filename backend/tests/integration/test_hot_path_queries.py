@@ -155,11 +155,12 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     # pays on every tick, so adding one is a deliberate act, not a rounding
     # error — the relative check below would let a constant cost slip through.
     # One of them reads which rooms' sessions their runners declare running
-    # (`session_states`), the board cell's 运行中. Three read which seat each
-    # room's teammate sits in (`addressable_agent_handles`: the rosters, and who
-    # on them is an agent), which a row's phrase names (「{agent}在做」).
-    assert small_count == 34, (
-        f"the topic list cost 34 statements; it now costs {small_count}.\n"
+    # (`session_states`), the board cell's 运行中. One reads which seat each
+    # room's teammate sits in (`addressable_agent_handles`: the room rosters,
+    # while `agents_among` reuses the project roster's cached agent-binding facts),
+    # which a row's phrase names (「{agent}在做」).
+    assert small_count == 29, (
+        f"the topic list cost 29 statements; it now costs {small_count}.\n"
         + "\n".join(small)
     )
 

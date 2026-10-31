@@ -69,17 +69,13 @@ def test_mentioned_message_reads_roster_once(client, project):
     assert message["meta"]["agent_recipient"]["mentioned"] is False
     counts = Counter()
     for sql in sent:
-        for table in ("project_members", "user_profile", "agent_instances"):
+        for table in ("project_members", "user_profile", "own_agents"):
             if table == "user_profile" and "project_members" not in sql:
                 continue  # Profiles joined to the roster, not other profile reads.
-            if table == "agent_instances" and "own_agents" not in sql:
-                continue  # Roster enrichment, not other agent-list reads.
             if re.search(rf"\b(?:FROM|JOIN)\s+{table}\b", sql):
                 counts[table] += 1
     print("SQL_TOTAL", len(sent), "ROSTER_QUERIES", dict(counts))
-    assert counts == dict.fromkeys(
-        ("project_members", "user_profile", "agent_instances"), 1
-    )
+    assert counts == dict.fromkeys(("project_members", "user_profile", "own_agents"), 1)
 
 
 def test_different_teams_and_projects_do_not_share_answers(client, project):

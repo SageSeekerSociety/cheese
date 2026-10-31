@@ -166,6 +166,13 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # The memory consolidation said what it changed, or why it stopped, in
+        # the overview; it is silent now, and old overview lines still say it.
+        "memoryDreamChanged",
+        "memoryDreamRefused",
+        "memoryDreamRefusedDetail",
+        "labelWhichChanged",
+        "labelWhyStopped",
         # A sandbox the disk guard stopped for holding the most of a full disk
         # or more than its budget: each sandbox now has a quota of its own and
         # is refused writes past it, and old room lines still name the stop.
