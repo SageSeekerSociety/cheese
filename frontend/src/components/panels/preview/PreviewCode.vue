@@ -13,13 +13,23 @@
 // 会跟着焦点走掉，那几行不留个记号就看不出这句话对着哪儿。
 //
 // 长行默认横向滚，行号那一列钉在左边；「自动换行」由外面那条文件条切（`wrap`）。
+//
+// 一次只摆一段，底下说清还有多少行、点一下再看一段。这一档的开销都在行上：每行两个
+// 元素，高亮过的行还要多几十个。实测（546 px 面板，CPU 降速到 1/4 模拟中端手机）一整
+// 份 700 KB 的网页源码是 14 866 行、每个滚动帧 134 ms；先摆 1 000 行是 261 ms 出画面、
+// 帧 16.7 ms。后端那两道上限管不住这一档：1 MB 以内的文件整份给 `content`，不截行。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { columnsOf, type VisibleColumns, visibleColumns } from './codeColumns'
 import { type LineRange, lineRangeIn, selectLines } from './codeSelection'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { highlightLines, sourceOfLines } from '@/lib/codeHighlight'
+import { fmtNum } from '@/lib/usageFormat'
+import { highlightLines, sourceOfLines, splitLines } from '@/lib/codeHighlight'
+
+/** 一次摆多少行。见文件头量出来的那几个数：再多，滚动帧就从 16.7 ms 往上走。 */
+const CODE_WINDOW_LINES = 1_000
 
 const props = withDefaults(
   defineProps<{
@@ -37,10 +47,32 @@ const emit = defineEmits<{
   lines: [payload: LineRange & { text: string }]
 }>()
 
+const whole = computed(() => splitLines(props.source))
+const total = computed(() => whole.value.length)
+
+// 已经摆到第几行（含）：点一下「再看一段」就往上加一段，点到头为止。
+const until = ref(CODE_WINDOW_LINES)
+const shown = computed(() => Math.min(until.value, total.value))
+const rest = computed(() => total.value - shown.value)
+
+// 换了正文就从第一段重新开始：上一份看到一半的位置对不上这一份的行号。
+watch(
+  () => props.source,
+  () => {
+    until.value = CODE_WINDOW_LINES
+  }
+)
+
+// 高亮只做摆出来的这一段。切分拿的是整份的前 `shown` 行，所以行号还是这一份的行号。
+const windowOf = computed(() => whole.value.slice(0, shown.value).join('\n'))
 // 空行塞一个零宽字符：没有字的行撑不起行高，也选不中。
-const lines = computed(() => highlightLines(props.source, props.language).map((html) => html || '\u200b'))
+const lines = computed(() => highlightLines(windowOf.value, props.language).map((html) => html || '\u200b'))
 // 行号那一列按最大行号的位数留宽：一千多行的文件和十几行的文件，正文都从同一列起。
-const digits = computed(() => String(lines.value.length).length)
+const digits = computed(() => String(total.value).length)
+
+function showMore() {
+  until.value += CODE_WINDOW_LINES
+}
 
 const root = ref<HTMLElement | null>(null)
 const picked = ref<LineRange | null>(null)
@@ -52,7 +84,7 @@ const columns = ref<VisibleColumns | null>(null)
 /** 这一份里最长的那一行有多少列。缓存住，滚动时不必每帧重算整份正文。 */
 const widest = computed(() => {
   let widest = 0
-  for (const line of props.source.split('\n')) widest = Math.max(widest, columnsOf(line, 4))
+  for (const line of whole.value) widest = Math.max(widest, columnsOf(line, 4))
   return widest
 })
 
@@ -190,6 +222,17 @@ function isPicked(line: number): boolean {
         </div>
       </div>
     </div>
+    <!-- 底下还有没摆出来的行：「这一份有多长」和「现在摆到哪」是两件事，只给「N 行」
+         不说摆了多少，读者会以为滑到底就是文件尾（后端那一道 `too_large` 的说明也是
+         为这个）。点一下多摆一段，摆完这一句自己消失。 -->
+    <div v-if="rest > 0" class="code-view__more" data-testid="code-more">
+      <span class="code-view__more-line">{{
+        t('work.room.preview.codeMore', { shown: fmtNum(shown), total: fmtNum(total) })
+      }}</span>
+      <BaseButton kind="secondary" size="sm" data-testid="code-more-button" @click="showMore">{{
+        t('work.room.preview.codeMoreAction', { rest: fmtNum(rest) })
+      }}</BaseButton>
+    </div>
     <!-- 横滚时读者在哪一段：长行的文件里屏幕上的样子滚到哪儿都一样，没有这个没法说
          出「我在看第几列」。窄面板里字小，它跟着那一档的字号走。 -->
     <div v-if="columns" class="code-view__columns" data-testid="code-columns" aria-live="off">
@@ -207,6 +250,22 @@ function isPicked(line: number): boolean {
   display: flex;
   flex-direction: column;
   container-type: inline-size;
+}
+/* 「底下还有多少行」：和页面源码底下那条截断说明同一个长相，摆在这一格的最下面。 */
+.code-view__more {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--muted);
+  font-size: 12px;
+}
+.code-view__more-line {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 横滚时那一行坐标：钉在底边，不占正文的地方（它只说明现在看的是哪一段）。 */
 .code-view__columns {
