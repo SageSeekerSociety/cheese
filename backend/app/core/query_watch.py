@@ -203,7 +203,7 @@ class RequestWatch:
     the groups mean is decided by ``repeats`` at the end of the request.
     """
 
-    __slots__ = ("closed", "db_s", "groups", "slowest", "statements")
+    __slots__ = ("closed", "db_s", "groups", "last_site", "slowest", "statements")
 
     def __init__(self) -> None:
         self.groups: dict[tuple[tuple[str, ...], str], _Group] = {}
@@ -215,21 +215,22 @@ class RequestWatch:
         #: The slowest few statements as (seconds, innermost call site), longest
         #: first: which line a slow request waited on, without a profiler.
         self.slowest: list[tuple[float, str]] = []
+        self.last_site: tuple[str, ...] = ()
         #: Set when the request is over. A background task that inherited this
         #: watch must not keep appending to a count nobody will report.
         self.closed = False
 
-    def note(
-        self, statement: str, *, stack: Sequence[str] | None = None
-    ) -> tuple[str, ...]:
-        """Record one execution of ``statement`` from ``stack`` (or here), and
-        return the call site it was recorded under."""
+    def note(self, statement: str, *, stack: Sequence[str] | None = None) -> None:
+        """Record one execution of ``statement`` from ``stack`` (or here).
+
+        The call site it was recorded under is left in ``last_site`` for the
+        statement's timing (``took``)."""
         if self.closed:
-            return ()
-        where: tuple[str, ...] = ()
+            return
         try:
             shape = fingerprint_sql(statement)
             where = tuple(stack) if stack is not None else call_site()
+            self.last_site = where
             key = group_key(where, shape)
             group = self.groups.get(key)
             if group is None:
@@ -245,7 +246,6 @@ class RequestWatch:
             # A detector that breaks a request is worse than the query it
             # failed to count. Keep the request, leave a trail for a human.
             logger.debug("query watch could not record a statement", exc_info=True)
-        return where
 
     def took(self, seconds: float, where: tuple[str, ...]) -> None:
         """Count one finished statement's time; keep it if among the slowest."""
@@ -367,9 +367,10 @@ def _on_before_cursor_execute(
 ) -> None:
     watch = _current.get()
     if watch is not None:
-        where = watch.note(statement)
+        watch.last_site = ()
+        watch.note(statement)
         if context is not None:
-            context._cheese_where = where
+            context._cheese_where = watch.last_site
             context._cheese_started = time.perf_counter()
 
 
