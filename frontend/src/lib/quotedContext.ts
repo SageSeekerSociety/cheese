@@ -137,6 +137,8 @@ export type WebElementQuote = Readonly<
     kind: 'web-element'
     selector: string
     tag: string
+    /** 给人读的名字（这一处的标题，或它所在那一节的标题）；老消息里没有。 */
+    label?: string
     text: string
     rect: WebRect
     viewport: WebViewport
@@ -150,6 +152,8 @@ export type WebTextQuote = Readonly<
     kind: 'web-text'
     selector: string
     tag: string
+    /** 给人读的名字（这一处的标题，或它所在那一节的标题）；老消息里没有。 */
+    label?: string
     text: string
     prefix: string
     suffix: string
@@ -279,6 +283,7 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
   // 网页里点中的元素 / 选中的一段文字：选择器和标签是回到页面那一处的凭据。
   if (q.kind === 'web-element' || q.kind === 'web-text') {
     if (!isText(q.selector, 1, 256) || !isText(q.tag, 0, 32)) return false
+    if (q.label !== undefined && !isText(q.label, 0, 80)) return false
     if (!isWebRect(q.rect) || !isWebViewport(q.viewport)) return false
     if (q.kind === 'web-element') return isText(q.text, 0, 500)
     return isText(q.text, 1, 500) && isText(q.prefix, 0, 64) && isText(q.suffix, 0, 64)

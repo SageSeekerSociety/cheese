@@ -839,7 +839,6 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :target="locator"
       :queued-count="queuedCount"
       :pending-elsewhere="pendingElsewhere"
-      :can-queue="!pageLocator.pin.value && !imageRegion.target.value"
       :busy="pageLocator.sending.value || commenting"
       :can-comment="!!commentTarget"
       :can-ask-personal="!!props.askPersonal"

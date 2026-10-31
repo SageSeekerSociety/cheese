@@ -29,6 +29,7 @@ import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 import { useDisplay } from 'vuetify'
 
 import { PREVIEW_MODE } from '@/composables/panelPreview/previewMode'
@@ -226,6 +227,26 @@ watch(
   },
   { immediate: true }
 )
+// 不算窄、但这一行还是放不下（Markdown 多了大纲和看原文，右栏又拖得不宽）：先把右边几颗
+// 按钮收成图标，版本行留着。放回文字的判据是「宽度够放下带字的那一行」，不是「现在不溢出」，
+// 不然收成图标之后不溢出、放回文字又溢出，会来回翻。
+const barRef = ref<HTMLElement | null>(null)
+const tight = ref(false)
+let labeledWidth = 0
+function fitBar() {
+  const bar = barRef.value
+  if (!bar || compact.value) return
+  if (!tight.value) {
+    if (bar.scrollWidth > bar.clientWidth + 1) {
+      labeledWidth = bar.scrollWidth
+      tight.value = true
+    }
+  } else if (bar.clientWidth >= labeledWidth) {
+    tight.value = false
+    void nextTick(fitBar)
+  }
+}
+useResizeObserver(barRef, fitBar)
 /** 窄处的 Word 网页版按屏宽重排：页宽、页边距、分页都拿掉，字号照原文。 */
 const reflow = computed(() => compact.value && props.documentSuffix === 'docx')
 
@@ -433,6 +454,8 @@ const actions = computed<DocAction[]>(() => {
   })
   return list
 })
+// 按钮换了（看原文 ↔ 网页视图）宽度跟着变，重新量一次。
+watch(actions, () => void nextTick(fitBar))
 
 /** 这一页此刻长什么样：钉一处时随行带上（`usePreviewLocator` 借它）。
  *
@@ -449,7 +472,7 @@ defineExpose({ snapshot, clearMark })
 
 <template>
   <div v-if="documentType && previewFile" ref="docRef" class="doc">
-    <div class="doc__bar">
+    <div ref="barRef" class="doc__bar">
       <v-icon size="16" class="doc__icon">{{ documentType.icon }}</v-icon>
       <span v-if="!namedTab" class="doc__name">{{ documentName }}</span>
       <span class="doc__type t-meta">{{ documentType.label }}</span>
@@ -530,14 +553,16 @@ defineExpose({ snapshot, clearMark })
           :key="action.key"
           kind="ghost"
           size="sm"
-          :prepend-icon="action.icon"
-          :title="action.title"
+          :icon="tight ? action.icon : undefined"
+          :prepend-icon="tight ? undefined : action.icon"
+          :title="action.title ?? (tight ? action.label : undefined)"
+          :aria-label="tight ? action.label : undefined"
           :disabled="action.disabled"
           :active="action.active"
           :data-testid="action.testid"
           @click="action.run()"
         >
-          {{ action.label }}
+          <template v-if="!tight">{{ action.label }}</template>
         </BaseButton>
       </template>
     </div>
