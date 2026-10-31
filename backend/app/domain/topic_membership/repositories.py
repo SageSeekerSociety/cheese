@@ -5,7 +5,10 @@ import uuid
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.topic.models import TopicMembership, TopicRole
+
+_TOPIC_MEMBER_TABLES = frozenset({"topic_memberships"})
 
 
 class TopicMembershipRepository:
@@ -56,7 +59,20 @@ class TopicMembershipRepository:
             .where(TopicMembership.topic_id.in_(topic_ids))
             .order_by(TopicMembership.created_at.asc())
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        by_topic: dict[uuid.UUID, list[tuple[str, TopicRole]]] = {
+            tid: [] for tid in topic_ids
+        }
+        for row in rows:
+            by_topic.setdefault(row.topic_id, []).append((row.member_handle, row.role))
+        for tid, pairs in by_topic.items():
+            remember(
+                self._session,
+                ("topic_member_pairs", tid),
+                tuple(pairs),
+                tables=_TOPIC_MEMBER_TABLES,
+            )
+        return rows
 
     async def topic_ids_for_member(
         self,
@@ -74,13 +90,46 @@ class TopicMembershipRepository:
         """
         if not topic_ids:
             return set()
+        if self._session.autoflush:
+            await self._session.flush()
+        matched: set[uuid.UUID] = set()
+        missing: list[uuid.UUID] = []
+        for tid in dict.fromkeys(topic_ids):
+            found, pairs = recall(self._session, ("topic_member_pairs", tid))
+            if found:
+                if any(
+                    h == member_handle and (roles is None or r in roles)
+                    for h, r in pairs
+                ):
+                    matched.add(tid)
+                continue
+            found_role, member_role = recall(
+                self._session, ("topic_member_role", tid, member_handle)
+            )
+            if found_role:
+                if member_role is not None and (roles is None or member_role in roles):
+                    matched.add(tid)
+                continue
+            missing.append(tid)
+        if not missing:
+            return matched
         stmt = select(TopicMembership.topic_id).where(
-            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.topic_id.in_(missing),
             TopicMembership.member_handle == member_handle,
         )
         if roles is not None:
             stmt = stmt.where(TopicMembership.role.in_(roles))
-        return set((await self._session.scalars(stmt)).all())
+        found_ids = set((await self._session.scalars(stmt)).all())
+        if roles is None:
+            for tid in missing:
+                if tid not in found_ids:
+                    remember(
+                        self._session,
+                        ("topic_member_role", tid, member_handle),
+                        None,
+                        tables=_TOPIC_MEMBER_TABLES,
+                    )
+        return matched | found_ids
 
     async def roles_for_member(
         self, topic_ids: list[uuid.UUID], member_handle: str
@@ -89,22 +138,67 @@ class TopicMembershipRepository:
         Topics the handle is not in simply do not appear in the result."""
         if not topic_ids:
             return {}
+        if self._session.autoflush:
+            await self._session.flush()
+        out: dict[uuid.UUID, TopicRole] = {}
+        missing: list[uuid.UUID] = []
+        for tid in dict.fromkeys(topic_ids):
+            found_role, cached_role = recall(
+                self._session, ("topic_member_role", tid, member_handle)
+            )
+            if found_role:
+                if cached_role is not None:
+                    out[tid] = cached_role
+                continue
+            found_pairs, pairs = recall(self._session, ("topic_member_pairs", tid))
+            if found_pairs:
+                role = next((r for h, r in pairs if h == member_handle), None)
+                if role is not None:
+                    out[tid] = role
+                continue
+            missing.append(tid)
+        if not missing:
+            return out
         stmt = select(TopicMembership.topic_id, TopicMembership.role).where(
-            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.topic_id.in_(missing),
             TopicMembership.member_handle == member_handle,
         )
         rows = (await self._session.execute(stmt)).all()
-        return {topic_id: role for topic_id, role in rows}
+        fetched = {topic_id: role for topic_id, role in rows}
+        for tid in missing:
+            role = fetched.get(tid)
+            if role is not None:
+                out[tid] = role
+            remember(
+                self._session,
+                ("topic_member_role", tid, member_handle),
+                role,
+                tables=_TOPIC_MEMBER_TABLES,
+            )
+        return out
 
     async def topics_with_owner(self, topic_ids: list[uuid.UUID]) -> set[uuid.UUID]:
         """Which of these topics have an explicit ``owner`` seat."""
         if not topic_ids:
             return set()
+        if self._session.autoflush:
+            await self._session.flush()
+        owned: set[uuid.UUID] = set()
+        missing: list[uuid.UUID] = []
+        for tid in dict.fromkeys(topic_ids):
+            found, pairs = recall(self._session, ("topic_member_pairs", tid))
+            if found:
+                if any(r == TopicRole.owner for _, r in pairs):
+                    owned.add(tid)
+            else:
+                missing.append(tid)
+        if not missing:
+            return owned
         stmt = select(TopicMembership.topic_id).where(
-            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.topic_id.in_(missing),
             TopicMembership.role == TopicRole.owner,
         )
-        return set((await self._session.scalars(stmt)).all())
+        return owned | set((await self._session.scalars(stmt)).all())
 
     async def counts_for_topics(
         self, topic_ids: list[uuid.UUID]
@@ -112,12 +206,27 @@ class TopicMembershipRepository:
         """How many seats each of these topics has, in one read."""
         if not topic_ids:
             return {}
+        if self._session.autoflush:
+            await self._session.flush()
+        counts: dict[uuid.UUID, int] = {}
+        missing: list[uuid.UUID] = []
+        for tid in dict.fromkeys(topic_ids):
+            found, pairs = recall(self._session, ("topic_member_pairs", tid))
+            if found:
+                if pairs:
+                    counts[tid] = len(pairs)
+            else:
+                missing.append(tid)
+        if not missing:
+            return counts
         stmt = (
             select(TopicMembership.topic_id, func.count())
-            .where(TopicMembership.topic_id.in_(topic_ids))
+            .where(TopicMembership.topic_id.in_(missing))
             .group_by(TopicMembership.topic_id)
         )
-        return {t: n for t, n in (await self._session.execute(stmt)).all()}
+        for t, n in (await self._session.execute(stmt)).all():
+            counts[t] = n
+        return counts
 
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
         stmt = (

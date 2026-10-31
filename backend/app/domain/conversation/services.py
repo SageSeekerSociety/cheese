@@ -87,13 +87,24 @@ async def is_inner(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
     return kind in (ConversationKind.task, ConversationKind.thread)
 
 
+_ROOM_OF_TABLES = frozenset({"topics", "tasks", "threads"})
+
+
 async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
     """The room a conversation is in: itself for a room, its room for a task
     or a 支线."""
+    if session.autoflush:
+        await session.flush()
+    key = ("room_of", conversation_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
     room = await session.scalar(
         select(_inside.c.room_id).where(_inside.c.id == conversation_id)
     )
-    return room or conversation_id
+    resolved = room or conversation_id
+    remember(session, key, resolved, tables=_ROOM_OF_TABLES)
+    return resolved
 
 
 async def rooms_of(

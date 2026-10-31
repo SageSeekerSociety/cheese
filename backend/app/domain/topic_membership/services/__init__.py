@@ -211,7 +211,9 @@ class TopicMemberService:
     ) -> dict[uuid.UUID, int]:
         """How many people and AI teammates are in each of these channels:
         their seats, and for 综合 everyone in the project."""
-        counts = await self._repo.counts_for_topics([t.id for t in topics])
+        counts = await self._repo.counts_for_topics(
+            [t.id for t in topics if t.kind != TopicKind.root]
+        )
         roots = [t for t in topics if t.kind == TopicKind.root]
         if roots:
             # deferred-import: cycle membership.roster -> topic_membership.services

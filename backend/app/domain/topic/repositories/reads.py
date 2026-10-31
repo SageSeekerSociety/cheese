@@ -21,6 +21,7 @@ from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.request_facts import recall, remember
 from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat
 from app.domain.topic.repositories.statements import (
     _last_activity,
@@ -38,16 +39,47 @@ if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
 
 
+_TOPIC_ROW_TABLES = frozenset({"topics"})
+
+
 async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
-    return await repo._session.get(Topic, topic_id)
+    if repo._session.autoflush:
+        await repo._session.flush()
+    key = ("topic_row", topic_id)
+    found, cached = recall(repo._session, key)
+    if found:
+        return cached
+    topic = await repo._session.get(Topic, topic_id)
+    remember(repo._session, key, topic, tables=_TOPIC_ROW_TABLES)
+    return topic
 
 
 async def get_many(repo: pkg.TopicRepository, topic_ids: set[uuid.UUID]) -> list[Topic]:
     if not topic_ids:
         return []
-    return list(
-        await repo._session.scalars(select(Topic).where(Topic.id.in_(topic_ids)))
+    if repo._session.autoflush:
+        await repo._session.flush()
+    known: list[Topic] = []
+    missing: list[uuid.UUID] = []
+    for tid in topic_ids:
+        found, cached = recall(repo._session, ("topic_row", tid))
+        if found:
+            if cached is not None:
+                known.append(cached)
+        else:
+            missing.append(tid)
+    if not missing:
+        return known
+    rows = list(
+        await repo._session.scalars(select(Topic).where(Topic.id.in_(missing)))
     )
+    fetched = {t.id: t for t in rows}
+    for tid in missing:
+        t = fetched.get(tid)
+        if t is not None:
+            known.append(t)
+        remember(repo._session, ("topic_row", tid), t, tables=_TOPIC_ROW_TABLES)
+    return known
 
 
 async def list_for_project(
@@ -75,7 +107,10 @@ async def list_for_project(
         active_since=active_since,
         seen=None if only_seen_by is None else seen_by(only_seen_by),
     )
-    return list((await repo._session.scalars(stmt)).all())
+    rows = list((await repo._session.scalars(stmt)).all())
+    for row in rows:
+        remember(repo._session, ("topic_row", row.id), row, tables=_TOPIC_ROW_TABLES)
+    return rows
 
 
 async def ids_for_project(
