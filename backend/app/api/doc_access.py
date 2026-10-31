@@ -43,7 +43,12 @@ from app.domain.project.models import Project
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
 from app.domain.project_permissions import Permission
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import Place, place_or_404, require_doc_writable
+from app.domain.room_task.place import (
+    Place,
+    PlaceResolver,
+    place_or_404,
+    require_doc_writable,
+)
 from app.domain.room_task.services import TaskService
 from app.domain.task import teaching
 from app.domain.team import permissions as team_seats
@@ -80,14 +85,25 @@ async def reach(
     doc = await Documents(db).get(document_id)
     if doc is None:
         raise NotFoundError(say("docNotFound"))
-    task = await TaskService(db).of_document(doc.id)
+    task = (
+        await TaskService(db).of_document(doc.id)
+        if doc.number is None and doc.room_id is None and doc.project_id is not None
+        else None
+    )
     if task is not None:
-        place = await place_or_404(db, task.id)
+        room_place = await PlaceResolver(db).resolve(task.room_id)
+        if room_place is None:
+            raise NotFoundError(say("topicNotFound"))
+        place = Place(room=room_place.room, task=task)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
         await resolver.authorize_topic(
-            actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
+            actor,
+            project_id=place.project_id,
+            topic_id=place.room_id,
+            room=place.room,
+            enforce=enforce,
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
     if doc.room_id is not None and doc.kept_at is None:
@@ -97,7 +113,11 @@ async def reach(
         # the room is what decides who reads the document.
         actor = await resolver.resolve(project_id=place.project_id)
         await resolver.authorize_topic(
-            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+            actor,
+            project_id=place.project_id,
+            topic_id=place.room_id,
+            room=place.room,
+            enforce=True,
         )
         return Reached(doc, actor, place, None, resolver.credential_conversation())
     if doc.project_id is None:

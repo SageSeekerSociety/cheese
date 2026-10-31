@@ -48,6 +48,7 @@ from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 from app.domain.event_author import AuthorType
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -97,10 +98,12 @@ async def edit_block(
     actor = await resolver.resolve(
         topic_id=block.conversation_id, project_id=block.project_id
     )
+    room_id = await room_of(db, block.conversation_id)
+    await TopicMemberService(db).list_for_topic(room_id)
     await resolver.authorize_topic(
         actor,
         project_id=block.project_id,
-        topic_id=await room_of(db, block.conversation_id),
+        topic_id=room_id,
         enforce=True,
     )
     payload = await edit_message(

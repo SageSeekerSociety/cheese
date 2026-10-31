@@ -100,7 +100,10 @@ async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
         reviewer=reviewers[0] if reviewers else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
-    out["from_thread"] = task.id in await from_threads(db, [task.id])
+    out["from_thread"] = (
+        task.upgraded_from_block_id is not None
+        and task.id in await from_threads(db, [task.id])
+    )
     return out
 
 
@@ -198,7 +201,9 @@ async def task_rows(
     choices = catalog(project.settings if project else None)
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
-    in_place = await from_threads(db, thread_ids)
+    in_place = await from_threads(
+        db, [t.id for t, _ in threads if t.upgraded_from_block_id is not None]
+    )
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:

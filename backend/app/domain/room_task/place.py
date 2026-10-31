@@ -108,6 +108,32 @@ class PlaceResolver:
             )
         return Place(room=room) if room is not None else None
 
+    async def task_place(self, task_id: uuid.UUID) -> Place | None:
+        """The task ``task_id`` names and its room, without probing ``topics``
+        or ``threads`` for ``task_id`` first."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_task, cached_task = recall(self._session, ("task_row", task_id))
+            if found_task:
+                task = cached_task
+            else:
+                task = await self._session.get(Task, task_id)
+                remember(
+                    self._session,
+                    ("task_row", task_id),
+                    task,
+                    tables=frozenset({"tasks"}),
+                )
+        else:
+            task = await self._session.get(Task, task_id)
+        if task is None:
+            return None
+        room_place = await self.resolve(task.room_id)
+        return (
+            Place(room=room_place.room, task=task) if room_place is not None else None
+        )
+
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
         a 支线's. A 支线 that became a task shares its id and is the task."""
