@@ -17,7 +17,9 @@ from typing import Any
 from sqlalchemy import func
 
 
-def utc_day_window(days: int) -> tuple[datetime, datetime, list[date]]:
+def utc_day_window(
+    days: int, now: datetime | None = None
+) -> tuple[datetime, datetime, list[date]]:
     """最近 `days` 天（**含今天**）的窗口：``[since, until)`` 与逐日的桶。
 
     窗口是**半开**的（`>= since AND < until`），不是「只判下界」：只判下界的话，
@@ -26,8 +28,13 @@ def utc_day_window(days: int) -> tuple[datetime, datetime, list[date]]:
 
     返回的日期列表**最早的一天在前**，长度恒等于 `days` —— 调用方按它补 0，不自己
     数有数据的那些天。
+
+    「今天」是 `now` 所在的那个 UTC 日（不传就是此刻）。手里已经有一个 `now` 的调用方
+    要把它传进来：窗口和同一次计算里别的「此刻」各读一次时钟，两次之间跨过 UTC 午夜
+    时，窗口落在新的一天，而其余部分还在旧的一天。
     """
-    today = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    today = (now or datetime.now(UTC)).astimezone(UTC)
+    today = today.replace(hour=0, minute=0, second=0, microsecond=0)
     since = today - timedelta(days=days - 1)
     until = since + timedelta(days=days)
     buckets = [(since + timedelta(days=i)).date() for i in range(days)]

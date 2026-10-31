@@ -131,8 +131,9 @@ class Window:
     days: list[date]
 
 
-def window(days: int) -> Window:
-    since, until, buckets = utc_day_window(days)
+def window(days: int, now: datetime | None = None) -> Window:
+    """The last ``days`` whole UTC days up to the day ``now`` falls on."""
+    since, until, buckets = utc_day_window(days, now or datetime.now(UTC))
     return Window(since, until, buckets)
 
 
@@ -272,7 +273,7 @@ async def build_board(
     session: AsyncSession, repo: str, *, days: int, now: datetime | None = None
 ) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    w = window(days)
+    w = window(days, now)
     sampled_until = min(now, w.until)
 
     # --- runners: wait, busy time, per machine, concurrency -------------------
