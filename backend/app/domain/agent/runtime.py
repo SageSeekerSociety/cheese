@@ -23,6 +23,7 @@ from datetime import datetime
 from sqlalchemy import select
 
 from app.core.errors import AppError
+from app.core.process_role import refuse_on_api_pool
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
 from app.domain.addressing import Addressed, addressed_to_agent
@@ -396,6 +397,7 @@ class AgentWorkRunner:
         ``turn_id`` 可以由调用点先分配：有些调用点要在这一轮还没开始之前，就把它的
         id 写进自己那条记录里（环境修复把它写进事故 meta，之后靠 `turn_pending` 判断
         这一轮是不是还在排队）。不传就当场分配一个。"""
+        refuse_on_api_pool("start a turn")
         turn_id = turn_id or uuid.uuid4()
         work = self._intake._run(
             chat_service,
@@ -442,6 +444,7 @@ class AgentWorkRunner:
         by_assistant: bool = False,
         expects_agent: bool = False,
     ) -> uuid.UUID:
+        refuse_on_api_pool("take in a message for a turn")
         return await self._intake.receive_message(
             chat_service,
             topic_id,
