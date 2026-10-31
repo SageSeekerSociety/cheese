@@ -493,12 +493,14 @@ class AgentInstanceService:
         here (``living_doc.repositories.set_content`` takes the same stand).
         """
         await self._validate_model(instance.project_id, config, instance.id)
+        dumped = config.model_dump()
+        now = datetime.now(UTC)
         if expected_version is None:
-            instance.configuration = config.model_dump()
+            instance.configuration = dumped
             # The attribute, not the SQL expression below: assigning the
             # expression here would put a BinaryExpression where an int lives.
             instance.version = instance.version + 1
-            instance.updated_at = datetime.now(UTC)
+            instance.updated_at = now
             return
         written = await self._session.scalar(
             update(AgentInstance)
@@ -507,9 +509,9 @@ class AgentInstanceService:
                 AgentInstance.version == expected_version,
             )
             .values(
-                configuration=config.model_dump(),
+                configuration=dumped,
                 version=AgentInstance.version + 1,
-                updated_at=datetime.now(UTC),
+                updated_at=now,
             )
             .returning(AgentInstance.id)
         )
@@ -520,7 +522,9 @@ class AgentInstanceService:
             raise ConflictError(
                 say("agentSkillsStale"), data={"version": instance.version}
             )
-        await self._session.refresh(instance)
+        instance.configuration = dumped
+        instance.version = expected_version + 1
+        instance.updated_at = now
 
     async def append_to_persona(self, instance: AgentInstance, text: str) -> None:
         """Add a paragraph to the end of this teammate's persona (``body``):
@@ -635,7 +639,7 @@ class AgentInstanceService:
             raise ValidationError(say("teammateInactiveNoDefault"))
         project.default_agent_instance_id = instance.id
         await self._session.flush()
-        return await self.for_project(project)
+        return self.resolved(instance)
 
     async def materialize_default(
         self, project: Project, *, display_name: str | None = None

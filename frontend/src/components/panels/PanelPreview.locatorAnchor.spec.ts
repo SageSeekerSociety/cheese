@@ -199,6 +199,8 @@ it('「加入待发」把这一处加进话题页那一份待发篮，不是本�
   expect(note.where).toBeTruthy()
   expect(note.text).toBe('这里改成三段')
   expect(note.message).toContain('这里改成三段')
+  expect(note.message).not.toContain('上文「')
+  expect(note.message).not.toContain('下文「')
   // 面板底下照旧留一条计数（原型里那一条和输入框上方那一篮同时在）；那两个按钮不在
   // 这儿——同一批批注画两遍按钮，读者会以为进了两个地方。
   const strip = ui.container.querySelector('.locator__queue')

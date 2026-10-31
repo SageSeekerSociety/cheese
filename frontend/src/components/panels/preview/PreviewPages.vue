@@ -24,6 +24,7 @@ import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { KEPT_SELECTION } from './keptSelection'
 import { contextAround } from './markdownQuote'
+import { headingsOf, type MeasureRow, rowsInLayer, sectionAt } from './pageSections'
 import { useSelectionHighlight } from './selectionHighlight'
 import { pageRatio } from './slidesContext'
 import { type LineNode, linesFrom, rangeOf, type TextLine } from './textLines'
@@ -551,6 +552,14 @@ function onSelect() {
       context: { ...props.context },
       ...(inOneLayer && textLayer ? contextAround(textLayer, range) : {}),
       ...spot,
+      section: sectionOf(
+        page,
+        (() => {
+          const selBox = rect.height > 0 ? rect : startEl?.getBoundingClientRect()
+          const origin = canvasBox && canvasBox.width > 0 ? canvasBox : (host as HTMLElement).getBoundingClientRect()
+          return selBox && selBox.height > 0 ? selBox.top - origin.top : null
+        })()
+      ),
     })
     return
   }
@@ -595,6 +604,41 @@ function firstBoxed(
     if (box) return box
   }
   return null
+}
+
+/** 这一处属于哪一节：整份文档的标题先数一遍，再取它之前最近的那一个。
+ *
+ *  每次选字都重数一遍整份文档，是因为标题只认**读得到的页**：读者还没翻到的那几页，
+ *  文字层根本没画出来，数不出东西来。于是同一处的位置可能随着翻页从「有章节」变成
+ *  更准的「有章节」——但不会从一个对的说成另一个对的，只会在还没有信息时少写一句。
+ *  量不出来（页还没画、或者这一处不在页上）就返回空串，卡上只写页码。 */
+function sectionOf(page: number, top: number | null): string {
+  const rows: MeasureRow[][] = []
+  const rendered = new Set<number>()
+  pages.value.forEach((slot, idx) => {
+    const root = slot.el ?? slot.host
+    const layers = root ? Array.from(root.querySelectorAll<HTMLElement>('.pv-text')) : []
+    if (!root || !layers.length) {
+      rows.push([])
+      return
+    }
+    rendered.add(idx + 1)
+    // 原点是画布左上角（和画序号用的是同一个坐标）。画布量不出来时退回这一页的框——
+    // 量的环境没有布局（单测）里画布是零尺寸，但那几行字自己带着摆好的位置。
+    const canvas = root.querySelector('canvas')?.getBoundingClientRect()
+    const box = canvas && canvas.width > 0 ? canvas : root.getBoundingClientRect()
+    rows.push(layers.flatMap((layer) => rowsInLayer(layer, box)))
+  })
+  if (!rendered.has(page)) return ''
+  const headings = headingsOf(rows)
+  if (!headings.length) return ''
+  let minPage = page
+  while (minPage > 1 && rendered.has(minPage - 1)) minPage -= 1
+  const reachable = headings.filter((h) => h.page >= minPage && h.page <= page)
+  if (!reachable.length) return ''
+  // 量不到这一处的竖直位置时用这一页的底：宁可指到这一页靠后的那一节，也不指到更早的。
+  const at = top ?? Number.POSITIVE_INFINITY
+  return sectionAt(reachable, page, at)
 }
 
 /** 这一页现在能读到的行。文字层还没画出来时是空的（这一页还没进视野）。 */

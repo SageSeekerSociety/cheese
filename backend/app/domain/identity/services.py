@@ -71,21 +71,23 @@ class IdentityService:
         """Idempotently ensure an agent user row + its platform binding + its
         display profile exist. Safe to call at every startup, from the migration
         and on every turn — never duplicates."""
+        created = False
         user = await self._users.get_by_handle(handle)
         if user is None:
             try:
                 user = await self._create_agent_user(handle=handle)
+                created = True
             except IntegrityError:
                 # Two first turns raced; the other one's row is the agent.
                 user = await self._users.get_by_handle(handle)
                 if user is None:
                     raise
-        if await self._bindings.get_for_user(user.id) is None:
+        if created or await self._bindings.get_for_user(user.id) is None:
             await self._bindings.add(user_id=user.id, kind=AgentBindingKind.platform)
         # The display name lives on the profile (the User row only carries the
         # handle). Without it every agent would render as its raw
         # ``cheese-<hex>`` handle instead of 芝士 — identity forks, display does not.
-        if await self._profiles.get_profile_by_user_id(user.id) is None:
+        if created or await self._profiles.get_profile_by_user_id(user.id) is None:
             try:
                 await self._profiles.create_profile(
                     user_id=user.id, nickname=name, intro="", avatar_id=1

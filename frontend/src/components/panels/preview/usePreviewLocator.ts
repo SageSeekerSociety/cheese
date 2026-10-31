@@ -20,6 +20,7 @@ import type { SlidePageContext } from './slidesContext'
 
 import { computed, inject, ref, watch } from 'vue'
 
+import { pageLabel } from './pageLabel'
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
 import { usePreviewPick } from './usePreviewPick'
@@ -137,7 +138,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
 
   function onPageContext(payload: SlidePageContext) {
     if (!pageLocator.canUse(payload.context)) return
-    const page = t('work.room.preview.page', { page: payload.page })
+    // 位置写成「第 2 页 · 报名截止」：原型就是这么写的（`第 1 页 · 二、时间安排`）。
+    // 一页里的节比页码细一档，而同一句话在同一份文档里出现好几处是常事，那句话本身还
+    // 可能被改掉——节名才是能分辨「说的是哪一节」的那个东西。认不出节就只写页码。
+    const page = pageLabel(payload.page, payload.section)
     openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : firstCodePoints(payload.text, 200), page)
     quoted.page.value = { ...payload, context: { ...payload.context } }
   }
@@ -211,6 +215,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function onCodeLines(payload: { start: number; end: number; text: string }) {
     const where = codeLinesLabel(payload.start, payload.end)
     openLocator(where, firstCodePoints(payload.text, 200), where)
+    quoted.range({ text: firstCodePoints(payload.text, 500), heading: where, prefix: '', suffix: '' })
   }
 
   function onVideoLocate(payload: { seconds: number; timestamp: string }) {
@@ -291,7 +296,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     if (sharedPending) {
       // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
       //（卡上的「加入待发」也只在去处是芝士时出现）。
-      sharedPending.add(pendingNoteFor(target, note, message))
+      sharedPending.add(pendingNoteFor(target, note))
       clearLocator()
       return
     }
@@ -309,16 +314,22 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   }
 
   function pendingNoteFor(
-    target: { label: string; quote: string },
-    note: string,
-    message: string
+    target: { label: string; quote: string; address?: string },
+    note: string
   ): Omit<PendingNote, 'id'> {
+    const compactQuote = firstCodePoints(target.quote.replace(/\s+/g, ' ').trim(), 60)
+    const compactMessage = t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address || target.label,
+      quote: compactQuote,
+      note,
+    })
     return {
       ...pendingNoteBase(),
       where: target.label,
       quote: target.quote,
       text: note,
-      message,
+      message: compactMessage,
       anchor: pendingAnchor(),
     }
   }
@@ -334,7 +345,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       const target = locator.value
       const note = locatorNote.value.trim()
       if (target && note && !pageLocator.pin.value) {
-        sharedPending.add(pendingNoteFor(target, note, formatLocateMessage(target, note)))
+        sharedPending.add(pendingNoteFor(target, note))
         clearLocator()
       }
       sharedPending.send('')
@@ -426,6 +437,30 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     }
     if (props.topicId !== topicId) return
     annotateError.value = ''
+    if (
+      identity.version &&
+      props.submitQuestion?.({
+        intent: 'ask-agent',
+        topicId,
+        content: payload.note,
+        attachments: [attachment],
+        quotedContext: {
+          kind: 'image-region',
+          path: identity.path,
+          source: identity.source,
+          version: identity.version,
+          task_id: identity.taskId ?? null,
+          x: 0,
+          y: 0,
+          width: payload.naturalWidth,
+          height: payload.naturalHeight,
+          natural_width: payload.naturalWidth,
+          natural_height: payload.naturalHeight,
+        },
+      })
+    ) {
+      return
+    }
     deps.onLocate({
       message: t('design.sketchMessage', {
         ...identity,
