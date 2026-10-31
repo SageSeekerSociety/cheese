@@ -23,6 +23,8 @@ vi.mock('../../api', async (importOriginal) => {
     previewFileBytes: vi.fn(),
     attachmentImageUrl: vi.fn(),
     uploadAttachment: vi.fn(),
+    // 图片顶上那一条也读版本清单（第几版、谁改的）。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
