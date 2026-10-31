@@ -2,9 +2,11 @@
 
 The session runs on the session host and its file tools run on the executor,
 the machine that holds the project. The memory tree is neither the project's
-nor the machine's: it is the session's own, in the session's home on the
+nor the machine's: it is the seat's own, in the seat's directory on the
 session host, where the runner lays the platform's copy down and collects
-what changed (`runner.sync_memory`). So a Write or Edit of a memory has to
+what changed (`runner.sync_memory`). The room's seats share the room's home,
+and two of them can work for two people at once, so each seat's session
+reaches its own tree and no other. So a Write or Edit of a memory has to
 stay on the session host, however the agent spells the path: as the prompt
 names it (`~/.cheese/memory/...`), or with the home its shell reports, which
 is the executor's.
@@ -73,12 +75,18 @@ class Executor:
         return "/executor/project"
 
 
-def _session_writes(tmp_path, monkeypatch, actions) -> Path:
-    """Run one session whose model makes ``actions``; return its home."""
+def _seat(home: Path, seat: str) -> Path:
+    """Where one seat's session keeps its own files in the room's home."""
+    return home / ".cheese/seats" / seat / "remote-session"
+
+
+def _session_writes(tmp_path, monkeypatch, actions, seat: str = "cheese") -> Path:
+    """Run one ``seat``'s session whose model makes ``actions``; return the
+    room's home."""
     home = tmp_path / "owner/.cheese/home/project/room"
-    config = home / ".claude"
+    config = home / ".claude" / seat
     config.mkdir(parents=True)
-    directory = home / ".cheese/remote-session"
+    directory = _seat(home, seat)
     forwarded = directory / "forwarded-project"
     forwarded.mkdir(parents=True)
     monkeypatch.setattr(
@@ -154,9 +162,12 @@ def _session_writes(tmp_path, monkeypatch, actions) -> Path:
     return home
 
 
-def _reconciled(home: Path, monkeypatch, scopes: dict) -> dict:
-    """What the runner's next reconciliation collects from that home."""
+def _reconciled(home: Path, monkeypatch, scopes: dict, seat: str = "cheese") -> dict:
+    """What ``seat``'s runner's next reconciliation collects in that home."""
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv(
+        "CHEESE_EXECUTION_CONFIG", str(_seat(home, seat) / "execution.json")
+    )
     runner = object.__new__(Runner)
     runner.launch = "test"
     return runner.sync_memory({"scopes": scopes})["files"]
@@ -222,10 +233,7 @@ def test_what_the_platform_lays_down_is_what_the_agent_reads(tmp_path, monkeypat
         return None
 
     home = tmp_path / "owner/.cheese/home/project/room"
-    monkeypatch.setenv("HOME", str(home))
-    runner = object.__new__(Runner)
-    runner.launch = "test"
-    runner.sync_memory({"scopes": {"team": {"answer-first.md": _TEAM}}})
+    _reconciled(home, monkeypatch, {"team": {"answer-first.md": _TEAM}})
     _session_writes(
         tmp_path,
         monkeypatch,
@@ -274,10 +282,51 @@ def test_a_memory_written_empty_is_deleted_and_an_empty_index_is_kept(
         ],
     )
     assert _reconciled(home, monkeypatch, scopes) == {"team/MEMORY.md": ""}
-    assert not (home / ".cheese/memory/team/answer-first.md").exists()
+    assert not (_seat(home, "cheese") / "memory/team/answer-first.md").exists()
     # The platform, answered with that tree, deletes the memory; the next
     # reconciliation has nothing to lay back down.
     assert _reconciled(home, monkeypatch, {"team": {"MEMORY.md": ""}}) == {
         "team/MEMORY.md": ""
     }
-    assert not (home / ".cheese/memory/team/answer-first.md").exists()
+    assert not (_seat(home, "cheese") / "memory/team/answer-first.md").exists()
+
+
+def test_a_seat_working_for_someone_else_cannot_read_their_private_memory(
+    tmp_path, monkeypatch
+):
+    """Two seats of one room work at once, one for alice and one for bob.
+    bob's session reads alice's private memory as the prompt would name it,
+    and gets nothing of it: alice's is in her seat's tree, not in the room."""
+    captured = {}
+
+    def read_back(body):
+        captured["result"] = json.dumps(
+            body["messages"][-1]["content"], ensure_ascii=False
+        )
+        return None
+
+    home = tmp_path / "owner/.cheese/home/project/room"
+    _reconciled(home, monkeypatch, {"team": {}, "private/bob": {}}, seat="for-bob")
+    # alice's seat reconciled last: a tree the room shared would now hold hers.
+    _reconciled(
+        home,
+        monkeypatch,
+        {"team": {}, "private/alice": {"prefers-short.md": _PRIVATE}},
+        seat="for-alice",
+    )
+    _session_writes(
+        tmp_path,
+        monkeypatch,
+        [
+            {
+                "name": "Read",
+                "input": {
+                    "file_path": "~/.cheese/memory/private/alice/prefers-short.md"
+                },
+            },
+            read_back,
+        ],
+        seat="for-bob",
+    )
+    assert "result" in captured
+    assert "他要简短的回答" not in captured["result"]

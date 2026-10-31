@@ -55,6 +55,7 @@ from app.domain.session_record.archive import (
 )
 from app.domain.session_record.images import keep as keep_images
 from app.domain.session_record.models import SessionRecord
+from app.domain.session_record.privacy import for_reader
 
 #: How old a record is before the sealer moves it out of the row. Long enough
 #: that the live end of a turn is read from the database; short enough that
@@ -620,8 +621,13 @@ async def read(
     author: str | None = None,
     search: str | None = None,
     resident_budget_s: float | None = None,
+    reader: str | None,
 ) -> Page:
-    """A conversation's records (or one turn's) after `after`, oldest first.
+    """A conversation's records (or one turn's) after `after`, oldest first,
+    as `reader` may read them (`privacy.for_reader`): every route that hands a
+    record to someone reads it here, so each says who is reading, and `None`
+    is the platform reading for itself. `search` matches what the reader is
+    shown, never what was taken out for them.
 
     Runs are read in the order their first record was written, and a run is
     opened (from its row or its object) only while it may hold one of the next
@@ -653,10 +659,11 @@ async def read(
             execution = str(turn) if turn and not _queued(entry["record"]) else None
             if turn_id is not None and execution != str(turn_id):
                 continue
+            record = for_reader(entry["record"], reader)
             if (
                 search is not None
                 and search.casefold()
-                not in json.dumps(entry["record"], ensure_ascii=False).casefold()
+                not in json.dumps(record, ensure_ascii=False).casefold()
             ):
                 continue
             at = datetime.fromisoformat(entry["at"])
@@ -666,7 +673,7 @@ async def read(
                 "turn_id": execution,
                 "agent_handle": agent,
                 "harness": harness,
-                "record": entry["record"],
+                "record": record,
                 "_at": at,
             }
             key = _key(item)
