@@ -40,7 +40,11 @@ async def create_questions(
         project_id=place.project_id, topic_id=place.conversation_id
     )
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        actor,
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        room=place.room,
+        enforce=True,
     )
     if actor.via != "cheese" or not await TopicMemberService(db).holds_an_agent_seat(
         place.room, actor.handle

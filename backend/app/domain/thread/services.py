@@ -58,7 +58,7 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
         raise ValidationError(say("threadOnlyUnderChannelMessage"))
     if room.status == "archived":
         raise ValidationError(say("roomArchivedUnarchiveFirst"))
-    await session.execute(
+    inserted = await session.scalar(
         insert(Thread)
         .values(
             id=uuid.uuid4(),
@@ -68,8 +68,9 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
             created_by=by,
         )
         .on_conflict_do_nothing(index_elements=[Thread.root_block_id])
+        .returning(Thread)
     )
-    thread = await Thread.of_root(session, block.id)
+    thread = inserted or await Thread.of_root(session, block.id)
     assert thread is not None
     return thread
 

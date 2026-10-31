@@ -111,7 +111,7 @@ async def _in_room(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
     )
     return place, actor
 
@@ -177,11 +177,21 @@ async def _as_stored(db, place: Place, content: str) -> str:
 
 
 async def _with_notified(db, described: dict) -> dict:
-    comments = [described["comment"]] + [r["comment"] for r in described["replies"]]
+    return (await _with_notified_many(db, [described]))[0]
+
+
+async def _with_notified_many(db, items: list[dict]) -> list[dict]:
+    if not items:
+        return []
+    comments = [
+        c
+        for described in items
+        for c in [described["comment"], *(r["comment"] for r in described["replies"])]
+    ]
     told = await comment_notified(db, [uuid.UUID(c["id"]) for c in comments])
     for c in comments:
         c["notified"] = told.get(c["id"], [])
-    return described
+    return items
 
 
 def _outside(told) -> dict:
@@ -218,13 +228,15 @@ async def list_file_threads(
     subject = _file_out(place, clean)
     service = CommentThreads(db)
     await service.lock(subject)
-    items = [
-        await _with_notified(db, await service.describe(c))
-        for c in await service.roots(subject)
-    ]
+    roots = await service.roots(subject)
+    items = await _with_notified_many(db, await service.describe_many(roots))
     await db.commit()
-    states = await answering(
-        place.project_id, [uuid.UUID(item["comment"]["id"]) for item in items]
+    states = (
+        await answering(
+            place.project_id, [uuid.UUID(item["comment"]["id"]) for item in items]
+        )
+        if items
+        else {}
     )
     for item in items:
         item["answering"] = states.get(item["comment"]["id"])
@@ -339,6 +351,7 @@ async def _mutate(
         expected_revision=body.expected_revision,
         action=action,
         content=await _as_stored(db, place, body.content.strip()) if reply else None,
+        locked=True,
     )
     told = None
     if reply:

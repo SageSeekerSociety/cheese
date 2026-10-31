@@ -141,9 +141,8 @@ LAST_REPLY_CHARS = 200
 async def said_in(session: AsyncSession, block_id: uuid.UUID) -> uuid.UUID | None:
     """The conversation a message was said in, or None when there is no such
     message."""
-    return await session.scalar(
-        select(Block.conversation_id).where(Block.id == block_id)
-    )
+    block = await BlockRepository(session).get(block_id)
+    return block.conversation_id if block is not None else None
 
 
 async def root_of(session: AsyncSession, thread: Thread) -> Block | None:

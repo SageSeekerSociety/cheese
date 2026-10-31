@@ -1706,3 +1706,159 @@ def test_upgrade_block_to_task_deduplicates_room_seat_and_task_queries(client):
     assert len(up_sql) <= 30, (
         f"expected <= 30 SQL statements on POST /blocks/{{id}}/upgrade, got {len(up_sql)}: {up_sql}"
     )
+
+
+_DOC_THREADS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM document_threads\b",
+    re.IGNORECASE,
+)
+_DOC_LOCKS_FOR_UPDATE = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM document_locks\b",
+    re.IGNORECASE,
+)
+_BLOCKS_BY_ID_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM blocks\s+WHERE blocks\.id =",
+    re.IGNORECASE,
+)
+_THREADS_BY_ROOT_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM threads\s+WHERE threads\.root_block_id =",
+    re.IGNORECASE,
+)
+
+
+def test_document_comment_threads_and_mutations_batch_and_deduplicate_sql(client):
+    """`GET /documents/{id}/comments/threads` batch-loads `document_threads`,
+    replies, and `deliveries` in one query each instead of 3N queries, and
+    `POST /documents/{id}/comments/{cid}/replies|resolve|reopen` checks
+    `require_writable` before `journal.claim` flushes, locks the document once,
+    and loads `DocumentThread` once."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    doc = client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "Doc Threads", "content": "hello world body"},
+        headers=headers,
+    ).json()["data"]
+    doc_id = doc["id"]
+    cids = [
+        client.post(
+            f"/documents/{doc_id}/comments",
+            json={"content": f"comment {i}", "quote": "hello"},
+            headers=headers,
+        ).json()["data"]["id"]
+        for i in range(4)
+    ]
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(
+            f"/documents/{doc_id}/comments/threads",
+            headers=headers,
+        )
+    assert r_list.status_code == 200, r_list.text
+    assert _count(list_sql, _DOC_THREADS_SELECT) == 1, [
+        s for s in list_sql if _DOC_THREADS_SELECT.search(s)
+    ]
+    assert len(list_sql) <= 10, (
+        f"expected <= 10 SQL statements on GET /documents/{{id}}/comments/threads, got {len(list_sql)}: {list_sql}"
+    )
+
+    with counting_sql(client) as reply_sql:
+        r_reply = client.post(
+            f"/documents/{doc_id}/comments/{cids[0]}/replies",
+            json={
+                "content": "reply 1",
+                "expected_revision": 1,
+                "operation_id": str(uuid.uuid4()),
+            },
+            headers=headers,
+        )
+    assert r_reply.status_code == 200, r_reply.text
+    assert _count(reply_sql, _PROJECTS_SELECT) == 1, [
+        s for s in reply_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(reply_sql, _DOC_LOCKS_FOR_UPDATE) == 1, [
+        s for s in reply_sql if _DOC_LOCKS_FOR_UPDATE.search(s)
+    ]
+    assert _count(reply_sql, _DOC_THREADS_SELECT) == 1, [
+        s for s in reply_sql if _DOC_THREADS_SELECT.search(s)
+    ]
+    assert len(reply_sql) <= 15, (
+        f"expected <= 15 SQL statements on POST .../replies, got {len(reply_sql)}: {reply_sql}"
+    )
+
+    with counting_sql(client) as res_sql:
+        r_res = client.post(
+            f"/documents/{doc_id}/comments/{cids[1]}/resolve",
+            json={"expected_revision": 1, "operation_id": str(uuid.uuid4())},
+            headers=headers,
+        )
+    assert r_res.status_code == 200, r_res.text
+    assert _count(res_sql, _PROJECTS_SELECT) == 1
+    assert _count(res_sql, _DOC_LOCKS_FOR_UPDATE) == 1
+    assert _count(res_sql, _DOC_THREADS_SELECT) == 1
+    assert len(res_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST .../resolve, got {len(res_sql)}: {res_sql}"
+    )
+
+
+def test_open_and_create_channel_threads_reuse_block_and_returning_thread(client):
+    """`POST /blocks/{id}/thread` and `POST /topics/{id}/threads` keep the root
+    `Block` in `request_facts` across helper calls and use `RETURNING` on
+    `INSERT INTO threads`, avoiding a second `SELECT blocks` and `SELECT threads`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "thread root"})
+    msg_id = msg["id"]
+
+    with counting_sql(client) as open_sql:
+        r_open = client.post(f"/blocks/{msg_id}/thread", json={}, headers=headers)
+    assert r_open.status_code == 200, r_open.text
+    assert _count(open_sql, _BLOCKS_BY_ID_SELECT) == 1, [
+        s for s in open_sql if _BLOCKS_BY_ID_SELECT.search(s)
+    ]
+    assert _count(open_sql, _THREADS_BY_ROOT_SELECT) == 0, [
+        s for s in open_sql if _THREADS_BY_ROOT_SELECT.search(s)
+    ]
+    assert len(open_sql) <= 6, (
+        f"expected <= 6 SQL statements on POST /blocks/{{id}}/thread, got {len(open_sql)}: {open_sql}"
+    )
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            f"/topics/{ch}/threads",
+            json={"title": "Named Thread"},
+            headers=headers,
+        )
+    assert r_create.status_code == 200, r_create.text
+    assert _count(create_sql, _BLOCKS_BY_ID_SELECT) == 0, [
+        s for s in create_sql if _BLOCKS_BY_ID_SELECT.search(s)
+    ]
+    assert _count(create_sql, _THREADS_BY_ROOT_SELECT) == 0, [
+        s for s in create_sql if _THREADS_BY_ROOT_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /topics/{{id}}/threads, got {len(create_sql)}: {create_sql}"
+    )
+
+
+def test_rename_topic_passes_room_to_authorize_topic(client):
+    """`POST /topics/{id}/title` passes `room=place.room` to `authorize_topic`
+    instead of running `room_of` (`SELECT inside.room_id FROM tasks UNION ALL threads`)."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as title_sql:
+        r_title = client.post(
+            f"/topics/{ch}/title",
+            json={"title": "Renamed Channel"},
+            headers=headers,
+        )
+    assert r_title.status_code == 200, r_title.text
+    assert _count(title_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in title_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(title_sql) <= 6, (
+        f"expected <= 6 SQL statements on POST /topics/{{id}}/title, got {len(title_sql)}: {title_sql}"
+    )
