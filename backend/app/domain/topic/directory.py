@@ -31,17 +31,15 @@ async def channel_directory(
 ) -> dict:
     repo = TopicRepository(session)
     topics = await repo.list_for_project(project_id)
-    # 每个频道的主人一次取完：这里逐频道问 `owner_of` 是整页唯一还在随频道数
-    # 增长的读（下面那些全是批量接口），而一个项目几十个频道就是几十次往返。
-    # 先跑 `owners_of` 会把所有频道的 `topic_memberships` 一次记进 `request_facts`，
-    # 下面的 `seen`、`joined_topic_ids`、`seat_counts`、`managed_topic_ids` 直接命中内存。
-    managers = await members.owners_of(
-        [t.id for t in topics if t.kind != TopicKind.root]
-    )
     seen = {t.id for t in await members.seen(topics, viewer, team=team)}
     manages_project = await may(session, project_id, viewer, Permission.manage_channels)
     listed = [t for t in topics if t.id in seen or manages_project]
     ids = [t.id for t in listed]
+    # 每个频道的主人一次取完：这里逐频道问 `owner_of` 是整页唯一还在随频道数
+    # 增长的读（下面那些全是批量接口），而一个项目几十个频道就是几十次往返。
+    # 先跑 `owners_of` 会把所有频道的 `topic_memberships` 一次记进 `request_facts`，
+    # 下面的 `joined_topic_ids`、`seat_counts`、`managed_topic_ids` 直接命中内存。
+    managers = await members.owners_of(ids)
     joined = await members.joined_topic_ids(listed, viewer, team=team)
     seats = await members.seat_counts(listed, team=team)
     # 频道卡片上「N 个进行中的任务」那一个数：和侧栏那一行的 `my_tasks.open`、项目

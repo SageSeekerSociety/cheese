@@ -42,7 +42,13 @@ if TYPE_CHECKING:
 _TOPIC_ROW_TABLES = frozenset({"topics"})
 
 
+def _can_cache(session: object) -> bool:
+    return hasattr(session, "sync_session")
+
+
 async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
+    if not _can_cache(repo._session):
+        return await repo._session.get(Topic, topic_id)
     if repo._session.autoflush:
         await repo._session.flush()
     key = ("topic_row", topic_id)
@@ -57,6 +63,10 @@ async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
 async def get_many(repo: pkg.TopicRepository, topic_ids: set[uuid.UUID]) -> list[Topic]:
     if not topic_ids:
         return []
+    if not _can_cache(repo._session):
+        return list(
+            await repo._session.scalars(select(Topic).where(Topic.id.in_(topic_ids)))
+        )
     if repo._session.autoflush:
         await repo._session.flush()
     known: list[Topic] = []
@@ -106,8 +116,11 @@ async def list_for_project(
         seen=None if only_seen_by is None else seen_by(only_seen_by),
     )
     rows = list((await repo._session.scalars(stmt)).all())
-    for row in rows:
-        remember(repo._session, ("topic_row", row.id), row, tables=_TOPIC_ROW_TABLES)
+    if _can_cache(repo._session):
+        for row in rows:
+            remember(
+                repo._session, ("topic_row", row.id), row, tables=_TOPIC_ROW_TABLES
+            )
     return rows
 
 

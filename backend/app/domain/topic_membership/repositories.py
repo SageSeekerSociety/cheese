@@ -11,6 +11,10 @@ from app.domain.topic.models import TopicMembership, TopicRole
 _TOPIC_MEMBER_TABLES = frozenset({"topic_memberships"})
 
 
+def _can_cache(session: object) -> bool:
+    return hasattr(session, "sync_session")
+
+
 class TopicMembershipRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -60,18 +64,21 @@ class TopicMembershipRepository:
             .order_by(TopicMembership.created_at.asc())
         )
         rows = list((await self._session.scalars(stmt)).all())
-        by_topic: dict[uuid.UUID, list[tuple[str, TopicRole]]] = {
-            tid: [] for tid in topic_ids
-        }
-        for row in rows:
-            by_topic.setdefault(row.topic_id, []).append((row.member_handle, row.role))
-        for tid, pairs in by_topic.items():
-            remember(
-                self._session,
-                ("topic_member_pairs", tid),
-                tuple(pairs),
-                tables=_TOPIC_MEMBER_TABLES,
-            )
+        if _can_cache(self._session):
+            by_topic: dict[uuid.UUID, list[tuple[str, TopicRole]]] = {
+                tid: [] for tid in topic_ids
+            }
+            for row in rows:
+                by_topic.setdefault(row.topic_id, []).append(
+                    (row.member_handle, row.role)
+                )
+            for tid, pairs in by_topic.items():
+                remember(
+                    self._session,
+                    ("topic_member_pairs", tid),
+                    tuple(pairs),
+                    tables=_TOPIC_MEMBER_TABLES,
+                )
         return rows
 
     async def topic_ids_for_member(
@@ -90,6 +97,14 @@ class TopicMembershipRepository:
         """
         if not topic_ids:
             return set()
+        if not _can_cache(self._session):
+            stmt = select(TopicMembership.topic_id).where(
+                TopicMembership.topic_id.in_(topic_ids),
+                TopicMembership.member_handle == member_handle,
+            )
+            if roles is not None:
+                stmt = stmt.where(TopicMembership.role.in_(roles))
+            return set((await self._session.scalars(stmt)).all())
         if self._session.autoflush:
             await self._session.flush()
         matched: set[uuid.UUID] = set()
@@ -138,6 +153,13 @@ class TopicMembershipRepository:
         Topics the handle is not in simply do not appear in the result."""
         if not topic_ids:
             return {}
+        if not _can_cache(self._session):
+            stmt = select(TopicMembership.topic_id, TopicMembership.role).where(
+                TopicMembership.topic_id.in_(topic_ids),
+                TopicMembership.member_handle == member_handle,
+            )
+            rows = (await self._session.execute(stmt)).all()
+            return {topic_id: role for topic_id, role in rows}
         if self._session.autoflush:
             await self._session.flush()
         out: dict[uuid.UUID, TopicRole] = {}
@@ -181,6 +203,12 @@ class TopicMembershipRepository:
         """Which of these topics have an explicit ``owner`` seat."""
         if not topic_ids:
             return set()
+        if not _can_cache(self._session):
+            stmt = select(TopicMembership.topic_id).where(
+                TopicMembership.topic_id.in_(topic_ids),
+                TopicMembership.role == TopicRole.owner,
+            )
+            return set((await self._session.scalars(stmt)).all())
         if self._session.autoflush:
             await self._session.flush()
         owned: set[uuid.UUID] = set()
@@ -206,6 +234,13 @@ class TopicMembershipRepository:
         """How many seats each of these topics has, in one read."""
         if not topic_ids:
             return {}
+        if not _can_cache(self._session):
+            stmt = (
+                select(TopicMembership.topic_id, func.count())
+                .where(TopicMembership.topic_id.in_(topic_ids))
+                .group_by(TopicMembership.topic_id)
+            )
+            return {t: n for t, n in (await self._session.execute(stmt)).all()}
         if self._session.autoflush:
             await self._session.flush()
         counts: dict[uuid.UUID, int] = {}
