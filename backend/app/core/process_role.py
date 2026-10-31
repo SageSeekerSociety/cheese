@@ -41,8 +41,9 @@ def refuse_on_api_pool(what: str) -> None:
 #: `/api`), anchored, one route family each. Every other `GET` that is not a
 #: WebSocket upgrade may go to the pool.
 REALTIME_GET_PATTERNS: tuple[str, ...] = (
-    # Health and diagnostics describe the process that answers them.
-    r"^/health$",
+    # Health and diagnostics describe the process that answers them; the
+    # deploy's readiness probes through app-router mean the realtime one.
+    r"^/(health|healthz|readyz)$",
     r"^/debug/",
     r"^/_internal/",
     r"^/internal/",

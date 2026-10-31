@@ -516,6 +516,10 @@ jobs:
         if: steps.release.outputs.skip != 'true'
         env:
           CHEESE_CENTRAL_SESSION_HOST: "1"
+          # dev runs the api pool beside each backend (backend/app/serve.py):
+          # three workers for plain reads, the realtime process for the rest.
+          # 0 turns it off on the next release.
+          API_POOL_WORKERS: "3"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Install the dev database backup writer from this release

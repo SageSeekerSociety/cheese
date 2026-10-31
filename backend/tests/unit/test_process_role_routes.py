@@ -7,6 +7,7 @@ a realtime-only object by dependency is left to the pool.
 """
 
 import re
+from pathlib import Path
 
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute, APIWebSocketRoute
@@ -101,3 +102,21 @@ def test_only_plain_reads_go_to_the_pool():
     assert not served_by_pool("POST", "/topics/x/messages")
     assert not served_by_pool("GET", "/rooms/live", upgrade=True)
     assert not served_by_pool("GET", "/topics/x/status")
+
+
+APP_ROUTER = Path(__file__).resolve().parents[3] / "deploy/llm-tunnel/app-router.conf"
+
+
+def test_app_router_splits_by_the_same_list():
+    """app-router decides where a request goes; this module says where it may.
+    The map between its markers is the same list, entry for entry."""
+    text = APP_ROUTER.read_text()
+    block = text.split("# realtime-get-patterns:begin")[1].split(
+        "# realtime-get-patterns:end"
+    )[0]
+    entries = [
+        line.strip().removeprefix("~").removesuffix(" 1;")
+        for line in block.splitlines()
+        if line.strip()
+    ]
+    assert entries == list(REALTIME_GET_PATTERNS)
