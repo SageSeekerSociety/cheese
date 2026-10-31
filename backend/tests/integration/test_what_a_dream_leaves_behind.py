@@ -25,6 +25,7 @@ from app.domain.event_author import AuthorType
 from app.domain.memory.files import MEMORY_ROOT, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.models import MemoryDreamRun
+from app.domain.memory.writers import MemoryWriter
 from app.domain.run_record.models import RunRecord
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
@@ -320,6 +321,7 @@ async def _dream(
                 content=_note(name, "原来的"),
                 updated_by="alice",
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
         private_chat = await TopicService(session).get_or_create_private(
             project_id=project.id, user_handle="bob", named_teammate=named_teammate

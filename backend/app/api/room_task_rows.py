@@ -24,7 +24,7 @@ reach one (C4 `routes-independent`).
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,11 +64,14 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, task, card=None, *, me: str) -> dict:
+_CARD_UNSET: Any = object()
+
+
+async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
-    if card is None:
+    if card is _CARD_UNSET:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     runs = await teammate_runs(db, [task])

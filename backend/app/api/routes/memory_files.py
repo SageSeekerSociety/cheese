@@ -15,16 +15,25 @@
 """
 
 import uuid
+from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
-from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, ValidationError
+from app.api.response import ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.domain.memory import history
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileError,
@@ -35,6 +44,7 @@ from app.domain.memory.files import (
 )
 from app.domain.memory.files_store import MemoryFileMissing, MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory/files", tags=["memory"])
@@ -193,6 +203,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=None if expected is None else expected,
+            writer=MemoryWriter.panel,
         )
         _, warning = fit_index(content)
         return ok({"file": _file_out(row), "warning": warning})
@@ -207,6 +218,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=expected if expected is not None else None,
+            writer=MemoryWriter.panel,
         )
         return ok({"file": _file_out(row), "warning": str(exc)})
     row = await store.write(
@@ -217,6 +229,7 @@ async def write_memory_file(
         content=content,
         updated_by=actor,
         expected_version=expected,
+        writer=MemoryWriter.panel,
     )
     warning = None
     if memory.description and len(memory.description) > 150:
@@ -262,7 +275,141 @@ async def delete_memory_file(
             owner_handle=owner,
             path=path,
             expected_version=expected,
+            updated_by=actor,
+            writer=MemoryWriter.panel,
         )
     except MemoryFileMissing as exc:
         raise ValidationError(str(exc)) from exc
     return ok({"deleted": path, "deleted_by": actor})
+
+
+class MemoryChangeOut(BaseModel):
+    """一次改动：谁、从哪条路、什么时候、哪一条，和它的 diff。"""
+
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    writer: str
+    changed_by: str
+    created_at: str
+    created: bool
+    deleted: bool
+    diff: str
+
+
+class MemoryChangesOut(BaseModel):
+    """一页改动，新的在前；``next`` 是下一页的 ``before``，读到头了为空。"""
+
+    data: list[MemoryChangeOut]
+    next: str | None = None
+
+
+class MemoryFileOut(BaseModel):
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    content: str
+    version: int
+    updated_by: str
+    created_at: str
+    updated_at: str
+
+
+class MemoryRestoredOut(BaseModel):
+    """恢复之后那条记忆现在的样子。"""
+
+    file: MemoryFileOut
+
+
+def _change_out(row: history.Change) -> dict:
+    return {
+        "id": str(row.id),
+        "scope": row.scope.value,
+        "owner_handle": row.owner_handle,
+        "path": row.path,
+        "writer": row.writer.value,
+        "changed_by": row.changed_by,
+        "created_at": row.created_at.isoformat(),
+        # 是新建还是删除，面板据此说这一行做了什么、恢复按钮在不在（新建没有
+        # 「改之前」可恢复）。正文不整份给：一个改动很密的索引一个月能有几百版，
+        # 面板要画的只是差在哪。
+        "created": row.before is None,
+        "deleted": row.after is None,
+        "diff": history.diff_of(row),
+    }
+
+
+def _change_cursor(row: history.Change) -> str:
+    return f"{row.created_at.isoformat()}|{row.id}"
+
+
+def _read_change_cursor(cursor: str) -> history.Cursor:
+    try:
+        at, _, of = cursor.partition("|")
+        return datetime.fromisoformat(at), uuid.UUID(of)
+    except ValueError as error:
+        raise BadRequestError(say("listCursorUnreadable")) from error
+
+
+@router.get("/history", **typed_response(MemoryChangesOut))
+async def list_memory_changes(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    scope: str = Query("team"),
+    owner_handle: str | None = None,
+    before: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = history.PAGE,
+) -> dict:
+    """一个作用域的改动（`history.RETENTION` 之内，新的在前），一页一页地读：
+    ``before`` 是上一页的 ``next``，``next`` 为空就是读到头了。保留期内的每一条
+    都翻得到。
+
+    谁读得到和读记忆文件同一道门（`_readable`）：team 是项目里的人，某个人的
+    private 只有他本人，管理员也一样答 403。
+    """
+    which = _scope_of(scope)
+    owner = _owner_of(which, owner_handle)
+    await _readable(db, resolver, project_id, owner)
+    rows, more = await history.changes(
+        db,
+        project_id,
+        which,
+        owner,
+        before=None if before is None else _read_change_cursor(before),
+        limit=limit,
+    )
+    return ok(
+        {
+            "data": [_change_out(r) for r in rows],
+            "next": _change_cursor(rows[-1]) if more and rows else None,
+        }
+    )
+
+
+@router.post(
+    "/projects/{project_id}/history/{change_id}/restore",
+    **typed_response(MemoryRestoredOut),
+)
+async def restore_memory_change(
+    change_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.ask_agent)],
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把一条记忆写回这一次改动之前的样子（`history.restore`）。
+
+    `Can(ask_agent)` 是进门的那一道：能和芝士说话的人才有记忆可恢复。进门之后
+    和写入同一道门（`_writable`）：恢复就是一次写入，team 要能配置 AI 队友，
+    private 只有本人，写不动这个作用域的人也恢复不了它。恢复本身留下一条新的
+    改动记录。
+    """
+    row = await history.change(db, change_id)
+    if row is None or row.project_id != at.project.id:
+        raise NotFoundError(say("memoryChangeNotFound"))
+    owner = row.owner_handle or None
+    actor = await _writable(db, resolver, row.project_id, owner)
+    written = await history.restore(db, row, by=actor)
+    return ok({"file": _file_out(written)})

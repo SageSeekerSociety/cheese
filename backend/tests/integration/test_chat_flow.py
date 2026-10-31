@@ -6,6 +6,7 @@ import uuid
 from app.core.config import settings
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -208,6 +209,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
                     content=content,
                     updated_by="cheese",
                     expected_version=None,
+                    writer=MemoryWriter.panel,
                 )
 
             await put(

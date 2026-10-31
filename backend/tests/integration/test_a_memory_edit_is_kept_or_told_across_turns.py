@@ -26,8 +26,10 @@ from app.domain.agent.run_records import for_site
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
+from app.domain.memory import history
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
 
@@ -94,6 +96,7 @@ async def _setup(factory) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
             content=_INDEX,
             updated_by="someone",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
         assert project.root_topic_id is not None
@@ -308,6 +311,7 @@ async def _written_elsewhere(factory, project_id: uuid.UUID, content: str) -> No
             content=content,
             updated_by="another-room",
             expected_version=1,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 
@@ -356,6 +360,7 @@ async def _two_people(factory, project_id: uuid.UUID, index: str = "") -> None:
                 content=index or f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
                 updated_by=owner,
                 expected_version=None,
+                writer=MemoryWriter.panel,
             )
         await session.commit()
 
@@ -514,6 +519,37 @@ async def test_a_first_private_memory_reaches_its_owner_when_the_seat_turns_to_s
     assert written is not None and "alice-first-note" in written.content
 
 
+async def test_a_private_memory_handed_back_is_in_its_owners_history_alone(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The note alice's turn wrote reaches the platform through the hand-back
+    when the seat turns to bob. It is a change like any other: in alice's
+    private history, as a turn's, and nowhere in the shared one."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    sessions = _Session(tmp_path)
+    project_id, room, ledger, seat, hers = await _alice_then_bob(
+        factory, tmp_path, sessions
+    )
+    hers.mkdir(parents=True, exist_ok=True)
+    (hers / "first-note.md").write_text(_NOTE + "alice-first-note\n", encoding="utf-8")
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    await ledger.sync(seat)
+
+    async with factory() as session:
+        alices, _ = await history.changes(
+            session, project_id, MemoryFileScope.private, "alice"
+        )
+        team, _ = await history.changes(session, project_id, MemoryFileScope.team, None)
+    noted = [c for c in alices if c.path == "first-note.md"]
+    assert [(c.writer, c.before) for c in noted] == [(MemoryWriter.turn, None)]
+    assert "alice-first-note" in (noted[0].after or "")
+    assert all("alice-first-note" not in (c.after or "") for c in team)
+
+
 async def test_a_private_memory_handed_back_on_a_lost_answer_still_reaches_its_owner(
     business_db_factory, tmp_path, monkeypatch
 ):
@@ -568,6 +604,7 @@ async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for
             content=_NOTE + "the platform's first version\n",
             updated_by="alice",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
     await ledger.sync(seat)
@@ -587,6 +624,7 @@ async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for
             content=_NOTE + "the platform's newer version\n",
             updated_by="alice",
             expected_version=row.version,
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 
@@ -705,6 +743,8 @@ async def test_a_handoff_merged_once_is_not_merged_again_when_its_receipt_is_los
             owner_handle="alice",
             path="secret.md",
             expected_version=merged.version,
+            updated_by="alice",
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 
@@ -756,6 +796,8 @@ async def test_a_handoff_is_not_merged_again_when_its_receipt_goes_unanswered(
             owner_handle="alice",
             path="secret.md",
             expected_version=merged.version,
+            updated_by="alice",
+            writer=MemoryWriter.panel,
         )
         await session.commit()
 
