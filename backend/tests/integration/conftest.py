@@ -918,6 +918,20 @@ def _portal() -> Generator["BlockingPortal"]:
 
 
 @pytest.fixture(autouse=True)
+def _lookups_unbudgeted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the hourly `/users/lookup` budget for the suite.
+
+    Test accounts are seeded under fixed handles and ids recur from test to
+    test, while the budget lives in a Redis the whole run shares; a fixture that
+    looks up its cast for each of a dozen cases would spend one account's hour
+    and turn later setups into 429s. The test that pins the budget sets its own.
+    """
+    from app.api.routes.users import directory
+
+    monkeypatch.setattr(directory, "LOOKUPS_PER_WINDOW", 10**9)
+
+
+@pytest.fixture(autouse=True)
 def _app_engine_off_the_portal(request: pytest.FixtureRequest) -> Generator[None]:
     """Close what a test left in the application pool on the session portal.
 
