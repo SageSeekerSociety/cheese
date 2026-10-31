@@ -105,7 +105,7 @@ const standaloneRegion = ref<RasterRegion | null>(null)
 const tool = ref<SketchTool>('select')
 // 「在图上说」那一行只在批注模式里摆（没有模式的地方照旧摆）。切回「看」时笔收起来，
 // 拖动只是在看图；画了没发的笔画还在，那一行留着，免得画好的东西没处可发。
-const marking = usePreviewMarking()
+const marking = usePreviewMarking({ readOnlyToo: true })
 watch(marking, (on) => {
   if (!on) tool.value = 'select'
 })
