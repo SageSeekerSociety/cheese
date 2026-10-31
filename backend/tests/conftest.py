@@ -1181,6 +1181,42 @@ def _redis_client_per_loop() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _a_test_process_never_hands_the_work_over() -> Iterator[None]:
+    """No test may meet a runner the test before it left as a departing process.
+
+    One runner per process, and its two admission flags describe the PROCESS:
+    may a turn start here, does this process listen to sessions. Entering the
+    app runs ``main.lifespan``, which clears both — a backend arriving does not
+    listen yet, and one on its way out stops — and a test process does neither.
+    So the tests that enter the app (a bare ``TestClient(app)``; ``client``
+    restores the flags itself, this is for the rest) used to leave every later
+    test on the same xdist worker unable to recover a machine's sessions:
+    ``_recover_business_state`` returns before doing anything when the flag is
+    clear, and the failing case was in another file entirely
+    (``test_recovery_burst_is_bounded.py``, ``0 == 8``) — which is why this is
+    autouse and here rather than in the files that noticed.
+
+    Only when a runner already exists, and only one that has the two methods: a
+    test that never built one pays nothing, this fixture must never be the reason
+    one appears, and the stand-ins a few tests install have neither.
+    """
+    from app.domain.agent import pending_messages
+
+    def a_process_of_its_own() -> None:
+        runner = pending_messages.current_runner()
+        if runner is None or not (
+            hasattr(runner, "own_sessions") and hasattr(runner, "start_turns")
+        ):
+            return
+        runner.start_turns()
+        runner.own_sessions(True)
+
+    a_process_of_its_own()
+    yield
+    a_process_of_its_own()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_dependency_probe() -> Iterator[None]:
     """No test reads a readiness answer another test left behind.
 
