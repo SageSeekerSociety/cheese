@@ -336,6 +336,7 @@ for (const scene of [
 // TopicView permits a 25% desktop split and its columns have min-width: 0.
 // A narrow pane is therefore reachable while the viewport is still desktop.
 const narrowFixture = fixture
+  .replace("height: 560px", "height: 588px")
   .replace("author: 'me'", "author: 'external'")
   .replace("'前一条消息。\\n'.repeat(8)", "'前一条消息。'")
   .replace(

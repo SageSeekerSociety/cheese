@@ -87,6 +87,10 @@ interface Options {
   handOff?: boolean
   pool?: MentionPoolEntry[]
   lastMate?: string | null
+  /** 这条发在哪段对话里；给了，输入框就问后端这条交给谁（`useAddressing`）。 */
+  place?: string
+  /** 名册上这个房间的队友叫什么。 */
+  seat?: { handle: string; label: string }
 }
 
 /** 回车那条路只在焦点真的在输入框里时才走（走的时候还会问一次
@@ -114,8 +118,9 @@ function mount(opts: Options = {}) {
         mentionPool: opts.pool ?? POOL,
         topicList: [],
         refs: { mentionNames: {}, topicTitles: {} },
-        agentSeat: CHEESE_SEAT,
-        agentName: CHEESE_SEAT.label,
+        agentSeat: opts.seat ?? CHEESE_SEAT,
+        agentName: (opts.seat ?? CHEESE_SEAT).label,
+        place: opts.place ?? null,
         alwaysSummon: opts.alwaysSummon ?? false,
         handOff: opts.handOff,
         hint: '说点什么',
@@ -859,6 +864,34 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
 })
 
 // 发送键旁边那颗队友头像：这条发出去谁会接手。它读的是正文，点它、换一位写的都是正文里的 @。
+describe('输入框顶上那一行：这条交给谁', () => {
+  it('交给的队友按名册上的叫法写：没改过名的队友库里叫「芝士」，英文界面写的是名册给的名字', async () => {
+    // 后端回的是库里存的原名；名册（`teammateName`）在英文界面把它叫作 Cheese。
+    const seat = { handle: 'cheese-topica', label: 'Cheese' }
+    const fetchSpy = vi.fn(async () =>
+      Response.json({
+        code: 200,
+        message: 'ok',
+        data: {
+          agent: { handle: seat.handle, name: '芝士' },
+          reason: 'private',
+          people: [],
+          place: 'private',
+          task_status: null,
+        },
+      })
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const { container } = mount({ place: 't1', seat, pool: [] })
+      await vi.waitFor(() => expect(container.querySelector('.recipient__name')?.textContent).toBe('Cheese'))
+      expect(container.querySelector('.recipient')?.textContent).not.toContain('芝士')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('交给谁', () => {
   const OWN = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
   const TWO = [...POOL, { handle: OWN.handle, label: OWN.label, avatar: null, agent: true }]
