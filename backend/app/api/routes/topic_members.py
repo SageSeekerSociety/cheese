@@ -24,6 +24,7 @@ from app.domain.agent.own_calls import ask_owner_to_join
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.room_task.place import place_or_404
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -54,9 +55,14 @@ async def add_topic_member(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    who = await resolver.resolve(topic_id=topic_id)
+    topic = await TopicService(db).get(topic_id)
+    who = await resolver.resolve(
+        topic_id=topic_id, project_id=topic.project_id if topic is not None else None
+    )
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
+    if topic is not None:
+        await TopicMemberService(db).list_for_topic(topic_id)
     member = await TopicMemberService(db).add(
         topic_id=topic_id,
         handle=body.handle,
@@ -64,7 +70,9 @@ async def add_topic_member(
         seat_project=seat_project,
         team=project_team,
     )
-    await ask_owner_to_join(db, (await place_or_404(db, topic_id)).room, body.handle)
+    await ask_owner_to_join(
+        db, topic or (await place_or_404(db, topic_id)).room, body.handle
+    )
     await db.commit()
     # A private channel appears in the list of whoever was brought in.
     await tell_project(topic_id, TOPICS)
@@ -79,9 +87,14 @@ async def remove_topic_member(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    who = await resolver.resolve(topic_id=topic_id)
+    topic = await TopicService(db).get(topic_id)
+    who = await resolver.resolve(
+        topic_id=topic_id, project_id=topic.project_id if topic is not None else None
+    )
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
+    if topic is not None:
+        await TopicMemberService(db).list_for_topic(topic_id)
     await TopicMemberService(db).remove(
         topic_id=topic_id, handle=handle, actor=who.handle
     )

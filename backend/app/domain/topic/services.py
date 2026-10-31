@@ -27,11 +27,13 @@ from app.core.errors import (
     UnprocessableEntityError,
     ValidationError,
 )
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.session_record.tail import SessionTail, tails, working_seats
 from app.domain.topic.models import (
     NotifyLevel,
@@ -197,12 +199,12 @@ class TopicService:
             number=number,
             environment=environment,
             title=title,
+            description=(description or "").strip() or None,
+            members_only=members_only,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
         )
-        topic.description = (description or "").strip() or None
-        topic.members_only = members_only
         # No branch parent: this path only ever makes ROOMS now, and a room forks
         # the base branch. Binding one to its parent would have made the project
         # root a fork point, which nothing has ever wanted.
@@ -230,7 +232,19 @@ class TopicService:
                 project_owner=project.owner_handle,
                 project_team=project.team_id,
             ),
+            agent_handle=(
+                agent_instance_handle(project.default_agent_instance_id)
+                if project.default_agent_instance_id is not None
+                else None
+            ),
         )
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("newly_created_topic", topic.id),
+                True,
+                tables=frozenset({"accept_cards", "notification"}),
+            )
         return topic
 
     async def get_or_create_private(
@@ -366,8 +380,26 @@ class TopicService:
         if hasattr(self._members, "_repo"):
             await self._members._repo.list_for_topics(topic_ids)
         joined = await self._members.joined_topic_ids(topics, viewer_handle, team=team)
-        awaiting_card = await cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        pending = await decisions.decision_topic_ids(topic_ids, viewer_handle)
+        fresh_ids = (
+            {
+                tid
+                for tid in topic_ids
+                if recall(self._session, ("newly_created_topic", tid)) == (True, True)
+            }
+            if isinstance(self._session, AsyncSession)
+            else set()
+        )
+        check_ids = [tid for tid in topic_ids if tid not in fresh_ids]
+        awaiting_card = (
+            await cards.reviewer_topic_ids(check_ids, viewer_handle)
+            if check_ids
+            else {}
+        )
+        pending = (
+            await decisions.decision_topic_ids(check_ids, viewer_handle)
+            if check_ids
+            else {}
+        )
         return {
             topic.id: TopicRelevance(
                 joined=topic.id in joined,
