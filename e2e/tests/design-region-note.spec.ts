@@ -201,7 +201,9 @@ test('a short-panel note keeps the opener focused and returns focus after editin
   await page.evaluate(() => {
     const fixture = (window as unknown as { fixture: { resize: (width: number) => void; height: (height: number) => void } }).fixture
     fixture.resize(240)
-    fixture.height(150)
+    // 150 plus the annotate mode's drawing toolbar (one more row, about 30px):
+    // the image keeps the short strip it had before that row existed.
+    fixture.height(180)
   })
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
@@ -220,7 +222,7 @@ test('a short wide real panel keeps its note placement stable and its editor rea
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await open(page)
-  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(150))
+  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(180))
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
   await expect(input).toBeVisible()
@@ -453,6 +455,8 @@ test.describe('real project page', () => {
     const url = new URL(page.url())
     url.searchParams.set('tab', 'file:design.png')
     await page.goto(url.toString())
+    // 图上框一块在「批注」那一段里（默认是「看」），和上面 `open` 一样先切过去。
+    await page.getByTestId('preview-mode-note').click({ timeout: 30_000 })
     await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 30_000 })
     await page.setViewportSize({ width: 1440, height: 280 })
     await page.locator('.panel-preview').evaluate(element => element.scrollTop = element.scrollHeight)
