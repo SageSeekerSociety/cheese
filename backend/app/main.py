@@ -57,6 +57,7 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.ownership import keep_holding
+from app.core.process_role import is_api_pool
 from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
 from app.core.route_mounting import FAILED_ROUTE_MODULES
@@ -70,6 +71,8 @@ from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub import machine as machine_streams
 from app.domain.agent.gateway_models import roles as model_role_store
 from app.domain.agent.preview_owner import reuse_preview_owner_connections
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent.realtime.relay import relay_into
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.feedback import announce as feedback_announce
@@ -119,17 +122,22 @@ async def lifespan(application: FastAPI):
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
-    # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
-    # its platform agent-binding. Idempotent — the migration seeds it too; this is
-    # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
-    try:
-        async with async_session_factory() as session:
-            await IdentityService(session).ensure_agent_user()
-            await session.commit()
-    except Exception as exc:  # a missing table (pre-migration) must not crash boot
-        get_logger("cheesex.runtime").warning(
-            "agent-user seed skipped", reason=str(exc)[:120]
-        )
+    # A pool process (`core/process_role`) answers reads beside the realtime
+    # process: it does not run the work, and it leaves the seeds below — writes
+    # every start repeats — to that process rather than race N copies of them.
+    pool = is_api_pool()
+    if not pool:
+        # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
+        # its platform agent-binding. Idempotent — the migration seeds it too; this is
+        # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
+        try:
+            async with async_session_factory() as session:
+                await IdentityService(session).ensure_agent_user()
+                await session.commit()
+        except Exception as exc:  # a missing table (pre-migration) must not crash boot
+            get_logger("cheesex.runtime").warning(
+                "agent-user seed skipped", reason=str(exc)[:120]
+            )
 
     # Which gateway model each platform model role runs on, as an administrator
     # pointed it (`app.core.model_roles`), read before this process serves: a
@@ -144,35 +152,37 @@ async def lifespan(application: FastAPI):
             "platform model roles read skipped", reason=str(exc)[:120]
         )
 
-    # Every project agent is a collaborator with an identity of its own — a user
-    # row under `agent_instance_handle(id)`, which is what its roster seats name.
-    # `ensure_identity` runs on create, so this only reaches agents created before
-    # it existed; and the migration that seated each room's former agent wrote
-    # the seat's handle without the user row behind it, which this supplies.
-    # Idempotent, and never blocks boot for the same reason as the seed above.
-    try:
-        async with async_session_factory() as session:
-            service = AgentInstanceService(session)
-            for instance in await AgentInstanceRepository(session).list_all():
-                await service.ensure_identity(instance)
-            await session.commit()
-    except Exception as exc:  # same rule as the seed above
-        get_logger("cheesex.runtime").warning(
-            "agent identity backfill skipped", reason=str(exc)[:120]
-        )
+    if not pool:
+        # Every project agent is a collaborator with an identity of its own — a user
+        # row under `agent_instance_handle(id)`, which is what its roster seats name.
+        # `ensure_identity` runs on create, so this only reaches agents created before
+        # it existed; and the migration that seated each room's former agent wrote
+        # the seat's handle without the user row behind it, which this supplies.
+        # Idempotent, and never blocks boot for the same reason as the seed above.
+        try:
+            async with async_session_factory() as session:
+                service = AgentInstanceService(session)
+                for instance in await AgentInstanceRepository(session).list_all():
+                    await service.ensure_identity(instance)
+                await session.commit()
+        except Exception as exc:  # same rule as the seed above
+            get_logger("cheesex.runtime").warning(
+                "agent identity backfill skipped", reason=str(exc)[:120]
+            )
 
-    # Feedback triage ships with the product: its rule is installed here, on
-    # every start, in the room the deployment names (`builtin_triage`).
-    # Idempotent; a pause somebody set is kept. Never blocks boot: what kept it
-    # from installing is the `feedback_triage` entry of the health report.
-    try:
-        async with async_session_factory() as session:
-            await builtin_triage.install(session)
-            await session.commit()
-    except Exception as exc:  # same rule as the seed above
-        get_logger("cheesex.runtime").warning(
-            "feedback triage install skipped", reason=str(exc)[:120]
-        )
+        # Feedback triage ships with the product: its rule is installed here, on
+        # every start, in the room the deployment names (`builtin_triage`).
+        # Idempotent; a pause somebody set is kept. Never blocks boot: what kept it
+        # from installing is the `feedback_triage` entry of the health report.
+        try:
+            async with async_session_factory() as session:
+                await builtin_triage.install(session)
+                await session.commit()
+        except Exception as exc:  # same rule as the seed above
+            get_logger("cheesex.runtime").warning(
+                "feedback triage install skipped", reason=str(exc)[:120]
+            )
+
     set_domain_checks(
         {
             "feedback_announce": feedback_announce.health,
@@ -435,7 +445,12 @@ async def lifespan(application: FastAPI):
                 )
             )
 
-    taking_over = asyncio.create_task(take_over(), name="take over running work")
+    # A pool process never runs the work: it does not queue for the lock, and
+    # nothing it holds is anyone's to take over.
+    taking_over = asyncio.create_task(
+        take_over() if not pool else asyncio.sleep(0),
+        name="take over running work",
+    )
 
     # The jobs no longer behind the ownership lock run on every process, so they
     # start at boot rather than when the lock arrives: that, and not the lock, is
@@ -450,7 +465,14 @@ async def lifespan(application: FastAPI):
     # takes up the ones nobody reads from its start, and on its way out gives
     # its own up first, for the next process to take at once.
     reading_questions = asyncio.create_task(
-        get_consumptions().run(), name="questions nobody reads"
+        get_consumptions().run() if not pool else asyncio.sleep(0),
+        name="questions nobody reads",
+    )
+    # What pool processes publish reaches the room sockets through this
+    # process's broker (`realtime/relay.py`).
+    relaying = asyncio.create_task(
+        relay_into(get_broker()) if not pool else asyncio.sleep(0),
+        name="broker relay from the api pool",
     )
 
     # FastAPI builds the OpenAPI document, and with it every included route's
@@ -570,7 +592,8 @@ async def lifespan(application: FastAPI):
             set_periodic_health(None)
             set_domain_checks({})
             reading_questions.cancel()
-            await asyncio.gather(reading_questions, return_exceptions=True)
+            relaying.cancel()
+            await asyncio.gather(reading_questions, relaying, return_exceptions=True)
             await get_consumptions().let_go()
             await hand_over_once()
             # The backend serves through its drain, so requests since the

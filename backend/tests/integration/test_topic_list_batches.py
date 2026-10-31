@@ -855,7 +855,10 @@ def test_room_blocks_deduplicates_root_messages_and_routine_runs(client):
     assert _count(seen, _ROUTINE_RUNS_SELECT) == 1, [
         s for s in seen if _ROUTINE_RUNS_SELECT.search(s)
     ]
-    assert len(seen) <= 13, f"expected <= 13 SQL statements, got {len(seen)}: {seen}"
+    # 14 since the page reads who is answering in each 支线 from session_states
+    # (one read of the running sessions) instead of the realtime process's
+    # broker, so any backend process can serve it (`core/process_role.py`).
+    assert len(seen) <= 14, f"expected <= 14 SQL statements, got {len(seen)}: {seen}"
 
 
 def test_awaiting_me_and_project_tasks_deduplicate_reviewers_and_last_said(client):
