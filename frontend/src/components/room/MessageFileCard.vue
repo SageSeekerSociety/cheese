@@ -203,8 +203,8 @@ const badgeHint = computed(() =>
       @sheets="sheetNames = $event"
     />
 
-    <!-- 会话内展开是文档类自己的一样东西，摆在正文下面，不占底下那一排：每种文件卡底下都只有
-         「在右侧打开」「下载」两颗，读者换一种文件不用重新找按钮在哪。 -->
+    <!-- Inline expand belongs to documents, so it sits under the snippet: every file card keeps the
+         same two buttons at the bottom (open on the right, download). -->
     <button
       v-if="family === 'doc' && pdf.count.value"
       type="button"
