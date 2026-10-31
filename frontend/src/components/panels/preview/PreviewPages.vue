@@ -5,11 +5,8 @@
 // 没有它，一页文档就是一张图：读的人不能选、不能搜、不能复制一句话给芝士看。
 // 有了它，读者指着一句话说「这里不对」这件事才成立——选中的原文就是交给芝士的坐标。
 //
-// 指不完的地方就指位置：图里的东西、排版的空当，那些没有文字可选的地方，「指位置」
-// 让读者在页面上点一下，交出去的是这一页的哪个比例位置。
-//
-// 页面按需渲染。一份几十页的文档一次性全画出来，等待的是空白，而且大多数页永远
-// 不会被看到。
+// 没有文字可选的地方（图、排版的空当）用「标一处」点一下，交出去的是这一页的比例位置。
+// 页面按需渲染：几十页一次全画，等的是空白，而且大多数页永远不会被看到。
 //
 // 手机上一页按页宽铺开，正文只有六七个像素：两根手指捏着放大，点两下放大到正文那一栏
 // 刚好占满宽度、再点两下回到整页。缩放先只把已经画好的页拉大（立刻跟手），手停下来再按
@@ -20,6 +17,7 @@ import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, inject, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
 import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { KEPT_SELECTION } from './keptSelection'
@@ -100,8 +98,10 @@ const pages = ref<PageSlot[]>([])
 const loading = ref(false)
 const failure = ref('')
 const doc = shallowRef<PDFDocumentProxy | null>(null)
-/** 指位置模式。开着的时候点页面是「指这里」，不是选文字。 */
+/** 指位置模式。开着的时候点页面是「指这里」，不是选文字。键只在批注模式里摆。 */
 const pointing = ref(false)
+const marking = usePreviewMarking()
+watch(marking, (on) => on || (pointing.value = false))
 /** 刚指过的那一点，画在页上，读者看得见自己指的是哪儿。 */
 const marked = ref<{ page: number; x: number; y: number } | null>(null)
 
@@ -608,9 +608,7 @@ function firstBoxed(
 
 /** 这一处属于哪一节：整份文档的标题先数一遍，再取它之前最近的那一个。
  *
- *  每次选字都重数一遍整份文档，是因为标题只认**读得到的页**：读者还没翻到的那几页，
- *  文字层根本没画出来，数不出东西来。于是同一处的位置可能随着翻页从「有章节」变成
- *  更准的「有章节」——但不会从一个对的说成另一个对的，只会在还没有信息时少写一句。
+ *  标题只认读得到的页（没翻到的页文字层还没画）；量过的页按层缓存，见 `rowsInLayer`。
  *  量不出来（页还没画、或者这一处不在页上）就返回空串，卡上只写页码。 */
 function sectionOf(page: number, top: number | null): string {
   const rows: MeasureRow[][] = []
@@ -938,6 +936,7 @@ onBeforeUnmount(() => {
         @click.stop="zoomByStep(1)"
       />
       <BaseButton
+        v-if="marking"
         size="sm"
         :kind="pointing ? 'primary' : 'ghost'"
         :prepend-icon="pointing ? 'mdi-crosshairs-gps' : 'mdi-crosshairs'"

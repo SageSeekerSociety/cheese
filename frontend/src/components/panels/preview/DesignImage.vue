@@ -4,6 +4,8 @@ import type { SketchTool } from './designSketch'
 
 import { computed, ref, watch } from 'vue'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
+
 import DesignCropBox from './DesignCropBox.vue'
 import DesignMinimap from './DesignMinimap.vue'
 import DesignRasterRegion from './DesignRasterRegion.vue'
@@ -101,6 +103,12 @@ const natural = ref({ width: 0, height: 0 })
 const standaloneRegion = ref<RasterRegion | null>(null)
 
 const tool = ref<SketchTool>('select')
+// 「在图上说」那一行只在批注模式里摆（没有模式的地方照旧摆）。切回「看」时笔收起来，
+// 拖动只是在看图；画了没发的笔画还在，那一行留着，免得画好的东西没处可发。
+const marking = usePreviewMarking()
+watch(marking, (on) => {
+  if (!on) tool.value = 'select'
+})
 const color = ref<string>(SKETCH_COLORS[0])
 /** 亮度和饱和度那两根滑杆摊开着没有。 */
 const tonePanel = ref(false)
@@ -449,6 +457,7 @@ watch(
       <template #actions><slot name="actions" /></template>
     </DesignViewToolbar>
     <DesignSketchToolbar
+      v-if="marking || strokes.length > 0"
       v-model:note="note"
       :tool="tool"
       :color="color"

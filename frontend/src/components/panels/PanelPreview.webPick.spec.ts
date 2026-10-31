@@ -130,8 +130,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('the toggle only appears for web previews and hands the switch to the frame', async () => {
+it('the toggle only appears in the note mode of a web preview and hands the switch to the frame', async () => {
   const ui = mount()
+  // 「看」是默认那一段：在读，不摆「标一处」。切到「批注」才摆出来。
+  expect(ui.queryByTestId('preview-pick')).toBeNull()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
   const toggle = ui.getByTestId('preview-pick')
   expect(toggle.getAttribute('aria-pressed')).toBe('false')
   await fireEvent.click(toggle)
@@ -139,6 +142,11 @@ it('the toggle only appears for web previews and hands the switch to the frame',
   expect(toggle.getAttribute('aria-pressed')).toBe('true')
   await fireEvent.click(toggle)
   expect(ui.modes).toEqual([true, false])
+  // 开着圈选切回「看」：开关不摆了，帧里那一头也得收到「关」，不然还在描边、还在报。
+  await fireEvent.click(ui.getByTestId('preview-pick'))
+  await fireEvent.click(ui.getByTestId('preview-mode-view'))
+  expect(ui.queryByTestId('preview-pick')).toBeNull()
+  expect(ui.modes).toEqual([true, false, true, false])
 })
 
 it('an element pick from the frame becomes a structured web-element quote', async () => {

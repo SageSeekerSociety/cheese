@@ -9,7 +9,9 @@
 // 宿主那一层）和只有名字的应用（`frameName`，授权表投进去的那一个）。哪一帧在台前由
 // `displayedFrame` 说，其余几帧 `inert` 收起来——它们还在跑，只是不接读者的输入。
 import type { AppWakeStep } from '@/composables/panelPreview/appWake'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
 import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFrames'
+import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
@@ -19,13 +21,14 @@ import { useElementSize, useOnline } from '@vueuse/core'
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
 import PreviewCode from './PreviewCode.vue'
+import PreviewFileBar from './PreviewFileBar.vue'
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
 import PreviewRegionPick from './PreviewRegionPick.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { readerText } from '@/lib/fileKind'
+import { fileIcon, fileLabel, readerText } from '@/lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
 import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
@@ -71,6 +74,11 @@ const props = defineProps<{
   pickOn: boolean
   /** 这间房的队友叫什么：连不上时那句话请它去查。 */
   agentName: string
+  /** 房间里的网页文件顶上那一条（类型、看 / 批注 / 改、第几版）要的。应用没有版本，不摆。 */
+  versions?: PreviewVersionsBundle
+  showHistory?: boolean
+  fileHistory?: RoomFileHistoryBundle
+  projectId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -87,6 +95,8 @@ const emit = defineEmits<{
   wake: []
   /** 把页面抛的这几条错附进一处批注：宿主开定位条并预填这几行。 */
   'annotate-errors': [text: string]
+  'toggle-history': []
+  'mention-click': [handle: string]
 }>()
 
 // 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
@@ -427,6 +437,18 @@ watch(
 
 <template>
   <div ref="wrapRef" class="preview-wrap">
+    <PreviewFileBar
+      v-if="previewFile && !previewAppNote"
+      :icon="fileIcon(previewFile.path)"
+      :label="fileLabel(previewFile.path)"
+      :versions="versions"
+      :show-history="!!showHistory"
+      :file-history="fileHistory"
+      :project-id="projectId"
+      :topic-id="topicId"
+      @toggle-history="emit('toggle-history')"
+      @mention-click="emit('mention-click', $event)"
+    />
     <div class="preview-bar text-caption px-2 pt-1">
       <PreviewBrowserBar
         :href="displayedFrame?.href ?? ''"

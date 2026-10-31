@@ -4,6 +4,7 @@ import type { SlidePageContext, SlideSource } from './slidesContext'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DragGesture } from '@use-gesture/vanilla'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
@@ -21,6 +22,8 @@ import { t } from '@/i18n'
  *  而轨道正是这一档最主要的翻页方式之一。 */
 const COMPACT_PX = 460
 
+/** 「标一处」（整页那一颗）只在批注模式里摆。 */
+const marking = usePreviewMarking()
 const props = withDefaults(
   defineProps<{
     data: ArrayBuffer | null
@@ -406,7 +409,7 @@ onBeforeUnmount(() => {
           {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
         </button>
         <button
-          v-if="context"
+          v-if="context && marking"
           type="button"
           class="slides__tool"
           :disabled="!canAskPage || pageBusy"

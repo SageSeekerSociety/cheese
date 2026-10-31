@@ -357,7 +357,7 @@ it('去处菜单每一项都说清会发生什么', async () => {
 
 it('卡关掉时焦点回到打开它的那一处', async () => {
   // 卡自己不抢焦点，所以打开它的那一处就是按下去那一刻拿着焦点的东西：图上那颗
-  // 「选择图片区域」、表格里那一格。不还的话焦点掉到 body。
+  // 图上框一块、表格里那一格。不还的话焦点掉到 body。
   const opener = document.createElement('button')
   document.body.append(opener)
   opener.focus()

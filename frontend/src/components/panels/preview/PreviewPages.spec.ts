@@ -581,7 +581,7 @@ describe('在页面上指一点', () => {
   it('这一页的版本没确认就不给指：按钮禁用，点了也不进指位置', async () => {
     const ui = await opened()
 
-    const pin = ui.getByRole('button', { name: '指位置' })
+    const pin = ui.getByRole('button', { name: '标一处' })
     expect(pin).toHaveProperty('disabled', true)
 
     // 真浏览器里禁用的按钮根本收不到 click；这里直接点页面，守的是组件自己那道闸：
@@ -594,7 +594,7 @@ describe('在页面上指一点', () => {
   it('点一下报的是这一点在那一页里的比例，屏上同时留下标记', async () => {
     const ui = await opened({ data: new ArrayBuffer(8), context })
 
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     // 画布是 (100,200)-(500,1000)：横里走一半、竖里走十六分之一。两个数不一样，
     // 免得把 x 和 y 对调了还看不出来。
     await fireEvent.click(pageBox(ui.container, 1), { clientX: 300, clientY: 250 })
@@ -608,7 +608,7 @@ describe('在页面上指一点', () => {
   it('点在画布外的坐标夹到边界', async () => {
     const ui = await opened({ data: new ArrayBuffer(8), context })
 
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     // 画布是 (100,200)-(500,1000)，点在这一框的右下外面和左上外面。
     await fireEvent.click(pageBox(ui.container, 1), { clientX: 1000, clientY: -100 })
     expect(pins(ui)[0]).toMatchObject({ page: 1, x: 1, y: 0 })
@@ -622,7 +622,7 @@ describe('在页面上指一点', () => {
     await waitFor(() => expect(ui.container.querySelectorAll('canvas')).toHaveLength(1))
     await waitFor(() => expect(ui.container.textContent).toContain('第 2 页无法显示'))
 
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     // 给这一页也摆一个量得到的框：不然「没发出指认」只是因为框量出来是零，
     // 闸门在不在都对——这条要守的正是那道闸。
     const broken = ui.container.querySelector('[data-page="2"]') as HTMLElement
@@ -636,7 +636,7 @@ describe('在页面上指一点', () => {
   it('点在页与页之间的空白上什么都不发', async () => {
     const ui = await opened({ data: new ArrayBuffer(8), context })
 
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     // 落在容器本身，不在任何一页里。
     await fireEvent.click(ui.container.firstElementChild as HTMLElement, { clientX: 300, clientY: 250 })
 
@@ -669,7 +669,7 @@ describe('在页面上指一点', () => {
     await new Promise((r) => setTimeout(r, 260))
     expect(ui.emitted('dropped')).toBeUndefined()
 
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     await fireEvent.click(pageBox(ui.container, 1), { clientX: 300, clientY: 250 })
     expect(ui.container.querySelector('.pv__pin')).not.toBeNull()
 
@@ -681,7 +681,7 @@ describe('在页面上指一点', () => {
 
   it('记号撤掉时连着退出指位置，屏上不留一个已经交出去的记号', async () => {
     const ui = await opened({ data: new ArrayBuffer(8), context })
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     await fireEvent.click(pageBox(ui.container, 1), { clientX: 300, clientY: 250 })
     expect(ui.container.querySelector('.pv__pin')).not.toBeNull()
 
@@ -1120,7 +1120,7 @@ describe('手指放大', () => {
     resize?.()
     await new Promise((r) => setTimeout(r, 300))
     await waitFor(() => expect(boxWidth(ui)).toBe(568))
-    await fireEvent.click(ui.getByRole('button', { name: '指位置' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     doubleTap(pv)
     expect(boxWidth(ui)).toBe(568)
   })
