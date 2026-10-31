@@ -21,6 +21,8 @@ from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
 
+_CARD_REVIEWER_TABLES = frozenset({"accept_card_reviewer", "accept_cards"})
+
 
 def _can_cache(session: object) -> bool:
     return isinstance(session, AsyncSession)
@@ -88,6 +90,8 @@ class AcceptCardRepository:
         的地方（测试的夹具）只写这一列。回落只在这一种情况下发生：表里有行，
         以表为准，删光就是删光。
         """
+        if _can_cache(self._session):
+            return (await self.reviewer_handles_for_cards([card_id])).get(card_id, [])
         stmt = (
             select(AcceptCardReviewer.handle)
             .where(AcceptCardReviewer.card_id == card_id)
@@ -109,12 +113,53 @@ class AcceptCardRepository:
         """
         if not card_ids:
             return {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            out: dict[uuid.UUID, list[str]] = {}
+            unseen: list[uuid.UUID] = []
+            for cid in dict.fromkeys(card_ids):
+                hit, cached = recall(self._session, ("card_reviewer_handles", cid))
+                if hit:
+                    if cached:
+                        out[cid] = list(cached)
+                else:
+                    unseen.append(cid)
+            if not unseen:
+                return out
+            stmt = (
+                select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
+                .where(AcceptCardReviewer.card_id.in_(unseen))
+                .order_by(AcceptCardReviewer.created_at)
+            )
+            found: dict[uuid.UUID, list[str]] = {}
+            for card_id, handle in (await self._session.execute(stmt)).all():
+                found.setdefault(card_id, []).append(handle)
+            missing = [cid for cid in unseen if cid not in found]
+            if missing:
+                cards = await self._session.scalars(
+                    select(AcceptCard).where(AcceptCard.id.in_(missing))
+                )
+                for card in cards:
+                    if card.reviewer_handle:
+                        found[card.id] = [card.reviewer_handle]
+            for cid in unseen:
+                handles = found.get(cid, [])
+                remember(
+                    self._session,
+                    ("card_reviewer_handles", cid),
+                    tuple(handles),
+                    tables=_CARD_REVIEWER_TABLES,
+                )
+                if handles:
+                    out[cid] = handles
+            return out
         stmt = (
             select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
             .where(AcceptCardReviewer.card_id.in_(card_ids))
             .order_by(AcceptCardReviewer.created_at)
         )
-        found: dict[uuid.UUID, list[str]] = {}
+        found = {}
         for card_id, handle in (await self._session.execute(stmt)).all():
             found.setdefault(card_id, []).append(handle)
         # 表里没有行的那些卡（这一刀之前建的、或夹具直接写列建的）读影子列，

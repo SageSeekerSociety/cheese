@@ -22,7 +22,7 @@ reach one (C4 `routes-independent`).
 """
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -338,6 +338,7 @@ async def project_task_rows(
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
     running_of: Callable[[uuid.UUID], bool] | None = None,
+    last_activity_of: Mapping[uuid.UUID, datetime] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
@@ -363,7 +364,11 @@ async def project_task_rows(
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
     # 第四次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
-    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
+    last_said = (
+        last_activity_of
+        if last_activity_of is not None
+        else await TaskService(db).last_block_at_for_tasks(task_ids)
+    )
     # 第五次：哪几条活的会话此刻真在跑 —— 侧栏呼吸绿的「有一轮在跑」那一半。
     # 用 runner 报的会话状态，不用队友自己报的「在做」：那是纸面状态，会话可能已经停了。
     # 调用方已经读过（频道清单的 `at_work`）就直接用，不在这里多查一次。

@@ -37,6 +37,7 @@ async def list_topic_members(
 
     # A task's id reaches its room's roster, files and documents.
     topic = (await place_or_404(db, topic_id)).room
+    await TopicMemberService(db)._repo.list_for_topic(topic.id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id, room=topic

@@ -198,6 +198,7 @@ async def list_project_agents(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
+    await service.list_team(project_id)
     await service.for_project(project)
     rows = await service.list_team(project_id)
     # Who is editing what, in one round of reads against Valkey (one per agent;
