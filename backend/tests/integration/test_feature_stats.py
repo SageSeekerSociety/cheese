@@ -21,7 +21,7 @@
 
 import asyncio
 import json
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
@@ -408,6 +408,20 @@ def test_a_visitor_is_counted_once_a_day(client):
     # 另一个浏览器编号是另一个访问者。
     client.post("/docs/visit", json={"visitor": "ddddeeeeffff"})
     assert len(_visit_rows(client)) == 2
+
+
+def test_a_visit_just_after_utc_midnight_counts_on_the_new_day(client, pinned_clock):
+    """一天一行按 UTC 日算：23:59:59 来一次、00:00:01 再来一次，是两天各一行。"""
+    body = {"visitor": "aaaabbbbcccc", "page": "quickstart"}
+    pinned_clock.move_to(datetime(2026, 3, 14, 23, 59, 59, tzinfo=UTC))
+    client.post("/docs/visit", json=body)
+    pinned_clock.move_to(datetime(2026, 3, 15, 0, 0, 1, tzinfo=UTC))
+    client.post("/docs/visit", json=body)
+
+    assert sorted(row.day for row in _visit_rows(client)) == [
+        date(2026, 3, 14),
+        date(2026, 3, 15),
+    ]
 
 
 def test_a_signed_in_visitor_is_counted_by_account_not_by_browser(client, docs_host):

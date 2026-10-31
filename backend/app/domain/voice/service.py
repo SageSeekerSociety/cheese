@@ -29,6 +29,7 @@ from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import QuotaExceededError, SystemBusyError, ValidationError
 from app.core.sentences import say
+from app.domain.day_windows import utc_now
 from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.usage.credits import spend_to_credits
@@ -145,7 +146,7 @@ class VoiceInputs:
         self._polish = polish
 
     async def spoken_today(self, user_id: int, now: datetime | None = None) -> float:
-        start = _today_start(now or datetime.now(UTC))
+        start = _today_start(now or utc_now())
         total = await self._session.scalar(
             select(func.coalesce(func.sum(VoiceInput.seconds), 0.0)).where(
                 VoiceInput.user_id == user_id, VoiceInput.created_at >= start
