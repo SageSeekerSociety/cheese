@@ -4,6 +4,8 @@ Nobody knows another person's numeric id, so the invite dialog finds the person
 by exact username or email first and invites whoever that turned out to be.
 """
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -77,6 +79,11 @@ def test_one_account_cannot_test_a_long_list_of_addresses(
     from app.api.routes.users import directory
 
     monkeypatch.setattr(directory, "LOOKUPS_PER_WINDOW", 2)
+    # Account ids recur across tests and runs while Redis is shared: count under
+    # a key of this test's own so earlier lookups are not on the bill.
+    monkeypatch.setattr(
+        directory, "_LOOKUP_KEY", f"cheesex:users-lookup:{uuid.uuid4().hex}:{{}}"
+    )
     owner = team["owner"]
     asked = [
         api_client.get("/users/lookup", params={"q": q}, headers=auth(owner))
