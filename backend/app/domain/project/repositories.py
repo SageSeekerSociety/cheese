@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
-from sqlalchemy import BigInteger, and_, column, func, or_, select, table, text
+from sqlalchemy import BigInteger, and_, column, func, inspect, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -97,6 +97,47 @@ class ProjectRepository:
         """
         if not project_ids:
             return {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[uuid.UUID, Project] = {}
+            missing: list[uuid.UUID] = []
+            for pid in dict.fromkeys(project_ids):
+                found, cached = recall(self._session, ("project", pid))
+                if found and (cached is None or not inspect(cached).expired_attributes):
+                    if cached is not None:
+                        by_id[pid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Project, (pid,))
+                )
+                if in_map is not None and not inspect(in_map).expired_attributes:
+                    by_id[pid] = in_map
+                    remember(
+                        self._session,
+                        ("project", pid),
+                        in_map,
+                        tables=frozenset({"projects"}),
+                    )
+                else:
+                    missing.append(pid)
+            if not missing:
+                return by_id
+            stmt = select(Project).where(Project.id.in_(missing))
+            fetched = {
+                project.id: project for project in (await self._session.scalars(stmt))
+            }
+            for pid in missing:
+                p = fetched.get(pid)
+                if p is not None:
+                    by_id[pid] = p
+                remember(
+                    self._session,
+                    ("project", pid),
+                    p,
+                    tables=frozenset({"projects"}),
+                )
+            return by_id
         stmt = select(Project).where(Project.id.in_(list(project_ids)))
         return {project.id: project for project in (await self._session.scalars(stmt))}
 
@@ -427,6 +468,38 @@ class ProjectRepository:
             "name": name or handle,
             "avatar_id": None if avatar_type == "default" else avatar_id,
         }
+
+    async def persons(self, handles: Sequence[str]) -> dict[str, dict]:
+        """Batch ``person`` for a list of handles, in one query."""
+        unique = [h for h in dict.fromkeys(handles) if h]
+        if not unique:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    User.username,
+                    UserProfile.nickname,
+                    UserProfile.avatar_id,
+                    Avatar.avatar_type,
+                )
+                .select_from(User)
+                .outerjoin(UserProfile, UserProfile.user_id == User.id)
+                .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+                .where(User.username.in_(unique))
+            )
+        ).all()
+        by_handle = {
+            username: (nickname, avatar_id, avatar_type)
+            for username, nickname, avatar_id, avatar_type in rows
+        }
+        out: dict[str, dict] = {}
+        for h in unique:
+            name, avatar_id, avatar_type = by_handle.get(h, (None, None, None))
+            out[h] = {
+                "name": name or h,
+                "avatar_id": None if avatar_type == "default" else avatar_id,
+            }
+        return out
 
     async def _profile_of(
         self, handle: str
