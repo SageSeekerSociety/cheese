@@ -54,7 +54,7 @@ def _homes_root(home: Path, owner: Path) -> Path:
     from app.domain.agent.harness.claude_code import device_launch
 
     holes = device_launch.launch_holes(state="$HOME/.cheese/state/acceptance")
-    script = home.parent.parent.parent / "configure.sh"
+    script = owner.parent / "configure.sh"
     script.write_text(
         holes.configure + '\nprintf "%s\\n" "$CHEESE_SEATS_ROOT" "$CHEESE_HOMES_ROOT"\n'
     )
