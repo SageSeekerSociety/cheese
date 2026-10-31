@@ -259,6 +259,9 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
    *  比例；表里存单元格地址。哪一样都拿不到时（网页圈选、图上框选、代码行）就不画
    *  pin——那些地方本来也没有能长期成立的坐标，宁可不画。 */
   function pendingAnchor(): PendingAnchor | undefined {
+    // 页上钉的一点：进篮时截图留不下，位置留着，序号 pin 照样画在那一点上。
+    const pin = pageLocator.pin.value
+    if (pin) return { kind: 'page-pin', page: pin.page, x: pin.x, y: pin.y }
     const page = quoted.page.value
     if (page) {
       if (page.scope !== 'selection') return undefined
@@ -291,7 +294,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function queueLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
-    if (!target || !note || pageLocator.pin.value) return
+    if (!target || !note) return
     const message = formatLocateMessage(target, note)
     if (sharedPending) {
       // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
@@ -344,7 +347,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       // 共享篮：还没收进篮里的这一处先并进去，再整批发。
       const target = locator.value
       const note = locatorNote.value.trim()
-      if (target && note && !pageLocator.pin.value) {
+      if (target && note) {
         sharedPending.add(pendingNoteFor(target, note))
         clearLocator()
       }
@@ -354,31 +357,30 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const target = locator.value
     const note = locatorNote.value.trim()
     const pending = [...queued.value]
-    if (target && note && !pageLocator.pin.value) {
+    if (target && note) {
       pending.push(formatLocateMessage(target, note))
     }
     if (!pending.length) return
     deps.onLocate({ message: pending.join('\n\n') })
     queued.value = []
-    if (!pageLocator.pin.value) clearLocator()
+    clearLocator()
   }
 
   function sendLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note) return
-    if (pageLocator.pin.value) {
-      void pageLocator.send(note)
-      return
-    }
     // 卡片主按钮写着「全部发送（N+1）」时，这一下发的必须是整批：判据要和那颗键写字的
     // 判据同一条（`queuedCount`，共享篮优先），不是本格自己那一条——共享篮时
     // `queued.value` 永远是空的，用它会只发当前这一处、把篮里那几条留成没发出去。
-    //
-    // 图上框的那一块是例外：它这一下有自己的路（下面那一支），进的是「结构化引用」
-    // 那条，篮里有几条与它无关——不分这一下，读者按「发送」会被换成一整批。
-    if (!imageRegion.target.value && queuedCount.value > 0) {
+    // 页上钉的一点、图上框的一块也一样：卡上都有「加入待发」，篮里有东西时主按钮就是
+    // 整批；它们并进篮里时只带位置，截图只在单独发的时候带。
+    if (queuedCount.value > 0) {
       sendQueued()
+      return
+    }
+    if (pageLocator.pin.value) {
+      void pageLocator.send(note)
       return
     }
     if (imageRegion.target.value) {

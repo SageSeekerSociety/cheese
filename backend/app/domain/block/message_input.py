@@ -164,6 +164,7 @@ class WebElementQuoteIn(BaseModel):
     task_id: uuid.UUID | None = None
     selector: str = Field(min_length=1, max_length=256)
     tag: str = Field(default="", max_length=32)
+    label: str = Field(default="", max_length=80)
     text: str = Field(default="", max_length=500)
     rect: WebRectIn
     viewport: WebViewportIn
@@ -185,6 +186,7 @@ class WebTextQuoteIn(BaseModel):
     task_id: uuid.UUID | None = None
     selector: str = Field(min_length=1, max_length=256)
     tag: str = Field(default="", max_length=32)
+    label: str = Field(default="", max_length=80)
     text: str = Field(min_length=1, max_length=500)
     prefix: str = Field(default="", max_length=64)
     suffix: str = Field(default="", max_length=64)

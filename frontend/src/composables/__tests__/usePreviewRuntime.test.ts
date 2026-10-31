@@ -210,6 +210,7 @@ it('an element pick from the current frame and session is handed to the host', a
     selection: false,
     selector: 'body > main > p:nth-of-type(2)',
     tag: 'p',
+    label: '  二、时间安排\n',
     text: '这一句说错了',
     prefix: '',
     suffix: '',
@@ -227,16 +228,21 @@ it('an element pick from the current frame and session is handed to the host', a
     selection: false,
     selector: 'body > main > p:nth-of-type(2)',
     tag: 'p',
+    // 给人读的名字收拢空白；帧没报（老页面）时是空串，由宿主按标签起名。
+    label: '二、时间安排',
     text: '这一句说错了',
     prefix: '',
     suffix: '',
     rect: { x: 1, y: 2, w: 3, h: 4 },
     viewport: { w: 800, h: 600 },
   })
+  const { label: _unnamed, ...legacy } = pick
+  dispatch(legacy)
+  expect(picked.mock.calls[1]![0].label).toBe('')
   // 认不出的位置（选择器空）、或者「选中的一段」却没报原文：都不当一处。
   dispatch({ ...pick, selector: '' })
   dispatch({ ...pick, selection: true, text: '' })
-  expect(picked).toHaveBeenCalledTimes(1)
+  expect(picked).toHaveBeenCalledTimes(2)
 })
 
 it('turning pick mode on is posted to the frame with the current session and origin', async () => {

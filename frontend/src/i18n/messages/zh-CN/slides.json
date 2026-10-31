@@ -19,7 +19,7 @@
   "pageFailed": "第 {page} 页无法显示：{error}",
   "noPageText": "当前页暂无可提取的文字",
   "textFailed": "无法读取当前页文字",
-  "wholePage": "整页 PDF 文字上下文",
+  "wholePage": "整页幻灯片内容",
   "quotedPage": "引用第 {page} 页文字",
   "quotedSelection": "引用第 {page} 页里选中一段",
   "pinnedPage": "指了第 {page} 页的一处",
