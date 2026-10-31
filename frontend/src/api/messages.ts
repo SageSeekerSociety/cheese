@@ -29,8 +29,12 @@ export type PostedMessage = Block & {
 
 /** 一条消息此刻发出去会交给谁：后端照发送时的同一套规矩读草稿，不写任何东西。 */
 export interface Addressing {
-  /** 会为它开一轮的 AI 队友（席位和名字）；不交给任何一位时是 null。 */
-  agent: { handle: string; name: string } | null
+  /**
+   * 会为它开一轮的 AI 队友（席位、名字、名字从哪来）；不交给任何一位时是 null。
+   * `name_source` 是名册上同一个字段：还是出生时那个名字（`default`）时，屏幕要按读的
+   * 人的语言叫它（`lib/agentNames` 的 `teammateName`），和名册、消息行各处一致。
+   */
+  agent: { handle: string; name: string; name_source: string | null } | null
   /** 哪条规矩交给了它：@ 了它、回复它的消息、任务负责人在开着的任务里说、和它私聊。 */
   reason: 'mention' | 'reply' | 'task' | 'private' | null
   /** @ 到的人。 */

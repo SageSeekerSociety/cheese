@@ -322,6 +322,11 @@ class ChatAddressingIn(BaseModel):
 class AddressedAgentOut(BaseModel):
     handle: str
     name: str
+    # Where the name came from: ``default`` is the name a teammate is born with
+    # (「芝士」, stored so the agents read one word), which every screen says in
+    # its reader's language (`teammateName` in frontend/src/lib/agentNames.ts).
+    # The roster rows carry the same field.
+    name_source: str
 
 
 class ChatAddressingOut(BaseModel):

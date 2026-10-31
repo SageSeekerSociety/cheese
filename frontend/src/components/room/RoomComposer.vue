@@ -33,6 +33,7 @@ import { useComposerVoice } from '@/composables/useComposerVoice'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
+import { teammateName } from '../../lib/agentNames'
 import { pastedTextName } from '../../lib/attachments'
 import { expandComposerMentions, mentionsAgent as containsAgentMention } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
@@ -362,8 +363,14 @@ const mates = computed<Mate[]>(() => {
     if (m.agent && !list.some((x) => x.handle === m.handle)) list.push({ handle: m.handle, label: m.label })
   return list
 })
-function mateOf(agent: { handle: string; name: string }): Mate {
-  return mates.value.find((m) => m.handle === agent.handle) ?? { handle: agent.handle, label: agent.name }
+// 名册里没有这一位时用后端答的名字；那还是出生时那个名字，屏幕照读的人的语言说。
+function mateOf(agent: { handle: string; name: string; name_source?: string | null }): Mate {
+  return (
+    mates.value.find((m) => m.handle === agent.handle) ?? {
+      handle: agent.handle,
+      label: teammateName(agent.name, agent.name_source),
+    }
+  )
 }
 // 正文里 @ 到的队友，按出现的顺序。
 const draftMates = computed<Mate[]>(() => {

@@ -23,7 +23,7 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.models import Project
 from app.domain.review.pr_publish import _draft_pr_for_one_task
-from app.domain.room_task.models import Task
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -136,15 +136,18 @@ async def main():
     # it holds the task row while it opens the PR, and this call then skips the
     # task. So what is checked is that the PR exists, not who opened it; the
     # blocking lock waits out a sweep still holding the row.
+    #
+    # The lock is `lock_task_for_change`, the only way to take a task's row
+    # exclusively (room_task/lock_order holds the guard that refuses a bare FOR
+    # UPDATE): it takes the task conversation's numbering first, as every other
+    # change to a task does.
     for task in request["tasks"]:
         task_id = uuid.UUID(task["id"])
         async with async_session_factory() as session:
             await _draft_pr_for_one_task(session, task_id)
             await session.commit()
         async with async_session_factory() as session:
-            row = await session.scalar(
-                select(Task).where(Task.id == task_id).with_for_update()
-            )
+            row = await lock_task_for_change(session, task_id)
             assert row is not None and row.pr_number is not None, task_id
     (state / "config.json").write_text(
         json.dumps({"workspace": str(home), "env": {"HOME": str(home)}})

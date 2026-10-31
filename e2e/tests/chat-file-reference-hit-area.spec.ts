@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // Browser geometry belongs here: happy-dom's element.click() bypasses the hit
 // target and cannot see a hover action sitting over a file reference. Mount the
@@ -64,6 +64,53 @@ createApp({ render: () => h(VApp, {}, { default: () => h('main', {
   },
 })]) }) }).use(vuetify).use(i18n).mount('#fixture');
 </script></body></html>`;
+
+/** Put the pane at its top the way a reader does: wheel up until it stops moving. */
+async function scrollToTop(page: Page) {
+  const pane = page.getByTestId("chat-scroll");
+  const box = await pane.boundingBox();
+  if (!box) throw new Error("the timeline has no visible box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 8; i++) {
+    const before = await pane.evaluate((el) => el.scrollTop);
+    if (before === 0) return;
+    await page.mouse.wheel(0, -2000);
+    await expect
+      .poll(() => pane.evaluate((el) => el.scrollTop))
+      .toBeLessThan(before);
+    if ((await pane.evaluate((el) => el.scrollTop)) === 0) return;
+  }
+  await expect(pane).toHaveJSProperty("scrollTop", 0);
+}
+
+/** Scroll up with the wheel until `id`'s row sits `room` pixels below the pane's top. */
+async function giveRoomAbove(page: Page, id: string, room: number) {
+  const scroll = page.locator(".messages");
+  const now = async () =>
+    page.evaluate(
+      ({ targetId, want }) => {
+        const el = document.querySelector(`[data-mid="${targetId}"]`)!;
+        const pane = el.closest<HTMLElement>(".messages")!;
+        const box = pane.getBoundingClientRect();
+        return {
+          room: Math.round(el.getBoundingClientRect().top - box.top),
+          top: pane.scrollTop,
+          max: pane.scrollHeight - pane.clientHeight,
+        };
+      },
+      { targetId: id, want: room },
+    );
+  const box = await scroll.boundingBox();
+  if (!box) throw new Error("the timeline has no visible box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 8; i++) {
+    const { room: has, top, max } = await now();
+    // Out of room above: a reader cannot go further up than the top.
+    if (has >= room || top <= 0 || max <= 0) return;
+    await page.mouse.wheel(0, -Math.min(600, room - has));
+    await expect.poll(async () => (await now()).top).toBeLessThan(top);
+  }
+}
 
 test("hover actions leave a continuation file reference clickable at its center", async ({
   page,
@@ -386,9 +433,13 @@ test("180px desktop pane preserves author clicks and keeps actions above the mes
   await page.locator("main").evaluate((el) => {
     el.style.width = "180px";
   });
-  await page.getByTestId("chat-scroll").evaluate((el) => {
-    el.scrollTop = 0;
-  });
+  // Scroll to the top the way a reader does — a wheel gesture, not `scrollTop = 0`.
+  // A script's write and the pane's own follow-the-bottom are a race the reader
+  // never runs: the composer's recipient line arrives after mount and grows the
+  // column under the pane in the same frame, and a position set by hand can be
+  // mistaken for the browser clamping the pane. A wheel is the reader saying where
+  // he wants to be, and the pane leaves it alone.
+  await scrollToTop(page);
   await page.evaluate(() => document.fonts.ready);
   const before = await row.locator(".im-text").boundingBox();
   await row.locator(".im-text").hover();
@@ -474,13 +525,12 @@ test("compact desktop menu keeps all actions on its captured message after hover
         ),
     );
     // The bar floats above its row; against the top of the scroll area it is
-    // cut off, as in Discord. Give the row room above it first.
-    await page.locator(`[data-mid="${id}"]`).evaluate((el) => {
-      const scroll = el.closest<HTMLElement>(".messages")!;
-      const room =
-        el.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
-      scroll.scrollTop -= 40 - room;
-    });
+    // cut off, as in Discord. Give the row room above it first — with a wheel,
+    // as a reader does. Writing `scrollTop` from here races the pane's own
+    // follow-the-bottom: the composer's recipient line lands after mount and
+    // grows the column under the pane, and a position set by hand in that
+    // frame is read as the browser clamping the pane and pinned back.
+    await giveRoomAbove(page, id, 40);
     await page.locator(`[data-mid="${id}"] .im-text`).hover();
     const more = page.locator(".hover-bar__more");
     await expect(more).toBeVisible();

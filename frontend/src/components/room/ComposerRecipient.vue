@@ -13,6 +13,7 @@ import { computed } from 'vue'
 
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
+import { teammateName } from '@/lib/agentNames'
 
 const props = defineProps<{
   addressing: Addressing | null
@@ -34,6 +35,9 @@ const nobody = computed(() =>
     ? t('work.room.composer.recipient.channel')
     : t('work.room.composer.recipient.discussion')
 )
+// 后端存的是队友自己的名字（没人改过时是「芝士」，因为队友和提示词读的是它）；屏幕按读
+// 的人的语言叫它，和名册、消息行同一条规矩（`teammateName`）。头像的读屏名也用这一个。
+const agentName = computed(() => teammateName(props.addressing?.agent?.name, props.addressing?.agent?.name_source))
 </script>
 
 <template>
@@ -45,8 +49,8 @@ const nobody = computed(() =>
       </template>
       <template v-if="addressing.agent">
         <span>{{ t('work.room.composer.recipient.to') }}</span>
-        <CheeseAvatar :size="16" :name="addressing.agent.name" :handle="addressing.agent.handle" />
-        <span class="recipient__name">{{ addressing.agent.name }}</span>
+        <CheeseAvatar :size="16" :name="agentName" :handle="addressing.agent.handle" />
+        <span class="recipient__name">{{ agentName }}</span>
       </template>
       <template v-else-if="people">
         <span>{{ t('work.room.composer.recipient.to') }}</span>
