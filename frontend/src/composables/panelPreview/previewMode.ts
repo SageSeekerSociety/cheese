@@ -97,15 +97,16 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
   }
 }
 
-/** 这一处有没有地方接「标一处」。资料库、交付页这些只读的预览（`FileBytesPreview`）
- *  没有对话可交、也没有评论可挂，在那里摆一颗永远灰着的键只是死路，它们提供 false。 */
+/** 这一处有没有地方接「标一处」。只读的预览（`FileBytesPreview`：资料库、题目材料、私聊
+ *  文件；`ArtifactVersionPreview`：交付的某一版）没有对话可交，PDF 的「标一处」、幻灯片的整页那颗在那里永远是灰的，它提供 false。
+ *  图上的框选不看它：框出来的原图像素在只读预览里照样有用（读得出、复制得走）。 */
 export const PREVIEW_MARKABLE: InjectionKey<boolean> = Symbol('preview-markable')
 
 /** 「标一处」那颗键此刻摆不摆：只在「批注」那一段里摆（符露夀 2026-10-31 定的：圈选这类
  *  指法只属于批注模式）。「看」是在读，「改」是在打字，这两段里按下去指一处都不对。
  *  没有模式的地方（资料库、产物页）照旧摆——那里没有三段可切，藏起来就再也按不到。 */
-export function usePreviewMarking(): ComputedRef<boolean> {
+export function usePreviewMarking(options: { readOnlyToo?: boolean } = {}): ComputedRef<boolean> {
   const modes = inject(PREVIEW_MODE, null)
-  const markable = inject(PREVIEW_MARKABLE, true)
+  const markable = options.readOnlyToo || inject(PREVIEW_MARKABLE, true)
   return computed(() => markable && (!modes || modes.mode.value === 'note'))
 }

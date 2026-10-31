@@ -125,6 +125,15 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
     </div>
     <div v-if="!props.wide" class="library-detail__bar">
       <BaseButton kind="primary" block @click="emit('download')">{{ t('work.library.download') }}</BaseButton>
+      <BaseButton
+        block
+        prepend-icon="mdi-comment-text-outline"
+        :aria-expanded="commentsOpen"
+        data-testid="library-comments-phone"
+        @click="commentsOpen = !commentsOpen"
+      >
+        {{ t('work.library.comments') }}
+      </BaseButton>
     </div>
   </section>
 </template>
@@ -198,6 +207,8 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
 }
 
 .library-detail__bar {
+  display: flex;
+  gap: 8px;
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);

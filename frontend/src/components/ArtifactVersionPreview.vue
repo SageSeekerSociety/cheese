@@ -6,6 +6,9 @@
 // （`.claude/rules/architecture.md` 的组件边界）。这里只管画。
 import type { ArtifactVersion } from '../api'
 
+import { provide } from 'vue'
+
+import { PREVIEW_MARKABLE } from '../composables/panelPreview/previewMode'
 import { useArtifactVersionPreview } from '../composables/useArtifactVersionPreview'
 import { t } from '../i18n'
 import { codeLanguageOf, sheetKindOf, SLIDE_SUFFIXES } from '../lib/fileKind'
@@ -16,6 +19,9 @@ import PreviewMarkdown from './panels/preview/PreviewMarkdown.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
 import PreviewSlides from './panels/preview/PreviewSlides.vue'
+
+// 交付的某一版只读：PDF 和幻灯片上那颗「标一处」在这里接不住，不摆。
+provide(PREVIEW_MARKABLE, false)
 
 const props = withDefaults(
   defineProps<{
