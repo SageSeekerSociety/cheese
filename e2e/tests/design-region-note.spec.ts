@@ -65,6 +65,10 @@ window.fetch=async url=>{
     if(window.blockBytes) return new Promise(()=>{});
     return new Response(Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
   }
+  // The version list is a paginated payload ({data:[…],total}), not file metadata.
+  // Answering it in the metadata shape makes versions.ts filter a non-array and
+  // the page throws; before #5041 this fixture never asked for it.
+  if(String(url).includes('/files/revisions')) return new Response(JSON.stringify({code:200,data:{data:[],total:0,path:'design.png',version:null}}),{headers:{'Content-Type':'application/json'}});
   return new Response(JSON.stringify({code:200,data:window.metadata}),{headers:{'Content-Type':'application/json'}});
 };
 createApp({setup(){return()=>h(VApp,{}, {default:()=>h('main',{style:'padding:24px;display:flex;gap:24px'},[
@@ -201,9 +205,13 @@ test('a short-panel note keeps the opener focused and returns focus after editin
   await page.evaluate(() => {
     const fixture = (window as unknown as { fixture: { resize: (width: number) => void; height: (height: number) => void } }).fixture
     fixture.resize(240)
-    // 150 plus the annotate mode's drawing toolbar (one more row, about 30px):
-    // the image keeps the short strip it had before that row existed.
-    fixture.height(180)
+    // 150 plus the annotate mode's drawing toolbar (a 37px row after #5041),
+    // and enough that the drag lands on the image: measured at 180, the image
+    // starts at y=201 while the panel's bottom is 204, so the drag at image.y+8
+    // (209) is clipped away and no note opens. 200 is the smallest round height
+    // that keeps the drag start inside the visible part; the panel still
+    // scrolls (its content floor is 240px), which is the short-strip case.
+    fixture.height(200)
   })
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
@@ -222,7 +230,7 @@ test('a short wide real panel keeps its note placement stable and its editor rea
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await open(page)
-  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(180))
+  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(200))
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
   await expect(input).toBeVisible()
