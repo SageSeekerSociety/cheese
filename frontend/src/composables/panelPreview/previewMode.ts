@@ -18,7 +18,7 @@
 // 的两段接上定位层，宿主按它禁不禁用「改」那一段。
 import type { ComputedRef, InjectionKey } from 'vue'
 
-import { computed, reactive } from 'vue'
+import { computed, inject, reactive } from 'vue'
 
 /** 三段模式。名字照原型里的 `view / note / edit`。 */
 export type PreviewMode = 'view' | 'note' | 'edit'
@@ -95,4 +95,12 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
     editing: computed(() => mode.value === 'edit' && canEdit()),
     forget,
   }
+}
+
+/** 「标一处」那颗键此刻摆不摆：只在「批注」那一段里摆（符露夀 2026-10-31 定的：圈选这类
+ *  指法只属于批注模式）。「看」是在读，「改」是在打字，这两段里按下去指一处都不对。
+ *  没有模式的地方（资料库、产物页）照旧摆——那里没有三段可切，藏起来就再也按不到。 */
+export function usePreviewMarking(): ComputedRef<boolean> {
+  const modes = inject(PREVIEW_MODE, null)
+  return computed(() => !modes || modes.mode.value === 'note')
 }

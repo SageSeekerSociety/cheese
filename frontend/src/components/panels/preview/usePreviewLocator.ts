@@ -96,7 +96,11 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onRuntime: deps.onPickMode,
     open: (label, quote, address) => openLocator(label, quote, address),
     quote: quoted,
-    allowed: () => pointing.value,
+    // 圈选只在「批注」那一段里有：「看」是在读，按下去不该指。跑着的应用顶上没有三段
+    // 可切（它不是一份文件），没有模式的地方（资料库）也一样，这两处照旧随时能圈。
+    allowed: () =>
+      pointing.value &&
+      (!previewMode || previewMode.mode.value === 'note' || !!props.previewAppNote || !!props.displayedFrame?.live),
   })
 
   function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {

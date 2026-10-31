@@ -7,16 +7,21 @@
 //
 // 框选之后那张写批注的卡由宿主（`PanelPreviewView`）的统一「指一处」卡负责，和别的
 // 文件类型同一张——这一档不再自造第二张。
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
+import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { ImageRegionMark, RasterSelection } from './designRegion'
 import type { ImageRegionHandle } from './usePreviewImageRegion'
 
 import { computed } from 'vue'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
+
 import DesignImage from './DesignImage.vue'
+import PreviewFileBar from './PreviewFileBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { imageMayHaveAlpha } from '@/lib/fileKind'
+import { fileIcon, fileLabel, imageMayHaveAlpha } from '@/lib/fileKind'
 
 const props = defineProps<{
   documentName: string
@@ -32,7 +37,17 @@ const props = defineProps<{
   marks?: readonly ImageRegionMark[]
   /** 打开着的那一串，画得实一点。 */
   activeMark?: string | null
+  /** 顶上那一条（类型、看 / 批注 / 改、第几版）要的：哪一份、版本、历史栏。 */
+  path: string
+  topicId?: string | null
+  projectId?: string | null
+  versions?: PreviewVersionsBundle
+  showHistory: boolean
+  fileHistory?: RoomFileHistoryBundle
 }>()
+
+/** 框一块只在批注模式里做得了（「看」里拖动只是在看图）。 */
+const marking = usePreviewMarking()
 
 /** 这种格式可能带透明：底下铺棋盘格，透明的地方看得出是透明。 */
 const transparent = computed(() => imageMayHaveAlpha(props.documentSuffix ?? ''))
@@ -48,17 +63,30 @@ const emit = defineEmits<{
   retry: []
   /** 读不成时「下载原文件」。 */
   download: []
+  'toggle-history': []
+  'mention-click': [handle: string]
 }>()
 </script>
 
 <template>
   <div class="file-image">
+    <PreviewFileBar
+      :icon="fileIcon(path)"
+      :label="fileLabel(path)"
+      :versions="versions"
+      :show-history="showHistory"
+      :file-history="fileHistory"
+      :project-id="projectId"
+      :topic-id="topicId"
+      @toggle-history="emit('toggle-history')"
+      @mention-click="emit('mention-click', $event)"
+    />
     <DesignImage
       v-if="imageRegion.imageSrc.value"
       :src="imageRegion.imageSrc.value"
       :alt="documentName"
       :identity="imageRegion.imageIdentity.value"
-      :selection-enabled="imageRegion.selectionEnabled.value"
+      :selection-enabled="imageRegion.selectionEnabled.value && marking"
       :active-region="imageRegion.target.value?.selection.region ?? null"
       :active="active"
       :zoom-on-wheel="previewFull"

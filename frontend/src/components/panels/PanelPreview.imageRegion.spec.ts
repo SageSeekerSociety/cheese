@@ -84,6 +84,9 @@ function mount() {
 }
 async function paint(ui: ReturnType<typeof mount>) {
   await waitFor(() => expect(ui.container.querySelector('.design-image img')).toBeTruthy())
+  // 图上框一块、画标注都在「批注」那一段里：先切过去（默认是「看」）。
+  const note = ui.queryByTestId('preview-mode-note')
+  if (note) await fireEvent.click(note)
   const image = ui.container.querySelector('.design-image img') as HTMLImageElement
   const pane = ui.container.querySelector('.design-image__pane') as HTMLElement
   Object.defineProperty(pane, 'clientWidth', { value: 532, configurable: true })
@@ -99,11 +102,11 @@ async function paint(ui: ReturnType<typeof mount>) {
   return image
 }
 async function select(ui: ReturnType<typeof mount>) {
-  await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
   // The layer has only just mounted; a pointer in that same millisecond is dropped by Vue as an
   // event older than its listener (see nextMillisecond). No real hand is that fast.
   await nextMillisecond()
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
@@ -140,7 +143,7 @@ it.each([null, 'bbbbbbbbbbbbbbbb'])(
     const ui = mount()
     await paint(ui)
     expect(ui.getByRole('img')).toBeTruthy()
-    expect(ui.getByRole('button', { name: '选择图片区域' }).hasAttribute('disabled')).toBe(true)
+    expect(ui.getByRole('button', { name: '标一处' }).hasAttribute('disabled')).toBe(true)
     expect(ui.emitted().locate).toBeUndefined()
   }
 )
@@ -148,7 +151,7 @@ it('does not promote unverified bytes when source fingerprinting is unavailable'
   vi.stubGlobal('crypto', {})
   const ui = mount()
   await paint(ui)
-  expect(ui.getByRole('button', { name: '选择图片区域' }).hasAttribute('disabled')).toBe(true)
+  expect(ui.getByRole('button', { name: '标一处' }).hasAttribute('disabled')).toBe(true)
   expect(ui.emitted().locate).toBeUndefined()
 })
 it.each([
@@ -179,8 +182,8 @@ it('图片框选之后弹的是共用的那张卡，不是图自己那张', asyn
   const card = ui.container.querySelector('.locator')
   expect(card).toBeTruthy()
   expect(ui.container.querySelector('.design-region-note')).toBeNull()
-  // 卡上写着指的是哪儿（标签 = 「选择图片区域」，原文 = 这块区域的坐标）。
-  expect(card!.querySelector('.locator__label')?.textContent).toContain('选择图片区域')
+  // 卡上写着指的是哪儿（标签 = 「图上的一块」，原文 = 这块区域的坐标）。
+  expect(card!.querySelector('.locator__label')?.textContent).toContain('图上的一块')
   expect(card!.querySelector('.locator__quote')?.textContent).toContain('x=100')
 })
 

@@ -130,8 +130,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('the toggle only appears for web previews and hands the switch to the frame', async () => {
+it('the toggle only appears in the note mode of a web preview and hands the switch to the frame', async () => {
   const ui = mount()
+  // 「看」是默认那一段：在读，不摆「标一处」。切到「批注」才摆出来。
+  expect(ui.queryByTestId('preview-pick')).toBeNull()
+  await fireEvent.click(ui.getByTestId('preview-mode-note'))
   const toggle = ui.getByTestId('preview-pick')
   expect(toggle.getAttribute('aria-pressed')).toBe('false')
   await fireEvent.click(toggle)

@@ -36,7 +36,8 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allo
   const on = ref(false)
   const target = computed<'runtime' | 'region' | null>(() => {
     const current = frame()
-    if (!current) return null
+    // 指不动的那几段（看、改）里连开关都不摆：摆一颗按下去没反应的键比不摆更糟。
+    if (!current || !allowed()) return null
     if (current.live) return 'region'
     // A third party's View has no cheese runtime injected, so there is no pick
     // bridge to switch on — the toggle would do nothing.

@@ -209,8 +209,8 @@ describe('slide reader contract (PDF.js substituted)', () => {
       doc.getPage = async (number: number) => ({ ...(await getPage(number)), streamTextContent: () => stream })
       pdf.requests[0]!.resolve(doc)
       await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
-      await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
-      expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', true)
+      await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
+      expect(ui.getByRole('button', { name: '标一处' })).toHaveProperty('disabled', true)
       if (replacement) await ui.rerender({ context: { ...identity, version: 'v8' } })
       else {
         context.version = 'v8'
@@ -293,7 +293,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
   it('emits the whole page and a selected run through the same frozen context, told apart by scope', async () => {
     const ui = await loaded()
     await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
-    await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     await waitFor(() => expect(ui.emitted().pageContext).toHaveLength(1))
     expect(ui.emitted().pageContext![0]).toEqual([{ text: pdf.text.trim(), page: 2, scope: 'page', context: identity }])
     expect(pdf.text.length).toBeGreaterThan(200)
@@ -409,13 +409,13 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(ui.container.contains(sheet)).toBe(true)
     expect(stage.scrollTop).toBe(120)
     expect(stage.scrollLeft).toBe(24)
-    expect(ui.queryByRole('button', { name: '对整页提问' })).toBeNull()
+    expect(ui.queryByRole('button', { name: '标一处' })).toBeNull()
 
     await ui.rerender({ pending: false, error: 'Refresh failed', context: identity })
     expect(ui.getByRole('alert').textContent).toContain('Refresh failed')
     expect(ui.container.contains(sheet)).toBe(true)
     expect(pageInput(ui).value).toBe('2')
-    expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', true)
+    expect(ui.getByRole('button', { name: '标一处' })).toHaveProperty('disabled', true)
     await fireEvent.click(ui.getByRole('button', { name: '下载原文件' }))
     expect(ui.emitted().download).toHaveLength(1)
 
@@ -424,7 +424,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
     expect(pageInput(ui).value).toBe('2')
     expect(stage.scrollTop).toBe(120)
     expect(stage.scrollLeft).toBe(24)
-    expect(ui.getByRole('button', { name: '对整页提问' })).toHaveProperty('disabled', false)
+    expect(ui.getByRole('button', { name: '标一处' })).toHaveProperty('disabled', false)
     expect(pdf.requests).toHaveLength(1)
   })
 
@@ -437,7 +437,7 @@ describe('slide reader contract (PDF.js substituted)', () => {
     doc.getPage = async (number: number) => ({ ...(await getPage(number)), streamTextContent: () => stream })
     pdf.requests[0]!.resolve(doc)
     await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
-    await fireEvent.click(ui.getByRole('button', { name: '对整页提问' }))
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
     await ui.rerender({ pending: true })
     deliver({ items: [{ str: 'text captured before refreshing', hasEOL: true }] })
     await new Promise((resolve) => setTimeout(resolve, 0))
