@@ -402,6 +402,31 @@ class UserProfileRepository:
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}
 
+    async def profiles_and_chosen_avatars(
+        self, user_ids: Sequence[int]
+    ) -> tuple[dict[int, UserProfile], dict[int, int]]:
+        """Live profiles and their non-default avatar ids in a single outerjoin."""
+        if not user_ids:
+            return {}, {}
+        stmt = (
+            select(UserProfile, Avatar.avatar_type)
+            .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+            .where(
+                and_(
+                    UserProfile.user_id.in_(list(user_ids)),
+                    UserProfile.deleted_at.is_(None),
+                )
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        profiles: dict[int, UserProfile] = {}
+        avatars: dict[int, int] = {}
+        for profile, avatar_type in rows:
+            profiles[profile.user_id] = profile
+            if avatar_type not in (None, "default") and profile.avatar_id is not None:
+                avatars[profile.user_id] = profile.avatar_id
+        return profiles, avatars
+
     async def usernames_by_user_ids(self, user_ids: Sequence[int]) -> dict[int, str]:
         """user_id -> handle. 通知里「谁做了这件事」要按 handle 链到那个人的主页。"""
         if not user_ids:
