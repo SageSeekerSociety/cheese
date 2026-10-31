@@ -28,8 +28,14 @@ module holds it there:
 - A task write that names no task by id is refused: whose numbering it needs
   cannot be told.
 
-A transaction that writes several tasks takes their numbering in id order
-within a flush; across flushes, in the order it reaches them.
+Several tasks in one transaction (archiving a project, the overdue sweep) take
+every one of their numbering locks at once, in conversation id order, before
+any of their rows: `lock_tasks_for_change` with the whole set. Two such
+transactions over overlapping tasks then meet at the first task they share,
+and the one that waits holds nothing the other needs. A transaction that holds
+some numbering and then asks for another is refused
+(`block.output_effects.NumberingOutOfOrder`), wherever the ask comes from: the
+helpers, or a task row written later in the transaction.
 """
 
 import uuid
@@ -60,6 +66,25 @@ async def lock_task_for_change(
     return await session.get(
         Task, task_id, with_for_update={"key_share": True}, populate_existing=True
     )
+
+
+async def lock_tasks_for_change(
+    session: AsyncSession, task_ids: Iterable[uuid.UUID]
+) -> list[Task]:
+    """Every one of ``task_ids`` read for a change: all their numbering at
+    once, in id order, then each row FOR NO KEY UPDATE in that order. The
+    tasks that exist, in that order. The way a transaction touching several
+    tasks starts; a task it reaches afterwards is refused."""
+    ordered = sorted(set(task_ids), key=str)
+    await session.run_sync(hold_numbering_now, ordered)
+    found = []
+    for task_id in ordered:
+        task = await session.get(
+            Task, task_id, with_for_update={"key_share": True}, populate_existing=True
+        )
+        if task is not None:
+            found.append(task)
+    return found
 
 
 def _names_tasks(table: Any) -> bool:

@@ -83,7 +83,9 @@ async def consume_prompt(
 #: `block_numbered()` trigger takes on each new block (alembic `0dd66b328211`).
 NUMBERING_LOCK = 1_734_632_801
 
-#: `Session.info` key: the conversations whose numbering this transaction holds.
+#: `Session.info` key: the conversations whose numbering this transaction holds,
+#: each with the savepoint it was taken in (None: outside any). PostgreSQL lets
+#: one go when that savepoint is rolled back, and keeps it when it is released.
 NUMBERING_HELD = "numbering_held"
 
 _TAKE_NUMBERING = text(
@@ -91,18 +93,45 @@ _TAKE_NUMBERING = text(
 )
 
 
+class NumberingOutOfOrder(RuntimeError):
+    """A transaction already holding numbering locks asked for another one.
+
+    Numbering locks are taken in one order, conversation id order, all at
+    once: a transaction that will write into several conversations' rows
+    (several tasks) names them all in one call, before any of them is held.
+    One that holds some and then takes another can take it after a lock a
+    second transaction already holds while that one waits for a lock the first
+    holds."""
+
+
 def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> None:
     """Take these conversations' numbering locks on ``session``'s connection,
-    in id order, the ones this transaction does not hold yet; held until it
+    in conversation id order, all of them now; held until the transaction
     ends. Synchronous, for code already inside a flush or a statement's
-    execution (`room_task.lock_order`)."""
-    held: set[uuid.UUID] = session.info.setdefault(NUMBERING_HELD, set())
-    for conversation in sorted(set(conversations) - held, key=str):
+    execution (`room_task.lock_order`).
+
+    Every lock a transaction takes through here comes from one call: asking
+    again for ones it holds takes nothing, and asking for another while it
+    holds some is refused (`NumberingOutOfOrder`)."""
+    held: dict[uuid.UUID, object] = session.info.setdefault(NUMBERING_HELD, {})
+    wanted = set(conversations) - held.keys()
+    if not wanted:
+        return
+    if held:
+        # i18n-exempt: programming error, raised before the lock is taken
+        raise NumberingOutOfOrder(
+            "this transaction holds the numbering of "
+            f"{sorted(map(str, held))} and asked for {sorted(map(str, wanted))}: "
+            "name every conversation it will lock in one call, first "
+            "(room_task.lock_order.lock_tasks_for_change)"
+        )
+    savepoint = session.get_nested_transaction()
+    for conversation in sorted(wanted, key=str):
         session.connection().execute(
             _TAKE_NUMBERING,
             {"key": NUMBERING_LOCK, "conversation": str(conversation)},
         )
-        held.add(conversation)
+        held[conversation] = savepoint
 
 
 async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> None:
@@ -113,8 +142,34 @@ async def hold_numbering(session: AsyncSession, conversation_id: uuid.UUID) -> N
     await session.run_sync(hold_numbering_now, [conversation_id])
 
 
+@event.listens_for(Session, "after_rollback")
+def _numbering_rolled_back(session: Session) -> None:
+    # Fired while the transaction rolling back is still the innermost one.
+    held = session.info.get(NUMBERING_HELD)
+    if not held:
+        return
+    savepoint = session.get_nested_transaction()
+    if savepoint is None:
+        held.clear()
+        return
+    for conversation in [c for c, taken in held.items() if taken is savepoint]:
+        del held[conversation]
+
+
 @event.listens_for(Session, "after_transaction_end")
-def _numbering_released(session: Session, _transaction) -> None:
-    # A savepoint rolled back releases the locks taken inside it; forgetting on
-    # every end, savepoints included, only costs taking one again.
-    session.info.pop(NUMBERING_HELD, None)
+def _numbering_released(session: Session, transaction) -> None:
+    held = session.info.get(NUMBERING_HELD)
+    if held is None:
+        return
+    if transaction.parent is None:
+        session.info.pop(NUMBERING_HELD, None)
+        return
+    if not transaction.nested:
+        return
+    # A savepoint released: what was taken in it is held by the one around it.
+    outer = transaction.parent
+    while outer is not None and not outer.nested:
+        outer = outer.parent
+    for conversation, taken in held.items():
+        if taken is transaction:
+            held[conversation] = outer

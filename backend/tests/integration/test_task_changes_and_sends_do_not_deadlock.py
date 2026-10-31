@@ -7,6 +7,10 @@ in one transaction. Run at the same moment, any two of them finish: one waits
 for the other, then goes on (or is refused for what it now reads, as a 4xx).
 None of them fails because the two waited on each other.
 
+The same holds for two transactions that each change several tasks, the same
+ones, reaching them in opposite orders (archiving a project room by room, the
+overdue sweep task by task).
+
 Each case starts one operation, holds it at the point where it is under way in
 the task, starts the other and lets it go as far as it can, then lets the
 first one finish.
@@ -15,7 +19,7 @@ first one finish.
 import asyncio
 import itertools
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import update
@@ -224,3 +228,116 @@ def test_the_write_up_closer_and_a_teammate_change_both_finish(
     _finished(closed)
     assert changed.status_code == 200, changed.text
     assert closed is None
+
+
+class _Sweep:
+    async def stop_work(self, conversation):
+        return None
+
+
+def _two_rooms_tasks_crossing(client) -> tuple[str, str, uuid.UUID, uuid.UUID]:
+    """A project with two rooms, each holding a task overdue for its write-up
+    with a request still unread in it: the larger task id in the room created
+    first, the smaller in the second. Archiving the project reaches them in
+    room order; the overdue sweep, in id order. Returns the project, the first
+    room, and the two task ids, smaller first."""
+    project, _, first = _channel(client)
+    second = client.post(
+        "/topics",
+        json={"project_id": project, "title": "第二个"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    ids = []
+    for room in (first, second):
+        made = client.post(
+            f"/topics/{room}/tasks", json={}, headers=session_auth_headers("alice")
+        )
+        assert made.status_code == 200, made.text
+        ids.append(uuid.UUID(made.json()["data"]["id"]))
+    low, high = sorted(ids, key=str)
+
+    async def overdue_and_crossing():
+        # One task per transaction: one that changes several names them all
+        # first (`lock_tasks_for_change`).
+        for task_id, room in ((high, first), (low, second)):
+            async with client.test_factory() as db:
+                await db.execute(
+                    update(Task)
+                    .where(Task.id == task_id)
+                    .values(
+                        room_id=uuid.UUID(room),
+                        closing_since=datetime.now(UTC) - timedelta(hours=1),
+                    )
+                )
+                await db.commit()
+
+    client.portal.call(overdue_and_crossing)
+    for task_id in (high, low):
+        sent = client.post(
+            f"/topics/{task_id}/messages",
+            json={
+                "request_id": str(uuid.uuid4()),
+                "content": "还没读",
+                "expects_agent": True,
+            },
+            headers=session_auth_headers("alice"),
+        )
+        assert sent.status_code == 200, sent.text
+    return project, first, low, high
+
+
+@pytest.mark.parametrize(
+    "archive_first", [True, False], ids=["archive-then-sweep", "sweep-then-archive"]
+)
+def test_archiving_a_project_and_the_overdue_sweep_both_finish(
+    client, stub_hooks, monkeypatch, archive_first
+):
+    """Two transactions that each change several tasks, the same two, reaching
+    them in opposite orders: archiving the project room by room, the overdue
+    sweep task by task. Either one held part way, the other started, both
+    finish."""
+    monkeypatch.setattr(
+        get_work_runner()._intake, "_schedule_message", lambda *a, **k: None
+    )
+    project, first_room, _, _ = _two_rooms_tasks_crossing(client)
+    reached, release = asyncio.Event(), asyncio.Event()
+    archive_one = TopicService._archive_one
+    unfinished_work = closing.unfinished_work
+
+    async def archive_held_after_its_first_room(self, topic, **kwargs):
+        done = await archive_one(self, topic, **kwargs)
+        if archive_first and str(topic.id) == first_room and not reached.is_set():
+            reached.set()
+            await release.wait()
+        return done
+
+    async def sweep_held_at_its_first_task(*args, **kwargs):
+        if not archive_first and not reached.is_set():
+            reached.set()
+            await release.wait()
+        return await unfinished_work(*args, **kwargs)
+
+    monkeypatch.setattr(TopicService, "_archive_one", archive_held_after_its_first_room)
+    monkeypatch.setattr(closing, "unfinished_work", sweep_held_at_its_first_task)
+
+    async def sweep():
+        async with client.test_factory() as db:
+            swept = await closing.close_overdue(db, _Sweep())
+            await db.commit()
+            return swept
+
+    def archive():
+        return _post(client, f"/projects/{project}/archive", {})
+
+    async def race():
+        one = asyncio.ensure_future(archive() if archive_first else sweep())
+        await asyncio.wait_for(reached.wait(), 10)
+        two = asyncio.ensure_future(sweep() if archive_first else archive())
+        await asyncio.sleep(0.5)
+        release.set()
+        return await asyncio.wait_for(
+            asyncio.gather(one, two, return_exceptions=True), 20
+        )
+
+    for result in client.portal.call(race):
+        _finished(result)

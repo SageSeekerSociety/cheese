@@ -558,20 +558,24 @@ class TopicService:
             return topic
         if await self._repo.has_open_tasks(topic.id):
             raise ValidationError(say("channelArchiveOpenTasks"))
+        await self._close_tasks_of(
+            await self._rooms_to_archive(topic),
+            by=by,
+            close_tasks=close_tasks,
+            events=events,
+        )
         await self._archive_one(
             topic,
             by=by,
             settle_card=settle_card,
             cards=cards,
             events=events,
-            close_tasks=close_tasks,
         )
         await self._archive_children(
             topic,
             by=by,
             settle_card=settle_card,
             cards=cards,
-            close_tasks=close_tasks,
             events=events,
         )
         await self._session.flush()
@@ -584,12 +588,11 @@ class TopicService:
         by: str,
         settle_card: SettleCard | None,
         cards: ArchivedCards,
-        close_tasks: CloseRoomTasks,
         events: PlatformLine,
     ) -> None:
         """Closing a place closes the rooms inside it: rooms nest one level
-        under the root, so the recursion below still applies there. A room's
-        own tasks are closed with the room (`_archive_one`)."""
+        under the root, so the recursion below still applies there. Their
+        tasks were closed before any of them (`_close_tasks_of`)."""
         # 卡上还开着的验收卡由 `_archive_one` 一并收：它们和房间自己的卡挂在同一
         # 个房间上，一次问清比每条活问一次少一半的往返，也不会漏掉一条活被收工
         # 之后才归档的房间。
@@ -604,15 +607,55 @@ class TopicService:
                 settle_card=settle_card,
                 cards=cards,
                 events=events,
-                close_tasks=close_tasks,
             )
             await self._archive_children(
                 child,
                 by=by,
                 settle_card=settle_card,
                 cards=cards,
-                close_tasks=close_tasks,
                 events=events,
+            )
+
+    async def _rooms_to_archive(self, topic: Topic) -> list[Topic]:
+        """``topic`` and every room archiving it takes along: its children not
+        yet archived, and theirs (`_archive_children` walks the same tree)."""
+        rooms = [topic]
+        for child in await self._repo.list_children(topic.id):
+            if child.status != TopicStatus.archived:
+                rooms.extend(await self._rooms_to_archive(child))
+        return rooms
+
+    async def _close_tasks_of(
+        self,
+        rooms: list[Topic],
+        *,
+        by: str,
+        close_tasks: CloseRoomTasks,
+        events: PlatformLine,
+    ) -> None:
+        """Close the tasks of every room this archiving takes, in one call and
+        before anything else of theirs: the tasks' locks are taken together, in
+        one order (`room_task.lock_order`), and the cards settled after are
+        settled by a task's close too.
+
+        活那一行由上面那句口子改成结束（`CloseRoomTasks`）：`tasks` 是本包向上的
+        那张表里的行，结束一件活是那个域的判断，不是本包的。本包说的是**为什么**它
+        结束了 —— 那句话要落在每条活自己的支线里（`PlatformLine` 写下去），房间
+        自己那条归档的话落在房间上，而后来的谁打开这条支线，看到的是一句说到一半
+        就没了的活。"""
+        titles = {room.id: room for room in rooms}
+        for task_id, room_id in await close_tasks(
+            self._session, [room.id for room in rooms]
+        ):
+            room = titles[room_id]
+            await events(
+                self._session,
+                about=EventAbout.task,
+                project_id=room.project_id,
+                room_id=room.id,
+                task_id=task_id,
+                author=by,
+                content=say("threadArchivedWithRoom", room=room.title),
             )
 
     async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
@@ -642,28 +685,8 @@ class TopicService:
         settle_card: SettleCard | None,
         cards: ArchivedCards,
         events: PlatformLine,
-        close_tasks: CloseRoomTasks,
         cascaded_from: str | None = None,
     ) -> None:
-        # The room's tasks first, before its cards: closing them takes each
-        # task's conversation numbering, then its row (`room_task.lock_order`),
-        # and nothing a task's change waits on may be held before them — the
-        # cards below are settled by a task's close too.
-        # 活那一行由上面那句口子改成结束（`CloseRoomTasks`）：`tasks` 是本包向上的
-        # 那张表里的行，结束一件活是那个域的判断，不是本包的。本包说的是**为什么**它
-        # 结束了 —— 那句话要落在每条活自己的支线里（`PlatformLine` 写下去），房间
-        # 自己那条归档的话落在房间上，而后来的谁打开这条支线，看到的是一句说到一半
-        # 就没了的活。
-        for thread_id in await close_tasks(self._session, topic.id):
-            await events(
-                self._session,
-                about=EventAbout.task,
-                project_id=topic.project_id,
-                room_id=topic.id,
-                task_id=thread_id,
-                author=by,
-                content=say("threadArchivedWithRoom", room=topic.title),
-            )
         topic.status = TopicStatus.archived
         archived_at = datetime.now(UTC)
         topic.archived_at = archived_at
@@ -795,20 +818,24 @@ class TopicService:
         if topic.status != TopicStatus.archived:
             if await self._repo.has_open_tasks(topic.id):
                 raise UnprocessableEntityError(say("channelArchiveOpenTasks"))
+            await self._close_tasks_of(
+                await self._rooms_to_archive(topic),
+                by=by,
+                close_tasks=close_tasks,
+                events=events,
+            )
             await self._archive_one(
                 topic,
                 by=by,
                 settle_card=settle_card,
                 cards=cards,
                 events=events,
-                close_tasks=close_tasks,
             )
             await self._archive_children(
                 topic,
                 by=by,
                 settle_card=settle_card,
                 cards=cards,
-                close_tasks=close_tasks,
                 events=events,
             )
         deleted_at = datetime.now(UTC)
@@ -857,6 +884,7 @@ class TopicService:
             for topic in await self._repo.lock_all_in_project(project_id)
             if topic.status != TopicStatus.archived
         ]
+        await self._close_tasks_of(rooms, by=by, close_tasks=close_tasks, events=events)
         for topic in rooms:
             # The overview's children were already taken along with it.
             if topic.status != TopicStatus.archived:
@@ -866,14 +894,12 @@ class TopicService:
                     settle_card=settle_card,
                     cards=cards,
                     events=events,
-                    close_tasks=close_tasks,
                 )
                 await self._archive_children(
                     topic,
                     by=by,
                     settle_card=settle_card,
                     cards=cards,
-                    close_tasks=close_tasks,
                     events=events,
                 )
             topic.archived_with_project = True

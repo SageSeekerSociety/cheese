@@ -58,7 +58,10 @@ from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task import heard
 from app.domain.room_task.checkouts import after_close
-from app.domain.room_task.lock_order import lock_task_for_change
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.room_task.services import said_title
@@ -448,12 +451,10 @@ async def close_overdue(
         )
     )
     closed = []
-    # Id order: the order `lock_order` takes several tasks' numbering in.
-    for task_id in sorted(overdue, key=str):
-        # As `close_after_summary`: a message being sent in it is seen, not
-        # stopped.
-        task = await lock_task_for_change(session, task_id)
-        if task is None or task.closing_since is None:
+    # Every one of them at once, before any is looked at (`lock_order`); as in
+    # `close_after_summary`, a message being sent in one is seen, not stopped.
+    for task in await lock_tasks_for_change(session, overdue):
+        if task.closing_since is None:
             continue
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
