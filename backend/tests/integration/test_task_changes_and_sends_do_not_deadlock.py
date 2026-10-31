@@ -18,6 +18,7 @@ first one finish.
 
 import asyncio
 import itertools
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -26,10 +27,13 @@ from sqlalchemy import update
 
 from app.api.deps import get_work_runner
 from app.api.routes import topics_tasks
+from app.core.config import settings
 from app.domain.agent.turn.intake import human
 from app.domain.block.adapters import platform_line
+from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.numbering import NumberingOutOfOrder
 from app.domain.event_about import EventAbout
+from app.domain.event_author import AuthorType
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task import closing, heard
 from app.domain.room_task.lock_order import lock_task_for_change
@@ -374,3 +378,42 @@ def test_a_task_is_not_locked_after_a_line_was_written_elsewhere(client, stub_ho
             return "locked"
 
     assert client.portal.call(room_line_then_task) == "refused"
+
+
+def test_a_deployment_names_the_writer_that_asked_for_a_numbering_lock_late(
+    client, stub_hooks, monkeypatch, caplog
+):
+    """Where an out-of-order ask only logs (a deployment), the log names the
+    code that made it: the async function whose write asked, not only the
+    database library that ran the flush."""
+    monkeypatch.setattr(settings, "strict_numbering_order", False)
+    project, _, one = _channel(client)
+    other = client.post(
+        "/topics",
+        json={"project_id": project, "title": "第二个"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    async def a_writer_into_two_rooms_one_after_the_other():
+        async with client.test_factory() as db:
+            for room in (one, other):
+                await BlockRepository(db).add(
+                    project_id=uuid.UUID(project),
+                    conversation_id=uuid.UUID(room),
+                    author="system",
+                    author_type=AuthorType.platform,
+                    content="说一句",
+                )
+            await db.rollback()
+
+    with caplog.at_level(logging.ERROR, logger="app.domain.conversation.numbering"):
+        client.portal.call(a_writer_into_two_rooms_one_after_the_other)
+
+    said = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "app.domain.conversation.numbering"
+        and record.levelno == logging.ERROR
+    ]
+    assert len(said) == 1, said
+    assert "a_writer_into_two_rooms_one_after_the_other" in said[0]

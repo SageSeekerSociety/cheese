@@ -35,10 +35,12 @@ savepoint is released.
 """
 
 import logging
+import traceback
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
+import greenlet
 from sqlalchemy import Insert, Uuid, column, event, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import ORMExecuteState, Session
@@ -100,9 +102,9 @@ def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> 
         )
         if settings.strict_numbering_order:
             raise NumberingOutOfOrder(said)
-        # The stack names the writer that asked late; the ids above, what it
-        # held and what it asked for.
-        logger.error("numbering lock out of order: %s", said, stack_info=True)
+        logger.error(
+            "numbering lock out of order: %s\nasked from:\n%s", said, _asked_from()
+        )
     savepoint = session.get_nested_transaction()
     # Only PostgreSQL numbers blocks (`block_numbered()`); elsewhere (the unit
     # tests' SQLite) there is no lock to take, and the order is still kept.
@@ -113,6 +115,24 @@ def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> 
                 _TAKE, {"key": NUMBERING_LOCK, "conversation": str(conversation)}
             )
         held[conversation] = savepoint
+
+
+def _asked_from() -> str:
+    """The stack of the code that asked, the async caller included.
+
+    A flush or a `run_sync` runs this listener in a greenlet SQLAlchemy
+    spawned for the sync side; its own stack ends at that handoff. The caller
+    — the coroutine that awaited the flush, and every coroutine awaiting it —
+    is suspended in the parent greenlet, at the switch, with its frames still
+    linked: that stack is the one that names the writer."""
+    here = traceback.format_stack()[:-1]
+    parent = getattr(greenlet.getcurrent(), "parent", None)
+    frame = getattr(parent, "gr_frame", None)
+    if frame is None:
+        return "".join(here)
+    return (
+        "".join(traceback.format_stack(frame)) + "  -- sync side --\n" + "".join(here)
+    )
 
 
 async def lock_conversations(
