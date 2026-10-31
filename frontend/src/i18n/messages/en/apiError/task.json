@@ -57,6 +57,7 @@
   "taskLockingPolicyInvalid": "The team membership setting is not valid",
   "taskStartModeInvalid": "How a task starts is either start directly or apply first",
   "taskOpeningNotFailed": "The AI teammate didn't fail when it took on this task; there is nothing to retry",
+  "taskCloseWhileInReview": "A card on this task is waiting for its reviewer's decision. Closing the task would void the card and close its pull request, and that decision is not yours, so the task was not closed. The reviewer accepts or returns it on the card; if they said in the conversation that they accept it, ask them to press accept on the card. Wrap up once the card is decided.",
   "taskOwnSessionCloses": "Only the task's owner, its collaborators, or the AI teammate working in the task's conversation can close it",
   "taskOwnSessionReopens": "Only project members whose role has “Create and review tasks”, or the AI teammate working in the task's conversation, can reopen it",
   "taskOwnSessionReportsProgress": "Only the AI teammate working in this task's conversation can report its progress",
