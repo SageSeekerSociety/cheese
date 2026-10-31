@@ -287,6 +287,11 @@ const sweepLine = computed(() => {
   return t('ciActivity.sweep.current', { at })
 })
 
+// The board is kept up to a minute per server worker, so it says when it was computed.
+const computedLine = computed(() =>
+  props.board ? t('ciActivity.computedAt', { at: `${props.board.generated_at.slice(0, 16).replace('T', ' ')}Z` }) : ''
+)
+
 const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivity.runners.hostedPrefix'))
 </script>
 
@@ -312,6 +317,7 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
 
       <template v-else>
         <p class="aci__prov t-meta-read">{{ sweepLine }}</p>
+        <p v-if="board" class="aci__prov t-meta-read">{{ computedLine }}</p>
         <p v-if="headline?.rounds.incomplete_prs" class="aci__prov t-meta-read">
           {{
             headline.rounds.covered_from

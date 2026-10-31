@@ -41,7 +41,12 @@ Days = Annotated[int, Query(ge=1, le=30)]
 async def ci_activity_board(
     db: DbSession, handle: PlatformAdminDep, days: Days = 7
 ) -> dict:
-    return ok(await board.build_board(db, settings.platform_repository, days=days))
+    repo = settings.platform_repository
+    return ok(
+        await board.kept_board(
+            repo, days, lambda: board.build_board(db, repo, days=days)
+        )
+    )
 
 
 @router.get("/jobs", **typed_response(CiJobsOut))
