@@ -1862,3 +1862,108 @@ def test_rename_topic_passes_room_to_authorize_topic(client):
     assert len(title_sql) <= 6, (
         f"expected <= 6 SQL statements on POST /topics/{{id}}/title, got {len(title_sql)}: {title_sql}"
     )
+
+
+_PROJECT_ROLES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_roles\b",
+    re.IGNORECASE,
+)
+_BLOCK_REACTIONS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM block_reactions\b",
+    re.IGNORECASE,
+)
+
+
+def test_set_member_role_reuses_cached_standing_dependencies_before_commit(client):
+    """`PUT /projects/{id}/members/{handle}/role` resolves `standing` before
+    `commit()` and only invalidates `project_roles` on Core DML so `projects`,
+    `user`, `team_user_relation`, `project_member_exclusions`, `project_role_defs`,
+    and `project_members` are not re-queried."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as role_sql:
+        r_role = client.put(
+            f"/projects/{pid}/members/bob/role",
+            json={"role": "admin"},
+            headers=headers,
+        )
+    assert r_role.status_code == 200, r_role.text
+    assert _count(role_sql, _PROJECTS_SELECT) == 1, [
+        s for s in role_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(role_sql, _PROJECT_MEMBERS_SELECT) == 1, [
+        s for s in role_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 1, [
+        s for s in role_sql if _PROJECT_ROLES_SELECT.search(s)
+    ]
+    assert len(role_sql) <= 12, (
+        f"expected <= 12 SQL statements on PUT /projects/{{id}}/members/bob/role, got {len(role_sql)}: {role_sql}"
+    )
+
+
+def test_get_thread_skips_topic_probe_and_redundant_thread_lookup_for_task(client):
+    """`GET /topics/{id}/thread` resolves tasks and threads via `inner_place`
+    without probing `topics` for `topic_id` first, and skips querying `threads`
+    when `place.task.upgraded_from_block_id is None`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "thread root"})
+    th = client.post(f"/blocks/{msg['id']}/thread", json={}, headers=headers).json()[
+        "data"
+    ]
+    th_id = th["id"]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as th_sql:
+        r_th = client.get(f"/topics/{th_id}/thread", headers=headers)
+    assert r_th.status_code == 200, r_th.text
+    assert _count(th_sql, _TOPICS_SELECT) == 1, [
+        s for s in th_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert len(th_sql) <= 7, (
+        f"expected <= 7 SQL statements on GET /topics/{{thread_id}}/thread, got {len(th_sql)}: {th_sql}"
+    )
+
+    with counting_sql(client) as task_sql:
+        r_task = client.get(f"/topics/{task_id}/thread", headers=headers)
+    assert r_task.status_code == 200, r_task.text
+    assert _count(task_sql, _TOPICS_SELECT) == 1, [
+        s for s in task_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert len(task_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /topics/{{task_id}}/thread, got {len(task_sql)}: {task_sql}"
+    )
+
+
+def test_toggle_reaction_reuses_room_and_reaction_rows(client):
+    """`POST /blocks/{id}/reactions` resolves the room via `place_or_404`
+    without `room_of` UNION ALL on channel messages and reads `block_reactions`
+    once per toggle."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "react to me"})
+    msg_id = msg["id"]
+
+    with counting_sql(client) as react_sql:
+        r_react = client.post(
+            f"/blocks/{msg_id}/reactions",
+            json={"emoji": "👍"},
+            headers=headers,
+        )
+    assert r_react.status_code == 200, r_react.text
+    assert _count(react_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in react_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(react_sql, _BLOCK_REACTIONS_SELECT) == 1, [
+        s for s in react_sql if _BLOCK_REACTIONS_SELECT.search(s)
+    ]
+    assert len(react_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /blocks/{{id}}/reactions, got {len(react_sql)}: {react_sql}"
+    )

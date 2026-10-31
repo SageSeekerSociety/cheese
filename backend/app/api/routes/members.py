@@ -260,8 +260,8 @@ async def set_member_role(
     await RoleService(db).set_role(
         project_id=project_id, handle=user_handle, role=body.role, actor=at.actor
     )
-    await db.commit()
     held = await standing(db, project_id, user_handle)
+    await db.commit()
     return ok({"role": held.role if held is not None else None})
 
 

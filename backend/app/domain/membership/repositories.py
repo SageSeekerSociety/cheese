@@ -48,11 +48,32 @@ class MemberRepository:
 
     async def is_excluded(self, *, project_id: uuid.UUID, user_handle: str) -> bool:
         """Is this person out of this project even though the team may say otherwise?"""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_all, cached_all = recall(
+                self._session, ("excluded_handles", project_id)
+            )
+            if found_all:
+                return user_handle in cached_all
+            found, cached = recall(
+                self._session, ("project_member_excluded", project_id, user_handle)
+            )
+            if found:
+                return cached
         stmt = select(ProjectMemberExclusion.id).where(
             ProjectMemberExclusion.project_id == project_id,
             ProjectMemberExclusion.user_handle == user_handle,
         )
-        return await self._session.scalar(stmt) is not None
+        excluded = await self._session.scalar(stmt) is not None
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_excluded", project_id, user_handle),
+                excluded,
+                tables=frozenset({"project_member_exclusions"}),
+            )
+        return excluded
 
     async def excluded_handles(self, project_id: uuid.UUID) -> set[str]:
         """Everyone excluded from this project, in one read — the roster's half."""
@@ -100,11 +121,34 @@ class MemberRepository:
     async def get(
         self, *, project_id: uuid.UUID, user_handle: str
     ) -> ProjectMember | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_all, cached_all = recall(
+                self._session, ("project_member_rows", project_id)
+            )
+            if found_all:
+                return next(
+                    (m for m in cached_all if m.user_handle == user_handle), None
+                )
+            found, cached = recall(
+                self._session, ("project_member_row", project_id, user_handle)
+            )
+            if found:
+                return cached
         stmt = select(ProjectMember).where(
             ProjectMember.project_id == project_id,
             ProjectMember.user_handle == user_handle,
         )
-        return await self._session.scalar(stmt)
+        member = await self._session.scalar(stmt)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_row", project_id, user_handle),
+                member,
+                tables=frozenset({"project_members"}),
+            )
+        return member
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMember]:
         if _can_cache(self._session):
@@ -241,6 +285,14 @@ class RoleRepository:
 
     async def role_of(self, *, project_id: uuid.UUID, user_handle: str) -> str | None:
         """The key of the role recorded for ``user_handle``; none when nothing is."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(
+                self._session, ("project_role_of", project_id, user_handle)
+            )
+            if found:
+                return cached
         row = (
             await self._session.execute(
                 select(ProjectRole.role, ProjectRole.role_id).where(
@@ -249,7 +301,15 @@ class RoleRepository:
                 )
             )
         ).first()
-        return role_key(row[0], row[1]) if row is not None else None
+        ans = role_key(row[0], row[1]) if row is not None else None
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                ans,
+                tables=frozenset({"project_roles"}),
+            )
+        return ans
 
     async def roles(self, project_id: uuid.UUID) -> dict[str, str]:
         rows = await self._session.execute(
@@ -281,7 +341,17 @@ class RoleRepository:
                 },
             )
         )
-        await self._session.flush()
+        if not _can_cache(self._session) or (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                role_key(role, role_id),
+                tables=frozenset({"project_roles"}),
+            )
 
     async def clear_role(self, *, project_id: uuid.UUID, user_handle: str) -> None:
         await self._session.execute(
@@ -290,7 +360,17 @@ class RoleRepository:
                 ProjectRole.user_handle == user_handle,
             )
         )
-        await self._session.flush()
+        if not _can_cache(self._session) or (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_of", project_id, user_handle),
+                None,
+                tables=frozenset({"project_roles"}),
+            )
 
     async def holders(self, role_id: uuid.UUID) -> list[str]:
         """Who holds one of the project's own roles."""
