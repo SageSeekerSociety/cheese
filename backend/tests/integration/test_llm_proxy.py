@@ -199,6 +199,26 @@ def test_scoped_token_is_swapped_for_the_project_key(client, _pool, _project_key
     assert sent["content"] == b'{"model":"m","messages":[]}'
 
 
+def test_only_model_calls_go_through_to_the_gateway(client, _pool, _project_key):
+    """A session's token rides on the project's gateway key, so what it may
+    reach there is the model calls the harnesses make — not the gateway's key,
+    spend or model administration, and no path climbing out of `v1/`."""
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    token = mint_scoped_token(
+        project_id=project["id"], topic_id=project["root_topic_id"]
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    _FakeClient.seen = {}
+    for path in ("key/info", "spend/logs", "v1/model/info", "v1/../key/info"):
+        refused = client.get(f"/llm/{path}", headers=headers)
+        assert refused.status_code == 404, (path, refused.text)
+    assert _FakeClient.seen == {}, "a refused path reached the gateway"
+
+    for path in ("v1/models", "v1/messages/count_tokens", "v1/responses"):
+        client.post(f"/llm/{path}", headers=headers, content=b"{}")
+        assert _FakeClient.seen["url"] == f"http://pool:4000/{path}"
+
+
 def test_a_room_session_names_its_room_so_the_gateway_keeps_its_cache(
     client, _pool, _project_key
 ):

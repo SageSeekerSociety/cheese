@@ -88,9 +88,33 @@ def _servers(client, pid, handle="alice") -> dict:
     return {s["name"]: s for s in response.json()["data"]["servers"]}
 
 
-def _connect(client, pid, name="tracker", handle="alice") -> httpx.Response:
+def _connect(client, pid, name="tracker", handle="alice") -> dict:
     """What a member's browser does: start from settings, pass through the
-    authorization server, come back to the platform's callback."""
+    authorization server, come back to the platform's callback, and land on
+    the settings page, which claims what the callback held. Returns where it
+    landed (``path``) and the outcome the page shows (``query``)."""
+    back = _come_back(client, pid, name, handle)
+    assert back.status_code == 302, back.text
+    landing = urlsplit(back.headers["location"])
+    return {"path": landing.path, "query": _claim(client, back, handle)}
+
+
+def _claim(client, back: httpx.Response, handle: str) -> dict:
+    """The settings page's MCP section, signed in as ``handle``, claiming the
+    hand-off; the response itself when the claim is refused outright."""
+    landing = urlsplit(back.headers["location"])
+    project = landing.path.split("/")[2]
+    (handoff,) = parse_qs(landing.query)["mcp_handoff"]
+    claimed = client.post(
+        f"/projects/{project}/mcp/handoffs/{handoff}",
+        headers=session_auth_headers(handle),
+    )
+    if claimed.status_code != 200:
+        return {"status": claimed.status_code}
+    return claimed.json()["data"]["query"]
+
+
+def _come_back(client, pid, name="tracker", handle="alice") -> httpx.Response:
     started = client.post(
         f"/projects/{pid}/mcp/servers/{name}/connect",
         headers=session_auth_headers(handle),
@@ -154,10 +178,8 @@ def test_a_member_connects_a_server_once_for_the_whole_project(client, upstream)
     assert before["search"]["status"] == "missing_values"
 
     back = _connect(client, pid)
-    assert back.status_code == 302
-    landing = urlsplit(back.headers["location"])
-    assert landing.path == f"/projects/{pid}/settings"
-    assert parse_qs(landing.query)["mcp_result"] == ["connected"]
+    assert back["path"] == f"/projects/{pid}/settings/mcp"
+    assert back["query"]["mcp_result"] == "connected"
 
     # The authorization request followed the spec: PKCE S256 and the resource.
     asked = upstream.authorize_requests[-1]
@@ -348,9 +370,7 @@ def test_a_legacy_sse_server_is_called_over_its_stream(client, upstream):
     )
     tid = _topic(client, pid)
     back = _connect(client, pid, "old")
-    assert parse_qs(urlsplit(back.headers["location"]).query)["mcp_result"] == [
-        "connected"
-    ]
+    assert back["query"]["mcp_result"] == "connected"
     called = _call(
         client, tid, pid, "old", "tools/call", {"name": "whoami", "arguments": {}}
     )
@@ -429,9 +449,23 @@ def test_a_state_is_spent_once(client, upstream):
     consent = httpx.get(started, follow_redirects=False)
     query = urlsplit(consent.headers["location"]).query
     first = client.get("/mcp/oauth/callback?" + query, follow_redirects=False)
-    assert "mcp_result" in first.headers["location"]
+    assert _claim(client, first, "alice")["mcp_result"] == "connected"
     replay = client.get("/mcp/oauth/callback?" + query, follow_redirects=False)
-    assert _landing(replay)["mcp_error"] == ["mcpAuthAlreadyUsed"]
+    assert _claim(client, replay, "alice")["mcp_error"] == "mcpAuthAlreadyUsed"
+
+
+def test_a_connection_finished_by_someone_else_saves_nothing(client, upstream):
+    """The state names a connection, not whose browser finishes it. A member
+    who starts one and sends the authorization link to somebody else must not
+    end up with that person's tokens on the project: the callback keeps the
+    result for the starter, and another person's claim spends it unsaved."""
+    pid = _project(client, upstream)
+    back = _come_back(client, pid)
+    assert _servers(client, pid)["tracker"]["status"] == "disconnected"
+    # Somebody outside the project is refused before anything is taken.
+    assert _claim(client, back, "mallory")["status"] in (401, 403, 404)
+    assert _servers(client, pid)["tracker"]["status"] == "disconnected"
+    assert _rows(client, ProjectMcpConnection) == []
 
 
 def _landing(back: httpx.Response) -> dict[str, list[str]]:
