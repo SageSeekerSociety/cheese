@@ -15,7 +15,6 @@ from sqlalchemy import Uuid, column, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import DocumentJournal, Documents
@@ -69,13 +68,6 @@ async def overview_document(session: AsyncSession, project_id: uuid.UUID) -> Doc
         .where(_projects.c.id == project_id)
         .values(overview_document_id=doc.id)
     )
-    if isinstance(session, AsyncSession):
-        remember(
-            session,
-            ("overview_document_id", project_id),
-            doc.id,
-            tables=frozenset({"projects"}),
-        )
     return doc
 
 
@@ -125,23 +117,6 @@ async def seed_overview(
 
 async def _pointed_at(session: AsyncSession, project_id: uuid.UUID) -> uuid.UUID | None:
     """Which document the project names as its goals, straight from the row."""
-    if isinstance(session, AsyncSession):
-        if session.autoflush:
-            await session.flush()
-        found, cached = recall(session, ("overview_document_id", project_id))
-        if found:
-            return cached
-        found_proj, proj = recall(session, ("project", project_id))
-        if found_proj and proj is not None:
-            return proj.overview_document_id
-    val = await session.scalar(
+    return await session.scalar(
         select(_projects.c.overview_document_id).where(_projects.c.id == project_id)
     )
-    if isinstance(session, AsyncSession):
-        remember(
-            session,
-            ("overview_document_id", project_id),
-            val,
-            tables=frozenset({"projects"}),
-        )
-    return val
