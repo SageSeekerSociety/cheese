@@ -10,7 +10,5 @@ import { t } from '@/i18n'
  *  单独拿出来是为了能直接测：拼错一个字，卡上就会把读者指到一个不存在的节。 */
 export function pageLabel(page: number, section?: string): string {
   const name = section?.trim()
-  return name
-    ? t('work.room.preview.pageSection', { page, section: name })
-    : t('work.room.preview.page', { page })
+  return name ? t('work.room.preview.pageSection', { page, section: name }) : t('work.room.preview.page', { page })
 }
