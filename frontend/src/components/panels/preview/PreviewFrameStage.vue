@@ -93,6 +93,21 @@ const emit = defineEmits<{
 // `allow-same-origin`。第三方 MCP View 不能带 —— `allow-scripts` 加
 // `allow-same-origin` 会把手写这份 HTML 的人放进内容域的存储里。同一个面板、
 // 同一个预览源，沙箱按这一帧的 mime 分：房内那套不变，第三方那套收紧。
+
+/**
+ * 帧里的应用「外面是深还是浅」，由这一格自己声明，不由浏览器的继承决定。
+ *
+ * 平台的深色主题在 `<html>` 上声明 `color-scheme: dark`，帧会**继承**它（2026-10-31
+ * 在 Chromium 141 里量过：跨源的帧一样收到）。于是用 `@media (prefers-color-scheme:
+ * dark)` 配色的应用以为外面是深色，把自己调成深色——而这一格的底色一直是白的
+ * （`.preview-frame` 的 `background: #fff`，那是刻意的：应用自己的正文默认近黑）。
+ * 同一个页面在深色平台下渲染成 #eee 的字落在 #fff 上，读不出来。
+ *
+ * 底色是白的，就对应用说白：钉成 `light`。应用自己的配色照旧说了算——它要深色就自己
+ * 画深底，这一条只是不让「平台主题」这个信号去改一份白纸。
+ */
+const FRAME_SCHEME = { colorScheme: 'light' } as const
+
 const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
 function sandboxFor(mime?: string | null): string {
   return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
@@ -600,6 +615,7 @@ watch(
             :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
             :title="t('work.room.preview.frameTitle')"
             :sandbox="sandboxFor(frame.mime)"
+            :style="FRAME_SCHEME"
             @load="emit('frame-load', frame.id, $event)"
             @error="emit('frame-error', frame.id, $event)"
           />
@@ -610,6 +626,7 @@ watch(
           class="preview-frame"
           :title="t('work.room.preview.frameTitle')"
           :sandbox="DEFAULT_SANDBOX"
+          :style="FRAME_SCHEME"
         />
         <!-- 冷启动那一段的骨架：先在屏幕上占出页面大概的样子（标题、几行正文），等它
              到了再换成真的。原来这里是一片白，加上顶上那行秒数，读者还是在盯着空框。
