@@ -392,7 +392,9 @@ class MemoryHandoffApplied(Base):
     changed since — a note deleted from the memory panel — as untouched on the
     platform's side and put the seat's version back. The token is written in
     the transaction that merges the handoff; a token found here is told taken
-    and not merged again, and the row goes once the seat has heard."""
+    and not merged again. The row goes once the seat answers that it dropped
+    the handoff (`runner.acknowledge`), or after
+    `memory_ledger.HANDOFF_APPLIED_KEPT` when it never does."""
 
     __tablename__ = "memory_handoffs_applied"
 

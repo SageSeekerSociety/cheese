@@ -17,7 +17,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy import delete, func, select
@@ -64,6 +64,17 @@ logger = logging.getLogger(__name__)
 #: to, and a bounded map is what keeps a long-lived process from growing one
 #: entry per room it has ever seen.
 MEMORY_TURNS_KEPT = 512
+
+#: How long a merged handoff's record is kept when its seat never confirmed it
+#: dropped the handoff (`MemoryHandoffApplied`). A seat that lost the
+#: confirmation keeps its handoff until it next reconciles, which is the next
+#: time somebody talks there; a room's home, and the seat in it, stays until the
+#: room is archived. So no bound covers every case: a room left untouched for
+#: longer than this after a lost confirmation hands the tree back once more,
+#: and it is merged again from its old baseline. A year is far past a room's
+#: ordinary quiet spells, and the records it keeps are one row per lost
+#: confirmation.
+HANDOFF_APPLIED_KEPT = timedelta(days=365)
 
 #: How long one consolidation call may take, and how much it may answer: the
 #: files it rewrites come back whole.
@@ -271,6 +282,12 @@ class MemoryLedger:
                     # 一次合并旧，再合一遍会把主人之后删掉的东西写回去）。
                     continue
                 db.add(MemoryHandoffApplied(token=str(token)))
+                await db.execute(
+                    delete(MemoryHandoffApplied).where(
+                        MemoryHandoffApplied.applied_at
+                        < func.now() - HANDOFF_APPLIED_KEPT
+                    )
+                )
                 said = True
                 prefix = str(given.get("prefix") or "")
                 handed, owners, kept = await apply_withdrawn(
@@ -296,15 +313,21 @@ class MemoryLedger:
             if said:
                 await db.commit()
         if acked:
-            await self._compute.memory(session, {"acked": acked})
-            # 会话那一侧听到了，这几份不会再交回来。
-            async with self._sessions() as db:
-                await db.execute(
-                    delete(MemoryHandoffApplied).where(
-                        MemoryHandoffApplied.token.in_(acked)
+            # 只有会话那一侧答了「这几份已经不在了」（`runner.acknowledge` 的
+            # ``dropped``），平台这边的记录才删：设备调用失败、座位上已经没有活
+            # 着的会话，这一问都只答一个 None，而那份交接还在那一侧，下一次对账
+            # 还会交回来，记录得留着挡住它。
+            answer = await self._compute.memory(session, {"acked": acked})
+            dropped = answer.get("dropped") if isinstance(answer, dict) else None
+            confirmed = [token for token in acked if token in (dropped or ())]
+            if confirmed:
+                async with self._sessions() as db:
+                    await db.execute(
+                        delete(MemoryHandoffApplied).where(
+                            MemoryHandoffApplied.token.in_(confirmed)
+                        )
                     )
-                )
-                await db.commit()
+                    await db.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 

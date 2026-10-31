@@ -1735,12 +1735,16 @@ class Runner(runner.Runner[Journal]):
         return handed
 
     def acknowledge(self, params: dict) -> dict:
-        """平台已经把这几份交接合进数据库、提交了（``acked``）：删掉它们。"""
+        """平台已经把这几份交接合进数据库、提交了（``acked``）：删掉它们，并答
+        上这一次确认已经不在交接区里的那几份（``dropped``）。平台只凭这一句删
+        它那边的记录：没有这一句，就不知道这一侧还会不会再交回来。"""
         handoff = _handoff_root(self.memory_root())
+        dropped = []
         for token in params.get("acked") or []:
             if isinstance(token, str) and _HANDOFF_TOKEN.fullmatch(token):
                 (handoff / f"{token}.json").unlink(missing_ok=True)
-        return {}
+                dropped.append(token)
+        return {"dropped": dropped}
 
     @staticmethod
     def _keep_refused(root: Path, refused: dict[str, str]) -> None:

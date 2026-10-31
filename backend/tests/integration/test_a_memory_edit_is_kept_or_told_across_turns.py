@@ -711,3 +711,54 @@ async def test_a_handoff_merged_once_is_not_merged_again_when_its_receipt_is_los
     await ledger.sync(seat)
 
     assert await _alices(factory, project_id, "secret.md") is None
+
+
+async def test_a_handoff_is_not_merged_again_when_its_receipt_goes_unanswered(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The word that the platform took alice's handed-back tree reaches no
+    session (the seat's session has gone, or the call to its machine failed),
+    so the seat still holds the handoff. alice deletes the note; when the seat
+    hands the same tree back on its next reconciliation, her deletion stands."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id, "- [original](note.md) — original\n")
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    heard = sessions.memory
+    unanswered = {"once": False}
+
+    async def no_session_to_tell(ref, request):
+        if "acked" in request and not unanswered["once"]:
+            unanswered["once"] = True
+            return None
+        return await heard(ref, request)
+
+    sessions.memory = no_session_to_tell
+    await ledger.sync(seat)
+    merged = await _alices(factory, project_id, "secret.md")
+    assert merged is not None
+    async with factory() as session:
+        await MemoryFileStore(session).delete(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="secret.md",
+            expected_version=merged.version,
+        )
+        await session.commit()
+
+    await ledger.sync(seat)
+
+    assert await _alices(factory, project_id, "secret.md") is None
