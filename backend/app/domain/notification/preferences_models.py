@@ -123,13 +123,17 @@ def _events_json(pref: Preferences) -> dict:
 _PREFERENCE_TABLES = frozenset({"notification_preference"})
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 class PreferencesRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def for_user(self, user_id: int) -> Preferences:
         """这个人的偏好；没保存过就是默认（读取永远成功，见模块说明）。"""
-        if isinstance(self._session, AsyncSession):
+        if _can_cache(self._session):
             if self._session.autoflush:
                 await self._session.flush()
             found, cached = recall(self._session, ("notification_preference", user_id))
@@ -137,7 +141,7 @@ class PreferencesRepository:
                 return cached
         row = await self._session.get(NotificationPreference, user_id)
         pref = _to_preferences(row) if row is not None else default_preferences()
-        if isinstance(self._session, AsyncSession):
+        if _can_cache(self._session):
             remember(
                 self._session,
                 ("notification_preference", user_id),
@@ -151,7 +155,7 @@ class PreferencesRepository:
         ids = list(dict.fromkeys(user_ids))
         if not ids:
             return {}
-        if isinstance(self._session, AsyncSession):
+        if _can_cache(self._session):
             if self._session.autoflush:
                 await self._session.flush()
             by_id: dict[int, Preferences] = {}
