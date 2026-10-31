@@ -27,7 +27,7 @@ import { ApiError, ensureFreshToken, isRetryableGetFailure } from '../../api'
 import { applyLiveChanges } from '../../lib/blockPaging'
 
 import { t } from '@/i18n'
-import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
+import { cachedWindow, forgetCachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
 
 /** 打开一段对话：清干净、摆上缓存、读最新一页，并看着它换。 */
 export function usePanelTopicWindow(deps: {
@@ -76,7 +76,12 @@ export function usePanelTopicWindow(deps: {
   paging: () => ReturnType<typeof useChatPaging>
 }) {
   function historyReadFailed(roomId: string, e: unknown) {
-    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) deps.closeSocket()
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) {
+      deps.closeSocket()
+      // 已经看不到这间房了：先摆上的那份缓存（可能是上次从浏览器里放回来的）撤掉。
+      forgetCachedWindow(roomId)
+      deps.timeline.show({ blocks: [], hasMore: false })
+    }
     deps.errorMsg.value = e instanceof Error ? e.message : t('work.room.loadFailed')
     // A failed history fetch must not terminate socket recovery during an outage.
     if (isRetryableGetFailure('GET', e instanceof ApiError ? e.status : undefined, e)) deps.retryLater(roomId)
