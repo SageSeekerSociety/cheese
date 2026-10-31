@@ -532,6 +532,7 @@ void openPlace()
                 :saved="skills.saved.value.filter((s) => s.id === id)"
                 :busy="skills.busy.value"
                 :error="skills.error.value"
+                :member-names="memberNames"
                 @save="skills.save"
                 @decline="skills.decline"
                 @open="openSkillPage"
