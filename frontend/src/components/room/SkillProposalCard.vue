@@ -5,7 +5,6 @@ import { ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
 
 // 对话里请人保存技能的那张卡：芝士把一套做法整理成技能（或者提议改一份），
 // 人就在说话的地方决定存不存，不用跳去技能页。
@@ -18,7 +17,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 // 改动退回保存的那一版。取数和保存在 `useSkillProposals`，这里只画。
 defineOptions({ name: 'SkillProposalCard' })
 
-defineProps<{
+const props = defineProps<{
   /** 还在等人的提议。 */
   proposals: ProjectSkill[]
   /** 这一轮刚保存的。 */
@@ -26,6 +25,8 @@ defineProps<{
   /** 正在保存或拒绝的那一份的 id。 */
   busy: string
   error: string
+  /** handle → 名字：提议人画成名字。认不出的照写 handle。 */
+  memberNames: Record<string, string>
 }>()
 
 const emit = defineEmits<{
@@ -34,11 +35,10 @@ const emit = defineEmits<{
   open: [skill: ProjectSkill]
 }>()
 
-const workspace = useWorkspaceStore()
 const expanded = ref<Set<string>>(new Set())
 
 function nameOf(handle: string): string {
-  return workspace.members.find((m) => m.user_handle === handle)?.name || handle
+  return props.memberNames[handle] || handle
 }
 
 function toggle(id: string) {

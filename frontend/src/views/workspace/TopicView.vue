@@ -3,7 +3,7 @@ import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 
-import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
@@ -17,12 +17,15 @@ import { useCardPhase, useTopicConversation } from './topicView/conversation'
 import { useTopicHeader } from './topicView/header'
 import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
+import { useSkillProposals } from './useSkillProposals'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
+import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -190,12 +193,43 @@ const {
 } = conversation
 
 // ---- 这个房间此刻是不是活的（见 topicView/live.ts）----
+// 对话里 AI 队友提议的技能：卡片点开在右侧那一格读完再决定（WorkPanel 的 `#skill`），
+// 取数和保存在这一页。卡片属于提出它的那段对话。第一次点开一张卡才去读，读过之后
+// 换对话、提议有变动再跟着读——没人点开就不为它多发一次请求。
+const skillConversation = computed(() => props.taskId ?? props.threadId ?? props.topicId)
+const skills = useSkillProposals(
+  toRef(() => props.projectId),
+  skillConversation
+)
+const skillsRead = ref(false)
+function loadSkills() {
+  skillsRead.value = true
+  return skills.load()
+}
+watch(skillConversation, () => {
+  if (skillsRead.value) void skills.load()
+})
+// 地址直接指着右侧那一格技能（刷新、发出去的链接）：那一格要画它，这时也要读。
+watch(
+  () => panelTab.value,
+  (tab) => {
+    if (!skillsRead.value && tab?.startsWith('file:skill:')) void loadSkills()
+  },
+  { immediate: true }
+)
+function openSkillPage(skill: { id: string }) {
+  void router.push({ name: 'project-skills', params: { projectId: props.projectId }, query: { skill: skill.id } })
+}
+
 const live = useTopicLive({
   conversationId: () => conversationId.value,
   taskId: () => props.taskId,
   reloadTask: () => taskPage.load(true),
   noteChatNews,
   reloadAccept,
+  reloadSkills: () => {
+    if (skillsRead.value) void skills.load()
+  },
   chat: () => chatColumn.value,
 })
 const { working, activity, agentControl, siteTurns, activityTick, roomConnected } = live
@@ -270,6 +304,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   onPanelTab,
   onReview,
   reloadAccept,
+  loadSkills,
   opening: { onOpenThread, onOpenCard, upgradeMessage },
   openTopic,
   panelRef,
@@ -489,6 +524,27 @@ void openPlace()
                 @click="toggleFocus"
               />
               <BaseButton icon="mdi-close" size="sm" :title="closeLabel" :aria-label="closeLabel" @click="closePanel" />
+            </template>
+            <template #skill="{ id }">
+              <SkillProposalCard
+                v-if="skills.proposals.value.some((s) => s.id === id) || skills.saved.value.some((s) => s.id === id)"
+                :proposals="skills.proposals.value.filter((s) => s.id === id)"
+                :saved="skills.saved.value.filter((s) => s.id === id)"
+                :busy="skills.busy.value"
+                :error="skills.error.value"
+                :member-names="memberNames"
+                @save="skills.save"
+                @decline="skills.decline"
+                @open="openSkillPage"
+              />
+              <BaseEmptyState
+                v-else
+                size="compact"
+                icon=""
+                :title="t('work.room.workCard.settled')"
+                :action="t('work.room.workCard.viewSkill')"
+                @action="openSkillPage({ id })"
+              />
             </template>
             <template #overview>
               <TaskOverview

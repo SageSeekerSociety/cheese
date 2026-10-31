@@ -22,6 +22,7 @@ import { computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { personalAsker } from '@/lib/personalAsker'
+import { isProposalResource, proposalPage } from '@/lib/proposalNavigation'
 import { userRefRoute } from '@/lib/userRef'
 import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
@@ -37,6 +38,8 @@ export function useTopicActions(opts: {
   onReview: () => void
   /** 采纳卡重读。 */
   reloadAccept: () => void
+  /** 读这段对话里还在等人的技能提议：右侧那一格要画它。 */
+  loadSkills: () => Promise<void>
   /** 支线：打开一条、开任务页、把一条消息转成任务。 */
   opening: {
     onOpenThread: (block: Block) => void
@@ -104,6 +107,20 @@ export function useTopicActions(opts: {
     review?: DocReviewRequest,
     document?: OpenedDocument
   ) {
+    if (document && isProposalResource(resource)) {
+      // AI 队友提议的技能：还在等人的，在面板的自由区开一格，读完就地决定；定下来的和
+      // 例行事务去它在项目里的那一页。
+      if (resource === 'skill' && opts.panelRef.value?.openSkill) {
+        opts.focusMode.value = false
+        void opts.loadSkills()
+        await nextTick()
+        await opts.panelRef.value.openSkill(document)
+        return
+      }
+      const page = proposalPage(resource, opts.place().projectId, document.id)
+      if (page) void router.push(page)
+      return
+    }
     if (resource === 'doc' && document) {
       // 资料库里的一份文档：在面板的自由区开一格，不是这个对话自己的文档。
       opts.focusMode.value = false

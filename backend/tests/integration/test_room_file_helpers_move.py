@@ -53,6 +53,8 @@ CARD_KEYS = {
     "conversation_id",
     "seq",
     "turn_id",
+    # How a platform line is drawn; null on anything else.
+    "shown_as",
 }
 
 

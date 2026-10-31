@@ -128,7 +128,6 @@ function mount() {
           template: '<div data-testid="attachment-image" :data-path="path" />',
         },
         AgentFeedbackCard: true,
-        SkillProposalCard: true,
         TopicAcceptCard: true,
       },
     },

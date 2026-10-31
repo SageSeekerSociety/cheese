@@ -229,10 +229,24 @@ export interface Block {
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
   // translates/classifies from this; content is the baked-text fallback.
   meta?: BlockMeta | null
+  // How a platform line is drawn (kind=event), decided by the backend's one
+  // table (`notice_meta.shown_as`); absent on anything else.
+  shown_as?: ShownAs | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   created_at: string
 }
+
+/**
+ * 一行平台事件在对话里看成什么（后端 `notice_meta.shown_as`）。
+ * - `hidden`：不给人看。
+ * - `result`：附在 AI 队友这次工作的消息下面，这次改了什么。
+ * - `card`：AI 队友交出来的一样东西，卡片。
+ * - `for_agent`：平台替 AI 队友说，要人来处理。
+ * - `happening`：频道里发生的事，居中一行。
+ * - `person`：一个人说的话（退回时写的理由）。
+ */
+export type ShownAs = 'hidden' | 'result' | 'card' | 'for_agent' | 'happening' | 'person'
 
 // Standard API envelope: {"code":200,"message":"ok","data":<payload>}
 export interface ApiEnvelope<T> {

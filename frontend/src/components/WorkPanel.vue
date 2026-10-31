@@ -182,6 +182,9 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 const FILE_TAB = 'file:'
 // 自由区里的资料库文档，路径写成 `doc:<编号>`：和文件同一排页签，打开的是文档。
 const DOC_TAB = 'doc:'
+// AI 队友提议的一项技能，路径写成 `skill:<编号>`：读完就地决定存不存。内容由页面从插槽
+// 递进来（`#skill`），面板自己不取数。
+const SKILL_TAB = 'skill:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -212,6 +215,8 @@ function ensureFileFromUrl(key: string | null) {
   if (openFiles.value.some((f) => f.path === path)) return
   // 资料库文档的页签：名字等它自己读到了再补上。
   if (path.startsWith(DOC_TAB)) placeFile(path, { id: path.slice(DOC_TAB.length), title: '' })
+  else if (path.startsWith(SKILL_TAB))
+    placeFile(path, undefined, undefined, { id: path.slice(SKILL_TAB.length), title: '' })
   else placeFile(path)
 }
 
@@ -630,10 +635,21 @@ const { exists: inRoomFiles } = useRoomFileProbe(topicId)
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
-function placeFile(path: string, document?: { id: string; title: string }, project?: OpenFileTab['project']) {
+function placeFile(
+  path: string,
+  document?: { id: string; title: string },
+  project?: OpenFileTab['project'],
+  skill?: OpenFileTab['skill']
+) {
   if (openFiles.value.some((f) => f.path === path)) return
   const next = [...openFiles.value]
-  const tab: OpenFileTab = { path, pinned: false, ...(document ? { document } : {}), ...(project ? { project } : {}) }
+  const tab: OpenFileTab = {
+    path,
+    pinned: false,
+    ...(document ? { document } : {}),
+    ...(project ? { project } : {}),
+    ...(skill ? { skill } : {}),
+  }
   const temp = next.findIndex((f) => !f.pinned)
   if (temp >= 0) next.splice(temp, 1, tab)
   else next.push(tab)
@@ -663,6 +679,13 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   const host = docRefs.get(document.id)
   if (host) host.reviewEdits(review)
   else waitingReviews.set(document.id, review)
+}
+/** 对话里那张技能提议卡：在自由区开一格，读完就地决定。 */
+async function openSkill(skill: { id: string; title: string }) {
+  const path = SKILL_TAB + skill.id
+  noteFileOrigin()
+  placeFile(path, undefined, undefined, { ...skill })
+  await setTab(fileKey(path))
 }
 function keepDocRef(id: string, el: unknown) {
   if (!el) {
@@ -742,6 +765,7 @@ defineExpose({
   showOverview,
   openFile,
   openDocument,
+  openSkill,
   siteBlock,
   previewShown,
   activeTab: () => active.value,
@@ -915,6 +939,14 @@ defineExpose({
               :lines="f.project.lines"
               @open-task="emit('open-card', $event)"
             />
+            <div
+              v-else-if="f.skill && mounted.has(fileKey(f.path))"
+              v-show="shown(fileKey(f.path))"
+              class="panel-skill"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
+            >
+              <slot name="skill" :id="f.skill.id" />
+            </div>
             <PanelPreviewHost
               v-else-if="mounted.has(fileKey(f.path))"
               v-show="shown(fileKey(f.path))"
@@ -940,6 +972,12 @@ defineExpose({
 </template>
 
 <style scoped>
+.panel-skill {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
 .work-panel {
   display: flex;
   flex-direction: column;

@@ -45,6 +45,7 @@ from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.receipts import held_blocks, register_input
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.run_record.models import RunRecord
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import post_message
 from tests.integration.test_a_release_restarts_quiet_sessions import (
@@ -244,6 +245,16 @@ async def _said(client, topic) -> list[str]:
     async with client.test_request_factory() as db:
         blocks = await db.scalars(select(Block).where(Block.conversation_id == topic))
         return [str(block.content or "") for block in blocks]
+
+
+async def _recorded(client, topic) -> list[str]:
+    """The platform's own running for this conversation: kept as run records for
+    the 现场, not said in the room."""
+    async with client.test_request_factory() as db:
+        rows = await db.scalars(
+            select(RunRecord).where(RunRecord.conversation_id == topic)
+        )
+        return [str(row.content or "") for row in rows]
 
 
 @pytest.fixture
@@ -450,7 +461,12 @@ async def test_a_message_sent_meanwhile_waits_and_reaches_the_new_runner(
         service, old = held["service"], held["old"]
         assert not await _admitted(service, topic, first)
         assert not await _admitted(service, topic, second)
-        waiting = [line for line in await _said(client, topic) if "平台更新中" in line]
+        # Waiting out an update is the platform's own running: not said in the
+        # room, recorded once per drain for the 现场.
+        assert not [line for line in await _said(client, topic) if "平台更新中" in line]
+        waiting = [
+            line for line in await _recorded(client, topic) if "平台更新中" in line
+        ]
         assert len(waiting) == 1, "told once per drain, not once per message"
         async with client.test_request_factory() as db:
             kept = await db.get(Block, first)

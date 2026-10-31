@@ -29,6 +29,7 @@ import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { threadHeading } from '@/lib/blockDisplay'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
+import { proposalPage } from '@/lib/proposalNavigation'
 import { taskTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
@@ -74,6 +75,9 @@ const viewer = computed(() => currentUserName.value ?? myHandle())
 // Open its library-document cards on the document's own page instead, and a
 // task's own document (「编辑了文档」) on the task's page, where 概览 shows it.
 function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
+  // 提议的技能、例行事务：支线占着面板，去它在项目里的那一页。
+  const page = document ? proposalPage(resource, props.room.project_id, document.id) : null
+  if (page) return void router.push(page)
   if (resource !== 'doc') return
   if (document) return void openThreadDocument(router, props.room.project_id, document, review)
   if (task.value) emit('open-page', task.value.id)

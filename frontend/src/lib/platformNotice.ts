@@ -3,8 +3,8 @@
  *
  * 房间是个对话，不是监控面板。平台自己的提示（CI 没过、闸门红了、轮次失败、
  * 合并冲突…）过去和真人发言一样平铺、一样字号、想多长就多长，一条能占五六行。
- * 这个模块决定事件的正文、详情和操作。ChatPanel 根据作者与事件归属，给 agent
- * 相关通知加上统一的状态消息外观。
+ * 这个模块决定事件的正文、详情和操作。给不给人看、看成什么样，由后端那一张表
+ * 答（`Block.shown_as`，`notice_meta.shown_as`），这里不再按类别码另分一遍。
  *
  * 硬约束是「信息不能丢，只能收起来」—— 所以没有任何一档会把原文扔掉：长文进
  * `<details>` 的展开区，连续同类事件折成一行时，每一次的原文都还在展开区里。
@@ -36,9 +36,6 @@
 import type { Block } from '../cx_types'
 import type { DocEdit } from './docEdits'
 import type { PlatformErrorPresentation } from './platformEvents'
-
-/** 谁在管这件事。扫一眼不点开就能决定跟不跟自己有关。 */
-export type WhoTag = 'platform' | 'cheese' | 'human'
 
 /** 本轮改动里的一个文件：路径和它自己的增删行数。 */
 export interface ChangedFile {
@@ -141,9 +138,6 @@ export type PlatformNotice =
   | {
       mode: 'fold'
       line: string
-      /** 谁在管这件事的**码**——形态统一之后，只有它决定这一行的记号颜色。 */
-      who: WhoTag | ''
-      whoLabel: string
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
       /** 一个人自己写的那句话（退回的理由），跟着这一行直接写出来，不收进展开区。 */
@@ -156,49 +150,6 @@ export type PlatformNotice =
   | { mode: 'repeats'; actor: string; rows: NoticeRow[] }
   /** 老样子：居中、灰、12px、一行。 */
   | { mode: 'plain' }
-
-// These events describe the room agent's work or execution environment. `who`
-// instead names the next responder, so it cannot decide the message's identity.
-export const AGENT_STATUS_EVENTS = new Set([
-  'machine_provisioning',
-  'turn_failed',
-  'turn_timeout',
-  'deploy_interrupted',
-  'dispatch_unknown',
-  'sandbox_rebuilt',
-  'host_failure',
-  'platform_error',
-  'subagent_start',
-  'ci_failed',
-  'gate_failed',
-  'gate_blocked',
-  'gate_abandoned',
-  'accept_conflict',
-  'upstream_conflict',
-  'pr_conflict',
-  'pr_review',
-  'merge_refused',
-  'card_filed',
-  'artifact_declared',
-  'card_rejected',
-  'card_voided',
-  'card_redescribed',
-  'deploy_done',
-  'deploy_failed',
-  'main_checks_failed',
-  'room_merge',
-  'conclusion_settled',
-  'archive_deferred',
-  'accept_done',
-  'accept_stopped',
-  'accept_ready',
-  'accept_dismissed',
-  'merge_withheld',
-  'pr_closed',
-  'force_merged',
-  'migration_collision',
-  'doc_missing',
-])
 
 /** 聊天里那张文档卡：哪一份、是不是刚建的、这一串改了哪几处。 */
 export interface LibraryDocCard {

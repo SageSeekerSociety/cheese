@@ -257,7 +257,7 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         name: '本轮摘要',
         note: '一轮里的动作行折成一行，改动摘要挂在后面（「改了 1 个文件（+6 -0）」）。',
         props: roomNoticeProps(TURN_SUMMARY),
-        expect: '改动了 1 个文件',
+        expect: '修改了 1 个文件',
       },
       {
         name: '验收卡已递出',

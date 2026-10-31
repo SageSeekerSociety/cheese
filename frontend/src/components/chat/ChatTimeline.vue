@@ -307,8 +307,9 @@ const faceRows = computed(() => {
   const seen = new Set<string>()
   for (let i = props.rows.length - 1; i >= 0 && seen.size < wanted; i--) {
     const { block, notice } = props.rows[i]
+    // 平台替队友说的那一行头像列里只是一枚小头像，不是它的头像：表情不放在那儿。
     const handle = notice
-      ? noticeCont.value[i]
+      ? noticeCont.value[i] || block.shown_as === 'for_agent'
         ? null
         : agentOf(block, notice)?.handle ?? null
       : props.runEdges[i] !== 'cont' && props.isAgentBlock(block)
