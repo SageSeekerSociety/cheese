@@ -81,6 +81,7 @@ class RelayBroker:
         return True
 
     def __getattr__(self, name: str) -> Any:
+        # i18n-exempt: a request routed to the wrong process, a 500 no reader is told
         raise ProcessRoleError(
             f"an api pool process has no realtime broker state (asked for {name!r})"
         )

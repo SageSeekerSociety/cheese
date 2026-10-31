@@ -32,6 +32,7 @@ def refuse_on_api_pool(what: str) -> None:
     """Fail where a pool process would otherwise do ``what`` without the state
     it needs (or wait for an owner lock it never takes)."""
     if is_api_pool():
+        # i18n-exempt: a request routed to the wrong process, a 500 no reader is told
         raise ProcessRoleError(f"an api pool process cannot {what}")
 
 
