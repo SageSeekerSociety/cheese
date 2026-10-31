@@ -196,7 +196,10 @@ def _note_inserted_conversations(state: ORMExecuteState) -> None:
     ):
         inserted = _inserted_ids(statement, state.parameters)
         if statement.table.name == "tasks" and inserted:
-            state.session.info.setdefault(CREATED_TASKS_KEY, set()).update(inserted)
+            savepoint = state.session.get_nested_transaction()
+            created_tasks = state.session.info.setdefault(CREATED_TASKS_KEY, {})
+            for tid in inserted:
+                created_tasks.setdefault(tid, savepoint)
         created = _new_conversations(
             state.session,
             statement.table.name,
@@ -243,7 +246,10 @@ def _note_created_conversations(session: Session, _context) -> None:
             by_table.setdefault(name, []).append(row.id)
     for name, ids in by_table.items():
         if name == "tasks" and ids:
-            session.info.setdefault(CREATED_TASKS_KEY, set()).update(ids)
+            savepoint = session.get_nested_transaction()
+            created_tasks = session.info.setdefault(CREATED_TASKS_KEY, {})
+            for tid in ids:
+                created_tasks.setdefault(tid, savepoint)
         created = _new_conversations(session, name, ids)
         if created:
             session.info.setdefault(_CREATED, set()).update(created)
@@ -252,12 +258,19 @@ def _note_created_conversations(session: Session, _context) -> None:
 @event.listens_for(Session, "after_rollback")
 def _numbering_rolled_back(session: Session) -> None:
     # Fired while the transaction rolling back is still the innermost one.
-    session.info.pop(CREATED_TASKS_KEY, None)
-    session.info.pop(FRESH_TASKS_KEY, None)
+    savepoint = session.get_nested_transaction()
+    created_tasks = session.info.get(CREATED_TASKS_KEY)
+    if created_tasks:
+        if savepoint is None:
+            created_tasks.clear()
+        else:
+            for tid in [t for t, taken in created_tasks.items() if taken is savepoint]:
+                del created_tasks[tid]
+    if savepoint is None:
+        session.info.pop(FRESH_TASKS_KEY, None)
     held = session.info.get(NUMBERING_HELD_KEY)
     if not held:
         return
-    savepoint = session.get_nested_transaction()
     if savepoint is None:
         held.clear()
         return
@@ -273,6 +286,14 @@ def _numbering_released(session: Session, transaction) -> None:
         session.info.pop(CREATED_TASKS_KEY, None)
         session.info.pop(FRESH_TASKS_KEY, None)
         return
+    created_tasks = session.info.get(CREATED_TASKS_KEY)
+    if created_tasks and transaction.nested:
+        outer = transaction.parent
+        while outer is not None and not outer.nested:
+            outer = outer.parent
+        for tid, taken in created_tasks.items():
+            if taken is transaction:
+                created_tasks[tid] = outer
     held = session.info.get(NUMBERING_HELD_KEY)
     if not held or not transaction.nested:
         return

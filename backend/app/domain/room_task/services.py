@@ -549,8 +549,8 @@ class TaskService:
                 raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
             # task's landed, unless it never delivered.
-            if parent.accepted_at is None and (
-                parent.status == TaskStatus.open or parent.delivered_head is None
+            if parent.status == TaskStatus.open or (
+                parent.accepted_at is None and parent.delivered_head is None
             ):
                 base = parent.branch_name
         if reviewer_handle is None:

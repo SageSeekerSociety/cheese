@@ -7,27 +7,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
 from app.domain.agent_instance.models import AgentInstance, NameSource
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import (
+    agent_instance_handle,
+    agent_instance_id_bounds,
+)
 
-_AGENT_INSTANCE_TABLES = frozenset({"agent_instances"})
+AGENT_INSTANCE_TABLES = _AGENT_INSTANCE_TABLES = frozenset({"agent_instances"})
 
 
 class AgentInstanceRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def project_of_seat_prefix(self, hex_prefix: str) -> uuid.UUID | None:
-        if len(hex_prefix) != 12:
+    async def project_of_seat_handle(self, handle: str) -> uuid.UUID | None:
+        bounds = agent_instance_id_bounds(handle)
+        if bounds is None:
             return None
-        try:
-            low = uuid.UUID(
-                f"{hex_prefix[:8]}-{hex_prefix[8:12]}-0000-0000-000000000000"
-            )
-            high = uuid.UUID(
-                f"{hex_prefix[:8]}-{hex_prefix[8:12]}-ffff-ffff-ffffffffffff"
-            )
-        except ValueError:
-            return None
+        low, high = bounds
         return await self._session.scalar(
             select(AgentInstance.project_id)
             .where(AgentInstance.id.between(low, high))
