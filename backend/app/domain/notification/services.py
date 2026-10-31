@@ -118,6 +118,13 @@ class NotificationQueryService:
             user_id=user_id, notification_id=notification_id, read=desired_read_status
         )
 
+    async def set_read_status_and_get(
+        self, user_id: int, notification_id: int, desired_read_status: bool
+    ) -> Notification | None:
+        return await self._repo.set_read_status_and_get_for_user(
+            user_id=user_id, notification_id=notification_id, read=desired_read_status
+        )
+
     async def get_unread_notification_count_for_current_user(self, user_id: int) -> int:
         return await self._repo.count_unread_for_user(user_id=user_id)
 
@@ -308,6 +315,8 @@ class NotificationQueryService:
         self, notifications: Sequence[Notification]
     ) -> list[NotificationDTO]:
         """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
+        if not notifications:
+            return []
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
         names = (
             await names_for(self._session, *map(_metadata_map_of, notifications))
@@ -524,8 +533,10 @@ class ProjectNotificationService:
             raise NotFoundError("Notification not found")
         return row
 
-    async def mark_read(self, notification_id: int) -> Notification:
-        row = await self.get_or_404(notification_id)
+    async def mark_read(
+        self, notification_id: int, *, row: Notification | None = None
+    ) -> Notification:
+        row = row if row is not None else await self.get_or_404(notification_id)
         row.read = True
         return await self._repo.save(row)
 
@@ -538,11 +549,12 @@ class ProjectNotificationService:
         publish: Callable[[str, dict], Awaitable[None]],
         decision_line: DecisionLine,
         by_assistant: bool = False,
+        row: Notification | None = None,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。``by_assistant``：是 ``decided_by`` 自己的芝士
         替他拍的板，那一句照样署他的名，并标明是芝士代他说的。"""
-        row = await self.get_or_404(notification_id)
+        row = row if row is not None else await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
             raise ValidationError(say("notificationOnlyDecisions"))
         # 幂等：一件事只拍一次板，重复拍不会往房间里再丢一条【决策】。

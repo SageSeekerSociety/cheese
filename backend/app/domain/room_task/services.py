@@ -501,11 +501,16 @@ class TaskService:
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
 
-    async def set_contributors(self, task: Task, handles: list[str]) -> Task:
+    async def set_contributors(
+        self, task: Task, handles: list[str], *, flush: bool = True
+    ) -> Task:
         """Who works the task beside its owner. They are credited on its
         commits too (``repository.identity``)."""
         await self.set_credits(
-            task, reporter_handle=task.reporter_handle, contributor_handles=handles
+            task,
+            reporter_handle=task.reporter_handle,
+            contributor_handles=handles,
+            flush=flush,
         )
         return task
 

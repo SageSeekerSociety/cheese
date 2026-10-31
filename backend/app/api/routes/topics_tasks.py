@@ -380,7 +380,7 @@ async def report_progress(
         run=parse_run(run),
     )
     await db.flush()
-    out = await task_out(db, task, me=actor.handle or "")
+    out = await task_out(db, task, card, me=actor.handle or "")
     await db.commit()
     return ok(out)
 
@@ -524,10 +524,10 @@ async def update_task(
             place.project_id, team=project_team
         ):
             raise UnprocessableEntityError(say("taskOwnerNotInProject"))
-        await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
             db, actor, place, task, body.owner_handle
         )
+        await members.take_in(place.room_id, body.owner_handle)
         if body.owner_handle != task.owner_handle:
             await heard.inform(
                 db,
@@ -553,11 +553,12 @@ async def update_task(
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
             raise UnprocessableEntityError(say("contributorNotInProject"))
-        for handle in wanted:
-            await members.take_in(place.room_id, handle)
         before = list(task.contributor_handles or [])
         after = [h for h in wanted if h != task.owner_handle]
-        await tasks.set_contributors(task, after)
+        await tasks.set_contributors(task, after, flush=False)
+        for handle in wanted:
+            await members.take_in(place.room_id, handle)
+        await db.flush()
         added = [h for h in after if h not in before]
         removed = [h for h in before if h not in after]
         if added or removed:
@@ -580,7 +581,7 @@ async def _move_off_former_owners_computer(db, actor, place, task, owner) -> Non
     default naming such a computer is cleared. A push that fails leaves the
     task with its owner and says why."""
 
-    room = await TopicService(db).get_or_404(place.room_id)
+    room = place.room
     project = await ProjectRepository(db).get(place.project_id)
     if not await usable_by_owner(db, task.default_environment, project, owner):
         task.default_environment = None

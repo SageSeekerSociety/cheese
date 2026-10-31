@@ -244,13 +244,9 @@ class TopicMemberService:
         """Everyone in the project who is a person: whom a channel's work may be
         handed to."""
         # deferred-import: cycle membership.roster -> topic_membership.services
-        from app.domain.membership.roster import roster
+        from app.domain.membership.roster import people_in_project
 
-        return [
-            m.handle
-            for m in await roster(self._session, project_id, team=team)
-            if not m.agent
-        ]
+        return await people_in_project(self._session, project_id=project_id, team=team)
 
     async def joined_topic_ids(
         self, topics: list[Topic], handle: str, *, team: ProjectTeam

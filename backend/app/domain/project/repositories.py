@@ -271,6 +271,7 @@ class ProjectRepository:
         stmt = (
             select(
                 ProjectMember,
+                User,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
                 Avatar.avatar_type,
@@ -286,9 +287,23 @@ class ProjectRepository:
             remember(
                 self._session,
                 ("project_member_rows", project_id),
-                tuple(m for m, _, _, _ in rows),
+                tuple(m for m, _, _, _, _ in rows),
                 tables=frozenset({"project_members"}),
             )
+            for _m, u, _, _, _ in rows:
+                if u is not None and u.deleted_at is None:
+                    remember(
+                        self._session,
+                        ("user_by_username", u.username),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
         external = [
             {
                 "handle": m.user_handle,
@@ -296,7 +311,7 @@ class ProjectRepository:
                 "avatar_id": None if avatar_type == "default" else avatar_id,
                 "source": "external",
             }
-            for (m, name, avatar_id, avatar_type) in rows
+            for (m, _u, name, avatar_id, avatar_type) in rows
         ]
         project = await self.get(project_id)
         if project is None:
@@ -309,7 +324,7 @@ class ProjectRepository:
         team_rows = (
             await self._session.execute(
                 select(
-                    User.username,
+                    User,
                     UserProfile.nickname,
                     UserProfile.avatar_id,
                     Avatar.avatar_type,
@@ -330,15 +345,29 @@ class ProjectRepository:
             remember(
                 self._session,
                 ("team_roles_by_handle", project.team_id),
-                {handle: role for handle, _, _, _, _, role in team_rows},
+                {u.username: role for u, _, _, _, _, role in team_rows},
                 tables=frozenset({"team_user_relation", "user"}),
             )
+            for u, _, _, _, _, _ in team_rows:
+                if u.deleted_at is None:
+                    remember(
+                        self._session,
+                        ("user_by_username", u.username),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
         by_handle: dict[str, tuple[str | None, int | None, str | None]] = {
             m.user_handle: (name, avatar_id, avatar_type)
-            for (m, name, avatar_id, avatar_type) in rows
+            for (m, _u, name, avatar_id, avatar_type) in rows
         }
-        for handle, name, avatar_id, avatar_type, _created_at, _role in team_rows:
-            by_handle[handle] = (name, avatar_id, avatar_type)
+        for u, name, avatar_id, avatar_type, _created_at, _role in team_rows:
+            by_handle[u.username] = (name, avatar_id, avatar_type)
         if project.owner_handle:
             name, avatar_id, avatar_type = (
                 by_handle[project.owner_handle]
@@ -356,10 +385,22 @@ class ProjectRepository:
                 }
             )
             seen.add(project.owner_handle)
-        team = await self._session.get(Team, project.team_id)
-        team_handle = team.handle if team is not None else None
-        team_name = team.name if team is not None else None
-        for handle, name, avatar_id, avatar_type, created_at, _role in team_rows:
+        team_handle: str | None = None
+        team_name: str | None = None
+        if any(u.username not in seen for u, *_ in team_rows):
+            team: Team | None = None
+            if _can_cache(self._session):
+                found_team, cached_team = recall(
+                    self._session, ("team_by_id", project.team_id)
+                )
+                if found_team:
+                    team = cached_team
+            if team is None:
+                team = await self._session.get(Team, project.team_id)
+            team_handle = team.handle if team is not None else None
+            team_name = team.name if team is not None else None
+        for u, name, avatar_id, avatar_type, created_at, _role in team_rows:
+            handle = u.username
             if handle in seen:
                 continue
             members.append(
