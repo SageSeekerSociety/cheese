@@ -353,7 +353,7 @@ class Sample:
 def _parse_server_timing(header_val: str | None) -> float | None:
     if not header_val:
         return None
-    m = re.search(r"dur=([0-9.]+)", header_val)
+    m = re.search(r"\bapp;dur=([0-9.]+)", header_val)
     return round(float(m.group(1)), 2) if m else None
 
 
