@@ -519,6 +519,8 @@ it('电脑睡了：显示压暗的静态快照和唤醒卡，快照不跑脚本�
   const shot = ui.getByTestId('preview-snapshot') as HTMLIFrameElement
   expect(shot.getAttribute('sandbox')).toBe('')
   expect(shot.getAttribute('srcdoc')).toContain('报名')
+  // 快照也是一份网页、白纸承载：它自己对应用说白，别继承平台的深色（见下面那条用例）。
+  expect(shot.style.colorScheme).toBe('light')
   // 那句报错不再另起一行：卡上已经说清了。
   expect(ui.queryByRole('alert')).toBeNull()
   // 链上通道、应用两段变灰。
@@ -843,4 +845,14 @@ it('睡着时，快照太大留不下和从没留过说的是两回事', async (
   await ui.rerender({ ...base, snapshotTooLarge: true })
   expect(card().textContent).toContain('太大')
   expect(card().textContent).not.toContain('还没有留下快照')
+})
+
+// 平台深色时，帧会**继承** `<html>` 上的 `color-scheme: dark`。应用看到这个信号就会按
+// 深色排版（常见写法是只把文字改浅），而这一格的底色一直是白的——2026-10-31 在
+// Chromium 141 里实测：只浅化文字的应用渲染成 #eee 落在 #fff 上，读不出来。所以帧自己
+// 对应用声明的底是白色，和它的白底一致。
+it('帧对应用声明的底是白色，跟它的白底一致', () => {
+  const ui = mount('loaded', frame())
+  const el = ui.container.querySelector('.preview-frame') as HTMLIFrameElement
+  expect(el.style.colorScheme).toBe('light')
 })
