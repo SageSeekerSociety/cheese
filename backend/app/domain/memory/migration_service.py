@@ -68,6 +68,7 @@ from app.domain.memory.models import (
 from app.domain.memory.ports import Announce
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
+from app.domain.memory.writers import MemoryWriter
 from app.domain.notice_meta import (
     EVENT_MEMORY_ORGANIZING,
     SEVERITY_INFO,
@@ -465,6 +466,7 @@ class MemoryMigrationService:
                     content=item["content"],
                     updated_by=MIGRATION_AUTHOR,
                     expected_version=item["version"],
+                    writer=MemoryWriter.migration,
                 )
                 scope = MemoryFileScope(item["scope"])
                 written.append(
@@ -479,6 +481,7 @@ class MemoryMigrationService:
                     content=item["content"],
                     updated_by=MIGRATION_AUTHOR,
                     expected_version=item["version"],
+                    writer=MemoryWriter.migration,
                 )
         except MemoryFileConflict as exc:
             row.status = MemoryMigrationStatus.failed.value

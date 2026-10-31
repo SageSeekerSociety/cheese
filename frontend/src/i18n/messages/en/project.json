@@ -90,12 +90,29 @@
     "memoryProject": "Project memory",
     "memoryDelete": "Delete this memory",
     "memoryDeleteTitle": "Delete this memory?",
-    "memoryDeleteBody": "It can't be recovered, and {name} will no longer remember it.",
+    "memoryDeleteBody": "{name} will no longer remember it. You can restore it from Recent changes within 30 days.",
     "noCharter": "This project has no editable goals yet",
     "fromTopic": "From channel",
     "weekliesEmpty": "No weekly reports",
     "weekliesHint": "Mention {'@'}{name} in the project channel and ask for “this week's project report”. It is recorded here once written",
     "goToRoom": "Go to General",
-    "recordedOn": "Recorded {date}"
+    "recordedOn": "Recorded {date}",
+    "memoryChanges": "Recent changes",
+    "memoryChangesEmpty": "No changes yet",
+    "memoryChangesMore": "Earlier changes",
+    "memoryChangeCreated": "Created",
+    "memoryChangeEdited": "Edited",
+    "memoryChangeDeleted": "Deleted",
+    "memoryChangeShowDiff": "Show change",
+    "memoryRestore": "Restore previous version",
+    "memoryWriter": {
+      "turn": "In a conversation",
+      "dream_team": "Tidy-up",
+      "dream_private": "Tidy-up",
+      "panel": "By hand",
+      "restore": "Restored",
+      "skill": "Folded into a project method",
+      "migration": "Old memory migration"
+    }
   }
 }

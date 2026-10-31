@@ -8,6 +8,11 @@
 先看懂两边改了什么，而 `MEMORY.md` 和记忆文件都是散文——自动合并散文的唯一结果
 是两句互相矛盾的话安静地并排躺在一起。拒绝一次写入是便宜的：agent 就在现场，
 重读一次就行。
+
+**每一次改动都在这里留一条记录（`memory_file_changes`）。** 改记忆的路有好几条——
+一轮对话收回来的、面板上的、整理的、方法确认时并掉的——它们全都经过 `write` /
+`delete`，所以记录写在这一层，写入方只要说清自己是哪一种（`writer`，必填），没有
+哪一条路能忘了记。记录和改动在同一个事务里：改动回滚，记录跟着没了。
 """
 
 import uuid
@@ -30,7 +35,8 @@ from app.domain.memory.files import (
     without_entries,
 )
 from app.domain.memory.instructions import private_index_pointer
-from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.models import MemoryFileChange, MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 
 
 class MemoryFileConflict(ConflictError):
@@ -116,6 +122,44 @@ class MemoryFileStore:
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        #: 一个实例是一次改动（一次对账、一轮整理、一个请求）：它记下的每一行都带
+        #: 这个 id，恢复一次删除时靠它找到同一次改动里拿掉的那一行索引
+        #: （`history._removed_index_line`）。
+        self.event_id = uuid.uuid4()
+
+    def _record(
+        self,
+        *,
+        project_id: uuid.UUID | None,
+        scope: MemoryFileScope,
+        owner_handle: str | None,
+        path: str,
+        writer: MemoryWriter,
+        changed_by: str,
+        before: str | None,
+        after: str | None,
+    ) -> None:
+        """把这一次改动记进 `memory_file_changes`，和改动同一个事务。
+
+        personal 不记：它不在任何项目里，有自己那条撤销（`assistant.memory.put`
+        交回改之前的那一份）；正文没变也不记——一条没有差别的记录只会把真改过
+        的那几条淹掉。
+        """
+        if project_id is None or before == after:
+            return
+        self._session.add(
+            MemoryFileChange(
+                project_id=project_id,
+                scope=scope,
+                owner_handle=_owner(scope, owner_handle),
+                path=path,
+                writer=writer,
+                changed_by=changed_by,
+                event_id=self.event_id,
+                before=before,
+                after=after,
+            )
+        )
 
     async def list(
         self,
@@ -179,6 +223,7 @@ class MemoryFileStore:
         content: str,
         updated_by: str,
         expected_version: int | None,
+        writer: MemoryWriter,
     ) -> MemoryFileRecord:
         """写入一版；版本对不上就抛 :class:`MemoryFileConflict`，超了单条上限就抛
         :class:`MemoryFileLimit`。
@@ -197,6 +242,8 @@ class MemoryFileStore:
         （``begin_nested()`` 会先把待写对象 flush 出去，在外面 add 的那一行 INSERT
         落在保存点外面，回滚不掉）、撞上时**自己动手**回滚这一次保存点（让异常从
         ``async with`` 里传出去，等于把失败标记传给外层）、回滚之后再读一次。
+
+        ``writer`` 是这一次从哪条路来的，进改动记录（`_record`）。
         """
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
@@ -231,9 +278,30 @@ class MemoryFileStore:
                     path, expected_version, current.version
                 ) from None
             await savepoint.commit()
+            self._record(
+                project_id=project_id,
+                scope=scope,
+                owner_handle=owner_handle,
+                path=path,
+                writer=writer,
+                changed_by=updated_by,
+                before=None,
+                after=content,
+            )
+            await self._session.flush()
             return row
         if expected_version is None or expected_version != row.version:
             raise MemoryFileConflict(path, expected_version, row.version)
+        self._record(
+            project_id=project_id,
+            scope=scope,
+            owner_handle=owner_handle,
+            path=path,
+            writer=writer,
+            changed_by=updated_by,
+            before=row.content,
+            after=content,
+        )
         row.content = content
         row.version = row.version + 1
         row.updated_by = updated_by
@@ -248,6 +316,8 @@ class MemoryFileStore:
         owner_handle: str | None,
         path: str,
         expected_version: int | None,
+        updated_by: str,
+        writer: MemoryWriter,
     ) -> None:
         """删掉一条记忆；索引那一行由调用方一并删（它才看得见两份）。"""
         check_path(path)
@@ -256,6 +326,16 @@ class MemoryFileStore:
             raise MemoryFileMissing(say("memoryFileGone", path=path))
         if expected_version is not None and expected_version != row.version:
             raise MemoryFileConflict(path, expected_version, row.version)
+        self._record(
+            project_id=project_id,
+            scope=scope,
+            owner_handle=owner_handle,
+            path=path,
+            writer=writer,
+            changed_by=updated_by,
+            before=row.content,
+            after=None,
+        )
         await self._session.execute(
             delete(MemoryFileRecord).where(MemoryFileRecord.id == row.id)
         )
@@ -269,6 +349,7 @@ class MemoryFileStore:
         owner_handle: str | None,
         paths: Sequence[str],
         updated_by: str,
+        writer: MemoryWriter,
     ) -> tuple[str, ...]:
         """删掉几条记忆，连同索引里指向它们的那几行。返回真删掉的路径。
 
@@ -287,6 +368,8 @@ class MemoryFileStore:
                 owner_handle=owner_handle,
                 path=path,
                 expected_version=None,
+                updated_by=updated_by,
+                writer=writer,
             )
             gone = (*gone, path)
         index = await self.get(
@@ -303,6 +386,7 @@ class MemoryFileStore:
                     content=trimmed,
                     updated_by=updated_by,
                     expected_version=index.version,
+                    writer=writer,
                 )
         return gone
 

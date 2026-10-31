@@ -43,6 +43,7 @@ from app.domain.memory.files_store import (
     MemoryFileStore,
 )
 from app.domain.memory.tree import sync_tree
+from app.domain.memory.writers import MemoryWriter
 
 #: diff 里一条路径最多留几行。事件是给人扫一眼的，不是补丁文件；一整份被重写的
 #: 索引能有几千行，全塞进去就是把房间里那条事件变成一个没人展开的附件。
@@ -172,11 +173,15 @@ async def apply_tree(
     *,
     scopes: list[tuple[MemoryFileScope, str | None]],
     updated_by: str,
+    writer: MemoryWriter,
 ) -> MemoryChange:
     """把会话机回来的那一份写进数据库，并说清改了什么。
 
     回来的 `files` 是**整个受管树**（不只是改过的），所以这里逐条比正文：一样就
     跳过，不一样才写，没见过的路径就是新建，点过名的作用域里少了的路径就是删除。
+
+    ``writer`` 是这一份从哪来的（一轮对话、整理的哪一轮），每一条改动都按它记进
+    改动记录（`MemoryFileStore._record`）。
     """
     store = MemoryFileStore(session)
     wanted = {prefix_of_scope(scope, owner): (scope, owner) for scope, owner in scopes}
@@ -218,6 +223,7 @@ async def apply_tree(
                 content=content,
                 updated_by=updated_by,
                 expected_version=stored.versions.get(path),
+                writer=writer,
             )
         except MemoryFileConflict:
             # 对账的这几秒里又有人改了这一条。它不重试：下一次对账就是一次重
@@ -250,6 +256,8 @@ async def apply_tree(
                 owner_handle=owner,
                 path=name,
                 expected_version=stored.versions.get(path),
+                updated_by=updated_by,
+                writer=writer,
             )
         except (MemoryFileConflict, NotFoundError):
             conflict.append(path)
@@ -334,6 +342,8 @@ async def apply_withdrawn(
         },
         scopes=scopes,
         updated_by=updated_by,
+        # 交回来的是那个人在一轮对话里写下的 private，只是那一轮的座位已经换了人。
+        writer=MemoryWriter.turn,
     )
     kept.update({path: body for path, body in change.refused.items() if body})
     kept.update({path: disk[path] for path in change.rejected if path in disk})

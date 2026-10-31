@@ -53,6 +53,7 @@ from app.domain.memory.session import (
     prefix_of_scope,
     read_tree,
 )
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.models import ResourceUsage
@@ -265,6 +266,7 @@ class MemoryLedger:
                 answer,
                 scopes=collected,
                 updated_by=updated_by,
+                writer=MemoryWriter.turn,
             )
             # 上一轮那一位的 private，这一次没点名、会话交了回来：替那个人收下
             # （`memory.session.apply_withdrawn`），只说给他本人
@@ -558,6 +560,9 @@ class MemoryLedger:
                 {"files": files},
                 scopes=scopes,
                 updated_by=author,
+                writer=MemoryWriter.dream_team
+                if scope is MemoryFileScope.team
+                else MemoryWriter.dream_private,
             )
             await session.commit()
         return _ScopeDream(

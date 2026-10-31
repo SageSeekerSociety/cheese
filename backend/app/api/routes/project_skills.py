@@ -54,6 +54,7 @@ from app.domain.memory.files import (
     parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.notice_meta import (
     EVENT_SKILL_PROPOSED,
     SEVERITY_INFO,
@@ -528,6 +529,7 @@ async def confirm_skill(
             owner_handle=None,
             paths=absorbed,
             updated_by=actor.handle,
+            writer=MemoryWriter.skill,
         )
     await db.commit()
     await service.publish(row.project_id)
