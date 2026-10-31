@@ -33,8 +33,28 @@ class UserRepository:
                 await self._session.flush()
             key = ("user_by_username", username)
             found, cached = recall(self._session, key)
-            if found:
+            if found and (cached is None or not inspect(cached).expired_attributes):
                 return cached
+            for obj in self._session.sync_session.identity_map.values():
+                if (
+                    isinstance(obj, User)
+                    and not inspect(obj).expired_attributes
+                    and obj.deleted_at is None
+                    and obj.username == username
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", obj.id),
+                        obj,
+                        tables=frozenset({"user"}),
+                    )
+                    return obj
         stmt: Select[tuple[User]] = select(User).where(
             User.username == username, User.deleted_at.is_(None)
         )
@@ -48,6 +68,9 @@ class UserRepository:
                 tables=frozenset({"user"}),
             )
             if user is not None:
+                self._session.sync_session.info.setdefault("_pinned_rows", []).append(
+                    user
+                )
                 remember(
                     self._session,
                     ("user_by_id", user.id),
@@ -146,20 +169,50 @@ class UserRepository:
         missing: list[str] = []
         for h in names:
             found, cached = recall(self._session, ("user_by_username", h))
-            if found:
+            if found and (cached is None or not inspect(cached).expired_attributes):
                 if cached is not None:
                     users[h] = cached
             else:
                 missing.append(h)
+        if missing:
+            in_map_by_name = {
+                obj.username: obj
+                for obj in self._session.sync_session.identity_map.values()
+                if isinstance(obj, User)
+                and not inspect(obj).expired_attributes
+                and obj.deleted_at is None
+            }
+            still_missing: list[str] = []
+            for h in missing:
+                u = in_map_by_name.get(h)
+                if u is not None:
+                    users[h] = u
+                    remember(
+                        self._session,
+                        ("user_by_username", h),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                else:
+                    still_missing.append(h)
+            missing = still_missing
         if missing:
             stmt: Select[tuple[User]] = select(User).where(
                 User.username.in_(missing), User.deleted_at.is_(None)
             )
             result = await self._session.execute(stmt)
             fetched = {u.username: u for u in result.scalars()}
+            pinned = self._session.sync_session.info.setdefault("_pinned_rows", [])
             for h in missing:
                 u = fetched.get(h)
                 if u is not None:
+                    pinned.append(u)
                     users[h] = u
                     remember(
                         self._session,
@@ -180,8 +233,23 @@ class UserRepository:
             if self._session.autoflush:
                 await self._session.flush()
             found, cached = recall(self._session, ("user_by_id", user_id))
-            if found:
+            if found and (cached is None or not inspect(cached).expired_attributes):
                 return cached
+            in_map = self._session.sync_session.identity_map.get(
+                self._session.sync_session.identity_key(User, (user_id,))
+            )
+            if (
+                in_map is not None
+                and not inspect(in_map).expired_attributes
+                and in_map.deleted_at is None
+            ):
+                remember(
+                    self._session,
+                    ("user_by_id", user_id),
+                    in_map,
+                    tables=frozenset({"user"}),
+                )
+                return in_map
         stmt: Select[tuple[User]] = select(User).where(
             User.id == user_id, User.deleted_at.is_(None)
         )
@@ -195,6 +263,9 @@ class UserRepository:
                 tables=frozenset({"user"}),
             )
             if user is not None:
+                self._session.sync_session.info.setdefault("_pinned_rows", []).append(
+                    user
+                )
                 remember(
                     self._session,
                     ("user_by_username", user.username),
@@ -317,9 +388,11 @@ class UserRepository:
             )
             result = await self._session.execute(stmt)
             fetched = {u.id: u for u in result.scalars().all()}
+            pinned = self._session.sync_session.info.setdefault("_pinned_rows", [])
             for uid in missing:
                 u = fetched.get(uid)
                 if u is not None:
+                    pinned.append(u)
                     by_id[uid] = u
                 remember(
                     self._session,

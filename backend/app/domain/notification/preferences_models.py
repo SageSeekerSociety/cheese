@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.request_facts import recall, remember
 from app.db.base_class import Base
 from app.domain.notification.preferences import (
     ChannelChoice,
@@ -119,20 +120,66 @@ def _events_json(pref: Preferences) -> dict:
     }
 
 
+_PREFERENCE_TABLES = frozenset({"notification_preference"})
+
+
 class PreferencesRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def for_user(self, user_id: int) -> Preferences:
         """这个人的偏好；没保存过就是默认（读取永远成功，见模块说明）。"""
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("notification_preference", user_id))
+            if found:
+                return cached
         row = await self._session.get(NotificationPreference, user_id)
-        return _to_preferences(row) if row is not None else default_preferences()
+        pref = _to_preferences(row) if row is not None else default_preferences()
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("notification_preference", user_id),
+                pref,
+                tables=_PREFERENCE_TABLES,
+            )
+        return pref
 
     async def for_users(self, user_ids: Iterable[int]) -> dict[int, Preferences]:
         """一次把一批人的偏好读出来 —— 投递一条事件要按人裁渠道，别一个人一次查。"""
         ids = list(dict.fromkeys(user_ids))
         if not ids:
             return {}
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[int, Preferences] = {}
+            missing: list[int] = []
+            for uid in ids:
+                found, cached = recall(self._session, ("notification_preference", uid))
+                if found:
+                    by_id[uid] = cached
+                else:
+                    missing.append(uid)
+            if not missing:
+                return by_id
+            rows = await self._session.scalars(
+                select(NotificationPreference).where(
+                    NotificationPreference.user_id.in_(missing)
+                )
+            )
+            fetched = {row.user_id: _to_preferences(row) for row in rows}
+            for uid in missing:
+                pref = fetched.get(uid) or default_preferences()
+                by_id[uid] = pref
+                remember(
+                    self._session,
+                    ("notification_preference", uid),
+                    pref,
+                    tables=_PREFERENCE_TABLES,
+                )
+            return by_id
         rows = await self._session.scalars(
             select(NotificationPreference).where(
                 NotificationPreference.user_id.in_(ids)

@@ -162,6 +162,20 @@ async def ids_for_project(
     `unarchived` 排掉归档的频道：它们是只读的，里面没有还能推进的活。
     走的还是 `_project_topics_stmt`，所以筛选和排序只有那一份定义。
     """
+    cache_all = _can_cache(repo._session) and only_seen_by is None and not unarchived
+    if cache_all:
+        if repo._session.autoflush:
+            await repo._session.flush()
+        found_topics, cached_topics = recall(
+            repo._session, ("project_topics_all", project_id)
+        )
+        if found_topics:
+            return [t.id for t in cached_topics]
+        found_ids, cached_ids = recall(
+            repo._session, ("project_topic_ids_all", project_id)
+        )
+        if found_ids:
+            return list(cached_ids)
     stmt = _project_topics_stmt(
         repo,
         [project_id],
@@ -172,7 +186,15 @@ async def ids_for_project(
     ).with_only_columns(Topic.id)
     if unarchived:
         stmt = stmt.where(Topic.status != TopicStatus.archived)
-    return list((await repo._session.scalars(stmt)).all())
+    ids = list((await repo._session.scalars(stmt)).all())
+    if cache_all:
+        remember(
+            repo._session,
+            ("project_topic_ids_all", project_id),
+            tuple(ids),
+            tables=_TOPIC_ROW_TABLES,
+        )
+    return ids
 
 
 async def visible_unarchived_ids_for_projects(
