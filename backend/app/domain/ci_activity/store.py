@@ -6,22 +6,21 @@ re-run adds jobs to a run and GitHub's answer is the complete list. Queue events
 are inserted once each. Everything older than the window is deleted by `prune`:
 this is a picture of recent CI, not an archive.
 
-Nothing here commits except `record_sweep`. Each write is one savepoint, so a
-write that fails leaves the ones before it standing, and a sweep's writes become
-visible to readers in the same commit as its `ci_activity_sweeps` row: whatever
-the tables hold is what the latest recorded sweep left there. A sweep that never
-reaches its record — its process dies, an error nobody catches — leaves nothing
-behind, and the next sweep reads the same ground again.
+Nothing here commits except `record_sweep`. The sweep calls it after each unit
+of work (`ingest.py`), so a unit's writes become visible to readers in the same
+commit as the sweep's `ci_activity_sweeps` row recording the cursors they
+advanced: whatever the tables hold is whole units, each described by the latest
+sweep row. A unit that is dropped — an error, the deadline, the process dying —
+leaves nothing behind.
 """
 
 from __future__ import annotations
 
-import functools
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any, Concatenate
+from typing import Any
 
 from sqlalchemy import ColumnElement, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -135,24 +134,10 @@ def runner_kind(job: dict[str, Any]) -> str | None:
     return "hosted" if job.get("runner_group_name") == HOSTED_GROUP else "self_hosted"
 
 
-def _savepoint[**P, R](
-    write: Callable[Concatenate[CiActivityStore, P], Awaitable[R]],
-) -> Callable[Concatenate[CiActivityStore, P], Awaitable[R]]:
-    """Run one write as a savepoint: all of it stands, or none of it."""
-
-    @functools.wraps(write)
-    async def run(self: CiActivityStore, *args: P.args, **kwargs: P.kwargs) -> R:
-        async with self._session.begin_nested():
-            return await write(self, *args, **kwargs)
-
-    return run
-
-
 class CiActivityStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    @_savepoint
     async def upsert_merged_pull_requests(
         self, repo: str, pulls: list[dict[str, Any]]
     ) -> int:
@@ -188,7 +173,6 @@ class CiActivityStore:
             )
         return len(rows)
 
-    @_savepoint
     async def upsert_runs(self, repo: str, runs: list[dict[str, Any]]) -> int:
         """Insert new runs and refresh known ones; return how many rows changed.
 
@@ -275,7 +259,6 @@ class CiActivityStore:
         )
         return int(total or 0)
 
-    @_savepoint
     async def replace_jobs(
         self, run: CiWorkflowRun, jobs: list[dict[str, Any]], *, attempt: int
     ) -> int:
@@ -333,7 +316,6 @@ class CiActivityStore:
         )
         return stored
 
-    @_savepoint
     async def add_queue_events(self, repo: str, events: list[QueueEvent]) -> int:
         inserted = 0
         for start in range(0, len(events), UPSERT_BATCH):
@@ -381,21 +363,23 @@ class CiActivityStore:
         runs_listed_to: datetime | None,
         queue_read_to: datetime | None,
         report: dict[str, Any],
-    ) -> None:
-        self._session.add(
-            CiActivitySweep(
-                repo=repo,
-                started_at=started_at,
-                finished_at=_now(),
-                runs_listed_from=runs_listed_from,
-                runs_listed_to=runs_listed_to,
-                queue_read_to=queue_read_to,
-                report=report,
-            )
-        )
+        row: CiActivitySweep | None = None,
+    ) -> CiActivitySweep:
+        """Commit everything written since the last commit, together with the
+        sweep's row saying where its cursors stand now: ``row`` updated when the
+        sweep already has one, a new row otherwise. ``finished_at`` is when this
+        commit landed, so it changes with every unit the sweep commits."""
+        if row is None:
+            row = CiActivitySweep(repo=repo, started_at=started_at)
+            self._session.add(row)
+        row.finished_at = _now()
+        row.runs_listed_from = runs_listed_from
+        row.runs_listed_to = runs_listed_to
+        row.queue_read_to = queue_read_to
+        row.report = dict(report)
         await self._session.commit()
+        return row
 
-    @_savepoint
     async def prune(self, repo: str, before: datetime) -> int:
         """Delete everything older than ``before``; jobs and steps go with
         their run. Returns how many runs were deleted."""

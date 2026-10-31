@@ -133,15 +133,16 @@ class Window:
 
 
 #: Every figure on the page is read from the tables the sweep fills. Only the
-#: sweep writes them, and its writes become visible in the same commit as its
-#: `ci_activity_sweeps` row (`store.py`), so the committed tables are always what
-#: the latest recorded sweep left. An answer therefore stays right until the next
-#: sweep row lands or the UTC day turns, and a worker computes each one once per
-#: sweep rather than on every open: a board over a week's ~25k jobs is two
-#: seconds of this worker's event loop, which every other request on the worker
-#: waits out. The sweep lock keeps that commit from landing between the queries
-#: of one answer being computed for keeping; while a sweep holds it, or before
-#: any sweep is recorded, every answer is computed and none is kept.
+#: sweep writes them, a unit at a time, and each unit becomes visible in the same
+#: commit that updates the sweep's `ci_activity_sweeps` row and its `finished_at`
+#: (`store.py`). The latest row's id and `finished_at` therefore name what the
+#: tables hold: an answer stays right until either changes or the UTC day turns,
+#: and a worker computes each one once per such state rather than on every open:
+#: a board over a week's ~25k jobs is two seconds of this worker's event loop,
+#: which every other request on the worker waits out. The sweep lock keeps a
+#: commit from landing between the queries of one answer being computed for
+#: keeping; while a sweep holds it, or before any sweep is recorded, every answer
+#: is computed and none is kept.
 _per_sweep: dict[str, Any] = {"key": None, "answers": {}}
 
 
@@ -151,7 +152,8 @@ async def once_per_sweep(
     question: tuple,
     compute: Callable[[], Awaitable[Any]],
 ) -> Any:
-    """``compute()``'s answer to ``question``, computed once per finished sweep.
+    """``compute()``'s answer to ``question``, computed once per committed state
+    of the CI tables.
 
     The sweep lock is held shared until ``session``'s transaction ends, so no
     sweep starts writing while an answer is being computed for keeping."""
@@ -160,15 +162,17 @@ async def once_per_sweep(
     )
     if not settled:
         return await compute()
-    sweep = await session.scalar(
-        select(CiActivitySweep.id)
-        .where(CiActivitySweep.repo == repo)
-        .order_by(CiActivitySweep.started_at.desc())
-        .limit(1)
-    )
+    sweep = (
+        await session.execute(
+            select(CiActivitySweep.id, CiActivitySweep.finished_at)
+            .where(CiActivitySweep.repo == repo)
+            .order_by(CiActivitySweep.started_at.desc())
+            .limit(1)
+        )
+    ).first()
     if sweep is None:
         return await compute()
-    key = (repo, sweep, datetime.now(UTC).date())
+    key = (repo, *sweep, datetime.now(UTC).date())
     if _per_sweep["key"] != key:
         _per_sweep["key"] = key
         _per_sweep["answers"] = {}

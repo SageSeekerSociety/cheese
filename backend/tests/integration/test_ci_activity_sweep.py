@@ -11,7 +11,8 @@ Rules pinned here, each one a person could state without the code:
 * The backfill walks back to the window's start and stops there; rows older
   than the window are deleted.
 * After a day without sweeps, the next one lists the whole gap and stores it,
-  however many runs that is.
+  however many runs that is; a gap longer than one sweep's deadline is worked
+  off over the sweeps that follow, each keeping what it finished.
 * A run GitHub no longer has does not stop the sweeps after it, and a run that
   used no runner costs no request.
 * The queue is read from the window's start the first time, then from where
@@ -21,10 +22,9 @@ Rules pinned here, each one a person could state without the code:
 * A quota refusal mid-sweep keeps what was already stored and says why.
 * A GitHub answer that never finishes, however steadily its bytes trickle in,
   ends the sweep with the reason recorded; so does a sweep that runs past its
-  deadline, which keeps nothing it read.
-* The page shows what the last recorded sweep stored, board and jobs table
-  alike: a sweep's rows appear together with its record, and a sweep that dies
-  before its record leaves the page as it was.
+  deadline, which keeps the units it finished.
+* The board and the jobs table always show the same stored rows, whether the
+  sweep that stored them is still running, finished, or died part-way.
 
 GitHub is a fake `CiSource`; the credential lookup is real down to the App's
 token, which is a fake with a quota the test sets.
@@ -1072,8 +1072,9 @@ def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
 
     class _Watching(_GitHub):
         async def merged_pull_requests(self, **kwargs):
-            # A sweep reads merged PRs after storing jobs and before its record:
-            # in the second sweep, run 42's job is stored and its record is not.
+            # A sweep reads merged PRs after storing jobs and before its final
+            # record: in the second sweep, run 42's job is committed and the
+            # sweep is still running.
             if 42 in self.runs and not mid_sweep:
                 mid_sweep.append(page())
             return await super().merged_pull_requests(**kwargs)
@@ -1090,11 +1091,11 @@ def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
     later = now + timedelta(minutes=5)
     assert _sweep_through_the_app(client, github, at=later, first=False)["error"] == ""
 
-    assert mid_sweep == [(1, 1)]
+    assert mid_sweep == [(2, 2)]
     assert page() == (2, 2)
 
 
-def test_a_sweep_that_dies_before_its_record_leaves_the_page_as_it_was(
+def test_a_sweep_that_dies_part_way_leaves_board_and_table_agreeing(
     client, tokens, page
 ):
     page, board = page
@@ -1102,8 +1103,8 @@ def test_a_sweep_that_dies_before_its_record_leaves_the_page_as_it_was(
 
     class _Dying(_GitHub):
         async def merged_pull_requests(self, **kwargs):
-            # After the jobs are stored, before the record: an answer the sweep
-            # does not catch, as a process killed at this point would be.
+            # After the jobs are committed, before the sweep's final record: an
+            # answer the sweep does not catch, as a process killed here would be.
             if 42 in self.runs:
                 raise json.JSONDecodeError("Expecting value", "", 0)
             return await super().merged_pull_requests(**kwargs)
@@ -1122,7 +1123,7 @@ def test_a_sweep_that_dies_before_its_record_leaves_the_page_as_it_was(
             client, github, at=now + timedelta(minutes=5), first=False
         )
 
-    assert page() == (1, 1)
+    assert page() == (2, 2)
 
 
 def test_an_answer_that_never_finishes_ends_the_sweep_with_the_reason(
@@ -1157,7 +1158,7 @@ def test_an_answer_that_never_finishes_ends_the_sweep_with_the_reason(
     _portal.call(run)
 
 
-def test_a_sweep_past_its_deadline_keeps_nothing_and_says_why(
+def test_a_sweep_past_its_deadline_keeps_its_finished_units_and_says_why(
     db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
 ):
     monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1), raising=False)
@@ -1167,15 +1168,65 @@ def test_a_sweep_past_its_deadline_keeps_nothing_and_says_why(
             await asyncio.sleep(3600)
 
     github = _Stalled()
-    run = _run(81, age=timedelta(minutes=10))
-    github.runs = {81: run}
+    github.runs = {81: _run(81, age=timedelta(minutes=10))}
 
     async def go():
         await _connect(db_session)
         report = await asyncio.wait_for(_sweep(db_session, github), 10)
-        assert "did not finish within 1 s" in report["error"]
-        assert await _count(db_session, CiWorkflowRun) == 0
+        assert "1 s deadline" in report["error"]
+        assert await _count(db_session, CiWorkflowRun) == 1
+        assert await _count(db_session, CiJob) == 0
         recorded = await CiActivityStore(db_session).last_sweep(REPO)
         assert recorded is not None and recorded.report["error"] == report["error"]
+        assert recorded.runs_listed_to == NOW
+
+    _portal.call(go)
+
+
+def test_a_gap_longer_than_one_sweep_is_worked_off_over_the_next_sweeps(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    """Each sweep gets through about three of the gap's ten four-hour slices
+    before its deadline; none of them may be lost to the deadline."""
+    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1.2), raising=False)
+
+    class _SlowBulk(_GitHub):
+        async def list_runs(self, *, owner, repo, token, since, until):
+            if until - since > ingest.RUN_SLICE:
+                await asyncio.sleep(0.35)
+            return await super().list_runs(
+                owner=owner, repo=repo, token=token, since=since, until=until
+            )
+
+    github = _SlowBulk()
+    for hours in range(4, 40, 4):
+        run = _run(900 + hours, age=timedelta(hours=hours, minutes=30))
+        github.runs[run["id"]] = run
+    gap_start = NOW - timedelta(hours=40)
+
+    async def go():
+        await _connect(db_session)
+        await CiActivityStore(db_session).record_sweep(
+            REPO,
+            started_at=gap_start,
+            runs_listed_from=gap_start - timedelta(hours=8),
+            runs_listed_to=gap_start,
+            queue_read_to=gap_start,
+            report={"error": ""},
+        )
+        covered = [gap_start]
+        for n in range(1, 7):
+            report = await _sweep(
+                db_session, github, at=NOW + timedelta(seconds=n), jobs_budget=0
+            )
+            last = await CiActivityStore(db_session).last_sweep(REPO)
+            covered.append(last.runs_listed_to)
+            assert covered[-1] > covered[-2], covered
+            if report["error"] == "":
+                break
+            assert "deadline" in report["error"]
+        assert report["error"] == "", covered
+        assert len(covered) > 3, "the gap fit in fewer sweeps than meant"
+        assert await _count(db_session, CiWorkflowRun) == len(github.runs)
 
     _portal.call(go)
