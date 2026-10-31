@@ -9,7 +9,7 @@ import { FRONTEND_PORT, stackServers } from './stack.mjs';
 // (`/src/...`, `/node_modules/.vite/deps/...`) rather than visiting the app.
 // A production build has no such paths, so on CI they get a dev server of
 // their own; locally the one frontend server is already a dev server.
-const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts', 'chat-back-to-latest.spec.ts', 'work-panel-file-tab-width.spec.ts', 'work-panel-tab-scroll-arrow.spec.ts', 'work-panel-pdf-text-layer.spec.ts', 'model-connections-layout.spec.ts', 'settings-overlay-macos-arrow.spec.ts', 'guide-bubble-does-not-cover-text.spec.ts'];
+const COMPONENT_SPECS = ['chat-file-reference-hit-area.spec.ts', 'design-region-note.spec.ts', 'chat-back-to-latest.spec.ts', 'work-panel-file-tab-width.spec.ts', 'work-panel-tab-scroll-arrow.spec.ts', 'work-panel-pdf-text-layer.spec.ts', 'model-connections-layout.spec.ts', 'settings-overlay-macos-arrow.spec.ts', 'guide-bubble-does-not-cover-text.spec.ts', 'sidebar-resizer-follows-the-pointer.spec.ts'];
 const COMPONENT_PORT = process.env.CI ? (process.env.E2E_COMPONENT_PORT ?? '3300') : FRONTEND_PORT;
 
 export default defineConfig({
