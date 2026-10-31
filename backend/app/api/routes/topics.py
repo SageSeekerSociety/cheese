@@ -92,8 +92,6 @@ from app.domain.topic.services import (
     TopicSortField,
 )
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.budgets import CreditBudgets
-from app.domain.usage.ledger import Ledger, payer_for_project
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 from app.domain.usage.windows import _TZ
@@ -1047,36 +1045,9 @@ async def topic_status(
     card_reviewers = await AcceptService(db).reviewer_handles_for_cards(
         [card.id for card in cards]
     )
-    credits = await UsageService(db).project_credits(place.project_id)
-    # 芝士读得懂的那一层：还剩多少之外，还要说清是哪一层、上限多少、几时恢复
-    # （`usage.alerts` 的同一档）。项目预算这一层不会自动恢复，单独给个数。
-    payer = await payer_for_project(db, place.project_id)
-    balance = await Ledger(db).balance(payer)
-    budget = await CreditBudgets(db).report(place.project_id)
-    cap = budget["credits_limit"]
-    cap_remaining = None if cap is None else max(0.0, cap - budget["credits_used"])
-    plan_remaining = None if balance.unlimited else balance.credits_remaining
-    # 哪一层先停：项目预算和团队方案哪边剩得少就是哪边。上限和恢复时间要跟着那一层
-    # 说，不能拿团队方案的上限去配项目预算的剩余。
-    by_budget = cap_remaining is not None and (
-        plan_remaining is None or cap_remaining <= plan_remaining
-    )
-    total = None
-    reset = None
-    if by_budget:
-        total = cap
-    elif plan_remaining is not None:
-        total = balance.credits_total
-        # 按窗口的方案没有月包，`resets_at` 是空的；要回答「几时恢复」得看最紧的那
-        # 个窗口（`usage.alerts` 认的是同一个窗口）。
-        reset = balance.resets_at
-        if reset is None and balance.windows:
-            reset = min(balance.windows, key=lambda use: use.room).resets_at
-    credits["total"] = total
+    credits = await UsageService(db).project_status_credits(place.project_id)
+    reset = credits.pop("resets_at_dt", None)
     credits["resets_at"] = None if reset is None else _credit_reset_text(reset)
-    credits["project_remaining"] = cap_remaining
-    # 上面这组数说的是哪一层：团队方案会自己回来，项目预算要有管理人去调。
-    credits["layer"] = "project_budget" if by_budget else "plan"
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
@@ -1208,15 +1179,21 @@ async def write_topic_progress(
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
+    inner_id = place.task_id
+    if inner_id is None:
+        await TopicMemberService(db).list_for_topic(place.room_id)
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        actor,
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        room=place.room,
+        enforce=True,
     )
     if not actor.authenticated:
         # The global development token is nobody, and a message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
     # A task's checklist is its own session's, shown as its progress; a room's or
     # a 支线's is a seated agent's, or a person's said like any message of theirs.
-    inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
         if inner_id is not None
@@ -1275,6 +1252,7 @@ async def write_topic_progress(
     message = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
+        room=place.room,
         inner_id=place.thread_id,
         text=await project_refs_text(db, place.project_id, place.room_id, text),
         turn_id=turn_id,

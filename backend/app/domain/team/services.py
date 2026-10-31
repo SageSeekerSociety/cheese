@@ -170,7 +170,7 @@ class TeamService:
         """
         team = await self._repo.get_by_id(team_id)
         if team is not None and (
-            await self._repo.is_team_member(team_id, user_id) or team.open_to_all
+            team.open_to_all or await self._repo.is_team_member(team_id, user_id)
         ):
             return team
         raise NotFoundError(

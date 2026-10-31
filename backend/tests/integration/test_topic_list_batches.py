@@ -1083,3 +1083,124 @@ def test_room_snapshot_batches_open_and_recent_closed_tasks_in_one_pass(client):
     assert _count(snap_sql, _AWAITING_PLACES_SELECT) == 1, [
         s for s in snap_sql if _AWAITING_PLACES_SELECT.search(s)
     ]
+
+
+_PLANS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM plans\b",
+    re.IGNORECASE,
+)
+_COMPUTE_GRANTS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM compute_grants\b",
+    re.IGNORECASE,
+)
+_FEEDBACK_DISMISSALS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM feedback_proposal_dismissals\b",
+    re.IGNORECASE,
+)
+
+
+def test_topic_status_and_feedback_proposals_avoid_redundant_credit_and_dismissal_queries(
+    client,
+):
+    """`GET /topics/{room_id}/status` reads `plans` and `compute_grants` once
+    via `UsageService.project_status_credits`, and `GET /topics/{room_id}/feedback-proposals`
+    skips `feedback_proposal_dismissals` when the room has no proposal blocks."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as status_sql:
+        r_status = client.get(f"/topics/{room_id}/status", headers=headers)
+    assert r_status.status_code == 200, r_status.text
+    assert _count(status_sql, _PLANS_SELECT) == 1, [
+        s for s in status_sql if _PLANS_SELECT.search(s)
+    ]
+    assert _count(status_sql, _COMPUTE_GRANTS_SELECT) == 1, [
+        s for s in status_sql if _COMPUTE_GRANTS_SELECT.search(s)
+    ]
+    assert len(status_sql) <= 12, (
+        f"expected <= 12 SQL statements on /status, got {len(status_sql)}: {status_sql}"
+    )
+
+    with counting_sql(client) as prop_sql:
+        r_prop = client.get(f"/topics/{room_id}/feedback-proposals", headers=headers)
+    assert r_prop.status_code == 200, r_prop.text
+    assert _count(prop_sql, _FEEDBACK_DISMISSALS_SELECT) == 0, [
+        s for s in prop_sql if _FEEDBACK_DISMISSALS_SELECT.search(s)
+    ]
+    assert len(prop_sql) <= 4, (
+        f"expected <= 4 SQL statements on /feedback-proposals, got {len(prop_sql)}: {prop_sql}"
+    )
+
+
+def test_write_progress_and_addressing_reuse_loaded_room_and_skip_no_mention_roster(
+    client,
+):
+    """`PUT /topics/{room_id}/progress` without `@` mentions and
+    `POST /topics/{room_id}/messages/addressing` reuse the already-loaded
+    `place.room`, and `PUT /topics/{room_id}/progress` skips loading the
+    project roster when the checklist text has no `@`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as addr_sql:
+        r_addr = client.post(
+            f"/topics/{room_id}/messages/addressing",
+            json={"content": "hello @cheese", "with_text": True},
+            headers=headers,
+        )
+    assert r_addr.status_code == 200, r_addr.text
+    assert _count(addr_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in addr_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as prog_sql:
+        r_prog = client.put(
+            f"/topics/{room_id}/progress",
+            json={"todos": [{"content": "step 1", "status": "in_progress"}]},
+            headers=headers,
+        )
+    assert r_prog.status_code == 200, r_prog.text
+    assert _count(prog_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in prog_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(prog_sql, _TOPICS_SELECT) == 1, [
+        s for s in prog_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(prog_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in prog_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(prog_sql) <= 11, (
+        f"expected <= 11 SQL statements on PUT /progress, got {len(prog_sql)}: {prog_sql}"
+    )
+
+
+def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client):
+    """`GET /teams/{team_id}` and `GET /teams/{team_id}/members` each query
+    `team_user_relation` once instead of running a separate membership/seat
+    query before listing the team's members."""
+    _pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    my_teams = client.get("/teams/my-teams", headers=headers).json()["data"]["teams"]
+    team_id = next(t["id"] for t in my_teams if not t["personal"])
+
+    with counting_sql(client) as team_sql:
+        r_team = client.get(f"/teams/{team_id}", headers=headers)
+    assert r_team.status_code == 200, r_team.text
+    assert _count(team_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
+        s for s in team_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
+    ]
+    assert len(team_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /teams/{{id}}, got {len(team_sql)}: {team_sql}"
+    )
+
+    with counting_sql(client) as mem_sql:
+        r_mem = client.get(f"/teams/{team_id}/members", headers=headers)
+    assert r_mem.status_code == 200, r_mem.text
+    assert _count(mem_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 1, [
+        s for s in mem_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
+    ]
+    assert len(mem_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    )

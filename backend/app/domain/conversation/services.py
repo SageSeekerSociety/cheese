@@ -90,10 +90,27 @@ async def is_inner(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
 async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
     """The room a conversation is in: itself for a room, its room for a task
     or a 支线."""
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found_room, cached_room = recall(
+            session, ("conversation_room_id", conversation_id)
+        )
+        if found_room:
+            return cached_room
     room = await session.scalar(
         select(_inside.c.room_id).where(_inside.c.id == conversation_id)
     )
-    return room or conversation_id
+    resolved = room or conversation_id
+    if can_cache:
+        remember(
+            session,
+            ("conversation_room_id", conversation_id),
+            resolved,
+            tables=frozenset({"tasks", "threads"}),
+        )
+    return resolved
 
 
 async def rooms_of(
