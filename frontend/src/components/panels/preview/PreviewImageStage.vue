@@ -38,11 +38,11 @@ const props = defineProps<{
   /** 打开着的那一串，画得实一点。 */
   activeMark?: string | null
   /** 顶上那一条（类型、看 / 批注 / 改、第几版）要的：哪一份、版本、历史栏。 */
-  path: string
+  path?: string
   topicId?: string | null
   projectId?: string | null
   versions?: PreviewVersionsBundle
-  showHistory: boolean
+  showHistory?: boolean
   fileHistory?: RoomFileHistoryBundle
 }>()
 
@@ -71,10 +71,10 @@ const emit = defineEmits<{
 <template>
   <div class="file-image">
     <PreviewFileBar
-      :icon="fileIcon(path)"
-      :label="fileLabel(path)"
+      :icon="fileIcon(path || documentName)"
+      :label="fileLabel(path || documentName)"
       :versions="versions"
-      :show-history="showHistory"
+      :show-history="!!showHistory"
       :file-history="fileHistory"
       :project-id="projectId"
       :topic-id="topicId"

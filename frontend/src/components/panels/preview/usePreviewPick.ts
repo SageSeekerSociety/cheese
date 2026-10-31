@@ -34,10 +34,10 @@ interface PickOptions {
 
 export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allowed }: PickOptions) {
   const on = ref(false)
-  const target = computed<'runtime' | 'region' | null>(() => {
+  /** 这一帧能怎么圈，不管此刻让不让圈：关开关时要照它给帧发「关」，哪怕已经切出了批注。 */
+  const kind = computed<'runtime' | 'region' | null>(() => {
     const current = frame()
-    // 指不动的那几段（看、改）里连开关都不摆：摆一颗按下去没反应的键比不摆更糟。
-    if (!current || !allowed()) return null
+    if (!current) return null
     if (current.live) return 'region'
     // A third party's View has no cheese runtime injected, so there is no pick
     // bridge to switch on — the toggle would do nothing.
@@ -46,11 +46,13 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allo
     // SVG 发出去是图，不是 HTML，内容域不往里装桥：帧里没人接开关。和应用一样盖遮罩框一块。
     return /\.svg$/i.test(current.label) ? 'region' : 'runtime'
   })
+  // 指不动的那几段（看、改）里连开关都不摆：摆一颗按下去没反应的键比不摆更糟。
+  const target = computed(() => (allowed() ? kind.value : null))
 
   function set(value: boolean) {
     if (value && !allowed()) return
     on.value = value
-    if (target.value === 'runtime') onRuntime(value)
+    if (kind.value === 'runtime') onRuntime(value)
   }
   function toggle() {
     if (target.value) set(!on.value)

@@ -15,6 +15,8 @@ import { computed, defineAsyncComponent, ref } from 'vue'
 import PreviewModeSwitch from './PreviewModeSwitch.vue'
 import PreviewVersionPicker from './PreviewVersionPicker.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import { t } from '@/i18n'
 import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 const RoomFileHistory = defineAsyncComponent(() => import('./RoomFileHistory.vue'))
@@ -55,6 +57,18 @@ const version = computed(() => props.versions?.current.value ?? null)
         on-pick="none"
         @history="emit('toggle-history')"
       />
+      <!-- 版本行没出来（清单还没取到、取失败、这一版不在清单里）时历史就没有入口了：
+           和文档条一样单摆一颗「历史」。 -->
+      <BaseButton
+        v-else-if="topicId && fileHistory"
+        kind="ghost"
+        size="sm"
+        prepend-icon="mdi-history"
+        data-testid="file-bar-history"
+        @click="emit('toggle-history')"
+      >
+        {{ t('work.room.preview.history') }}
+      </BaseButton>
       <v-spacer />
       <slot />
     </div>
