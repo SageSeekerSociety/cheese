@@ -94,12 +94,6 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
     if can_cache:
         if session.autoflush:
             await session.flush()
-        found_topic, cached_topic = recall(session, ("topic_row", conversation_id))
-        if found_topic and cached_topic is not None:
-            return conversation_id
-        found_task, cached_task = recall(session, ("task_row", conversation_id))
-        if found_task and cached_task is not None:
-            return cached_task.room_id
         found_room, cached_room = recall(
             session, ("conversation_room_id", conversation_id)
         )
