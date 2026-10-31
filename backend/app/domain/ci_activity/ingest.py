@@ -252,6 +252,9 @@ async def _sweep_once(
     # The id came back with the credential, read off the binding and token
     # objects already resolved — no extra request, no stored token.
     report["installation_id"] = credential.installation_id
+    # The last count stands until this sweep counts again (it may run out of
+    # time first).
+    report["jobs_owed"] = int(last.report.get("jobs_owed") or 0) if last else 0
 
     # This sweep's row, once its first unit is committed, and what the last
     # commit held: a dropped unit goes back to it.
@@ -390,17 +393,19 @@ async def _sweep_once(
 
     # Tidying up stays inside the sweep's deadline, held by the server rather
     # than by cancelling a statement mid-flight: each statement gets the time
-    # left, and a sweep with none left skips it (the next sweep prunes).
+    # left as its statement timeout, and a sweep with none left skips the rest.
+    # The next sweep prunes; until it counts, the owed jobs stay at the last
+    # count. Writing the outcome is one short statement under its own timeout.
     loop = asyncio.get_running_loop()
     try:
-        for tidy in ("pruned_runs", "jobs_owed"):
+        for step in ("pruned_runs", "jobs_owed"):
             left = deadline - loop.time()
             if left <= 0:
                 raise TimeoutError
             await _limit_statements(session, left)
-            report[tidy] = (
+            report[step] = (
                 await store.prune(repo, window_start)
-                if tidy == "pruned_runs"
+                if step == "pruned_runs"
                 else await store.count_runs_owing_jobs(repo)
             )
     except (SQLAlchemyError, TimeoutError) as exc:
