@@ -464,6 +464,8 @@ class DashboardService:
                 .limit(50)
             )
         ).all()[::-1]
+        if not rows:
+            return []
         keys = {row.id: parse_user_scope_id(row.scope_id) for row in rows}
         project_ids = {key[0] for key in keys.values() if key is not None}
         readable = {
@@ -471,28 +473,36 @@ class DashboardService:
             for project_id in project_ids
             if await may_read_project(self._s, project_id=project_id, handle=handle)
         }
-        names = dict(
-            (
-                await self._s.execute(
-                    select(Project.id, Project.name).where(Project.id.in_(readable))
+        names = (
+            dict(
+                (
+                    await self._s.execute(
+                        select(Project.id, Project.name).where(Project.id.in_(readable))
+                    )
                 )
+                .tuples()
+                .all()
             )
-            .tuples()
-            .all()
+            if readable
+            else {}
         )
-        agents = {
-            (project_id, agent_handle): (display_name, name_source)
-            for project_id, agent_handle, display_name, name_source in (
-                await self._s.execute(
-                    select(
-                        AgentInstance.project_id,
-                        AgentInstance.handle,
-                        AgentInstance.display_name,
-                        AgentInstance.name_source,
-                    ).where(AgentInstance.project_id.in_(readable))
-                )
-            ).tuples()
-        }
+        agents = (
+            {
+                (project_id, agent_handle): (display_name, name_source)
+                for project_id, agent_handle, display_name, name_source in (
+                    await self._s.execute(
+                        select(
+                            AgentInstance.project_id,
+                            AgentInstance.handle,
+                            AgentInstance.display_name,
+                            AgentInstance.name_source,
+                        ).where(AgentInstance.project_id.in_(readable))
+                    )
+                ).tuples()
+            }
+            if readable
+            else {}
+        )
         out = []
         for row in rows:
             key = keys[row.id]

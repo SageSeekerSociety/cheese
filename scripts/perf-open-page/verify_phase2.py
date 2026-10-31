@@ -29,18 +29,16 @@ FRONTEND_DIST = REPO_ROOT / "frontend" / "dist"
 DEFAULT_OUT = HERE / "phase2_ab_evidence.json"
 
 TARGET_PAGES = [
-    "teams",
-    "team-detail",
-    "project-members",
-    "channel",
+    "user-profile",
+    "workspace-task",
+    "project-channels",
 ]
 MODES = ["walk", "warm", "cold"]
 BACKEND_PORT_FILE = Path("/tmp/active-backend-port")
 
 
 def _switch_dist(target_dir: Path, variant: str = "after") -> None:
-    if BACKEND_PORT_FILE.exists():
-        BACKEND_PORT_FILE.write_text("18081\n" if variant == "before" else "18082\n")
+    BACKEND_PORT_FILE.write_text("18081\n" if variant == "before" else "18082\n")
     if not target_dir.is_dir():
         raise RuntimeError(f"Missing pre-built dist directory: {target_dir}")
     if FRONTEND_DIST.is_symlink() or FRONTEND_DIST.is_file():
@@ -118,7 +116,7 @@ def main() -> None:
     ap.add_argument("--pages", default=",".join(TARGET_PAGES))
     ap.add_argument("--dist-before", default="/tmp/dist-before")
     ap.add_argument("--dist-after", default="/tmp/dist-after")
-    ap.add_argument("--before-commit", default="1e06333eb619")
+    ap.add_argument("--before-commit", default="bf8f646e687c")
     ap.add_argument("--after-commit", default="HEAD")
     ap.add_argument("--reuse-tmp", action="store_true", help="Aggregate existing /tmp/perf-phase2-ab passes without re-running browser")
     ap.add_argument("--out", default=str(DEFAULT_OUT))
@@ -152,8 +150,7 @@ def main() -> None:
                     res = _run_single_pass(args.base_url, variant, r, out_file, target_pages)
                     raw_passes[variant].append(res)
         finally:
-            if BACKEND_PORT_FILE.exists():
-                BACKEND_PORT_FILE.write_text("18082\n")
+            BACKEND_PORT_FILE.write_text("18082\n")
             if dist_after.is_dir():
                 _restore_dist_copy(dist_after)
 
@@ -390,32 +387,6 @@ def main() -> None:
             "target_pages": target_pages,
             "modes": MODES,
             "guardrails_all_ok": guardrails_all_ok,
-            "backend_sql_counts": {
-                "GET /teams/my-teams": {
-                    "before_sql": 20,
-                    "after_sql": 7,
-                    "delta_sql": -13,
-                    "n_plus_1_warnings_before": 4,
-                    "n_plus_1_warnings_after": 0,
-                },
-                "GET /teams": {
-                    "before_sql": 18,
-                    "after_sql": 6,
-                    "delta_sql": -12,
-                    "n_plus_1_warnings_before": 4,
-                    "n_plus_1_warnings_after": 0,
-                },
-                "GET /projects/{id}/members": {
-                    "before_sql": 27,
-                    "after_sql": 19,
-                    "delta_sql": -8,
-                },
-                "GET /topics?project_id={id}": {
-                    "before_sql": 36,
-                    "after_sql": 31,
-                    "delta_sql": -5,
-                },
-            },
             "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         },
         "comparison": comparison,

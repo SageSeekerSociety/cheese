@@ -182,6 +182,22 @@ _USERS_IN_SELECT = re.compile(
     r'^\s*SELECT\b[^;]*?\bFROM "user"\s+WHERE "user"\.id IN\b',
     re.IGNORECASE,
 )
+_TEAM_USER_REL_FOR_USER_SELECT = re.compile(
+    r"^\s*SELECT team_user_relation\.id\b[^;]*?\bFROM team_user_relation\s+WHERE team_user_relation\.user_id =",
+    re.IGNORECASE,
+)
+_EMPTY_IN_NULL_SELECT = re.compile(
+    r"IN \(NULL\)",
+    re.IGNORECASE,
+)
+_ROOM_OF_UNION_SELECT = re.compile(
+    r"^\s*SELECT inside\.room_id FROM",
+    re.IGNORECASE,
+)
+_TOPIC_MEMBERSHIPS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM topic_memberships\b",
+    re.IGNORECASE,
+)
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
@@ -605,3 +621,75 @@ def test_every_room_row_names_the_seat_its_teammate_sits_in(client):
         assert listed[room] == seat
         header = client.get(f"/topics/{room}", headers=headers).json()["data"]
         assert header["agent_handle"] == seat
+
+
+def test_user_profile_deduplicates_self_teams_and_empty_understanding_queries(client):
+    """`GET /users/{handle}/profile` when viewing one's own profile queries
+    `team_user_relation` once instead of twice for the same user, and skips
+    empty `IN (NULL)` queries when `_understanding` finds no memory entries."""
+    post_project(client, json={"name": "Profile project"}, owner="alice")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as seen:
+        r = client.get("/users/alice/profile", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["handle"] == "alice"
+
+    assert _count(seen, _TEAM_USER_REL_FOR_USER_SELECT) == 1, [
+        s for s in seen if _TEAM_USER_REL_FOR_USER_SELECT.search(s)
+    ]
+    assert _count(seen, _EMPTY_IN_NULL_SELECT) == 0, [
+        s for s in seen if _EMPTY_IN_NULL_SELECT.search(s)
+    ]
+
+
+def test_task_header_deduplicates_card_running_and_room_of_queries(client):
+    """`GET /topics/{task_id}/task` on a task with no acceptance card queries
+    `accept_cards` once, `session_states` once, and reuses the room resolved by
+    `place_or_404` without issuing a second `room_of` UNION query."""
+    headers = session_auth_headers("alice")
+    pid = post_project(client, json={"name": "Task header"}, owner="alice").json()[
+        "data"
+    ]["id"]
+    room_id = client.post(
+        "/topics", json={"project_id": pid, "title": "Main"}, headers=headers
+    ).json()["data"]["id"]
+    task_id = client.post(
+        f"/topics/{room_id}/tasks", json={"title": "Cardless task"}, headers=headers
+    ).json()["data"]["id"]
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/topics/{task_id}/task", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["id"] == task_id
+
+    assert _count(seen, _TASK_CARDS_SELECT) == 1, [
+        s for s in seen if _TASK_CARDS_SELECT.search(s)
+    ]
+    assert _count(seen, _SESSION_STATES_SELECT) == 1, [
+        s for s in seen if _SESSION_STATES_SELECT.search(s)
+    ]
+    assert _count(seen, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in seen if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+
+
+def test_channel_directory_deduplicates_topic_memberships_and_fallback_reads(client):
+    """`GET /projects/{id}/channels` reads `topic_memberships` once across
+    `owners_of`, `seen`, `joined_topic_ids`, `seat_counts`, and
+    `managed_topic_ids`, and reads `topics` once without a second `get_many`
+    query on the root topic."""
+    pid, _ = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/projects/{pid}/channels", headers=headers)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]["items"]) == 5
+
+    assert _count(seen, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in seen if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(seen, _TOPICS_SELECT) == 2, [
+        s for s in seen if _TOPICS_SELECT.search(s)
+    ]

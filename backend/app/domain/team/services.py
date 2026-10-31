@@ -181,7 +181,9 @@ class TeamService:
         """The teams ``user_id`` is in that ``viewer_id`` may see, by the rule of
         :meth:`visible_team`: the ones the viewer is also in, and the public
         shared ones. A stealth team is not named to anyone outside it."""
-        theirs = await self._repo.list_teams_of_user(user_id=user_id)
+        theirs = list(await self._repo.list_teams_of_user(user_id=user_id))
+        if viewer_id == user_id:
+            return theirs
         mine = (
             {t.id for t in await self._repo.list_teams_of_user(user_id=viewer_id)}
             if viewer_id is not None
