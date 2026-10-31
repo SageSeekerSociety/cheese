@@ -137,6 +137,17 @@ class PlaceResolver:
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
         a 支线's. A 支线 that became a task shares its id and is the task."""
+        if _can_cache(self._session):
+            in_map = self._session.sync_session.identity_map.get(
+                self._session.sync_session.identity_key(Task, (conversation_id,))
+            )
+            if in_map is not None:
+                room_place = await self.resolve(in_map.room_id)
+                return (
+                    Place(room=room_place.room, task=in_map)
+                    if room_place is not None
+                    else None
+                )
         place = await self.resolve(conversation_id)
         if place is not None:
             return place

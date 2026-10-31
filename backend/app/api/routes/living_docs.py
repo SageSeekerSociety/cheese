@@ -262,8 +262,10 @@ async def create_document(
             title = source.title or (task.title if task is not None else "")
     origin = _origin(resolver, actor)
     created_by, drafted_by = await _authors(db, project_id, actor, origin)
+    project = await ProjectService(db).get(project_id)
     doc = await Documents(db).create(
         project_id=project_id,
+        team_id=project.team_id if project is not None else None,
         title=title,
         author=actor.handle,
         created_by=created_by,

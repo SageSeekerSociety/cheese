@@ -243,12 +243,26 @@ class AcceptCardRepository:
         and therefore one PR, and two live cards on it would be two PRs racing
         each other on the same commits.
         """
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("task_accept_cards", task_id))
+            if found:
+                return list(reversed(cached))
         stmt = (
             select(AcceptCard)
             .where(AcceptCard.task_id == task_id)
             .order_by(AcceptCard.created_at.desc())
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("task_accept_cards", task_id),
+                tuple(reversed(rows)),
+                tables=frozenset({"accept_cards"}),
+            )
+        return rows
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
         """Every card filed under this room: its tasks' cards, each carrying

@@ -28,6 +28,10 @@ from app.domain.user.models import User, UserProfile
 _task = table("task", column("id", BigInteger), column("space_id", BigInteger))
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 class ProjectRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -223,7 +227,7 @@ class ProjectRepository:
         # seed data and differs per environment.
         stmt = (
             select(
-                ProjectMember.user_handle,
+                ProjectMember,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
                 Avatar.avatar_type,
@@ -235,33 +239,27 @@ class ProjectRepository:
             .order_by(ProjectMember.created_at)
         )
         rows = (await self._session.execute(stmt)).all()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_rows", project_id),
+                tuple(m for m, _, _, _ in rows),
+                tables=frozenset({"project_members"}),
+            )
         external = [
             {
-                "handle": h,
-                "name": name or h,
+                "handle": m.user_handle,
+                "name": name or m.user_handle,
                 "avatar_id": None if avatar_type == "default" else avatar_id,
                 "source": "external",
             }
-            for (h, name, avatar_id, avatar_type) in rows
+            for (m, name, avatar_id, avatar_type) in rows
         ]
         project = await self.get(project_id)
         if project is None:
             return external
         members: list[dict] = []
         seen: set[str] = set()
-        if project.owner_handle:
-            name, avatar_id, avatar_type = await self._profile_of(project.owner_handle)
-            # Front of the list: the owner is the first person a reader of the
-            # roster is looking for.
-            members.append(
-                {
-                    "handle": project.owner_handle,
-                    "name": name or project.owner_handle,
-                    "avatar_id": None if avatar_type == "default" else avatar_id,
-                    "source": "owner",
-                }
-            )
-            seen.add(project.owner_handle)
         # Team access is read here, never stored, so it ends the moment someone
         # leaves the team. Someone who was an external member and later joined the
         # team is on it now, and is shown that way.
@@ -273,6 +271,7 @@ class ProjectRepository:
                     UserProfile.avatar_id,
                     Avatar.avatar_type,
                     TeamUserRelation.created_at,
+                    TeamUserRelation.role,
                 )
                 .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
                 .outerjoin(UserProfile, UserProfile.user_id == User.id)
@@ -284,10 +283,40 @@ class ProjectRepository:
                 )
             )
         ).all()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("team_roles_by_handle", project.team_id),
+                {handle: role for handle, _, _, _, _, role in team_rows},
+                tables=frozenset({"team_user_relation", "user"}),
+            )
+        by_handle: dict[str, tuple[str | None, int | None, str | None]] = {
+            m.user_handle: (name, avatar_id, avatar_type)
+            for (m, name, avatar_id, avatar_type) in rows
+        }
+        for handle, name, avatar_id, avatar_type, _created_at, _role in team_rows:
+            by_handle[handle] = (name, avatar_id, avatar_type)
+        if project.owner_handle:
+            name, avatar_id, avatar_type = (
+                by_handle[project.owner_handle]
+                if project.owner_handle in by_handle
+                else await self._profile_of(project.owner_handle)
+            )
+            # Front of the list: the owner is the first person a reader of the
+            # roster is looking for.
+            members.append(
+                {
+                    "handle": project.owner_handle,
+                    "name": name or project.owner_handle,
+                    "avatar_id": None if avatar_type == "default" else avatar_id,
+                    "source": "owner",
+                }
+            )
+            seen.add(project.owner_handle)
         team = await self._session.get(Team, project.team_id)
         team_handle = team.handle if team is not None else None
         team_name = team.name if team is not None else None
-        for handle, name, avatar_id, avatar_type, created_at in team_rows:
+        for handle, name, avatar_id, avatar_type, created_at, _role in team_rows:
             if handle in seen:
                 continue
             members.append(

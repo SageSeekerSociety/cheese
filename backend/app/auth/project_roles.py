@@ -332,16 +332,24 @@ async def seats(
     excluded = await MemberRepository(session).excluded_handles(project_id)
     team_roles: dict[str, int] = {}
     if project.team_id is not None:
-        rows = await session.execute(
-            select(User.username, TeamUserRelation.role)
-            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
-            .where(
-                TeamUserRelation.team_id == project.team_id,
-                TeamUserRelation.deleted_at.is_(None),
-                User.username.in_(handles),
-            )
+        found_tr, cached_tr = (
+            recall(session, ("team_roles_by_handle", project.team_id))
+            if isinstance(session, AsyncSession)
+            else (False, None)
         )
-        team_roles = {name: role for name, role in rows.all()}
+        if found_tr and cached_tr is not None:
+            team_roles = {h: cached_tr[h] for h in handles if h in cached_tr}
+        else:
+            rows = await session.execute(
+                select(User.username, TeamUserRelation.role)
+                .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                    User.username.in_(handles),
+                )
+            )
+            team_roles = {name: role for name, role in rows.all()}
     everything = PEOPLE_PERMISSIONS
     out: dict[str, Standing] = {}
     for handle in handles:

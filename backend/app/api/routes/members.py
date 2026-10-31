@@ -96,11 +96,11 @@ async def list_members(
     成员的人打开空工作区，照样看得见所有人的脸。"""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
+    people = await roster(db, project_id, team=project_team)
     members, _ = await MemberService(db).list_for_project(project_id)
     # The roster is the answer; a stored row adds only its id and when it was
     # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
-    people = await roster(db, project_id, team=project_team)
     seated = await seats(db, project_id, [m.handle for m in people if not m.agent])
     viewer_handle = actor.handle if actor.authenticated else None
     remarks = await remarks_by_handles(db, viewer_handle, [m.handle for m in people])

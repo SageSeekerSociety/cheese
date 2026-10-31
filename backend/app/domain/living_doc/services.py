@@ -124,6 +124,7 @@ class Documents:
         not change keeps its id and its author; a new one is ``author``'s.
         ``keep_author`` leaves the document's own author as it was.
         """
+        prev_content = doc.content
         written = await self._repo.set_content(
             doc,
             content,
@@ -133,7 +134,11 @@ class Documents:
         if written is None:
             return None
         new_nodes = markdown_to_nodes(content)
-        existing = await self._repo.nodes(doc.id)
+        existing = (
+            []
+            if expected_version == 0 and not (prev_content or "")
+            else await self._repo.nodes(doc.id)
+        )
         matcher = difflib.SequenceMatcher(
             a=[n.content for n in existing],
             b=[n.content for n in new_nodes],

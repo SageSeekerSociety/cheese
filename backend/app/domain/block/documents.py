@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.request_facts import recall, remember
 from app.core.sentences import NoticeList, listing, say
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
@@ -92,14 +93,29 @@ async def whose_document(
     """``(room, task)`` whose living document this is: a task's (told in the
     task, where its session reads it), or ``(None, None)`` for one of the
     project's own."""
+    if doc.number is not None or doc.room_id is not None or doc.project_id is None:
+        return None, None
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("whose_document", doc.id))
+        if found:
+            return cached
     owner = (
         await session.execute(
             select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.document_id == doc.id)
         )
     ).first()
-    if owner is None:
-        return None, None
-    return owner[1], owner[0]
+    res = (None, None) if owner is None else (owner[1], owner[0])
+    if can_cache:
+        remember(
+            session,
+            ("whose_document", doc.id),
+            res,
+            tables=frozenset({"tasks"}),
+        )
+    return res
 
 
 async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
