@@ -17,14 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page, typed_response
+from app.api.response import ok, page
 from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.crypto import Purpose, keyed_digest, keyed_digests
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
-    NotFoundError,
     ValidationError,
     message_key,
 )
@@ -110,6 +109,10 @@ class IntegrationPatch(BaseModel):
     password: str | None = None
     app_secret: str | None = None
     folders: list[str] | None = None
+    #: The Feishu authorization this browser came back with
+    #: (`feishu_callback`): claimed by the connection's owner, it finishes
+    #: authorizing; the answer carries the outcome as ``authorization``.
+    feishu_handoff: str | None = Field(default=None, max_length=64)
 
 
 class SearchIn(BaseModel):
@@ -266,6 +269,9 @@ async def update_integration(
     assert actor.user_id is not None
     service = _service(db)
     row = await service.get_owned(integration_id, actor.user_id)
+    if body.feishu_handoff is not None:
+        outcome = await _claim_feishu(db, row, body.feishu_handoff)
+        return ok({**public(row), "authorization": outcome})
     secret = {
         k: v
         for k, v in (("password", body.password), ("app_secret", body.app_secret))
@@ -384,33 +390,26 @@ async def _hand_back_feishu(code: str, state: str, error: str) -> RedirectRespon
         )
     except SingleUseUnavailableError:
         return _connections({"feishu": "exchange_failed"})
-    return _connections({"feishu_handoff": held})
+    return _connections(
+        {"feishu_integration": str(integration_id), "feishu_handoff": held}
+    )
 
 
-@router.post(
-    "/me/integrations/feishu/handoffs/{handoff}",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(oauth_handoff.HandoffOutcome),
-)
-async def claim_feishu_handoff(
-    handoff: str, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """Finish the authorization this browser came back with — only for the
-    person who started it. Returns the outcome the connections page shows
-    (``feishu`` and maybe ``feishu_detail``, as the callback used to land)."""
-    actor = await _person(resolver)
-    assert actor.user_id is not None
+async def _claim_feishu(
+    db: AsyncSession, row: Integration, handoff: str
+) -> dict[str, str]:
+    """Finish the authorization the callback held for ``row``, whose owner is
+    the one asking (`update_integration` checked it before anything is
+    taken). A hand-off for another connection — somebody else's flow,
+    finished in this browser — is spent and saves nothing."""
     held = await oauth_handoff.take(handoff)
-    if held is None or held.get("kind") != "feishu":
-        return ok({"query": {"feishu": "invalid_link"}})
-    try:
-        row = await _service(db).get_owned(
-            uuid.UUID(held["integration"]), actor.user_id
-        )
-    except NotFoundError:
-        # Somebody else's flow, finished in this browser: spent, not saved.
-        return ok({"query": {"feishu": "invalid_link"}})
-    return ok({"query": await _finish_feishu(db, row, held["code"])})
+    if (
+        held is None
+        or held.get("kind") != "feishu"
+        or held.get("integration") != str(row.id)
+    ):
+        return {"feishu": "invalid_link"}
+    return await _finish_feishu(db, row, held["code"])
 
 
 async def _finish_feishu(

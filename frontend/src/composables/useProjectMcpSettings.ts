@@ -241,7 +241,7 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     let query: Record<string, unknown> = landed
     if (typeof handoff === 'string' && handoff) {
       try {
-        query = { ...landed, ...(await claimMcpHandoff(handoff)).query }
+        query = { ...landed, ...(await claimMcpHandoff(projectId(), handoff)).query }
       } catch {
         query = { ...landed, mcp_error: 'failed' }
       }

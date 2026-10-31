@@ -322,7 +322,9 @@ async def callback(
         flow = service.read_state(state)
     except UnprocessableEntityError as exc:
         return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
-    back = f"{base}/projects/{flow['project']}/settings"
+    # The MCP section itself: it is the part of the page that claims the
+    # hand-off, and a page landing on another section would never claim it.
+    back = f"{base}/projects/{flow['project']}/settings/mcp"
     query = {"mcp": flow["server"]}
     try:
         if error or not code:
@@ -341,17 +343,24 @@ async def callback(
 
 
 @router.post(
-    "/mcp/oauth/handoffs/{handoff}",
-    dependencies=[ROUTE_DECIDES],
+    "/projects/{project_id}/mcp/handoffs/{handoff}",
     **typed_response(oauth_handoff.HandoffOutcome),
 )
 async def claim_handoff(
-    handoff: str, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.configure_agents)],
+    handoff: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """Finish the connection this browser came back with — only for the member
-    who started it. Returns the outcome the settings page shows (``mcp`` with
-    ``mcp_result`` or ``mcp_error``, as the callback used to land)."""
-    actor = await resolver.resolve()
+    """Finish the connection this browser came back with — only for the
+    member who started it, and only while they may still configure the
+    project's agents. Returns the outcome the settings page shows (``mcp``
+    with ``mcp_result`` or ``mcp_error``, as the callback used to land).
+
+    Who claims is settled before the hand-off is taken: a claim refused for
+    want of a session spends nothing, and the starter can sign in and land
+    again."""
+    handle = await manager(at, db, resolver)
     held = await oauth_handoff.take(handoff)
     if held is None or held.get("kind") != "mcp":
         return ok({"query": {"mcp_error": "failed"}})
@@ -360,14 +369,10 @@ async def claim_handoff(
     except UnprocessableEntityError as exc:
         return ok({"query": _failure(exc)})
     query = {"mcp": flow["server"]}
-    if actor.handle != flow["handle"]:
+    if flow["handle"] != handle or flow["project"] != str(at.project.id):
         # Somebody else's connection, finished in this browser: spent, not saved.
-        return ok(
-            {
-                "query": query
-                | _failure(UnprocessableEntityError(say("mcpAuthLinkInvalid")))
-            }
-        )
+        invalid = UnprocessableEntityError(say("mcpAuthLinkInvalid"))
+        return ok({"query": query | _failure(invalid)})
     try:
         await service.finish_connect(
             db, flow, code=held["code"], issuer=held.get("iss")

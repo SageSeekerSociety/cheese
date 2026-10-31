@@ -228,7 +228,7 @@ describe('useProjectMcpSettings', () => {
     await tick()
     await router.push('/projects/p/settings?mcp=tracker&mcp_handoff=h1')
     await state.consumeCallback()
-    expect(claimMcpHandoff).toHaveBeenCalledWith('h1')
+    expect(claimMcpHandoff).toHaveBeenCalledWith('p', 'h1')
     expect(sonner.success).toHaveBeenCalledTimes(1)
     await tick()
     expect(router.currentRoute.value.query).toEqual({})

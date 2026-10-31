@@ -515,10 +515,16 @@ def _authorize(client, person, row_id):
 
 def _claim(client, person, location: str) -> dict:
     """The connections page, signed in, claiming what the callback held."""
-    (handoff,) = parse_qs(urlparse(location).query)["feishu_handoff"]
-    r = client.post(f"/me/integrations/feishu/handoffs/{handoff}", headers=person)
+    query = parse_qs(urlparse(location).query)
+    (integration,) = query["feishu_integration"]
+    (handoff,) = query["feishu_handoff"]
+    r = client.patch(
+        f"/me/integrations/{integration}",
+        json={"feishu_handoff": handoff},
+        headers=person,
+    )
     assert r.status_code == 200, r.text
-    return r.json()["data"]["query"]
+    return r.json()["data"]["authorization"]
 
 
 def _shared_app_connection(client, person, project, *, admin=ADMIN, monkeypatch=None):
@@ -724,13 +730,14 @@ def test_an_authorization_finished_by_someone_else_saves_nothing(
     assert listed[0]["user_authorized"] is False
 
     stranger = {"Authorization": f"Bearer {seed_user(client, 'stranger')}"}
-    assert _claim(client, stranger, back.headers["location"]) == {
-        "feishu": "invalid_link"
-    }
-    # Spent: the starter cannot pick up what the stranger's browser brought.
-    assert _claim(client, starter, back.headers["location"]) == {
-        "feishu": "invalid_link"
-    }
+    query = parse_qs(urlparse(back.headers["location"]).query)
+    claimed = client.patch(
+        f"/me/integrations/{query['feishu_integration'][0]}",
+        json={"feishu_handoff": query["feishu_handoff"][0]},
+        headers=stranger,
+    )
+    # Not the stranger's connection: nothing of it exists for them.
+    assert claimed.status_code == 404, claimed.text
     listed = client.get("/me/integrations", headers=starter).json()["data"]["data"]
     assert listed[0]["user_authorized"] is False
     assert not any(

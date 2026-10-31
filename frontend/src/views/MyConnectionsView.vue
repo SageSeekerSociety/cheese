@@ -189,11 +189,11 @@ async function save(body: Record<string, unknown>, done: (ok: boolean, message?:
  *  去领，只有发起授权的人领得到 —— 别人点了同一条授权链接，令牌也进不了这一行。领到的
  *  就是这次授权的结果，和别的回执（`?feishu=`）一样说一次；地址栏里的领取号随即拿掉。 */
 async function landedFeishu(): Promise<Record<string, unknown>> {
-  const { feishu_handoff: handoff, ...rest } = route.query
-  if (typeof handoff !== 'string' || !handoff) return route.query
+  const { feishu_handoff: handoff, feishu_integration: integration, ...rest } = route.query
+  if (typeof handoff !== 'string' || !handoff || typeof integration !== 'string') return route.query
   void router.replace({ query: rest, hash: route.hash })
   try {
-    return { ...rest, ...(await claimFeishuHandoff(handoff)).query }
+    return { ...rest, ...(await claimFeishuHandoff(integration, handoff)).authorization }
   } catch {
     return { ...rest, feishu: 'exchange_failed' }
   }

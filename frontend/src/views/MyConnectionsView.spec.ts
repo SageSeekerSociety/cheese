@@ -44,7 +44,7 @@ vi.mock('../api/feishu', async () => ({
   feishuAvailability: () => feishuAvailability(),
   connectFeishu: () => connectFeishu(),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
-  claimFeishuHandoff: (handoff: string) => claimFeishuHandoff(handoff),
+  claimFeishuHandoff: (integration: string, handoff: string) => claimFeishuHandoff(integration, handoff),
 }))
 
 // 授权回调是一次性动作，结果走全局 toast（§3.11）：这里只验它说了什么。
@@ -233,16 +233,16 @@ describe('从飞书授权回来', () => {
   // 回调不存东西，只留一个领取号：这一页登录着去领，领回来的才是这次授权的结果。只有
   // 发起授权的人领得到，所以别人点了授权链接，令牌也进不了这一行。
   it('回来时先领取这次授权，领到的结果说一次', async () => {
-    claimFeishuHandoff.mockResolvedValueOnce({ query: { feishu: 'ok' } })
-    await mount('/?feishu_handoff=h1')
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'ok' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h1')
     await vi.waitFor(() => expect(sonner.success).toHaveBeenCalledWith('飞书授权成功'))
-    expect(claimFeishuHandoff).toHaveBeenCalledWith('h1')
+    expect(claimFeishuHandoff).toHaveBeenCalledWith('i1', 'h1')
   })
 
   it('领不到（别人的授权、过期了）就说链接无效，不当成功', async () => {
     setLocale('en')
-    claimFeishuHandoff.mockResolvedValueOnce({ query: { feishu: 'invalid_link' } })
-    await mount('/?feishu_handoff=h2')
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'invalid_link' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h2')
     await vi.waitFor(() => expect(sonner.error).toHaveBeenCalled())
     expect(sonner.success).not.toHaveBeenCalled()
   })
