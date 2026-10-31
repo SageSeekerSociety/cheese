@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -244,7 +244,7 @@ class GitHubCi:
         until: datetime,
         per_leaf: int,
         oldest_first: bool,
-    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]:
+    ) -> AsyncGenerator[tuple[datetime, datetime, Listed]]:
         """The runs created in ``[since, until)``, a leaf at a time: a part of
         the range holding at most ``per_leaf`` runs, or one second wide however
         many it holds. Each leaf comes with its own bounds, oldest or newest leaf
@@ -262,7 +262,7 @@ class GitHubCi:
 
     async def _leaves(
         self, client, owner, repo, token, since, until, per_leaf, oldest_first
-    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]:
+    ) -> AsyncGenerator[tuple[datetime, datetime, Listed]]:
         url = f"{self._api_base}/repos/{owner}/{repo}/actions/runs"
         # GitHub's bounds are inclusive; adjacent half-open windows meet exactly.
         created = f"{_iso(since)}..{_iso(until - timedelta(seconds=1))}"

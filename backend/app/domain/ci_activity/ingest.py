@@ -21,7 +21,7 @@ sweep, including a deferred one, records its reason and actual reader counts.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, Awaitable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -65,7 +65,8 @@ SWEEP_DEADLINE = timedelta(minutes=10)
 #: cannot end one itself (a wedged event loop never fires `SWEEP_DEADLINE`): no
 #: statement of a sweep runs longer than a minute, and the server ends a
 #: transaction once it has sat idle as long as a whole sweep may take.
-STATEMENT_TIMEOUT = "60s"
+_STATEMENT_S = 60
+STATEMENT_TIMEOUT = f"{_STATEMENT_S}s"
 IDLE_IN_TRANSACTION_TIMEOUT = f"{int(SWEEP_DEADLINE.total_seconds())}s"
 #: How long the statement that writes a sweep's outcome may take, deadline
 #: spent or not; past it the sweep gives up and its row stays unfinished.
@@ -91,7 +92,7 @@ class CiSource(Protocol):
         until: datetime,
         per_leaf: int,
         oldest_first: bool,
-    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]: ...
+    ) -> AsyncGenerator[tuple[datetime, datetime, Listed]]: ...
 
     async def run_jobs(
         self, *, owner: str, repo: str, token: str, run_id: int
@@ -299,7 +300,7 @@ async def _sweep_once(
         bulk read (a downtime gap, the backfill) has one page per leaf, so no
         unit outlasts one request and every sweep keeps what it read."""
         nonlocal runs_listed_from, runs_listed_to
-        async for low, high, listed in reader.run_leaves(
+        leaves = reader.run_leaves(
             owner=owner,
             repo=name,
             token=token,
@@ -307,112 +308,140 @@ async def _sweep_once(
             until=until,
             per_leaf=RUNS_PAGE if bulk else RESULT_CAP,
             oldest_first=oldest_first,
-        ):
-            complete(listed, f"runs from {low.isoformat()}")
-            report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
-            covered_to = min(high, now)
-            runs_listed_to = (
-                max(runs_listed_to, covered_to) if runs_listed_to else covered_to
-            )
-            if runs_listed_from is None or runs_listed_from > low:
-                runs_listed_from = low
-            await record(finished=False)
-
-    deadline = asyncio.get_running_loop().time() + SWEEP_DEADLINE.total_seconds()
-    try:
-        async with asyncio.timeout_at(deadline):
-            reader.check_quota(token)
-            recent_from = now - RECENT
-            oldest_open = await store.oldest_open_run(repo, now - OPEN_LOOKBACK)
-            if oldest_open is not None:
-                recent_from = min(recent_from, oldest_open)
-            cursor = _slice_start(max(window_start, recent_from))
-            if runs_listed_to is not None and runs_listed_to < cursor:
-                # A downtime gap older than the revalidation range is read once,
-                # in bounded bulk slices, rather than hundreds of empty windows.
-                missing = _slice_start(max(window_start, runs_listed_to))
-                while missing < cursor:
-                    until = min(cursor, missing + BACKFILL_SLICE)
-                    await read_runs(missing, until, bulk=True)
-                    missing = until
-            while cursor < now:
-                until = cursor + RUN_SLICE
-                await read_runs(cursor, until, bulk=False)
-                cursor = until
-
-            for _ in range(backfill_slices):
-                if runs_listed_from is None or runs_listed_from <= window_start:
-                    break
-                since = max(window_start, runs_listed_from - BACKFILL_SLICE)
-                await read_runs(since, runs_listed_from, bulk=True, oldest_first=False)
-
-            for run in await store.runs_owing_jobs(repo, jobs_budget):
-                if run.conclusion == "skipped":
-                    await store.replace_jobs(run, [], attempt=run.run_attempt)
-                    await record(finished=False)
-                    continue
+        )
+        try:
+            while True:
                 try:
-                    listed = await reader.run_jobs(
+                    low, high, listed = await from_github(anext(leaves))
+                except StopAsyncIteration:
+                    return
+                complete(listed, f"runs from {low.isoformat()}")
+                await to_db()
+                report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
+                covered_to = min(high, now)
+                runs_listed_to = (
+                    max(runs_listed_to, covered_to) if runs_listed_to else covered_to
+                )
+                if runs_listed_from is None or runs_listed_from > low:
+                    runs_listed_from = low
+                await record(finished=False)
+        finally:
+            await leaves.aclose()
+
+    # The deadline is kept two ways. A GitHub read is cancelled when it comes;
+    # a database statement is given the time left as its server-side timeout,
+    # so the server ends it cleanly instead of the connection being dropped
+    # mid-statement.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SWEEP_DEADLINE.total_seconds()
+
+    async def from_github[T](call: Awaitable[T]) -> T:
+        async with asyncio.timeout_at(deadline):
+            return await call
+
+    async def to_db() -> None:
+        left = deadline - loop.time()
+        if left <= 0:
+            raise TimeoutError
+        await _limit_statements(session, min(left, _STATEMENT_S))
+
+    try:
+        reader.check_quota(token)
+        recent_from = now - RECENT
+        await to_db()
+        oldest_open = await store.oldest_open_run(repo, now - OPEN_LOOKBACK)
+        if oldest_open is not None:
+            recent_from = min(recent_from, oldest_open)
+        cursor = _slice_start(max(window_start, recent_from))
+        if runs_listed_to is not None and runs_listed_to < cursor:
+            # A downtime gap older than the revalidation range is read once,
+            # in bounded bulk slices, rather than hundreds of empty windows.
+            missing = _slice_start(max(window_start, runs_listed_to))
+            while missing < cursor:
+                until = min(cursor, missing + BACKFILL_SLICE)
+                await read_runs(missing, until, bulk=True)
+                missing = until
+        while cursor < now:
+            until = cursor + RUN_SLICE
+            await read_runs(cursor, until, bulk=False)
+            cursor = until
+
+        for _ in range(backfill_slices):
+            if runs_listed_from is None or runs_listed_from <= window_start:
+                break
+            since = max(window_start, runs_listed_from - BACKFILL_SLICE)
+            await read_runs(since, runs_listed_from, bulk=True, oldest_first=False)
+
+        await to_db()
+        for run in await store.runs_owing_jobs(repo, jobs_budget):
+            if run.conclusion == "skipped":
+                await to_db()
+                await store.replace_jobs(run, [], attempt=run.run_attempt)
+                await record(finished=False)
+                continue
+            try:
+                listed = await from_github(
+                    reader.run_jobs(
                         owner=owner, repo=name, token=token, run_id=run.run_id
                     )
-                except CiGitHubError as exc:
-                    if exc.status != 404:
-                        raise
-                    await store.replace_jobs(run, [], attempt=run.run_attempt)
-                    report["gone_runs"] += 1
-                    await record(finished=False)
-                    continue
-                complete(listed, f"jobs of run {run.run_id}")
-                report["jobs_read"] += await store.replace_jobs(
-                    run, listed.items, attempt=run.run_attempt
                 )
+            except CiGitHubError as exc:
+                if exc.status != 404:
+                    raise
+                await to_db()
+                await store.replace_jobs(run, [], attempt=run.run_attempt)
+                report["gone_runs"] += 1
                 await record(finished=False)
-
-            cursor = max(
-                window_start, (queue_read_to or window_start) - MERGED_PRS_OVERLAP
+                continue
+            complete(listed, f"jobs of run {run.run_id}")
+            await to_db()
+            report["jobs_read"] += await store.replace_jobs(
+                run, listed.items, attempt=run.run_attempt
             )
-            while cursor < now:
-                until = min(now, cursor + MERGED_PRS_SLICE)
-                listed = await reader.merged_pull_requests(
+            await record(finished=False)
+
+        cursor = max(window_start, (queue_read_to or window_start) - MERGED_PRS_OVERLAP)
+        while cursor < now:
+            until = min(now, cursor + MERGED_PRS_SLICE)
+            listed = await from_github(
+                reader.merged_pull_requests(
                     owner=owner, repo=name, token=token, since=cursor, until=until
                 )
-                complete(listed, f"merged PRs from {cursor.isoformat()}")
-                report[
-                    "merged_prs_upserted"
-                ] += await store.upsert_merged_pull_requests(repo, listed.items)
-                queue_read_to = until
-                await record(finished=False)
-                cursor = until
+            )
+            complete(listed, f"merged PRs from {cursor.isoformat()}")
+            await to_db()
+            report["merged_prs_upserted"] += await store.upsert_merged_pull_requests(
+                repo, listed.items
+            )
+            queue_read_to = until
+            await record(finished=False)
+            cursor = until
     except (CiGitHubError, httpx.HTTPError, SQLAlchemyError, TimeoutError) as exc:
         # Only the unit in progress is lost: everything before it is committed.
         await session.rollback()
         runs_listed_from, runs_listed_to, queue_read_to = committed["cursors"]
         report.update(committed["counters"])
-        report["error"] = _stopped_by(exc)
+        report["error"] = _stopped_by(
+            TimeoutError() if loop.time() >= deadline else exc
+        )
         await _bound_transaction(session)
 
-    # Tidying up stays inside the sweep's deadline, held by the server rather
-    # than by cancelling a statement mid-flight: each statement gets the time
-    # left as its statement timeout, and a sweep with none left skips the rest.
-    # The next sweep prunes; until it counts, the owed jobs stay at the last
-    # count. Writing the outcome is one short statement under its own timeout.
-    loop = asyncio.get_running_loop()
+    # Tidying up stays inside the deadline the same way; a sweep with no time
+    # left skips the rest. The next sweep prunes, and until it counts, the owed
+    # jobs stay at the last count. Writing the outcome is one short statement
+    # under its own timeout.
     try:
-        for step in ("pruned_runs", "jobs_owed"):
-            left = deadline - loop.time()
-            if left <= 0:
-                raise TimeoutError
-            await _limit_statements(session, left)
-            report[step] = (
-                await store.prune(repo, window_start)
-                if step == "pruned_runs"
-                else await store.count_runs_owing_jobs(repo)
-            )
+        await to_db()
+        report["pruned_runs"] = await store.prune(repo, window_start)
+        await to_db()
+        report["jobs_owed"] = await store.count_runs_owing_jobs(repo)
     except (SQLAlchemyError, TimeoutError) as exc:
         await session.rollback()
         await _bound_transaction(session)
         report["pruned_runs"] = 0
-        report["error"] = report["error"] or _stopped_by(exc)
+        report["error"] = report["error"] or _stopped_by(
+            TimeoutError() if loop.time() >= deadline else exc
+        )
     if runs_listed_from is not None:
         runs_listed_from = max(window_start, runs_listed_from)
     await _limit_statements(session, OUTCOME_DEADLINE.total_seconds())
