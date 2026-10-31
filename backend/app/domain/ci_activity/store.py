@@ -5,26 +5,17 @@ first listed). A run's jobs are replaced whole when they are read, because a
 re-run adds jobs to a run and GitHub's answer is the complete list. Queue events
 are inserted once each. Everything older than the window is deleted by `prune`:
 this is a picture of recent CI, not an archive.
-
-Nothing here commits except `record_sweep`. The sweep calls it after each unit
-of work (`ingest.py`), so a unit's writes become visible to readers in the same
-commit as the sweep's `ci_activity_sweeps` row recording the cursors they
-advanced: whatever the tables hold is whole units, each described by the latest
-sweep row. A unit that is dropped — an error, the deadline, the process dying —
-leaves nothing behind.
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.ci_activity.github import QueueEvent, parse_time
 from app.domain.ci_activity.models import (
@@ -52,37 +43,6 @@ UPSERT_BATCH = 500
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def sweep_lock(repo: str) -> ColumnElement[int]:
-    """The advisory lock a sweep of ``repo`` holds exclusively from before its
-    first write until its record has landed (`sweeping`). A reader that holds it
-    shared sees tables no sweep is part-way through writing."""
-    return func.hashtextextended(f"ci-activity-sweep:{repo}", 0)
-
-
-@asynccontextmanager
-async def sweeping(session: AsyncSession, repo: str) -> AsyncIterator[None]:
-    """Hold ``repo``'s sweep lock for the whole of one sweep.
-
-    A sweep commits as it goes, so the lock cannot live in its transactions: it
-    is a session-level lock on a connection of its own, waiting out any reader
-    that holds it shared."""
-    bind = session.bind
-    assert bind is not None
-    engine = bind.engine if isinstance(bind, AsyncConnection) else bind
-    connection = await engine.connect()
-    try:
-        await connection.execute(select(func.pg_advisory_lock(sweep_lock(repo))))
-        await connection.commit()
-        yield
-    finally:
-        # Dropped rather than unlocked and pooled: a session-level lock outlives
-        # a pool's reset-on-return, so a failed unlock would leave the next
-        # sweep waiting on a pooled connection forever. Closing the connection
-        # always lets it go.
-        await connection.invalidate()
-        await connection.close()
 
 
 def pr_number_of(run: dict[str, Any]) -> int | None:
@@ -171,6 +131,7 @@ class CiActivityStore:
                     },
                 )
             )
+        await self._session.commit()
         return len(rows)
 
     async def upsert_runs(self, repo: str, runs: list[dict[str, Any]]) -> int:
@@ -187,6 +148,7 @@ class CiActivityStore:
         changed = 0
         for start in range(0, len(rows), UPSERT_BATCH):
             changed += await self._upsert(rows[start : start + UPSERT_BATCH])
+        await self._session.commit()
         return changed
 
     async def _upsert(self, rows: list[dict[str, Any]]) -> int:
@@ -314,6 +276,7 @@ class CiActivityStore:
             .where(CiWorkflowRun.id == run.id)
             .values(jobs_attempt=attempt)
         )
+        await self._session.commit()
         return stored
 
     async def add_queue_events(self, repo: str, events: list[QueueEvent]) -> int:
@@ -322,6 +285,7 @@ class CiActivityStore:
             inserted += await self._add_events(
                 repo, events[start : start + UPSERT_BATCH]
             )
+        await self._session.commit()
         return inserted
 
     async def _add_events(self, repo: str, events: list[QueueEvent]) -> int:
@@ -363,22 +327,19 @@ class CiActivityStore:
         runs_listed_to: datetime | None,
         queue_read_to: datetime | None,
         report: dict[str, Any],
-        row: CiActivitySweep | None = None,
-    ) -> CiActivitySweep:
-        """Commit everything written since the last commit, together with the
-        sweep's row saying where its cursors stand now: ``row`` updated when the
-        sweep already has one, a new row otherwise. ``finished_at`` is when this
-        commit landed, so it changes with every unit the sweep commits."""
-        if row is None:
-            row = CiActivitySweep(repo=repo, started_at=started_at)
-            self._session.add(row)
-        row.finished_at = _now()
-        row.runs_listed_from = runs_listed_from
-        row.runs_listed_to = runs_listed_to
-        row.queue_read_to = queue_read_to
-        row.report = dict(report)
+    ) -> None:
+        self._session.add(
+            CiActivitySweep(
+                repo=repo,
+                started_at=started_at,
+                finished_at=_now(),
+                runs_listed_from=runs_listed_from,
+                runs_listed_to=runs_listed_to,
+                queue_read_to=queue_read_to,
+                report=report,
+            )
+        )
         await self._session.commit()
-        return row
 
     async def prune(self, repo: str, before: datetime) -> int:
         """Delete everything older than ``before``; jobs and steps go with
@@ -403,5 +364,6 @@ class CiActivityStore:
                 CiActivitySweep.repo == repo, CiActivitySweep.started_at < before
             )
         )
+        await self._session.commit()
         # rowcount exists on the CursorResult execute() returns for DML at runtime
         return int(runs.rowcount or 0)  # type: ignore[attr-defined]

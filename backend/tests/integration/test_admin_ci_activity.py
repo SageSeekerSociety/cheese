@@ -14,6 +14,8 @@ Each rule here is one a person reading the page could state:
 * A run that passed only on a re-run is counted as fail-then-pass.
 * A day with nothing to measure has no median, not a median of 0.
 * The jobs and steps tables can be narrowed to one runner.
+* The board says when its figures were computed, and they are never more than
+  a minute old.
 * A day's figures stay on that UTC day: past midnight they leave the 1-day
   window and stay in the 2-day one.
 
@@ -29,8 +31,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cachetools import TTLCache
 
 from app.core.config import settings
+from app.domain.ci_activity import board as board_module
 from app.domain.ci_activity.models import (
     CiJob,
     CiJobStep,
@@ -56,6 +60,28 @@ T0 = TODAY + timedelta(minutes=10)
 @pytest.fixture(autouse=True)
 def _read_at_now(pinned_clock) -> None:
     pinned_clock.move_to(NOW)
+
+
+class _Stopwatch:
+    """The clock a worker's kept boards age by, moved by hand."""
+
+    def __init__(self) -> None:
+        self.seconds = 0.0
+
+    def __call__(self) -> float:
+        return self.seconds
+
+
+@pytest.fixture(autouse=True)
+def kept_boards_clock(monkeypatch: pytest.MonkeyPatch) -> _Stopwatch:
+    """Each test starts with a worker that has kept no board."""
+    clock = _Stopwatch()
+    monkeypatch.setattr(
+        board_module,
+        "_boards",
+        TTLCache(maxsize=32, ttl=board_module.BOARD_TTL_S, timer=clock),
+    )
+    return clock
 
 
 @pytest.fixture
@@ -536,3 +562,22 @@ def test_same_job_name_in_different_workflows_stays_separate(client, as_admin):
     assert [
         (s["name"], s["duration_s"]["n"], s["duration_s"]["p50"]) for s in steps
     ] == [("Check", 1, 10)]
+
+
+def test_the_board_says_when_it_was_computed_and_is_at_most_a_minute_old(
+    client, as_admin, pinned_clock, kept_boards_clock
+):
+    seed_user(client, ADMIN)
+    run = _run()
+    _seed(client, [run, _job(run, wait_s=100)])
+
+    first = _board(client)
+    assert first["headline"]["runner_wait_seconds"]["all"]["n"] == 1
+    assert first["generated_at"] == NOW.isoformat()
+
+    _seed(client, [_job(run, wait_s=300)])
+    pinned_clock.move_to(NOW + timedelta(seconds=61))
+    kept_boards_clock.seconds = 61
+    later = _board(client)
+    assert later["headline"]["runner_wait_seconds"]["all"]["n"] == 2
+    assert later["generated_at"] == (NOW + timedelta(seconds=61)).isoformat()

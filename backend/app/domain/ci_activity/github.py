@@ -13,10 +13,7 @@ each request when its installation has half its REST quota or less left.
 
 from __future__ import annotations
 
-import asyncio
 from collections import Counter
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -41,10 +38,6 @@ RUNS_PAGE = 10
 #: GitHub creation-time filters have second precision. A still-busier second
 #: is explicitly reported as truncated, never claimed as complete coverage.
 _NARROWEST = timedelta(seconds=1)
-#: The longest one request may take from sending to the last byte of its answer.
-#: The client's 30 s timeout is per network wait, so an answer that keeps
-#: trickling in never trips it; this one is for the whole exchange.
-REQUEST_DEADLINE_S = 60.0
 
 _MERGED_PRS_QUERY = """
 query($q: String!, $after: String) {
@@ -78,18 +71,6 @@ class CiQuotaRefused(CiGitHubError):
 
 class CiReadDeferred(CiGitHubError):
     """Reporting leaves the remaining quota for higher-priority work."""
-
-
-@asynccontextmanager
-async def _whole_answer_within_deadline() -> AsyncIterator[None]:
-    try:
-        async with asyncio.timeout(REQUEST_DEADLINE_S):
-            yield
-    except TimeoutError as exc:
-        # i18n-exempt: internal admin sweep report, not a user refusal
-        raise CiGitHubError(
-            f"GitHub did not finish answering within {REQUEST_DEADLINE_S:g} s"
-        ) from exc
 
 
 @dataclass(frozen=True)
@@ -210,8 +191,7 @@ class GitHubCi:
         }
 
     async def _get(self, client: httpx.AsyncClient, url: str, token: str, params):
-        async with _whole_answer_within_deadline():
-            resp = await client.get(url, headers=self._headers(token), params=params)
+        resp = await client.get(url, headers=self._headers(token), params=params)
         _raise_for(resp)
         return resp.json()
 
@@ -220,53 +200,17 @@ class GitHubCi:
     ) -> Listed:
         """Every run created in ``[since, until)``, newest first."""
         out = Listed(items=[])
-        async for _, _, leaf in self.run_leaves(
-            owner=owner,
-            repo=repo,
-            token=token,
-            since=since,
-            until=until,
-            per_leaf=RESULT_CAP,
-            oldest_first=False,
-        ):
-            out.items.extend(leaf.items)
-            out.requests += leaf.requests
-            out.truncated = leaf.truncated
-        return out
-
-    async def run_leaves(
-        self,
-        *,
-        owner: str,
-        repo: str,
-        token: str,
-        since: datetime,
-        until: datetime,
-        per_leaf: int,
-        oldest_first: bool,
-    ) -> AsyncGenerator[tuple[datetime, datetime, Listed]]:
-        """The runs created in ``[since, until)``, a leaf at a time: a part of
-        the range holding at most ``per_leaf`` runs, or one second wide however
-        many it holds. Each leaf comes with its own bounds, oldest or newest leaf
-        first; a truncated leaf is the last one."""
         since, until = _second_ceiling(since), _second_ceiling(until)
         if since >= until:
-            return
+            return out
         async with self._client("GET /actions/runs") as client:
-            async for leaf in self._leaves(
-                client, owner, repo, token, since, until, per_leaf, oldest_first
-            ):
-                yield leaf
-                if leaf[2].truncated:
-                    return
+            await self._runs_in(client, owner, repo, token, since, until, out)
+        return out
 
-    async def _leaves(
-        self, client, owner, repo, token, since, until, per_leaf, oldest_first
-    ) -> AsyncGenerator[tuple[datetime, datetime, Listed]]:
+    async def _runs_in(self, client, owner, repo, token, since, until, out: Listed):
         url = f"{self._api_base}/repos/{owner}/{repo}/actions/runs"
         # GitHub's bounds are inclusive; adjacent half-open windows meet exactly.
         created = f"{_iso(since)}..{_iso(until - timedelta(seconds=1))}"
-        out = Listed(items=[])
         page = 1
         while True:
             body = await self._get(
@@ -277,37 +221,26 @@ class GitHubCi:
             )
             out.requests += 1
             total = int(body.get("total_count") or 0)
-            if page == 1 and total > per_leaf and until - since > _NARROWEST:
+            if page == 1 and total > RESULT_CAP and until - since > _NARROWEST:
                 # Keep split points at the API's second precision as well.
                 seconds = int((until - since).total_seconds())
                 middle = since + timedelta(seconds=seconds // 2)
-                halves = [(since, middle), (middle, until)]
-                if not oldest_first:
-                    halves.reverse()
-                for lo, hi in halves:
-                    async for leaf in self._leaves(
-                        client, owner, repo, token, lo, hi, per_leaf, oldest_first
-                    ):
-                        # The request that showed this part must be split is
-                        # counted with the first leaf it led to.
-                        leaf[2].requests += out.requests
-                        out.requests = 0
-                        yield leaf
-                        if leaf[2].truncated:
-                            return
+                await self._runs_in(client, owner, repo, token, middle, until, out)
+                if out.truncated:
+                    return
+                await self._runs_in(client, owner, repo, token, since, middle, out)
                 return
             runs = [r for r in body.get("workflow_runs") or [] if isinstance(r, dict)]
             out.items.extend(runs)
             if total > RESULT_CAP:
                 out.truncated = True
-                break
+                return
             if len(runs) < RUNS_PAGE or page * RUNS_PAGE >= total:
-                break
+                return
             if page * RUNS_PAGE >= RESULT_CAP:
                 out.truncated = True
-                break
+                return
             page += 1
-        yield since, until, out
 
     async def run_jobs(
         self, *, owner: str, repo: str, token: str, run_id: int
@@ -319,12 +252,9 @@ class GitHubCi:
             page = 1
             while True:
                 params = {"filter": "all", "per_page": _PAGE, "page": page}
-                async with (
-                    _whole_answer_within_deadline(),
-                    client.stream(
-                        "GET", url, headers=self._headers(token), params=params
-                    ) as resp,
-                ):
+                async with client.stream(
+                    "GET", url, headers=self._headers(token), params=params
+                ) as resp:
                     await resp.aread()
                 _raise_for(resp)
                 body = resp.json()
@@ -356,15 +286,14 @@ class GitHubCi:
         first = True
         read = 0
         while True:
-            async with _whole_answer_within_deadline():
-                resp = await client.post(
-                    f"{self._api_base}/graphql",
-                    headers=self._headers(token),
-                    json={
-                        "query": _MERGED_PRS_QUERY,
-                        "variables": {"q": query, "after": after},
-                    },
-                )
+            resp = await client.post(
+                f"{self._api_base}/graphql",
+                headers=self._headers(token),
+                json={
+                    "query": _MERGED_PRS_QUERY,
+                    "variables": {"q": query, "after": after},
+                },
+            )
             _raise_for(resp)
             body = resp.json()
             if errors := body.get("errors"):

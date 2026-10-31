@@ -43,11 +43,8 @@ async def ci_activity_board(
 ) -> dict:
     repo = settings.platform_repository
     return ok(
-        await board.once_per_sweep(
-            db,
-            repo,
-            ("board", days),
-            lambda: board.build_board(db, repo, days=days),
+        await board.kept_board(
+            repo, days, lambda: board.build_board(db, repo, days=days)
         )
     )
 
@@ -59,14 +56,13 @@ async def ci_activity_jobs(
     days: Days = 7,
     runner: Annotated[str | None, Query(max_length=300)] = None,
 ) -> dict:
-    repo = settings.platform_repository
-    jobs = await board.once_per_sweep(
-        db,
-        repo,
-        ("jobs", days, runner),
-        lambda: board.job_table(db, repo, days=days, runner=runner),
+    return ok(
+        {
+            "jobs": await board.job_table(
+                db, settings.platform_repository, days=days, runner=runner
+            )
+        }
     )
-    return ok({"jobs": jobs})
 
 
 @router.get("/steps", **typed_response(CiStepsOut))

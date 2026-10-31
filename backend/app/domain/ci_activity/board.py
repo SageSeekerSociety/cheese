@@ -44,7 +44,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from cachetools import TTLCache
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -56,7 +57,6 @@ from app.domain.ci_activity.models import (
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
-from app.domain.ci_activity.store import sweep_lock
 from app.domain.day_windows import utc_day_window, utc_now
 
 REQUIRED_CI_PATH = ".github/workflows/required-ci.yml"
@@ -130,56 +130,6 @@ class Window:
     since: datetime
     until: datetime
     days: list[date]
-
-
-#: Every figure on the page is read from the tables the sweep fills. Only the
-#: sweep writes them, a unit at a time, and each unit becomes visible in the same
-#: commit that updates the sweep's `ci_activity_sweeps` row and its `finished_at`
-#: (`store.py`). The latest row's id and `finished_at` therefore name what the
-#: tables hold: an answer stays right until either changes or the UTC day turns,
-#: and a worker computes each one once per such state rather than on every open:
-#: a board over a week's ~25k jobs is two seconds of this worker's event loop,
-#: which every other request on the worker waits out. The sweep lock keeps a
-#: commit from landing between the queries of one answer being computed for
-#: keeping; while a sweep holds it, or before any sweep is recorded, every answer
-#: is computed and none is kept.
-_per_sweep: dict[str, Any] = {"key": None, "answers": {}}
-
-
-async def once_per_sweep(
-    session: AsyncSession,
-    repo: str,
-    question: tuple,
-    compute: Callable[[], Awaitable[Any]],
-) -> Any:
-    """``compute()``'s answer to ``question``, computed once per committed state
-    of the CI tables.
-
-    The sweep lock is held shared until ``session``'s transaction ends, so no
-    sweep starts writing while an answer is being computed for keeping."""
-    settled = await session.scalar(
-        select(func.pg_try_advisory_xact_lock_shared(sweep_lock(repo)))
-    )
-    if not settled:
-        return await compute()
-    sweep = (
-        await session.execute(
-            select(CiActivitySweep.id, CiActivitySweep.finished_at)
-            .where(CiActivitySweep.repo == repo)
-            .order_by(CiActivitySweep.started_at.desc())
-            .limit(1)
-        )
-    ).first()
-    if sweep is None:
-        return await compute()
-    key = (repo, *sweep, utc_now().date())
-    if _per_sweep["key"] != key:
-        _per_sweep["key"] = key
-        _per_sweep["answers"] = {}
-    answers = _per_sweep["answers"]
-    if question not in answers:
-        answers[question] = await compute()
-    return answers[question]
 
 
 def window(days: int, now: datetime | None = None) -> Window:
@@ -318,6 +268,29 @@ def _minute_samples(spans: Iterable[tuple[datetime, datetime]], w: Window, until
         )
         moment += timedelta(minutes=1)
     return samples
+
+
+#: How long a worker keeps a board it built. Built from a week of jobs on dev
+#: (~41k jobs, 2026-10-31) a board takes about a second, half of it on this
+#: worker's event loop, and a 30-day one about six seconds, close to three of
+#: them on the loop, which every other request on the worker waits out; kept
+#: this long, it is built at most once a minute per window. The board says when
+#: it was built (``generated_at``), and the page shows it.
+BOARD_TTL_S = 60
+_boards: TTLCache = TTLCache(maxsize=32, ttl=BOARD_TTL_S)
+
+
+async def kept_board(
+    repo: str, days: int, build: Callable[[], Awaitable[dict[str, Any]]]
+) -> dict[str, Any]:
+    """The board for ``days``, as built by ``build`` at most ``BOARD_TTL_S`` ago."""
+    # The window is whole UTC days, so a board built before midnight is not
+    # the board after it, however recently it was built.
+    key = (repo, days, utc_now().date())
+    board: dict[str, Any] | None = _boards.get(key)
+    if board is None:
+        board = _boards[key] = await build()
+    return board
 
 
 async def build_board(
@@ -656,15 +629,9 @@ async def _rounds(session, repo, w: Window) -> dict[str, Any]:
 
 
 async def _sweep_status(session, repo, w: Window) -> dict[str, Any] | None:
-    """The last finished sweep: a sweep's row exists from its first committed
-    unit on, marked ``in_progress`` until the sweep writes its outcome, and one
-    whose process died stays marked."""
     last = await session.scalar(
         select(CiActivitySweep)
-        .where(
-            CiActivitySweep.repo == repo,
-            ~CiActivitySweep.report.has_key("in_progress"),
-        )
+        .where(CiActivitySweep.repo == repo)
         .order_by(CiActivitySweep.started_at.desc())
         .limit(1)
     )

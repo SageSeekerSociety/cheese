@@ -11,8 +11,7 @@ Rules pinned here, each one a person could state without the code:
 * The backfill walks back to the window's start and stops there; rows older
   than the window are deleted.
 * After a day without sweeps, the next one lists the whole gap and stores it,
-  however many runs that is; a gap longer than one sweep's deadline is worked
-  off over the sweeps that follow, each keeping what it finished.
+  however many runs that is.
 * A run GitHub no longer has does not stop the sweeps after it, and a run that
   used no runner costs no request.
 * The queue is read from the window's start the first time, then from where
@@ -20,17 +19,11 @@ Rules pinned here, each one a person could state without the code:
 * While the installation's quota is down to the share kept for people, the
   sweep makes no GitHub call and says why.
 * A quota refusal mid-sweep keeps what was already stored and says why.
-* A GitHub answer that never finishes, however steadily its bytes trickle in,
-  ends the sweep with the reason recorded; so does a sweep that runs past its
-  deadline, which keeps the units it finished.
-* The board and the jobs table always show the same stored rows, whether the
-  sweep that stored them is still running, finished, or died part-way.
 
 GitHub is a fake `CiSource`; the credential lookup is real down to the App's
 token, which is a fake with a quota the test sets.
 """
 
-import asyncio
 import hashlib
 import json
 import time
@@ -40,14 +33,12 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from anyio.from_thread import BlockingPortal
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import forge_etags, forge_quota
-from app.core.config import settings
 from app.domain.ci_activity import board, ingest
-from app.domain.ci_activity import github as ci_github
 from app.domain.ci_activity.github import (
     CiGitHubError,
     CiQuotaRefused,
@@ -64,11 +55,9 @@ from app.domain.ci_activity.models import (
     CiWorkflowRun,
 )
 from app.domain.ci_activity.store import CiActivityStore
-from app.domain.day_windows import utc_now
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectGitInstallation
-from tests.conftest import seed_user
-from tests.integration.conftest import a_team, session_auth_headers
+from tests.integration.conftest import a_team
 
 REPO = "owner/ci-activity-test"
 NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
@@ -161,10 +150,6 @@ class _GitHub:
             < until
         ]
         return Listed(items=found, requests=1)
-
-    async def run_leaves(self, *, per_leaf, oldest_first, **ranged):
-        # The whole range as one leaf, however many runs it holds.
-        yield ranged["since"], ranged["until"], await self.list_runs(**ranged)
 
     async def run_jobs(self, *, owner, repo, token, run_id) -> Listed:
         self.jobs_attempted.append(run_id)
@@ -1013,359 +998,9 @@ def test_a_truncated_window_does_not_claim_complete_coverage(
             db_session, remote.reader(), backfill_slices=0, jobs_budget=0
         )
         assert report["truncated"] and report["error"]
-        # Coverage reaches the start of the one second GitHub cut short, and
-        # not into it: the empty parts before it were read in full.
         assert (
             await CiActivityStore(db_session).last_sweep(REPO)
-        ).runs_listed_to == NOW - timedelta(minutes=1)
+        ).runs_listed_to == NOW - timedelta(minutes=5)
         assert await _count(db_session, CiWorkflowRun) == 0
 
     _portal.call(run)
-
-
-_ADMIN = "ci-sweep-admin"
-
-
-@pytest.fixture
-def page(client, monkeypatch: pytest.MonkeyPatch):
-    """How many jobs the CI activity page's board and jobs table each show,
-    and the board alone."""
-    monkeypatch.setattr(settings, "platform_admin_handles", [_ADMIN])
-    monkeypatch.setattr(settings, "platform_repository", REPO)
-    seed_user(client, _ADMIN)
-
-    headers = session_auth_headers(_ADMIN)
-
-    def board() -> int:
-        body = client.get("/admin/ci-activity?days=7", headers=headers).json()
-        return body["data"]["headline"]["runner_wait_seconds"]["all"]["n"]
-
-    def table() -> int:
-        body = client.get("/admin/ci-activity/jobs?days=7", headers=headers).json()
-        return sum(j["jobs"] for j in body["data"]["jobs"])
-
-    # The board is read first, so a worker that keeps answers already holds it
-    # when the jobs table is asked for the first time.
-    return lambda: (board(), table()), board
-
-
-def _an_hour_ago(run_id: int, now: datetime) -> dict:
-    created = _iso(now - timedelta(hours=1))
-    return _run(
-        run_id,
-        age=timedelta(0),
-        created_at=created,
-        run_started_at=created,
-        updated_at=created,
-    )
-
-
-def _sweep_through_the_app(client, github, *, at: datetime, first: bool) -> dict:
-    async def run() -> dict:
-        async with client.test_factory() as session:
-            if first:
-                await _connect(session)
-            return await ingest.sweep_once(session, source=github, repo=REPO, now=at)
-
-    return asyncio.run(run())
-
-
-def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
-    client, tokens, page, pinned_clock
-):
-    page, board = page
-    now = utc_now()
-    mid_sweep: list[tuple[int, int]] = []
-
-    class _Watching(_GitHub):
-        async def merged_pull_requests(self, **kwargs):
-            # A sweep reads merged PRs after storing jobs and before its final
-            # record: in the second sweep, run 42's job is committed and the
-            # sweep is still running.
-            if 42 in self.runs and not mid_sweep:
-                mid_sweep.append(page())
-            return await super().merged_pull_requests(**kwargs)
-
-    github = _Watching()
-    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
-    github.runs = {41: first}
-    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
-
-    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
-    assert board() == 1
-
-    github.runs[42] = second
-    later = now + timedelta(minutes=5)
-    assert _sweep_through_the_app(client, github, at=later, first=False)["error"] == ""
-
-    assert mid_sweep == [(2, 2)]
-    assert page() == (2, 2)
-
-
-def test_a_sweep_that_dies_part_way_leaves_board_and_table_agreeing(
-    client, tokens, page, pinned_clock
-):
-    page, board = page
-    now = utc_now()
-
-    class _Dying(_GitHub):
-        async def merged_pull_requests(self, **kwargs):
-            # After the jobs are committed, before the sweep's final record: an
-            # answer the sweep does not catch, as a process killed here would be.
-            if 42 in self.runs:
-                raise json.JSONDecodeError("Expecting value", "", 0)
-            return await super().merged_pull_requests(**kwargs)
-
-    github = _Dying()
-    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
-    github.runs = {41: first}
-    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
-
-    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
-    assert board() == 1
-
-    github.runs[42] = second
-    with pytest.raises(json.JSONDecodeError):
-        _sweep_through_the_app(
-            client, github, at=now + timedelta(minutes=5), first=False
-        )
-
-    assert page() == (2, 2)
-
-
-def test_an_answer_that_never_finishes_ends_the_sweep_with_the_reason(
-    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
-):
-    monkeypatch.setattr(ci_github, "REQUEST_DEADLINE_S", 0.5, raising=False)
-    remote = _NativeGitHub()
-    remote.runs = {71: _run(71, age=timedelta(minutes=10))}
-
-    async def trickle():
-        while True:
-            yield b" "
-            await asyncio.sleep(0.05)
-
-    def handler(request):
-        remote.requests.append(request)
-        return httpx.Response(
-            200, content=trickle(), headers={"content-type": "application/json"}
-        )
-
-    async def run():
-        await _connect(db_session)
-        report = await asyncio.wait_for(
-            _sweep(db_session, remote.reader(handler), backfill_slices=0), 10
-        )
-        assert report["error"].startswith(
-            "CiGitHubError: GitHub did not finish answering"
-        )
-        recorded = await CiActivityStore(db_session).last_sweep(REPO)
-        assert recorded is not None and recorded.report["error"] == report["error"]
-
-    _portal.call(run)
-
-
-def test_a_sweep_past_its_deadline_keeps_its_finished_units_and_says_why(
-    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
-):
-    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1), raising=False)
-
-    class _Stalled(_GitHub):
-        async def run_jobs(self, **kwargs):
-            await asyncio.sleep(3600)
-
-    github = _Stalled()
-    github.runs = {81: _run(81, age=timedelta(minutes=10))}
-
-    async def go():
-        await _connect(db_session)
-        report = await asyncio.wait_for(_sweep(db_session, github), 10)
-        assert "1 s deadline" in report["error"]
-        assert await _count(db_session, CiWorkflowRun) == 1
-        assert await _count(db_session, CiJob) == 0
-        recorded = await CiActivityStore(db_session).last_sweep(REPO)
-        assert recorded is not None and recorded.report["error"] == report["error"]
-        assert recorded.runs_listed_to == NOW
-
-    _portal.call(go)
-
-
-def test_a_gap_longer_than_one_sweep_is_worked_off_over_the_next_sweeps(
-    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
-):
-    """Each sweep gets through about three of the gap's ten four-hour slices
-    before its deadline; none of them may be lost to the deadline."""
-    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1.2), raising=False)
-
-    class _SlowBulk(_GitHub):
-        async def list_runs(self, *, owner, repo, token, since, until):
-            if until - since > ingest.RUN_SLICE:
-                await asyncio.sleep(0.35)
-            return await super().list_runs(
-                owner=owner, repo=repo, token=token, since=since, until=until
-            )
-
-    github = _SlowBulk()
-    for hours in range(4, 40, 4):
-        run = _run(900 + hours, age=timedelta(hours=hours, minutes=30))
-        github.runs[run["id"]] = run
-    gap_start = NOW - timedelta(hours=40)
-
-    async def go():
-        await _connect(db_session)
-        await CiActivityStore(db_session).record_sweep(
-            REPO,
-            started_at=gap_start,
-            runs_listed_from=gap_start - timedelta(hours=8),
-            runs_listed_to=gap_start,
-            queue_read_to=gap_start,
-            report={"error": ""},
-        )
-        covered = [gap_start]
-        for n in range(1, 7):
-            report = await _sweep(
-                db_session, github, at=NOW + timedelta(seconds=n), jobs_budget=0
-            )
-            last = await CiActivityStore(db_session).last_sweep(REPO)
-            covered.append(last.runs_listed_to)
-            assert covered[-1] > covered[-2], covered
-            if report["error"] == "":
-                break
-            assert "deadline" in report["error"]
-        assert report["error"] == "", covered
-        assert len(covered) > 3, "the gap fit in fewer sweeps than meant"
-        assert await _count(db_session, CiWorkflowRun) == len(github.runs)
-
-    _portal.call(go)
-
-
-def test_a_slice_with_more_pages_than_one_sweep_is_resumed_inside_it(
-    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
-):
-    """One four-hour slice of the gap holds 300 runs, thirty pages and more
-    than a sweep can read before its deadline; each sweep must still keep the
-    part it read, and the slice must be finished in the end."""
-    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1.5), raising=False)
-    remote = _NativeGitHub()
-    for n in range(300):
-        age = timedelta(hours=4, minutes=1) + n * timedelta(seconds=47)
-        remote.runs[3000 + n] = _run(3000 + n, age=age)
-
-    async def slow_bulk(request):
-        created = request.url.params.get("created", "")
-        if ".." in created:
-            a, b = (
-                datetime.fromisoformat(t.replace("Z", "+00:00"))
-                for t in created.split("..")
-            )
-            if b - a > ingest.RUN_SLICE:
-                await asyncio.sleep(0.1)
-        return remote(request)
-
-    reader = remote.reader(slow_bulk)
-    gap_start = NOW - timedelta(hours=8)
-
-    async def go():
-        await _connect(db_session)
-        await CiActivityStore(db_session).record_sweep(
-            REPO,
-            started_at=gap_start,
-            runs_listed_from=NOW - ingest.WINDOW,
-            runs_listed_to=gap_start,
-            queue_read_to=gap_start,
-            report={"error": ""},
-        )
-        covered = [gap_start]
-        for n in range(1, 21):
-            report = await _sweep(
-                db_session,
-                reader,
-                at=NOW + timedelta(seconds=n),
-                jobs_budget=0,
-                backfill_slices=0,
-            )
-            last = await CiActivityStore(db_session).last_sweep(REPO)
-            covered.append(last.runs_listed_to)
-            assert covered[-1] > covered[-2], covered
-            if report["error"] == "":
-                break
-            assert "deadline" in report["error"], report["error"]
-        assert report["error"] == "", covered
-        assert await _count(db_session, CiWorkflowRun) == 300
-        inside = [c for c in covered if gap_start < c < NOW - timedelta(hours=4)]
-        assert len(inside) >= 2, "the slice was finished without being resumed"
-
-    _portal.call(go)
-
-
-def test_the_last_sweep_on_the_page_is_the_last_finished_one(
-    client, tokens, page, pinned_clock
-):
-    """The board's sweep status (when, what went wrong, what it covered) is the
-    last sweep that finished, whatever a sweep still running, or one that died,
-    has already committed."""
-    headers = session_auth_headers(_ADMIN)
-
-    def last_sweep() -> dict:
-        board = client.get("/admin/ci-activity?days=7", headers=headers).json()
-        return board["data"]["sweep"]
-
-    now = utc_now()
-    seen: list[dict] = []
-
-    class _Dying(_GitHub):
-        async def merged_pull_requests(self, **kwargs):
-            if 42 in self.runs:
-                seen.append(last_sweep())
-                raise json.JSONDecodeError("Expecting value", "", 0)
-            return await super().merged_pull_requests(**kwargs)
-
-    github = _Dying()
-    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
-    github.runs = {41: first}
-    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
-    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
-    finished = last_sweep()
-    assert finished["error"] == ""
-
-    github.runs[42] = second
-    with pytest.raises(json.JSONDecodeError):
-        _sweep_through_the_app(
-            client, github, at=now + timedelta(minutes=5), first=False
-        )
-
-    assert seen == [finished]
-    assert last_sweep() == finished
-
-
-def test_a_sweep_that_cannot_tidy_up_in_time_still_ends_and_says_why(
-    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
-):
-    """GitHub refuses at once, and a migration holds the runs table, so the
-    sweep's tidying up would wait on that lock: it stops at the sweep's
-    deadline like everything else the sweep does, and the refusal is
-    recorded."""
-    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=0.5), raising=False)
-
-    class _Refusing(_GitHub):
-        def check_quota(self, token):
-            raise CiQuotaRefused("GitHub quota spent (HTTP 403)")
-
-    async def go():
-        await _connect(db_session)
-        engine = db_session.bind.engine
-        async with engine.connect() as migration:
-            await migration.execute(text("SET lock_timeout = '3s'"))
-            await migration.execute(
-                text("LOCK TABLE ci_workflow_runs IN ACCESS EXCLUSIVE MODE")
-            )
-            try:
-                report = await asyncio.wait_for(_sweep(db_session, _Refusing()), 5)
-            finally:
-                await migration.rollback()
-        assert report["error"].startswith("CiQuotaRefused")
-        recorded = await CiActivityStore(db_session).last_sweep(REPO)
-        assert recorded is not None and recorded.report["error"] == report["error"]
-        assert "in_progress" not in recorded.report
-
-    _portal.call(go)
