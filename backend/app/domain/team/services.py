@@ -208,12 +208,17 @@ class TeamService:
         A shared team is its own handle. A user's handle names their personal
         team, which only they can open — so ``/teams/<your username>`` is yours.
         """
+        owner = await user_by_handle(self._repo._session, handle)
+        if owner is not None:
+            if owner.id == user_id:
+                personal = await self._repo.get_personal_team(owner.id)
+                if personal is not None:
+                    return personal
+            raise NotFoundError(
+                "Resource team not found", data={"type": "team", "handle": handle}
+            )
         team = await self._repo.get_by_handle(handle)
         if team is None:
-            owner = await user_by_handle(self._repo._session, handle)
-            personal = await self._repo.get_personal_team(owner.id) if owner else None
-            if personal is not None and owner is not None and owner.id == user_id:
-                return personal
             raise NotFoundError(
                 "Resource team not found", data={"type": "team", "handle": handle}
             )

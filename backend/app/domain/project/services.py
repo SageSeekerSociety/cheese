@@ -89,13 +89,21 @@ class ProjectArchivedError(ConflictError):
         super().__init__(say("projectArchived"))
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 async def refuse_writes_if_archived(
     session: AsyncSession, project_id: uuid.UUID
 ) -> None:
     """Raise :class:`ProjectArchivedError` when this project is archived."""
-    archived_at = await session.scalar(
-        select(Project.archived_at).where(Project.id == project_id)
-    )
+    if _can_cache(session):
+        project = await ProjectRepository(session).get(project_id)
+        archived_at = project.archived_at if project is not None else None
+    else:
+        archived_at = await session.scalar(
+            select(Project.archived_at).where(Project.id == project_id)
+        )
     if archived_at is not None:
         raise ProjectArchivedError()
 

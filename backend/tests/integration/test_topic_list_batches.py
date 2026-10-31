@@ -31,10 +31,12 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import event
 
+from app.api.room_snapshot import room_snapshot
 from app.domain.agent.models import AgentTurn
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms, threads_still_threads
 from app.domain.event_author import AuthorType
+from app.domain.identity.actor import Actor
 from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.services import TaskService
@@ -42,6 +44,7 @@ from app.domain.thread.services import open_thread
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import (
     join_project_team,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -979,3 +982,104 @@ def test_project_roles_deduplicates_role_defs_query(client):
     assert len(seen) <= 14, (
         f"expected <= 14 SQL statements on project roles, got {len(seen)}: {seen}"
     )
+
+
+def test_send_chat_message_deduplicates_archived_project_and_post_commit_roster_reads(
+    client,
+):
+    """`POST /topics/{room_id}/messages` reads `projects` once across
+    `refuse_writes_if_archived` and `may`, and resolves `people` before the
+    writer session commits so `topic_memberships` is read once."""
+    pid, room_ids = _seed_populated_project(client)
+    room_id = room_ids[0]
+
+    with counting_sql(client) as seen:
+        sent = post_message(client, room_id, "alice", {"content": "测试发消息去重"})
+    assert sent["content"] == "测试发消息去重"
+
+    assert _count(seen, _PROJECTS_SELECT) == 1, [
+        s for s in seen if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(seen, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in seen if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(seen) <= 15, (
+        f"expected <= 15 SQL statements on send_chat_message, got {len(seen)}: {seen}"
+    )
+
+
+def test_team_by_handle_and_my_teams_deduplicate_profiles_and_join_status(client):
+    """`GET /teams/by-handle/{handle}`, `GET /teams/my-teams`, and `GET /teams`
+    each query `user_profile` once via `profiles_and_chosen_avatars`, and
+    `GET /teams/by-handle/{handle}` skips redundant `get_by_handle` and
+    `join_status` queries for a member's own team."""
+    post_project(client, json={"name": "Team profile seed"}, owner="alice")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as handle_sql:
+        r_handle = client.get("/teams/by-handle/alice", headers=headers)
+    assert r_handle.status_code == 200, r_handle.text
+    assert r_handle.json()["data"]["team"]["joinStatus"] == "member"
+    assert _count(handle_sql, _USER_PROFILE_SELECT) == 1, [
+        s for s in handle_sql if _USER_PROFILE_SELECT.search(s)
+    ]
+    assert len(handle_sql) <= 5, (
+        f"expected <= 5 SQL statements on /teams/by-handle/alice, got {len(handle_sql)}: {handle_sql}"
+    )
+
+    with counting_sql(client) as my_sql:
+        r_my = client.get("/teams/my-teams", headers=headers)
+    assert r_my.status_code == 200, r_my.text
+    assert _count(my_sql, _USER_PROFILE_SELECT) == 1, [
+        s for s in my_sql if _USER_PROFILE_SELECT.search(s)
+    ]
+
+
+def test_room_snapshot_batches_open_and_recent_closed_tasks_in_one_pass(client):
+    """`room_snapshot` on a channel with both open and closed tasks hydrates
+    both lists in a single `task_rows` + `with_session_running` pass instead of
+    querying `accept_cards` and `awaiting_an_answer` twice."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+    tasks = client.get(f"/topics/{room_id}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    closed_id = tasks[0]["id"]
+    r_close = client.post(
+        f"/topics/{closed_id}/close", json={"conclusion": "done"}, headers=headers
+    )
+    assert r_close.status_code == 200, r_close.text
+
+    snap_sql: list[str] = []
+
+    async def _run():
+        async with client.test_factory() as s:
+            eng = s.get_bind()
+            eng = getattr(eng, "sync_engine", eng)
+
+            def _rec(_conn, _cur, stmt, _p, _ctx, _m):
+                st = " ".join(stmt.split())
+                if not st.startswith(("SAVEPOINT", "RELEASE SAVEPOINT")):
+                    snap_sql.append(st)
+
+            event.listen(eng, "before_cursor_execute", _rec)
+            try:
+                return await room_snapshot(
+                    s,
+                    Actor(handle="alice", user_id=2, via="token"),
+                    uuid.UUID(room_id),
+                )
+            finally:
+                event.remove(eng, "before_cursor_execute", _rec)
+
+    snap = client.portal.call(_run)
+    assert snap is not None
+    assert len(snap["tasks"]["open"]) == 1
+    assert len(snap["tasks"]["recent"]) == 1
+    assert _count(snap_sql, _TASK_CARDS_SELECT) == 1, [
+        s for s in snap_sql if _TASK_CARDS_SELECT.search(s)
+    ]
+    assert _count(snap_sql, _AWAITING_PLACES_SELECT) == 1, [
+        s for s in snap_sql if _AWAITING_PLACES_SELECT.search(s)
+    ]
