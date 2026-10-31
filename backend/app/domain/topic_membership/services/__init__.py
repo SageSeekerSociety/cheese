@@ -246,7 +246,7 @@ class TopicMemberService:
         # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import people_in_project
 
-        return await people_in_project(self._session, project_id, team=team)
+        return await people_in_project(self._session, project_id=project_id, team=team)
 
     async def joined_topic_ids(
         self, topics: list[Topic], handle: str, *, team: ProjectTeam

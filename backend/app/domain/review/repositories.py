@@ -148,9 +148,10 @@ class AcceptCardRepository:
                 found.setdefault(card_id, []).append(handle)
             missing = [cid for cid in unseen if cid not in found]
             if missing:
+                identity_map = self._session.sync_session.identity_map
                 still_missing: list[uuid.UUID] = []
                 for cid in missing:
-                    in_map = self._session.sync_session.identity_map.get(
+                    in_map = identity_map.get(
                         self._session.sync_session.identity_key(AcceptCard, (cid,))
                     )
                     if in_map is not None and not inspect(in_map).expired_attributes:

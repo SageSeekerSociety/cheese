@@ -349,18 +349,19 @@ class ProjectRepository:
                 tables=frozenset({"team_user_relation", "user"}),
             )
             for u, _, _, _, _, _ in team_rows:
-                remember(
-                    self._session,
-                    ("user_by_username", u.username),
-                    u,
-                    tables=frozenset({"user"}),
-                )
-                remember(
-                    self._session,
-                    ("user_by_id", u.id),
-                    u,
-                    tables=frozenset({"user"}),
-                )
+                if u.deleted_at is None:
+                    remember(
+                        self._session,
+                        ("user_by_username", u.username),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
         by_handle: dict[str, tuple[str | None, int | None, str | None]] = {
             m.user_handle: (name, avatar_id, avatar_type)
             for (m, _u, name, avatar_id, avatar_type) in rows
