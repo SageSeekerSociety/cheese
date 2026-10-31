@@ -536,7 +536,7 @@
     "tests/integration/test_a_removed_agent_loses_its_session_channels.py": [3.8, 5],
     "tests/integration/test_a_retry_sends_what_the_platform_still_owes.py": [2.58, 2],
     "tests/integration/test_a_routine_run_is_a_message.py": [3.55, 4],
-    "tests/integration/test_a_routine_turn_reads_the_owners_memory.py": [1.7, 2],
+    "tests/integration/test_a_routine_turn_in_a_shared_room_carries_no_private_memory.py": [1.7, 2],
     "tests/integration/test_a_session_keeps_its_system_prompt.py": [1.29, 1],
     "tests/integration/test_a_session_whose_work_is_not_kept.py": [38.44, 47],
     "tests/integration/test_a_social_notification_is_resent.py": [0.22, 1],

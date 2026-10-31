@@ -1,11 +1,8 @@
-"""周期任务那一轮读的是**规则主人**的 private 记忆。
+"""多人房间里周期任务的那一轮，不带任何人的 private 记忆，规则主人的也不带。
 
-一个人交代下来的活，就该按他的口味做：他人在不在房间里说话都一样 —— 那一轮没有
-他署名的消息（正文是平台写完塞进投递的），所以主人是从那一笔投递上认出来的
-（`ChatService._routine_owner`），而不是在历史里找出来的。
-
-这里两头都看：调度器确实把主人写进了投递（写的那一半），以及组装那一轮时他确实被
-算进了「本轮发言人」（读的那一半）。
+座位上的会话一轮一轮接着用，下一轮可能就替房间里别的人干活；它为主人读过的东西，
+下一轮一条命令就拿得出来，而命令的输出标不上主人（`turn_speakers` 的开头那一段）。
+所以那一轮和这间房里任何一轮一样，只带项目共看的那一份。
 """
 
 import uuid
@@ -89,7 +86,7 @@ def _delivery_of(client) -> tuple[uuid.UUID, dict]:
     async def read(session):
         rows = list(await session.scalars(select(Delivery)))
         match = [
-            row for row in rows if (row.payload or {}).get("routineOwner") is not None
+            row for row in rows if (row.payload or {}).get("eventType") == "routine_run"
         ]
         assert len(match) == 1, match
         return match[0].id, dict(match[0].payload)
@@ -132,7 +129,9 @@ def _prompt_of_the_routine_turn(client, tmp_path, room: str, submitted: dict):
     return screen.told
 
 
-def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
+def test_a_routine_run_in_a_shared_room_carries_nobodys_private_memory(
+    client, tmp_path
+):
     project = _project(client)
     room = _room(client, project)
     rule = _weekly(client, room, headers=PERSON).json()["data"]
@@ -146,24 +145,19 @@ def test_a_routine_runs_with_the_owners_private_memory(client, tmp_path):
     delivery_id, payload = _delivery_of(client)
     assert submitted["delivery_id"] == delivery_id
     assert payload["eventType"] == "routine_run"
-    assert payload["routineOwner"] == OWNER
     assert submitted["content"] == payload["content"]
 
     # The run is answered where the runner was told to: the run's own 支线.
     prompt = _prompt_of_the_routine_turn(client, tmp_path, conversation, submitted)
-    # 说话那个人的那一份注入的是它在哪，正文由会话自己读（`private_index_pointer`）。
     assert TEAM_HOOK in prompt
-    assert _index_of(OWNER) in prompt, "规则主人那一份没有被读进来"
-    assert OWNER_HOOK not in prompt
-    assert _index_of(BOB) not in prompt, "读到了没交代这件事的人的私有偏好"
+    for absent in (_index_of(OWNER), OWNER_HOOK, _index_of(BOB), BOB_HOOK):
+        assert absent not in prompt
 
 
-def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
-    """主人是**这一笔投递**说的，不是这个项目里所有周期任务的主人的并集。
-
-    同一间房里再跑一轮普通的一轮（没有投递号），主人的那一份就不该跟进来：它只
-    在替主人做事的那一轮里算数。
-    """
+def test_a_persons_turn_in_a_room_with_a_routine_carries_nobodys_private_memory(
+    client, tmp_path
+):
+    """同一间房里 bob 问一句：他自己的那一份、规则主人的那一份都不在。"""
     project = _project(client)
     room = _room(client, project)
     _weekly(client, room, headers=PERSON)
@@ -189,5 +183,5 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
     client.portal.call(run)
     assert screen.last_system_prompt is not None
     assert TEAM_HOOK in screen.told
-    assert _index_of(BOB) in screen.told
-    assert _index_of(OWNER) not in screen.told
+    for absent in (_index_of(OWNER), OWNER_HOOK, _index_of(BOB), BOB_HOOK):
+        assert absent not in screen.told

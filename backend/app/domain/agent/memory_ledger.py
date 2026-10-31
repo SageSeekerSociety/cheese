@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.audience import seats_only
@@ -45,7 +45,7 @@ from app.domain.memory.dream_prompt import (
 )
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore, private_owners
-from app.domain.memory.models import MemoryDreamRunStatus
+from app.domain.memory.models import MemoryDreamRunStatus, MemoryHandoffApplied
 from app.domain.memory.session import (
     MemoryChange,
     apply_tree,
@@ -107,7 +107,8 @@ class _Turn:
 
     room_id: uuid.UUID
     acting: str
-    #: 这一轮那一位（`turn_speaker`）；None 时这一轮只有 team。
+    #: 这一轮带谁的 private（`turn_speakers.private_memory_for`：只有私聊里的那个
+    #: 人）；None 时这一轮只有 team。
     speaker: str | None
     #: 这一轮的注入里有没有那一位的 private 索引在哪
     #: （`instructions.private_index_pointer`）：有，这一轮就该先读它。
@@ -160,14 +161,12 @@ class MemoryLedger:
     def _scopes(
         self, seat: tuple[uuid.UUID, str]
     ) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮那一位的
-        private（`turn_speaker`）。
+        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮带的那一位的
+        private（`turn_speakers.private_memory_for`：只有私聊里的那个人）。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
-        没点到的 private 不铺下去；会话目录里上一轮铺下的别人那一份，会话交回来、
-        从树上拿走，平台替那个人收下（`tree.withdrawn_prefixes`）。多人
-        的房间里别人的 private 不进这一轮（产品决定，2026-10-30），所以只点这个座
-        位自己的那一位，不点同一间房里别的座位的。
+        没点到的 private 不铺下去；会话目录里先前铺下的哪一棵这一次没点名，会话
+        交回来、从树上拿走，平台替那个人收下（`tree.withdrawn_prefixes`）。
         """
         turn = self._turns.get(seat)
         speaker = turn.speaker if turn is not None else None
@@ -266,6 +265,13 @@ class MemoryLedger:
             for token, given in sorted((answer.get("withdrawn") or {}).items()):
                 if not isinstance(given, dict):
                     continue
+                acked.append(str(token))
+                if await db.get(MemoryHandoffApplied, str(token)) is not None:
+                    # 合过、提交过，只是会话那一侧没听到：不再合（它的基线比那
+                    # 一次合并旧，再合一遍会把主人之后删掉的东西写回去）。
+                    continue
+                db.add(MemoryHandoffApplied(token=str(token)))
+                said = True
                 prefix = str(given.get("prefix") or "")
                 handed, owners, kept = await apply_withdrawn(
                     db,
@@ -276,7 +282,6 @@ class MemoryLedger:
                 if _said(handed) or kept:
                     said = True
                     await _say_handed_back(db, project_id, handed, owners, kept)
-                acked.append(str(token))
             if _said(change):
                 # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
                 await _say_memory_change(
@@ -292,6 +297,14 @@ class MemoryLedger:
                 await db.commit()
         if acked:
             await self._compute.memory(session, {"acked": acked})
+            # 会话那一侧听到了，这几份不会再交回来。
+            async with self._sessions() as db:
+                await db.execute(
+                    delete(MemoryHandoffApplied).where(
+                        MemoryHandoffApplied.token.in_(acked)
+                    )
+                )
+                await db.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 

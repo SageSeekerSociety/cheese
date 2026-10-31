@@ -345,16 +345,16 @@ async def memory_index(
     speaker: str | None,
     shared_read_only: bool = False,
 ) -> MemoryIndex:
-    """这一轮注入的 L1 索引：team 一份，这一轮那一位（`turn_speaker`）的 private 一份。
+    """这一轮注入的 L1 索引：team 一份，加上 ``speaker`` 那一份 private 在哪
+    （只有一个人和芝士的私聊里有这一位，`turn_speakers.private_memory_for`）。
 
     ``shared_read_only``：私聊和私密频道里 team 只读（#3830）。在那里听到的话
     只有在场的人能读，写进全项目共看的 team 就成了别人的后门，所以记忆对账不收
     team 的改动（`memory_ledger`），这里把这件事说给 agent 听。
 
-    **只读这一位的。** 一间多人的房间里，这一轮的 agent 说的话、做的事房间里的人都
-    看得到，所以别人的 private 不进来（产品决定，2026-10-30）。这一位的那一份也不
-    注入正文，只说它在哪、先读它（`instructions.private_index_pointer`）：注入记进
-    会话记录，房间里的人都读得到，而 agent 读那个文件的那一次调用记录只给本人看。
+    这一位的那一份不注入正文，只说它在哪、先读它
+    （`instructions.private_index_pointer`）：注入记进会话记录，而 agent 读那个文件
+    的那一次调用记录只给本人看。
 
     超预算照样注入（截断后），并在注入块里说清截断过：静默截断读起来就是「索引
     就这么长」，于是没有人会去修它。

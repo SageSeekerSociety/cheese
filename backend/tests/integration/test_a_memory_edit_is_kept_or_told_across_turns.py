@@ -658,3 +658,56 @@ async def test_a_turn_that_worked_for_someone_without_reading_their_index_is_cou
     await ledger.sync(seat)
     assert "memory_private_index_unread" in caplog.text
     assert "speaker=alice" in caplog.text
+
+
+async def test_a_handoff_merged_once_is_not_merged_again_when_its_receipt_is_lost(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The seat turns from alice to bob and hands her tree back; the platform
+    merges it, but the word that it did never reaches the seat. alice then
+    deletes the note from her memory. The seat hands the same tree back again
+    on the next reconciliation: it is told taken and not merged a second time,
+    so her deletion stands."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id, "- [original](note.md) — original\n")
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    heard = sessions.memory
+    lost = {"once": False}
+
+    async def loses_the_receipt(ref, request):
+        if "acked" in request and not lost["once"]:
+            lost["once"] = True
+            raise ConnectionError("the receipt did not arrive")
+        return await heard(ref, request)
+
+    sessions.memory = loses_the_receipt
+    with pytest.raises(ConnectionError):
+        await ledger.sync(seat)
+    merged = await _alices(factory, project_id, "secret.md")
+    assert merged is not None
+    async with factory() as session:
+        await MemoryFileStore(session).delete(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="secret.md",
+            expected_version=merged.version,
+        )
+        await session.commit()
+
+    await ledger.sync(seat)
+
+    assert await _alices(factory, project_id, "secret.md") is None
