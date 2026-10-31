@@ -223,6 +223,30 @@ def execution_handler():
     return DeviceExecutionHandler
 
 
+# The project and place a device case's room belongs to. Only their shape is
+# read: a room's home on a machine is `<owner>/.cheese/home/<project>/<place>`
+# (`device_provider.DEVICE_HOME_ROOT`), two levels under the root the launcher
+# derives for `namespace._keep_only`, so the machine's own home — and the pinned
+# claude under it — stays outside the part of the host the session is kept to.
+ROOM_PROJECT = "11111111-1111-1111-1111-111111111111"
+ROOM_PLACE = "22222222-2222-2222-2222-222222222222"
+
+
+def case_home(folder, options):
+    """Where this case's room home sits, laid out the way a machine's is.
+
+    A device's room home is `<owner>/.cheese/home/<project>/<place>`: the
+    launcher exports `CHEESE_HOMES_ROOT` as its grandparent, and the session is
+    kept to its own room below it (`namespace._keep_only`). The machine owner's
+    own home holds the pinned claude the launcher runs, so a room laid out
+    beside the owner rather than below its home made the session refuse to
+    start (#4985's narrowing meeting this fixture's old `device-home`).
+    """
+    if options.launcher == "device":
+        return folder / "device-owner/.cheese/home" / ROOM_PROJECT / ROOM_PLACE
+    return folder / "home"
+
+
 def before_turn(session, home):
     """What happens between the session starting and its first turn: nothing.
 
@@ -245,6 +269,9 @@ def case(folder, options):
     wire = None
     session = None
     center_fd = None
+    # Before the try: the cleanup below names it, and `setup` failing is one of
+    # the runs that needs that cleanup.
+    home = case_home(folder, options)
     try:
         executor, target = setup(
             folder, options, f"http://127.0.0.1:{server.server_port}"
@@ -253,7 +280,6 @@ def case(folder, options):
         # `.cheese`, the target and everything the client prepares from it in
         # the SEAT that owns this session (`place.seat_dir`, `runner_fixture`),
         # and the config dir the room shares.
-        home = folder / ("device-home" if options.launcher == "device" else "home")
         session_path = runner_fixture.session_dir(home)
         center = session_path / "remote-session/forwarded-project"
         center.mkdir(parents=True)
@@ -606,14 +632,22 @@ def case(folder, options):
             os.close(center_fd)
         if session is not None:
             session.stop(folder / "journal.jsonl")
+        # Both layouts this case can leave a mount in: the plugin case's `home`
+        # and a device case's room, which sits where a machine puts one
+        # (`case_home`). One path when the case is the plugin one.
+        rooms = dict.fromkeys((folder / "home", home))
         for mountpoint in (
             *(
-                runner_fixture.session_dir(folder / name)
-                / "remote-session/forwarded-project"
-                for name in ("home", "device-home")
+                runner_fixture.session_dir(room) / "remote-session/forwarded-project"
+                for room in rooms
             ),
-            # The room-level pair a run under the layout before seats mounted,
-            # so a machine that still carries one of those is cleared too.
+            # Where runs under the earlier layouts left the same mount, so a
+            # machine that still carries one of those is cleared too: the room
+            # at the case's own `home`, and at `device-home`, which is beside
+            # the owner's home — where a device case's room sat before it moved
+            # below it (`case_home`).
+            runner_fixture.session_dir(folder / "device-home")
+            / "remote-session/forwarded-project",
             folder / "home/.cheese/remote-session/forwarded-project",
             folder / "device-home/.cheese/remote-session/forwarded-project",
         ):
