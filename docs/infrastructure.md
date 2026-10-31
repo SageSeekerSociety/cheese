@@ -389,9 +389,10 @@ beside its realtime process (`backend/app/serve.py`,
   realtime process. dev's release workflow sets 3 and layers
   `docker-compose.api-pool.yml` (pool ports 18091 and 18092 for the two slots).
   To turn it off on dev, set it to 0 in `deploy-dev.yml` and release.
-- The pool's database budget is its own, 4 + 2 connections per worker by
-  default (`API_POOL_DB_POOL_SIZE`, `API_POOL_DB_MAX_OVERFLOW`). A rollout
-  runs both slots' pools: about 36 more connections on dev's 200.
+- The pool's database budget is its own (`API_POOL_DB_POOL_SIZE`,
+  `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
+  its workers as the backend's is: 5 connections each at 3 workers. A rollout
+  runs both slots' pools, 30 more connections on dev's 200.
 
 ### dev — continuous deploy
 
