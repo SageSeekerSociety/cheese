@@ -1,5 +1,6 @@
 """查人，以及一个人的提问 / 回答 / 关注列表。"""
 
+import asyncio
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import (
@@ -12,9 +13,12 @@ from fastapi import (
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
 from app.core.errors import (
     NotFoundError,
+    QuotaExceededError,
 )
+from app.core.redis import get_redis_client
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.questions.repositories import (
@@ -35,6 +39,40 @@ if TYPE_CHECKING:
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
+#: Lookups one account may make per window. An invitation dialog asks a handful
+#: of times; a script walking a list of leaked emails to learn which of them
+#: have an account here asks thousands, and the general request limit (about
+#: twenty a second) would let it through in minutes.
+LOOKUPS_PER_WINDOW = 60
+LOOKUP_WINDOW_S = 3600
+_LOOKUP_KEY = "cheesex:users-lookup:{}"
+
+
+async def _spend_a_lookup(user_id: int) -> None:
+    """Count one lookup against the caller's hourly budget; refuse past it.
+
+    A Redis that is down or silent lets the lookup through, within the same
+    wait `request_limits` gives it: a broken brake must not stop people
+    inviting each other.
+    """
+    redis = get_redis_client()
+    if redis is None:
+        return
+    key = _LOOKUP_KEY.format(user_id)
+    try:
+        async with asyncio.timeout(settings.request_limit_redis_timeout_s):
+            used = await redis.incr(key)
+            # On every call, not only the one that created the key: a key whose
+            # EXPIRE was lost (the connection dropped after INCR, or the process
+            # died in between) would otherwise refuse this account long after
+            # the window, for good. `nx` keeps the window fixed at the first
+            # lookup instead of sliding it forward on every call.
+            await redis.expire(key, LOOKUP_WINDOW_S, nx=True)
+    except Exception:  # a broken brake lets it through, see the docstring
+        return
+    if used > LOOKUPS_PER_WINDOW:
+        raise QuotaExceededError()
+
 
 @router.get("/lookup", summary="Find one account by exact username or email")
 async def lookup_account_route(
@@ -45,9 +83,11 @@ async def lookup_account_route(
     """The one person an external-member invitation is about to go to.
 
     Exact username or email only, like finding an external contact: no partial
-    match, so the endpoint cannot be used to list who is registered.
+    match, so the endpoint cannot be used to list who is registered, and a
+    budget per account (`LOOKUPS_PER_WINDOW`), so it cannot be used to test a
+    long list of addresses one by one either.
     """
-    _ = auth_user
+    await _spend_a_lookup(auth_user.user_id)
     found = await lookup_account(db, q)
     if found is None:
         raise NotFoundError("No account with that username or email")
