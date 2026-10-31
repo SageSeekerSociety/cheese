@@ -2,7 +2,7 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy import Select, and_, func, inspect, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -227,14 +227,18 @@ class TeamRepository:
             missing: list[int] = []
             for tid in dict.fromkeys(ids):
                 found, cached = recall(self._session, ("team_by_id", tid))
-                if found:
+                if found and (cached is None or not inspect(cached).expired_attributes):
                     if cached is not None:
                         by_id[tid] = cached
                     continue
                 in_map = self._session.sync_session.identity_map.get(
                     self._session.sync_session.identity_key(Team, (tid,))
                 )
-                if in_map is not None and in_map.deleted_at is None:
+                if (
+                    in_map is not None
+                    and not inspect(in_map).expired_attributes
+                    and in_map.deleted_at is None
+                ):
                     by_id[tid] = in_map
                     remember(
                         self._session,

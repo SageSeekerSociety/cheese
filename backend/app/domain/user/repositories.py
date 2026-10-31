@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Select, and_, exists, func, or_, select
+from sqlalchemy import Select, and_, exists, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
@@ -289,14 +289,18 @@ class UserRepository:
             missing: list[int] = []
             for uid in dict.fromkeys(user_ids):
                 found, cached = recall(self._session, ("user_by_id", uid))
-                if found:
+                if found and (cached is None or not inspect(cached).expired_attributes):
                     if cached is not None:
                         by_id[uid] = cached
                     continue
                 in_map = self._session.sync_session.identity_map.get(
                     self._session.sync_session.identity_key(User, (uid,))
                 )
-                if in_map is not None and in_map.deleted_at is None:
+                if (
+                    in_map is not None
+                    and not inspect(in_map).expired_attributes
+                    and in_map.deleted_at is None
+                ):
                     by_id[uid] = in_map
                     remember(
                         self._session,
