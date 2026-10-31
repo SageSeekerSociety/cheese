@@ -72,6 +72,15 @@ async def project_of(
 
 
 async def is_task(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        found_topic, cached_topic = recall(session, ("topic_row", conversation_id))
+        if found_topic and cached_topic is not None:
+            return False
+        found_task, cached_task = recall(session, ("task_row", conversation_id))
+        if found_task:
+            return cached_task is not None
     kind = await session.scalar(
         select(Conversation.kind).where(Conversation.id == conversation_id)
     )

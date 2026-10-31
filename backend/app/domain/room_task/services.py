@@ -421,7 +421,8 @@ class TaskService:
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
-
+        if task.document_id is not None:
+            return task.document_id
         locked = await lock_task_for_change(self._session, task.id)
         assert locked is not None
         if locked.document_id is None:

@@ -1204,3 +1204,143 @@ def test_get_team_and_team_members_deduplicate_team_user_relation_queries(client
     assert len(mem_sql) <= 5, (
         f"expected <= 5 SQL statements on GET /teams/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
     )
+
+
+_THREADS_IN_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM threads\s+WHERE threads\.id IN\b",
+    re.IGNORECASE,
+)
+_CONVERSATIONS_KIND_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM conversations\s+WHERE conversations\.id =",
+    re.IGNORECASE,
+)
+_TOPIC_MEMBERSHIPS_COUNT_SELECT = re.compile(
+    r"^\s*SELECT count\(\*\)\b[^;]*?\bFROM topic_memberships\b",
+    re.IGNORECASE,
+)
+
+
+def test_document_and_overview_routes_avoid_redundant_task_and_room_queries(client):
+    """`GET /topics/{task_id}/document`, `GET /documents/{doc_id}/about`, and
+    `GET /projects/{project_id}/overview` reuse already-loaded task, room, and
+    overview document pointers instead of re-querying `topics`, `tasks`, or
+    `projects.overview_document_id`."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+    client.get(f"/projects/{pid}/overview", headers=headers)
+    tdoc = client.get(f"/topics/{task_id}/document", headers=headers).json()["data"]
+    tdoc_id = tdoc["id"]
+
+    with counting_sql(client) as ov_sql:
+        r_ov = client.get(f"/projects/{pid}/overview", headers=headers)
+    assert r_ov.status_code == 200, r_ov.text
+    assert _count(ov_sql, _PROJECTS_SELECT) == 1, [
+        s for s in ov_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(ov_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /projects/{{id}}/overview, got {len(ov_sql)}: {ov_sql}"
+    )
+
+    with counting_sql(client) as tdoc_sql:
+        r_tdoc = client.get(f"/topics/{task_id}/document", headers=headers)
+    assert r_tdoc.status_code == 200, r_tdoc.text
+    assert _count(tdoc_sql, _TOPICS_SELECT) == 1, [
+        s for s in tdoc_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(tdoc_sql, _ALL_TASKS_SELECT) == 1, [
+        s for s in tdoc_sql if _ALL_TASKS_SELECT.search(s)
+    ]
+    assert len(tdoc_sql) <= 4, (
+        f"expected <= 4 SQL statements on GET /topics/{{task}}/document, got {len(tdoc_sql)}: {tdoc_sql}"
+    )
+
+    with counting_sql(client) as about_sql:
+        r_about = client.get(f"/documents/{tdoc_id}/about", headers=headers)
+    assert r_about.status_code == 200, r_about.text
+    assert _count(about_sql, _TOPICS_SELECT) == 1, [
+        s for s in about_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(about_sql, _ALL_TASKS_SELECT) == 1, [
+        s for s in about_sql if _ALL_TASKS_SELECT.search(s)
+    ]
+    assert _count(about_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in about_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(about_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /documents/{{id}}/about, got {len(about_sql)}: {about_sql}"
+    )
+
+
+def test_task_detail_and_task_list_skip_redundant_topic_and_thread_probes(client):
+    """`GET /topics/{task_id}/task` resolves the task directly without probing
+    `topics` for `task_id`, and both `GET /topics/{task_id}/task` and
+    `GET /topics/{room_id}/tasks` skip `SELECT threads.id` when no task has
+    `upgraded_from_block_id` set."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as task_sql:
+        r_task = client.get(f"/topics/{task_id}/task", headers=headers)
+    assert r_task.status_code == 200, r_task.text
+    assert _count(task_sql, _TOPICS_SELECT) == 1, [
+        s for s in task_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(task_sql, _THREADS_IN_SELECT) == 0, [
+        s for s in task_sql if _THREADS_IN_SELECT.search(s)
+    ]
+    assert len(task_sql) <= 11, (
+        f"expected <= 11 SQL statements on GET /topics/{{task}}/task, got {len(task_sql)}: {task_sql}"
+    )
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/topics/{ch}/tasks?status=open", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert _count(list_sql, _THREADS_IN_SELECT) == 0, [
+        s for s in list_sql if _THREADS_IN_SELECT.search(s)
+    ]
+
+
+def test_edit_block_deduplicates_membership_count_agent_lookup_and_conversation_kind(
+    client,
+):
+    """`PATCH /blocks/{block_id}` without `@` mentions reuses cached
+    `topic_memberships` for both `roles_for_member` and `count_for_topic`,
+    skips `_agent_at`, and resolves `is_task` before flushing `replace_content`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "initial message"})
+    msg_id = msg["id"]
+
+    with counting_sql(client) as edit_sql:
+        r_edit = client.patch(
+            f"/blocks/{msg_id}",
+            json={"content": "updated message without mention"},
+            headers=headers,
+        )
+    assert r_edit.status_code == 200, r_edit.text
+    assert _count(edit_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in edit_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(edit_sql, _TOPIC_MEMBERSHIPS_COUNT_SELECT) == 0, [
+        s for s in edit_sql if _TOPIC_MEMBERSHIPS_COUNT_SELECT.search(s)
+    ]
+    assert _count(edit_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in edit_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(edit_sql, _CONVERSATIONS_KIND_SELECT) == 0, [
+        s for s in edit_sql if _CONVERSATIONS_KIND_SELECT.search(s)
+    ]
+    assert len(edit_sql) <= 10, (
+        f"expected <= 10 SQL statements on PATCH /blocks/{{id}}, got {len(edit_sql)}: {edit_sql}"
+    )

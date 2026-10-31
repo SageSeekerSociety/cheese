@@ -306,6 +306,12 @@ class TopicMembershipRepository:
         return counts
 
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, pairs = recall(self._session, ("topic_member_pairs", topic_id))
+            if found:
+                return len(pairs)
         stmt = (
             select(func.count())
             .select_from(TopicMembership)

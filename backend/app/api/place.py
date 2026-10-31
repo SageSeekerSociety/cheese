@@ -13,7 +13,7 @@ from app.api.auth import ActorResolver
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import PlaceResolver, place_or_404
 from app.domain.topic.models import room_ref
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -79,8 +79,9 @@ async def task_conversation(
 ):
     """The task this conversation id names, with who is calling — whoever may
     see its room; 404 when the id is a room's or nobody's."""
-    place = await place_or_404(db, conversation_id)
-    if place.task is None:
+    place = await PlaceResolver(db).task_place(conversation_id)
+    if place is None or place.task is None:
+        await place_or_404(db, conversation_id)
         raise NotFoundError(say("taskNotFound"))
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
