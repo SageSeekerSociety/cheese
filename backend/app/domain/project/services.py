@@ -299,7 +299,8 @@ class ProjectService:
             project_id=project_id,
             settings={"forge_kind": forge_kind},
         )
-        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
+        if (project.settings or {}).get("forge_kind") != forge_kind:
+            project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         number, environment = await self.channel_start(project)
         root = await self._topics.add(
             project_id=project.id,
