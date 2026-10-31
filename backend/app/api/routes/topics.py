@@ -307,7 +307,7 @@ def _topic_out(
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
     # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
-    # （`_answering_in`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
+    # （`topics_signals.answering`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
     # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
     # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
@@ -637,11 +637,6 @@ async def get_topic(
     )
 
 
-def _answering_in(thread_id: uuid.UUID) -> list[str]:
-    """The AI teammates with a turn running in a 支线 right now."""
-    return sorted(set(get_broker().activity.turn_agents(str(thread_id)).values()))
-
-
 @router.get("/{topic_id}/blocks")
 async def list_topic_blocks(
     topic_id: uuid.UUID,
@@ -774,13 +769,17 @@ async def list_topic_blocks(
     runs = (
         await routine_reads.runs_under(db, block_ids) if place.inner_id is None else {}
     )
-    threads = (
-        await thread_reads.under_messages(
-            db, block_ids, replying=_answering_in, roots=by_id
+    if place.inner_id is None:
+        # The AI teammates at work in each 支线 right now (`topics_signals`).
+        seats = await topics_signals.answering(db)
+        threads = await thread_reads.under_messages(
+            db,
+            block_ids,
+            replying=lambda thread: seats.get(thread, []),
+            roots=by_id,
         )
-        if place.inner_id is None
-        else {}
-    )
+    else:
+        threads = {}
     # The tasks made from these messages, and the ones these rows say began:
     # the page draws their cards without reading the room's whole task list.
     carried = await tasks_under_blocks(

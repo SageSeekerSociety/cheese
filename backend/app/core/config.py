@@ -127,6 +127,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # above are the CONTAINER's budget and the workers share it; the image
     # passes this same variable to uvicorn's `--workers` (see the split below).
     backend_workers: int = 1
+    # Which part of the backend this process plays (`app.core.process_role`).
+    # `realtime` is the one process that holds the running work: turns,
+    # sessions, room sockets, the owner lock and the jobs behind it. `api` is a
+    # pool process beside it that answers the plain reads app-router sends it
+    # and nothing else: it never takes the owner lock, and what it publishes
+    # reaches the realtime process's broker through Valkey.
+    backend_role: Literal["realtime", "api"] = "realtime"
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
     # idle otherwise fails the first statement of whoever checks it out next.

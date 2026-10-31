@@ -1,0 +1,18 @@
+# The api pool overlay: a box that runs one (dev) has each backend slot run the
+# pool of plain-read workers beside its realtime process (backend/app/serve.py,
+# backend/app/core/process_role.py), and publishes it for app-router, which
+# sends it every plain read (deploy/llm-tunnel/app-router.conf).
+#
+# deploy-docker.sh layers this on when API_POOL_WORKERS is above 0 and gives
+# the second slot its own pool port (BACKEND_POOL_PORT_NEXT). A box that does
+# not set it — prod — runs no pool and never reads this file.
+#
+# The pool's connection budget is its own (API_POOL_DB_POOL_SIZE and
+# API_POOL_DB_MAX_OVERFLOW, by default 4 and 2 per worker), on top of the
+# backend's: dev's server takes 200 connections, and a rollout runs two slots.
+services:
+  backend:
+    environment:
+      - API_POOL_WORKERS=${API_POOL_WORKERS:-0}
+    ports:
+      - "127.0.0.1:${BACKEND_POOL_PORT:-18091}:8085"

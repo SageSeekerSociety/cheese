@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from app import serve
 from app.core.config import Settings
 
 BACKEND = Path(__file__).resolve().parents[2]
@@ -65,20 +66,25 @@ def test_a_worker_still_has_a_pool_and_burst_headroom(workers):
     assert pool_size >= 1
 
 
-def test_the_image_and_the_app_take_the_worker_count_from_one_variable():
+def test_the_image_and_the_app_take_the_worker_count_from_one_variable(monkeypatch):
     # The `development` stage's CMD is `uv run uvicorn --reload`, one process by
-    # construction; the deploy runs the `production` stage.
+    # construction; the deploy runs the `production` stage, whose command is
+    # built by `app/serve.py`.
     text = DOCKERFILE.read_text().split("AS production")[1]
-    command = re.search(r"^CMD .*uvicorn.*$", text, re.MULTILINE)
-    assert command is not None, "backend/Dockerfile has no uvicorn CMD"
-    assert "--workers" in command.group(0), (
-        "the image's uvicorn CMD names no --workers, so the app divides a pool "
-        "for a process count the CMD never sets"
-    )
-    assert "BACKEND_WORKERS" in command.group(0), (
+    command = re.search(r"^CMD .*$", text, re.MULTILINE)
+    assert command is not None and "app.serve" in command.group(0)
+    monkeypatch.setenv("BACKEND_WORKERS", "3")
+    argv = serve.realtime_argv()
+    assert argv[argv.index("--workers") + 1] == "3", (
         "the image's --workers does not come from BACKEND_WORKERS, so it can "
         "disagree with the pool division"
     )
+    # The api pool is its own set of workers with its own budget, and the app
+    # in each of them divides that budget by the pool's own count.
+    env = serve.pool_env(4)
+    pool = serve.pool_argv(4)
+    assert env["BACKEND_WORKERS"] == pool[pool.index("--workers") + 1] == "4"
+    assert env["BACKEND_ROLE"] == "api"
 
 
 def test_the_deploy_can_raise_the_worker_count_without_a_rebuild():
