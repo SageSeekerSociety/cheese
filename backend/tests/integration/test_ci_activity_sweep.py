@@ -64,6 +64,7 @@ from app.domain.ci_activity.models import (
     CiWorkflowRun,
 )
 from app.domain.ci_activity.store import CiActivityStore
+from app.domain.day_windows import utc_now
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectGitInstallation
 from tests.conftest import seed_user
@@ -1070,10 +1071,10 @@ def _sweep_through_the_app(client, github, *, at: datetime, first: bool) -> dict
 
 
 def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
-    client, tokens, page
+    client, tokens, page, pinned_clock
 ):
     page, board = page
-    now = datetime.now(UTC)
+    now = utc_now()
     mid_sweep: list[tuple[int, int]] = []
 
     class _Watching(_GitHub):
@@ -1102,10 +1103,10 @@ def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
 
 
 def test_a_sweep_that_dies_part_way_leaves_board_and_table_agreeing(
-    client, tokens, page
+    client, tokens, page, pinned_clock
 ):
     page, board = page
-    now = datetime.now(UTC)
+    now = utc_now()
 
     class _Dying(_GitHub):
         async def merged_pull_requests(self, **kwargs):
