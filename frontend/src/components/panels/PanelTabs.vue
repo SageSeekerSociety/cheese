@@ -61,6 +61,7 @@ function fileName(path: string): string {
 
 /** 页签上写什么：文件写文件名，资料库文档写它的标题。 */
 function tabName(f: OpenFileTab): string {
+  if (f.skill) return f.skill.title || t('work.room.workCard.skill')
   return f.document ? f.document.title || t('work.room.doc.untitled') : fileName(f.path)
 }
 
@@ -223,7 +224,9 @@ const inkStyle = computed(() =>
             @click="emit('select', fileKey(f.path))"
             @dblclick="emit('pin-file', f.path)"
           >
-            <v-icon size="16">{{ f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path) }}</v-icon>
+            <v-icon size="16">{{
+              f.skill ? 'mdi-book-open-variant' : f.document ? 'mdi-file-document-edit-outline' : fileIcon(f.path)
+            }}</v-icon>
             <span class="tabbar__name">{{ tabName(f) }}</span>
           </button>
           <button

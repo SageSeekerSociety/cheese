@@ -157,7 +157,12 @@ describe('芝士起草、等人确认的那一行', () => {
     const view = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
     expect(view.getByTestId('work-card').textContent).toContain('待确认')
     await fireEvent.click(view.getByRole('button', { name: /每周进展/ }))
-    expect(view.emitted('open-proposal')).toEqual([['routine', 'r-9']])
+    expect(view.emitted('open-resource')?.[0]).toEqual([
+      'routine',
+      undefined,
+      undefined,
+      { id: 'r-9', title: expect.any(String) },
+    ])
   })
 
   it('规则那两类都不是「等人确认」的样子：没有「去确认」', async () => {
@@ -179,7 +184,12 @@ describe('芝士起草、等人确认的那一行', () => {
     const view = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
     expect(view.queryByRole('button', { name: '保存' })).toBeNull()
     await fireEvent.click(view.getByRole('button', { name: /每周进展/ }))
-    expect(view.emitted('open-proposal')).toEqual([['skill', 's-3']])
+    expect(view.emitted('open-resource')?.[0]).toEqual([
+      'skill',
+      undefined,
+      undefined,
+      { id: 's-3', title: expect.any(String) },
+    ])
   })
 
   it('人定下来以后，卡片写的是结果', async () => {

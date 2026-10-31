@@ -8,5 +8,7 @@
   "saved": "已保存",
   "notSaved": "未保存",
   "confirmed": "已确认",
-  "deleted": "已删除"
+  "deleted": "已删除",
+  "settled": "这项提议已处理",
+  "viewSkill": "查看技能"
 }

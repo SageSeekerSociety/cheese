@@ -8,5 +8,7 @@
   "saved": "Saved",
   "notSaved": "Not saved",
   "confirmed": "Confirmed",
-  "deleted": "Deleted"
+  "deleted": "Deleted",
+  "settled": "This proposal has been decided",
+  "viewSkill": "View skill"
 }

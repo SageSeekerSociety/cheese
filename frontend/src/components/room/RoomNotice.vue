@@ -74,8 +74,6 @@ const emit = defineEmits<{
   (e: 'retry'): void
   /** 「置顶了一条消息」那一行的「查看」：去被置顶的那一条。 */
   (e: 'jump', blockId: string): void
-  /** AI 队友提议的一项技能或例行事务：在右侧打开，读完再决定。 */
-  (e: 'open-proposal', kind: 'skill' | 'routine', id: string): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
@@ -104,9 +102,9 @@ const shownAs = computed(() => {
   if (own.block.shown_as) return own.block.shown_as
   return own.notice?.mode === 'plain' && !props.agent ? 'happening' : null
 })
-/** 没有署名的一行字：房间里发生的事，不是谁做的事。改了一份文档的那一行照旧是一行
- *  文档记录（DocEditLine）：点它打开那份文档、看改了哪几处。 */
-const happening = computed(() => shownAs.value === 'happening' && !docLine.value)
+/** 没有署名的一行字：房间里发生的事，不是谁做的事。带着一件东西的那几种照旧是一行
+ *  记录：改了一份文档（DocEditLine，点它打开、看改了哪几处）、带按钮的动作行。 */
+const happening = computed(() => shownAs.value === 'happening' && !docLine.value && props.notice.mode !== 'action')
 /** 平台替 AI 队友说的话：它停下了、要人来处理。 */
 const forAgent = computed(() => shownAs.value === 'for_agent')
 
@@ -137,6 +135,11 @@ const proposal = computed<{
     outcome: m.state === 'over' ? proposalOutcome(m) : null,
   }
 })
+// 还在等人的提议在右侧打开，读完再决定（资源 `skill` / `routine`）；已经定下来的去它
+// 自己的那一页看（`skill-page` / `routine-page`）。
+function openProposal(p: { kind: 'skill' | 'routine'; id: string; title: string; over: boolean }) {
+  emit('open-resource', p.over ? `${p.kind}-page` : p.kind, undefined, undefined, { id: p.id, title: p.title })
+}
 /** 人定下来以后卡上写的结果：那一句是哪一句（`meta.i18n.content.key`）就是哪个结果。 */
 const OUTCOMES: Record<string, string> = {
   skillProposalSaved: 'work.room.workCard.saved',
@@ -198,6 +201,7 @@ const frame = computed(() =>
           : docLine.value
             ? 'mdi-file-document-edit-outline'
             : undefined,
+        markAgent: forAgent.value ? props.agent : null,
         cont: props.cont,
         face: props.face ?? null,
         faceLabel: props.faceLabel ?? null,
@@ -384,7 +388,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       :kind="t(proposal.kind === 'skill' ? 'work.room.workCard.skill' : 'work.room.workCard.routine')"
       :state="proposal.over ? proposal.outcome : t('work.room.workCard.toConfirm')"
       :pending="!proposal.over"
-      @open="emit('open-proposal', proposal.kind, proposal.id)"
+      @open="openProposal(proposal)"
     />
     <div
       v-else-if="notice.mode === 'incident'"

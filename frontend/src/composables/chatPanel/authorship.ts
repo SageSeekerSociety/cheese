@@ -41,9 +41,11 @@ export function usePanelAuthorship(deps: {
   }
 
   function noticeAgent(block: Block): NoticeAgent | null {
-    // 只有一位 AI 队友这次工作的结果和它交出来的东西挂在它名下（`shown_as`）：它们是
-    // 那次工作的一部分。平台替它说的话、频道里发生的事都不是它说的，不署它的名。
-    if (block.shown_as !== 'result' && block.shown_as !== 'card') return null
+    // 一位 AI 队友这次工作的结果和它交出来的东西挂在它名下（`shown_as`）：它们是那次
+    // 工作的一部分。平台替它说的话也认得出是哪一位（那一行头像列里放它的小头像，不署
+    // 名字：不是它说的）。频道里发生的事不是哪位队友的。
+    const own = block.shown_as === 'result' || block.shown_as === 'card' || block.shown_as === 'for_agent'
+    if (!own) return null
     if (isPersonBlock(block)) return null
     if (isAgentHandle(block.author) || deps.roster.seatByHandle.value.get(block.author)?.agent) {
       return { name: deps.roster.agentDisplayName(block.author), handle: block.author }

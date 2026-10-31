@@ -7,19 +7,15 @@ import type { CardPhase } from '@/lib/topicState'
 import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, onMounted, ref, toRef, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
-
-import { useSkillProposals } from './useSkillProposals'
 
 import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -130,25 +126,9 @@ const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 // 正在写退回理由：输入框让给退回那一块（AcceptRejectForm），写到一半的消息留在原处。
 const rejecting = ref(false)
 
-const router = useRouter()
 // 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
 // 取、按它决定 —— 任务里提的卡落在任务里，按房间去取就一张也看不到。
 const conversationId = computed(() => props.taskId ?? props.threadId ?? props.topic.id)
-// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换对话就重读。
-const skills = useSkillProposals(
-  toRef(() => props.topic.project_id),
-  conversationId
-)
-onMounted(skills.load)
-watch(conversationId, skills.load)
-function openSkill(skill: { id: string }) {
-  void router.push({
-    name: 'project-skills',
-    params: { projectId: props.topic.project_id },
-    query: { skill: skill.id },
-  })
-}
-
 const store = useWorkspaceStore()
 
 // 这一栏是任务时，那件任务（任务页、右半边页头读的是同一份）。
@@ -247,7 +227,6 @@ const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submit
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
-  reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -372,17 +351,6 @@ defineExpose({
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
         <AgentFeedbackCard ref="feedbackRef" :topic-id="conversationId" />
-        <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
-             说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
-        <SkillProposalCard
-          :proposals="skills.proposals.value"
-          :saved="skills.saved.value"
-          :busy="skills.busy.value"
-          :error="skills.error.value"
-          @save="skills.save"
-          @decline="skills.decline"
-          @open="openSkill"
-        />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
