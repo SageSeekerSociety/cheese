@@ -76,9 +76,10 @@ export function usePanelTopicWindow(deps: {
   paging: () => ReturnType<typeof useChatPaging>
 }) {
   function historyReadFailed(roomId: string, e: unknown) {
-    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) {
-      deps.closeSocket()
-      // 已经看不到这间房了：先摆上的那份缓存（可能是上次从浏览器里放回来的）撤掉。
+    if (e instanceof ApiError && [401, 403, 404].includes(e.status)) deps.closeSocket()
+    // 已经看不到这间房了：先摆上的那份缓存（可能是上次从浏览器里放回来的）撤掉。
+    // 401 不算：换令牌那一步一时没通（刷新接口 5xx、超时）时也会落成 401，人还登录着。
+    if (e instanceof ApiError && [403, 404].includes(e.status)) {
       forgetCachedWindow(roomId)
       deps.timeline.show({ blocks: [], hasMore: false })
     }

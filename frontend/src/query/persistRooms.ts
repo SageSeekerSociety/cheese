@@ -10,7 +10,8 @@
 // - 存的人是谁写在包上，换了人不放回、整份清掉；退出登录清掉（`forgetRoomCache`）。
 // - 放回哪个项目，以这一次启动刚问到的项目清单为准（index.html 抢先问的那一次，
 //   `peekEarlyProjects`）：被移出的项目，它的包不放回；问不到这份清单就一个都不放回。
-// - 放回来之后房间读最新一页被拒（401/403/404），对话栏换成空的（`topicWindow`）。
+// - 放回来之后房间读最新一页被拒（403/404），对话栏换成空的（`topicWindow`），存着的那份
+//   随后也跟着扔掉。
 import type { DehydratedState, Query } from '@tanstack/vue-query'
 import type { BlockWindow } from '@/query/blocks'
 
@@ -31,7 +32,7 @@ const SAVE_DELAY_MS = 3000
 /** 项目这一层存的几份：`['project', 项目, 这一种]`。 */
 const PROJECT_PARTS = new Set(['topics', 'members', 'agents'])
 /** 房间这一层存的几份：`['room', 房间, ...]`，最新一页是 `blocks, newest`。 */
-const ROOM_PARTS = new Set(['row', 'members', 'blocks'])
+const ROOM_PARTS = new Set(['row', 'members'])
 
 export interface SavedRooms {
   handle: string
@@ -60,7 +61,7 @@ function projectPart(key: readonly unknown[]): string | null {
 function roomPart(key: readonly unknown[]): string | null {
   if (key[0] !== 'room' || typeof key[1] !== 'string') return null
   if (isNewestBlocks(key)) return key[1]
-  return key.length === 3 && ROOM_PARTS.has(key[2] as string) && key[2] !== 'blocks' ? key[1] : null
+  return key.length === 3 && ROOM_PARTS.has(key[2] as string) ? key[1] : null
 }
 
 /** 房间 → 项目：先看这个房间自己那一行，再看各项目的频道清单里有没有它。 */
@@ -185,7 +186,9 @@ export function persistRooms(): void {
     .catch(() => {})
     .finally(() => {
       queryClient.getQueryCache().subscribe((event) => {
-        if (event.type !== 'updated' || event.action.type !== 'success') return
+        // 读回来了，或者被扔掉了（看不到这间房了）：存着的那份都该跟着变。
+        const changed = (event.type === 'updated' && event.action.type === 'success') || event.type === 'removed'
+        if (!changed) return
         const key = event.query.queryKey
         if (projectPart(key) || roomPart(key)) scheduleSave()
       })
