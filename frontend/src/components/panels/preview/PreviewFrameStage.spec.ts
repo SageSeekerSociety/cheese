@@ -809,12 +809,14 @@ it('视口三档是一组单选：Tab 只停一次，方向键在档位之间走
 
 it('睡着时，快照太大留不下和从没留过说的是两回事', async () => {
   const sleeping = { ...frame(), live: true, connection: 'online' as const }
+  // 只给需要收窄的那几样加 `as const`：整个对象加会把 `frames` 一起变成只读元组，
+  // 和组件的 props 类型对不上（CI 就是这么红的）。
   const base = {
     topicId: 't',
     frameName: 'frame',
     frames: [sleeping],
     displayedFrame: sleeping,
-    navigation: 'loaded',
+    navigation: 'loaded' as const,
     previewFile: null,
     previewMime: 'text/html',
     previewUrl: 'https://example.test/',
@@ -824,10 +826,10 @@ it('睡着时，快照太大留不下和从没留过说的是两回事', async (
     previewAppUp: false,
     previewError: null,
     previewReadError: null,
-    pickTarget: null,
+    pickTarget: null as null,
     pickOn: false,
     agentName: '芝士',
-  } as const
+  }
   const ui = render(PreviewFrameStage, {
     props: { ...base },
     global: { stubs: { VIcon: true, VChip: { template: '<span><slot /></span>' }, ...menuStubs } },
