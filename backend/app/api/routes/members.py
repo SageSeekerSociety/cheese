@@ -384,8 +384,9 @@ async def offer_transfer(
     offer = await _ownership(db).offer(
         project_id=project_id, to_handle=body.to_handle, actor=who
     )
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.delete(
@@ -402,8 +403,9 @@ async def cancel_transfer(
     if pending is None:
         raise NotFoundError()
     offer = await service.cancel(transfer_id=pending.id, actor=who)
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post(
@@ -421,8 +423,9 @@ async def respond_to_transfer(
     offer = await _ownership(db).respond(
         transfer_id=transfer_id, accept=body.accept, actor=who
     )
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post(

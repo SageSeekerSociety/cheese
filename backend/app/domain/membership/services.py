@@ -50,7 +50,7 @@ from app.domain.membership.repositories import (
     RoleRepository,
     TransferRepository,
 )
-from app.domain.membership.roster import people_in_project, roster
+from app.domain.membership.roster import people_in_project
 from app.domain.membership.schemas import InvitationOut
 from app.domain.project.models import (
     InvitationStatus,
@@ -595,11 +595,7 @@ class RoleService:
 
     async def holders(self, project_id: uuid.UUID) -> dict[str, int]:
         """How many people hold each role, by key. The owner holds none."""
-        people = [
-            m.handle
-            for m in await roster(self._session, project_id, team=_no_teammates)
-            if not m.agent
-        ]
+        people = await people_in_project(self._session, project_id, team=_no_teammates)
         counts: dict[str, int] = {}
         for held in (await seats(self._session, project_id, people)).values():
             if held.seat is not Seat.owner:
