@@ -27,6 +27,6 @@ async def test_a_response_says_how_long_it_spent_on_the_database() -> None:
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.get("/version")
     timing = response.headers.get_list("server-timing")
-    assert any(
-        re.fullmatch(r'db;dur=\d+(\.\d+)?;desc="\d+ sql"', t) for t in timing
-    ), timing
+    assert any(re.fullmatch(r'db;dur=\d+(\.\d+)?;desc="\d+ sql"', t) for t in timing), (
+        timing
+    )
