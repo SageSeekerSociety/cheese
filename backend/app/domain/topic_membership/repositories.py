@@ -40,12 +40,32 @@ class TopicMembershipRepository:
         return await self._session.scalar(stmt)
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[TopicMembership]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("topic_member_rows", topic_id))
+            if found:
+                return list(cached)
         stmt = (
             select(TopicMembership)
             .where(TopicMembership.topic_id == topic_id)
             .order_by(TopicMembership.created_at.asc())
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("topic_member_rows", topic_id),
+                tuple(rows),
+                tables=_TOPIC_MEMBER_TABLES,
+            )
+            remember(
+                self._session,
+                ("topic_member_pairs", topic_id),
+                tuple((r.member_handle, r.role) for r in rows),
+                tables=_TOPIC_MEMBER_TABLES,
+            )
+        return rows
 
     async def list_for_topics(
         self, topic_ids: list[uuid.UUID]
@@ -58,28 +78,50 @@ class TopicMembershipRepository:
         """
         if not topic_ids:
             return []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            cached_rows: list[TopicMembership] = []
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(topic_ids):
+                found, rows_t = recall(self._session, ("topic_member_rows", tid))
+                if found:
+                    cached_rows.extend(rows_t)
+                else:
+                    missing.append(tid)
+            if not missing:
+                return cached_rows
+            stmt = (
+                select(TopicMembership)
+                .where(TopicMembership.topic_id.in_(missing))
+                .order_by(TopicMembership.created_at.asc())
+            )
+            fetched = list((await self._session.scalars(stmt)).all())
+            by_topic: dict[uuid.UUID, list[TopicMembership]] = {
+                tid: [] for tid in missing
+            }
+            for row in fetched:
+                by_topic.setdefault(row.topic_id, []).append(row)
+            for tid, t_rows in by_topic.items():
+                remember(
+                    self._session,
+                    ("topic_member_rows", tid),
+                    tuple(t_rows),
+                    tables=_TOPIC_MEMBER_TABLES,
+                )
+                remember(
+                    self._session,
+                    ("topic_member_pairs", tid),
+                    tuple((r.member_handle, r.role) for r in t_rows),
+                    tables=_TOPIC_MEMBER_TABLES,
+                )
+            return sorted(cached_rows + fetched, key=lambda r: r.created_at)
         stmt = (
             select(TopicMembership)
             .where(TopicMembership.topic_id.in_(topic_ids))
             .order_by(TopicMembership.created_at.asc())
         )
-        rows = list((await self._session.scalars(stmt)).all())
-        if _can_cache(self._session):
-            by_topic: dict[uuid.UUID, list[tuple[str, TopicRole]]] = {
-                tid: [] for tid in topic_ids
-            }
-            for row in rows:
-                by_topic.setdefault(row.topic_id, []).append(
-                    (row.member_handle, row.role)
-                )
-            for tid, pairs in by_topic.items():
-                remember(
-                    self._session,
-                    ("topic_member_pairs", tid),
-                    tuple(pairs),
-                    tables=_TOPIC_MEMBER_TABLES,
-                )
-        return rows
+        return list((await self._session.scalars(stmt)).all())
 
     async def topic_ids_for_member(
         self,

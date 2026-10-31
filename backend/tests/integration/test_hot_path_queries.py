@@ -159,8 +159,8 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     # room's teammate sits in (`addressable_agent_handles`: the room rosters,
     # while `agents_among` reuses the project roster's cached agent-binding facts),
     # which a row's phrase names (「{agent}在做」).
-    assert small_count == 29, (
-        f"the topic list cost 29 statements; it now costs {small_count}.\n"
+    assert small_count == 27, (
+        f"the topic list cost 27 statements; it now costs {small_count}.\n"
         + "\n".join(small)
     )
 

@@ -419,7 +419,13 @@ async def list_topics(
     )
     # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
-    # 每个房间在等哪几位成员，一次查完。
+    # 这间房名下的活（开着、还没进收尾窗口）—— 先查未恢复失败以复用失败块缓存。
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in tasks_by_room.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [t.id for t in topics], tasks_of_room
+    )
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics],
         now=now,
@@ -440,14 +446,6 @@ async def list_topics(
     answered = (
         await service.replied_to_me([t.id for t in topics], viewer) if viewer else set()
     )
-    # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败（`_unresolved_failures`）；用的是上面已经取到的那一份。
-    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for task_id, room_id in tasks_by_room.items():
-        tasks_of_room.setdefault(room_id, []).append(task_id)
-    incomplete, incomplete_tasks = await _unresolved_failures(
-        db, [t.id for t in topics], tasks_of_room
-    )
-    # 每间房的 AI 队友坐在哪一席：名册一次读完一整页，不逐间问。
     seats = await TopicMemberService(db).addressable_agent_handles(project_id, room_ids)
     rails = await rail_tasks(
         db,
@@ -569,6 +567,9 @@ async def get_topic(
         cards=AcceptService(db),
         decisions=ProjectNotificationService(db),
     )
+    seats = await TopicMemberService(db).addressable_agent_handles(
+        topic.project_id, [topic.id]
+    )
     live = await topics_signals.live_cards(db, [topic.id])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -577,15 +578,20 @@ async def get_topic(
         else set()
     )
     asked = await _awaiting_an_answer(db, [topic.id], threads=room_threads)
+    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给同一次读。
+    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in underway.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [topic.id], tasks_of_room
+    )
     waits = await MemberWaits(db).for_rooms(
         [topic.id],
         now=datetime.now(UTC),
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
     )
-    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给
-    # 同一次读，免得为呼吸绿多查一条。
-    underway = await TaskService(db).tasks_of_rooms([topic.id])
     working = await topics_signals.at_work(
         db, [topic.id], threads=room_threads, tasks=underway
     )
@@ -596,20 +602,10 @@ async def get_topic(
     )
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
-    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话
-    # 在跑，或者有没有活走在交付链路上。
+    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话在跑。
     moving_ids = set(working.rooms) | set(working.threads)
     moving_ids |= {underway[task_id] for task_id in working.tasks}
     moving_ids |= topics_signals.delivering_rooms(live)
-    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for task_id, room_id in underway.items():
-        tasks_of_room.setdefault(room_id, []).append(task_id)
-    incomplete, incomplete_tasks = await _unresolved_failures(
-        db, [topic.id], tasks_of_room
-    )
-    seats = await TopicMemberService(db).addressable_agent_handles(
-        topic.project_id, [topic.id]
-    )
     rails = await rail_tasks(
         db,
         actor,

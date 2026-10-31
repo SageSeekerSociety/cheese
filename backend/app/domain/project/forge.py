@@ -23,6 +23,7 @@ from app.core.db import SessionFactory, release_read_session
 from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
 from app.core.forge_http import forge_client
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.project.forgejo_tokens import (
     ForgejoTokens,
@@ -53,6 +54,12 @@ from app.domain.project.starter import Remote
 async def binding_for_project(
     project_id: uuid.UUID, session: AsyncSession
 ) -> ProjectForge | None:
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("project_forge_binding", project_id))
+        if found:
+            return cached
     binding = await session.scalar(
         select(ProjectForge).where(ProjectForge.project_id == project_id)
     )
@@ -63,6 +70,13 @@ async def binding_for_project(
                 .where(ProjectForge.project_id == project_id)
                 .execution_options(populate_existing=True)
             )
+    if isinstance(session, AsyncSession):
+        remember(
+            session,
+            ("project_forge_binding", project_id),
+            binding,
+            tables=frozenset({"project_forges"}),
+        )
     return binding
 
 

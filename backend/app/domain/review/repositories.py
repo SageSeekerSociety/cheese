@@ -8,6 +8,7 @@ from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, sele
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.project.models import ProjectForge
 from app.domain.review.models import (
     AcceptApproval,
@@ -19,6 +20,10 @@ from app.domain.review.models import (
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 def _clean_handles(handles: Iterable[str]) -> list[str]:
@@ -249,6 +254,45 @@ class AcceptCardRepository:
         still one query."""
         if not task_ids:
             return {}, {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            latest: dict[uuid.UUID, AcceptCard] = {}
+            counts: dict[uuid.UUID, int] = {}
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_accept_cards", tid))
+                if found:
+                    if cached:
+                        latest[tid] = cached[-1]
+                        counts[tid] = len(cached)
+                else:
+                    missing.append(tid)
+            if not missing:
+                return latest, counts
+            stmt = (
+                select(AcceptCard)
+                .where(
+                    AcceptCard.task_id
+                    == any_(bindparam(None, missing, type_=ARRAY(Uuid)))
+                )
+                .order_by(AcceptCard.created_at, AcceptCard.id)
+            )
+            by_task: dict[uuid.UUID, list[AcceptCard]] = {tid: [] for tid in missing}
+            for card in (await self._session.scalars(stmt)).all():
+                if card.task_id is not None:
+                    by_task.setdefault(card.task_id, []).append(card)
+            for tid, cards in by_task.items():
+                remember(
+                    self._session,
+                    ("task_accept_cards", tid),
+                    tuple(cards),
+                    tables=frozenset({"accept_cards"}),
+                )
+                if cards:
+                    latest[tid] = cards[-1]
+                    counts[tid] = len(cards)
+            return latest, counts
         stmt = (
             select(AcceptCard)
             # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
@@ -260,8 +304,8 @@ class AcceptCardRepository:
             )
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
-        latest: dict[uuid.UUID, AcceptCard] = {}
-        counts: dict[uuid.UUID, int] = {}
+        latest = {}
+        counts = {}
         for card in (await self._session.scalars(stmt)).all():
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
@@ -414,6 +458,36 @@ class AcceptCardRepository:
         """
         if not task_ids:
             return []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            cached_accepted: list[AcceptCard] = []
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_accept_cards", tid))
+                if found:
+                    cached_accepted.extend(
+                        c for c in cached if c.status == AcceptStatus.accepted
+                    )
+                else:
+                    missing.append(tid)
+            if not missing:
+                cached_accepted.sort(
+                    key=lambda c: (c.decided_at is None, c.decided_at, c.id)
+                )
+                return cached_accepted
+            stmt = (
+                select(AcceptCard)
+                .where(
+                    AcceptCard.task_id.in_(missing),
+                    AcceptCard.status == AcceptStatus.accepted,
+                )
+                .order_by(AcceptCard.decided_at, AcceptCard.id)
+            )
+            fetched = list((await self._session.scalars(stmt)).all())
+            all_accepted = cached_accepted + fetched
+            all_accepted.sort(key=lambda c: (c.decided_at is None, c.decided_at, c.id))
+            return all_accepted
         stmt = (
             select(AcceptCard)
             .where(
