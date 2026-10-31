@@ -184,6 +184,32 @@ class PlaceResolver:
             )
         return None
 
+    async def inner_place(self, conversation_id: uuid.UUID) -> Place | None:
+        """The task or 支线 ``conversation_id`` names and its room, checking
+        ``tasks`` and ``threads`` before falling back to ``topics``."""
+        task_place = await self.task_place(conversation_id)
+        if task_place is not None:
+            return task_place
+        thread = await self._session.get(Thread, conversation_id)
+        if thread is not None:
+            room_place = await self.resolve(thread.room_id)
+            return (
+                Place(room=room_place.room, thread=thread)
+                if room_place is not None
+                else None
+            )
+        return await self.resolve(conversation_id)
+
+
+async def inner_place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
+    """The task or 支线 ``place_id`` names (or its room for authorization on a
+    channel id), without probing ``topics`` first when ``place_id`` is a task
+    or 支线."""
+    place = await PlaceResolver(session).inner_place(place_id)
+    if place is None:
+        raise NotFoundError(say("topicNotFound"))
+    return place
+
 
 async def place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
     """The conversation this id names — a room, or one of its tasks — or 404.

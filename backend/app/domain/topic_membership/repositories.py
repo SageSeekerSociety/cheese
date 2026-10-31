@@ -40,11 +40,24 @@ class TopicMembershipRepository:
                 return next(
                     (r for r in cached if r.member_handle == member_handle), None
                 )
+            found_one, cached_one = recall(
+                self._session, ("topic_member_row", topic_id, member_handle)
+            )
+            if found_one:
+                return cached_one
         stmt = select(TopicMembership).where(
             TopicMembership.topic_id == topic_id,
             TopicMembership.member_handle == member_handle,
         )
-        return await self._session.scalar(stmt)
+        row = await self._session.scalar(stmt)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("topic_member_row", topic_id, member_handle),
+                row,
+                tables=_TOPIC_MEMBER_TABLES,
+            )
+        return row
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[TopicMembership]:
         if _can_cache(self._session):
