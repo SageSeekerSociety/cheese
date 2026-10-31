@@ -121,13 +121,28 @@ async def _team_role(
 ) -> int | None:
     if team_id is None:
         return None
-    return await session.scalar(
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        key = ("team_user_role", team_id, user_id)
+        found, cached = recall(session, key)
+        if found:
+            return cached
+    role = await session.scalar(
         select(TeamUserRelation.role).where(
             TeamUserRelation.team_id == team_id,
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
         )
     )
+    if isinstance(session, AsyncSession):
+        remember(
+            session,
+            ("team_user_role", team_id, user_id),
+            role,
+            tables=frozenset({"team_user_relation"}),
+        )
+    return role
 
 
 async def team_owner_handle(session: AsyncSession, team_id: int) -> str | None:
@@ -179,6 +194,12 @@ async def _resolve_owner_of(
     session: AsyncSession, project: Project, owner: str | None
 ) -> str | None:
     if owner:
+        if isinstance(session, AsyncSession):
+            found_team, team_roles = recall(
+                session, ("team_roles_by_handle", project.team_id)
+            )
+            if found_team and owner in team_roles:
+                return owner
         user = await UserRepository(session).get_by_username(owner)
         if (
             user is not None
@@ -252,6 +273,21 @@ def _team_admin(roles: dict[str, RoleDef]) -> Standing:
     )
 
 
+_STANDING_TABLES = frozenset(
+    {
+        "projects",
+        "user",
+        "agent_bindings",
+        "team_user_relation",
+        "project_members",
+        "project_member_exclusions",
+        "project_roles",
+        "project_role_defs",
+        "team",
+    }
+)
+
+
 async def standing(
     session: AsyncSession, project_id: uuid.UUID, handle: str | None
 ) -> Standing | None:
@@ -272,7 +308,7 @@ async def standing(
     if found:
         return answer
     answer = await _standing(session, project_id, handle)
-    remember(session, key, answer)
+    remember(session, key, answer, tables=_STANDING_TABLES)
     return answer
 
 

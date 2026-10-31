@@ -260,8 +260,8 @@ async def set_member_role(
     await RoleService(db).set_role(
         project_id=project_id, handle=user_handle, role=body.role, actor=at.actor
     )
-    await db.commit()
     held = await standing(db, project_id, user_handle)
+    await db.commit()
     return ok({"role": held.role if held is not None else None})
 
 
@@ -336,8 +336,9 @@ async def update_role(
         permissions=body.permissions,
         actor=at.actor,
     )
+    holders = await service.holders(at.project.id)
     await db.commit()
-    return ok(_role_out(role, await service.holders(at.project.id)))
+    return ok(_role_out(role, holders))
 
 
 @router.delete("/projects/{project_id}/roles/{key}", **typed_response(RoleDeletedOut))

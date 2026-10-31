@@ -1862,3 +1862,200 @@ def test_rename_topic_passes_room_to_authorize_topic(client):
     assert len(title_sql) <= 6, (
         f"expected <= 6 SQL statements on POST /topics/{{id}}/title, got {len(title_sql)}: {title_sql}"
     )
+
+
+_PROJECT_ROLES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_roles\b",
+    re.IGNORECASE,
+)
+_BLOCK_REACTIONS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM block_reactions\b",
+    re.IGNORECASE,
+)
+
+
+def test_set_member_role_reuses_cached_standing_dependencies_before_commit(client):
+    """`PUT /projects/{id}/members/{handle}/role` resolves `standing` before
+    `commit()` and only invalidates `project_roles` on Core DML so `projects`,
+    `user`, `team_user_relation`, `project_member_exclusions`, `project_role_defs`,
+    and `project_members` are not re-queried."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as role_sql:
+        r_role = client.put(
+            f"/projects/{pid}/members/bob/role",
+            json={"role": "admin"},
+            headers=headers,
+        )
+    assert r_role.status_code == 200, r_role.text
+    assert _count(role_sql, _PROJECTS_SELECT) == 1, [
+        s for s in role_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(role_sql, _PROJECT_MEMBERS_SELECT) == 1, [
+        s for s in role_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 1, [
+        s for s in role_sql if _PROJECT_ROLES_SELECT.search(s)
+    ]
+    assert len(role_sql) <= 12, (
+        f"expected <= 12 SQL statements on PUT /projects/{{id}}/members/bob/role, got {len(role_sql)}: {role_sql}"
+    )
+
+
+def test_get_thread_skips_topic_probe_and_redundant_thread_lookup_for_task(client):
+    """`GET /topics/{id}/thread` resolves tasks and threads via `inner_place`
+    without probing `topics` for `topic_id` first, and skips querying `threads`
+    when `place.task.upgraded_from_block_id is None`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "thread root"})
+    th = client.post(f"/blocks/{msg['id']}/thread", json={}, headers=headers).json()[
+        "data"
+    ]
+    th_id = th["id"]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as th_sql:
+        r_th = client.get(f"/topics/{th_id}/thread", headers=headers)
+    assert r_th.status_code == 200, r_th.text
+    assert _count(th_sql, _TOPICS_SELECT) == 1, [
+        s for s in th_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert len(th_sql) <= 7, (
+        f"expected <= 7 SQL statements on GET /topics/{{thread_id}}/thread, got {len(th_sql)}: {th_sql}"
+    )
+
+    with counting_sql(client) as task_sql:
+        r_task = client.get(f"/topics/{task_id}/thread", headers=headers)
+    assert r_task.status_code == 200, r_task.text
+    assert _count(task_sql, _TOPICS_SELECT) == 1, [
+        s for s in task_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert len(task_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /topics/{{task_id}}/thread, got {len(task_sql)}: {task_sql}"
+    )
+
+
+def test_toggle_reaction_reuses_room_and_reaction_rows(client):
+    """`POST /blocks/{id}/reactions` resolves the room via `place_or_404`
+    without `room_of` UNION ALL on channel messages and reads `block_reactions`
+    once per toggle."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "react to me"})
+    msg_id = msg["id"]
+
+    with counting_sql(client) as react_sql:
+        r_react = client.post(
+            f"/blocks/{msg_id}/reactions",
+            json={"emoji": "👍"},
+            headers=headers,
+        )
+    assert r_react.status_code == 200, r_react.text
+    assert _count(react_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in react_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(react_sql, _BLOCK_REACTIONS_SELECT) == 1, [
+        s for s in react_sql if _BLOCK_REACTIONS_SELECT.search(s)
+    ]
+    assert len(react_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /blocks/{{id}}/reactions, got {len(react_sql)}: {react_sql}"
+    )
+
+
+_PROJECT_ROLE_DEFS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_role_defs\b",
+    re.IGNORECASE,
+)
+_AGENT_BINDINGS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\b",
+    re.IGNORECASE,
+)
+
+
+def test_role_create_and_update_reuse_cached_role_defs_and_holders(client):
+    """`POST /projects/{id}/roles` and `PATCH /projects/{id}/roles/{key}`
+    resolve `get_def` and `named` from cached `project_role_defs`, retain the
+    role definitions across `flush()`, and compute `holders` before `commit()`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            f"/projects/{pid}/roles",
+            json={"name": "CustomRole", "copy_from": "member"},
+            headers=headers,
+        )
+    assert r_create.status_code == 200, r_create.text
+    rkey = r_create.json()["data"]["key"]
+    assert _count(create_sql, _PROJECT_ROLE_DEFS_SELECT) == 1, [
+        s for s in create_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 6, (
+        f"expected <= 6 SQL statements on POST /projects/{{id}}/roles, got {len(create_sql)}: {create_sql}"
+    )
+
+    with counting_sql(client) as update_sql:
+        r_update = client.patch(
+            f"/projects/{pid}/roles/{rkey}",
+            json={"name": "RenamedRole"},
+            headers=headers,
+        )
+    assert r_update.status_code == 200, r_update.text
+    assert _count(update_sql, _PROJECTS_SELECT) == 1, [
+        s for s in update_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(update_sql, _PROJECT_ROLE_DEFS_SELECT) == 1, [
+        s for s in update_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(update_sql) <= 13, (
+        f"expected <= 13 SQL statements on PATCH /projects/{{id}}/roles/{{key}}, got {len(update_sql)}: {update_sql}"
+    )
+
+
+def test_create_project_agent_skips_new_user_binding_and_profile_probes(client):
+    """`POST /projects/{id}/agents` skips querying `agent_bindings` and
+    `user_profile` for a freshly inserted agent `User` row and avoids refreshing
+    `AgentBinding` after `flush()`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as agent_sql:
+        r_agent = client.post(
+            f"/projects/{pid}/agents",
+            json={"handle": "fast-helper", "display_name": "Fast Helper"},
+            headers=headers,
+        )
+    assert r_agent.status_code == 200, r_agent.text
+    assert _count(agent_sql, _AGENT_BINDINGS_SELECT) == 1, [
+        s for s in agent_sql if _AGENT_BINDINGS_SELECT.search(s)
+    ]
+    assert len(agent_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST /projects/{{id}}/agents, got {len(agent_sql)}: {agent_sql}"
+    )
+
+
+def test_set_members_only_caches_single_topic_membership_lookup(client):
+    """`PUT /topics/{id}/members-only` caches `("topic_member_row", topic_id, handle)`
+    across `require_manager` and `_ensure_member` instead of querying
+    `topic_memberships` for the same `(topic_id, member_handle)` twice."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as priv_sql:
+        r_priv = client.put(
+            f"/topics/{ch}/members-only",
+            json={"members_only": True},
+            headers=headers,
+        )
+    assert r_priv.status_code == 200, r_priv.text
+    assert len(priv_sql) <= 6, (
+        f"expected <= 6 SQL statements on PUT /topics/{{id}}/members-only, got {len(priv_sql)}: {priv_sql}"
+    )
