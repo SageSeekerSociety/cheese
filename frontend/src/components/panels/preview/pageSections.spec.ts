@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { headingsOf, rowsInLayer, sectionAt, type MeasureRow } from './pageSections'
+import { headingsOf, type MeasureRow, rowsInLayer, sectionAt } from './pageSections'
 
 /** 一行字。`size` 是原始字号（不含缩放），和 pdf.js 的 `--font-height` 同一个东西。 */
 function row(top: number, text: string, size = 10, height = size * 1.2): MeasureRow {
@@ -18,7 +18,11 @@ function row(top: number, text: string, size = 10, height = size * 1.2): Measure
 
 describe('哪一行算标题', () => {
   it('比正文明显大的整行是标题，正文不是', () => {
-    const page = [row(0, '报名方案 B 实现与核验', 22), row(40, '这一版修掉了一个窄屏真缺陷。'), row(60, '结论：已实现。')]
+    const page = [
+      row(0, '报名方案 B 实现与核验', 22),
+      row(40, '这一版修掉了一个窄屏真缺陷。'),
+      row(60, '结论：已实现。'),
+    ]
     expect(headingsOf([page]).map((h) => h.text)).toEqual(['报名方案 B 实现与核验'])
   })
 
@@ -75,6 +79,18 @@ describe('这一处属于哪一节', () => {
     { page: 1, top: 200, text: '二、时间安排', size: 18 },
     { page: 3, top: 50, text: '三、面试', size: 18 },
   ]
+
+  it('同一页里的标题按竖直位置排序，不受 DOM 顺序影响', () => {
+    const page = [
+      row(200, '二、时间安排', 22),
+      row(10, '一、报名', 22),
+      row(60, '正文第一段', 12),
+      row(80, '正文第二段', 12),
+    ]
+    const found = headingsOf([page])
+    expect(found.map((h) => h.text)).toEqual(['一、报名', '二、时间安排'])
+    expect(sectionAt(found, 1, 100)).toBe('一、报名')
+  })
 
   it('取它之前最近的那个标题', () => {
     expect(sectionAt(headings, 1, 100)).toBe('一、报名')

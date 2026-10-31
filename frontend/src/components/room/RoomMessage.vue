@@ -462,7 +462,10 @@ const told = computed(() => toldByMessage(props.refs))
         </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
-      <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
+      <MessageQuote
+        v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
+        :quote="block.meta.quoted_context"
+      />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
           outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')

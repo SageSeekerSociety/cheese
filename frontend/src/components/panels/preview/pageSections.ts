@@ -99,7 +99,7 @@ function bodySize(rows: readonly MeasureRow[]): number {
     if (size < next * LOOSE_RATIO) return size
     // 差得远：这一档更像标题，跳过它继续往下找。
   }
-  return 0
+  return sizes.at(-1) ?? 0
 }
 
 /** 一页文字层里按视觉行收好的字与字号。
@@ -120,10 +120,13 @@ export function rowsInLayer(layer: HTMLElement, box: DOMRect): MeasureRow[] {
     if (rect.width < 0.5 || rect.height < 0.5) continue
     const top = rect.top - box.top
     const bottom = rect.bottom - box.top
-    const declared = Number.parseFloat(getComputedStyle(span).getPropertyValue('--font-height'))
+    const declared = Number.parseFloat(
+      span.style.getPropertyValue('--font-height') || getComputedStyle(span).getPropertyValue('--font-height')
+    )
     const size = declared > 0 ? declared : rect.height
     const row = rows.find(
-      (one) => Math.min(one.bottom, bottom) - Math.max(one.top, top) > SAME_ROW * Math.min(one.bottom - one.top, bottom - top)
+      (one) =>
+        Math.min(one.bottom, bottom) - Math.max(one.top, top) > SAME_ROW * Math.min(one.bottom - one.top, bottom - top)
     )
     if (!row) rows.push({ top, bottom, text, size, minSize: size })
     else {
@@ -146,6 +149,7 @@ export function headingsOf(pages: readonly (readonly MeasureRow[])[]): HeadingRo
   const floor = body * HEADING_RATIO
   const out: HeadingRow[] = []
   pages.forEach((rows, index) => {
+    const pageHeadings: HeadingRow[] = []
     for (const row of rows) {
       const text = row.text.replace(/\s+/g, ' ').trim()
       if (!text || text.length > MAX_HEADING_CHARS) continue
@@ -153,8 +157,10 @@ export function headingsOf(pages: readonly (readonly MeasureRow[])[]): HeadingRo
       // 一行里字号不齐：这是表格的一行或者正文里一句放大的字，不是标题。
       if ((row.minSize ?? row.size) < floor) continue
       if (!standsAlone(row, rows)) continue
-      out.push({ page: index + 1, top: row.top, text, size: row.size })
+      pageHeadings.push({ page: index + 1, top: row.top, text, size: row.size })
     }
+    pageHeadings.sort((a, b) => a.top - b.top)
+    out.push(...pageHeadings)
   })
   return out
 }

@@ -552,7 +552,14 @@ function onSelect() {
       context: { ...props.context },
       ...(inOneLayer && textLayer ? contextAround(textLayer, range) : {}),
       ...spot,
-      section: sectionOf(page, canvasBox ? rect.top - canvasBox.top : null),
+      section: sectionOf(
+        page,
+        (() => {
+          const selBox = rect.height > 0 ? rect : startEl?.getBoundingClientRect()
+          const origin = canvasBox && canvasBox.width > 0 ? canvasBox : (host as HTMLElement).getBoundingClientRect()
+          return selBox && selBox.height > 0 ? selBox.top - origin.top : null
+        })()
+      ),
     })
     return
   }
@@ -607,23 +614,31 @@ function firstBoxed(
  *  量不出来（页还没画、或者这一处不在页上）就返回空串，卡上只写页码。 */
 function sectionOf(page: number, top: number | null): string {
   const rows: MeasureRow[][] = []
-  pages.value.forEach((slot) => {
-    const layer = slot.host?.querySelector<HTMLElement>('.pv-text')
-    if (!slot.host || !layer) {
+  const rendered = new Set<number>()
+  pages.value.forEach((slot, idx) => {
+    const root = slot.el ?? slot.host
+    const layers = root ? Array.from(root.querySelectorAll<HTMLElement>('.pv-text')) : []
+    if (!root || !layers.length) {
       rows.push([])
       return
     }
+    rendered.add(idx + 1)
     // 原点是画布左上角（和画序号用的是同一个坐标）。画布量不出来时退回这一页的框——
     // 量的环境没有布局（单测）里画布是零尺寸，但那几行字自己带着摆好的位置。
-    const canvas = slot.host.querySelector('canvas')?.getBoundingClientRect()
-    const box = canvas && canvas.width > 0 ? canvas : slot.host.getBoundingClientRect()
-    rows.push(rowsInLayer(layer, box))
+    const canvas = root.querySelector('canvas')?.getBoundingClientRect()
+    const box = canvas && canvas.width > 0 ? canvas : root.getBoundingClientRect()
+    rows.push(layers.flatMap((layer) => rowsInLayer(layer, box)))
   })
+  if (!rendered.has(page)) return ''
   const headings = headingsOf(rows)
   if (!headings.length) return ''
+  let minPage = page
+  while (minPage > 1 && rendered.has(minPage - 1)) minPage -= 1
+  const reachable = headings.filter((h) => h.page >= minPage && h.page <= page)
+  if (!reachable.length) return ''
   // 量不到这一处的竖直位置时用这一页的底：宁可指到这一页靠后的那一节，也不指到更早的。
   const at = top ?? Number.POSITIVE_INFINITY
-  return sectionAt(headings, page, at)
+  return sectionAt(reachable, page, at)
 }
 
 /** 这一页现在能读到的行。文字层还没画出来时是空的（这一页还没进视野）。 */
