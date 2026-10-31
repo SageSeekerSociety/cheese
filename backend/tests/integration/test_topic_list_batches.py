@@ -2059,3 +2059,95 @@ def test_set_members_only_caches_single_topic_membership_lookup(client):
     assert len(priv_sql) <= 6, (
         f"expected <= 6 SQL statements on PUT /topics/{{id}}/members-only, got {len(priv_sql)}: {priv_sql}"
     )
+
+
+def test_agent_editing_lease_reuses_cached_standing_without_roster_build(client):
+    """`PUT /projects/{id}/agents/{aid}/editing` checks `MemberService.manages`
+    (which hits cached `standing` from `authorize_project`) before building the
+    full project roster."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ag = client.post(
+        f"/projects/{pid}/agents",
+        json={"handle": "edit-bot", "display_name": "Edit Bot"},
+        headers=headers,
+    ).json()["data"]
+    aid = ag.get("id") or ag.get("instance_id")
+
+    with counting_sql(client) as edit_sql:
+        r_edit = client.put(
+            f"/projects/{pid}/agents/{aid}/editing",
+            json={"held": True},
+            headers=headers,
+        )
+    assert r_edit.status_code == 200, r_edit.text
+    assert _count(edit_sql, _PROJECT_MEMBERS_SELECT) == 0, [
+        s for s in edit_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert len(edit_sql) <= 5, (
+        f"expected <= 5 SQL statements on PUT /projects/{{id}}/agents/{{aid}}/editing, got {len(edit_sql)}: {edit_sql}"
+    )
+
+
+def test_archive_and_unarchive_channel_skip_redundant_children_tasks_and_project_reads(
+    client,
+):
+    """`POST /topics/{id}/archive` and `POST /topics/{id}/unarchive` pre-load
+    `topic_memberships` once in `administers`, resolve `_where_said` before
+    dirtying the session, and skip `task_conversations_in` / `close_tasks` /
+    `_archive_children` when archiving a childless channel with 0 open tasks."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch2 = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Archivable Ch"},
+        headers=headers,
+    ).json()["data"]["id"]
+
+    with counting_sql(client) as arch_sql:
+        r_arch = client.post(f"/topics/{ch2}/archive", json={}, headers=headers)
+    assert r_arch.status_code == 200, r_arch.text
+    assert _count(arch_sql, _PROJECTS_SELECT) == 1, [
+        s for s in arch_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(arch_sql) <= 15, (
+        f"expected <= 15 SQL statements on POST /topics/{{id}}/archive, got {len(arch_sql)}: {arch_sql}"
+    )
+
+    with counting_sql(client) as unarch_sql:
+        r_unarch = client.post(f"/topics/{ch2}/unarchive", json={}, headers=headers)
+    assert r_unarch.status_code == 200, r_unarch.text
+    assert _count(unarch_sql, _PROJECTS_SELECT) == 1, [
+        s for s in unarch_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(unarch_sql) <= 12, (
+        f"expected <= 12 SQL statements on POST /topics/{{id}}/unarchive, got {len(unarch_sql)}: {unarch_sql}"
+    )
+
+
+def test_hand_over_channel_reuses_roster_is_agent_and_list_for_topic_rows(client):
+    """`PUT /projects/{id}/channels/{cid}/manager` reuses `("is_agent", handle)`
+    populated by `_on_project` (`roster`) and finds `seat` inside the
+    `list_for_topic` loop without triggering a premature autoflush and second
+    `topic_memberships` query."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch2 = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Handover Ch"},
+        headers=headers,
+    ).json()["data"]["id"]
+
+    with counting_sql(client) as ho_sql:
+        r_ho = client.put(
+            f"/projects/{pid}/channels/{ch2}/manager",
+            json={"handle": "bob"},
+            headers=headers,
+        )
+    assert r_ho.status_code == 200, r_ho.text
+    assert _count(ho_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in ho_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(ho_sql) <= 18, (
+        f"expected <= 18 SQL statements on PUT /projects/{{id}}/channels/{{cid}}/manager, got {len(ho_sql)}: {ho_sql}"
+    )
