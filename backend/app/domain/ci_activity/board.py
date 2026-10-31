@@ -56,7 +56,7 @@ from app.domain.ci_activity.models import (
     CiMergeQueueEvent,
     CiWorkflowRun,
 )
-from app.domain.day_windows import utc_day_window
+from app.domain.day_windows import utc_day_window, utc_now
 
 REQUIRED_CI_PATH = ".github/workflows/required-ci.yml"
 #: The aggregating job of the full tier; a draft's is `CI required (draft quick)`.
@@ -133,7 +133,7 @@ class Window:
 
 def window(days: int, now: datetime | None = None) -> Window:
     """The last ``days`` whole UTC days up to the day ``now`` falls on."""
-    since, until, buckets = utc_day_window(days, now or datetime.now(UTC))
+    since, until, buckets = utc_day_window(days, now)
     return Window(since, until, buckets)
 
 
@@ -272,7 +272,7 @@ def _minute_samples(spans: Iterable[tuple[datetime, datetime]], w: Window, until
 async def build_board(
     session: AsyncSession, repo: str, *, days: int, now: datetime | None = None
 ) -> dict[str, Any]:
-    now = now or datetime.now(UTC)
+    now = now or utc_now()
     w = window(days, now)
     sampled_until = min(now, w.until)
 

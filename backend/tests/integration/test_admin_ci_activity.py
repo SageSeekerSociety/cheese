@@ -31,7 +31,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
-from app.domain.ci_activity import board as ci_board
 from app.domain.ci_activity.models import (
     CiJob,
     CiJobStep,
@@ -54,20 +53,9 @@ TODAY = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
 T0 = TODAY + timedelta(minutes=10)
 
 
-def _read_at(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
-    """The page reads its clock at ``moment``."""
-
-    class _Pinned(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return moment.astimezone(tz) if tz else moment.replace(tzinfo=None)
-
-    monkeypatch.setattr(ci_board, "datetime", _Pinned)
-
-
 @pytest.fixture(autouse=True)
-def _pinned_clock(monkeypatch: pytest.MonkeyPatch) -> None:
-    _read_at(monkeypatch, NOW)
+def _read_at_now(pinned_clock) -> None:
+    pinned_clock.move_to(NOW)
 
 
 @pytest.fixture
@@ -390,7 +378,7 @@ def test_a_run_that_passed_only_on_a_rerun_is_fail_then_pass(client, as_admin):
 
 
 def test_a_days_runs_leave_the_one_day_window_at_utc_midnight(
-    client, as_admin, monkeypatch
+    client, as_admin, pinned_clock
 ):
     seed_user(client, ADMIN)
     late = _run(created=TODAY + timedelta(hours=23, minutes=50), attempt=2)
@@ -403,9 +391,9 @@ def test_a_days_runs_leave_the_one_day_window_at_utc_midnight(
         ],
     )
 
-    _read_at(monkeypatch, TODAY + timedelta(hours=23, minutes=59))
+    pinned_clock.move_to(TODAY + timedelta(hours=23, minutes=59))
     before_midnight = _board(client)["headline"]["fail_then_pass"]
-    _read_at(monkeypatch, TODAY + timedelta(days=1, minutes=1))
+    pinned_clock.move_to(TODAY + timedelta(days=1, minutes=1))
     after_midnight = _board(client)["headline"]["fail_then_pass"]
     two_days = _board(client, days=2)["headline"]["fail_then_pass"]
 

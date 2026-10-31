@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +29,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.day_windows import utc_day_window
+from app.domain.day_windows import utc_day_window, utc_now
 from app.domain.delivery.ledger import MAX_ATTEMPTS
 from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow, HostedDeviceRow
@@ -74,8 +73,8 @@ class GapRepository:
         新发放到账或项目安静下来时立刻失效，所以 unlimited 与零燃烧都回 `None`
         （画破折号），0 和 Infinity 在这里都是谎言。
         """
-        since, until, _ = utc_day_window(days)
-        now = datetime.now(UTC)
+        now = utc_now()
+        since, until, _ = utc_day_window(days, now)
         grants = (
             (
                 await self._session.execute(

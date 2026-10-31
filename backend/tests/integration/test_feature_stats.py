@@ -21,12 +21,13 @@
 
 import asyncio
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.domain.day_windows import utc_now
 from app.domain.docs_site import visits
 from app.domain.docs_site.assistant import purge_old_questions
 from app.domain.docs_site.models import DocsQuestion, DocsVisit
@@ -50,8 +51,13 @@ def as_admin(monkeypatch: pytest.MonkeyPatch) -> str:
     return ADMIN
 
 
+# Rows are dated from `utc_now()`, the moment the routes read too, held still
+# for each test (`pinned_clock`): a run across UTC midnight cannot split them.
+pytestmark = pytest.mark.usefixtures("pinned_clock")
+
+
 def _today() -> datetime:
-    return datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _days_ago(days: int) -> datetime:

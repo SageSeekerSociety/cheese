@@ -17,6 +17,16 @@ from typing import Any
 from sqlalchemy import func
 
 
+def utc_now() -> datetime:
+    """此刻（UTC）：看板的窗口和网关的「今天」都从这里读「现在是哪一天」。
+
+    只有这一处读墙钟，测试把它钉住（`tests/support/clock.py`），按「今天」铺的
+    种子行和路由算出的窗口就是同一天；各读各的，两次读之间跨过 UTC 午夜，种子行
+    就整批落在窗口外。
+    """
+    return datetime.now(UTC)
+
+
 def utc_day_window(
     days: int, now: datetime | None = None
 ) -> tuple[datetime, datetime, list[date]]:
@@ -33,7 +43,7 @@ def utc_day_window(
     要把它传进来：窗口和同一次计算里别的「此刻」各读一次时钟，两次之间跨过 UTC 午夜
     时，窗口落在新的一天，而其余部分还在旧的一天。
     """
-    today = (now or datetime.now(UTC)).astimezone(UTC)
+    today = (now or utc_now()).astimezone(UTC)
     today = today.replace(hour=0, minute=0, second=0, microsecond=0)
     since = today - timedelta(days=days - 1)
     until = since + timedelta(days=days)
