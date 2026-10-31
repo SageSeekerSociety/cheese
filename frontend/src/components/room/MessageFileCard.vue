@@ -203,6 +203,19 @@ const badgeHint = computed(() =>
       @sheets="sheetNames = $event"
     />
 
+    <!-- 会话内展开是文档类自己的一样东西，摆在正文下面，不占底下那一排：每种文件卡底下都只有
+         「在右侧打开」「下载」两颗，读者换一种文件不用重新找按钮在哪。 -->
+    <button
+      v-if="family === 'doc' && pdf.count.value"
+      type="button"
+      class="fcard__expand"
+      :aria-expanded="expanded"
+      @click="toggleExpand"
+    >
+      <v-icon size="14">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+      {{ expanded ? t('work.room.fileCard.collapse') : t('work.room.fileCard.expand') }}
+    </button>
+
     <div v-if="expanded" class="fcard__inline" data-testid="file-card-inline">
       <span
         v-for="n in inlineCount"
@@ -218,15 +231,6 @@ const badgeHint = computed(() =>
     <div class="fcard__actions">
       <BaseButton kind="secondary" size="sm" prepend-icon="mdi-dock-right" @click="emit('open')">
         {{ t('work.room.message.openInPanel') }}
-      </BaseButton>
-      <BaseButton
-        v-if="family === 'doc' && pdf.count.value"
-        size="sm"
-        :prepend-icon="expanded ? 'mdi-chevron-up' : 'mdi-text-box-outline'"
-        :aria-expanded="expanded"
-        @click="toggleExpand"
-      >
-        {{ expanded ? t('work.room.fileCard.collapse') : t('work.room.fileCard.expand') }}
       </BaseButton>
       <BaseButton
         v-if="downloadable"
@@ -407,6 +411,23 @@ const badgeHint = computed(() =>
   background: none;
   border: 0;
   cursor: pointer;
+}
+.fcard__expand {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 2px;
+  margin: 0 12px 8px;
+  padding: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.fcard__expand:hover {
+  color: var(--ink);
 }
 .fcard__actions {
   display: flex;

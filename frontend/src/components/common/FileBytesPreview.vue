@@ -4,7 +4,9 @@
 //
 // 字节从哪来由调用方给（`read`）：资料库的一份、交付的某一版，取法不一样，摆法一样。
 // Office 文档浏览器画不了，`read(true)` 要的是服务端转好的 PDF。
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, provide, ref, watch } from 'vue'
+
+import { PREVIEW_MARKABLE } from '@/composables/panelPreview/previewMode'
 
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
@@ -27,6 +29,9 @@ import {
   SLIDE_SUFFIXES,
   suffixOf,
 } from '@/lib/fileKind'
+
+// 只读的一份：这里没有对话可交、没有评论可挂，「标一处」和图上标注都不摆。
+provide(PREVIEW_MARKABLE, false)
 
 const props = withDefaults(
   defineProps<{

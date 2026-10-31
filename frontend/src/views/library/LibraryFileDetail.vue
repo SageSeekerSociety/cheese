@@ -35,6 +35,10 @@ const props = defineProps<{
 const emit = defineEmits<{ download: []; replace: []; close: [] }>()
 
 const tooLarge = computed(() => tooLargeToPreview(props.file.bytes))
+/** 「评论」那一行开着没有。资料库里的原件挂不了评论、也标不了一处（这一栏没有对话可交），
+ *  点开说清楚评论在哪：从某个任务存进来的，在那个任务里；别的要先放进一个任务。 */
+const commentsOpen = ref(false)
+const fromRoom = computed(() => (props.file.room && typeof props.shelf === 'string' ? props.file.room : null))
 
 // 桌面上这一栏可以往左拖宽，记在这台浏览器上（项目和空间的资料库共用这一份）。
 const root = ref<HTMLElement | null>(null)
@@ -84,10 +88,28 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
         >
           {{ t('work.library.replace') }}
         </BaseButton>
+        <BaseButton
+          size="sm"
+          prepend-icon="mdi-comment-text-outline"
+          :aria-expanded="commentsOpen"
+          data-testid="library-comments"
+          @click="commentsOpen = !commentsOpen"
+        >
+          {{ t('work.library.comments') }}
+        </BaseButton>
         <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="emit('close')">
           {{ t('work.library.close') }}
         </BaseButton>
       </div>
+      <p v-if="commentsOpen" class="t-meta c-muted library-detail__comments" role="note">
+        <template v-if="fromRoom && typeof props.shelf === 'string'">
+          {{ t('work.library.commentsInRoom') }}
+          <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: fromRoom.id } }">{{
+            t('work.library.commentsGo', { title: topicTitle(fromRoom) })
+          }}</NavLink>
+        </template>
+        <template v-else>{{ t('work.library.commentsNone') }}</template>
+      </p>
     </header>
     <div class="library-detail__preview">
       <!-- The download is the one already on the page: the header's on desktop, the bottom bar's on a phone. -->
@@ -108,6 +130,9 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
 </template>
 
 <style scoped>
+.library-detail__comments {
+  margin: 8px 0 0;
+}
 .library-detail {
   position: relative;
   display: flex;
