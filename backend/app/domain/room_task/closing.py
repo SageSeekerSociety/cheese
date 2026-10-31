@@ -58,6 +58,10 @@ from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task import heard
 from app.domain.room_task.checkouts import after_close
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.room_task.services import said_title
@@ -407,7 +411,10 @@ async def close_after_summary(
     or asked for in it (`unfinished`, module docstring). Returns the task it
     closed; the pages showing it hear from `room_task.live`. ``machines`` is
     `close_task`'s."""
-    task = await session.get(Task, task_id, with_for_update=True)
+    # Under the task lock order (`lock_order`): a message being sent in the
+    # task holds its conversation's numbering until it commits, so it is seen
+    # waiting below rather than stopped by the close.
+    task = await lock_task_for_change(session, task_id)
     if task is None or task.closing_since is None:
         return None
     if await unfinished(session, task.id):
@@ -435,18 +442,25 @@ async def close_overdue(
     something else is being done or asked for in it — and, past
     `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
     now = datetime.now(UTC)
-    overdue = list(
-        await session.scalars(
-            select(Task.id).where(
+    overdue = (
+        await session.execute(
+            select(Task.id, Task.room_id).where(
                 Task.closing_since.is_not(None),
                 Task.closing_since < now - CLOSE_AT_THE_LATEST,
             )
         )
-    )
+    ).all()
     closed = []
-    for task_id in overdue:
-        task = await session.get(Task, task_id, with_for_update=True)
-        if task is None or task.closing_since is None:
+    # Every one of them at once, with the rooms told what a close left undone
+    # (`review.room_notices.tell_room_undelivered`), before any is looked at
+    # (`lock_order`); as in `close_after_summary`, a message being sent in one
+    # is seen, not stopped.
+    for task in await lock_tasks_for_change(
+        session,
+        [task_id for task_id, _room in overdue],
+        also=[room_id for _task, room_id in overdue],
+    ):
+        if task.closing_since is None:
             continue
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:

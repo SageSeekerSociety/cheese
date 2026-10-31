@@ -38,6 +38,7 @@ async def _run_persist_human_message(
 
     place = SimpleNamespace(
         room=SimpleNamespace(project_id=project_id),
+        task=None,
         room_id=topic_id,
         conversation_id=topic_id,
     )

@@ -18,6 +18,7 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task import progress
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -165,7 +166,9 @@ class TaskService:
                     Task.branch_name.is_not(None),
                     Task.pr_number.is_(None),
                 )
-                .with_for_update(skip_locked=True)
+                # FOR NO KEY UPDATE, after its numbering: the task lock order
+                # (`lock_order`).
+                .with_for_update(skip_locked=True, key_share=True)
             )
         ).first()
         return task
@@ -419,12 +422,7 @@ class TaskService:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
 
-        locked = await self._session.scalar(
-            select(Task)
-            .where(Task.id == task.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+        locked = await lock_task_for_change(self._session, task.id)
         assert locked is not None
         if locked.document_id is None:
             doc = await Documents(self._session).create(project_id=locked.project_id)

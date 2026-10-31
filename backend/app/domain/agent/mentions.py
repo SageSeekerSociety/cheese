@@ -139,6 +139,7 @@ async def person_mentions(
     *,
     dm: bool,
     members: Sequence[Member] | None = None,
+    seating: Sequence[str] = (),
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -155,12 +156,17 @@ async def person_mentions(
     person's words through here, so an edit stores what sending stores.
 
     ``members`` is the project's `roster` when the caller already read it
-    (sending hands over the request's read); without it the roster is read."""
+    (sending hands over the request's read); without it the roster is read.
+
+    ``seating`` are seats the message would seat before it is read
+    (`own_calls.named_own_seats`): a preview reads the message as if they
+    already sat here, which sending makes true before it reads."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
         else []
     )
+    agent_handles += [s for s in seating if s not in agent_handles]
     # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
     # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
     # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。

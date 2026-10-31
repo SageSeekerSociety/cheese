@@ -61,6 +61,25 @@ DEFAULT_QUESTION_LIFETIME = timedelta(hours=72)
 MAX_QUESTION_LIFETIME_HOURS = 24 * 30
 
 
+async def owner_chat(session, project_id, seat: str):
+    """The private chat ``seat``'s owner holds with it, opened if it is not
+    yet, and the owner's handle; None when the seat is nobody's own agent or
+    its owner is gone. Opening one writes no line in it."""
+    owned = await owned_by_seat(session, project_id, seat)
+    owner = await owner_of(session, owned.instance_id) if owned else None
+    if owned is None or owner is None:
+        return None
+    instance = await session.get(AgentInstance, owned.instance_id)
+    assert instance is not None
+    private = await TopicService(session).get_or_create_private(
+        project_id=project_id,
+        user_handle=owner[0],
+        agent_handle=instance.handle,
+        named_teammate=named_teammate,
+    )
+    return private, owner[0]
+
+
 async def ask(session, *, place, seat, body) -> list:
     """Post ``body``'s questions under ``seat`` and notify whoever they ask.
 
@@ -77,20 +96,12 @@ async def ask(session, *, place, seat, body) -> list:
     """
     questions = parse_questions(body)
     if body.get("to_owner") is True:
-        owned = await owned_by_seat(session, place.project_id, seat)
-        owner = await owner_of(session, owned.instance_id) if owned else None
-        if owned is None or owner is None:
+        chat = await owner_chat(session, place.project_id, seat)
+        if chat is None:
             raise UnprocessableEntityError(say("ownAgentHasNoOwner"))
-        instance = await session.get(AgentInstance, owned.instance_id)
-        assert instance is not None
-        private = await TopicService(session).get_or_create_private(
-            project_id=place.project_id,
-            user_handle=owner[0],
-            agent_handle=instance.handle,
-            named_teammate=named_teammate,
-        )
+        private, owner = chat
         place = Place(room=private)
-        body = {**body, "to": [owner[0]]}
+        body = {**body, "to": [owner]}
     to = body.get("to")
     if to is None:
         starter = await who_started_the_open_turn(

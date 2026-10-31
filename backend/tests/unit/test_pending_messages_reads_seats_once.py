@@ -23,6 +23,7 @@ from sqlalchemy import event, select
 from app.domain.agent import pending_messages, queries
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task as TaskRow
@@ -143,6 +144,8 @@ async def _said(blocks, project_id, conversation_id, handle, index, where):
 
 async def _more(factory, project_id, thread_id, task_id, handle, *, per_conversation):
     async with factory() as session:
+        # Both conversations written into, named first (`conversation.numbering`).
+        await lock_conversations(session, [thread_id, task_id])
         blocks = BlockRepository(session)
         for index in range(per_conversation):
             await _said(blocks, project_id, thread_id, handle, index, "后补支线")

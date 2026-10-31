@@ -110,6 +110,9 @@ _PG_BASE = os.environ.get(
     "TEST_PG_BASE", "postgresql+asyncpg://postgres:postgres@localhost:5433"
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
+# A writer that reaches a second conversation's numbering late fails here
+# rather than only logging (`conversation.numbering`).
+settings.strict_numbering_order = True
 # Redis needs the same per-worker split as Postgres. Its keys are scoped by
 # user id (the #357 attempt budgets and lockouts), and user ids
 # restart from 1 in every worker's own database — so on ONE shared Redis, gw0's

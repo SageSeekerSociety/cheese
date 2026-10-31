@@ -73,7 +73,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
-from app.domain.agent.own_calls import ask_owner_to_join
+from app.domain.agent.own_calls import ask_owner_to_join, owner_chats_to_ask
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
@@ -95,6 +95,7 @@ from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard
 from app.domain.room_task.closing import close_task
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.progress import RUN_HEADER, parse_run, set_progress
 from app.domain.room_task.schemas import ProgressIn, TaskOut
@@ -251,6 +252,9 @@ async def conclude_task(
     teammate acts on (`TaskService.takes_part`); reopening is wider.
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
+    # Before anything else is locked: the task lock order (`lock_order`); the
+    # task read above is read again under it.
+    await lock_task_for_change(db, task.id)
     tasks = TaskService(db)
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
@@ -394,6 +398,9 @@ async def reopen_task(
     teammate goes on from the project's latest code when it has landed
     something."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
+    # Before anything else is locked: the task lock order (`lock_order`); the
+    # task read above is read again under it.
+    await lock_task_for_change(db, task.id)
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionReopens"))
@@ -472,6 +479,19 @@ async def update_task(
     teammate, and brings collaborators in or lets them go. A collaborator may
     only take themself off the list."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
+    # Before anything else is locked: the task lock order (`lock_order`), with
+    # the private chat a newly given personal agent's owner is asked in; the
+    # task read above is read again under it.
+    given = (
+        (body.agent_handle or "").strip() or None
+        if "agent_handle" in body.model_fields_set
+        else None
+    )
+    await lock_task_for_change(
+        db,
+        task.id,
+        also=await owner_chats_to_ask(db, place.room, [given] if given else []),
+    )
     if not actor.authenticated:
         raise ForbiddenError(say("taskOwnerOnly"))
     TaskService.require_open(task)

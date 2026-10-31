@@ -91,6 +91,8 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             events=platform_line,
         )
         assert room.cleanup_due_at is None
+        # Unarchiving and archiving again are two requests: two transactions.
+        await session.commit()
         await service.archive(
             room_id,
             by="owner",

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 输入区：打字、@ 补全、贴/拖/挑文件、以及「交给芝士」。
 //
-// **叫不叫芝士，只由正文里有没有 @ 它决定**，这里没有一个自己存着状态的开关。
-// 开关能和正文说不一样的话（亮着、正文里却没有 @），那时候「这条到底算不算叫了
-// 它」谁也答不上来，而只有开关那条是通的。三个入口（手打 @、点按钮、⌘/Ctrl+
-// Enter）写的都是同一个 @，你看得见，也能自己删。
+// **叫不叫芝士，只由这条消息本身决定**，这里没有一个自己存着状态的开关。开关能和
+// 正文说不一样的话（亮着、正文里却没有 @），那时候「这条到底算不算叫了它」谁也答不
+// 上来。三个入口（手打 @、点按钮、⌘/Ctrl+Enter）写的都是同一个 @，你看得见，也能
+// 自己删。这条最后交给谁由后端定（@、回复、任务负责人那几条规矩），输入框顶上那一行
+// 和那颗头像画的都是后端对这份草稿的回答（`useAddressing`），不在这里另算一遍。
 //
 // 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
 // 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
@@ -16,6 +17,7 @@
 import type { RowRefs } from '@/composables/useChatComposer'
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { VoiceHeard } from '@/composables/useVoiceInput'
+import type { Addressing } from '../../api/messages'
 import type { ChatAttachment, Topic } from '../../cx_types'
 import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { QuotedContext } from '../../lib/quotedContext'
@@ -25,17 +27,14 @@ import { computed, inject, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { useAddressing } from '@/composables/useAddressing'
 import { useComposerText } from '@/composables/useComposerText'
 import { useComposerVoice } from '@/composables/useComposerVoice'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
-import {
-  expandComposerMentions,
-  mentionsAgent as containsAgentMention,
-  namesOnlyPeople,
-} from '../../lib/composerMentions'
+import { expandComposerMentions, mentionsAgent as containsAgentMention } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
 import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
@@ -45,6 +44,7 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
+import ComposerRecipient from './ComposerRecipient.vue'
 import ComposerSummon from './ComposerSummon.vue'
 import ComposerViewing from './ComposerViewing.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
@@ -93,13 +93,20 @@ const props = defineProps<{
   busyAgents?: string[]
   /** 我在这个频道里上一次交给的那位队友：头像平时画它，点一下就交给它。 */
   lastMate?: string | null
+  /** 这条发在哪段对话里（房间，或房间里的任务、支线）。不给就不问「交给谁」，那一行空着。 */
+  place?: string | null
+  /** 这条回复的那条消息的 id。 */
+  replyTo?: string | null
+  /** 这段对话自己的状态（任务开着还是关了）：变了，「交给谁」那一行重问一次。 */
+  placeState?: string | null
 }>()
 
 const checklistOpen = ref(false)
 
 const emit = defineEmits<{
   /** 发这一条。附件由房间补上——它才知道此刻待发条里有什么。 */
-  (e: 'send', message: { content: string; summon: boolean }): void
+  /** `expectsAgent`：发的人看到的是「交给」某位队友（送到时已经不交给了，后端退回来）。 */
+  (e: 'send', message: { content: string; summon: boolean; expectsAgent: boolean }): void
   (e: 'files', files: File[]): void
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
@@ -309,19 +316,29 @@ function mentionsAgent(expanded: string): boolean {
   return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
 }
 
-// 叫不叫它：@ 了它就叫；任务、私聊里不 @ 也叫，只有 @ 了人、没 @ 任何 AI 队友的那句
-// 是说给那几个人的，不叫（后端同一条规矩，见 `_names_only_people`）。
-function summons(expanded: string): boolean {
-  return (
-    mentionsAgent(expanded) || (props.alwaysSummon && !namesOnlyPeople(expanded, props.agentSeat, props.mentionPool))
-  )
-}
+// 这条草稿发出去交给谁：问后端（`useAddressing`）。问的就是发送时会发出去的那一份——展开
+// 成 <@handle> 之后的正文、回复对象、有没有正文——所以它说的就是发出去之后会发生的事。
+const { addressing, fresh: addressingFresh } = useAddressing({
+  ask: () => ({
+    place: props.place ?? null,
+    draft: {
+      content: expandMentions(draft.value),
+      reply_to: props.replyTo ?? undefined,
+      with_text: !!draft.value.trim() || !props.atts.length,
+    },
+  }),
+  version: () => props.placeState ?? null,
+})
 
-// 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
-// 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
-// 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
-// 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
-const summonOn = computed(() => summons(expandMentions(draft.value)))
+// 这条草稿现在交不交给队友。**读的是后端对这份草稿的回答**，不是一个单独存着的开关值，
+// 也不是浏览器照抄的一份规矩：@ 了它、回复它的消息、任务负责人在开着的任务里说话，
+// 都由后端那一处判定。刚改过草稿、回答还在路上的那一下，先看正文里有没有 @ 它——点头像、
+// ⌘/Ctrl+Enter 写进去的就是这一枚，按下去当场就要亮，不等一次来回。
+function goesToAgent(expanded: string): boolean {
+  if (addressingFresh.value) return !!addressing.value?.agent
+  return mentionsAgent(expanded) || !!addressing.value?.agent
+}
+const summonOn = computed(() => goesToAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
 // ⌘/Ctrl+Enter「发送并交给它」：和 AI 队友私聊时没有可交的人，这个组合键就是发送，
@@ -345,6 +362,9 @@ const mates = computed<Mate[]>(() => {
     if (m.agent && !list.some((x) => x.handle === m.handle)) list.push({ handle: m.handle, label: m.label })
   return list
 })
+function mateOf(agent: { handle: string; name: string }): Mate {
+  return mates.value.find((m) => m.handle === agent.handle) ?? { handle: agent.handle, label: agent.name }
+}
 // 正文里 @ 到的队友，按出现的顺序。
 const draftMates = computed<Mate[]>(() => {
   const out: Mate[] = []
@@ -371,13 +391,73 @@ const restingMate = computed<Mate | null>(
   () => mates.value.find((m) => m.handle === preferred.value) ?? mates.value[0] ?? null
 )
 // 名册还没到时头像照样画出来（按名字配色、灰着、点不动），这一行不会因为它晚到而跳一下。
-const shownMates = computed<Mate[]>(() =>
-  draftMates.value.length ? draftMates.value.slice(0, 2) : [restingMate.value ?? { handle: '', label: props.agentName }]
-)
+// 没 @ 谁、却交给了一位（回复了它、任务里不用 @）：画的是那一位。
+const shownMates = computed<Mate[]>(() => {
+  if (draftMates.value.length) return draftMates.value.slice(0, 2)
+  const agent = addressing.value?.agent
+  return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
+})
 // 任务负责人那里每句都交给队友：头像常亮，是规则不是开关。和 AI 队友私聊时没有这颗头像。
 const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
-const peopleOnly = computed(() => namesOnlyPeople(expandMentions(draft.value), props.agentSeat, props.mentionPool))
+const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
+// 「交给：」后面写的人名：@ 名单上的叫法，名单上没有就是 handle。
+function personName(handle: string): string {
+  return props.mentionPool.find((m) => m.handle === handle)?.label ?? handle
+}
+
+// ---- 打字的时候任务关了 ----
+//
+// 开着的任务里，负责人说的每句话都交给队友；任务一关，同一句话就只是讨论。打到一半的
+// 草稿不能就这样悄悄降成讨论发出去：那个人一直看着「交给」那一行在打字。所以记住这份
+// 草稿是在「任务交给队友」时写的（`heldFor`），任务关了之后第一次发，先就地问一句：
+// 「@ 它」还是「仅发布讨论」。草稿、回复对象、附件都原样留着。
+//
+// 记的是**这个人看着的那一行**：草稿非空的每一刻，那一行说「任务里交给队友」就记下。所以
+// 第一个字落下时那一行（空草稿问到的那一次）已经说了交给队友，就从这一刻算起——不等这份
+// 草稿自己的回答；一路打字、它第一次问到时任务已经关了，也照样先问。
+const heldFor = ref<Mate | null>(null)
+const askingRecipient = ref(false)
+watch([addressing, () => !!draft.value.trim()], ([now, typed]) => {
+  if (!typed) {
+    heldFor.value = null
+    askingRecipient.value = false
+    return
+  }
+  if (!now) return
+  if (now.reason === 'task' && now.agent) heldFor.value = mateOf(now.agent)
+  else if (now.task_status !== 'closed') heldFor.value = null
+})
+watch(
+  () => props.place,
+  () => {
+    heldFor.value = null
+    askingRecipient.value = false
+  }
+)
+/** 这一下发出去会不会把「交给队友」悄悄降成讨论。 */
+function wouldDowngrade(): boolean {
+  const now = addressing.value
+  return !!heldFor.value && !!now && !now.agent && now.task_status === 'closed'
+}
+function sendToHeldMate() {
+  const mate = heldFor.value
+  heldFor.value = null
+  askingRecipient.value = false
+  sendDraft({ summon: true, to: mate })
+}
+function postAsDiscussion() {
+  heldFor.value = null
+  askingRecipient.value = false
+  sendDraft()
+}
+/** 送到时后端说这条已经不交给队友了（`AddressingChanged`）：房间把草稿放回来之后叫这个，
+ *  就地问同一句。 */
+function askRecipient(now: Addressing | null) {
+  const shown = heldFor.value ?? (addressing.value?.agent ? mateOf(addressing.value.agent) : null)
+  heldFor.value = shown ?? restingMate.value
+  askingRecipient.value = !!heldFor.value && !now?.agent
+}
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -402,7 +482,7 @@ function withoutMention(text: string, mate: Mate): string {
 
 // 点一下头像：它不改任何隐藏状态，它只是替你打那个 @，写完你看得见、也能自己删掉。
 function toggleSummon() {
-  if (!summonOn.value) draft.value = withAgentMention(draft.value)
+  if (!draftMates.value.length) draft.value = withAgentMention(draft.value)
   else draft.value = draftMates.value.reduce(withoutMention, draft.value)
   void nextTick(() => composerInput.value?.focus?.())
 }
@@ -509,7 +589,7 @@ function onComposerKey(e: KeyboardEvent) {
 // `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
 // 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
 // 是一条谁也没 @ 的消息，芝士却动了。
-function sendDraft(opts?: { summon?: boolean }) {
+function sendDraft(opts?: { summon?: boolean; to?: Mate | null }) {
   if (props.attsUploading) return
   // 攒着待发批注时，这一下发的就是那一批：输入框里的字当作「总体说明」并进同一条消息，
   // 而不是先发一条空话再发那批（原型里发送键写的就是「发送（含 N 条批注）」）。
@@ -530,8 +610,22 @@ function sendDraft(opts?: { summon?: boolean }) {
     return
   }
   if (!draft.value.trim() && !props.atts.length) return
-  const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  emit('send', { content, summon: summons(content) })
+  if (!opts?.summon && wouldDowngrade()) {
+    askingRecipient.value = true
+    return
+  }
+  const content = expandMentions(
+    opts?.summon ? withAgentMention(draft.value, opts.to ?? restingMate.value) : draft.value
+  )
+  // 那一行此刻写着交给谁，发出去就是在说「我要交给它」：送到时不交给了，后端不发、退回来
+  // （`expects_agent`），由后端按发送那一刻的状态再判一次。带的是屏幕上那一行，不论它是
+  // 不是对这份草稿问到的——刚改了一个字就按发送，那人看着的仍是那一行。
+  const expectsAgent = !opts?.summon && !!addressing.value?.agent
+  emit('send', {
+    content,
+    summon: opts?.summon ? mentionsAgent(content) || summonOn.value : summonOn.value,
+    expectsAgent,
+  })
 }
 
 // ---- 语音输入（useComposerVoice）----
@@ -577,6 +671,12 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
+  /** 在正文前面 @ 上这个频道平时交给的那位（「回复并 @芝士」）。已经 @ 了队友就不动。 */
+  addAgentMention() {
+    if (summonReady.value) draft.value = withAgentMention(draft.value)
+    void nextTick(() => composerInput.value?.focus?.())
+  },
+  askRecipient,
 })
 </script>
 
@@ -649,6 +749,17 @@ defineExpose({
           <v-icon size="14">mdi-close</v-icon>
         </button>
       </div>
+      <div v-else-if="askingRecipient && heldFor" key="recipient" class="composer-strip" role="status">
+        <span class="composer-strip__text">
+          {{ t('work.room.composer.recipient.closedAsk', { name: heldFor.label }) }}
+        </span>
+        <BaseButton kind="ghost" size="sm" @click="sendToHeldMate">
+          {{ t('work.room.composer.recipient.closedAskAgent', { name: heldFor.label }) }}
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="postAsDiscussion">
+          {{ t('work.room.composer.recipient.closedAskPost') }}
+        </BaseButton>
+      </div>
       <div v-else-if="$slots.strip" key="outside" class="composer-strip composer-strip--slot">
         <slot name="strip" />
       </div>
@@ -660,6 +771,7 @@ defineExpose({
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
+      <ComposerRecipient :addressing="addressing" :name-of="personName" />
       <!-- 这条消息带着的东西：回复的那条在最前，然后是引用，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"

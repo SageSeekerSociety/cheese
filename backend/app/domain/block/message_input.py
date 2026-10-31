@@ -289,6 +289,12 @@ class ChatMessageIn(BaseModel):
     reply_to: uuid.UUID | None = None
     attachments: list[ChatAttachmentIn] = Field(default_factory=list)
     quoted_context: QuotedContextIn | None = None
+    # The sender was shown that this message goes to an AI teammate (the
+    # composer's preview). When it no longer would, nothing is stored and the
+    # send is refused with who it is for now (409 `AddressingChanged`). It
+    # never makes a message call anyone: who is called is read from the
+    # message itself (invariant I13).
+    expects_agent: bool = False
 
     @model_validator(mode="after")
     def quote_is_bounded_message_data(self):
@@ -302,3 +308,27 @@ class ChatMessageIn(BaseModel):
             ):
                 raise ValueError(say("quoteTooLong", limit=100000))
         return self
+
+
+class ChatAddressingIn(BaseModel):
+    """A draft whose recipient the composer shows before it is sent."""
+
+    content: str = Field(default="", max_length=100000)
+    reply_to: uuid.UUID | None = None
+    # False for a send of attachments alone: no @ or reply calls anyone by it.
+    with_text: bool = True
+
+
+class AddressedAgentOut(BaseModel):
+    handle: str
+    name: str
+
+
+class ChatAddressingOut(BaseModel):
+    """Who a draft would be for if sent now (`preview_addressing`)."""
+
+    agent: AddressedAgentOut | None
+    reason: Literal["mention", "reply", "task", "private"] | None
+    people: list[str]
+    place: Literal["channel", "task", "private"]
+    task_status: Literal["open", "closed"] | None

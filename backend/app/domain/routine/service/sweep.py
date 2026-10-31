@@ -80,10 +80,16 @@ async def publish_run_messages(
 
 async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
     began = now()
+    # Each kind of firing in a transaction of its own: each names every room
+    # it writes into first (`conversation.numbering`), and one transaction
+    # takes one such batch. Nothing ties a scheduled fire to an event fire.
     async with sessions() as session:
         scheduled = await _fire_schedules(session)
+        await session.commit()
+    async with sessions() as session:
         triggered = await _fire_events(session)
         await session.commit()
+    async with sessions() as session:
         started = [
             message
             for message in await session.scalars(

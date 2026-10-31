@@ -461,6 +461,9 @@ export interface ChatMessageBody {
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   quoted_context?: import('./lib/quotedContext').QuotedContext
+  // 发的人看到这条是「交给」AI 队友的。后端读到它此刻已经不交给任何一位时不发，回 409
+  // `AddressingChanged`，带着此刻的收件人。它不让任何一条消息叫醒谁（不变量 I13）。
+  expects_agent?: boolean
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----

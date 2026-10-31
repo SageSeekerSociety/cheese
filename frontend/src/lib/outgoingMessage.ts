@@ -8,6 +8,7 @@ export function outgoingMessageBody(item: Outgoing): ChatMessageBody {
     reply_to: item.replyTo,
     attachments: item.atts,
     quoted_context: item.quotedContext,
+    expects_agent: item.expectsAgent || undefined,
   }
   return body
 }

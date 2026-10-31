@@ -68,5 +68,6 @@
   "unarchiveWhileSessionStopping": "The channel's AI teammate is stopping and saving its record. You can unarchive once that's done",
   "threadRestoreNotYours": "Only whoever started this thread, or a channel admin, can restore it",
   "threadRestoreSignIn": "Sign in to restore this thread",
-  "threadNotFound": "Thread not found"
+  "threadNotFound": "Thread not found",
+  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent"
 }

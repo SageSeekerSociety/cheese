@@ -15,7 +15,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Uuid, any_, bindparam, func, select
+from sqlalchemy import Uuid, any_, bindparam, column, func, select, table
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -394,3 +394,32 @@ async def count_for_project(
         )
     )
     return int((await repo._session.scalar(stmt)) or 0)
+
+
+async def task_conversations_in(
+    repo: pkg.TopicRepository, room_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Every task in these rooms, open or closed, and the 支线 each was made
+    from: the conversations archiving them may say something in (a task's
+    change says how it went where it came from too). 走裸表，理由同
+    `has_open_tasks`。"""
+    if not room_ids:
+        return []
+    tasks = table(
+        "tasks",
+        column("id", Uuid),
+        column("room_id", Uuid),
+        column("upgraded_from_block_id", Uuid),
+    )
+    threads = table("threads", column("id", Uuid), column("root_block_id", Uuid))
+    rows = (
+        await repo._session.execute(
+            select(tasks.c.id, threads.c.id)
+            .select_from(tasks)
+            .outerjoin(
+                threads, threads.c.root_block_id == tasks.c.upgraded_from_block_id
+            )
+            .where(tasks.c.room_id.in_(room_ids))
+        )
+    ).all()
+    return [one for row in rows for one in row if one is not None]

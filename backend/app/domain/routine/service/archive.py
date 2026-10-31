@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.event_author import AuthorType
 from app.domain.notice_meta import (
     EVENT_ROUTINE_STOPPED,
@@ -71,6 +72,9 @@ async def announce_archived_rooms(svc: pkg.RoutineService) -> int:
         )
     )
 
+    # Every room it may speak in, at once, before the first line
+    # (`conversation.numbering`).
+    await lock_conversations(svc._session, [room.id for room in rooms])
     stopped = 0
     for room in rooms:
         rules = list(

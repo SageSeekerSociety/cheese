@@ -3613,7 +3613,9 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
             await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
             try:
                 await other.scalar(
-                    select(Task.id).where(Task.id == task_id).with_for_update()
+                    select(Task.id)
+                    .where(Task.id == task_id)
+                    .with_for_update(key_share=True)
                 )
                 locked_elsewhere.append(False)
             except Exception:  # the lock wait is the observation
@@ -3650,7 +3652,9 @@ def test_github_is_asked_about_its_quota_without_the_task_locked(
             await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
             try:
                 await other.scalar(
-                    select(Task.id).where(Task.id == task_id).with_for_update()
+                    select(Task.id)
+                    .where(Task.id == task_id)
+                    .with_for_update(key_share=True)
                 )
                 locked_while_asked.append(False)
             except Exception:  # the lock wait is the observation
