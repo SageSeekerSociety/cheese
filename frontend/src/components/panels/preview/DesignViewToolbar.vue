@@ -5,9 +5,11 @@
 // 原图不动；下行的东西会把一张新图交给房间里。摆成一行会让人分不清哪颗按钮会改动文件。
 import type { ImageAdjust } from '@/lib/imageEdit'
 
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 
 import { t } from '@/i18n'
+import { usePreviewNarrow } from '@/lib/previewNarrow'
 
 const props = defineProps<{
   scale: number
@@ -34,14 +36,37 @@ const emit = defineEmits<{
 /** 调过色时按钮一直亮着，摊开着也亮——「改过」和「开着」是两件事，亮的是前面那件。 */
 const toneLit = computed(() => props.toneOpen || props.adjust.brightness !== 100 || props.adjust.saturation !== 100)
 
+// 窄面板（手机、拖窄的右栏）里旋转、翻转这几颗只留图标，名字放进悬停提示和读屏名。
+// 还放不下的部分照旧横滚；滚得动的那一头淡出，读者看得出后面还有按钮。
+const root = ref<HTMLElement | null>(null)
+const scroller = ref<HTMLElement | null>(null)
+const { narrow } = usePreviewNarrow(root)
+const moreStart = ref(false)
+const moreEnd = ref(false)
+function measureScroll() {
+  const el = scroller.value
+  if (!el) return
+  moreStart.value = el.scrollLeft > 1
+  moreEnd.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+useResizeObserver(scroller, measureScroll)
+// 收成图标、放回文字会让里面变宽变窄，而滚动那一段自己的宽跟着父级走、不变：补量一次。
+watch(narrow, () => void nextTick(measureScroll))
+onMounted(measureScroll)
+
 const zoomModes = computed(() =>
   props.fitsHeight ? (['fitv', 'fitw', 'actual'] as const) : (['fitw', 'actual'] as const)
 )
 </script>
 
 <template>
-  <div class="design-view-tools" role="group" :aria-label="t('design.viewTools')">
-    <div class="design-view-tools__scroll">
+  <div ref="root" class="design-view-tools" role="group" :aria-label="t('design.viewTools')">
+    <div
+      ref="scroller"
+      class="design-view-tools__scroll"
+      :class="{ 'is-more-start': moreStart, 'is-more-end': moreEnd }"
+      @scroll.passive="measureScroll"
+    >
       <button
         type="button"
         class="dt-btn"
@@ -73,47 +98,57 @@ const zoomModes = computed(() =>
       </button>
       <output class="dt-pct" :aria-label="t('design.scale')">{{ Math.round(scale * 100) }}%</output>
       <span class="dt-sep" />
-      <button type="button" class="dt-btn dt-btn--text" :title="t('design.rotateHint')" @click="emit('rotate')">
-        <i class="mdi mdi-rotate-right" aria-hidden="true" />{{ t('design.rotate') }}
+      <button
+        type="button"
+        class="dt-btn dt-btn--text"
+        :aria-label="narrow ? t('design.rotate') : undefined"
+        :title="t('design.rotateHint')"
+        @click="emit('rotate')"
+      >
+        <i class="mdi mdi-rotate-right" aria-hidden="true" /><span v-if="!narrow">{{ t('design.rotate') }}</span>
       </button>
       <button
         type="button"
         class="dt-btn dt-btn--text"
+        :aria-label="narrow ? t('design.flip') : undefined"
         :class="{ 'is-on': adjust.flip }"
         :aria-pressed="adjust.flip"
         :title="t('design.flipHint')"
         @click="emit('flip')"
       >
-        <i class="mdi mdi-flip-horizontal" aria-hidden="true" />{{ t('design.flip') }}
+        <i class="mdi mdi-flip-horizontal" aria-hidden="true" /><span v-if="!narrow">{{ t('design.flip') }}</span>
       </button>
       <button
         type="button"
         class="dt-btn dt-btn--text"
+        :aria-label="narrow ? t('design.crop') : undefined"
         :class="{ 'is-on': cropping }"
         :aria-pressed="cropping"
         :title="t('design.cropHint')"
         @click="emit('crop')"
       >
-        <i class="mdi mdi-crop" aria-hidden="true" />{{ t('design.crop') }}
+        <i class="mdi mdi-crop" aria-hidden="true" /><span v-if="!narrow">{{ t('design.crop') }}</span>
       </button>
       <button
         type="button"
         class="dt-btn dt-btn--text"
+        :aria-label="narrow ? t('design.toneLabel') : undefined"
         :class="{ 'is-on': toneLit }"
         :aria-expanded="toneOpen"
         :title="t('design.toneHint')"
         @click="emit('tone', !toneOpen)"
       >
-        <i class="mdi mdi-tune-variant" aria-hidden="true" />{{ t('design.toneLabel') }}
+        <i class="mdi mdi-tune-variant" aria-hidden="true" /><span v-if="!narrow">{{ t('design.toneLabel') }}</span>
       </button>
       <button
         type="button"
         class="dt-btn dt-btn--text"
+        :aria-label="narrow ? t('design.restore') : undefined"
         :disabled="!edited"
         :title="t('design.restoreHint')"
         @click="emit('restore')"
       >
-        <i class="mdi mdi-backup-restore" aria-hidden="true" />{{ t('design.restore') }}
+        <i class="mdi mdi-backup-restore" aria-hidden="true" /><span v-if="!narrow">{{ t('design.restore') }}</span>
       </button>
     </div>
     <div class="design-view-tools__actions"><slot name="actions" /></div>
@@ -145,6 +180,15 @@ const zoomModes = computed(() =>
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
+}
+.design-view-tools__scroll.is-more-end {
+  mask-image: linear-gradient(to right, var(--text) calc(100% - 28px), transparent);
+}
+.design-view-tools__scroll.is-more-start {
+  mask-image: linear-gradient(to right, transparent, var(--text) 28px);
+}
+.design-view-tools__scroll.is-more-start.is-more-end {
+  mask-image: linear-gradient(to right, transparent, var(--text) 28px, var(--text) calc(100% - 28px), transparent);
 }
 .design-view-tools__scroll::-webkit-scrollbar {
   display: none;

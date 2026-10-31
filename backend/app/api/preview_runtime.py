@@ -240,6 +240,47 @@ RUNTIME_SCRIPT = r"""(() => {
     return String(node.innerText || node.textContent || '')
       .replace(/\s+/g, ' ').trim().slice(0, 500);
   }
+  // 给人看的名字：这一处自己是标题就用它；里面有标题用第一个；有无障碍名字用它；
+  // 都没有就往前找最近的一个标题（「在『二、时间安排』这一节里」）。找不到答空串，
+  // 宿主按标签名说「一处段落 / 区块」。选择器是给芝士回到这一处的凭据，不给人读。
+  const HEADING = 'h1,h2,h3,h4,h5,h6';
+  function shortText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+  function headingBefore(node) {
+    let current = node;
+    let guard = 0;
+    while (current && current.nodeType === 1 && guard < 400) {
+      let sibling = current.previousElementSibling;
+      while (sibling && guard < 400) {
+        guard++;
+        if (sibling.matches && sibling.matches(HEADING)) return sibling;
+        const inner = sibling.querySelectorAll ? sibling.querySelectorAll(HEADING) : [];
+        if (inner.length) return inner[inner.length - 1];
+        sibling = sibling.previousElementSibling;
+      }
+      current = current.parentElement;
+      guard++;
+    }
+    return null;
+  }
+  function labelOf(node) {
+    if (!node || node.nodeType !== 1) return '';
+    try {
+      if (node.matches && node.matches(HEADING)) return shortText(node.textContent);
+      const own = node.getAttribute && (node.getAttribute('aria-label') ||
+        node.getAttribute('alt') || node.getAttribute('title'));
+      if (own) return shortText(own);
+      const inner = node.querySelector && node.querySelector(HEADING);
+      if (inner) return shortText(inner.textContent);
+      // 点在标题里面（`<h2><a>…</a></h2>`）：包着它的那个标题就是名字，再往前找会把
+      // 上一节的标题安到它头上。
+      const enclosing = node.closest && node.closest(HEADING);
+      if (enclosing) return shortText(enclosing.textContent);
+      const before = headingBefore(node);
+      return before ? shortText(before.textContent) : '';
+    } catch (e) { return ''; }
+  }
   function postPick(payload) {
     if (!hello) return;
     window.parent.postMessage({
@@ -267,6 +308,7 @@ RUNTIME_SCRIPT = r"""(() => {
       selection: false,
       selector: buildSelector(node) || 'html',
       tag: node.tagName ? node.tagName.toLowerCase() : '',
+      label: labelOf(node),
       text: visibleText(node),
       prefix: '', suffix: '',
       rect: boxOf(node),
@@ -301,6 +343,7 @@ RUNTIME_SCRIPT = r"""(() => {
       selection: true,
       selector: node ? (buildSelector(node) || 'html') : 'html',
       tag: node && node.tagName ? node.tagName.toLowerCase() : '',
+      label: labelOf(node),
       text: text,
       prefix: prefix, suffix: suffix,
       rect: rect

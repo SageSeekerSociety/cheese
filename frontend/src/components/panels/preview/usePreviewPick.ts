@@ -4,8 +4,10 @@ import type { WebRect, WebViewport } from '@/lib/quotedContext'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { firstCodePoints } from '@/lib/codePoints'
 import { isWebPage } from '@/lib/fileKind'
 import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
+import { webPickLabel } from '@/lib/webPickLabel'
 
 /** 网页预览里的「圈选」开关。
  *
@@ -39,7 +41,9 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allo
     // A third party's View has no cheese runtime injected, so there is no pick
     // bridge to switch on — the toggle would do nothing.
     if (current.mime === MCP_APP_MIME) return null
-    return isWebPage(current.label) ? 'runtime' : null
+    if (!isWebPage(current.label)) return null
+    // SVG 发出去是图，不是 HTML，内容域不往里装桥：帧里没人接开关。和应用一样盖遮罩框一块。
+    return /\.svg$/i.test(current.label) ? 'region' : 'runtime'
   })
 
   function set(value: boolean) {
@@ -76,7 +80,9 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allo
   /** 帧的桥报回来的一处。帧那边报完已经自己关掉了，宿主这一侧的开关也收回来。 */
   function fromFrame(pick: FramePick) {
     set(false)
-    open(pick.selector, pick.text || (pick.tag ? `<${pick.tag}>` : ''), pick.selector)
+    // 卡头给人读的名字，引文和别的类型一样只留开头一段；选择器留在引用里交给芝士。
+    const label = webPickLabel(pick.label, pick.tag)
+    open(label, firstCodePoints(pick.text, 200), label)
     quote.web(pick)
   }
 
