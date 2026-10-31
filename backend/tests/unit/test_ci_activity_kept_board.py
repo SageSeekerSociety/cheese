@@ -1,5 +1,6 @@
-"""A worker's kept CI board: opens that arrive while it is being built wait for
-that one build instead of each starting their own."""
+"""A worker's kept CI board: requests that arrive while it is being built wait
+for that one build instead of each starting their own, and when a build fails
+or is cancelled, one build replaces it, never two at once."""
 
 import asyncio
 
@@ -51,3 +52,68 @@ async def test_a_failed_build_is_not_kept_and_the_next_open_builds_again():
         await board.kept_board("o/r", 7, build)
 
     assert await board.kept_board("o/r", 7, build) == {"built": 2}
+
+
+class _Builds:
+    """Builds of one board, each held until the test lets it finish: how many
+    ran, and the most that ran at once."""
+
+    def __init__(self) -> None:
+        self.started = 0
+        self.running = 0
+        self.most_at_once = 0
+        self.release = [asyncio.Event() for _ in range(3)]
+
+    async def build(self) -> dict:
+        n = self.started
+        self.started += 1
+        self.running += 1
+        self.most_at_once = max(self.most_at_once, self.running)
+        try:
+            await self.release[n].wait()
+            if n == 0:
+                raise RuntimeError("database went away")
+            return {"built": n}
+        finally:
+            self.running -= 1
+
+
+async def _settle() -> None:
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def _replaced(end_first) -> None:
+    builds = _Builds()
+    first = asyncio.ensure_future(board.kept_board("o/r", 7, builds.build))
+    await _settle()
+    second = asyncio.ensure_future(board.kept_board("o/r", 7, builds.build))
+    await _settle()
+
+    await end_first(first, builds)
+    await _settle()
+    third = asyncio.ensure_future(board.kept_board("o/r", 7, builds.build))
+    await _settle()
+    for event in builds.release:
+        event.set()
+    results = await asyncio.gather(first, second, third, return_exceptions=True)
+
+    assert builds.most_at_once == 1
+    assert results[1:] == [{"built": 1}, {"built": 1}]
+    assert await board.kept_board("o/r", 7, builds.build) == {"built": 1}
+
+
+@pytest.mark.anyio
+async def test_a_failed_build_is_replaced_by_one_build_not_two():
+    async def fail(first, builds):
+        builds.release[0].set()
+
+    await _replaced(fail)
+
+
+@pytest.mark.anyio
+async def test_a_cancelled_build_is_replaced_by_one_build_not_two():
+    async def cancel(first, builds):
+        first.cancel()
+
+    await _replaced(cancel)

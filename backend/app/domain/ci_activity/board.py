@@ -357,22 +357,30 @@ def _minute_samples(starts: list[datetime], ends: list[datetime], w: Window, unt
 #: The board says when it was built (``generated_at``), and the page shows it.
 BOARD_TTL_S = 60
 _boards: TTLCache = TTLCache(maxsize=32, ttl=BOARD_TTL_S)
-#: The build under way for each board, so a burst of opens after a board ages
-#: out waits for one build instead of starting one each.
-_building: dict[tuple[str, int, date], asyncio.Lock] = {}
+#: One lock per repository and window, held while that board is built, so
+#: builds of one board never overlap: a burst of requests after it ages out
+#: waits for one build, and if that build fails or is cancelled the next waiter
+#: builds in its place, alone. Never removed: there are at most 30 windows.
+_building: dict[tuple[str, int], asyncio.Lock] = {}
 
 
 async def kept_board(
     repo: str, days: int, build: Callable[[], Awaitable[dict[str, Any]]]
 ) -> dict[str, Any]:
     """The board for ``days``, as built by ``build`` at most ``BOARD_TTL_S`` ago.
-    Opens that find no board wait for the one build already running."""
+    Requests that find no board wait for the one build already running, each
+    with its own session should that build not finish."""
     # The window is whole UTC days, so a board built before midnight is not
     # the board after it, however recently it was built.
     key = (repo, days, utc_now().date())
     board: dict[str, Any] | None = _boards.get(key)
     if board is not None:
         return board
+    async with _building.setdefault((repo, days), asyncio.Lock()):
+        board = _boards.get(key)
+        if board is None:
+            board = _boards[key] = await build()
+    return board
     lock = _building.setdefault(key, asyncio.Lock())
     async with lock:
         board = _boards.get(key)

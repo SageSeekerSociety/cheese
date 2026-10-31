@@ -81,6 +81,7 @@ def kept_boards_clock(monkeypatch: pytest.MonkeyPatch) -> _Stopwatch:
         "_boards",
         TTLCache(maxsize=32, ttl=board_module.BOARD_TTL_S, timer=clock),
     )
+    monkeypatch.setattr(board_module, "_building", {})
     return clock
 
 
