@@ -136,6 +136,11 @@ async def main():
     # it holds the task row while it opens the PR, and this call then skips the
     # task. So what is checked is that the PR exists, not who opened it; the
     # blocking lock waits out a sweep still holding the row.
+    #
+    # The lock is `lock_task_for_change`, the only way to take a task's row
+    # exclusively (room_task/lock_order holds the guard that refuses a bare FOR
+    # UPDATE): it takes the task conversation's numbering first, as every other
+    # change to a task does.
     for task in request["tasks"]:
         task_id = uuid.UUID(task["id"])
         async with async_session_factory() as session:

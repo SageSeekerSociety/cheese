@@ -114,6 +114,9 @@ def test_adding_and_removing_the_at_changes_who_it_is_for(client, stub_hooks):
 
     assert named["agent"]["handle"] == seat
     assert named["agent"]["name"]
+    # 名字从哪来一起答：还是出生时那个名字（`default`）时，屏幕要按读的人的语言说它。
+    # 名册那一行带着同一个字段，输入框这一行以前没带，英文界面就在这里冒出「芝士」。
+    assert named["agent"]["name_source"] == "default"
     assert named["reason"] == "mention"
     assert unnamed["agent"] is None
 

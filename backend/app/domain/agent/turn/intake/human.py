@@ -137,8 +137,13 @@ async def _read_human(
 class Addressing:
     """Who a person's message would be for, read the way sending reads it.
 
-    ``agent`` is the AI teammate it starts a turn for (its seat and name), or
-    None when it starts none. ``reason`` says which rule called it:
+    ``agent`` is the AI teammate it starts a turn for (its seat, its name as
+    stored, and where that name came from), or None when it starts none.
+    ``name_source`` is the teammate's, the same field the roster carries: a
+    teammate still wearing the name it was born with is shown in each reader's
+    language (`teammateName`), so the composer needs it to do the same. The
+    preview does not translate the name itself — it answers what the backend
+    knows, and the screen says it. ``reason`` says which rule called it:
     ``mention`` (it @-s the teammate), ``reply`` (it replies to the teammate's
     message), ``task`` (its owner or a collaborator speaks in an open task),
     ``private`` (a private chat with the teammate). ``people`` are the persons it
@@ -215,6 +220,7 @@ async def preview_addressing(
         agent = {
             "handle": recipient_seat(recipient),
             "name": instance.display_name,
+            "name_source": str(instance.name_source),
         }
     people = [
         h

@@ -18,7 +18,8 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const CHEESE = { handle: 'cheese-topica', label: '芝士' }
+// 还是出生时那个名字（`name_source: 'default'`）：屏幕按读的人的语言叫它。
+const CHEESE = { handle: 'cheese-topica', label: '芝士', nameSource: 'default' }
 const AGENT_MESSAGE = 'block-from-cheese'
 
 const backend = vi.hoisted(() => ({
@@ -44,7 +45,7 @@ vi.mock('../../api/messages', async () => {
               ? 'task'
               : null
       return {
-        agent: reason ? { handle: CHEESE.handle, name: CHEESE.label } : null,
+        agent: reason ? { handle: CHEESE.handle, name: CHEESE.label, name_source: CHEESE.nameSource } : null,
         reason,
         people,
         place: backend.task ? 'task' : backend.privateChat ? 'private' : 'channel',
@@ -144,6 +145,21 @@ describe('发之前看得见这条交给谁', () => {
     await fillComposer(box(), '好的')
     await settle()
     expect(line()).toBe('交给：芝士')
+  })
+
+  // 后端存的是队友出生时的名字（「芝士」，队友自己读的是它），界面按读的人的语言说。
+  // 这一行以前直接画后端那份，英文界面就在输入框顶上冒出中文。
+  it('英文界面：还是默认名字的队友按读的人的语言叫', async () => {
+    setLocale('en')
+    try {
+      const { box, line } = mount({ replyTo: AGENT_MESSAGE })
+      await fillComposer(box(), '好的')
+      await settle()
+      expect(line()).toBe('To:Cheese')
+      expect(line()).not.toContain('芝士')
+    } finally {
+      setLocale('zh-CN')
+    }
   })
 
   it('任务负责人在开着的任务里：交给队友；只 @ 了人时写那个人', async () => {
