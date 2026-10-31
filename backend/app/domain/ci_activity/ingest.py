@@ -21,6 +21,7 @@ sweep, including a deferred one, records its reason and actual reader counts.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -31,7 +32,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.ci_activity.github import CiGitHubError, GitHubCi, Listed
+from app.domain.ci_activity.github import (
+    RESULT_CAP,
+    RUNS_PAGE,
+    CiGitHubError,
+    GitHubCi,
+    Listed,
+)
 from app.domain.ci_activity.models import CiActivitySweep
 from app.domain.ci_activity.store import CiActivityStore, sweeping
 from app.domain.project.forge import github_read_token_for_repo
@@ -51,7 +58,8 @@ MERGED_PRS_OVERLAP = timedelta(minutes=10)
 #: pooled connections. Sized from dev's recorded sweeps, 2026-10-18 to 10-31:
 #: p99 142 s over 3083 sweeps, 247 s over the 79 that finished without an
 #: error, longest 371 s (the first, a 30-day backfill). A backlog longer than
-#: this is worked off over several sweeps.
+#: this is worked off over several sweeps: a bulk listing commits one page at a
+#: time (`read_runs`), so every sweep finishes at least one unit.
 SWEEP_DEADLINE = timedelta(minutes=10)
 #: Server-side backstops on each of the sweep's transactions, for a process that
 #: cannot end one itself (a wedged event loop never fires `SWEEP_DEADLINE`): no
@@ -74,9 +82,17 @@ class CiSource(Protocol):
 
     def check_quota(self, token: str) -> None: ...
 
-    async def list_runs(
-        self, *, owner: str, repo: str, token: str, since: datetime, until: datetime
-    ) -> Listed: ...
+    def run_leaves(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        token: str,
+        since: datetime,
+        until: datetime,
+        per_leaf: int,
+        oldest_first: bool,
+    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]: ...
 
     async def run_jobs(
         self, *, owner: str, repo: str, token: str, run_id: int
@@ -247,20 +263,33 @@ async def _sweep_once(
             # i18n-exempt: internal admin report about incomplete source coverage
             raise CiGitHubError(f"Truncated {what}; coverage cursor was not advanced")
 
-    async def read_runs(since: datetime, until: datetime) -> None:
+    async def read_runs(
+        since: datetime, until: datetime, *, bulk: bool, oldest_first: bool = True
+    ) -> None:
+        """List ``[since, until)`` and commit it a leaf at a time, each leaf
+        extending the coverage cursors it adjoins: oldest leaf first moving
+        ``runs_listed_to`` up, newest first moving ``runs_listed_from`` down. A
+        bulk read (a downtime gap, the backfill) has one page per leaf, so no
+        unit outlasts one request and every sweep keeps what it read."""
         nonlocal runs_listed_from, runs_listed_to
-        listed = await reader.list_runs(
-            owner=owner, repo=name, token=token, since=since, until=until
-        )
-        complete(listed, f"runs from {since.isoformat()}")
-        report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
-        covered_to = min(until, now)
-        runs_listed_to = (
-            max(runs_listed_to, covered_to) if runs_listed_to else covered_to
-        )
-        if runs_listed_from is None or runs_listed_from > since:
-            runs_listed_from = since
-        await record(finished=False)
+        async for low, high, listed in reader.run_leaves(
+            owner=owner,
+            repo=name,
+            token=token,
+            since=since,
+            until=until,
+            per_leaf=RUNS_PAGE if bulk else RESULT_CAP,
+            oldest_first=oldest_first,
+        ):
+            complete(listed, f"runs from {low.isoformat()}")
+            report["runs_upserted"] += await store.upsert_runs(repo, listed.items)
+            covered_to = min(high, now)
+            runs_listed_to = (
+                max(runs_listed_to, covered_to) if runs_listed_to else covered_to
+            )
+            if runs_listed_from is None or runs_listed_from > low:
+                runs_listed_from = low
+            await record(finished=False)
 
     try:
         async with asyncio.timeout(SWEEP_DEADLINE.total_seconds()):
@@ -276,18 +305,18 @@ async def _sweep_once(
                 missing = _slice_start(max(window_start, runs_listed_to))
                 while missing < cursor:
                     until = min(cursor, missing + BACKFILL_SLICE)
-                    await read_runs(missing, until)
+                    await read_runs(missing, until, bulk=True)
                     missing = until
             while cursor < now:
                 until = cursor + RUN_SLICE
-                await read_runs(cursor, until)
+                await read_runs(cursor, until, bulk=False)
                 cursor = until
 
             for _ in range(backfill_slices):
                 if runs_listed_from is None or runs_listed_from <= window_start:
                     break
                 since = max(window_start, runs_listed_from - BACKFILL_SLICE)
-                await read_runs(since, runs_listed_from)
+                await read_runs(since, runs_listed_from, bulk=True, oldest_first=False)
 
             for run in await store.runs_owing_jobs(repo, jobs_budget):
                 if run.conclusion == "skipped":

@@ -220,17 +220,53 @@ class GitHubCi:
     ) -> Listed:
         """Every run created in ``[since, until)``, newest first."""
         out = Listed(items=[])
-        since, until = _second_ceiling(since), _second_ceiling(until)
-        if since >= until:
-            return out
-        async with self._client("GET /actions/runs") as client:
-            await self._runs_in(client, owner, repo, token, since, until, out)
+        async for _, _, leaf in self.run_leaves(
+            owner=owner,
+            repo=repo,
+            token=token,
+            since=since,
+            until=until,
+            per_leaf=RESULT_CAP,
+            oldest_first=False,
+        ):
+            out.items.extend(leaf.items)
+            out.requests += leaf.requests
+            out.truncated = leaf.truncated
         return out
 
-    async def _runs_in(self, client, owner, repo, token, since, until, out: Listed):
+    async def run_leaves(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        token: str,
+        since: datetime,
+        until: datetime,
+        per_leaf: int,
+        oldest_first: bool,
+    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]:
+        """The runs created in ``[since, until)``, a leaf at a time: a part of
+        the range holding at most ``per_leaf`` runs, or one second wide however
+        many it holds. Each leaf comes with its own bounds, oldest or newest leaf
+        first; a truncated leaf is the last one."""
+        since, until = _second_ceiling(since), _second_ceiling(until)
+        if since >= until:
+            return
+        async with self._client("GET /actions/runs") as client:
+            async for leaf in self._leaves(
+                client, owner, repo, token, since, until, per_leaf, oldest_first
+            ):
+                yield leaf
+                if leaf[2].truncated:
+                    return
+
+    async def _leaves(
+        self, client, owner, repo, token, since, until, per_leaf, oldest_first
+    ) -> AsyncIterator[tuple[datetime, datetime, Listed]]:
         url = f"{self._api_base}/repos/{owner}/{repo}/actions/runs"
         # GitHub's bounds are inclusive; adjacent half-open windows meet exactly.
         created = f"{_iso(since)}..{_iso(until - timedelta(seconds=1))}"
+        out = Listed(items=[])
         page = 1
         while True:
             body = await self._get(
@@ -241,26 +277,37 @@ class GitHubCi:
             )
             out.requests += 1
             total = int(body.get("total_count") or 0)
-            if page == 1 and total > RESULT_CAP and until - since > _NARROWEST:
+            if page == 1 and total > per_leaf and until - since > _NARROWEST:
                 # Keep split points at the API's second precision as well.
                 seconds = int((until - since).total_seconds())
                 middle = since + timedelta(seconds=seconds // 2)
-                await self._runs_in(client, owner, repo, token, middle, until, out)
-                if out.truncated:
-                    return
-                await self._runs_in(client, owner, repo, token, since, middle, out)
+                halves = [(since, middle), (middle, until)]
+                if not oldest_first:
+                    halves.reverse()
+                for lo, hi in halves:
+                    async for leaf in self._leaves(
+                        client, owner, repo, token, lo, hi, per_leaf, oldest_first
+                    ):
+                        # The request that showed this part must be split is
+                        # counted with the first leaf it led to.
+                        leaf[2].requests += out.requests
+                        out.requests = 0
+                        yield leaf
+                        if leaf[2].truncated:
+                            return
                 return
             runs = [r for r in body.get("workflow_runs") or [] if isinstance(r, dict)]
             out.items.extend(runs)
             if total > RESULT_CAP:
                 out.truncated = True
-                return
+                break
             if len(runs) < RUNS_PAGE or page * RUNS_PAGE >= total:
-                return
+                break
             if page * RUNS_PAGE >= RESULT_CAP:
                 out.truncated = True
-                return
+                break
             page += 1
+        yield since, until, out
 
     async def run_jobs(
         self, *, owner: str, repo: str, token: str, run_id: int

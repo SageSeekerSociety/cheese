@@ -161,6 +161,10 @@ class _GitHub:
         ]
         return Listed(items=found, requests=1)
 
+    async def run_leaves(self, *, per_leaf, oldest_first, **ranged):
+        # The whole range as one leaf, however many runs it holds.
+        yield ranged["since"], ranged["until"], await self.list_runs(**ranged)
+
     async def run_jobs(self, *, owner, repo, token, run_id) -> Listed:
         self.jobs_attempted.append(run_id)
         if (
@@ -1008,9 +1012,11 @@ def test_a_truncated_window_does_not_claim_complete_coverage(
             db_session, remote.reader(), backfill_slices=0, jobs_budget=0
         )
         assert report["truncated"] and report["error"]
+        # Coverage reaches the start of the one second GitHub cut short, and
+        # not into it: the empty parts before it were read in full.
         assert (
             await CiActivityStore(db_session).last_sweep(REPO)
-        ).runs_listed_to == NOW - timedelta(minutes=5)
+        ).runs_listed_to == NOW - timedelta(minutes=1)
         assert await _count(db_session, CiWorkflowRun) == 0
 
     _portal.call(run)
@@ -1228,5 +1234,64 @@ def test_a_gap_longer_than_one_sweep_is_worked_off_over_the_next_sweeps(
         assert report["error"] == "", covered
         assert len(covered) > 3, "the gap fit in fewer sweeps than meant"
         assert await _count(db_session, CiWorkflowRun) == len(github.runs)
+
+    _portal.call(go)
+
+
+def test_a_slice_with_more_pages_than_one_sweep_is_resumed_inside_it(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    """One four-hour slice of the gap holds 300 runs, thirty pages and more
+    than a sweep can read before its deadline; each sweep must still keep the
+    part it read, and the slice must be finished in the end."""
+    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1.5), raising=False)
+    remote = _NativeGitHub()
+    for n in range(300):
+        age = timedelta(hours=4, minutes=1) + n * timedelta(seconds=47)
+        remote.runs[3000 + n] = _run(3000 + n, age=age)
+
+    async def slow_bulk(request):
+        created = request.url.params.get("created", "")
+        if ".." in created:
+            a, b = (
+                datetime.fromisoformat(t.replace("Z", "+00:00"))
+                for t in created.split("..")
+            )
+            if b - a > ingest.RUN_SLICE:
+                await asyncio.sleep(0.1)
+        return remote(request)
+
+    reader = remote.reader(slow_bulk)
+    gap_start = NOW - timedelta(hours=8)
+
+    async def go():
+        await _connect(db_session)
+        await CiActivityStore(db_session).record_sweep(
+            REPO,
+            started_at=gap_start,
+            runs_listed_from=NOW - ingest.WINDOW,
+            runs_listed_to=gap_start,
+            queue_read_to=gap_start,
+            report={"error": ""},
+        )
+        covered = [gap_start]
+        for n in range(1, 21):
+            report = await _sweep(
+                db_session,
+                reader,
+                at=NOW + timedelta(seconds=n),
+                jobs_budget=0,
+                backfill_slices=0,
+            )
+            last = await CiActivityStore(db_session).last_sweep(REPO)
+            covered.append(last.runs_listed_to)
+            assert covered[-1] > covered[-2], covered
+            if report["error"] == "":
+                break
+            assert "deadline" in report["error"], report["error"]
+        assert report["error"] == "", covered
+        assert await _count(db_session, CiWorkflowRun) == 300
+        inside = [c for c in covered if gap_start < c < NOW - timedelta(hours=4)]
+        assert len(inside) >= 2, "the slice was finished without being resumed"
 
     _portal.call(go)
