@@ -121,7 +121,7 @@ def split_trailers(body: str) -> tuple[str, tuple[str, ...]]:
     the rule git applies. Lines with a key `pr_trailers` writes are dropped:
     those credits are decided by the platform, and a pasted copy would repeat
     them above the real block."""
-    head, sep, last = body.rstrip().rpartition("\n\n")
+    head, sep, last = body.replace("\r\n", "\n").rstrip().rpartition("\n\n")
     lines = [line.strip() for line in last.splitlines() if line.strip()]
     if not lines or not all(_TRAILER_LINE.match(line) for line in lines):
         return body, ()
