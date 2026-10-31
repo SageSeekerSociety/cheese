@@ -102,10 +102,14 @@ def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> 
             raise NumberingOutOfOrder(said)
         logger.error("numbering lock out of order: %s", said)
     savepoint = session.get_nested_transaction()
+    # Only PostgreSQL numbers blocks (`block_numbered()`); elsewhere (the unit
+    # tests' SQLite) there is no lock to take, and the order is still kept.
+    numbered = session.get_bind().dialect.name == "postgresql"
     for conversation in sorted(wanted, key=str):
-        session.connection().execute(
-            _TAKE, {"key": NUMBERING_LOCK, "conversation": str(conversation)}
-        )
+        if numbered:
+            session.connection().execute(
+                _TAKE, {"key": NUMBERING_LOCK, "conversation": str(conversation)}
+            )
         held[conversation] = savepoint
 
 
