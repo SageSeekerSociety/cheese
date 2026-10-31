@@ -5,6 +5,7 @@
  *   would read as a queue that took no time);
  * - while the sweep is still backfilling, the page says how far back the data
  *   reaches, and quotes why the last sweep stopped;
+ * - the page says when the board's figures were computed;
  * - picking a runner asks for that runner's jobs, and picking it again lets go;
  * - opening a job shows its steps.
  */
@@ -49,6 +50,13 @@ describe('AdminCiActivityPageView', () => {
     const queue = cards.find((card) => card.textContent?.includes('ciActivity.kpi.queue'))
     expect(queue?.textContent).toContain('—')
     expect(queue?.textContent).not.toMatch(/ciActivity\.unit\.minutes \{"n":"0"\}/)
+  })
+
+  it('says when the board it shows was computed', () => {
+    const board: CiBoard = { ...CRV_CI_BOARD, generated_at: '2026-10-17T22:41:09+00:00' }
+    const { getByText } = mount({ board, jobs: CRV_CI_JOBS })
+
+    getByText((text) => text.includes('ciActivity.computedAt') && text.includes('2026-10-17 22:41Z'))
   })
 
   it('says how far back a backfilling sweep reaches and why it stopped', () => {

@@ -22,6 +22,7 @@
     "backfilling": "Last sweep {at}. Still backfilling: the data covers only {from} onwards; jobs of {owed} runs not read yet",
     "error": "The last sweep did not finish: {error}"
   },
+  "computedAt": "Board figures as of {at}; recomputed at most once a minute",
   "kpi": {
     "queue": "Merge queue time p50",
     "waitHosted": "Runner wait p50 (GitHub-hosted)",

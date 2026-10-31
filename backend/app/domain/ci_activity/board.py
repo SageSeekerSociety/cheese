@@ -36,15 +36,17 @@ other block on the admin dashboard uses; hours of the day are UTC too.
 
 from __future__ import annotations
 
+import asyncio
 import bisect
 import statistics
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
-from sqlalchemy import and_, or_, select
+from cachetools import TTLCache
+from sqlalchemy import Row, Select, and_, case, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -137,9 +139,77 @@ def window(days: int, now: datetime | None = None) -> Window:
     return Window(since, until, buckets)
 
 
-async def _jobs_in(session: AsyncSession, repo: str, w: Window):
-    """Jobs that started in the window and had a runner, with their run's event."""
-    rows = await session.execute(
+#: Rows read per round trip. Each batch becomes rows on the event loop, so a
+#: batch is kept small enough not to hold the loop up for long.
+_BATCH = 500
+
+
+async def _rows(
+    session: AsyncSession, statement: Select, *, batch: int = _BATCH
+) -> list[Row]:
+    """Every row of ``statement``, read in batches so no one batch holds the
+    event loop for long. Plain rows, tied to no session: the figures are worked
+    out from them in a thread."""
+    result = await session.stream(statement.execution_options(yield_per=batch))
+    out: list[Row] = []
+    async for part in result.partitions():
+        out.extend(part)
+    return out
+
+
+class _Job(NamedTuple):
+    name: str
+    created_at: datetime | None
+    started_at: datetime
+    completed_at: datetime | None
+    conclusion: str | None
+    runner_kind: str
+    runner: str
+    event: str
+    workflow_name: str
+    workflow_path: str
+
+
+#: The machine a job ran on (`runner_group`), worked out by the database.
+_RUNNER = case(
+    (
+        CiJob.runner_kind == "self_hosted",
+        func.coalesce(CiJob.runner_name, "self-hosted"),
+    ),
+    else_="hosted: "
+    + func.coalesce(func.nullif(func.array_to_string(CiJob.labels, ","), ""), "?"),
+)
+
+
+async def _columns(session: AsyncSession, statement: Select, by: str) -> list[list]:
+    """``statement``'s rows as one list per column, read an hour (of the
+    ``by`` column) at a time.
+
+    Columns rather than a row each: a month is ~90k jobs, and holding that many
+    row objects at once sets off full garbage collections that stop the event
+    loop for a tenth of a second each. A list of datetimes or strings is one
+    object to the collector, however long."""
+    rows = statement.subquery()
+    hours = await _rows(
+        session,
+        select(*(func.array_agg(c) for c in rows.c)).group_by(
+            func.date_trunc("hour", rows.c[by])
+        ),
+        # An hour is at most a few hundred rows, each a value in every column.
+        batch=6,
+    )
+    out: list[list] = [[] for _ in rows.c]
+    for hour in hours:
+        for into, values in zip(out, hour, strict=True):
+            into.extend(values)
+    return out
+
+
+async def _jobs_in(session: AsyncSession, repo: str, w: Window) -> list[list]:
+    """Jobs that started in the window and had a runner, with their run's
+    event: one list per `_Job` field."""
+    return await _columns(
+        session,
         select(
             CiJob.name,
             CiJob.created_at,
@@ -147,8 +217,7 @@ async def _jobs_in(session: AsyncSession, repo: str, w: Window):
             CiJob.completed_at,
             CiJob.conclusion,
             CiJob.runner_kind,
-            CiJob.runner_name,
-            CiJob.labels,
+            _RUNNER.label("runner"),
             CiWorkflowRun.event,
             CiWorkflowRun.workflow_name,
             CiWorkflowRun.workflow_path,
@@ -159,90 +228,101 @@ async def _jobs_in(session: AsyncSession, repo: str, w: Window):
             CiJob.runner_kind.is_not(None),
             CiJob.started_at >= w.since,
             CiJob.started_at < w.until,
-        )
+        ),
+        "started_at",
     )
-    return list(rows)
 
 
-async def _required_runs(session: AsyncSession, repo: str, since: datetime, until):
-    return list(
-        await session.scalars(
-            select(CiWorkflowRun).where(
-                CiWorkflowRun.repo == repo,
-                CiWorkflowRun.workflow_path == REQUIRED_CI_PATH,
-                CiWorkflowRun.created_at >= since,
-                CiWorkflowRun.created_at < until,
+def _each[T](columns: list[list], row: Callable[..., T]) -> Iterator[T]:
+    return (row(*values) for values in zip(*columns, strict=True))
+
+
+_FAILED_JOB = aliased(CiJob)
+
+
+def _required_in(repo: str, since: datetime, until) -> list:
+    return [
+        CiWorkflowRun.repo == repo,
+        CiWorkflowRun.workflow_path == REQUIRED_CI_PATH,
+        CiWorkflowRun.created_at >= since,
+        CiWorkflowRun.created_at < until,
+    ]
+
+
+class _Run(NamedTuple):
+    event: str
+    conclusion: str | None
+    created_at: datetime
+    run_attempt: int
+    full_tier: bool
+    last_done: datetime | None
+    had_a_failed_job: bool
+
+
+async def _required_runs(
+    session: AsyncSession, repo: str, since: datetime, until
+) -> list[list]:
+    """`Required CI` runs created in the window, each with whether its first
+    attempt is the full tier (has a job named exactly `FULL_TIER_JOB`), the
+    last completion among that attempt's jobs, and whether any attempt had a
+    failed job, worked out by the database: one list per `_Run` field."""
+    return await _columns(
+        session,
+        select(
+            CiWorkflowRun.event,
+            CiWorkflowRun.conclusion,
+            CiWorkflowRun.created_at,
+            CiWorkflowRun.run_attempt,
+            func.coalesce(func.bool_or(CiJob.name == FULL_TIER_JOB), False).label(
+                "full_tier"
+            ),
+            func.max(CiJob.completed_at).label("last_done"),
+            exists()
+            .where(
+                _FAILED_JOB.run_row_id == CiWorkflowRun.id,
+                _FAILED_JOB.conclusion == "failure",
             )
+            .label("had_a_failed_job"),
         )
+        .outerjoin(
+            CiJob, and_(CiJob.run_row_id == CiWorkflowRun.id, CiJob.run_attempt == 1)
+        )
+        .where(*_required_in(repo, since, until))
+        .group_by(CiWorkflowRun.id),
+        "created_at",
     )
 
 
-async def _first_attempt_jobs(
-    session: AsyncSession, run_row_ids: list
-) -> dict[Any, tuple[set[str], datetime | None]]:
-    """Per run row: (names of its first attempt's jobs, last completion among them)."""
-    names: dict[Any, set[str]] = defaultdict(set)
-    last: dict[Any, datetime | None] = {}
-    if run_row_ids:
-        rows = await session.execute(
-            select(CiJob.run_row_id, CiJob.name, CiJob.completed_at).where(
-                CiJob.run_row_id.in_(run_row_ids), CiJob.run_attempt == 1
-            )
-        )
-        for run_row_id, name, completed in rows:
-            names[run_row_id].add(name)
-            seen = last.get(run_row_id)
-            if completed is not None and (seen is None or completed > seen):
-                last[run_row_id] = completed
-    return defaultdict(
-        lambda: (set(), None), {k: (v, last.get(k)) for k, v in names.items()}
-    )
-
-
-async def _failed_before_last(session: AsyncSession, run_row_ids: list) -> dict:
-    """Per run row: the names of jobs that failed on an attempt before the
-    run's latest, and the names that succeeded on a later attempt."""
-    out: dict = defaultdict(lambda: (set(), set()))
-    if not run_row_ids:
-        return out
-    rows = await session.execute(
-        select(CiJob.run_row_id, CiJob.name, CiJob.run_attempt, CiJob.conclusion).where(
-            CiJob.run_row_id.in_(run_row_ids)
-        )
-    )
-    attempts: dict = defaultdict(list)
-    for run_row_id, name, attempt, conclusion in rows:
-        attempts[run_row_id].append((name, attempt, conclusion))
-    for run_row_id, jobs in attempts.items():
-        failed = {(n, a) for n, a, c in jobs if c == "failure"}
-        passed = {(n, a) for n, a, c in jobs if c == "success"}
-        flaky = {n for n, a in failed if any(pn == n and pa > a for pn, pa in passed)}
-        out[run_row_id] = ({n for n, _ in failed}, flaky)
-    return out
-
-
-async def _queue_passages(session: AsyncSession, repo: str, w: Window):
-    """Each PR merged through the queue in the window: (pr, first added, merged)."""
+async def _queue_rows(
+    session: AsyncSession, repo: str, w: Window
+) -> tuple[dict[int, datetime], list[Row]]:
+    """PRs merged through the queue in the window, and their ``added`` events."""
     merged = aliased(CiMergeQueueEvent)
-    rows = await session.execute(
-        select(merged.pr_number, merged.at).where(
-            merged.repo == repo,
-            merged.kind == "removed",
-            merged.reason == MERGED,
-            merged.at >= w.since,
-            merged.at < w.until,
-        )
+    merged_in_window = select(merged.pr_number, merged.at).where(
+        merged.repo == repo,
+        merged.kind == "removed",
+        merged.reason == MERGED,
+        merged.at >= w.since,
+        merged.at < w.until,
     )
-    merges = {pr: at for pr, at in rows}
+    merges = {pr: at for pr, at in await _rows(session, merged_in_window)}
     if not merges:
-        return []
-    adds = await session.execute(
+        return merges, []
+    adds = await _rows(
+        session,
         select(CiMergeQueueEvent.pr_number, CiMergeQueueEvent.at).where(
             CiMergeQueueEvent.repo == repo,
             CiMergeQueueEvent.kind == "added",
-            CiMergeQueueEvent.pr_number.in_(list(merges)),
-        )
+            CiMergeQueueEvent.pr_number.in_(
+                merged_in_window.with_only_columns(merged.pr_number)
+            ),
+        ),
     )
+    return merges, adds
+
+
+def _queue_passages(merges: dict[int, datetime], adds: list[Row]):
+    """Each PR merged through the queue in the window: (pr, first added, merged)."""
     first: dict[int, datetime] = {}
     count: Counter = Counter()
     for pr, at in adds:
@@ -255,10 +335,11 @@ async def _queue_passages(session: AsyncSession, repo: str, w: Window):
     ]
 
 
-def _minute_samples(spans: Iterable[tuple[datetime, datetime]], w: Window, until):
-    """How many spans cover each minute from the window's start to ``until``."""
-    starts = sorted(a for a, _ in spans)
-    ends = sorted(b for _, b in spans)
+def _minute_samples(starts: list[datetime], ends: list[datetime], w: Window, until):
+    """How many spans (``starts[i]`` to ``ends[i]``) cover each minute from the
+    window's start to ``until``."""
+    starts = sorted(starts)
+    ends = sorted(ends)
     samples = []
     moment = w.since
     while moment < until:
@@ -269,25 +350,110 @@ def _minute_samples(spans: Iterable[tuple[datetime, datetime]], w: Window, until
     return samples
 
 
+#: How long a worker keeps a board it built. On dev (2026-10-31, ~41k jobs a
+#: week, ~168k a month) a 7-day board takes about a second to build and a 30-day
+#: one about six: worked out off the event loop (`build_board`), but still
+#: database time and a thread, so it is built at most once a minute per window.
+#: The board says when it was built (``generated_at``), and the page shows it.
+BOARD_TTL_S = 60
+_boards: TTLCache = TTLCache(maxsize=32, ttl=BOARD_TTL_S)
+#: One lock per repository and window, held while that board is built, so
+#: builds of one board never overlap: a burst of requests after it ages out
+#: waits for one build, and if that build fails or is cancelled the next waiter
+#: builds in its place, alone. Never removed: there are at most 30 windows.
+_building: dict[tuple[str, int], asyncio.Lock] = {}
+
+
+async def kept_board(
+    repo: str, days: int, build: Callable[[], Awaitable[dict[str, Any]]]
+) -> dict[str, Any]:
+    """The board for ``days``, as built by ``build`` at most ``BOARD_TTL_S`` ago.
+    Requests that find no board wait for the one build already running, each
+    with its own session should that build not finish."""
+    # The window is whole UTC days, so a board built before midnight is not
+    # the board after it, however recently it was built.
+    key = (repo, days, utc_now().date())
+    board: dict[str, Any] | None = _boards.get(key)
+    if board is not None:
+        return board
+    async with _building.setdefault((repo, days), asyncio.Lock()):
+        board = _boards.get(key)
+        if board is None:
+            board = _boards[key] = await build()
+    return board
+    lock = _building.setdefault(key, asyncio.Lock())
+    async with lock:
+        board = _boards.get(key)
+        if board is None:
+            try:
+                board = _boards[key] = await build()
+            finally:
+                # Whoever waits on this lock finds the board, or builds it
+                # with its own session if this build failed.
+                if _building.get(key) is lock:
+                    del _building[key]
+    return board
+
+
+@dataclass(frozen=True)
+class _BoardRows:
+    """Everything the board is worked out from, read before any of it is."""
+
+    jobs: list[list]
+    merges: dict[int, datetime]
+    adds: list[Row]
+    queue_events: list[Row]
+    removals: list[Row]
+    runs: list[list]
+    rounds: tuple
+
+
 async def build_board(
     session: AsyncSession, repo: str, *, days: int, now: datetime | None = None
 ) -> dict[str, Any]:
+    """The board: the rows read here on the event loop, a batch at a time, and
+    the figures worked out from them in a thread, so neither holds the loop and
+    every other request on this worker waiting."""
     now = now or utc_now()
     w = window(days, now)
     sampled_until = min(now, w.until)
+    merges, adds = await _queue_rows(session, repo, w)
+    runs = await _required_runs(session, repo, w.since, w.until)
+    rows = _BoardRows(
+        jobs=await _jobs_in(session, repo, w),
+        merges=merges,
+        adds=adds,
+        queue_events=await _queue_event_rows(session, repo, sampled_until),
+        removals=await _removal_rows(session, repo, w),
+        runs=runs,
+        rounds=await _rounds_rows(session, repo, w),
+    )
+    board = await asyncio.to_thread(_board, rows, repo, days, w, now, sampled_until)
+    board["sweep"] = await _sweep_status(session, repo, w)
+    return board
 
+
+def _board(
+    rows: _BoardRows,
+    repo: str,
+    days: int,
+    w: Window,
+    now: datetime,
+    sampled_until: datetime,
+) -> dict[str, Any]:
     # --- runners: wait, busy time, per machine, concurrency -------------------
-    jobs = await _jobs_in(session, repo, w)
     waits: dict[str, list[float]] = defaultdict(list)
     wait_by_day: dict[tuple[str, date], list[float]] = defaultdict(list)
     machines: dict[str, dict[str, Any]] = {}
-    spans: dict[str, list[tuple[datetime, datetime]]] = defaultdict(list)
+    # Each span's start and end kept apart, not as pairs: no tuple per job.
+    starts: dict[str, list[datetime]] = defaultdict(list)
+    ends: dict[str, list[datetime]] = defaultdict(list)
     busy_seconds: dict[str, float] = defaultdict(float)
-    for job in jobs:
+    for job in _each(rows.jobs, _Job):
         wait = _seconds(job.created_at, job.started_at)
         took = _seconds(job.started_at, job.completed_at)
         kind = job.runner_kind
-        group = runner_group(kind, job.runner_name, list(job.labels or []))
+        group = job.runner
         machine = machines.setdefault(
             group,
             {
@@ -313,46 +479,47 @@ async def build_board(
             cls = event_class(job.event)
             busy_seconds[cls] += took
             end = job.completed_at
-            spans[cls].append((job.started_at, end))
-            spans[kind].append((job.started_at, end))
+            assert end is not None  # a duration needs both stamps
+            for key in (cls, kind):
+                starts[key].append(job.started_at)
+                ends[key].append(end)
 
-    per_class = {cls: _minute_samples(spans[cls], w, sampled_until) for cls in CLASSES}
+    per_class = {
+        cls: _minute_samples(starts[cls], ends[cls], w, sampled_until)
+        for cls in CLASSES
+    }
     per_kind = {
-        k: _minute_samples(spans[k], w, sampled_until)
+        k: _minute_samples(starts[k], ends[k], w, sampled_until)
         for k in ("hosted", "self_hosted")
     }
     total = [sum(v[i] for v in per_class.values()) for i in range(len(per_class["pr"]))]
 
     # --- the merge queue -----------------------------------------------------
-    passages = await _queue_passages(session, repo, w)
+    passages = _queue_passages(rows.merges, rows.adds)
     queue_minutes = [(m - a).total_seconds() / 60 for _, a, m, _ in passages]
     queue_by_day: dict[date, list[float]] = defaultdict(list)
     for _, added, merged_at, _ in passages:
         queue_by_day[_day(merged_at)].append((merged_at - added).total_seconds() / 60)
-    depth = await _queue_depth(session, repo, w, sampled_until)
-    ejections = await _ejections(session, repo, w)
+    depth = _queue_depth(rows.queue_events, w, sampled_until)
+    ejections = _ejections(rows.removals)
 
     # --- Required CI: duration, rounds, fail-then-pass -------------------------
-    runs = await _required_runs(session, repo, w.since, w.until)
-    first = await _first_attempt_jobs(session, [r.id for r in runs])
     durations: dict[str, list[float]] = defaultdict(list)
     duration_by_day: dict[tuple[str, date], list[float]] = defaultdict(list)
-    for run in runs:
-        names, last_done = first[run.id]
-        if run.conclusion not in VERDICTS or FULL_TIER_JOB not in names:
+    for run in _each(rows.runs, _Run):
+        if run.conclusion not in VERDICTS or not run.full_tier:
             continue
-        took = _seconds(run.created_at, last_done)
+        took = _seconds(run.created_at, run.last_done)
         if took is None or took <= 0:
             continue
         durations[run.event].append(took / 60)
         duration_by_day[(run.event, _day(run.created_at))].append(took / 60)
 
-    rounds = await _rounds(session, repo, w)
-    retried = [r for r in runs if r.run_attempt > 1]
-    failed_before = await _failed_before_last(session, [r.id for r in retried])
-    verdict_runs = [r for r in runs if r.conclusion in VERDICTS]
+    rounds = _rounds_from(*rows.rounds)
+    retried = [r for r in _each(rows.runs, _Run) if r.run_attempt > 1]
+    verdict_runs = sum(r.conclusion in VERDICTS for r in _each(rows.runs, _Run))
     fail_then_pass = [
-        r for r in retried if r.conclusion == "success" and failed_before[r.id][0]
+        r for r in retried if r.conclusion == "success" and r.had_a_failed_job
     ]
 
     hourly = _hourly(w, sampled_until, total, per_class, per_kind, depth)
@@ -362,7 +529,6 @@ async def build_board(
         "since": w.since.isoformat(),
         "until": w.until.isoformat(),
         "generated_at": now.isoformat(),
-        "sweep": await _sweep_status(session, repo, w),
         "headline": {
             "merge_queue_minutes": summary(queue_minutes),
             "runner_wait_seconds": {
@@ -374,10 +540,8 @@ async def build_board(
             "rounds": rounds,
             "fail_then_pass": {
                 "runs": len(fail_then_pass),
-                "of": len(verdict_runs),
-                "share": (len(fail_then_pass) / len(verdict_runs))
-                if verdict_runs
-                else None,
+                "of": verdict_runs,
+                "share": (len(fail_then_pass) / verdict_runs) if verdict_runs else None,
             },
             "busy_runners": {
                 **summary([float(x) for x in total]),
@@ -475,35 +639,46 @@ def _hour_of_day(hourly: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-async def _queue_depth(session, repo, w: Window, until) -> list[int]:
-    """PRs in the merge queue at each minute of the window."""
-    rows = await session.execute(
+async def _queue_event_rows(session, repo, until) -> list[Row]:
+    return await _rows(
+        session,
         select(
             CiMergeQueueEvent.pr_number, CiMergeQueueEvent.kind, CiMergeQueueEvent.at
         )
         .where(CiMergeQueueEvent.repo == repo, CiMergeQueueEvent.at < until)
-        .order_by(CiMergeQueueEvent.at)
+        .order_by(CiMergeQueueEvent.at),
     )
+
+
+def _queue_depth(rows: list[Row], w: Window, until) -> list[int]:
+    """PRs in the merge queue at each minute of the window."""
     entered: dict[int, datetime] = {}
-    spans: list[tuple[datetime, datetime]] = []
+    starts: list[datetime] = []
+    ends: list[datetime] = []
     for pr, kind, at in rows:
         if kind == "added":
             entered.setdefault(pr, at)
         elif pr in entered:
-            spans.append((entered.pop(pr), at))
-    spans.extend((at, until) for at in entered.values())
-    return _minute_samples(spans, w, until)
+            starts.append(entered.pop(pr))
+            ends.append(at)
+    starts.extend(entered.values())
+    ends.extend(until for _ in entered)
+    return _minute_samples(starts, ends, w, until)
 
 
-async def _ejections(session, repo, w: Window) -> list[dict[str, Any]]:
-    rows = await session.execute(
+async def _removal_rows(session, repo, w: Window) -> list[Row]:
+    return await _rows(
+        session,
         select(CiMergeQueueEvent.reason, CiMergeQueueEvent.actor).where(
             CiMergeQueueEvent.repo == repo,
             CiMergeQueueEvent.kind == "removed",
             CiMergeQueueEvent.at >= w.since,
             CiMergeQueueEvent.at < w.until,
-        )
+        ),
     )
+
+
+def _ejections(rows: list[Row]) -> list[dict[str, Any]]:
     counts: Counter = Counter()
     for reason, actor in rows:
         if reason == MERGED:
@@ -516,6 +691,72 @@ async def _ejections(session, repo, w: Window) -> list[dict[str, Any]]:
 
 
 async def _rounds(session, repo, w: Window) -> dict[str, Any]:
+    """Required CI rounds of each PR merged in the window (`_rounds_from`)."""
+    return _rounds_from(*await _rounds_rows(session, repo, w))
+
+
+async def _rounds_rows(
+    session, repo, w: Window
+) -> tuple[list[Row], datetime | None, list[list]]:
+    """The PRs merged in the window, how far back the run listing reaches, and
+    the `Required CI` runs that could be theirs."""
+    pulls = await _rows(
+        session,
+        select(
+            CiMergedPullRequest.pr_number,
+            CiMergedPullRequest.head_branch,
+            CiMergedPullRequest.created_at,
+            CiMergedPullRequest.merged_at,
+        ).where(
+            CiMergedPullRequest.repo == repo,
+            CiMergedPullRequest.merged_at >= w.since,
+            CiMergedPullRequest.merged_at < w.until,
+        ),
+    )
+    covered_from = await session.scalar(
+        select(CiActivitySweep.runs_listed_from)
+        .where(CiActivitySweep.repo == repo)
+        .order_by(CiActivitySweep.started_at.desc())
+        .limit(1)
+    )
+    if not pulls:
+        return pulls, covered_from, [[], [], [], []]
+    merged_in_window = (
+        CiMergedPullRequest.repo == repo,
+        CiMergedPullRequest.merged_at >= w.since,
+        CiMergedPullRequest.merged_at < w.until,
+    )
+    numbers = select(CiMergedPullRequest.pr_number).where(*merged_in_window)
+    branches = select(CiMergedPullRequest.head_branch).where(
+        *merged_in_window, CiMergedPullRequest.head_branch.is_not(None)
+    )
+    runs = await _columns(
+        session,
+        select(
+            CiWorkflowRun.pr_number,
+            CiWorkflowRun.head_branch,
+            CiWorkflowRun.event,
+            CiWorkflowRun.created_at,
+        ).where(
+            CiWorkflowRun.repo == repo,
+            CiWorkflowRun.workflow_path == REQUIRED_CI_PATH,
+            CiWorkflowRun.conclusion.in_(VERDICTS),
+            or_(
+                CiWorkflowRun.pr_number.in_(numbers),
+                and_(
+                    CiWorkflowRun.pr_number.is_(None),
+                    CiWorkflowRun.head_branch.in_(branches),
+                ),
+            ),
+        ),
+        "created_at",
+    )
+    return pulls, covered_from, runs
+
+
+def _rounds_from(
+    pulls: list[Row], covered_from: datetime | None, runs: list[list]
+) -> dict[str, Any]:
     """Required CI rounds of each merged PR.
 
     A pull_request run names its PR only while the head branch exists, so most
@@ -523,22 +764,6 @@ async def _rounds(session, repo, w: Window) -> dict[str, Any]:
     branch, counting only runs created during the PR's lifetime so other PRs
     reusing its branch name are not counted. Queue membership is not required.
     """
-    pulls = list(
-        await session.scalars(
-            select(CiMergedPullRequest).where(
-                CiMergedPullRequest.repo == repo,
-                CiMergedPullRequest.merged_at >= w.since,
-                CiMergedPullRequest.merged_at < w.until,
-            )
-        )
-    )
-    last = await session.scalar(
-        select(CiActivitySweep)
-        .where(CiActivitySweep.repo == repo)
-        .order_by(CiActivitySweep.started_at.desc())
-        .limit(1)
-    )
-    covered_from = last.runs_listed_from if last else None
     coverage = {
         "covered_from": covered_from.isoformat() if covered_from else None,
         "incomplete_prs": sum(
@@ -555,32 +780,13 @@ async def _rounds(session, repo, w: Window) -> dict[str, Any]:
             **coverage,
         }
     by_number = {p.pr_number: p for p in pulls}
-    by_branch: dict[str, list[CiMergedPullRequest]] = defaultdict(list)
+    by_branch: dict[str, list[Row]] = defaultdict(list)
     for pull in pulls:
         if pull.head_branch:
             by_branch[pull.head_branch].append(pull)
-    rows = await session.execute(
-        select(
-            CiWorkflowRun.pr_number,
-            CiWorkflowRun.head_branch,
-            CiWorkflowRun.event,
-            CiWorkflowRun.created_at,
-        ).where(
-            CiWorkflowRun.repo == repo,
-            CiWorkflowRun.workflow_path == REQUIRED_CI_PATH,
-            CiWorkflowRun.conclusion.in_(VERDICTS),
-            or_(
-                CiWorkflowRun.pr_number.in_(list(by_number)),
-                and_(
-                    CiWorkflowRun.pr_number.is_(None),
-                    CiWorkflowRun.head_branch.in_(list(by_branch)),
-                ),
-            ),
-        )
-    )
     pr_rounds: Counter = Counter()
     queue_rounds: Counter = Counter()
-    for number, branch, event, created in rows:
+    for number, branch, event, created in zip(*runs, strict=True):
         candidates = (
             [by_number[number]] if number in by_number else by_branch.get(branch, [])
         )
@@ -636,12 +842,14 @@ async def job_table(
     session: AsyncSession, repo: str, *, days: int, runner: str | None = None
 ) -> list[dict[str, Any]]:
     """Per workflow and job name: wait, duration and failures."""
-    w = window(days)
-    jobs = await _jobs_in(session, repo, w)
+    jobs = await _jobs_in(session, repo, window(days))
+    return await asyncio.to_thread(_job_table, jobs, runner)
+
+
+def _job_table(jobs: list[list], runner: str | None) -> list[dict[str, Any]]:
     rows: dict[tuple[str, str], dict[str, Any]] = {}
-    for job in jobs:
-        group = runner_group(job.runner_kind, job.runner_name, list(job.labels or []))
-        if runner is not None and group != runner:
+    for job in _each(jobs, _Job):
+        if runner is not None and job.runner != runner:
             continue
         row = rows.setdefault(
             (job.workflow_path, job.name),
@@ -691,7 +899,8 @@ async def step_table(
 ) -> list[dict[str, Any]]:
     """Per step of one workflow's job: how long it takes."""
     w = window(days)
-    rows = await session.execute(
+    rows = await _rows(
+        session,
         select(
             CiJobStep.number,
             CiJobStep.name,
@@ -711,8 +920,12 @@ async def step_table(
                 CiJob.started_at >= w.since,
                 CiJob.started_at < w.until,
             )
-        )
+        ),
     )
+    return await asyncio.to_thread(_step_table, rows, runner)
+
+
+def _step_table(rows: list[Row], runner: str | None) -> list[dict[str, Any]]:
     steps: dict[str, dict[str, Any]] = {}
     for number, name, started, completed, kind, runner_name, labels in rows:
         if (
