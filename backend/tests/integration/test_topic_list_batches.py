@@ -2371,3 +2371,101 @@ def test_archive_and_unarchive_project_batch_tasks_cleanups_and_card_updates(cli
     assert len(unarch_sql) <= 24, (
         f"expected <= 24 SQL statements on POST /projects/{{id}}/unarchive, got {len(unarch_sql)}: {unarch_sql}"
     )
+
+
+_NOTIFICATION_PREF_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM notification_preference\b",
+    re.IGNORECASE,
+)
+_NOTIFICATION_INSERT = re.compile(
+    r"^\s*INSERT\s+INTO\s+notification\b",
+    re.IGNORECASE,
+)
+_PROJECTS_FOR_KEY_SHARE = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM projects\b[^;]*?\bFOR NO KEY UPDATE\b",
+    re.IGNORECASE,
+)
+
+
+def test_project_alerts_batch_preferences_and_insert_and_skip_first_page_count(client):
+    """`POST /projects/{id}/alerts` batches recipient user and preference reads
+    and flushes all recipient rows in one `INSERT INTO notification`, and
+    `GET /projects/{id}/alerts` skips `SELECT count(*) FROM notification` when
+    the first page has fewer than `page_size + 1` rows."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as post_sql:
+        r_post = client.post(
+            f"/projects/{pid}/alerts",
+            json={
+                "title": "Release Alert",
+                "body": "Body text",
+                "level": "light",
+                "kind": "change_alert",
+            },
+            headers=headers,
+        )
+    assert r_post.status_code == 200, r_post.text
+    assert _count(post_sql, _NOTIFICATION_PREF_SELECT) == 1, [
+        s for s in post_sql if _NOTIFICATION_PREF_SELECT.search(s)
+    ]
+    assert _count(post_sql, _NOTIFICATION_INSERT) == 1, [
+        s for s in post_sql if _NOTIFICATION_INSERT.search(s)
+    ]
+    assert _count(post_sql, _NOTIFICATION_SELECT) == 0, [
+        s for s in post_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(post_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST /projects/{{id}}/alerts, got {len(post_sql)}: {post_sql}"
+    )
+
+    with counting_sql(client) as get_sql:
+        r_get = client.get(f"/projects/{pid}/alerts", headers=headers)
+    assert r_get.status_code == 200, r_get.text
+    assert _count(get_sql, _NOTIFICATION_SELECT) == 1, [
+        s for s in get_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(get_sql) <= 2, (
+        f"expected <= 2 SQL statements on GET /projects/{{id}}/alerts, got {len(get_sql)}: {get_sql}"
+    )
+
+
+def test_project_settings_and_channel_description_avoid_duplicate_locks_and_reads(
+    client,
+):
+    """`PUT /projects/{id}/task-naming` and `PUT /projects/{id}/commit-credit`
+    acquire `lock_settings` once and return from `change_project_settings`
+    without re-running `get_task_naming` / `get_commit_credit`, and
+    `PUT /topics/{id}/description` queries `topic_memberships` once."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as naming_sql:
+        r_naming = client.put(
+            f"/projects/{pid}/task-naming",
+            json={"mode": "manual"},
+            headers=headers,
+        )
+    assert r_naming.status_code == 200, r_naming.text
+    assert _count(naming_sql, _PROJECTS_FOR_KEY_SHARE) == 1, [
+        s for s in naming_sql if _PROJECTS_FOR_KEY_SHARE.search(s)
+    ]
+    assert len(naming_sql) <= 9, (
+        f"expected <= 9 SQL statements on PUT /projects/{{id}}/task-naming, got {len(naming_sql)}: {naming_sql}"
+    )
+
+    with counting_sql(client) as desc_sql:
+        r_desc = client.put(
+            f"/topics/{ch}/description",
+            json={"description": "Channel purpose"},
+            headers=headers,
+        )
+    assert r_desc.status_code == 200, r_desc.text
+    assert _count(desc_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in desc_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(desc_sql) <= 5, (
+        f"expected <= 5 SQL statements on PUT /topics/{{id}}/description, got {len(desc_sql)}: {desc_sql}"
+    )

@@ -576,7 +576,9 @@ class ProjectService:
         """
         await self._repo.lock_settings(project)
         before = dict(project.settings or {})
-        after = await self._repo.merge_settings(project, patch, remove=remove)
+        after = await self._repo.merge_settings(
+            project, patch, remove=remove, locked=True
+        )
         return [
             SettingChange(key, before.get(key), after.get(key))
             for key in sorted(MEMBER_SETTINGS & {*patch, *remove})

@@ -275,6 +275,7 @@ class NotificationRepository:
         body: str = "",
         conversation_id: uuid.UUID | None = None,
         payload: dict | None = None,
+        flush: bool = True,
     ) -> Notification:
         now = datetime.now(UTC)
         row = Notification(
@@ -295,8 +296,8 @@ class NotificationRepository:
             updated_at=now,
         )
         self._session.add(row)
-        await self._session.flush()
-        await self._session.refresh(row)
+        if flush:
+            await self._session.flush()
         return row
 
     async def get(self, notification_id: int) -> Notification | None:
@@ -304,7 +305,6 @@ class NotificationRepository:
 
     async def save(self, notification: Notification) -> Notification:
         await self._session.flush()
-        await self._session.refresh(notification)
         return notification
 
     def _mine_in(self, stmt, project_id: uuid.UUID, recipient_handle: str):
