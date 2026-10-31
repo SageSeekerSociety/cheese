@@ -8,7 +8,9 @@ marked failed: one task does not take the other's close back with it.
 
 The scheduled-routine sweep and the report of resume instructions that can no
 longer start each write into the same rooms' main lines, reaching them in
-different orders. Run at the same moment, both finish.
+different orders. Run at the same moment, both finish. And one routine pass
+fires both its scheduled rules and its event rules, whichever rooms they live
+in.
 """
 
 import asyncio
@@ -28,6 +30,7 @@ from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine.models import Routine
 from app.domain.routine.service import scheduling
+from app.domain.routine.service.sweep import sweep as routine_sweep
 from tests.integration.conftest import room_agent_seat, session_auth_headers
 from tests.integration.test_the_composer_shows_who_a_message_is_for import _channel
 
@@ -226,3 +229,82 @@ def test_the_routine_sweep_and_the_failed_resume_report_both_finish(
         assert not isinstance(result, BaseException), repr(result)
     assert fired == 2
     assert reported == 2
+
+
+class _Runner:
+    def submit(self, chat, topic_id, **kwargs):
+        return None
+
+
+def test_a_routine_pass_fires_a_scheduled_rule_and_an_event_rule_in_two_rooms(
+    client, stub_hooks
+):
+    """One routine pass fires a scheduled rule due in one room and an event
+    rule (a task closed) in another; the room an event rule lives in sorts
+    before the scheduled one's. Both fire."""
+    project, _, one = _channel(client)
+    other = client.post(
+        "/topics",
+        json={"project_id": project, "title": "第二个"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+    low, high = sorted([uuid.UUID(one), uuid.UUID(other)], key=str)
+    seats = {room: room_agent_seat(client, str(room)) for room in (high, low)}
+    made = client.post(
+        f"/topics/{low}/tasks", json={}, headers=session_auth_headers("alice")
+    )
+    assert made.status_code == 200, made.text
+    closed = uuid.UUID(made.json()["data"]["id"])
+
+    async def a_rule_due_and_a_task_closed():
+        stamp = datetime.now(UTC)
+        async with client.test_factory() as db:
+            await db.execute(
+                update(Task)
+                .where(Task.id == closed)
+                .values(status=TaskStatus.closed, closed_at=stamp)
+            )
+            await db.commit()
+        async with client.test_factory() as db:
+            db.add(
+                Routine(
+                    project_id=uuid.UUID(project),
+                    topic_id=high,
+                    title="定时",
+                    instructions="总结一下",
+                    trigger="schedule",
+                    spec={"freq": "hourly", "minute": 0},
+                    timezone="UTC",
+                    state="active",
+                    agent_handle=seats[high],
+                    owner_handle="alice",
+                    created_by="alice",
+                    next_run_at=stamp - timedelta(minutes=1),
+                )
+            )
+            db.add(
+                Routine(
+                    project_id=uuid.UUID(project),
+                    topic_id=low,
+                    title="任务关了就记一笔",
+                    instructions="记一下",
+                    trigger="task_closed",
+                    spec={"scope": "room"},
+                    timezone="UTC",
+                    state="active",
+                    agent_handle=seats[low],
+                    owner_handle="alice",
+                    created_by="alice",
+                    created_at=stamp - timedelta(hours=1),
+                )
+            )
+            await db.commit()
+
+    client.portal.call(a_rule_due_and_a_task_closed)
+
+    swept = client.portal.call(
+        lambda: routine_sweep(client.test_factory, chat=object(), runner=_Runner())
+    )
+
+    assert swept["scheduled"] == 1
+    assert swept["triggered"] == 1

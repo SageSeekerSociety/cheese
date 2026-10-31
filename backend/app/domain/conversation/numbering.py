@@ -100,7 +100,9 @@ def hold_numbering_now(session: Session, conversations: Iterable[uuid.UUID]) -> 
         )
         if settings.strict_numbering_order:
             raise NumberingOutOfOrder(said)
-        logger.error("numbering lock out of order: %s", said)
+        # The stack names the writer that asked late; the ids above, what it
+        # held and what it asked for.
+        logger.error("numbering lock out of order: %s", said, stack_info=True)
     savepoint = session.get_nested_transaction()
     # Only PostgreSQL numbers blocks (`block_numbered()`); elsewhere (the unit
     # tests' SQLite) there is no lock to take, and the order is still kept.
