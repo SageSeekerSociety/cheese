@@ -45,9 +45,9 @@ from app.domain.block.repositories import BlockRepository
 # import a domain's models directly (C2 in `.importlinter`), and `schemas` is
 # the module that re-exports the two enums a route writes with.
 from app.domain.block.schemas import BlockKind, BlockOut, ReactionToggleIn
-from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 from app.domain.event_author import AuthorType
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
@@ -98,12 +98,14 @@ async def edit_block(
     actor = await resolver.resolve(
         topic_id=block.conversation_id, project_id=block.project_id
     )
-    room_id = await room_of(db, block.conversation_id)
+    place = await place_or_404(db, block.conversation_id)
+    room_id = place.room_id
     await TopicMemberService(db).list_for_topic(room_id)
     await resolver.authorize_topic(
         actor,
         project_id=block.project_id,
         topic_id=room_id,
+        room=place.room,
         enforce=True,
     )
     payload = await edit_message(
@@ -152,10 +154,12 @@ async def toggle_reaction(
     actor = await resolver.resolve(
         topic_id=block.conversation_id, project_id=block.project_id
     )
+    place = await place_or_404(db, block.conversation_id)
     await resolver.authorize_topic(
         actor,
         project_id=block.project_id,
-        topic_id=await room_of(db, block.conversation_id),
+        topic_id=place.room_id,
+        room=place.room,
         enforce=True,
     )
     if not actor.authenticated:
@@ -256,11 +260,13 @@ async def withdraw_own_question(
     actor = await resolver.resolve(
         topic_id=question.conversation_id, project_id=question.project_id
     )
-    room_id = await room_of(db, question.conversation_id)
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
     await resolver.authorize_topic(
         actor,
         project_id=question.project_id,
         topic_id=room_id,
+        room=place.room,
         enforce=True,
     )
     if not actor.authenticated:
@@ -310,9 +316,14 @@ async def _answer_group(block_id, body, db, resolver, broker, chat, runner) -> d
     actor = await resolver.resolve(
         topic_id=question.conversation_id, project_id=question.project_id
     )
-    room_id = await room_of(db, question.conversation_id)
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
     await resolver.authorize_topic(
-        actor, project_id=question.project_id, topic_id=room_id, enforce=True
+        actor,
+        project_id=question.project_id,
+        topic_id=room_id,
+        room=place.room,
+        enforce=True,
     )
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
@@ -365,11 +376,13 @@ async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict
     actor = await resolver.resolve(
         topic_id=question.conversation_id, project_id=question.project_id
     )
-    room_id = await room_of(db, question.conversation_id)
+    place = await place_or_404(db, question.conversation_id)
+    room_id = place.room_id
     await resolver.authorize_topic(
         actor,
         project_id=question.project_id,
         topic_id=room_id,
+        room=place.room,
         enforce=True,
     )
     # A credential that names nobody (the gate-only sandbox token) has no answer
