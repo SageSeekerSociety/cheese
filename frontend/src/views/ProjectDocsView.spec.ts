@@ -58,6 +58,8 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
+import type { MemoryChangeOut } from '../api'
+
 import { deleteMemory, getProject, getTopic, listMemoryChanges, restoreMemoryChange } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
@@ -307,7 +309,7 @@ describe('记忆', () => {
     view.unmount()
   })
 
-  const deletion = {
+  const deletion: MemoryChangeOut = {
     id: 'c-deleted',
     scope: 'team',
     owner_handle: '',
@@ -319,7 +321,7 @@ describe('记忆', () => {
     deleted: true,
     diff: '--- deploy-script.md\n+++ deploy-script.md\n@@ -1 +0,0 @@\n-部署脚本在 deploy/deploy.sh\n',
   }
-  const creation = {
+  const creation: MemoryChangeOut = {
     ...deletion,
     id: 'c-created',
     path: 'prefers-pnpm.md',
