@@ -268,6 +268,7 @@ const WEB_MIME: Record<string, string> = {
  *  一个说不出的类型不该在界面上变成一段后缀。 */
 export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
+  if (IMAGE_SUFFIXES.has(suffix)) return t('work.room.fileKind.image')
   return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
 }
 
