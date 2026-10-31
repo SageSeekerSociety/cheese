@@ -440,7 +440,11 @@ class ProjectRepository:
                     team = cached_team
             if team is None:
                 team = await self._session.get(Team, project.team_id)
-                if _can_cache(self._session):
+                if (
+                    _can_cache(self._session)
+                    and team is not None
+                    and team.deleted_at is None
+                ):
                     remember(
                         self._session,
                         ("team_by_id", project.team_id),

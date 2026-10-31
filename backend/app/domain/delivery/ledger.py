@@ -406,6 +406,7 @@ async def _settle(
                     resolved_at=now,
                 )
                 .returning(Notification.id)
+                .execution_options(synchronize_session=False)
             )
         ).all()
     )
@@ -421,6 +422,7 @@ async def _settle(
                     payload=func.coalesce(Delivery.payload, empty).op("||")(patch),
                 )
                 .returning(Delivery.id)
+                .execution_options(synchronize_session=False)
             )
         ).all()
     )
