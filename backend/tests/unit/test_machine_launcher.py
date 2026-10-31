@@ -890,3 +890,34 @@ def test_nothing_is_swept_when_the_stores_were_not_redirected(tmp_path):
 
     for rel in (*_DEAD_CACHES, _LIVE_INTERPRETER):
         assert _settled(home, rel, gone=False), rel
+
+
+@pytest.mark.parametrize("own_room", [True, False], ids=["a-room", "not-a-room"])
+def test_a_session_is_kept_to_its_room_only_where_the_platform_says_rooms_are(
+    tmp_path, own_room
+):
+    """The platform names where the machine's rooms are (`MachinePlace.homes`)
+    and the session is kept to its own room among them. A session whose home is
+    not one of them — a probe, a fixture with its home beside the machine
+    owner's files — is not narrowed to one: what lies beside its home is the
+    machine's, not another room's, and hiding it would hide what the session
+    runs (its Claude Code build)."""
+    machine_home, room_home, env = _room(tmp_path, "proj", "room")
+    if not own_room:
+        room_home = tmp_path / "beside-the-owner"
+        (room_home / ".cheese").mkdir(parents=True)
+        env["CHEESE_HOME"] = str(room_home)
+    env["CHEESE_HOMES"] = "$HOME/.cheese/home"
+    seen = tmp_path / "homes.out"
+    result = _run(
+        tmp_path,
+        env,
+        prepare=_harness(
+            tmp_path, f'printf "%s" "${{CHEESE_HOMES_ROOT-}}" > "{seen}"\n'
+        ),
+        command="$AGENT",
+    )
+
+    assert result.returncode == 0, result.stderr
+    expected = str((machine_home / ".cheese/home").resolve()) if own_room else ""
+    assert seen.read_text() == expected
