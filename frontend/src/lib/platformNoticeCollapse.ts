@@ -123,9 +123,10 @@ function foldTurnSummary(rows: NoticeRow[]): NoticeRow[] {
  * 它是工作途中做出来的，按时间会夹在两句话中间。只在同一次工作里挪，不跨出去。
  */
 function cardsLast(rows: NoticeRow[]): NoticeRow[] {
+  // 每次工作里最后一行不是卡片的那一行：交出来的东西按原来的先后接在它后面。
   const lastOfTurn = new Map<string, number>()
   rows.forEach((row, i) => {
-    if (row.block.turn_id) lastOfTurn.set(row.block.turn_id, i)
+    if (row.block.turn_id && row.block.shown_as !== 'card') lastOfTurn.set(row.block.turn_id, i)
   })
   const held = new Map<number, NoticeRow[]>()
   const out: NoticeRow[] = []

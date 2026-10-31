@@ -700,6 +700,12 @@ details[open] > summary > .sys-chev,
   gap: 2px;
   font-size: 12px;
 }
+/* 平台替队友说的那一行：要做的那一步接在这句话后面，不推到行尾——隔着大半行空白，
+   看不出它是哪句话的。 */
+.for-agent .sys-text + .sys-btn,
+.for-agent .sys-btn {
+  margin-left: 0;
+}
 .sys-more-toggle:hover {
   color: var(--ink);
 }
@@ -898,6 +904,7 @@ details[open]::details-content {
   text-decoration: underline;
 }
 .room-happening__go {
+  margin-left: 8px;
   padding: 0;
   border: 0;
   background: none;

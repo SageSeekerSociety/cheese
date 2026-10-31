@@ -44,6 +44,19 @@ describe('交出来的东西放在那次工作的最后', () => {
     ])
   })
 
+  it('几样交出来的东西之间照原来的先后', () => {
+    const first = block({ kind: 'message', author: 'cheese', author_type: 'participant', turn_id: 't1' })
+    const doc = block({ shown_as: 'card', turn_id: 't1', meta: { action: 'doc', doc_created: true } })
+    const last = block({ kind: 'message', author: 'cheese', author_type: 'participant', turn_id: 't1' })
+    const skill = block({ shown_as: 'card', turn_id: 't1', meta: { event_type: 'skill_proposed' } })
+    expect(collapseNotices([first, doc, last, skill]).map((row) => row.block.id)).toEqual([
+      first.id,
+      last.id,
+      doc.id,
+      skill.id,
+    ])
+  })
+
   it('不挪出那次工作：别的话照原来的先后', () => {
     const doc = block({ shown_as: 'card', turn_id: 't1', meta: { action: 'doc', doc_created: true } })
     const other = block({ kind: 'message', author: 'lin', author_type: 'participant', turn_id: null })
