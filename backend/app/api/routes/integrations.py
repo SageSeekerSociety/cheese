@@ -28,6 +28,7 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
+from app.core.single_use_state import SingleUseUnavailableError
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
@@ -55,6 +56,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
+from app.domain.oauth import handoff as oauth_handoff
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -107,6 +109,10 @@ class IntegrationPatch(BaseModel):
     password: str | None = None
     app_secret: str | None = None
     folders: list[str] | None = None
+    #: The Feishu authorization this browser came back with
+    #: (`feishu_callback`): claimed by the connection's owner, it finishes
+    #: authorizing; the answer carries the outcome as ``authorization``.
+    feishu_handoff: str | None = Field(default=None, max_length=64)
 
 
 class SearchIn(BaseModel):
@@ -263,6 +269,9 @@ async def update_integration(
     assert actor.user_id is not None
     service = _service(db)
     row = await service.get_owned(integration_id, actor.user_id)
+    if body.feishu_handoff is not None:
+        outcome = await _claim_feishu(db, row, body.feishu_handoff)
+        return ok({**public(row), "authorization": outcome})
     secret = {
         k: v
         for k, v in (("password", body.password), ("app_secret", body.app_secret))
@@ -337,49 +346,85 @@ async def feishu_authorize(
 @router.get("/integrations/feishu/callback")
 async def feishu_callback(
     request: Request,
-    db: DbSession,
     code: str = "",
     state: str = "",
     error: str = "",
 ) -> RedirectResponse:
+    """Where Feishu sends the browser back. Nothing is saved here: what came
+    back is held for the person who started the flow (`oauth/handoff.py`),
+    and the connections page claims it once it is signed in."""
     in_app = state.endswith(_IN_APP)
-    landing = await _finish_feishu(db, code, state.removesuffix(_IN_APP), error)
+    landing = await _hand_back_feishu(code, state.removesuffix(_IN_APP), error)
     return back_in_app(request, landing) if in_app else landing
 
 
-async def _finish_feishu(
-    db: AsyncSession, code: str, state: str, error: str
-) -> RedirectResponse:
-    """Finish authorizing and land on 我的连接 with the outcome in ``?feishu=``.
-
-    The outcome is a code the page words from its catalog in its reader's
-    language: ``ok``, ``invalid_link``, ``denied``, ``deleted`` or
-    ``exchange_failed``, or the key of a refusal of ours said with ``say()``.
-    What Feishu itself answered, when there is something, goes along as
-    ``feishu_detail`` in Feishu's own words."""
+def _connections(query: dict[str, str]) -> RedirectResponse:
     back = f"{settings.frontend_url}/users/settings/connections"
+    return RedirectResponse(f"{back}?{urlencode(query)}", 302)
 
-    def land(outcome: str, detail: str = "") -> RedirectResponse:
-        query = {"feishu": outcome}
-        if detail:
-            query["feishu_detail"] = detail[:200]
-        return RedirectResponse(f"{back}?{urlencode(query)}", 302)
 
+def _feishu_integration(state: str) -> uuid.UUID | None:
+    """The integration a state was minted for, if it is ours."""
     try:
         raw_id, kid, digest = state.split(".")
         integration_id = uuid.UUID(raw_id)
-        expected = keyed_digests(Purpose.INTEGRATION_STATE, integration_id.bytes).get(
-            kid
-        )
-        if expected is None or not hmac.compare_digest(expected.hex(), digest):
-            raise ValueError
     except ValueError:
-        return land("invalid_link")
+        return None
+    expected = keyed_digests(Purpose.INTEGRATION_STATE, integration_id.bytes).get(kid)
+    if expected is None or not hmac.compare_digest(expected.hex(), digest):
+        return None
+    return integration_id
+
+
+async def _hand_back_feishu(code: str, state: str, error: str) -> RedirectResponse:
+    integration_id = _feishu_integration(state)
+    if integration_id is None:
+        return _connections({"feishu": "invalid_link"})
     if error or not code:
-        return land("denied", error)
-    row = await db.get(Integration, integration_id)
-    if row is None:
-        return land("deleted")
+        return _connections(
+            {"feishu": "denied", **({"feishu_detail": error[:200]} if error else {})}
+        )
+    try:
+        held = await oauth_handoff.keep(
+            "feishu", {"integration": str(integration_id), "code": code}
+        )
+    except SingleUseUnavailableError:
+        return _connections({"feishu": "exchange_failed"})
+    return _connections(
+        {"feishu_integration": str(integration_id), "feishu_handoff": held}
+    )
+
+
+async def _claim_feishu(
+    db: AsyncSession, row: Integration, handoff: str
+) -> dict[str, str]:
+    """Finish the authorization the callback held for ``row``, whose owner is
+    the one asking (`update_integration` checked it before anything is
+    taken). A hand-off for another connection — somebody else's flow,
+    finished in this browser — is spent and saves nothing."""
+    held = await oauth_handoff.take(handoff)
+    if (
+        held is None
+        or held.get("kind") != "feishu"
+        or held.get("integration") != str(row.id)
+    ):
+        return {"feishu": "invalid_link"}
+    return await _finish_feishu(db, row, held["code"])
+
+
+async def _finish_feishu(
+    db: AsyncSession, row: Integration, code: str
+) -> dict[str, str]:
+    """Exchange the code and keep the tokens on ``row``; the outcome the page
+    words: ``ok``, ``exchange_failed``, or the key of a refusal of ours said
+    with ``say()``, with what Feishu itself answered as ``feishu_detail``."""
+
+    def land(outcome: str, detail: str = "") -> dict[str, str]:
+        query = {"feishu": outcome}
+        if detail:
+            query["feishu_detail"] = detail[:200]
+        return query
+
     try:
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())

@@ -41,6 +41,7 @@ FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
 # The docs' two ways of being served; docker-entrypoint.sh picks one at start.
 COPY nginx/docs /etc/nginx/docs-modes
+COPY nginx/snippets /etc/nginx/snippets
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
 COPY scripts/docs-mode.sh /usr/local/bin/docs-mode
