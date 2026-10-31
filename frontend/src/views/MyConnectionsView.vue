@@ -9,7 +9,7 @@ import type { FeishuAvailability } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import {
@@ -22,7 +22,7 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
-import { connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
+import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
@@ -33,6 +33,7 @@ import { queryClient } from '@/query/client'
 import { projectsQuery } from '@/query/projects'
 
 const route = useRoute()
+const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
@@ -51,15 +52,15 @@ const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
  *  apiError key；`feishu_detail` 是飞书自己的原话。按读者的语言说出来，不认识的
  *  码只说授权失败。 */
-function feishuOutcome(): string {
-  const code = typeof route.query.feishu === 'string' ? route.query.feishu : ''
+function feishuOutcome(query: Record<string, unknown>): string {
+  const code = typeof query.feishu === 'string' ? query.feishu : ''
   if (!code) return ''
   if (code === 'ok') return t('account.connections.feishuAuthorized')
   const known = FEISHU_OUTCOMES[code]
   const sentence = known
     ? t(`account.connections.feishuOutcome.${known}`)
     : renderNoticeMessage({ key: code }, t('account.connections.feishuOutcome.failed'))
-  const detail = typeof route.query.feishu_detail === 'string' ? route.query.feishu_detail : ''
+  const detail = typeof query.feishu_detail === 'string' ? query.feishu_detail : ''
   return detail ? t('account.connections.feishuOutcome.withDetail', { sentence, detail }) : sentence
 }
 const FEISHU_OUTCOMES: Record<string, string> = {
@@ -184,12 +185,27 @@ async function save(body: Record<string, unknown>, done: (ok: boolean, message?:
   }
 }
 
+/** 从飞书回来：回调不存东西，只把结果替发起人留着（`?feishu_handoff=`）。这一页登录着
+ *  去领，只有发起授权的人领得到 —— 别人点了同一条授权链接，令牌也进不了这一行。领到的
+ *  就是这次授权的结果，和别的回执（`?feishu=`）一样说一次；地址栏里的领取号随即拿掉。 */
+async function landedFeishu(): Promise<Record<string, unknown>> {
+  const { feishu_handoff: handoff, ...rest } = route.query
+  if (typeof handoff !== 'string' || !handoff) return route.query
+  void router.replace({ query: rest, hash: route.hash })
+  try {
+    return { ...rest, ...(await claimFeishuHandoff(handoff)).query }
+  } catch {
+    return { ...rest, feishu: 'exchange_failed' }
+  }
+}
+
 onMounted(async () => {
   // 从飞书授权回来时地址栏里的结果（`?feishu=`）是这一次跳转的回执，弹一次就够。
-  const outcome = feishuOutcome()
+  const landed = await landedFeishu()
+  const outcome = feishuOutcome(landed)
   await load()
   if (outcome) {
-    if (route.query.feishu === 'ok') toast.success(outcome)
+    if (landed.feishu === 'ok') toast.success(outcome)
     else toast.error(outcome)
   }
 })

@@ -11,6 +11,7 @@ const connectMcpServer = vi.fn()
 const disconnectMcpServer = vi.fn()
 const setMcpSecret = vi.fn()
 const clearMcpSecret = vi.fn()
+const claimMcpHandoff = vi.fn()
 
 vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api')>()
@@ -21,6 +22,7 @@ vi.mock('@/api', async (importOriginal) => {
     disconnectMcpServer: (...a: unknown[]) => disconnectMcpServer(...a),
     setMcpSecret: (...a: unknown[]) => setMcpSecret(...a),
     clearMcpSecret: (...a: unknown[]) => clearMcpSecret(...a),
+    claimMcpHandoff: (...a: unknown[]) => claimMcpHandoff(...a),
   }
 })
 
@@ -216,6 +218,30 @@ describe('useProjectMcpSettings', () => {
     expect(sonner.error).toHaveBeenCalledTimes(1)
     await tick()
     expect(router.currentRoute.value.query).toEqual({})
+  })
+
+  // 回调不存东西，只留领取号：登录着的设置页去领，领回来的才是这次连接的结果。只有发起
+  // 连接的成员领得到，别人点了授权链接，令牌也进不了这个项目。
+  it('claims what the authorization server sent back, says it once and drops the claim from the address', async () => {
+    claimMcpHandoff.mockReset().mockResolvedValue({ query: { mcp: 'tracker', mcp_result: 'connected' } })
+    const { state, router } = await host()
+    await tick()
+    await router.push('/projects/p/settings?mcp=tracker&mcp_handoff=h1')
+    await state.consumeCallback()
+    expect(claimMcpHandoff).toHaveBeenCalledWith('h1')
+    expect(sonner.success).toHaveBeenCalledTimes(1)
+    await tick()
+    expect(router.currentRoute.value.query).toEqual({})
+  })
+
+  it('a claim that is not ours is said as a failure, not a connection', async () => {
+    claimMcpHandoff.mockReset().mockResolvedValue({ query: { mcp: 'tracker', mcp_error: 'mcpAuthLinkInvalid' } })
+    const { state, router } = await host()
+    await tick()
+    await router.push('/projects/p/settings?mcp=tracker&mcp_handoff=h2')
+    await state.consumeCallback()
+    expect(sonner.error).toHaveBeenCalledTimes(1)
+    expect(sonner.success).not.toHaveBeenCalled()
   })
 
   it('waits for enabled to turn on before reading', async () => {
