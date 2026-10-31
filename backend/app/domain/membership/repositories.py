@@ -40,10 +40,15 @@ class MemberRepository:
         再看排除，靠的就是它）。
         """
         await self.lift_exclusion(project_id=project_id, user_handle=user_handle)
-        member = ProjectMember(project_id=project_id, user_handle=user_handle)
+        now = datetime.now(UTC)
+        member = ProjectMember(
+            project_id=project_id,
+            user_handle=user_handle,
+            created_at=now,
+            updated_at=now,
+        )
         self._session.add(member)
         await self._session.flush()
-        await self._session.refresh(member)
         return member
 
     async def is_excluded(self, *, project_id: uuid.UUID, user_handle: str) -> bool:
@@ -196,6 +201,7 @@ class InvitationRepository:
         invited_by_assistant: bool = False,
     ) -> ProjectInvitation:
         """``role_id`` is one of the project's own roles; none means member."""
+        now = datetime.now(UTC)
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
@@ -204,10 +210,11 @@ class InvitationRepository:
             status=InvitationStatus.pending,
             role="custom" if role_id is not None else "member",
             role_id=role_id,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(invitation)
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
     async def get(self, invitation_id: uuid.UUID) -> ProjectInvitation | None:
@@ -263,10 +270,11 @@ class InvitationRepository:
     async def settle(
         self, invitation: ProjectInvitation, status: InvitationStatus
     ) -> ProjectInvitation:
+        now = datetime.now(UTC)
         invitation.status = status
-        invitation.responded_at = datetime.now(UTC)
+        invitation.responded_at = now
+        invitation.updated_at = now
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
 

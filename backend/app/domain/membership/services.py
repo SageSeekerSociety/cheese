@@ -50,7 +50,7 @@ from app.domain.membership.repositories import (
     RoleRepository,
     TransferRepository,
 )
-from app.domain.membership.roster import roster
+from app.domain.membership.roster import people_in_project, roster
 from app.domain.membership.schemas import InvitationOut
 from app.domain.project.models import (
     InvitationStatus,
@@ -341,9 +341,8 @@ class InvitationService:
         那条路。
         """
 
-        return any(
-            m.handle == handle
-            for m in await roster(self._session, project_id, team=self._team)
+        return handle in await people_in_project(
+            self._session, project_id, team=self._team
         )
 
     async def invite(
@@ -386,6 +385,7 @@ class InvitationService:
         ):
             raise ValidationError(say("invitePending"))
         role_id = await RoleService(self._session).custom_role_id(project_id, role)
+        inviter = await user_by_handle(self._session, actor.handle or "")
         invitation = await self._repo.add(
             project_id=project_id,
             invitee_handle=invitee_handle,
@@ -393,11 +393,15 @@ class InvitationService:
             role_id=role_id,
             invited_by_assistant=actor.by_assistant,
         )
-        await self._notify_invitee(invitation, project)
+        await self._notify_invitee(invitation, project, inviter=inviter)
         return invitation
 
     async def _notify_invitee(
-        self, invitation: ProjectInvitation, project: Project
+        self,
+        invitation: ProjectInvitation,
+        project: Project,
+        *,
+        inviter: object = None,
     ) -> None:
         """Tell the invitee in their own mail — the bell, email — not the project's.
 
@@ -412,9 +416,16 @@ class InvitationService:
             "projectName": project.name,
             "invitationId": str(invitation.id),
         }
-        inviter = await user_by_handle(self._session, invitation.inviter_handle)
-        if inviter is not None:
-            payload["inviter"] = {"type": "user", "id": str(inviter.id)}
+        resolved_inviter = (
+            inviter
+            if inviter is not None
+            else await user_by_handle(self._session, invitation.inviter_handle)
+        )
+        if resolved_inviter is not None:
+            payload["inviter"] = {
+                "type": "user",
+                "id": str(getattr(resolved_inviter, "id", "")),
+            }
         await self._deliver(
             self._session,
             DeliveryEvent(
@@ -450,6 +461,28 @@ class InvitationService:
         row["invitee_name"] = invitee["name"]
         row["invitee_avatar_id"] = invitee["avatar_id"]
         return row
+
+    async def describe_many(
+        self, invitations: Sequence[ProjectInvitation]
+    ) -> list[dict]:
+        """Batch ``describe`` across a list of invitations."""
+        if not invitations:
+            return []
+        projects = await self._projects.get_by_ids([i.project_id for i in invitations])
+        invitees = await self._projects.persons([i.invitee_handle for i in invitations])
+        out: list[dict] = []
+        for invitation in invitations:
+            row = InvitationOut.model_validate(invitation).model_dump(mode="json")
+            project = projects.get(invitation.project_id)
+            row["project_name"] = project.name if project else ""
+            invitee = invitees.get(
+                invitation.invitee_handle,
+                {"name": invitation.invitee_handle, "avatar_id": None},
+            )
+            row["invitee_name"] = invitee["name"]
+            row["invitee_avatar_id"] = invitee["avatar_id"]
+            out.append(row)
+        return out
 
     async def _pending_or_404(self, invitation_id: uuid.UUID) -> ProjectInvitation:
         invitation = await self._repo.get(invitation_id)
@@ -730,6 +763,10 @@ class RoleService:
     async def custom_role_id(self, project_id: uuid.UUID, key: str) -> uuid.UUID | None:
         """The project's own role a key names, ``mentor`` meaning its mentor
         role; none for member. Refuses a key the project does not have."""
+        if key == Builtin.member.value:
+            return None
+        if key == Builtin.admin.value:
+            raise UnprocessableEntityError(say("inviteRole"))
         if key == Template.mentor.value:
             return await self.mentor_role(project_id)
         role = await self._own(project_id, key)

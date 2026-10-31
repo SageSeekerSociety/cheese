@@ -150,7 +150,7 @@ async def get_environment(
     topic, task = place.room, place.task
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic.id
+        actor, project_id=topic.project_id, topic_id=topic.id, room=topic
     )
     project = await ProjectRepository(db).get(topic.project_id)
     if project is None:
@@ -159,13 +159,10 @@ async def get_environment(
     own_default = stored(
         task.default_environment if task is not None else topic.default_environment
     )
-    devices = [
-        device
-        for device in await sql_device_service(db).list_devices_for_project(
-            topic.project_id
-        )
-        if device.supply is Supply.self_hosted
-    ]
+    all_devices = await sql_device_service(db).list_devices_for_project(
+        topic.project_id
+    )
+    devices = [device for device in all_devices if device.supply is Supply.self_hosted]
     return ok(
         {
             # What this conversation itself says; None when it inherits.
@@ -185,7 +182,7 @@ async def get_environment(
                 }
                 for device in devices
             ],
-            "specs": await offered_specs(db, project),
+            "specs": await offered_specs(db, project, project_devices=all_devices),
         }
     )
 

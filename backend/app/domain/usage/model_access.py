@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.team.services import team_service
-from app.domain.usage.ledger import team_terms
+from app.domain.usage.ledger import Terms, team_terms
 from app.domain.usage.models import OverseasModelApproval, Plan
 
 
@@ -84,19 +85,38 @@ class ModelAccess:
 
 
 async def model_access(session: AsyncSession, team_id: int) -> ModelAccess:
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("model_access", team_id))
+        if found:
+            return cached
 
     team = await team_service(session).get_team(team_id)
     personal = team is not None and team.personal_owner_user_id is not None
-    rows = await session.execute(select(Plan))
+    all_plans = list((await session.execute(select(Plan))).scalars())
     plans = sorted(
-        (p for p in rows.scalars() if _fits(p, personal=personal)), key=_cheapness
+        (p for p in all_plans if _fits(p, personal=personal)), key=_cheapness
     )
-    terms = await team_terms(session, team_id)
-    return ModelAccess(
-        allowed_tiers=terms.model_tiers,
+    by_key = {p.key: p for p in all_plans}
+    plan_key = team.plan_key if team is not None else "free"
+    if plan_key in by_key:
+        allowed_tiers = Terms.of(by_key[plan_key]).model_tiers
+    else:
+        allowed_tiers = (await team_terms(session, team_id)).model_tiers
+    out = ModelAccess(
+        allowed_tiers=allowed_tiers,
         plans=tuple(plans),
         overseas_approved=await overseas_approved(session, team_id),
     )
+    if isinstance(session, AsyncSession):
+        remember(
+            session,
+            ("model_access", team_id),
+            out,
+            tables=frozenset({"team", "plans", "overseas_model_approvals"}),
+        )
+    return out
 
 
 async def overseas_approved(session: AsyncSession, team_id: int) -> bool:

@@ -2548,3 +2548,98 @@ def test_notifications_list_and_alerts_avoid_redundant_count_and_agent_queries(c
     assert len(alert_sql) <= 10, (
         f"expected <= 10 SQL statements on POST /projects/{{id}}/alerts, got {len(alert_sql)}: {alert_sql}"
     )
+
+
+_DEVICE_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM device\b",
+    re.IGNORECASE,
+)
+
+
+def test_default_model_and_compute_configs_deduplicate_plans_and_device_queries(
+    client,
+):
+    """`GET /projects/{id}/default-model` reads `plans` once in `model_access`
+    instead of twice, and `GET /projects/{id}/compute-configs` reads `device`
+    once across `get_compute_configs`, `offered_specs`, and `project_distribution`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as model_sql:
+        r_model = client.get(f"/projects/{pid}/default-model", headers=headers)
+    assert r_model.status_code == 200, r_model.text
+    assert _count(model_sql, _PLANS_SELECT) == 1, [
+        s for s in model_sql if _PLANS_SELECT.search(s)
+    ]
+    assert len(model_sql) <= 7, (
+        f"expected <= 7 SQL statements on GET /projects/{{id}}/default-model, got {len(model_sql)}: {model_sql}"
+    )
+
+    with counting_sql(client) as comp_sql:
+        r_comp = client.get(f"/projects/{pid}/compute-configs", headers=headers)
+    assert r_comp.status_code == 200, r_comp.text
+    assert _count(comp_sql, _DEVICE_SELECT) == 1, [
+        s for s in comp_sql if _DEVICE_SELECT.search(s)
+    ]
+    assert len(comp_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /projects/{{id}}/compute-configs, got {len(comp_sql)}: {comp_sql}"
+    )
+
+
+def test_project_invitations_avoid_agent_roster_role_lookup_and_profile_n_plus_one(
+    client,
+):
+    """`POST /projects/{id}/invitations` uses `people_in_project`, skips
+    `project_role_defs` for `role='member'`, and avoids refreshing the
+    invitation row, while `GET /projects/{id}/invitations` batches invitee
+    profile lookups in one query via `describe_many`."""
+    pid, _room_ids = _seed_populated_project(client)
+    post_project(client, json={"name": "Dave Proj"}, owner="dave")
+    post_project(client, json={"name": "Eve Proj"}, owner="eve")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as inv_sql:
+        r_inv = client.post(
+            f"/projects/{pid}/invitations",
+            json={"user_handle": "dave", "role": "member"},
+            headers=headers,
+        )
+    assert r_inv.status_code in (200, 201), r_inv.text
+    inv_id = r_inv.json()["data"]["id"]
+    assert _count(inv_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in inv_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(inv_sql, _PROJECT_ROLE_DEFS_SELECT) == 0, [
+        s for s in inv_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(inv_sql) <= 27, (
+        f"expected <= 27 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
+    )
+
+    client.post(
+        f"/projects/{pid}/invitations",
+        json={"user_handle": "eve", "role": "member"},
+        headers=headers,
+    )
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/projects/{pid}/invitations", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert len(r_list.json()["data"]["data"]) == 2
+    assert _count(list_sql, _PROJECTS_SELECT) == 1, [
+        s for s in list_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(list_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /projects/{{id}}/invitations, got {len(list_sql)}: {list_sql}"
+    )
+
+    with counting_sql(client) as resp_sql:
+        r_resp = client.post(
+            f"/invitations/{inv_id}/respond",
+            json={"accept": True},
+            headers=session_auth_headers("dave"),
+        )
+    assert r_resp.status_code == 200, r_resp.text
+    assert len(resp_sql) <= 12, (
+        f"expected <= 12 SQL statements on POST /invitations/{{id}}/respond, got {len(resp_sql)}: {resp_sql}"
+    )
