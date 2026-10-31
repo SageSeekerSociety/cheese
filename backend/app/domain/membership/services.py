@@ -662,6 +662,7 @@ class RoleService:
                         permissions=sorted(p.value for p in granted),
                     )
             return (await self.roles(project_id))[key]
+        defs = await self._roles.defs(project_id)
         row = await self._roles.get_def(project_id=project_id, role_id=uuid.UUID(key))
         assert row is not None
         if name is not None:
@@ -670,7 +671,7 @@ class RoleService:
             row.permissions = sorted(
                 p.value for p in with_locks(False, self._known(permissions))
             )
-        await self._session.flush()
+        await self._roles.flush_def(project_id, defs)
         return (await self.roles(project_id))[key]
 
     async def delete(

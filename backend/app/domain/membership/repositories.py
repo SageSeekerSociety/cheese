@@ -481,12 +481,24 @@ class RoleRepository:
     async def get_def(
         self, *, project_id: uuid.UUID, role_id: uuid.UUID
     ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.id == role_id), None)
         row = await self._session.get(ProjectRoleDef, role_id)
         return row if row is not None and row.project_id == project_id else None
 
     async def templated(
         self, *, project_id: uuid.UUID, template: str
     ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.template == template), None)
         return await self._session.scalar(
             select(ProjectRoleDef)
             .where(
@@ -498,6 +510,12 @@ class RoleRepository:
         )
 
     async def named(self, *, project_id: uuid.UUID, name: str) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.name == name), None)
         return await self._session.scalar(
             select(ProjectRoleDef).where(
                 ProjectRoleDef.project_id == project_id, ProjectRoleDef.name == name
@@ -512,12 +530,36 @@ class RoleRepository:
         permissions: list[str],
         template: str | None = None,
     ) -> ProjectRoleDef:
+        prior_found, prior_cached = (
+            recall(self._session, ("project_role_defs", project_id))
+            if _can_cache(self._session)
+            else (False, None)
+        )
         row = ProjectRoleDef(
             project_id=project_id, name=name, permissions=permissions, template=template
         )
         self._session.add(row)
         await self._session.flush()
+        if _can_cache(self._session) and prior_found and prior_cached is not None:
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                (*prior_cached, row),
+                tables=_ROLE_DEF_TABLES,
+            )
         return row
+
+    async def flush_def(
+        self, project_id: uuid.UUID, defs: list[ProjectRoleDef]
+    ) -> None:
+        await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                tuple(defs),
+                tables=_ROLE_DEF_TABLES,
+            )
 
     async def delete_def(self, row: ProjectRoleDef) -> None:
         await self._session.delete(row)

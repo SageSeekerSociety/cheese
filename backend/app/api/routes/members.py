@@ -336,8 +336,9 @@ async def update_role(
         permissions=body.permissions,
         actor=at.actor,
     )
+    holders = await service.holders(at.project.id)
     await db.commit()
-    return ok(_role_out(role, await service.holders(at.project.id)))
+    return ok(_role_out(role, holders))
 
 
 @router.delete("/projects/{project_id}/roles/{key}", **typed_response(RoleDeletedOut))
