@@ -72,6 +72,19 @@ class AgentInstanceRepository:
     async def get_by_handle(
         self, *, project_id: uuid.UUID, handle: str
     ) -> AgentInstance | None:
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_new, is_new = recall(
+                self._session, ("newly_created_project", project_id)
+            )
+            if found_new and is_new:
+                return None
+            found_all, cached_all = recall(
+                self._session, ("project_agent_instances", project_id)
+            )
+            if found_all:
+                return next((r for r in cached_all if r.handle == handle), None)
         result = await self._session.execute(
             select(AgentInstance).where(
                 AgentInstance.project_id == project_id,

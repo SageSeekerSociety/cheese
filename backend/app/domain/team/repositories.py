@@ -2,7 +2,7 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy import Select, and_, func, inspect, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -220,21 +220,58 @@ class TeamRepository:
     async def get_by_ids(self, ids: Sequence[int]) -> dict[int, Team]:
         if not ids:
             return {}
-        stmt: Select[tuple[Team]] = select(Team).where(
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[int, Team] = {}
+            missing: list[int] = []
+            for tid in dict.fromkeys(ids):
+                found, cached = recall(self._session, ("team_by_id", tid))
+                if found and (cached is None or not inspect(cached).expired_attributes):
+                    if cached is not None:
+                        by_id[tid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Team, (tid,))
+                )
+                if (
+                    in_map is not None
+                    and not inspect(in_map).expired_attributes
+                    and in_map.deleted_at is None
+                ):
+                    by_id[tid] = in_map
+                    remember(
+                        self._session,
+                        ("team_by_id", tid),
+                        in_map,
+                        tables=_TEAM_TABLES,
+                    )
+                else:
+                    missing.append(tid)
+            if not missing:
+                return by_id
+            stmt: Select[tuple[Team]] = select(Team).where(
+                and_(Team.id.in_(missing), Team.deleted_at.is_(None))
+            )
+            result = await self._session.execute(stmt)
+            fetched = {t.id: t for t in result.scalars().all()}
+            for tid in missing:
+                team = fetched.get(tid)
+                if team is not None:
+                    by_id[tid] = team
+                remember(
+                    self._session,
+                    ("team_by_id", tid),
+                    team,
+                    tables=_TEAM_TABLES,
+                )
+            return by_id
+        stmt = select(Team).where(
             and_(Team.id.in_(list(ids)), Team.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
         teams = list(result.scalars().all())
-        by_id = {t.id: t for t in teams}
-        if _can_cache(self._session):
-            for tid in ids:
-                remember(
-                    self._session,
-                    ("team_by_id", tid),
-                    by_id.get(tid),
-                    tables=_TEAM_TABLES,
-                )
-        return by_id
+        return {t.id: t for t in teams}
 
     async def chosen_avatar_ids(self, team_ids: Sequence[int]) -> dict[int, int]:
         """team id -> 这个团队**自己挑过**的头像 id，没挑过的不在里面。
