@@ -1,3 +1,4 @@
+import { reactive } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -11,9 +12,12 @@ vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
   requestSiteSession: (...args: unknown[]) => requestSiteSession(...args),
 }))
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { projectId: 'project-a' }, query: {}, fullPath: '/sites/project-a' }),
-}))
+const route = reactive({
+  params: { projectId: 'project-a' },
+  query: {} as Record<string, string>,
+  fullPath: '/sites/project-a',
+})
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 import SiteOpenView from './SiteOpenView.vue'
 
@@ -28,6 +32,9 @@ beforeEach(() => {
     setItem: (key: string, value: string) => values.set(key, value),
   })
   requestSiteSession.mockReset()
+  route.params.projectId = 'project-a'
+  route.query = {}
+  route.fullPath = '/sites/project-a'
 })
 afterEach(() => {
   cleanup()
@@ -79,4 +86,22 @@ it('shows a failed launch instead of navigating to an empty website', async () =
   mount()
   expect(await screen.findByText('暂无已发布的网站')).toBeTruthy()
   expect(screen.getByRole('button', { name: '重试' })).toBeTruthy()
+})
+
+it('reopens the requested site path when the URL path changes', async () => {
+  localStorage.setItem('accessToken', 'platform-secret')
+  requestSiteSession
+    .mockResolvedValueOnce({ url: 'https://site.example/_cheese/session', grant: 'grant-a' })
+    .mockResolvedValueOnce({ url: 'https://site.example/_cheese/session', grant: 'grant-b' })
+  const submissions: string[] = []
+  vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(function (this: HTMLFormElement) {
+    submissions.push(new URLSearchParams(new FormData(this) as never).toString())
+  })
+  mount()
+  await waitFor(() => expect(submissions).toEqual(['grant=grant-a']))
+
+  route.query = { path: '/report/page' }
+  route.fullPath = '/sites/project-a?path=%2Freport%2Fpage'
+
+  await waitFor(() => expect(submissions).toEqual(['grant=grant-a', 'grant=grant-b&path=%2Freport%2Fpage']))
 })

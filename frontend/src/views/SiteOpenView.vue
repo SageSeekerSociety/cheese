@@ -2,7 +2,7 @@
 // 网站落地页的容器：读地址里的项目，向后端要一份 Site 会话，再把 grant 用 POST
 // 交给内容站（POST 让只读授权不进 URL、历史和 referrer）。画面在
 // `SiteOpenViewView.vue`，只收 props、只发 `retry`。
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestSiteSession } from '../api'
@@ -14,14 +14,16 @@ const route = useRoute()
 const loading = ref(false)
 const error = ref('')
 const needsLogin = ref(!authToken())
+let generation = 0
 
 async function openSite() {
   const projectId = String(route.params.projectId)
+  const current = ++generation
   loading.value = true
   error.value = ''
   try {
     const session = await requestSiteSession(projectId)
-    if (String(route.params.projectId) !== projectId) return
+    if (current !== generation) return
     // A POST keeps the read-only grant out of URLs, history and referrers.
     const form = document.createElement('form')
     form.method = 'POST'
@@ -42,21 +44,27 @@ async function openSite() {
     form.submit()
     form.remove()
   } catch (e) {
-    if (String(route.params.projectId) !== projectId) return
+    if (current !== generation) return
     if (e instanceof ApiError && e.status === 401) needsLogin.value = true
     else error.value = e instanceof Error ? e.message : t('project.open.site.failed')
   } finally {
-    loading.value = false
+    if (current === generation) loading.value = false
   }
 }
 
 watch(
-  () => route.params.projectId,
+  () => route.fullPath,
   () => {
+    generation += 1
+    needsLogin.value = !authToken()
     if (!needsLogin.value) void openSite()
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  generation += 1
+})
 </script>
 
 <template>
