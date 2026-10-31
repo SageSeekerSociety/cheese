@@ -18,6 +18,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
+/**
+ * 快照和下面那张帧一样是一份网页、白纸承载：声明白，别让平台深色带来的继承改了它
+ * （理由写在 `.preview-frame` 那一段）。不钉的话，快照里的深色媒体查询会亮起来，
+ * 而底是白的。
+ */
+const SNAPSHOT_SCHEME = { colorScheme: 'light' } as const
+
 const props = defineProps<{
   /** 睡的是哪一层：整台电脑（通道断了），还是电脑在、应用没答。 */
   kind: 'machine' | 'app'
@@ -85,6 +92,7 @@ watch([() => props.steps, where, () => props.snapshotHtml], () => void nextTick(
       tabindex="-1"
       :title="t('work.room.preview.sleep.snapshotTitle')"
       :srcdoc="snapshotHtml"
+      :style="SNAPSHOT_SCHEME"
     />
     <div v-show="!picking" class="app-sleep__card" role="status" aria-live="polite">
       <v-icon size="30" class="app-sleep__icon" aria-hidden="true">mdi-sleep</v-icon>

@@ -46,6 +46,7 @@ class ProjectRepository:
         external_task_id: int | None = None,
         intent: str = "",
         project_id: uuid.UUID | None = None,
+        settings: dict | None = None,
     ) -> Project:
         project = Project(
             name=name,
@@ -54,12 +55,25 @@ class ProjectRepository:
             team_id=team_id,
             external_task_id=external_task_id,
             intent=intent,
+            **({"settings": settings} if settings is not None else {}),
         )
         if project_id is not None:
             project.id = project_id
         self._session.add(project)
         await self._session.flush()
-        await self._session.refresh(project)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project", project.id),
+                project,
+                tables=frozenset({"projects"}),
+            )
+            remember(
+                self._session,
+                ("newly_created_project", project.id),
+                True,
+                tables=frozenset({"agent_instances"}),
+            )
         return project
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
@@ -132,9 +146,36 @@ class ProjectRepository:
             (await self._session.scalar(select(func.count()).select_from(Project))) or 0
         )
 
-    async def set_root_topic(self, project: Project, root_topic_id: uuid.UUID) -> None:
+    async def set_root_topic(
+        self,
+        project: Project,
+        root_topic_id: uuid.UUID,
+        *,
+        flush: bool = True,
+        is_new_project: bool = False,
+    ) -> None:
+        was_new = is_new_project or (
+            recall(self._session, ("newly_created_project", project.id)) == (True, True)
+            if _can_cache(self._session)
+            else False
+        )
         project.root_topic_id = root_topic_id
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
+            if _can_cache(self._session):
+                remember(
+                    self._session,
+                    ("project", project.id),
+                    project,
+                    tables=frozenset({"projects"}),
+                )
+                if was_new:
+                    remember(
+                        self._session,
+                        ("newly_created_project", project.id),
+                        True,
+                        tables=frozenset({"agent_instances"}),
+                    )
 
     async def lock_settings(self, project: Project) -> None:
         """Lock this project's row and re-read its settings, in place.

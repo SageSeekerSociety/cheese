@@ -159,6 +159,8 @@ export interface FramePick {
   selection: boolean
   selector: string
   tag: string
+  /** 给人读的名字，帧找不到标题时是空串。 */
+  label: string
   text: string
   prefix: string
   suffix: string
@@ -189,6 +191,7 @@ export function framePick(value: unknown): FramePick | null {
     selection,
     selector,
     tag: frameText(data.tag, 32),
+    label: frameText(data.label, 80).replace(/\s+/g, ' ').trim(),
     text,
     prefix: frameText(data.prefix, 64),
     suffix: frameText(data.suffix, 64),

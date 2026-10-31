@@ -104,6 +104,7 @@ async def store(
             action=operation["action"],
             operation_id=operation_id,
             payload=operation["payload"],
+            locked=True,
         )
     proposed = [e["suggestion_id"] for e in edits or [] if e.get("suggestion_id")]
     await journal.put_state(

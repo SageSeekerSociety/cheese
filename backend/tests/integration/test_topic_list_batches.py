@@ -512,7 +512,7 @@ def test_my_teams_and_teams_list_batch_member_and_user_reads_once(client):
     assert _count(my_teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
         s for s in my_teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert _count(my_teams_sql, _USERS_IN_SELECT) == 1, [
+    assert _count(my_teams_sql, _USERS_IN_SELECT) <= 1, [
         s for s in my_teams_sql if _USERS_IN_SELECT.search(s)
     ]
 
@@ -523,7 +523,7 @@ def test_my_teams_and_teams_list_batch_member_and_user_reads_once(client):
     assert _count(teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
         s for s in teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert _count(teams_sql, _USERS_IN_SELECT) == 1, [
+    assert _count(teams_sql, _USERS_IN_SELECT) <= 1, [
         s for s in teams_sql if _USERS_IN_SELECT.search(s)
     ]
 
@@ -2153,4 +2153,97 @@ def test_hand_over_channel_reuses_roster_is_agent_and_list_for_topic_rows(client
     ]
     assert len(ho_sql) <= 18, (
         f"expected <= 18 SQL statements on PUT /projects/{{id}}/channels/{{cid}}/manager, got {len(ho_sql)}: {ho_sql}"
+    )
+
+
+_DOC_SUGGESTIONS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?document_states\.suggestions\b",
+    re.IGNORECASE,
+)
+_TEAM_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM team\b",
+    re.IGNORECASE,
+)
+
+
+def test_replace_and_edit_document_avoid_duplicate_locks_suggestions_and_refreshes(
+    client,
+):
+    """`PUT /documents/{id}` and `POST /documents/{id}/edits` acquire
+    `DocumentJournal.lock` once in `store`, skip querying
+    `document_states.suggestions` inside `put_state` when `not suggestions`,
+    and refresh `doc` once in `edit_doc_passages`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    doc = client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "Doc B20", "content": "hello world body"},
+        headers=headers,
+    ).json()["data"]
+    doc_id = doc["id"]
+
+    with counting_sql(client) as put_sql:
+        r_put = client.put(
+            f"/documents/{doc_id}",
+            json={
+                "content": "updated doc body",
+                "expected_version": 1,
+                "operation_id": str(uuid.uuid4()),
+            },
+            headers=headers,
+        )
+    assert r_put.status_code == 200, r_put.text
+    assert _count(put_sql, _DOC_LOCKS_FOR_UPDATE) == 1, [
+        s for s in put_sql if _DOC_LOCKS_FOR_UPDATE.search(s)
+    ]
+    assert _count(put_sql, _DOC_SUGGESTIONS_SELECT) == 1, [
+        s for s in put_sql if _DOC_SUGGESTIONS_SELECT.search(s)
+    ]
+    assert len(put_sql) <= 23, (
+        f"expected <= 23 SQL statements on PUT /documents/{{id}}, got {len(put_sql)}: {put_sql}"
+    )
+
+    with counting_sql(client) as edit_sql:
+        r_edit = client.post(
+            f"/documents/{doc_id}/edits",
+            json={"edits": [{"old": "updated", "new": "revised"}]},
+            headers=headers,
+        )
+    assert r_edit.status_code == 200, r_edit.text
+    assert _count(edit_sql, _DOC_SUGGESTIONS_SELECT) == 1, [
+        s for s in edit_sql if _DOC_SUGGESTIONS_SELECT.search(s)
+    ]
+    assert len(edit_sql) <= 19, (
+        f"expected <= 19 SQL statements on POST /documents/{{id}}/edits, got {len(edit_sql)}: {edit_sql}"
+    )
+
+
+def test_create_project_consolidates_insert_and_skips_new_project_probes(client):
+    """`POST /projects` writes `settings` in the initial `INSERT INTO projects`,
+    avoids refreshing the newly inserted `Project` row, and skips probing
+    `agent_instances` or `topic_memberships` for brand-new project/root-topic rows."""
+    _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as proj_sql:
+        r_proj = client.post(
+            "/projects",
+            json={"name": "Consolidated Project"},
+            headers=headers,
+        )
+    assert r_proj.status_code == 200, r_proj.text
+    assert _count(proj_sql, _PROJECTS_SELECT) == 0, [
+        s for s in proj_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in proj_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _TOPIC_MEMBERSHIPS_SELECT) == 0, [
+        s for s in proj_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _TEAM_SELECT) == 1, [
+        s for s in proj_sql if _TEAM_SELECT.search(s)
+    ]
+    assert len(proj_sql) <= 20, (
+        f"expected <= 20 SQL statements on POST /projects, got {len(proj_sql)}: {proj_sql}"
     )

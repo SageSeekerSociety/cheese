@@ -691,10 +691,7 @@ def test_a_run_that_has_not_settled_has_no_figure_yet(client):
 
 
 def _seed_runs(client, routine_id: str, statuses: list[str]) -> None:
-    """几次执行，一分钟一次，最早的在最前面 —— 记录的先后是有意义的，不用时钟凑。
-
-    隔一分钟而不是一天：按天往回排，月初头几天（项目时区里）就有几次落进上个月，
-    「本月花了多少」那条用例每个月都要红上几天。"""
+    """几次执行，最早的在最前面 —— 记录的先后是有意义的，不用时钟凑。"""
     base = datetime.now(UTC) - timedelta(minutes=len(statuses))
 
     async def go(session):
