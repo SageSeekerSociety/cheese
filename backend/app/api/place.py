@@ -66,9 +66,12 @@ async def channels_unseen(
     even in a project-wide list that does not name the channel."""
     if resolver.on_the_dev_credential(actor):
         return set()
-    seen = await rooms_seen(db, resolver, actor, project_id)
     rooms = await TopicRepository(db).list_for_project(project_id)
-    return {room.id for room in rooms if room.members_only and room.id not in seen}
+    private_ids = [room.id for room in rooms if room.members_only]
+    if not private_ids:
+        return set()
+    seen = await rooms_seen(db, resolver, actor, project_id)
+    return {rid for rid in private_ids if rid not in seen}
 
 
 async def task_conversation(

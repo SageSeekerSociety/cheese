@@ -108,6 +108,19 @@ async def list_for_project(
     filters the flat list, so a kept topic's parent may be filtered out;
     callers that rebuild the tree should not combine it with the filter.
     """
+    cache_all = (
+        _can_cache(repo._session)
+        and sort is None
+        and order == "asc"
+        and active_since is None
+        and only_seen_by is None
+    )
+    if cache_all:
+        if repo._session.autoflush:
+            await repo._session.flush()
+        found, cached = recall(repo._session, ("project_topics_all", project_id))
+        if found:
+            return list(cached)
     stmt = _project_topics_stmt(
         repo,
         [project_id],
@@ -118,6 +131,13 @@ async def list_for_project(
     )
     rows = list((await repo._session.scalars(stmt)).all())
     if _can_cache(repo._session):
+        if cache_all:
+            remember(
+                repo._session,
+                ("project_topics_all", project_id),
+                tuple(rows),
+                tables=_TOPIC_ROW_TABLES,
+            )
         for row in rows:
             remember(
                 repo._session, ("topic_row", row.id), row, tables=_TOPIC_ROW_TABLES

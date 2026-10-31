@@ -19,6 +19,12 @@ from app.domain.project.models import (
 )
 from app.domain.topic.models import Topic
 
+_ROLE_DEF_TABLES = frozenset({"project_role_defs"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
 
 class MemberRepository:
     def __init__(self, session: AsyncSession):
@@ -340,7 +346,13 @@ class RoleRepository:
 
     async def defs(self, project_id: uuid.UUID) -> list[ProjectRoleDef]:
         """The project's role rows, its own roles in the order they were made."""
-        return list(
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return list(cached)
+        rows = list(
             (
                 await self._session.scalars(
                     select(ProjectRoleDef)
@@ -349,6 +361,14 @@ class RoleRepository:
                 )
             ).all()
         )
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                tuple(rows),
+                tables=_ROLE_DEF_TABLES,
+            )
+        return rows
 
     async def defs_of(
         self, project_ids: list[uuid.UUID]

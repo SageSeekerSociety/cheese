@@ -42,7 +42,9 @@ async def mark_topic_read(
     room_id = await room_of(db, topic_id)
     topic = await TopicService(db).get_or_404(room_id)
     actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
-    await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=room_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=room_id, room=topic
+    )
     handle = await resolver.resolve_recipient(
         requested=(body.get("handle") or "").strip() or None,
         project_id=topic.project_id,
@@ -63,7 +65,7 @@ async def set_topic_notify_level(
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     handle = await resolver.resolve_recipient(
         requested=None, project_id=topic.project_id, allow_anonymous=False

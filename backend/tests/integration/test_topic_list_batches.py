@@ -230,6 +230,10 @@ _TASK_LAST_SAID_SELECT = re.compile(
     r"^\s*SELECT tasks\.id,\s*\(SELECT max\(blocks\.created_at\)",
     re.IGNORECASE,
 )
+_PROJECT_ROLE_DEFS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_role_defs\b",
+    re.IGNORECASE,
+)
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
@@ -919,4 +923,59 @@ def test_project_agents_and_room_endpoints_deduplicate_instances_and_memberships
     ]
     assert len(members_sql) <= 8, (
         f"expected <= 8 SQL statements on room members, got {len(members_sql)}: {members_sql}"
+    )
+
+
+def test_room_pins_chapters_and_proposals_pass_room_to_authorize_topic(client):
+    """`GET /topics/{room_id}/pins`, `GET /topics/{room_id}/chapters`, and
+    `GET /topics/{room_id}/feedback-proposals` pass `room=place.room` to
+    `authorize_topic` so none of them issues a redundant `room_of` UNION query."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    for suffix, max_sql in (("pins", 4), ("chapters", 4), ("feedback-proposals", 5)):
+        with counting_sql(client) as seen:
+            r = client.get(f"/topics/{room_id}/{suffix}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert _count(seen, _ROOM_OF_UNION_SELECT) == 0, [
+            s for s in seen if _ROOM_OF_UNION_SELECT.search(s)
+        ]
+        assert len(seen) <= max_sql, (
+            f"expected <= {max_sql} SQL statements on {suffix}, got {len(seen)}: {seen}"
+        )
+
+
+def test_project_artifacts_and_channels_unseen_skip_redundant_topic_queries(client):
+    """`GET /projects/{id}/artifacts` queries `topics` once when no private
+    channels exist, avoiding a second `ids_for_project` round-trip."""
+    pid, _ = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/projects/{pid}/artifacts", headers=headers)
+    assert r.status_code == 200, r.text
+    assert _count(seen, _TOPICS_SELECT) == 1, [
+        s for s in seen if _TOPICS_SELECT.search(s)
+    ]
+    assert len(seen) <= 6, (
+        f"expected <= 6 SQL statements on project artifacts, got {len(seen)}: {seen}"
+    )
+
+
+def test_project_roles_deduplicates_role_defs_query(client):
+    """`GET /projects/{id}/roles` queries `project_role_defs` once across
+    `RoleService.holders` and `RoleService.roles`."""
+    pid, _ = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/projects/{pid}/roles", headers=headers)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["data"]["roles"]) >= 1
+    assert _count(seen, _PROJECT_ROLE_DEFS_SELECT) == 1, [
+        s for s in seen if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(seen) <= 14, (
+        f"expected <= 14 SQL statements on project roles, got {len(seen)}: {seen}"
     )
