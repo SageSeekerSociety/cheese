@@ -170,13 +170,15 @@ class TopicMemberService:
         batch: whoever manages the project manages all of them."""
         if not topics:
             return set()
+        owned = await self._repo.topic_ids_for_member(
+            [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
+        )
+        if len(owned) == len({t.id for t in topics}):
+            return owned
         if await may(
             self._session, topics[0].project_id, actor, Permission.manage_channels
         ):
             return {t.id for t in topics}
-        owned = await self._repo.topic_ids_for_member(
-            [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
-        )
         if not self._is_agent_handle(actor):
             candidates = [
                 t

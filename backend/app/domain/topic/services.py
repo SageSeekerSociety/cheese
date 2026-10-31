@@ -27,6 +27,7 @@ from app.core.errors import (
     UnprocessableEntityError,
     ValidationError,
 )
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of
@@ -237,34 +238,14 @@ class TopicService:
                 else None
             ),
         )
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("newly_created_topic", topic.id),
+                True,
+                tables=frozenset({"accept_cards", "notification"}),
+            )
         return topic
-
-    async def created_topic_state(
-        self,
-        topic: Topic,
-        viewer_handle: str | None,
-        actor: str,
-        can_manage: bool,
-        team: ProjectTeam,
-    ) -> tuple[dict[uuid.UUID, TopicRelevance], set[uuid.UUID]]:
-        """Relevance and management flags for a newly created channel, which
-        starts with no open cards and no pending decision notifications."""
-        joined = (
-            await self._members.joined_topic_ids([topic], viewer_handle, team=team)
-            if viewer_handle is not None
-            else set()
-        )
-        relevance = (
-            {topic.id: TopicRelevance(joined=topic.id in joined, awaits_me=False)}
-            if viewer_handle is not None
-            else {}
-        )
-        managed = (
-            {topic.id}
-            if can_manage
-            else await self._members.managed_topic_ids([topic], actor)
-        )
-        return relevance, managed
 
     async def get_or_create_private(
         self,
@@ -399,8 +380,26 @@ class TopicService:
         if hasattr(self._members, "_repo"):
             await self._members._repo.list_for_topics(topic_ids)
         joined = await self._members.joined_topic_ids(topics, viewer_handle, team=team)
-        awaiting_card = await cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        pending = await decisions.decision_topic_ids(topic_ids, viewer_handle)
+        fresh_ids = (
+            {
+                tid
+                for tid in topic_ids
+                if recall(self._session, ("newly_created_topic", tid)) == (True, True)
+            }
+            if isinstance(self._session, AsyncSession)
+            else set()
+        )
+        check_ids = [tid for tid in topic_ids if tid not in fresh_ids]
+        awaiting_card = (
+            await cards.reviewer_topic_ids(check_ids, viewer_handle)
+            if check_ids
+            else {}
+        )
+        pending = (
+            await decisions.decision_topic_ids(check_ids, viewer_handle)
+            if check_ids
+            else {}
+        )
         return {
             topic.id: TopicRelevance(
                 joined=topic.id in joined,

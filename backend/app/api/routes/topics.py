@@ -27,7 +27,6 @@ from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
 from app.api.write_access import ROUTE_DECIDES, Can, InChannel
-from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -108,13 +107,9 @@ async def create_topic(
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
     await require_role(db, actor, body.project_id, Permission.create_channels)
-    can_manage = await may(
-        db, body.project_id, actor.handle, Permission.manage_channels
-    )
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
-    service = TopicService(db)
-    topic = await service.create(
+    topic = await TopicService(db).create(
         project_id=body.project_id,
         title=body.title,
         description=body.description,
@@ -122,9 +117,15 @@ async def create_topic(
         created_by=actor.handle if actor.authenticated else None,
         members_only=body.members_only,
     )
-    relevance, managed = await service.created_topic_state(
-        topic, _viewer(actor), actor.handle, can_manage, project_team
+    service = TopicService(db)
+    relevance = await service.relevance_for_topics(
+        [topic],
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
     )
+    managed = await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
     response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.

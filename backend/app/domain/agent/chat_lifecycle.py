@@ -36,6 +36,7 @@ from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.topic.reads import load_topic
@@ -64,7 +65,7 @@ class TurnLifecycle:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
         refused. What it wrote so far stays."""
-        if not seat or not seat.startswith("cheese-"):
+        if not seat or not seat.startswith(AGENT_HANDLE_PREFIX):
             return
         async with self._sessions() as session:
             topic = await load_topic(session, topic_id)

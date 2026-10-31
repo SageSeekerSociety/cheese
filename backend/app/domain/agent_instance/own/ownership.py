@@ -18,7 +18,7 @@ from app.domain.agent_instance.own.connections import (
     logins_by_teams,
 )
 from app.domain.device.models import DeviceClaudeLoginRow
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
@@ -59,7 +59,7 @@ async def owned_by_seat(
     """The owner of the agent that sits on rosters as ``seat_handle`` in this
     project, or None when that agent is not anyone's own (the project's 芝士,
     another teammate, a person)."""
-    if not seat_handle or not seat_handle.startswith("cheese-"):
+    if not seat_handle or not seat_handle.startswith(AGENT_HANDLE_PREFIX):
         return None
     rows = await db.execute(
         select(*_OWNED)
