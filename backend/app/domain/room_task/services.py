@@ -12,6 +12,7 @@ from sqlalchemy.orm import aliased
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
+from app.domain.conversation.numbering import CREATED_TASKS_KEY
 from app.domain.identity.handles import names_a_person
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
@@ -402,6 +403,7 @@ class TaskService:
         *,
         reporter_handle: str | None,
         contributor_handles: list[str],
+        flush: bool = True,
     ) -> None:
         """Record declared human contributions after validating their accounts."""
 
@@ -416,17 +418,35 @@ class TaskService:
                 )
         task.reporter_handle = reporter_handle
         task.contributor_handles = contributors
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
 
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
         if task.document_id is not None:
             return task.document_id
-        locked = await lock_task_for_change(self._session, task.id)
+        if isinstance(self._session, AsyncSession) and task.id in (
+            self._session.sync_session.info.get(CREATED_TASKS_KEY, ())
+        ):
+            locked: Task | None = task
+        else:
+            locked = await lock_task_for_change(self._session, task.id)
         assert locked is not None
         if locked.document_id is None:
-            doc = await Documents(self._session).create(project_id=locked.project_id)
+            project = (
+                self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(
+                        Project, (locked.project_id,)
+                    )
+                )
+                if isinstance(self._session, AsyncSession)
+                else None
+            )
+            doc = await Documents(self._session).create(
+                project_id=locked.project_id,
+                team_id=project.team_id if project is not None else None,
+            )
             locked.document_id = doc.id
             await self._session.flush()
         return locked.document_id
@@ -513,6 +533,7 @@ class TaskService:
         base_task_id: uuid.UUID | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
         task_id: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine.
 
@@ -528,8 +549,8 @@ class TaskService:
                 raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
             # task's landed, unless it never delivered.
-            if parent.status == TaskStatus.open or (
-                parent.accepted_at is None and parent.delivered_head is None
+            if parent.accepted_at is None and (
+                parent.status == TaskStatus.open or parent.delivered_head is None
             ):
                 base = parent.branch_name
         if reviewer_handle is None:
@@ -545,15 +566,18 @@ class TaskService:
             created_by=created_by,
             title_source=title_source,
             task_id=task_id,
+            flush=False,
         )
         await self.set_credits(
             task,
             reporter_handle=reporter_handle,
             contributor_handles=contributor_handles or [],
+            flush=False,
         )
         self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
         return task
 
     async def next_step(self, task: Task, *, base_branch: str | None = None) -> None:

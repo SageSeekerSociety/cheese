@@ -59,6 +59,12 @@ NUMBERING_HELD_KEY = "numbering_held"
 #: `Session.info` key: conversations created in this transaction.
 CREATED_KEY = _CREATED = "conversations_created"
 
+#: `Session.info` key: task rows created in this transaction.
+CREATED_TASKS_KEY = "created_tasks"
+
+#: `Session.info` key: task ids generated fresh (`task_id is None`).
+FRESH_TASKS_KEY = "fresh_task_ids"
+
 #: The tables whose inserted row registers a conversation of the same id
 #: (`conversation.models`, migration ``f7985445d2bf``).
 _CONVERSATION_TABLES = frozenset(
@@ -188,10 +194,13 @@ def _note_inserted_conversations(state: ORMExecuteState) -> None:
     if isinstance(statement, Insert) and (
         getattr(statement.table, "name", None) in _CONVERSATION_TABLES
     ):
+        inserted = _inserted_ids(statement, state.parameters)
+        if statement.table.name == "tasks" and inserted:
+            state.session.info.setdefault(CREATED_TASKS_KEY, set()).update(inserted)
         created = _new_conversations(
             state.session,
             statement.table.name,
-            _inserted_ids(statement, state.parameters),
+            inserted,
         )
         if created:
             state.session.info.setdefault(_CREATED, set()).update(created)
@@ -207,11 +216,21 @@ def _new_conversations(session: Session, table_name: str, ids: list[uuid.UUID]):
     there before, and others may be writing into it."""
     if table_name != "tasks" or not ids:
         return ids
-    existing = set(
-        session.connection()
-        .execute(select(_THREADS.c.id).where(_THREADS.c.id.in_(ids)))
-        .scalars()
-    )
+    fresh = session.info.get(FRESH_TASKS_KEY, ())
+    identity_threads = {
+        tid
+        for obj in session.identity_map.values()
+        if getattr(type(obj), "__tablename__", None) == "threads"
+        and (tid := getattr(obj, "id", None)) is not None
+    }
+    unknown = [one for one in ids if one not in fresh and one not in identity_threads]
+    existing = set(identity_threads)
+    if unknown:
+        existing.update(
+            session.connection()
+            .execute(select(_THREADS.c.id).where(_THREADS.c.id.in_(unknown)))
+            .scalars()
+        )
     return [one for one in ids if one not in existing]
 
 
@@ -223,6 +242,8 @@ def _note_created_conversations(session: Session, _context) -> None:
         if name in _CONVERSATION_TABLES:
             by_table.setdefault(name, []).append(row.id)
     for name, ids in by_table.items():
+        if name == "tasks" and ids:
+            session.info.setdefault(CREATED_TASKS_KEY, set()).update(ids)
         created = _new_conversations(session, name, ids)
         if created:
             session.info.setdefault(_CREATED, set()).update(created)
@@ -231,6 +252,8 @@ def _note_created_conversations(session: Session, _context) -> None:
 @event.listens_for(Session, "after_rollback")
 def _numbering_rolled_back(session: Session) -> None:
     # Fired while the transaction rolling back is still the innermost one.
+    session.info.pop(CREATED_TASKS_KEY, None)
+    session.info.pop(FRESH_TASKS_KEY, None)
     held = session.info.get(NUMBERING_HELD_KEY)
     if not held:
         return
@@ -247,6 +270,8 @@ def _numbering_released(session: Session, transaction) -> None:
     if transaction.parent is None:
         session.info.pop(NUMBERING_HELD_KEY, None)
         session.info.pop(_CREATED, None)
+        session.info.pop(CREATED_TASKS_KEY, None)
+        session.info.pop(FRESH_TASKS_KEY, None)
         return
     held = session.info.get(NUMBERING_HELD_KEY)
     if not held or not transaction.nested:
