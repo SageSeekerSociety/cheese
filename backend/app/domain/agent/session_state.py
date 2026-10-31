@@ -238,6 +238,9 @@ async def running_conversations(
         wanted = set(conversation_ids)
         if not wanted:
             return set()
+        if not isinstance(session, AsyncSession):
+            query = query.where(SessionState.conversation_id.in_(wanted))
+            return set(await session.scalars(query.distinct()))
         if session.autoflush:
             await session.flush()
         known: set[uuid.UUID] = set()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Uuid, any_, bindparam, func, select
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
@@ -43,7 +44,7 @@ _TOPIC_ROW_TABLES = frozenset({"topics"})
 
 
 def _can_cache(session: object) -> bool:
-    return hasattr(session, "sync_session")
+    return isinstance(session, AsyncSession)
 
 
 async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:

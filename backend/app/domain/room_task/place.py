@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.core.request_facts import remember
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
@@ -81,9 +80,6 @@ class Place:
         )
 
 
-_PLACE_ROOM_TABLES = frozenset({"topics", "tasks", "threads"})
-
-
 class PlaceResolver:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -92,15 +88,7 @@ class PlaceResolver:
         """The room ``place_id`` names. A task's id names no room: routes
         addressed by room stay closed to it."""
         room = await self._session.get(Topic, place_id)
-        if room is not None:
-            remember(
-                self._session,
-                ("room_of", place_id),
-                room.id,
-                tables=_PLACE_ROOM_TABLES,
-            )
-            return Place(room=room)
-        return None
+        return Place(room=room) if room is not None else None
 
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
@@ -110,34 +98,10 @@ class PlaceResolver:
             return place
         task = await self._session.get(Task, conversation_id)
         if task is not None:
-            remember(
-                self._session,
-                ("room_of", conversation_id),
-                task.room_id,
-                tables=_PLACE_ROOM_TABLES,
-            )
-            remember(
-                self._session,
-                ("room_of", task.room_id),
-                task.room_id,
-                tables=_PLACE_ROOM_TABLES,
-            )
             room = await self._session.get(Topic, task.room_id)
             return Place(room=room, task=task) if room is not None else None
         thread = await self._session.get(Thread, conversation_id)
         if thread is not None:
-            remember(
-                self._session,
-                ("room_of", conversation_id),
-                thread.room_id,
-                tables=_PLACE_ROOM_TABLES,
-            )
-            remember(
-                self._session,
-                ("room_of", thread.room_id),
-                thread.room_id,
-                tables=_PLACE_ROOM_TABLES,
-            )
             room = await self._session.get(Topic, thread.room_id)
             return Place(room=room, thread=thread) if room is not None else None
         return None

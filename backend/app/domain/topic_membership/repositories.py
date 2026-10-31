@@ -12,7 +12,7 @@ _TOPIC_MEMBER_TABLES = frozenset({"topic_memberships"})
 
 
 def _can_cache(session: object) -> bool:
-    return hasattr(session, "sync_session")
+    return isinstance(session, AsyncSession)
 
 
 class TopicMembershipRepository:
