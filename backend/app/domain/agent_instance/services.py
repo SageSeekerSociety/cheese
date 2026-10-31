@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import (
@@ -19,7 +20,10 @@ from app.domain.agent_instance.models import (
     OwnAgent,
     PersonalModelResource,
 )
-from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.agent_instance.repositories import (
+    AGENT_INSTANCE_TABLES,
+    AgentInstanceRepository,
+)
 from app.domain.agent_type.library import AgentTypeDef, preset_types
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import (
@@ -27,6 +31,7 @@ from app.domain.identity.handles import (
     CHEESE_NAME,
     UNRESOLVED_AGENT_HANDLE,
     agent_instance_handle,
+    agent_instance_id_bounds,
 )
 from app.domain.identity.services import IdentityService
 from app.domain.memory.models import agent_project_scope_id
@@ -294,10 +299,48 @@ class AgentInstanceService:
         """Which project's teammate sits on rosters as ``handle``, or None when
         the handle is not a saved teammate's seat at all (a person, the shared
         ``cheese`` seat, a room-derived seat, a device's agent)."""
-        for instance in await self._repo.list_all():
-            if agent_instance_handle(instance.id) == handle:
-                return instance.project_id
-        return None
+        if agent_instance_id_bounds(handle) is None:
+            return None
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            key = ("seat_project", handle)
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+            for obj in self._session.sync_session.identity_map.values():
+                if (
+                    isinstance(obj, AgentInstance)
+                    and agent_instance_handle(obj.id) == handle
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj.project_id,
+                        tables=AGENT_INSTANCE_TABLES,
+                    )
+                    return obj.project_id
+                if (
+                    isinstance(obj, Project)
+                    and obj.default_agent_instance_id is not None
+                    and agent_instance_handle(obj.default_agent_instance_id) == handle
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj.id,
+                        tables=AGENT_INSTANCE_TABLES | frozenset({"projects"}),
+                    )
+                    return obj.id
+            pid = await self._repo.project_of_seat_handle(handle)
+            remember(
+                self._session,
+                key,
+                pid,
+                tables=AGENT_INSTANCE_TABLES,
+            )
+            return pid
+        return await self._repo.project_of_seat_handle(handle)
 
     async def for_handle(self, project: Project, handle: str | None) -> AgentInstance:
         """The saved teammate a caller named by handle, else the project default.

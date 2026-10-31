@@ -1594,3 +1594,115 @@ def test_add_and_remove_topic_member_deduplicate_membership_and_non_agent_dismis
     assert len(del_sql) <= 5, (
         f"expected <= 5 SQL statements on DELETE /topics/{{id}}/members/bob, got {len(del_sql)}: {del_sql}"
     )
+
+
+_TASKS_UPDATE = re.compile(
+    r"^\s*UPDATE\s+tasks\s+SET\b",
+    re.IGNORECASE,
+)
+
+
+def test_create_task_consolidates_task_insert_and_skips_thread_and_lock_queries(client):
+    """`POST /topics/{id}/tasks` writes `branch_name`, `workspace_name`,
+    `base_branch`, `upgraded_from_block_id`, and `source_block_id` in the
+    initial `INSERT INTO tasks` flush, skips probing `threads` on a fresh task
+    UUID, and skips `FOR NO KEY UPDATE` + `SELECT projects.team_id` in
+    `ensure_document`."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as task_sql:
+        r_task = client.post(
+            f"/topics/{ch}/tasks",
+            json={"title": "Consolidated Task"},
+            headers=headers,
+        )
+    assert r_task.status_code == 200, r_task.text
+    assert _count(task_sql, _THREADS_IN_SELECT) == 0, [
+        s for s in task_sql if _THREADS_IN_SELECT.search(s)
+    ]
+    assert _count(task_sql, _ALL_TASKS_SELECT) == 0, [
+        s for s in task_sql if _ALL_TASKS_SELECT.search(s)
+    ]
+    assert _count(task_sql, _PROJECTS_SELECT) == 1, [
+        s for s in task_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(task_sql, _TASKS_UPDATE) == 1, [
+        s for s in task_sql if _TASKS_UPDATE.search(s)
+    ]
+    assert len(task_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST /topics/{{id}}/tasks, got {len(task_sql)}: {task_sql}"
+    )
+
+
+def test_channel_join_leave_and_mark_read_skip_redundant_room_of_union_queries(client):
+    """`POST /topics/{id}/join`, `POST /topics/{id}/leave`, and
+    `POST /topics/{id}/read` reuse the resolved channel `Topic` row instead of
+    running `room_of` (`SELECT inside.room_id FROM tasks UNION ALL threads`)."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    bob_headers = session_auth_headers("bob")
+    ch = room_ids[0]
+
+    with counting_sql(client) as join_sql:
+        r_join = client.post(f"/topics/{ch}/join", json={}, headers=bob_headers)
+    assert r_join.status_code == 200, r_join.text
+    assert _count(join_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in join_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as leave_sql:
+        r_leave = client.post(f"/topics/{ch}/leave", json={}, headers=bob_headers)
+    assert r_leave.status_code == 200, r_leave.text
+    assert _count(leave_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in leave_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(leave_sql) <= 6, (
+        f"expected <= 6 SQL statements on POST /topics/{{id}}/leave, got {len(leave_sql)}: {leave_sql}"
+    )
+
+    with counting_sql(client) as read_sql:
+        r_read = client.post(f"/topics/{ch}/read", json={}, headers=headers)
+    assert r_read.status_code == 200, r_read.text
+    assert _count(read_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in read_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(read_sql) <= 5, (
+        f"expected <= 5 SQL statements on POST /topics/{{id}}/read, got {len(read_sql)}: {read_sql}"
+    )
+
+
+def test_upgrade_block_to_task_deduplicates_room_seat_and_task_queries(client):
+    """`POST /blocks/{id}/upgrade` reuses the channel `Topic` row in
+    `_main_line_room`, resolves `project_of_seat` without a full-table scan of
+    `agent_instances`, checks `thread_teammate` in memory when `reply_count == 0`,
+    and writes task fields in the initial `INSERT INTO tasks` flush."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    msg = post_message(client, ch, "alice", {"content": "upgrade me"})
+    msg_id = msg["id"]
+
+    with counting_sql(client) as up_sql:
+        r_up = client.post(
+            f"/blocks/{msg_id}/upgrade",
+            json={"title": "Upgraded Task"},
+            headers=headers,
+        )
+    assert r_up.status_code == 200, r_up.text
+    assert _count(up_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in up_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(up_sql, _CONVERSATIONS_KIND_SELECT) == 0, [
+        s for s in up_sql if _CONVERSATIONS_KIND_SELECT.search(s)
+    ]
+    assert _count(up_sql, _THREADS_IN_SELECT) == 0, [
+        s for s in up_sql if _THREADS_IN_SELECT.search(s)
+    ]
+    assert _count(up_sql, _TASKS_UPDATE) == 1, [
+        s for s in up_sql if _TASKS_UPDATE.search(s)
+    ]
+    assert len(up_sql) <= 30, (
+        f"expected <= 30 SQL statements on POST /blocks/{{id}}/upgrade, got {len(up_sql)}: {up_sql}"
+    )

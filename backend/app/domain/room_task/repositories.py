@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import FRESH_TASKS_KEY
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import (
     Task,
@@ -128,10 +129,16 @@ class TaskRepository:
         contributor_handles: list[str] | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
         task_id: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> Task:
         """Create a task; its service assigns the branch before checkout."""
+        resolved_id = task_id if task_id is not None else uuid.uuid4()
+        if task_id is None and _can_cache(self._session):
+            self._session.sync_session.info.setdefault(FRESH_TASKS_KEY, set()).add(
+                resolved_id
+            )
         task = Task(
-            **({"id": task_id} if task_id is not None else {}),
+            id=resolved_id,
             project_id=project_id,
             room_id=room_id,
             number=await take_number(self._session, project_id, Numbered.task),
@@ -144,7 +151,8 @@ class TaskRepository:
             created_by=created_by,
         )
         self._session.add(task)
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
         return task
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:

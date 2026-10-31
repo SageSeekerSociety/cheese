@@ -116,11 +116,26 @@ def _said_around(session: Session, task_ids: Iterable[uuid.UUID]) -> set[uuid.UU
     around = {room_id for room_id, _origin in rows}
     origins = [origin for _room, origin in rows if origin is not None]
     if origins:
-        around.update(
-            connection.execute(
-                select(_THREADS.c.id).where(_THREADS.c.root_block_id.in_(origins))
-            ).scalars()
-        )
+        by_root = {
+            getattr(obj, "root_block_id", None): getattr(obj, "id", None)
+            for obj in session.identity_map.values()
+            if getattr(type(obj), "__tablename__", None) == "threads"
+        }
+        missing_origins: list[uuid.UUID] = []
+        for origin in origins:
+            tid = by_root.get(origin)
+            if tid is not None:
+                around.add(tid)
+            else:
+                missing_origins.append(origin)
+        if missing_origins:
+            around.update(
+                connection.execute(
+                    select(_THREADS.c.id).where(
+                        _THREADS.c.root_block_id.in_(missing_origins)
+                    )
+                ).scalars()
+            )
     return around
 
 
