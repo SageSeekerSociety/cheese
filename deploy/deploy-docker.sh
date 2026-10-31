@@ -86,6 +86,20 @@ case " $COMPOSE_OVERLAYS " in
   *docker-compose.forgejo.yml*) ;;
   *) COMPOSE_OVERLAYS="${COMPOSE_OVERLAYS:+$COMPOSE_OVERLAYS }docker-compose.forgejo.yml" ;;
 esac
+# The api pool beside each backend slot's realtime process
+# (backend/app/core/process_role.py, backend/app/serve.py): how many worker
+# processes answer the plain reads app-router sends them. 0, the default, runs
+# none, publishes no pool port and routes every request to the backend as
+# before. dev's release workflow sets it (.github/workflows/deploy-dev.yml).
+API_POOL_WORKERS="${API_POOL_WORKERS:-0}"
+case "$API_POOL_WORKERS" in ''|*[!0-9]*) API_POOL_WORKERS=0 ;; esac
+export API_POOL_WORKERS
+if [ "$API_POOL_WORKERS" -gt 0 ]; then
+  case " $COMPOSE_OVERLAYS " in
+    *docker-compose.api-pool.yml*) ;;
+    *) COMPOSE_OVERLAYS="$COMPOSE_OVERLAYS docker-compose.api-pool.yml" ;;
+  esac
+fi
 _overlay_args=()  # populated after fail() exists so a missing overlay aborts loudly
 FORGE_CUTOVER_PENDING="${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}/forge-migration/cutover-pending"
 FORGE_EXECUTOR_RESTART="$(dirname "$FORGE_CUTOVER_PENDING")/restart-host-executor"
@@ -483,6 +497,12 @@ ensure_application_router() {
   if [ ! -f "$ACTIVE_BACKEND_DIR/frontend.conf" ]; then
     printf 'upstream frontend_active { server 127.0.0.1:%s; }\n' "$FRONTEND_PORT" > "$ACTIVE_BACKEND_DIR/frontend.conf"
   fi
+  # app-router.conf includes backend-pool.conf. A box that has never written it
+  # gets it here, for the backend serving now, before that config is tested:
+  # each release's switch rewrites it with backend.conf from then on.
+  if [ ! -f "$ACTIVE_BACKEND_DIR/backend-pool.conf" ] && [ -f "$ACTIVE_BACKEND_DIR/backend.conf" ]; then
+    write_pool_upstream "$ACTIVE_BACKEND_DIR/backend-pool.conf" "$(serving_backend_port)"
+  fi
   if ! cmp -s "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"; then
     [ ! -f "$ACTIVE_BACKEND_DIR/app-router.conf" ] || router_changed=true
     cp "$HERE/llm-tunnel/app-router.conf" "$ACTIVE_BACKEND_DIR/app-router.conf"
@@ -736,6 +756,10 @@ done
 ACTIVE_BACKEND_DIR="${ACTIVE_BACKEND_DIR:-}"
 BACKEND_PORT="${BACKEND_PORT:-8081}"
 BACKEND_PORT_NEXT="${BACKEND_PORT_NEXT:-18082}"
+# Each slot's api pool, published beside its backend (docker-compose.api-pool.yml).
+BACKEND_POOL_PORT="${BACKEND_POOL_PORT:-18091}"
+BACKEND_POOL_PORT_NEXT="${BACKEND_POOL_PORT_NEXT:-18092}"
+export BACKEND_POOL_PORT
 FRONTEND_PORT="${FRONTEND_PORT:-8080}"
 FRONTEND_PORT_NEXT="${FRONTEND_PORT_NEXT:-18084}"
 # The first frontend slot's loopback port: the box's :8080 and :80 are app-router's.
@@ -750,12 +774,15 @@ write_slots_overlay() {
     -p "$PROJECT" config --format json \
     | ENV_FILE="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
       BACKEND_PORT_NEXT="$BACKEND_PORT_NEXT" FRONTEND_SLOT_PORT="$FRONTEND_SLOT_PORT" \
+      POOL_PORT_NEXT="$( [ "$API_POOL_WORKERS" -gt 0 ] && printf %s "$BACKEND_POOL_PORT_NEXT" )" \
       FRONTEND_PORT_NEXT="$FRONTEND_PORT_NEXT" ROLL_FRONTEND="${ACTIVE_FRONTEND_DIR:+1}" python3 -c '
 import json, os, sys
 services = json.load(sys.stdin)["services"]
 backend = dict(services["backend"])
 backend["env_file"] = [os.environ.get("ENV_FILE")]
 backend["ports"] = ["127.0.0.1:" + os.environ.get("BACKEND_PORT_NEXT") + ":8081"]
+if os.environ.get("POOL_PORT_NEXT"):
+    backend["ports"].append("127.0.0.1:" + os.environ["POOL_PORT_NEXT"] + ":8085")
 backend["networks"] = {"default": {"aliases": ["backend"]}}
 slots = {"backend-b": backend}
 if os.environ.get("ROLL_FRONTEND"):
@@ -1360,6 +1387,35 @@ write_upstream() {
   mv -f "$tmp" "$file"
 }
 
+# backend-pool.conf names where app-router sends a plain read
+# (deploy/llm-tunnel/app-router.conf): the api pool of the slot on $2, with that
+# slot's realtime process as the backup that takes a read whenever the pool does
+# not answer — or, on a box that runs no pool, that process alone.
+pool_port_of() {
+  if [ "$1" = "$BACKEND_PORT_NEXT" ]; then
+    printf '%s' "$BACKEND_POOL_PORT_NEXT"
+  else
+    printf '%s' "$BACKEND_POOL_PORT"
+  fi
+}
+
+write_pool_upstream() {
+  local file="$1" port="$2" tmp
+  tmp="$(mktemp "$file.XXXXXX")" || fail "cannot write into $(dirname "$file")"
+  if [ "$API_POOL_WORKERS" -gt 0 ]; then
+    printf 'upstream backend_pool_active { server 127.0.0.1:%s; server 127.0.0.1:%s backup; }\n' \
+      "$(pool_port_of "$port")" "$port" > "$tmp"
+  else
+    printf 'upstream backend_pool_active { server 127.0.0.1:%s; }\n' "$port" > "$tmp"
+  fi
+  mv -f "$tmp" "$file"
+}
+
+# The backend port backend.conf names now.
+serving_backend_port() {
+  sed -n 's/.*server 127\.0\.0\.1:\([0-9]*\);.*/\1/p' "$ACTIVE_BACKEND_DIR/backend.conf" | head -n 1
+}
+
 # frontend.conf names the frontend app-router serves and, once app-router owns
 # them, carries the box's :8080 and :80 (deploy/llm-tunnel/configure-frontend-upstream.sh).
 frontend_conf_has_ports() {
@@ -1381,13 +1437,16 @@ write_frontend_conf() {
 # rolled (no ACTIVE_FRONTEND_DIR); $3 says whether frontend.conf carries the
 # box's ports, which it cannot while the old frontend still publishes them.
 switch_app_router() {
-  local backend_port="$1" frontend_port="$2" with_ports="${3:-false}" backend_before frontend_before
+  local backend_port="$1" frontend_port="$2" with_ports="${3:-false}" backend_before frontend_before pool_before
   backend_before="$(cat "$ACTIVE_BACKEND_DIR/backend.conf")"
+  pool_before="$(cat "$ACTIVE_BACKEND_DIR/backend-pool.conf" 2>/dev/null || true)"
   frontend_before="$(cat "$ACTIVE_BACKEND_DIR/frontend.conf" 2>/dev/null || true)"
   write_upstream "$ACTIVE_BACKEND_DIR/backend.conf" backend_active "$backend_port"
+  write_pool_upstream "$ACTIVE_BACKEND_DIR/backend-pool.conf" "$backend_port"
   [ -z "$frontend_port" ] || write_frontend_conf "$frontend_port" "$with_ports"
   if ! docker exec cheese-app-router nginx -t || ! docker exec cheese-app-router nginx -s reload; then
     printf '%s\n' "$backend_before" > "$ACTIVE_BACKEND_DIR/backend.conf"
+    printf '%s\n' "$pool_before" > "$ACTIVE_BACKEND_DIR/backend-pool.conf"
     [ -z "$frontend_port" ] || printf '%s\n' "$frontend_before" > "$ACTIVE_BACKEND_DIR/frontend.conf"
     return 1
   fi
@@ -1633,6 +1692,11 @@ rollout_app() {
     docker logs --tail 40 "$(service_container "$backend_to")" 2>&1 | sed 's/^/  next| /' || true
     dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
     fail "$backend_to was not ready within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
+  fi
+  if [ "$API_POOL_WORKERS" -gt 0 ] && ! wait_for_ready "$(pool_port_of "$backend_port")" "$backend_to api pool"; then
+    docker logs --tail 40 "$(service_container "$backend_to")" 2>&1 | sed 's/^/  next| /' || true
+    dc rm -f -s "$backend_to" >/dev/null 2>&1 || true
+    fail "$backend_to's api pool was not ready within ${BACKEND_START_TIMEOUT}s; the running backend was not touched"
   fi
   if [ -n "$frontend_to" ]; then
     if ! dc up -d --no-deps --force-recreate "$frontend_to" \

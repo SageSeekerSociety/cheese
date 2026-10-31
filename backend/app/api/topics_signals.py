@@ -102,6 +102,26 @@ async def at_work(
     return AtWork(rooms, in_threads, running_tasks)
 
 
+async def answering(db: AsyncSession) -> dict[uuid.UUID, list[str]]:
+    """The seats at work in each conversation (a 支线, usually): whom a
+    message's line names as answering in it now.
+
+    The fact `at_work` reads — the runner's own word that a session is running
+    — and not the realtime process's broker, so a page read on any backend
+    process says the same. Running sessions are few, so all of them are read
+    and the caller looks up the conversations it draws."""
+    rows = await db.execute(
+        select(SessionState.conversation_id, SessionState.agent_handle)
+        .where(SessionState.worker_status == RUNNING)
+        .order_by(SessionState.agent_handle)
+    )
+    seats: dict[uuid.UUID, list[str]] = {}
+    for conversation, seat in rows:
+        if seat not in seats.setdefault(conversation, []):
+            seats[conversation].append(seat)
+    return seats
+
+
 async def live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
     """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 

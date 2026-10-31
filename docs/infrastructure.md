@@ -367,6 +367,33 @@ reloading the persistent ingress once. That migration can reconnect existing
 devices; subsequent business releases do not reload their ingress. A box without
 `ACTIVE_BACKEND_DIR` still recreates application containers in place.
 
+### The api pool beside each backend
+
+One Python process uses one core, so a backend that is a single process
+serves every request in one queue. Each backend slot can run an api pool
+beside its realtime process (`backend/app/serve.py`,
+`backend/app/core/process_role.py`):
+
+- The realtime process on :8081 is the backend as it always was: the owner
+  lock, turns, sessions, room sockets, the broker and every write.
+- The pool on :8085 runs `API_POOL_WORKERS` uvicorn workers with
+  `BACKEND_ROLE=api`. They answer plain reads: every `GET` that is not a
+  WebSocket and not in `REALTIME_GET_PATTERNS`. They never take the owner lock.
+  What they publish reaches the room sockets through Valkey
+  (`cheesex:broker-relay`, `realtime/relay.py`).
+- app-router splits the traffic (`deploy/llm-tunnel/app-router.conf`,
+  `backend-pool.conf` written by `deploy-docker.sh`). The realtime process is
+  the pool's backup, so a pool that does not answer costs nothing but its
+  speed.
+- `API_POOL_WORKERS` defaults to 0: no pool, no pool port, every request to the
+  realtime process. dev's release workflow sets 3 and layers
+  `docker-compose.api-pool.yml` (pool ports 18091 and 18092 for the two slots).
+  To turn it off on dev, set it to 0 in `deploy-dev.yml` and release.
+- The pool's database budget is its own (`API_POOL_DB_POOL_SIZE`,
+  `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
+  its workers as the backend's is: 5 connections each at 3 workers. A rollout
+  runs both slots' pools, 30 more connections on dev's 200.
+
 ### dev — continuous deploy
 
 Merge to `main` → `deploy-dev.yml` runs on the **self-hosted runner on the dev
