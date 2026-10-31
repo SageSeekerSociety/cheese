@@ -88,6 +88,7 @@ async def _newer_page(
     author: str | None,
     forward: service.Key,
     limit: int,
+    reader: str,
 ) -> JSONResponse:
     """The rows written after `forward`, oldest first.
 
@@ -103,6 +104,7 @@ async def _newer_page(
         after=forward,
         author=native_author,
         limit=limit + 1,
+        reader=reader,
     )
     items = [as_block(item, place.conversation_id) for item in raw.items]
     for item in items:
@@ -193,7 +195,7 @@ async def topic_transcript(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     instances = await AgentInstanceService(db).list_for_project(place.project_id)
     authors = {
         instance.handle: agent_instance_handle(instance.id) for instance in instances
@@ -207,7 +209,7 @@ async def topic_transcript(
     forward = _read_cursor(after)
     if forward is not None:
         return await _newer_page(
-            db, place, authors, native_author, author, forward, limit
+            db, place, authors, native_author, author, forward, limit, actor.handle
         )
     raw = await service.read(
         db,
@@ -222,6 +224,7 @@ async def topic_transcript(
         # retried. `deferred` tells the reader the page skipped the archive so
         # it re-reads (without `resident`) to fill it in.
         resident_budget_s=SITE_FIRST_PAGE_BUDGET_S if resident else None,
+        reader=actor.handle,
     )
     items = [as_block(item, place.conversation_id) for item in raw.items]
     for item in items:

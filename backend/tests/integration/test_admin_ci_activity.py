@@ -14,6 +14,14 @@ Each rule here is one a person reading the page could state:
 * A run that passed only on a re-run is counted as fail-then-pass.
 * A day with nothing to measure has no median, not a median of 0.
 * The jobs and steps tables can be narrowed to one runner.
+* A day's figures stay on that UTC day: past midnight they leave the 1-day
+  window and stay in the 2-day one.
+
+Every test reads the page at one pinned moment, the same one its rows are dated
+from. A "today" taken from the wall clock when the module is imported is a
+different day from the one the route reads when the suite crosses UTC midnight
+between collection and the request, and then every seeded row is outside the
+window.
 """
 
 import asyncio
@@ -38,10 +46,16 @@ ADMIN = "ci-activity-admin"
 STRANGER = "ci-activity-stranger"
 REPO = "owner/ci-activity-board"
 REQUIRED = ".github/workflows/required-ci.yml"
-# Two hours into today (UTC), so every seeded moment is inside a 1-day window
-# and none is in the future.
-TODAY = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+# The moment the page is read: two hours into a UTC day, so every seeded moment
+# is inside a 1-day window and none is in the future.
+NOW = datetime(2026, 3, 14, 2, 0, tzinfo=UTC)
+TODAY = NOW.replace(hour=0, minute=0, second=0, microsecond=0)
 T0 = TODAY + timedelta(minutes=10)
+
+
+@pytest.fixture(autouse=True)
+def _read_at_now(pinned_clock) -> None:
+    pinned_clock.move_to(NOW)
 
 
 @pytest.fixture
@@ -361,6 +375,31 @@ def test_a_run_that_passed_only_on_a_rerun_is_fail_then_pass(client, as_admin):
     share = _board(client)["headline"]["fail_then_pass"]
 
     assert (share["runs"], share["of"]) == (1, 2)
+
+
+def test_a_days_runs_leave_the_one_day_window_at_utc_midnight(
+    client, as_admin, pinned_clock
+):
+    seed_user(client, ADMIN)
+    late = _run(created=TODAY + timedelta(hours=23, minutes=50), attempt=2)
+    _seed(
+        client,
+        [
+            late,
+            _job(late, conclusion="failure"),
+            _job(late, attempt=2, start_after_s=60),
+        ],
+    )
+
+    pinned_clock.move_to(TODAY + timedelta(hours=23, minutes=59))
+    before_midnight = _board(client)["headline"]["fail_then_pass"]
+    pinned_clock.move_to(TODAY + timedelta(days=1, minutes=1))
+    after_midnight = _board(client)["headline"]["fail_then_pass"]
+    two_days = _board(client, days=2)["headline"]["fail_then_pass"]
+
+    assert (before_midnight["runs"], before_midnight["of"]) == (1, 1)
+    assert (after_midnight["runs"], after_midnight["of"]) == (0, 0)
+    assert (two_days["runs"], two_days["of"]) == (1, 1)
 
 
 def test_a_day_with_no_merge_has_no_median(client, as_admin):

@@ -29,6 +29,7 @@ import time
 import uuid
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -150,6 +151,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from app.domain.agent.harness.driven import lifecycle  # noqa: E402
+from tests.support.clock import PinnedClock  # noqa: E402
 from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
@@ -356,6 +358,12 @@ class ScriptedSession(Runner):
             "owner", json.dumps({"harness": CLAUDE_CODE, "agent_handle": agent})
         )
         self.written: list[dict] = []
+
+    def memory_root(self) -> Path:
+        """This seat's own memory tree, beside its state: a real runner is
+        told its seat's directory by its launch (`runner.memory_root`), and
+        the seats here share one process and its environment."""
+        return self.state.parent / "memory"
 
     async def _write(self, message: dict) -> None:
         self.written.append(message)
@@ -1033,6 +1041,20 @@ def fast_timings(monkeypatch) -> FastTimings:
     is deliberately left out and why.
     """
     return FastTimings(monkeypatch).apply()
+
+
+@pytest.fixture
+def pinned_clock(monkeypatch) -> PinnedClock:
+    """The product's UTC "now" (`day_windows.utc_now`) held still for the test.
+
+    Request it in any test that dates rows "today" or "N days ago" and then reads
+    them back through a day window or the gateway's day: without it, a run that
+    crosses UTC midnight between the seed and the read finds the rows on the
+    wrong side of the window. Date the rows from `utc_now()`, not from
+    `datetime.now`, so both sides read the pinned moment;
+    ``pinned_clock.move_to(at)`` moves it. See ``tests/support/clock.py``.
+    """
+    return PinnedClock(monkeypatch, datetime.now(UTC))
 
 
 #: The machine's own git configuration, neutralized. `os.devnull` rather than the

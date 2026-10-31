@@ -1,11 +1,9 @@
-"""Putting words into a seat's session: a message, a steer, or the platform's own.
+"""Putting words into a seat's session: a message or a steer.
 
 ``send`` opens the work (a message that owes an answer), ``steer`` adds words to a
 turn already running, and both end at ``_submit``, which is the one call that
 hands a prompt to the host and is the one place a lost acknowledgement is told
-apart from an input that never went in. ``reading`` is the same machinery for the
-platform's own work (the memory consolidation): its events are read here instead
-of heard by the room.
+apart from an input that never went in.
 
 ``send`` logs one ``room_send_timing`` line per message, under this module's
 logger — the name is ``app.domain.agent.room.sessions``, the path the module was
@@ -15,18 +13,16 @@ those lines.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.driven.subscription import Seat
 from app.domain.agent.room.sessions.records import Live
 from app.domain.agent.room.stopwatch import timed
-from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
+from app.domain.agent.service import AgentSessionInfo
 from app.domain.agent.session_host.contract import (
     Image,
     InputUnconfirmed,
@@ -125,11 +121,8 @@ async def send(
         # its result and its end all carry the running turn's work, and none
         # ever names this one. Taking the seat over would leave it holding a
         # turn that never ends, and the next time the session goes away (the
-        # runner lets an idle one go) that turn would be failed as a crash. The
-        # platform's own work (``reading``) takes the seat all the same: its
-        # caller waits on its own queue for an ending, and the session going
-        # away is the only one it can get.
-        if seat not in svc.clocks or work_id in svc.queues:
+        # runner lets an idle one go) that turn would be failed as a crash.
+        if seat not in svc.clocks:
             svc.work[seat] = work_id
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
@@ -283,26 +276,3 @@ def _steer_seat(svc: pkg.RoomSessions, topic_id, agent_handle) -> Seat | None:
         return (topic_id, agent_handle)
     working = [seat for seat in svc.work if seat[0] == topic_id]
     return working[0] if len(working) == 1 else None
-
-
-@contextlib.asynccontextmanager
-async def reading(
-    svc: pkg.RoomSessions, work_id: uuid.UUID
-) -> AsyncIterator[AsyncIterator[AgentEvent]]:
-    """The events of the platform's own work ``work_id`` (the memory
-    consolidation), read here rather than heard by the room, until its
-    result. Opened before the work is sent, so nothing it says is missed."""
-    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
-    svc.queues[work_id] = queue
-
-    async def events() -> AsyncIterator[AgentEvent]:
-        while True:
-            event = await queue.get()
-            yield event
-            if isinstance(event, AgentResult):
-                return
-
-    try:
-        yield events()
-    finally:
-        svc.queues.pop(work_id, None)

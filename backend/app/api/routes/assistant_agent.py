@@ -63,6 +63,7 @@ from app.domain.agent.personal import project_desk, reading, rosters, space_desk
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.assistant import changes, gate, proposals, refs
 from app.domain.assistant import memory as assistant_memory
+from app.domain.day_windows import utc_now
 from app.domain.fetch.preapproved import preapproved
 from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
@@ -129,7 +130,7 @@ async def _person(resolver, db) -> Person:
 def _when(moment: datetime, timezone: str | None) -> str:
     """A moment on the person's clock, as their pages show it."""
     here = local_time(moment, timezone)
-    today = local_time(datetime.now(UTC), timezone).date()
+    today = local_time(utc_now(), timezone).date()
     if here.date() == today:
         return f"今天 {here:%H:%M}"
     if here.year == today.year:

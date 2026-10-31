@@ -267,10 +267,9 @@ class LiveInput:
         session's next tool boundary.
 
         ``None``: the seat's session is not working here, or this delivery is
-        work of its own. A routine's run is: its session is assembled with the
-        routine owner's memory (`turn_speakers.routine_owner`), which a session
-        already working for somebody else does not carry. The caller starts it
-        as before. ``False``: the session is working and the input did not
+        work of its own. A routine's run is: it starts work of its own rather
+        than joining what the seat is already doing. The caller starts it as
+        before. ``False``: the session is working and the input did not
         reach it; nothing was sent (`receipts.withdraw_input` puts the attempt
         back to ``claimed``), so the attempt is refused and retried like any
         other. ``True``: the session's transport took it. Only the session's

@@ -250,7 +250,8 @@ class _MemoryBooks(Protocol):
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speakers: tuple[str, ...],
+        speaker: str | None,
+        pointed: bool = False,
     ) -> None: ...
 
 

@@ -8,7 +8,7 @@
 import pytest
 
 from app.domain.memory.files import digest
-from app.domain.memory.tree import REMOVED, sync_tree
+from app.domain.memory.tree import REMOVED, sync_tree, withdrawn_prefixes
 
 _A = "平台那一版\n"
 _A_HASH = digest(_A)
@@ -79,25 +79,23 @@ def test_a_deletion_the_platform_also_touched_is_refused_as_a_deletion():
     assert result.refused == {"team/a.md": REMOVED}
 
 
-def test_a_scope_the_platform_stopped_naming_is_reconciled_and_taken_away():
-    """上一次铺下去、这一次平台没提的（有人把这棵树关了），也要按同一套规矩收回来。"""
-    result = _sync(
-        scopes={},
-        disk={"private/alice/a.md": _A},
-        baseline={"private/alice/a.md": _A_HASH},
-    )
+def test_a_scope_the_platform_stopped_naming_is_handed_back_not_merged_here():
+    """上一次铺下去、这一次平台没提的（换了一位说话的人）：这一边手上没有平台那一
+    份，所以不在这里合，整棵交回去由平台替它的主人收（`withdrawn_prefixes`）。"""
+    baseline = {"private/alice/a.md": _A_HASH}
+    result = _sync(scopes={}, disk={"private/alice/a.md": _A}, baseline=baseline)
+    assert withdrawn_prefixes({}, baseline) == {"private/alice"}
     assert result.files == {}
     assert result.refused == {}
+    assert result.baseline == {}
 
 
-def test_a_file_the_session_wrote_into_a_closed_tree_is_refused_not_silently_dropped():
-    result = _sync(
-        scopes={},
-        disk={"private/alice/a.md": _C},
-        baseline={"private/alice/a.md": _A_HASH},
-    )
+def test_a_file_the_session_wrote_into_a_closed_tree_is_handed_back_not_refused():
+    baseline = {"private/alice/a.md": _A_HASH}
+    result = _sync(scopes={}, disk={"private/alice/a.md": _C}, baseline=baseline)
+    assert withdrawn_prefixes({}, baseline) == {"private/alice"}
     assert result.files == {}
-    assert result.refused == {"private/alice/a.md": _C}
+    assert result.refused == {}
 
 
 def test_a_path_only_the_baseline_knows_is_not_a_file_that_should_exist():

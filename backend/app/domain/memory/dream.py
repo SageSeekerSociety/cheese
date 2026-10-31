@@ -11,33 +11,44 @@
 4 小时。两个数写进 settings 而不是散在代码里，是因为它们量的是**这个项目**的
 节奏：一个一天到晚在跑的代码项目和一个一周动两次的文档项目，同一个数没有意义。
 
-**按项目一把锁。** 整理是一轮真会话，可能跑几分钟；两次整理同时起来只会互相
-覆盖。锁是 `memory_dream_states.claimed_at` 上的一次比较并交换（`claim`），抢不到
-就跳过这一次——不是排队，因为下一次巡检很快就到，而排队意味着一个项目的整理会
-堆成队列。
+**按作用域分开跑，每一份是一次模型调用。** team 一份，每个有 private 的人各一份。
+每一份都是平台在项目的整理 key 上发的一次调用：没有会话、没有工具、没有凭证、没有
+座位，输入只有那一个作用域（private 那一份另带 team 的索引，用来认出重复），答回来
+的改动由平台核过（`dream_answer`），只写回那一个作用域。所以一份读过某个人 private
+的计算，手上没有任何一条通往共享地方的写路；整理也不在任何房间里说话、不在任何
+现场留下记录，改了什么在记忆面板上看。
+
+**整理只整理，不提取**（#1336）：不读任何房间的发言，只对已有的记忆做合并、删除、
+改写。
+
+**按项目一把锁。** 整理可能跑几分钟；两次整理同时起来只会互相覆盖。锁是
+`memory_dream_states.claimed_at` 上的一次比较并交换（`claim`），抢不到就跳过这一次
+——不是排队，因为下一次巡检很快就到，而排队意味着一个项目的整理会堆成队列。
 
 **dream 自己花的不算。** 判据只数「上次整理之后」的 `output_tokens`，而收尾时
-`last_dream_at` 会推进到整理结束的那一刻；另外 dream 自己那一轮记的 `kind` 是
+`last_dream_at` 会推进到整理结束的那一刻；另外 dream 自己花的那几笔记的 `kind` 是
 `memory_dream`（见 `DREAM_KIND`），聚合时按前缀剔掉。两件事分开做，是因为网关的
 用量是延迟落库的：一条晚到的、时间戳落在新窗口里的 dream 用量，只有 kind 认得
 出来。
 
 **这一轮删得太多就先当它没删。** 一次整理删掉某个作用域一半以上、且超过 3 条，
-判为「这不像是整理，更像是那棵树出了事」，整轮作废、平台上一条都不少
-（`removal_refused`）。规矩的数值和会话侧那次对账共用一份（`tree.BULK_DELETE_*`）
+判为「这不像是整理，更像是那棵树出了事」，那个作用域这一次一条都不写、平台上
+一条都不少（`removal_refused`）。规矩的数值和会话侧那次对账共用一份（`tree.BULK_DELETE_*`）
 ——两处要防的是同一件事，两个数就会漂开。
 
 **拒绝也记一次账。** 拒绝执行的那次整理照样推进 `last_dream_at`：不推进的话，
 下一次巡检会立刻再跑一遍，而一个坏掉的树会把 token 烧在一遍遍重复的拒绝上。
-拒绝这件事本身记在 `memory_dream_runs` 里（`status=refused`），那是给人看的。
+拒绝这件事本身记在 `memory_dream_runs` 里（`status=refused`），并报给平台的告警：
+要去看那棵树怎么了的是平台的人，不是房间里的人。
 
-这个模块只管**规矩和账**（阈值、锁、拒绝判据、输入怎么压进 prompt 预算）。碰别
-的领域那些读（花销、房间记录）在 `agent/chat.py` 里，那里的编排才拿得住会话；这
-个领域包不 import 别人的 repository（`tests/unit/test_domain_import_guard.py`）。
+这个模块只管**规矩和账**（阈值、锁、拒绝判据、输入怎么压进 prompt 预算、答案怎么
+核）。碰别的领域那些读（花销）和那几次调用在 `agent/memory_ledger.py` 里；这个领域
+包不 import 别人的 repository（`tests/unit/test_domain_import_guard.py`）。
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -46,7 +57,6 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory.dream_prompt import DreamBriefing
 from app.domain.memory.files import INDEX_NAME
 from app.domain.memory.models import (
     MemoryDreamRun,
@@ -78,12 +88,6 @@ EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 #: 一次 prompt 里一个作用域最多带多少字。整理要的是「这些记忆讲了什么」，不是
 #: 逐字复读；带了上限，它的注意力才会落在模式和重复上，而不是被一棵大树淹没。
 PROMPT_SCOPE_MAX = 20_000
-
-#: 一次整理最多带几个房间、每个房间各留多少字。
-ROOMS_LIMIT = 5
-ROOM_LOG_MAX = 1200
-ROOM_LOG_LINES = 30
-ROOM_LINE_MAX = 200
 
 
 @dataclass(frozen=True)
@@ -248,46 +252,87 @@ def refused_scopes(
     return out
 
 
-def _clip(text: str, limit: int) -> str:
+def trim_tree(files: dict[str, str]) -> dict[str, str]:
+    """把一个作用域的树压进 prompt 预算：先留索引，再按路径序留正文。
+
+    按路径序取到用完为止。抽掉一条正文只损失一次「看得见正文」，而索引
+    （`MEMORY.md`）永远留着——整理至少知道有这条记忆、它讲什么。
+    """
+    kept: dict[str, str] = {}
+    used = 0
+    for path in sorted(files, key=lambda p: (p != INDEX_NAME, p)):
+        content = files[path]
+        if path != INDEX_NAME and used + len(content) > PROMPT_SCOPE_MAX:
+            continue
+        kept[path] = content
+        used += len(content)
+    return kept
+
+
+def clip(text: str, limit: int) -> str:
+    """一句交代最多留多少字（写进 `memory_dream_runs.summary` 的那一句）。"""
     text = text.strip()
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def trim_scopes(scopes: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
-    """把一个项目的树压进 prompt 预算：先留索引，再按路径序留正文。
+class DreamAnswerError(ValueError):
+    """一次整理调用答回来的不是一份平台能照着写的改动：为什么，一个代号。"""
 
-    每个作用域一个预算，按路径序取到用完为止。抽掉一条正文只损失一次「看得见
-    正文」，而索引（`MEMORY.md`）永远留着——整理至少知道有这条记忆、它讲什么，
-    要正文它自己去读。
+
+@dataclass(frozen=True)
+class DreamAnswer:
+    """一次整理调用答回来的、核过的那一份。"""
+
+    #: 改动套上去之后的整棵树（文件名 → 正文）。
+    tree: dict[str, str]
+    #: 它自己写的那句交代。
+    summary: str
+
+
+def dream_answer(before: dict[str, str], answer: str) -> DreamAnswer:
+    """一次整理调用答回来的改动，套在 ``before``（那一个作用域的树）上。
+
+    答案是 `{"write": {名: 正文}, "delete": [名], "summary": …}`（`dream_prompt.
+    ANSWER`）。只认改动、不认整棵树：模型漏写一个文件不等于删了它。
+    名字只认一层、以 `.md` 结尾的：答案里的路径带目录，就可能落到别人的树里。
+    形状不对就整份不认（`DreamAnswerError`）。
     """
-    out: dict[str, dict[str, str]] = {}
-    for name, files in scopes.items():
-        kept: dict[str, str] = {}
-        used = 0
-        for path in sorted(files, key=lambda p: (p != INDEX_NAME, p)):
-            content = files[path]
-            if path != INDEX_NAME and used + len(content) > PROMPT_SCOPE_MAX:
-                continue
-            kept[path] = content
-            used += len(content)
-        out[name] = kept
-    return out
+    text = answer.strip()
+    if text.startswith("```"):
+        # 要的是 JSON，较弱的模型仍时不时给它套一层代码块。
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        raise DreamAnswerError("not_json") from exc
+    if not isinstance(parsed, dict):
+        raise DreamAnswerError("not_an_object")
+    write = parsed.get("write") or {}
+    delete = parsed.get("delete") or []
+    summary = parsed.get("summary")
+    if not isinstance(write, dict) or not isinstance(delete, list):
+        raise DreamAnswerError("bad_shape")
+    tree = dict(before)
+    for name, content in write.items():
+        if not _flat_name(name) or not isinstance(content, str) or not content.strip():
+            raise DreamAnswerError("bad_write")
+        tree[name] = content
+    for name in delete:
+        if not _flat_name(name) or name in write:
+            raise DreamAnswerError("bad_delete")
+        tree.pop(name, None)
+    return DreamAnswer(
+        tree=tree, summary=summary.strip() if isinstance(summary, str) else ""
+    )
 
 
-def clip(text: str, limit: int) -> str:
-    """一行摘要最多留多少字（房间里那条记录、prompt 里的一段发言都用它）。"""
-    return _clip(text, limit)
-
-
-def briefing(
-    scopes: dict[str, dict[str, str]],
-    rooms: list[str],
-    *,
-    code_project: bool,
-) -> DreamBriefing:
-    """把取好的输入装成提示词要的那一份。"""
-    return DreamBriefing(
-        scopes=trim_scopes(scopes), rooms=rooms, code_project=code_project
+def _flat_name(name: object) -> bool:
+    return (
+        isinstance(name, str)
+        and name.endswith(".md")
+        and "/" not in name
+        and "\\" not in name
+        and not name.startswith(".")
     )
 
 
@@ -341,31 +386,6 @@ async def close_run(
     await session.flush()
 
 
-async def dreaming(
-    session: AsyncSession, project_id: uuid.UUID, *, now: datetime | None = None
-) -> bool:
-    """Whether the project's memory is being consolidated now.
-
-    A dream runs as a turn of the project's overview room and holds that
-    room's turn lock for as long as it runs (`agent/memory_ledger.py`), so
-    while a run is open every model call the overview makes is the dream's;
-    the caller compares the call's place with the overview. A run still open
-    past `CLAIM_TTL` is one whose process went away, and is not counted: the
-    claim it held has expired too.
-    """
-    now = now or datetime.now(UTC)
-    run = await session.scalar(
-        select(MemoryDreamRun.id)
-        .where(
-            MemoryDreamRun.project_id == project_id,
-            MemoryDreamRun.status == MemoryDreamRunStatus.running.value,
-            MemoryDreamRun.started_at > now - CLAIM_TTL,
-        )
-        .limit(1)
-    )
-    return run is not None
-
-
 __all__ = [
     "CLAIM_TTL",
     "DEFAULT_MIN_INTERVAL",
@@ -374,18 +394,15 @@ __all__ = [
     "DREAM_SETTINGS_KEY",
     "EPOCH",
     "PROMPT_SCOPE_MAX",
-    "ROOMS_LIMIT",
-    "ROOM_LINE_MAX",
-    "ROOM_LOG_LINES",
-    "ROOM_LOG_MAX",
     "DreamDue",
     "DreamSettings",
-    "briefing",
+    "DreamAnswer",
+    "DreamAnswerError",
     "claim",
     "clip",
-    "dreaming",
     "close_run",
     "dream_settings",
+    "dream_answer",
     "due_decision",
     "finish",
     "open_run",
@@ -395,5 +412,5 @@ __all__ = [
     "run_of",
     "since_of",
     "state_of",
-    "trim_scopes",
+    "trim_tree",
 ]

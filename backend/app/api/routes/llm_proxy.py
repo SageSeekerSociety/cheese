@@ -37,7 +37,7 @@ from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
 from app.api.machine_caller import Caller
 from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
-from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
+from app.api.model_keys import credit_refusal, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core import credentials
@@ -67,7 +67,6 @@ from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -420,11 +419,6 @@ async def admission(
             }
         )
     pool = bound.supply
-    # A call made in the overview room while the project's memory is being
-    # consolidated is the dream's: it runs on the project's dream key, and the
-    # metering proxy writes the dream's kind on its usage line. Read before the
-    # read session is handed back below.
-    dreaming = await dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -436,8 +430,6 @@ async def admission(
         supply["work_id"] = (
             str(credit_context.work_id) if credit_context.work_id else ""
         )
-    if dreaming:
-        supply["kind"] = dream.DREAM_KIND
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -470,7 +462,7 @@ async def admission(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            supply["key"] = await chat.project_gateway_key(project_uuid)
 
     return ok(
         {
@@ -627,7 +619,6 @@ async def _forward(
                     status_code=400,
                     media_type="application/json",
                 )
-        dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
         if machine_conversation is not None:
@@ -645,7 +636,7 @@ async def _forward(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            key = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.
