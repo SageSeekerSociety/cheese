@@ -4,7 +4,18 @@ import uuid
 from collections.abc import Collection, Iterable
 from datetime import datetime
 
-from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, select
+from sqlalchemy import (
+    Row,
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    delete,
+    func,
+    inspect,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -137,12 +148,23 @@ class AcceptCardRepository:
                 found.setdefault(card_id, []).append(handle)
             missing = [cid for cid in unseen if cid not in found]
             if missing:
-                cards = await self._session.scalars(
-                    select(AcceptCard).where(AcceptCard.id.in_(missing))
-                )
-                for card in cards:
-                    if card.reviewer_handle:
-                        found[card.id] = [card.reviewer_handle]
+                still_missing: list[uuid.UUID] = []
+                for cid in missing:
+                    in_map = self._session.sync_session.identity_map.get(
+                        self._session.sync_session.identity_key(AcceptCard, (cid,))
+                    )
+                    if in_map is not None and not inspect(in_map).expired_attributes:
+                        if in_map.reviewer_handle:
+                            found[cid] = [in_map.reviewer_handle]
+                    else:
+                        still_missing.append(cid)
+                if still_missing:
+                    cards = await self._session.scalars(
+                        select(AcceptCard).where(AcceptCard.id.in_(still_missing))
+                    )
+                    for card in cards:
+                        if card.reviewer_handle:
+                            found[card.id] = [card.reviewer_handle]
             for cid in unseen:
                 handles = found.get(cid, [])
                 remember(

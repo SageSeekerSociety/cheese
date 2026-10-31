@@ -252,6 +252,45 @@ async def _read_roster(
     return tuple(rows)
 
 
+async def people_in_project(
+    session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
+) -> list[str]:
+    """Human handles in ``project_id`` (same order and rules as ``[m.handle for m
+    in await roster(...) if not m.agent]``), without querying ``agent_instances``
+    or ``own_agents`` when the full roster is not already cached."""
+    if session.autoflush:
+        await session.flush()
+    found_roster, cached_roster = recall(session, ("roster", project_id, team))
+    if found_roster:
+        return [m.handle for m in cached_roster if not m.agent]
+    people_key = ("project_people_handles", project_id)
+    found_people, cached_people = recall(session, people_key)
+    if found_people:
+        return list(cached_people)
+    projects = ProjectService(session)
+    project = await projects.get(project_id)
+    people_rows = await projects.people(project_id)
+    excluded = await MemberRepository(session).excluded_handles(project_id)
+    if excluded:
+        owner = project.owner_handle if project is not None else None
+        people_rows = [
+            p
+            for p in people_rows
+            if p["handle"] not in excluded or p["handle"] == owner
+        ]
+    external_handles = [
+        p["handle"] for p in people_rows if p.get("source") == "external"
+    ]
+    agents = (
+        await IdentityService(session).agents_among(external_handles)
+        if external_handles
+        else set()
+    )
+    out = [p["handle"] for p in people_rows if p["handle"] not in agents]
+    remember(session, people_key, tuple(out), tables=_ROSTER_TABLES)
+    return out
+
+
 async def roster_rows(
     session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
 ) -> list[dict]:

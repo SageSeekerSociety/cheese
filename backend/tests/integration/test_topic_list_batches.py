@@ -2469,3 +2469,82 @@ def test_project_settings_and_channel_description_avoid_duplicate_locks_and_read
     assert len(desc_sql) <= 5, (
         f"expected <= 5 SQL statements on PUT /topics/{{id}}/description, got {len(desc_sql)}: {desc_sql}"
     )
+
+
+def test_update_task_skips_agent_roster_and_reuses_user_cache(client):
+    """`PATCH /topics/{task_id}/task` resolves `project_people` via
+    `people_in_project` without querying `agent_instances` or `own_agents`,
+    caches `User` rows loaded by `ProjectRepository.people`, and validates
+    contributors before `take_in` flushes."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as contrib_sql:
+        r_contrib = client.patch(
+            f"/topics/{task_id}/task",
+            json={"contributor_handles": ["bob"]},
+            headers=headers,
+        )
+    assert r_contrib.status_code == 200, r_contrib.text
+    assert _count(contrib_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in contrib_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(contrib_sql) <= 21, (
+        f"expected <= 21 SQL statements on PATCH /topics/{{id}}/task (contributors), got {len(contrib_sql)}: {contrib_sql}"
+    )
+
+    with counting_sql(client) as owner_sql:
+        r_owner = client.patch(
+            f"/topics/{task_id}/task",
+            json={"owner_handle": "bob"},
+            headers=headers,
+        )
+    assert r_owner.status_code == 200, r_owner.text
+    assert _count(owner_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in owner_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(owner_sql) <= 21, (
+        f"expected <= 21 SQL statements on PATCH /topics/{{id}}/task (owner handover), got {len(owner_sql)}: {owner_sql}"
+    )
+
+
+def test_notifications_list_and_alerts_avoid_redundant_count_and_agent_queries(client):
+    """`GET /notifications` skips `SELECT count(notification.id)` when the
+    first page has fewer than `pageSize + 1` rows, and `POST /projects/{id}/alerts`
+    uses `people_in_project` without querying `agent_instances`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as notif_sql:
+        r_notif = client.get("/notifications", headers=headers)
+    assert r_notif.status_code == 200, r_notif.text
+    assert _count(notif_sql, _NOTIFICATION_SELECT) == 1, [
+        s for s in notif_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(notif_sql) <= 2, (
+        f"expected <= 2 SQL statements on GET /notifications, got {len(notif_sql)}: {notif_sql}"
+    )
+
+    with counting_sql(client) as alert_sql:
+        r_alert = client.post(
+            f"/projects/{pid}/alerts",
+            json={
+                "title": "Alert B23",
+                "body": "Body",
+                "level": "light",
+                "kind": "change_alert",
+            },
+            headers=headers,
+        )
+    assert r_alert.status_code == 200, r_alert.text
+    assert _count(alert_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in alert_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(alert_sql) <= 10, (
+        f"expected <= 10 SQL statements on POST /projects/{{id}}/alerts, got {len(alert_sql)}: {alert_sql}"
+    )
