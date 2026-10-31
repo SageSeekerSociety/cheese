@@ -94,10 +94,10 @@ const title = computed(() =>
 <style scoped>
 /* 一行字，不是一颗按钮的样子：和文件名同一行读下去，悬停才看出点得开。 */
 /* 让位时只收作者和时间，「第 N 版」和箭头始终留着：最窄也是一行能认出的版本号，
-   不会被旁边的按钮压成一条叠字的缝。 */
+   不会被旁边的按钮压成一条叠字的缝。8em 放得下英文的「Version 12」连箭头。 */
 .vp {
   flex: 0 1 auto;
-  min-width: 6.5em;
+  min-width: 8em;
   overflow: hidden;
   display: inline-flex;
   align-items: center;

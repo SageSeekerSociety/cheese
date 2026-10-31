@@ -5,7 +5,7 @@
 // 原图不动；下行的东西会把一张新图交给房间里。摆成一行会让人分不清哪颗按钮会改动文件。
 import type { ImageAdjust } from '@/lib/imageEdit'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useResizeObserver } from '@vueuse/core'
 
 import { t } from '@/i18n'
@@ -50,6 +50,8 @@ function measureScroll() {
   moreEnd.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
 }
 useResizeObserver(scroller, measureScroll)
+// 收成图标、放回文字会让里面变宽变窄，而滚动那一段自己的宽跟着父级走、不变：补量一次。
+watch(narrow, () => void nextTick(measureScroll))
 onMounted(measureScroll)
 
 const zoomModes = computed(() =>
@@ -180,13 +182,13 @@ const zoomModes = computed(() =>
   scrollbar-width: none;
 }
 .design-view-tools__scroll.is-more-end {
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, var(--text) calc(100% - 28px), transparent);
 }
 .design-view-tools__scroll.is-more-start {
-  mask-image: linear-gradient(to right, transparent, #000 28px);
+  mask-image: linear-gradient(to right, transparent, var(--text) 28px);
 }
 .design-view-tools__scroll.is-more-start.is-more-end {
-  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, transparent, var(--text) 28px, var(--text) calc(100% - 28px), transparent);
 }
 .design-view-tools__scroll::-webkit-scrollbar {
   display: none;

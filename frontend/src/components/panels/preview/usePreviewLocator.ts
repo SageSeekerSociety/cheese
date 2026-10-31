@@ -259,7 +259,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
    *  比例；表里存单元格地址。哪一样都拿不到时（网页圈选、图上框选、代码行）就不画
    *  pin——那些地方本来也没有能长期成立的坐标，宁可不画。 */
   function pendingAnchor(): PendingAnchor | undefined {
-    // 页上钉的一点：进篮时截图留不下，位置留着，序号 pin 照样画在那一点上。
+    // 页上钉的一点：进篮时截图留不下，页码和比例位置留着，发出去的那句话照它写。
     const pin = pageLocator.pin.value
     if (pin) return { kind: 'page-pin', page: pin.page, x: pin.x, y: pin.y }
     const page = quoted.page.value

@@ -236,8 +236,7 @@ it('an element pick from the current frame and session is handed to the host', a
     rect: { x: 1, y: 2, w: 3, h: 4 },
     viewport: { w: 800, h: 600 },
   })
-  const { label: _unnamed, ...legacy } = pick
-  dispatch(legacy)
+  dispatch({ ...pick, label: undefined })
   expect(picked.mock.calls[1]![0].label).toBe('')
   // 认不出的位置（选择器空）、或者「选中的一段」却没报原文：都不当一处。
   dispatch({ ...pick, selector: '' })

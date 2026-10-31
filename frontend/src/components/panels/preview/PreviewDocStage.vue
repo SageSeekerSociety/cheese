@@ -29,8 +29,8 @@ import type { MarkdownQuote } from './markdownQuote'
 import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, defineAsyncComponent, inject, nextTick, ref, watch } from 'vue'
-import { useResizeObserver } from '@vueuse/core'
 import { useDisplay } from 'vuetify'
+import { useResizeObserver } from '@vueuse/core'
 
 import { PREVIEW_MODE } from '@/composables/panelPreview/previewMode'
 
@@ -454,8 +454,9 @@ const actions = computed<DocAction[]>(() => {
   })
   return list
 })
-// 按钮换了（看原文 ↔ 网页视图）宽度跟着变，重新量一次。
-watch(actions, () => void nextTick(fitBar))
+// 条上的东西换了（看原文 ↔ 网页视图、大纲解析完才出现、版本行取到了才挂上）宽度跟着变，
+// 而条自己的框不变，观察器收不到：重新量一次。
+watch([actions, outlineWorthIt, () => !!version.value, () => props.documentType?.label], () => void nextTick(fitBar))
 
 /** 这一页此刻长什么样：钉一处时随行带上（`usePreviewLocator` 借它）。
  *

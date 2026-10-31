@@ -212,14 +212,17 @@ it('卡片按选区的实际矩形弹在它旁边', async () => {
 // 框出来的那一块要走结构化引用那条路（连同坐标发出去），发不出才退回拼一句话——
 // 两条都只发当前这一处，凑不进待发篮那批「合并发送」。所以这一档不给「加入待发」，
 // 主按钮也不被篮里那几条改成「全部发送（N+1）」（那是它做不到的事）。
-it('图片框选那一处不摆「加入待发」，主按钮也不带批注计数', async () => {
+it('图片框选那一处也能加入待发：进篮只带位置，不当场发出去', async () => {
   const ui = mount()
   await paint(ui)
   await select(ui)
   const labels = () => [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
-  expect(labels()).not.toContain('加入待发')
-  expect(labels().some((label) => label.startsWith('全部发送'))).toBe(false)
+  expect(labels()).toContain('加入待发')
   expect(labels()).toContain('发送')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这块留白收一下')
+  await fireEvent.click(ui.getByRole('button', { name: '加入待发' }))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  expect(ui.emitted().locate).toBeUndefined()
 })
 
 it('cancels the region note without posting a message', async () => {

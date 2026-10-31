@@ -102,7 +102,7 @@ function bodySize(rows: readonly MeasureRow[]): number {
   return sizes.at(-1) ?? 0
 }
 
-const measured = new WeakMap<HTMLElement, { size: string; rows: MeasureRow[] }>()
+const measured = new WeakMap<HTMLElement, { signature: string; rows: MeasureRow[] }>()
 
 /** 一页文字层里按视觉行收好的字与字号。
  *
@@ -116,9 +116,9 @@ const measured = new WeakMap<HTMLElement, { size: string; rows: MeasureRow[] }>(
 export function rowsInLayer(layer: HTMLElement, box: DOMRect): MeasureRow[] {
   // 同一层、同一个页框量过就用上次的：选一次字要把已经画出来的每一页都过一遍，长文档里
   // 每页上千个 span 逐个量位置，选区一动就卡。页框尺寸变了（缩放、重排）或者层里的字换了才重新量。
-  const size = `${box.width}x${box.height}:${layer.querySelectorAll('span').length}`
+  const signature = `${box.width}x${box.height}:${layer.querySelectorAll('span').length}`
   const hit = measured.get(layer)
-  if (hit && hit.size === size) return hit.rows
+  if (hit && hit.signature === signature) return hit.rows
   const rows: MeasureRow[] = []
   for (const span of Array.from(layer.querySelectorAll<HTMLElement>('span'))) {
     // 只数最里层的字：pdf.js 把带结构标记的一段包在外层 span 里，外层的 textContent
@@ -148,7 +148,7 @@ export function rowsInLayer(layer: HTMLElement, box: DOMRect): MeasureRow[] {
       row.minSize = Math.min(row.minSize ?? size, size)
     }
   }
-  measured.set(layer, { size, rows })
+  measured.set(layer, { signature, rows })
   return rows
 }
 

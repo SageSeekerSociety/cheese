@@ -273,6 +273,10 @@ RUNTIME_SCRIPT = r"""(() => {
       if (own) return shortText(own);
       const inner = node.querySelector && node.querySelector(HEADING);
       if (inner) return shortText(inner.textContent);
+      // 点在标题里面（`<h2><a>…</a></h2>`）：包着它的那个标题就是名字，再往前找会把
+      // 上一节的标题安到它头上。
+      const enclosing = node.closest && node.closest(HEADING);
+      if (enclosing) return shortText(enclosing.textContent);
       const before = headingBefore(node);
       return before ? shortText(before.textContent) : '';
     } catch (e) { return ''; }
