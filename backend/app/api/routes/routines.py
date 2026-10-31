@@ -45,8 +45,7 @@ from app.domain.routine.models import Routine, RoutineRun, RoutineTemplate
 from app.domain.routine.service import RoutineService
 from app.domain.routine.templates import RoutineTemplateService
 from app.domain.routine.trigger import describe_trigger
-from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
+from app.domain.topic.services import Topic, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.windows import month_end, month_of, month_start
 
@@ -241,7 +240,7 @@ async def _sees_room(
     members = TopicMemberService(db)
     seated = (
         await members.joined_topic_ids([room], actor.handle, team=project_team)
-        if room is not None
+        if room is not None and room.id == topic_id
         else await members.joined_ids([topic_id], actor.handle, team=project_team)
     )
     if topic_id in seated:
@@ -367,6 +366,14 @@ async def _present(
     ]
 
 
+async def _admin_for_delete(db: AsyncSession, actor: Actor, row: Routine) -> bool:
+    if not _is_person(actor) or (
+        bool(actor.handle) and actor.handle == row.owner_handle
+    ):
+        return False
+    return await _manages_project(db, actor, row.project_id)
+
+
 async def _present_one(
     db: AsyncSession,
     actor: Actor,
@@ -376,12 +383,7 @@ async def _present_one(
     fresh: bool = False,
 ) -> dict:
     if admin is None:
-        if not _is_person(actor) or (
-            bool(actor.handle) and actor.handle == row.owner_handle
-        ):
-            admin = False
-        else:
-            admin = await _manages_project(db, actor, row.project_id)
+        admin = await _admin_for_delete(db, actor, row)
     return (await _present(db, actor, [row], admin=admin, fresh=fresh))[0]
 
 
@@ -458,9 +460,7 @@ async def create_routine(
     topic_id: uuid.UUID, body: RoutineIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     place = await place_or_404(db, topic_id)
-    room = place.room or await TopicService(db).get(place.room_id)
-    if room is None:
-        raise NotFoundError(say("topicNotFound"))
+    room = place.room
     if isinstance(db, AsyncSession):
         db.sync_session.info.setdefault("_pinned_rows", []).append(room)
     actor = await _viewer(
@@ -518,12 +518,7 @@ async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    admin = (
-        False
-        if not _is_person(actor)
-        or (bool(actor.handle) and actor.handle == row.owner_handle)
-        else await _manages_project(db, actor, row.project_id)
-    )
+    admin = await _admin_for_delete(db, actor, row)
     row = await RoutineService(db).update(
         row, changes=body.model_dump(exclude_unset=True)
     )
@@ -537,12 +532,7 @@ async def pause_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    admin = (
-        False
-        if not _is_person(actor)
-        or (bool(actor.handle) and actor.handle == row.owner_handle)
-        else await _manages_project(db, actor, row.project_id)
-    )
+    admin = await _admin_for_delete(db, actor, row)
     # 看得到就改得动，暂停也一样：暂停停下的是执行，不是新工作。
     row = await RoutineService(db).pause(row)
     presented = await _present_one(db, actor, row, admin=admin)
@@ -558,11 +548,7 @@ async def resume_routine(
     # A teammate may pause a rule, never start one again: what it paused, a
     # person decides to resume.
     _person(actor, say("routineResume"))
-    admin = (
-        False
-        if bool(actor.handle) and actor.handle == row.owner_handle
-        else await _manages_project(db, actor, row.project_id)
-    )
+    admin = await _admin_for_delete(db, actor, row)
     row = await RoutineService(db).resume(row)
     presented = await _present_one(db, actor, row, admin=admin)
     await db.commit()
