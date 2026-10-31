@@ -92,6 +92,7 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
           size="sm"
           prepend-icon="mdi-comment-text-outline"
           :aria-expanded="commentsOpen"
+          aria-controls="library-comments-note"
           data-testid="library-comments"
           @click="commentsOpen = !commentsOpen"
         >
@@ -101,7 +102,12 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
           {{ t('work.library.close') }}
         </BaseButton>
       </div>
-      <p v-if="commentsOpen" class="t-meta c-muted library-detail__comments" role="note">
+      <p
+        v-if="commentsOpen && props.wide"
+        id="library-comments-note"
+        class="t-meta c-muted library-detail__comments"
+        role="note"
+      >
         <template v-if="fromRoom && typeof props.shelf === 'string'">
           {{ t('work.library.commentsInRoom') }}
           <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: fromRoom.id } }">{{
@@ -123,12 +129,28 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
         :read="props.read"
       />
     </div>
+    <!-- 手机上提示摆在底栏正上方，挨着按的那颗「评论」，不跳到页首去。 -->
+    <p
+      v-if="commentsOpen && !props.wide"
+      id="library-comments-note"
+      class="t-meta c-muted library-detail__comments library-detail__comments--phone"
+      role="note"
+    >
+      <template v-if="fromRoom && typeof props.shelf === 'string'">
+        {{ t('work.library.commentsInRoom') }}
+        <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: fromRoom.id } }">{{
+          t('work.library.commentsGo', { title: topicTitle(fromRoom) })
+        }}</NavLink>
+      </template>
+      <template v-else>{{ t('work.library.commentsNone') }}</template>
+    </p>
     <div v-if="!props.wide" class="library-detail__bar">
       <BaseButton kind="primary" block @click="emit('download')">{{ t('work.library.download') }}</BaseButton>
       <BaseButton
         block
         prepend-icon="mdi-comment-text-outline"
         :aria-expanded="commentsOpen"
+        aria-controls="library-comments-note"
         data-testid="library-comments-phone"
         @click="commentsOpen = !commentsOpen"
       >
@@ -141,6 +163,11 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
 <style scoped>
 .library-detail__comments {
   margin: 8px 0 0;
+}
+.library-detail__comments--phone {
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
 }
 .library-detail {
   position: relative;
@@ -207,7 +234,8 @@ const pane = usePaneWidth('cheese.library.previewShare', root)
 }
 
 .library-detail__bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
