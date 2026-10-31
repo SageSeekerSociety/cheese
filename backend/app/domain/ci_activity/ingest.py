@@ -16,10 +16,12 @@ and its writes are committed together with that record (`store.py`).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import httpx
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +41,19 @@ RUN_SLICE = timedelta(minutes=5)
 BACKFILL_SLICE = timedelta(hours=4)
 MERGED_PRS_SLICE = timedelta(days=1)
 MERGED_PRS_OVERLAP = timedelta(minutes=10)
+#: The longest one sweep may run. Its writes stay uncommitted until its record
+#: (`store.py`), so a sweep that runs on holds row locks on the CI tables (a
+#: migration's ALTER waits on them) and two pooled connections. Sized from dev's
+#: recorded sweeps, 2026-10-18 to 10-31: p99 142 s over 3083 sweeps, 247 s over
+#: the 79 that finished without an error, longest 371 s (the first, a 30-day
+#: backfill).
+SWEEP_DEADLINE = timedelta(minutes=10)
+#: Server-side backstops on the sweep's own transaction, for a process that
+#: cannot end it itself (a wedged event loop never fires `SWEEP_DEADLINE`): no
+#: statement of a sweep runs longer than a minute, and the server ends the
+#: transaction once it has sat idle as long as a whole sweep may take.
+STATEMENT_TIMEOUT = "60s"
+IDLE_IN_TRANSACTION_TIMEOUT = f"{int(SWEEP_DEADLINE.total_seconds())}s"
 
 
 class CiSource(Protocol):
@@ -95,35 +110,11 @@ async def sweep_once(
     jobs_budget: int | None = None,
     backfill_slices: int | None = None,
 ) -> dict[str, Any]:
-    """One sweep, under the repo's sweep lock: a reader that keeps answers per
-    sweep (`board.once_per_sweep`) can tell the tables are part-way written."""
+    """One sweep, under the repo's sweep lock (`board.once_per_sweep` keeps
+    answers only while no sweep holds it) and within `SWEEP_DEADLINE`. A sweep
+    that runs out of time keeps nothing it read and records why."""
     repo = repo or settings.platform_repository
-    async with sweeping(session, repo):
-        return await _sweep_once(
-            session,
-            source=source,
-            repo=repo,
-            now=now,
-            jobs_budget=jobs_budget,
-            backfill_slices=backfill_slices,
-        )
-
-
-async def _sweep_once(
-    session: AsyncSession,
-    *,
-    source: CiSource | None,
-    repo: str,
-    now: datetime | None,
-    jobs_budget: int | None,
-    backfill_slices: int | None,
-) -> dict[str, Any]:
     now = now or datetime.now(UTC)
-    jobs_budget = JOBS_PER_SWEEP if jobs_budget is None else jobs_budget
-    backfill_slices = (
-        BACKFILL_SLICES_PER_SWEEP if backfill_slices is None else backfill_slices
-    )
-    window_start = now - WINDOW
     reader: CiSource = source or GitHubCi()
     before = reader.request_counts
     report: dict[str, Any] = {
@@ -145,12 +136,70 @@ async def _sweep_once(
         "truncated": [],
         "error": "",
     }
+    async with sweeping(session, repo):
+        try:
+            async with asyncio.timeout(SWEEP_DEADLINE.total_seconds()):
+                return await _sweep_once(
+                    session,
+                    reader=reader,
+                    before=before,
+                    report=report,
+                    repo=repo,
+                    now=now,
+                    jobs_budget=jobs_budget,
+                    backfill_slices=backfill_slices,
+                )
+        except TimeoutError:
+            await session.rollback()
+            # i18n-exempt: internal sweep report, read on the admin page only
+            report["error"] = (
+                f"Sweep did not finish within {SWEEP_DEADLINE.total_seconds():g} s;"
+                " nothing it read was kept"
+            )
+            report["request_counts"] = _request_delta(before, reader.request_counts)
+            report["requests"] = report["request_counts"]["http_attempts"]
+            store = CiActivityStore(session)
+            last = await store.last_sweep(repo)
+            await store.record_sweep(
+                repo,
+                started_at=now,
+                runs_listed_from=last.runs_listed_from if last else None,
+                runs_listed_to=last.runs_listed_to if last else None,
+                queue_read_to=last.queue_read_to if last else None,
+                report=report,
+            )
+            return report
+
+
+async def _sweep_once(
+    session: AsyncSession,
+    *,
+    reader: CiSource,
+    before: dict[str, Any],
+    report: dict[str, Any],
+    repo: str,
+    now: datetime,
+    jobs_budget: int | None,
+    backfill_slices: int | None,
+) -> dict[str, Any]:
+    jobs_budget = JOBS_PER_SWEEP if jobs_budget is None else jobs_budget
+    backfill_slices = (
+        BACKFILL_SLICES_PER_SWEEP if backfill_slices is None else backfill_slices
+    )
+    window_start = now - WINDOW
     owner, _, name = repo.partition("/")
     if not owner or not name:
         # i18n-exempt: internal sweep report, read on the admin page only
         report["error"] = f"not an owner/repo name: {repo!r}"
         return report
 
+    # Local to this transaction, which is the whole sweep (`store.py`): the
+    # pooled connection goes back without them.
+    for setting, value in (
+        ("statement_timeout", STATEMENT_TIMEOUT),
+        ("idle_in_transaction_session_timeout", IDLE_IN_TRANSACTION_TIMEOUT),
+    ):
+        await session.execute(select(func.set_config(setting, value, True)))
     store = CiActivityStore(session)
     last = await store.last_sweep(repo)
     runs_listed_from = last.runs_listed_from if last else None

@@ -19,6 +19,9 @@ Rules pinned here, each one a person could state without the code:
 * While the installation's quota is down to the share kept for people, the
   sweep makes no GitHub call and says why.
 * A quota refusal mid-sweep keeps what was already stored and says why.
+* A GitHub answer that never finishes, however steadily its bytes trickle in,
+  ends the sweep with the reason recorded; so does a sweep that runs past its
+  deadline, which keeps nothing it read.
 * The page shows what the last recorded sweep stored, board and jobs table
   alike: a sweep's rows appear together with its record, and a sweep that dies
   before its record leaves the page as it was.
@@ -44,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import forge_etags, forge_quota
 from app.core.config import settings
 from app.domain.ci_activity import board, ingest
+from app.domain.ci_activity import github as ci_github
 from app.domain.ci_activity.github import (
     CiGitHubError,
     CiQuotaRefused,
@@ -1119,3 +1123,59 @@ def test_a_sweep_that_dies_before_its_record_leaves_the_page_as_it_was(
         )
 
     assert page() == (1, 1)
+
+
+def test_an_answer_that_never_finishes_ends_the_sweep_with_the_reason(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    monkeypatch.setattr(ci_github, "REQUEST_DEADLINE_S", 0.5, raising=False)
+    remote = _NativeGitHub()
+    remote.runs = {71: _run(71, age=timedelta(minutes=10))}
+
+    async def trickle():
+        while True:
+            yield b" "
+            await asyncio.sleep(0.05)
+
+    def handler(request):
+        remote.requests.append(request)
+        return httpx.Response(
+            200, content=trickle(), headers={"content-type": "application/json"}
+        )
+
+    async def run():
+        await _connect(db_session)
+        report = await asyncio.wait_for(
+            _sweep(db_session, remote.reader(handler), backfill_slices=0), 10
+        )
+        assert report["error"].startswith(
+            "CiGitHubError: GitHub did not finish answering"
+        )
+        recorded = await CiActivityStore(db_session).last_sweep(REPO)
+        assert recorded is not None and recorded.report["error"] == report["error"]
+
+    _portal.call(run)
+
+
+def test_a_sweep_past_its_deadline_keeps_nothing_and_says_why(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=1), raising=False)
+
+    class _Stalled(_GitHub):
+        async def run_jobs(self, **kwargs):
+            await asyncio.sleep(3600)
+
+    github = _Stalled()
+    run = _run(81, age=timedelta(minutes=10))
+    github.runs = {81: run}
+
+    async def go():
+        await _connect(db_session)
+        report = await asyncio.wait_for(_sweep(db_session, github), 10)
+        assert "did not finish within 1 s" in report["error"]
+        assert await _count(db_session, CiWorkflowRun) == 0
+        recorded = await CiActivityStore(db_session).last_sweep(REPO)
+        assert recorded is not None and recorded.report["error"] == report["error"]
+
+    _portal.call(go)

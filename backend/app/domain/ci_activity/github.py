@@ -13,7 +13,10 @@ each request when its installation has half its REST quota or less left.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -38,6 +41,10 @@ RUNS_PAGE = 10
 #: GitHub creation-time filters have second precision. A still-busier second
 #: is explicitly reported as truncated, never claimed as complete coverage.
 _NARROWEST = timedelta(seconds=1)
+#: The longest one request may take from sending to the last byte of its answer.
+#: The client's 30 s timeout is per network wait, so an answer that keeps
+#: trickling in never trips it; this one is for the whole exchange.
+REQUEST_DEADLINE_S = 60.0
 
 _MERGED_PRS_QUERY = """
 query($q: String!, $after: String) {
@@ -71,6 +78,18 @@ class CiQuotaRefused(CiGitHubError):
 
 class CiReadDeferred(CiGitHubError):
     """Reporting leaves the remaining quota for higher-priority work."""
+
+
+@asynccontextmanager
+async def _whole_answer_within_deadline() -> AsyncIterator[None]:
+    try:
+        async with asyncio.timeout(REQUEST_DEADLINE_S):
+            yield
+    except TimeoutError as exc:
+        # i18n-exempt: internal admin sweep report, not a user refusal
+        raise CiGitHubError(
+            f"GitHub did not finish answering within {REQUEST_DEADLINE_S:g} s"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -191,7 +210,8 @@ class GitHubCi:
         }
 
     async def _get(self, client: httpx.AsyncClient, url: str, token: str, params):
-        resp = await client.get(url, headers=self._headers(token), params=params)
+        async with _whole_answer_within_deadline():
+            resp = await client.get(url, headers=self._headers(token), params=params)
         _raise_for(resp)
         return resp.json()
 
@@ -252,9 +272,12 @@ class GitHubCi:
             page = 1
             while True:
                 params = {"filter": "all", "per_page": _PAGE, "page": page}
-                async with client.stream(
-                    "GET", url, headers=self._headers(token), params=params
-                ) as resp:
+                async with (
+                    _whole_answer_within_deadline(),
+                    client.stream(
+                        "GET", url, headers=self._headers(token), params=params
+                    ) as resp,
+                ):
                     await resp.aread()
                 _raise_for(resp)
                 body = resp.json()
@@ -286,14 +309,15 @@ class GitHubCi:
         first = True
         read = 0
         while True:
-            resp = await client.post(
-                f"{self._api_base}/graphql",
-                headers=self._headers(token),
-                json={
-                    "query": _MERGED_PRS_QUERY,
-                    "variables": {"q": query, "after": after},
-                },
-            )
+            async with _whole_answer_within_deadline():
+                resp = await client.post(
+                    f"{self._api_base}/graphql",
+                    headers=self._headers(token),
+                    json={
+                        "query": _MERGED_PRS_QUERY,
+                        "variables": {"q": query, "after": after},
+                    },
+                )
             _raise_for(resp)
             body = resp.json()
             if errors := body.get("errors"):
