@@ -35,7 +35,13 @@ class AgentBindingRepository:
         binding = AgentBinding(user_id=user_id, kind=kind)
         self._session.add(binding)
         await self._session.flush()
-        await self._session.refresh(binding)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("is_agent_uid", user_id),
+                True,
+                tables=_BINDING_TABLES,
+            )
         return binding
 
     async def agent_user_ids(self, user_ids: list[int]) -> set[int]:
