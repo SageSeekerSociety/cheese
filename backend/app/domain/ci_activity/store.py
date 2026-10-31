@@ -5,15 +5,23 @@ first listed). A run's jobs are replaced whole when they are read, because a
 re-run adds jobs to a run and GitHub's answer is the complete list. Queue events
 are inserted once each. Everything older than the window is deleted by `prune`:
 this is a picture of recent CI, not an archive.
+
+Nothing here commits except `record_sweep`. Each write is one savepoint, so a
+write that fails leaves the ones before it standing, and a sweep's writes become
+visible to readers in the same commit as its `ci_activity_sweeps` row: whatever
+the tables hold is what the latest recorded sweep left there. A sweep that never
+reaches its record — its process dies, an error nobody catches — leaves nothing
+behind, and the next sweep reads the same ground again.
 """
 
 from __future__ import annotations
 
+import functools
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Concatenate
 
 from sqlalchemy import ColumnElement, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -127,10 +135,24 @@ def runner_kind(job: dict[str, Any]) -> str | None:
     return "hosted" if job.get("runner_group_name") == HOSTED_GROUP else "self_hosted"
 
 
+def _savepoint[**P, R](
+    write: Callable[Concatenate[CiActivityStore, P], Awaitable[R]],
+) -> Callable[Concatenate[CiActivityStore, P], Awaitable[R]]:
+    """Run one write as a savepoint: all of it stands, or none of it."""
+
+    @functools.wraps(write)
+    async def run(self: CiActivityStore, *args: P.args, **kwargs: P.kwargs) -> R:
+        async with self._session.begin_nested():
+            return await write(self, *args, **kwargs)
+
+    return run
+
+
 class CiActivityStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    @_savepoint
     async def upsert_merged_pull_requests(
         self, repo: str, pulls: list[dict[str, Any]]
     ) -> int:
@@ -164,9 +186,9 @@ class CiActivityStore:
                     },
                 )
             )
-        await self._session.commit()
         return len(rows)
 
+    @_savepoint
     async def upsert_runs(self, repo: str, runs: list[dict[str, Any]]) -> int:
         """Insert new runs and refresh known ones; return how many rows changed.
 
@@ -181,7 +203,6 @@ class CiActivityStore:
         changed = 0
         for start in range(0, len(rows), UPSERT_BATCH):
             changed += await self._upsert(rows[start : start + UPSERT_BATCH])
-        await self._session.commit()
         return changed
 
     async def _upsert(self, rows: list[dict[str, Any]]) -> int:
@@ -254,6 +275,7 @@ class CiActivityStore:
         )
         return int(total or 0)
 
+    @_savepoint
     async def replace_jobs(
         self, run: CiWorkflowRun, jobs: list[dict[str, Any]], *, attempt: int
     ) -> int:
@@ -309,16 +331,15 @@ class CiActivityStore:
             .where(CiWorkflowRun.id == run.id)
             .values(jobs_attempt=attempt)
         )
-        await self._session.commit()
         return stored
 
+    @_savepoint
     async def add_queue_events(self, repo: str, events: list[QueueEvent]) -> int:
         inserted = 0
         for start in range(0, len(events), UPSERT_BATCH):
             inserted += await self._add_events(
                 repo, events[start : start + UPSERT_BATCH]
             )
-        await self._session.commit()
         return inserted
 
     async def _add_events(self, repo: str, events: list[QueueEvent]) -> int:
@@ -374,6 +395,7 @@ class CiActivityStore:
         )
         await self._session.commit()
 
+    @_savepoint
     async def prune(self, repo: str, before: datetime) -> int:
         """Delete everything older than ``before``; jobs and steps go with
         their run. Returns how many runs were deleted."""
@@ -397,6 +419,5 @@ class CiActivityStore:
                 CiActivitySweep.repo == repo, CiActivitySweep.started_at < before
             )
         )
-        await self._session.commit()
         # rowcount exists on the CursorResult execute() returns for DML at runtime
         return int(runs.rowcount or 0)  # type: ignore[attr-defined]

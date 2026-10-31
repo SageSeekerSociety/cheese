@@ -9,8 +9,9 @@ Reruns outside that existing range remain outside this collector's coverage.
 Historical backfill and the per-run jobs-attempt ledger are preserved. PR merge
 facts still advance by update time, without fetching queue timelines. A failed,
 truncated or deferred read never advances a cursor beyond an unfinished unit;
-previously committed units survive and the next sweep retries the gap. Every
-sweep, including a deferred one, records its reason and actual reader counts.
+the units stored before it are kept and the next sweep retries the gap. Every
+sweep, including a deferred one, records its reason and actual reader counts,
+and its writes are committed together with that record (`store.py`).
 """
 
 from __future__ import annotations
@@ -255,7 +256,8 @@ async def _sweep_once(
             )
             cursor = queue_read_to = until
     except (CiGitHubError, httpx.HTTPError, SQLAlchemyError) as exc:
-        await session.rollback()
+        # A failed write has already rolled back to its own savepoint
+        # (`store.py`); the ones before it stay and land with the record below.
         # i18n-exempt: GitHub's own words, for the admin sweep report
         report["error"] = f"{type(exc).__name__}: {exc}"
 

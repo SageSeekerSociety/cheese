@@ -132,16 +132,16 @@ class Window:
     days: list[date]
 
 
-#: Every figure on the page is read from the tables the sweep fills, and only the
-#: sweep writes them (`store.py`), under its sweep lock from its first write until
-#: its `ci_activity_sweeps` row has landed. Between sweeps the tables do not
-#: change, so an answer stays right until the next sweep row lands or the UTC day
-#: turns, and a worker computes each one once per sweep rather than on every
-#: open: a board over a week's ~25k jobs is two seconds of this worker's event
-#: loop, which every other request on the worker waits out. While a sweep is
-#: writing, or before any sweep is recorded, every answer is computed from the
-#: tables as they stand and none is kept, so no two answers mix a kept state with
-#: a newer one.
+#: Every figure on the page is read from the tables the sweep fills. Only the
+#: sweep writes them, and its writes become visible in the same commit as its
+#: `ci_activity_sweeps` row (`store.py`), so the committed tables are always what
+#: the latest recorded sweep left. An answer therefore stays right until the next
+#: sweep row lands or the UTC day turns, and a worker computes each one once per
+#: sweep rather than on every open: a board over a week's ~25k jobs is two
+#: seconds of this worker's event loop, which every other request on the worker
+#: waits out. The sweep lock keeps that commit from landing between the queries
+#: of one answer being computed for keeping; while a sweep holds it, or before
+#: any sweep is recorded, every answer is computed and none is kept.
 _per_sweep: dict[str, Any] = {"key": None, "answers": {}}
 
 

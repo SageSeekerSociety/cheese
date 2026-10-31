@@ -19,9 +19,9 @@ Rules pinned here, each one a person could state without the code:
 * While the installation's quota is down to the share kept for people, the
   sweep makes no GitHub call and says why.
 * A quota refusal mid-sweep keeps what was already stored and says why.
-* The page never shows a figure kept from before a sweep beside one that sweep
-  has already changed: while a sweep is writing, the board and the jobs table
-  agree with the tables as they stand, and after it they agree again.
+* The page shows what the last recorded sweep stored, board and jobs table
+  alike: a sweep's rows appear together with its record, and a sweep that dies
+  before its record leaves the page as it was.
 
 GitHub is a fake `CiSource`; the credential lookup is real down to the App's
 token, which is a fake with a quota the test sets.
@@ -1012,65 +1012,110 @@ def test_a_truncated_window_does_not_claim_complete_coverage(
     _portal.call(run)
 
 
-def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
-    client, tokens, monkeypatch: pytest.MonkeyPatch
-):
-    admin = "ci-sweep-admin"
-    monkeypatch.setattr(settings, "platform_admin_handles", [admin])
+_ADMIN = "ci-sweep-admin"
+
+
+@pytest.fixture
+def page(client, monkeypatch: pytest.MonkeyPatch):
+    """How many jobs the CI activity page's board and jobs table each show,
+    and the board alone."""
+    monkeypatch.setattr(settings, "platform_admin_handles", [_ADMIN])
     monkeypatch.setattr(settings, "platform_repository", REPO)
-    seed_user(client, admin)
+    seed_user(client, _ADMIN)
 
-    def board_jobs() -> int:
-        board = client.get(
-            "/admin/ci-activity?days=7", headers=session_auth_headers(admin)
-        ).json()["data"]
-        return board["headline"]["runner_wait_seconds"]["all"]["n"]
+    headers = session_auth_headers(_ADMIN)
 
-    def table_jobs() -> int:
-        jobs = client.get(
-            "/admin/ci-activity/jobs?days=7", headers=session_auth_headers(admin)
-        ).json()["data"]["jobs"]
-        return sum(j["jobs"] for j in jobs)
+    def board() -> int:
+        body = client.get("/admin/ci-activity?days=7", headers=headers).json()
+        return body["data"]["headline"]["runner_wait_seconds"]["all"]["n"]
 
+    def table() -> int:
+        body = client.get("/admin/ci-activity/jobs?days=7", headers=headers).json()
+        return sum(j["jobs"] for j in body["data"]["jobs"])
+
+    # The board is read first, so a worker that keeps answers already holds it
+    # when the jobs table is asked for the first time.
+    return lambda: (board(), table()), board
+
+
+def _an_hour_ago(run_id: int, now: datetime) -> dict:
+    created = _iso(now - timedelta(hours=1))
+    return _run(
+        run_id,
+        age=timedelta(0),
+        created_at=created,
+        run_started_at=created,
+        updated_at=created,
+    )
+
+
+def _sweep_through_the_app(client, github, *, at: datetime, first: bool) -> dict:
+    async def run() -> dict:
+        async with client.test_factory() as session:
+            if first:
+                await _connect(session)
+            return await ingest.sweep_once(session, source=github, repo=REPO, now=at)
+
+    return asyncio.run(run())
+
+
+def test_the_page_never_mixes_a_kept_figure_with_a_sweep_still_writing(
+    client, tokens, page
+):
+    page, board = page
     now = datetime.now(UTC)
-
-    def run(run_id: int) -> dict:
-        created = _iso(now - timedelta(hours=1))
-        return _run(
-            run_id,
-            age=timedelta(0),
-            created_at=created,
-            run_started_at=created,
-            updated_at=created,
-        )
-
     mid_sweep: list[tuple[int, int]] = []
 
     class _Watching(_GitHub):
         async def merged_pull_requests(self, **kwargs):
             # A sweep reads merged PRs after storing jobs and before its record:
-            # in the second sweep, run 42's job is in and its record is not.
+            # in the second sweep, run 42's job is stored and its record is not.
             if 42 in self.runs and not mid_sweep:
-                mid_sweep.append((board_jobs(), table_jobs()))
+                mid_sweep.append(page())
             return await super().merged_pull_requests(**kwargs)
 
     github = _Watching()
-    first, second = run(41), run(42)
+    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
     github.runs = {41: first}
     github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
 
-    async def sweep(at: datetime) -> None:
-        async with client.test_factory() as session:
-            if at == now:
-                await _connect(session)
-            report = await ingest.sweep_once(session, source=github, repo=REPO, now=at)
-            assert report["error"] == ""
-
-    asyncio.run(sweep(now))
-    assert board_jobs() == 1
+    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
+    assert board() == 1
 
     github.runs[42] = second
-    asyncio.run(sweep(now + timedelta(minutes=5)))
+    later = now + timedelta(minutes=5)
+    assert _sweep_through_the_app(client, github, at=later, first=False)["error"] == ""
 
-    assert mid_sweep == [(2, 2)]
-    assert (board_jobs(), table_jobs()) == (2, 2)
+    assert mid_sweep == [(1, 1)]
+    assert page() == (2, 2)
+
+
+def test_a_sweep_that_dies_before_its_record_leaves_the_page_as_it_was(
+    client, tokens, page
+):
+    page, board = page
+    now = datetime.now(UTC)
+
+    class _Dying(_GitHub):
+        async def merged_pull_requests(self, **kwargs):
+            # After the jobs are stored, before the record: an answer the sweep
+            # does not catch, as a process killed at this point would be.
+            if 42 in self.runs:
+                raise json.JSONDecodeError("Expecting value", "", 0)
+            return await super().merged_pull_requests(**kwargs)
+
+    github = _Dying()
+    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
+    github.runs = {41: first}
+    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
+
+    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
+    assert board() == 1
+
+    github.runs[42] = second
+    with pytest.raises(json.JSONDecodeError):
+        _sweep_through_the_app(
+            client, github, at=now + timedelta(minutes=5), first=False
+        )
+
+    assert page() == (1, 1)
