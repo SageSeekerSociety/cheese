@@ -56,6 +56,7 @@ import logging
 import re
 import sys
 import sysconfig
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -199,10 +200,15 @@ class RequestWatch:
     the groups mean is decided by ``repeats`` at the end of the request.
     """
 
-    __slots__ = ("closed", "groups")
+    __slots__ = ("closed", "db_s", "groups", "statements")
 
     def __init__(self) -> None:
         self.groups: dict[tuple[tuple[str, ...], str], _Group] = {}
+        #: How many statements ran and how long they held the database, for
+        #: the response's Server-Timing (``db``): what a slow request spent
+        #: waiting on the database rather than in Python.
+        self.statements = 0
+        self.db_s = 0.0
         #: Set when the request is over. A background task that inherited this
         #: watch must not keep appending to a count nobody will report.
         self.closed = False
@@ -321,11 +327,23 @@ def request_scope() -> Iterator[RequestWatch]:
 
 
 def _on_before_cursor_execute(
-    _conn, _cursor, statement, _parameters, _context, _executemany
+    _conn, _cursor, statement, _parameters, context, _executemany
 ) -> None:
     watch = _current.get()
     if watch is not None:
         watch.note(statement)
+        if context is not None:
+            context._cheese_started = time.perf_counter()
+
+
+def _on_after_cursor_execute(
+    _conn, _cursor, _statement, _parameters, context, _executemany
+) -> None:
+    watch = _current.get()
+    started = getattr(context, "_cheese_started", None)
+    if watch is not None and started is not None and not watch.closed:
+        watch.statements += 1
+        watch.db_s += time.perf_counter() - started
 
 
 def watch_engine(engine) -> None:
@@ -341,6 +359,7 @@ def watch_engine(engine) -> None:
     if getattr(sync_engine, _INSTALLED, False):
         return
     event.listen(sync_engine, "before_cursor_execute", _on_before_cursor_execute)
+    event.listen(sync_engine, "after_cursor_execute", _on_after_cursor_execute)
     setattr(sync_engine, _INSTALLED, True)
 
 
@@ -371,8 +390,27 @@ class QueryWatchMiddleware:
             return
         watch = RequestWatch()
         token = _current.set(watch)
+
+        async def timed_send(message) -> None:
+            # What the request spent on the database, beside the app's own
+            # total (``app;dur``, set where the request is logged): the two
+            # tell a slow query from slow Python. A streamed body's later
+            # queries come after this header and are not in it.
+            if message["type"] == "http.response.start":
+                timing = (
+                    f'db;dur={watch.db_s * 1000:.1f};desc="{watch.statements} sql"'
+                ).encode()
+                message = {
+                    **message,
+                    "headers": [
+                        *message.get("headers", ()),
+                        (b"server-timing", timing),
+                    ],
+                }
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, timed_send)
         finally:
             _current.reset(token)
             watch.closed = True
