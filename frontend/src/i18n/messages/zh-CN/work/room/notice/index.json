@@ -3,7 +3,7 @@
   "changedFiles": "改动的文件",
   "detail": "详情",
   "docDiff": "文档修改对比",
-  "filesChanged": "改动了 {n} 个文件",
+  "filesChanged": "修改了 {n} 个文件",
   "goConfirm": "去确认",
   "goEnvironment": "去环境设置",
   "moreFiles": "另 {n} 个文件",
