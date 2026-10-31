@@ -957,6 +957,7 @@ class DeviceChannel(Channel):
             seat=seat,
             own_login=own_login and not own_key,
             own_key=own_key,
+            homes=DEVICE_HOME_ROOT,
         )
         settled_with = screen_identity.settled_with(
             agent_configuration=agent_configuration, place=place, token=token

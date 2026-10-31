@@ -214,6 +214,22 @@ _ACCEPT_CARDS_ALL_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM accept_cards\b",
     re.IGNORECASE,
 )
+_BLOCKS_BY_IDS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM blocks\s+WHERE blocks\.id = ANY\b",
+    re.IGNORECASE,
+)
+_ROUTINE_RUNS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM routine_runs\b",
+    re.IGNORECASE,
+)
+_ACCEPT_CARD_REVIEWER_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM accept_card_reviewer\b",
+    re.IGNORECASE,
+)
+_TASK_LAST_SAID_SELECT = re.compile(
+    r"^\s*SELECT tasks\.id,\s*\(SELECT max\(blocks\.created_at\)",
+    re.IGNORECASE,
+)
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
@@ -807,4 +823,100 @@ def test_room_tasks_and_accept_cards_deduplicate_room_cards_and_forges(client):
     ]
     assert len(cards_sql) <= 10, (
         f"expected <= 10 SQL statements on accept-card list, got {len(cards_sql)}: {cards_sql}"
+    )
+
+
+def test_room_blocks_deduplicates_root_messages_and_routine_runs(client):
+    """`GET /topics/{room_id}/blocks?limit=25` reuses the page's loaded `Block`
+    rows when describing thread roots instead of re-querying `blocks.id = ANY(...)`,
+    and queries `routine_runs JOIN routines` once across `runs_under` and
+    `routine_runs_of`."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/topics/{room_id}/blocks?limit=25", headers=headers)
+    assert r.status_code == 200, r.text
+    items = r.json()["data"]["data"]
+    assert len(items) >= 1
+    assert any("thread" in item for item in items)
+
+    assert _count(seen, _BLOCKS_BY_IDS_SELECT) == 0, [
+        s for s in seen if _BLOCKS_BY_IDS_SELECT.search(s)
+    ]
+    assert _count(seen, _ROUTINE_RUNS_SELECT) == 1, [
+        s for s in seen if _ROUTINE_RUNS_SELECT.search(s)
+    ]
+    assert len(seen) <= 13, f"expected <= 13 SQL statements, got {len(seen)}: {seen}"
+
+
+def test_awaiting_me_and_project_tasks_deduplicate_reviewers_and_last_said(client):
+    """`GET /awaiting-me` queries `accept_card_reviewer` once across
+    `listed_cards` and `waiting_items`, while `GET /projects/{id}/tasks` reuses
+    `page_for_project`'s `moved` timestamp without a second `last_block_at_for_tasks`
+    query."""
+    pid, _ = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as awaiting_sql:
+        r_await = client.get("/awaiting-me", headers=headers)
+    assert r_await.status_code == 200, r_await.text
+    assert _count(awaiting_sql, _ACCEPT_CARD_REVIEWER_SELECT) == 1, [
+        s for s in awaiting_sql if _ACCEPT_CARD_REVIEWER_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as tasks_sql:
+        r_tasks = client.get(
+            f"/projects/{pid}/tasks?status=open&limit=200", headers=headers
+        )
+    assert r_tasks.status_code == 200, r_tasks.text
+    assert len(r_tasks.json()["data"]["data"]) == 8
+    assert _count(tasks_sql, _TASK_LAST_SAID_SELECT) == 0, [
+        s for s in tasks_sql if _TASK_LAST_SAID_SELECT.search(s)
+    ]
+    assert len(tasks_sql) <= 12, (
+        f"expected <= 12 SQL statements on project tasks, got {len(tasks_sql)}: {tasks_sql}"
+    )
+
+
+def test_project_agents_and_room_endpoints_deduplicate_instances_and_memberships(
+    client,
+):
+    """`GET /projects/{id}/agents` queries `agent_instances` once, and
+    `GET /topics/{room_id}` and `GET /topics/{room_id}/members` each query
+    `topic_memberships` once across authorization and roster assembly."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as agents_sql:
+        r_agents = client.get(f"/projects/{pid}/agents", headers=headers)
+    assert r_agents.status_code == 200, r_agents.text
+    assert len(r_agents.json()["data"]["data"]) >= 1
+    assert _count(agents_sql, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in agents_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(agents_sql) <= 5, (
+        f"expected <= 5 SQL statements on project agents, got {len(agents_sql)}: {agents_sql}"
+    )
+
+    with counting_sql(client) as room_sql:
+        r_room = client.get(f"/topics/{room_id}", headers=headers)
+    assert r_room.status_code == 200, r_room.text
+    assert _count(room_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in room_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(room_sql) <= 22, (
+        f"expected <= 22 SQL statements on room header, got {len(room_sql)}: {room_sql}"
+    )
+
+    with counting_sql(client) as members_sql:
+        r_members = client.get(f"/topics/{room_id}/members", headers=headers)
+    assert r_members.status_code == 200, r_members.text
+    assert _count(members_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in members_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(members_sql) <= 8, (
+        f"expected <= 8 SQL statements on room members, got {len(members_sql)}: {members_sql}"
     )

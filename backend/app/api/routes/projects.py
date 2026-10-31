@@ -572,7 +572,11 @@ async def list_project_tasks(
             db, [t.id for t in tasks if t.status == "open"]
         )
         items = await project_task_rows(
-            db, actor.handle or "", tasks, incomplete_of=incomplete.get
+            db,
+            actor.handle or "",
+            tasks,
+            incomplete_of=incomplete.get,
+            last_activity_of={task.id: at for task, at in page_rows},
         )
         last = page_rows[-1] if page_rows and has_more else None
         return await conditional_json(
