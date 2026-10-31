@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import Select, delete, inspect, select, update
+from sqlalchemy import Select, cast, delete, func, inspect, select, update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import attributes
@@ -344,7 +345,7 @@ async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> N
     据此说现在的状态；账本上的 `payload` 也跟着改，补发写回来的才是现在这句话。
     """
     keys = select(Delivery.dedup_key).where(Delivery.event_id == event_id)
-    await _settle(session, keys, outcome)
+    await _settle(session, keys, outcome, delivery_where=Delivery.event_id == event_id)
 
 
 async def settle_for(
@@ -353,10 +354,9 @@ async def settle_for(
     """`settle`, for one recipient only: the thing is done as far as he is
     concerned, while the others it reached are still waited on (a person
     skipping a question several people were asked)."""
-    keys = select(Delivery.dedup_key).where(
-        Delivery.event_id == event_id, Delivery.recipient_handle == recipient
-    )
-    await _settle(session, keys, outcome)
+    cond = (Delivery.event_id == event_id) & (Delivery.recipient_handle == recipient)
+    keys = select(Delivery.dedup_key).where(cond)
+    await _settle(session, keys, outcome, delivery_where=cond)
 
 
 async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) -> None:
@@ -371,29 +371,81 @@ async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) 
     结的是「等验收人动手」的那些；说**结局**的那几条（合了、作废了、PR 被关了）
     不带卡号：它们正是在这个决定之后才说出来的。
     """
+    cond = Delivery.payload["cardId"].as_string() == str(card_id)
     await _settle(
         session,
-        select(Delivery.dedup_key).where(
-            Delivery.payload["cardId"].as_string() == str(card_id)
-        ),
+        select(Delivery.dedup_key).where(cond),
         outcome,
+        delivery_where=cond,
     )
 
 
-async def _settle(session: AsyncSession, keys: Select, outcome: dict) -> None:
+async def _settle(
+    session: AsyncSession,
+    keys: Select,
+    outcome: dict,
+    *,
+    delivery_where=None,
+) -> None:
     """把 `keys` 选出来的那几笔投递结掉。"""
+    if session.autoflush and (session.new or session.dirty or session.deleted):
+        await session.flush()
     now = _utcnow()
-    for row in await session.scalars(
-        select(Notification).where(Notification.delivery_key.in_(keys))
-    ):
-        row.metadata_payload = {**(row.metadata_payload or {}), **outcome}
-        row.read = True
-        row.resolved_at = now
-    for delivery in await session.scalars(
-        select(Delivery).where(Delivery.dedup_key.in_(keys))
-    ):
-        delivery.payload = {**(delivery.payload or {}), **outcome}
-    await session.flush()
+    patch = cast(outcome, JSONB)
+    empty = cast({}, JSONB)
+    notif_ids = set(
+        (
+            await session.scalars(
+                update(Notification)
+                .where(Notification.delivery_key.in_(keys))
+                .values(
+                    metadata_payload=func.coalesce(
+                        Notification.metadata_payload, empty
+                    ).op("||")(patch),
+                    read=True,
+                    resolved_at=now,
+                )
+                .returning(Notification.id)
+            )
+        ).all()
+    )
+    delivery_cond = (
+        delivery_where if delivery_where is not None else Delivery.dedup_key.in_(keys)
+    )
+    deliv_ids = set(
+        (
+            await session.scalars(
+                update(Delivery)
+                .where(delivery_cond)
+                .values(
+                    payload=func.coalesce(Delivery.payload, empty).op("||")(patch),
+                )
+                .returning(Delivery.id)
+            )
+        ).all()
+    )
+    if notif_ids or deliv_ids:
+        for obj in session.sync_session.identity_map.values():
+            if (
+                isinstance(obj, Notification)
+                and obj.id in notif_ids
+                and not inspect(obj).expired_attributes
+            ):
+                attributes.set_committed_value(
+                    obj,
+                    "metadata_payload",
+                    {**(obj.metadata_payload or {}), **outcome},
+                )
+                attributes.set_committed_value(obj, "read", True)
+                attributes.set_committed_value(obj, "resolved_at", now)
+            elif (
+                isinstance(obj, Delivery)
+                and obj.id in deliv_ids
+                and not inspect(obj).expired_attributes
+            ):
+                attributes.set_committed_value(
+                    obj, "payload", {**(obj.payload or {}), **outcome}
+                )
 
 
 async def resend_unsent_deliveries(sessions: SessionFactory) -> dict[str, int]:

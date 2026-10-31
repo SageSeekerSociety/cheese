@@ -278,7 +278,9 @@ class ProjectRepository:
             await self._session.flush()
         return merged
 
-    async def people(self, project_id: uuid.UUID) -> list[dict]:
+    async def people(
+        self, project_id: uuid.UUID, *, include_team_info: bool = True
+    ) -> list[dict]:
         """名册上**人**的那一半：每个人的 handle、昵称、头像，和他是怎么在这里的。
 
         「这个项目里有谁」不在这里回答，在 ``membership/roster.py`` 的 ``roster()``
@@ -428,7 +430,7 @@ class ProjectRepository:
             seen.add(project.owner_handle)
         team_handle: str | None = None
         team_name: str | None = None
-        if any(u.username not in seen for u, *_ in team_rows):
+        if include_team_info and any(u.username not in seen for u, *_ in team_rows):
             team: Team | None = None
             if _can_cache(self._session):
                 found_team, cached_team = recall(
@@ -438,6 +440,13 @@ class ProjectRepository:
                     team = cached_team
             if team is None:
                 team = await self._session.get(Team, project.team_id)
+                if _can_cache(self._session):
+                    remember(
+                        self._session,
+                        ("team_by_id", project.team_id),
+                        team,
+                        tables=frozenset({"team"}),
+                    )
             team_handle = team.handle if team is not None else None
             team_name = team.name if team is not None else None
         for u, name, avatar_id, avatar_type, created_at, _role in team_rows:
