@@ -41,7 +41,7 @@ async def _conversation(db, resolver, conversation_id: uuid.UUID, *, acting: boo
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
     )
     if acting and not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))

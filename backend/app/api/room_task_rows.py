@@ -540,6 +540,25 @@ async def room_task_items(
     return await task_rows(db, actor, topic.project_id, threads)
 
 
+async def room_snapshot_tasks(
+    db: AsyncSession, actor: Actor, topic, *, recent_done: int
+) -> dict[str, list[dict]]:
+    """The `tasks` of a channel's `room_snapshot` (`open` and `recent`),
+    hydrating both lists in one batched `task_rows` + `with_session_running`
+    pass instead of running the seven per-batch queries twice."""
+    service = TaskService(db)
+    open_threads = await service.threads_for_room(topic.id, limit=0, status="open")
+    recent_threads = await service.threads_for_room(
+        topic.id, limit=0, status="closed", latest=recent_done
+    )
+    combined = await with_session_running(
+        db,
+        await task_rows(db, actor, topic.project_id, [*open_threads, *recent_threads]),
+    )
+    split = len(open_threads)
+    return {"open": combined[:split], "recent": combined[split:]}
+
+
 async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:
     """Say on each task row whether any agent's session is running in it right
     now (`session_running`), as the session protocol declares it.

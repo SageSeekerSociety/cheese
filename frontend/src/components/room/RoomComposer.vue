@@ -408,6 +408,12 @@ const shownMates = computed<Mate[]>(() => {
 const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
+// 「交给：」后面那位队友叫什么：和头像、名册同一个叫法（`mateOf`），不是库里存的原名——
+// 没改过名的队友库里存的是「芝士」，屏幕按读者的语言叫它。
+const recipientMateName = computed(() => {
+  const agent = addressing.value?.agent
+  return agent ? mateOf(agent).label : ''
+})
 // 「交给：」后面写的人名：@ 名单上的叫法，名单上没有就是 handle。
 function personName(handle: string): string {
   return props.mentionPool.find((m) => m.handle === handle)?.label ?? handle
@@ -778,7 +784,7 @@ defineExpose({
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
-      <ComposerRecipient :addressing="addressing" :name-of="personName" />
+      <ComposerRecipient :addressing="addressing" :agent-name="recipientMateName" :name-of="personName" />
       <!-- 这条消息带着的东西：回复的那条在最前，然后是引用，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"

@@ -162,6 +162,8 @@ async def send_chat_message(
     session publishes there, in its turn.
     """
     place = await place_or_404(db, topic_id)
+    if place.inner_id is None:
+        await TopicMemberService(db)._repo.list_for_topic(place.room_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
@@ -186,6 +188,14 @@ async def send_chat_message(
     if not content and not attachments:
         raise ValidationError(say("messageOrAttachment"))
     may_summon = await may(db, place.project_id, actor.handle, Permission.ask_agent)
+    # Compute the room's people before `receive_message` commits its writer
+    # session and invalidates `request_facts`, reusing the roster and agent
+    # binding facts already loaded above.
+    people = (
+        [m.handle for m in members if not m.agent]
+        if members is not None
+        else await TopicMemberService(db).people_in(place.room, team=project_team)
+    )
 
     async def addressed_now() -> AddressingChanged:
         """Refuse a send shown as one for an AI teammate that is for none now,
@@ -242,13 +252,6 @@ async def send_chat_message(
         "agent_recipient"
     ) or {}
     if not (may_summon and recipient.get("mentioned")):
-        # 综合's main line already read the project's roster to let them speak
-        # (`require_person_speaks`); that roster is its people.
-        people = (
-            [m.handle for m in members if not m.agent]
-            if members is not None
-            else await TopicMemberService(db).people_in(place.room, team=project_team)
-        )
         if set(people) == {actor.handle}:
             sent["alone"] = True
     # The sender's own copy may be the first one the client sees. It carries the

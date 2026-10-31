@@ -2,9 +2,9 @@
 // 输入框顶上那一行：这条发出去交给谁。
 //
 // 它只画后端说的（`useAddressing`，发送时的同一套规矩），自己不判断。交给 AI 队友时画
-// 那位的头像和名字；只 @ 了人时写那几个人；谁也不交给时写「本条：频道讨论」——频道默认
-// 是人和人说话，这一行只是让人发之前看得见，不催人交给谁。任务里在前面写任务开着还是
-// 关了：同一句话，任务一关就不再自动交给队友。
+// 那位的头像和名字（名字按名册叫，由外面给：`agentName`）；只 @ 了人时写那几个人；谁也
+// 不交给时写「本条：频道讨论」——频道默认是人和人说话，这一行只是让人发之前看得见，不催
+// 人交给谁。任务里在前面写任务开着还是关了：同一句话，任务一关就不再自动交给队友。
 //
 // 还没问到时（刚打开）这一行空着、但占着高度，问到了不会把输入框顶一下。
 import type { Addressing } from '../../api/messages'
@@ -17,6 +17,8 @@ import { teammateName } from '@/lib/agentNames'
 
 const props = defineProps<{
   addressing: Addressing | null
+  /** 交给的那位队友在界面上叫什么（名册上的叫法）；`addressing.agent.name` 是库里存的原名。 */
+  agentName: string
   /** handle 在界面上叫什么（@ 到的人）。 */
   nameOf: (handle: string) => string
 }>()

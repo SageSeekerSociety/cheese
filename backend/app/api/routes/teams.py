@@ -296,8 +296,7 @@ async def _load_team_user_maps(
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     users_map = await user_repo.get_by_ids(user_ids)
-    profiles_map = await profile_repo.get_profiles_by_user_ids(user_ids)
-    avatars_map = await profile_repo.chosen_avatar_ids(user_ids)
+    profiles_map, avatars_map = await profile_repo.profiles_and_chosen_avatars(user_ids)
     return users_map, profiles_map, avatars_map
 
 
@@ -444,7 +443,8 @@ async def _team_profile(
         profiles_map=profiles_map,
         avatars_map=avatars_map,
     )
-    data["joinStatus"] = await membership_service.join_status(team.id, user_id)
+    if not data.get("joined"):
+        data["joinStatus"] = await membership_service.join_status(team.id, user_id)
     return ok({"team": data})
 
 
