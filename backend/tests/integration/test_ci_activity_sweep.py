@@ -40,7 +40,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 from anyio.from_thread import BlockingPortal
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1294,5 +1294,78 @@ def test_a_slice_with_more_pages_than_one_sweep_is_resumed_inside_it(
         assert await _count(db_session, CiWorkflowRun) == 300
         inside = [c for c in covered if gap_start < c < NOW - timedelta(hours=4)]
         assert len(inside) >= 2, "the slice was finished without being resumed"
+
+    _portal.call(go)
+
+
+def test_the_last_sweep_on_the_page_is_the_last_finished_one(
+    client, tokens, page, pinned_clock
+):
+    """The board's sweep status (when, what went wrong, what it covered) is the
+    last sweep that finished, whatever a sweep still running, or one that died,
+    has already committed."""
+    headers = session_auth_headers(_ADMIN)
+
+    def last_sweep() -> dict:
+        board = client.get("/admin/ci-activity?days=7", headers=headers).json()
+        return board["data"]["sweep"]
+
+    now = utc_now()
+    seen: list[dict] = []
+
+    class _Dying(_GitHub):
+        async def merged_pull_requests(self, **kwargs):
+            if 42 in self.runs:
+                seen.append(last_sweep())
+                raise json.JSONDecodeError("Expecting value", "", 0)
+            return await super().merged_pull_requests(**kwargs)
+
+    github = _Dying()
+    first, second = _an_hour_ago(41, now), _an_hour_ago(42, now)
+    github.runs = {41: first}
+    github.jobs = {41: [_job(410, first)], 42: [_job(420, second)]}
+    assert _sweep_through_the_app(client, github, at=now, first=True)["error"] == ""
+    finished = last_sweep()
+    assert finished["error"] == ""
+
+    github.runs[42] = second
+    with pytest.raises(json.JSONDecodeError):
+        _sweep_through_the_app(
+            client, github, at=now + timedelta(minutes=5), first=False
+        )
+
+    assert seen == [finished]
+    assert last_sweep() == finished
+
+
+def test_a_sweep_that_cannot_tidy_up_in_time_still_ends_and_says_why(
+    db_session: AsyncSession, _portal: BlockingPortal, tokens, monkeypatch
+):
+    """GitHub refuses at once, and a migration holds the runs table, so the
+    sweep's tidying up would wait on that lock: it stops at the sweep's
+    deadline like everything else the sweep does, and the refusal is
+    recorded."""
+    monkeypatch.setattr(ingest, "SWEEP_DEADLINE", timedelta(seconds=0.5), raising=False)
+
+    class _Refusing(_GitHub):
+        def check_quota(self, token):
+            raise CiQuotaRefused("GitHub quota spent (HTTP 403)")
+
+    async def go():
+        await _connect(db_session)
+        engine = db_session.bind.engine
+        async with engine.connect() as migration:
+            await migration.execute(text("SET lock_timeout = '3s'"))
+            await migration.execute(
+                text("LOCK TABLE ci_workflow_runs IN ACCESS EXCLUSIVE MODE")
+            )
+            try:
+                report = await asyncio.wait_for(_sweep(db_session, _Refusing()), 5)
+            finally:
+                await migration.rollback()
+        assert report["error"].startswith("CiQuotaRefused")
+        recorded = await CiActivityStore(db_session).last_sweep(REPO)
+        assert recorded is not None and recorded.report["error"] == report["error"]
+        assert "in_progress" not in recorded.report
 
     _portal.call(go)

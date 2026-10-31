@@ -67,10 +67,9 @@ SWEEP_DEADLINE = timedelta(minutes=10)
 #: transaction once it has sat idle as long as a whole sweep may take.
 STATEMENT_TIMEOUT = "60s"
 IDLE_IN_TRANSACTION_TIMEOUT = f"{int(SWEEP_DEADLINE.total_seconds())}s"
-#: What a sweep's row says while the sweep is still working, and what it keeps
-#: saying if the sweep never gets to write its outcome.
-# i18n-exempt: internal sweep report, read on the admin page only
-UNFINISHED = "Sweep stopped before it finished; its finished units are kept"
+#: How long the statement that writes a sweep's outcome may take, deadline
+#: spent or not; past it the sweep gives up and its row stays unfinished.
+OUTCOME_DEADLINE = timedelta(seconds=30)
 #: Report counters a unit adds to, put back to the last commit's when a unit is
 #: dropped.
 _COUNTERS = ("runs_upserted", "jobs_read", "merged_prs_upserted", "gone_runs")
@@ -154,6 +153,29 @@ async def sweep_once(
                 else backfill_slices
             ),
         )
+
+
+def _stopped_by(exc: BaseException) -> str:
+    """The sweep report's words for what ended a sweep early."""
+    if isinstance(exc, TimeoutError):
+        # i18n-exempt: internal sweep report, read on the admin page only
+        return (
+            f"Sweep stopped at its {SWEEP_DEADLINE.total_seconds():g} s deadline;"
+            " the units it finished are kept"
+        )
+    # i18n-exempt: GitHub's own words, for the admin sweep report
+    return f"{type(exc).__name__}: {exc}"
+
+
+async def _limit_statements(session: AsyncSession, seconds: float) -> None:
+    """No statement of the current transaction runs longer than ``seconds``."""
+    await session.execute(
+        select(
+            func.set_config(
+                "statement_timeout", f"{max(1, int(seconds * 1000))}ms", True
+            )
+        )
+    )
 
 
 async def _bound_transaction(session: AsyncSession) -> None:
@@ -250,7 +272,9 @@ async def _sweep_once(
             runs_listed_from=runs_listed_from,
             runs_listed_to=runs_listed_to,
             queue_read_to=queue_read_to,
-            report=report if finished else {**report, "error": UNFINISHED},
+            # A row the sweep has not finished says so: the page's "last sweep"
+            # is the last finished one (`board._sweep_status`).
+            report=report if finished else {**report, "in_progress": True},
         )
         committed["cursors"] = (runs_listed_from, runs_listed_to, queue_read_to)
         committed["counters"] = {k: report[k] for k in _COUNTERS}
@@ -291,8 +315,9 @@ async def _sweep_once(
                 runs_listed_from = low
             await record(finished=False)
 
+    deadline = asyncio.get_running_loop().time() + SWEEP_DEADLINE.total_seconds()
     try:
-        async with asyncio.timeout(SWEEP_DEADLINE.total_seconds()):
+        async with asyncio.timeout_at(deadline):
             reader.check_quota(token)
             recent_from = now - RECENT
             oldest_open = await store.oldest_open_run(repo, now - OPEN_LOOKBACK)
@@ -360,18 +385,31 @@ async def _sweep_once(
         await session.rollback()
         runs_listed_from, runs_listed_to, queue_read_to = committed["cursors"]
         report.update(committed["counters"])
-        report["error"] = (
-            # i18n-exempt: internal sweep report, read on the admin page only
-            f"Sweep stopped at its {SWEEP_DEADLINE.total_seconds():g} s deadline;"
-            " the units it finished are kept"
-            if isinstance(exc, TimeoutError)
-            # i18n-exempt: GitHub's own words, for the admin sweep report
-            else f"{type(exc).__name__}: {exc}"
-        )
+        report["error"] = _stopped_by(exc)
+        await _bound_transaction(session)
 
-    report["pruned_runs"] = await store.prune(repo, window_start)
+    # Tidying up stays inside the sweep's deadline, held by the server rather
+    # than by cancelling a statement mid-flight: each statement gets the time
+    # left, and a sweep with none left skips it (the next sweep prunes).
+    loop = asyncio.get_running_loop()
+    try:
+        for tidy in ("pruned_runs", "jobs_owed"):
+            left = deadline - loop.time()
+            if left <= 0:
+                raise TimeoutError
+            await _limit_statements(session, left)
+            report[tidy] = (
+                await store.prune(repo, window_start)
+                if tidy == "pruned_runs"
+                else await store.count_runs_owing_jobs(repo)
+            )
+    except (SQLAlchemyError, TimeoutError) as exc:
+        await session.rollback()
+        await _bound_transaction(session)
+        report["pruned_runs"] = 0
+        report["error"] = report["error"] or _stopped_by(exc)
     if runs_listed_from is not None:
         runs_listed_from = max(window_start, runs_listed_from)
-    report["jobs_owed"] = await store.count_runs_owing_jobs(repo)
+    await _limit_statements(session, OUTCOME_DEADLINE.total_seconds())
     await record(finished=True)
     return report

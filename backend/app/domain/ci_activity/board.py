@@ -656,9 +656,15 @@ async def _rounds(session, repo, w: Window) -> dict[str, Any]:
 
 
 async def _sweep_status(session, repo, w: Window) -> dict[str, Any] | None:
+    """The last finished sweep: a sweep's row exists from its first committed
+    unit on, marked ``in_progress`` until the sweep writes its outcome, and one
+    whose process died stays marked."""
     last = await session.scalar(
         select(CiActivitySweep)
-        .where(CiActivitySweep.repo == repo)
+        .where(
+            CiActivitySweep.repo == repo,
+            ~CiActivitySweep.report.has_key("in_progress"),
+        )
         .order_by(CiActivitySweep.started_at.desc())
         .limit(1)
     )
