@@ -210,19 +210,20 @@ class TeamService:
         """
         owner = await user_by_handle(self._repo._session, handle)
         if owner is not None:
-            if owner.id == user_id:
-                personal = await self._repo.get_personal_team(owner.id)
-                if personal is not None:
-                    return personal
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "handle": handle}
+            personal = (
+                await self._repo.get_personal_team(owner.id)
+                if owner.id == user_id
+                else None
             )
-        team = await self._repo.get_by_handle(handle)
-        if team is None:
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "handle": handle}
-            )
-        return await self.visible_team(team.id, user_id)
+            if personal is not None:
+                return personal
+        else:
+            team = await self._repo.get_by_handle(handle)
+            if team is not None:
+                return await self.visible_team(team.id, user_id)
+        raise NotFoundError(
+            "Resource team not found", data={"type": "team", "handle": handle}
+        )
 
     async def team_for_join_token(self, token: str) -> Team:
         """The team a link names, for whoever holds it.
