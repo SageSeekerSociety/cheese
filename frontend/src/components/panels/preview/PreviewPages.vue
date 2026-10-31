@@ -608,10 +608,16 @@ function firstBoxed(
 function sectionOf(page: number, top: number | null): string {
   const rows: MeasureRow[][] = []
   pages.value.forEach((slot) => {
-    const canvas = slot.host?.querySelector('canvas')
-    const box = canvas?.getBoundingClientRect()
     const layer = slot.host?.querySelector<HTMLElement>('.pv-text')
-    rows.push(layer && box && box.width > 0 ? rowsInLayer(layer, box) : [])
+    if (!slot.host || !layer) {
+      rows.push([])
+      return
+    }
+    // 原点是画布左上角（和画序号用的是同一个坐标）。画布量不出来时退回这一页的框——
+    // 量的环境没有布局（单测）里画布是零尺寸，但那几行字自己带着摆好的位置。
+    const canvas = slot.host.querySelector('canvas')?.getBoundingClientRect()
+    const box = canvas && canvas.width > 0 ? canvas : slot.host.getBoundingClientRect()
+    rows.push(rowsInLayer(layer, box))
   })
   const headings = headingsOf(rows)
   if (!headings.length) return ''
