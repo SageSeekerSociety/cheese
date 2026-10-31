@@ -1,0 +1,12 @@
+{
+  "open": "在右侧打开《{name}》",
+  "untitled": "未命名文档",
+  "doc": "文档",
+  "skill": "提议新增技能",
+  "routine": "提议新增例行事务",
+  "toConfirm": "待确认",
+  "saved": "已保存",
+  "notSaved": "未保存",
+  "confirmed": "已确认",
+  "deleted": "已删除"
+}

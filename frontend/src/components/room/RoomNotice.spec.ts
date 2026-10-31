@@ -59,8 +59,11 @@ function mount(block: Block) {
 beforeEach(() => setLocale('zh-CN'))
 
 describe('本轮改动的文件', () => {
-  it('每个文件带着自己的增删', () => {
-    const { container } = mount(changes(['a.ts', 'b.ts']))
+  it('收成一行，点开才列出每个文件和它自己的增删', async () => {
+    const { container, getByRole } = mount(changes(['a.ts', 'b.ts']))
+    expect(container.textContent).toContain('2')
+    expect(container.textContent).not.toContain('a.ts')
+    await fireEvent.click(getByRole('button', { name: '改动的文件' }))
     const text = container.textContent ?? ''
     expect(text).toContain('a.ts')
     expect(text).toContain('+10')
@@ -69,18 +72,9 @@ describe('本轮改动的文件', () => {
     expect(text).toContain('−1')
   })
 
-  it('文件多的时候先列前几个，其余点一下就展开', async () => {
-    const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts']
-    const { container, getByRole } = mount(changes(paths))
-    expect(container.textContent).not.toContain('e.ts')
-    await fireEvent.click(getByRole('button', { name: /另 \d+ 个文件/ }))
-    for (const p of paths) expect(container.textContent).toContain(p)
-  })
-
-  it('后端没发过来的那几个也算进「另 N 个」，不假装已经列全', async () => {
+  it('后端没发过来的那几个，点开后说「另 N 个」，不假装已经列全', async () => {
     const { container, getByRole } = mount(changes(['a.ts', 'b.ts', 'c.ts', 'd.ts'], 8))
-    expect(getByRole('button', { name: /另 9 个文件/ })).toBeTruthy()
-    await fireEvent.click(getByRole('button', { name: /另 9 个文件/ }))
+    await fireEvent.click(getByRole('button', { name: '改动的文件' }))
     expect(container.textContent).toContain('d.ts')
     expect(container.textContent).toContain('另 8 个文件')
   })
@@ -159,11 +153,11 @@ describe('芝士起草、等人确认的那一行', () => {
     })
   }
 
-  it('旧版留在房间里的那一行提到一条规则：只当一行字，不带任何按钮', async () => {
-    // 新版建规则不落这一行（芝士自己在对话里说），旧房间里的还在，照样读得懂。
-    const { container } = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
-    expect(container.textContent).toContain('名称：每周进展')
-    expect(container.querySelector('.sys-btn')).toBeNull()
+  it('提议的例行事务是一张卡片：标「待确认」，点它在右侧打开', async () => {
+    const view = await mountWithRouter(proposed({ event_type: 'routine_proposed', routine_id: 'r-9' }))
+    expect(view.getByTestId('work-card').textContent).toContain('待确认')
+    await fireEvent.click(view.getByRole('button', { name: /每周进展/ }))
+    expect(view.emitted('open-proposal')).toEqual([['routine', 'r-9']])
   })
 
   it('规则那两类都不是「等人确认」的样子：没有「去确认」', async () => {
@@ -181,9 +175,25 @@ describe('芝士起草、等人确认的那一行', () => {
     expect(container.querySelector('.sys-btn')).toBeNull()
   })
 
-  it('整理的技能：通到技能页的那一条', async () => {
-    const { getByTestId } = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
-    expect(getByTestId('notice-confirm').getAttribute('href')).toBe('/projects/proj-1/skills?skill=s-3')
+  it('提议的技能不在对话里直接保存：点开在右侧读完再决定', async () => {
+    const view = await mountWithRouter(proposed({ event_type: 'skill_proposed', skill_id: 's-3' }))
+    expect(view.queryByRole('button', { name: '保存' })).toBeNull()
+    await fireEvent.click(view.getByRole('button', { name: /每周进展/ }))
+    expect(view.emitted('open-proposal')).toEqual([['skill', 's-3']])
+  })
+
+  it('人定下来以后，卡片写的是结果', async () => {
+    const block = proposed({
+      event_type: 'skill_proposed',
+      skill_id: 's-3',
+      state: 'over',
+      i18n: { content: { key: 'skillProposalSavedBy', params: { who: 'lin', title: '组会纪要' } } },
+    })
+    const view = await mountWithRouter(block)
+    const card = view.getByTestId('work-card')
+    expect(card.textContent).toContain('组会纪要')
+    expect(card.textContent).toContain('已保存')
+    expect(card.textContent).not.toContain('待确认')
   })
 
   it('环境准备失败：一颗「去环境设置」直接打开那个频道的环境', async () => {
@@ -207,5 +217,96 @@ describe('芝士起草、等人确认的那一行', () => {
   it('别的平台提示不带这颗按钮', async () => {
     const { queryByTestId } = await mountWithRouter(proposed({ event_type: 'routine_result', routine_id: 'r-9' }))
     expect(queryByTestId('notice-confirm')).toBeNull()
+  })
+})
+
+describe('平台替 AI 队友说的话', () => {
+  function shown(block: Block, opts: { canRetry?: boolean } = {}) {
+    const [row] = collapseNotices([block])
+    return render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        agent: null,
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: {}, topicTitles: {} },
+        canRetry: opts.canRetry,
+      },
+      global: { plugins: [vuetify] },
+    })
+  }
+  const failed = {
+    id: 'f1',
+    conversation_id: 't',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'system',
+    content: '这次没做完：模型服务繁忙',
+    turn_id: 'turn-1',
+    created_at: '2026-10-31T08:00:00Z',
+    shown_as: 'for_agent',
+    meta: {
+      event_type: 'turn_failed',
+      who: 'human',
+      retryable: true,
+      detail: '这是服务端的问题，通常很快恢复。',
+      detail_label: '说明',
+    },
+  } as unknown as Block
+
+  it('一句话说出了什么事，带上能做的那一步，原因收在「详情」里', async () => {
+    const view = shown(failed, { canRetry: true })
+    expect(view.container.textContent).toContain('这次没做完：模型服务繁忙')
+    expect(view.getByRole('button', { name: '重试' })).toBeTruthy()
+    expect(view.container.textContent).not.toContain('通常很快恢复')
+    await fireEvent.click(view.getByRole('button', { name: /详情/ }))
+    expect(view.container.textContent).toContain('通常很快恢复')
+  })
+
+  it('不说谁在处理，也不铺底色', () => {
+    const view = shown(failed, { canRetry: true })
+    expect(view.container.textContent).not.toContain('等人处理')
+    expect(view.container.querySelector('.sys-row--warn, .sys-row--danger')).toBeNull()
+  })
+
+  it('这一行已经不能重试了（后面的事盖过了它）：不画一颗点不动的按钮', () => {
+    const view = shown(failed, { canRetry: false })
+    expect(view.queryByRole('button', { name: '重试' })).toBeNull()
+  })
+})
+
+describe('退回时写下的理由', () => {
+  it('画成审阅那个人的一条消息：他的名字，在做什么，理由原文', () => {
+    const rejected = {
+      id: 'r1',
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '<@lin> 退回了改动，正在修改',
+      turn_id: null,
+      created_at: '2026-10-31T08:00:00Z',
+      shown_as: 'person',
+      meta: { event_type: 'card_rejected', by: 'lin', detail: '登录失败的提示也要改' },
+    } as unknown as Block
+    const [row] = collapseNotices([rejected])
+    const view = render(RoomNotice as Component, {
+      props: {
+        block: row.block,
+        notice: row.notice!,
+        run: row.run,
+        agent: null,
+        time: '16:05',
+        agentName: '芝士',
+        refs: { mentionNames: { lin: '林晓' }, topicTitles: {} },
+      },
+      global: { plugins: [vuetify] },
+    })
+    const said = view.getByTestId('person-said')
+    expect(said.textContent).toContain('林晓')
+    expect(said.textContent).toContain('退回了改动')
+    expect(said.textContent).toContain('登录失败的提示也要改')
   })
 })

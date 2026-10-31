@@ -12,5 +12,5 @@
   "removed": "删除",
   "showDetail": "展开详情",
   "viewChanges": "查看改动",
-  "working": "{name}正在处理"
+  "rejectedCue": "退回了改动"
 }

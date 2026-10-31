@@ -577,13 +577,18 @@ async def reject_card(
             if actionable
             else say("cardRejectedClosed", who=who)
         ),
-        meta=notice(
-            EVENT_CARD_REJECTED,
-            severity=SEVERITY_WARN,
-            who=WHO_CHEESE,
-            detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p) or None,
-            detail_label=say("labelRejectReason"),
-        ),
+        meta={
+            **notice(
+                EVENT_CARD_REJECTED,
+                severity=SEVERITY_WARN,
+                who=WHO_CHEESE,
+                detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p)
+                or None,
+                detail_label=say("labelRejectReason"),
+            ),
+            # The reason is that person's own words, drawn as what they said.
+            "by": decided_by,
+        },
     )
     await db.commit()
     if sent:

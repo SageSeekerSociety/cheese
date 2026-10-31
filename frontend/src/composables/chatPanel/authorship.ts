@@ -6,14 +6,13 @@ import type { Ref } from 'vue'
 import type { useRoomRoster } from '../../components/room/composables/useRoomRoster'
 import type { Block } from '../../cx_types'
 import type { Outgoing } from '../../lib/composerDrafts'
-import type { NoticeAgent, PlatformNotice } from '../../lib/platformNotice'
+import type { NoticeAgent } from '../../lib/platformNotice'
 import type { useAgentNaming } from '../useAgentNaming'
 
 import { computed } from 'vue'
 
 import { isAgentHandle, isPersonBlock } from '../../lib/authorship'
 import { pendingMessageBlock } from '../../lib/outgoingMessage'
-import { AGENT_STATUS_EVENTS } from '../../lib/platformNotice'
 
 import i18n, { t } from '@/i18n'
 
@@ -41,26 +40,15 @@ export function usePanelAuthorship(deps: {
       : { name: deps.naming.agentName.value, handle: deps.naming.agentSeat.value?.handle ?? null }
   }
 
-  function noticeAgent(block: Block, notice: PlatformNotice): NoticeAgent | null {
-    // This event contains the worker's actual result, rather than a status notice.
-    if (block.meta?.event_type === 'subagent_stop') return null
+  function noticeAgent(block: Block): NoticeAgent | null {
+    // 只有一位 AI 队友这次工作的结果和它交出来的东西挂在它名下（`shown_as`）：它们是
+    // 那次工作的一部分。平台替它说的话、频道里发生的事都不是它说的，不署它的名。
+    if (block.shown_as !== 'result' && block.shown_as !== 'card') return null
     if (isPersonBlock(block)) return null
-    // 关于某位 AI 队友那件事的通知，以那位队友的身份出现（头像和名字），不另署「平
-    // 台」。是哪位：署名是队友就是它，否则是这一轮的那位（turnAgent）。不属于任
-    // 何一位队友那一轮的平台通知（人编辑了文档之类）照旧不署队友。
     if (isAgentHandle(block.author) || deps.roster.seatByHandle.value.get(block.author)?.agent) {
       return { name: deps.roster.agentDisplayName(block.author), handle: block.author }
     }
-    if (deps.roster.seatByHandle.value.has(block.author) || deps.roster.memberByHandle.value.has(block.author))
-      return null
-    if (AGENT_STATUS_EVENTS.has(String(block.meta?.event_type ?? ''))) return turnAgent(block.turn_id)
-    if (block.author === 'system' && (notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgent(block.turn_id)
-    }
-    if (block.turn_id && (block.author === 'system' || notice.mode === 'action' || notice.mode === 'turn-summary')) {
-      return turnAgent(block.turn_id)
-    }
-    return null
+    return block.turn_id ? turnAgent(block.turn_id) : null
   }
   const pendingBlock = (item: Outgoing) => pendingMessageBlock(item, deps.author)
 
