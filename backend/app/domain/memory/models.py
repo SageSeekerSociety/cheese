@@ -24,6 +24,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -449,3 +450,27 @@ class MemoryMigrationPlan(UuidPk, Timestamps, Base):
     )
     #: 结局：写进去几个文件，或者为什么停下。
     summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class MemoryHandoffApplied(Base):
+    """A private tree a seat handed back that the platform has merged
+    (`memory.session.apply_withdrawn`), until the seat is told so.
+
+    A seat deletes its copy of a handoff only when it hears the platform took
+    it (`runner.acknowledge`), so a handoff the platform merged and committed
+    comes back whenever that word is lost on the way. Its baseline is from
+    before the merge, so merging it again would read everything its owner
+    changed since — a note deleted from the memory panel — as untouched on the
+    platform's side and put the seat's version back. The token is written in
+    the transaction that merges the handoff; a token found here is told taken
+    and not merged again. The row goes once the seat answers that it dropped
+    the handoff (`runner.acknowledge`), or after
+    `memory_ledger.HANDOFF_APPLIED_KEPT` when it never does."""
+
+    __tablename__ = "memory_handoffs_applied"
+
+    #: The seat's name for the handoff (`runner.Runner._hand_over`).
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

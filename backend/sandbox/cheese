@@ -683,7 +683,10 @@ PLATFORM_TOOLS = ToolTable(
             "work turning "
             "out bigger or smaller than expected), or are done. Starting, "
             "checking or finishing one step is not announced; people watch "
-            "the work live. "
+            "the work live. When reminded after a long silence while still "
+            "working, send one short line saying concretely what you are doing "
+            "now and what is next (not just that you are still working), with "
+            "no @-mention, so people know you have not stopped. "
             "Ordinary model output is not published. "
             "Pictures go out with the message through `attachments`, shown in the "
             "conversation itself — no page to open.",

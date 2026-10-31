@@ -30,6 +30,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.model_catalog import catalog
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
+    memory_handed_back_notice,
 )
 from app.domain.agent.proposals import propose
 from app.domain.agent.repositories import AgentTurnRepository
@@ -552,6 +553,59 @@ async def _say_memory_change(
                 AGENT_NOTICE_META_KEY: "\n\n".join(said for _, said in told),
             },
         )
+
+
+async def _say_handed_back(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    change: MemoryChange,
+    scopes: list[tuple[MemoryFileScope, str | None]],
+    kept: dict[str, str],
+) -> None:
+    """一棵离开了座位的 private 树合回去之后（`memory.session.apply_withdrawn`），
+    说给它的主人，只说在他的私聊里：改了什么记成一条运行记录；他写下却没收进去
+    的那几版（``kept``），原文跟着那条记录，再说给他私聊里的 agent。
+
+    点了名的树上，这几版留在会话目录里，那句话叫写它的 agent 去读那个旁路文件
+    （`platform_notices.memory_conflict_notice`）。这一棵已经从那个座位上拿走了，
+    写它的那一轮也过去了，那个文件不在任何一棵树上：副本只能放在只有他看得到的
+    地方，那句话也只能说给他。"""
+    for scope, owner in scopes:
+        prefix = prefix_of_scope(scope, owner)
+        part = change.scoped(prefix)
+        mine = {p: b for p, b in kept.items() if p.startswith(f"{prefix}/")}
+        if part.is_empty() and not part.refused and not part.rejected and not mine:
+            continue
+        room = await _private_room(session, project_id, owner)
+        if room is None:
+            continue
+        copies = "".join(f"--- {path}\n{body}\n" for path, body in sorted(mine.items()))
+        content, meta = memory_changed_notice(
+            where=say("memoryScopePrivate"),
+            summary=part.summary(),
+            diff=part.diff + copies,
+            refused=part.refused,
+            rejected=part.rejected,
+            unindexed=part.unindexed,
+        )
+        # It names side files on a tree this person's memory has left.
+        meta.pop(AGENT_NOTICE_META_KEY, None)
+        await keep_record(session, conversation_id=room, content=content, meta=meta)
+        place = await PlaceResolver(session).conversation(room)
+        if mine and place is not None:
+            await announce(
+                session,
+                place_id=place.room_id,
+                task_id=place.inner_id,
+                content=content,
+                meta={
+                    **notice(
+                        EVENT_MEMORY_CHANGED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                    ),
+                    "in_room": False,
+                    AGENT_NOTICE_META_KEY: memory_handed_back_notice(mine),
+                },
+            )
 
 
 def _model_policy_call(project, agent=None) -> gate.Call:

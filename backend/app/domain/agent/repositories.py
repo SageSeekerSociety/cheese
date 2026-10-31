@@ -184,6 +184,13 @@ class AgentTurnRepository:
     async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
         return await self._session.get(AgentTurn, turn_id)
 
+    async def get_locked(self, turn_id: uuid.UUID) -> AgentTurn | None:
+        """``get``, row-locked until the caller's transaction ends (see
+        ``lock_open``)."""
+        return await self._session.get(
+            AgentTurn, turn_id, with_for_update=True, populate_existing=True
+        )
+
     async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
         """Stamp that admission refused this turn for spent credits (#715).
 
@@ -298,6 +305,21 @@ class AgentTurnRepository:
             return set()
         stmt = select(AgentTurn.id).where(
             AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None)
+        )
+        return set((await self._session.execute(stmt)).scalars())
+
+    async def lock_open(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Of these turns, the ones still open, row-locked until the caller's
+        transaction ends. Whoever decides a turn's fate — the sweep closing it,
+        recovery taking it up again — holds its row while deciding, so the two
+        are serialized and the second sees what the first did."""
+        ids = list(turn_ids)
+        if not ids:
+            return set()
+        stmt = (
+            select(AgentTurn.id)
+            .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
+            .with_for_update()
         )
         return set((await self._session.execute(stmt)).scalars())
 

@@ -12,6 +12,7 @@ agent 在某一间房里改 `team/MEMORY.md`，回合结束时对一次账，下
 览里那位 agent 什么都没写过。
 """
 
+import json
 import os
 import uuid
 from pathlib import Path
@@ -22,15 +23,25 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.runner import Runner, memory_root
 from app.domain.agent.memory_ledger import MemoryLedger
 from app.domain.agent.run_records import for_site
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory import history
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.writers import MemoryWriter
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def _no_seat_left_over(monkeypatch):
+    """`_Session.tree` points the runner at a seat through the environment;
+    this puts it back after the test."""
+    monkeypatch.delenv("CHEESE_EXECUTION_CONFIG", raising=False)
+
 
 _INDEX = "- [先给结论](answer-first.md) — 回答先说结论，理由跟在后面\n"
 _ADDED = "- [测试连真库](tests-hit-a-real-db.md) — 集成测试不 mock 数据库\n"
@@ -41,9 +52,10 @@ _REWORDED_ELSEWHERE = "- [先给结论](answer-first.md) — 结论放在第一�
 
 
 class _Session:
-    """会话机那一半：真的 `Runner.sync_memory`，一间房一个家，都在 `home` 下。
+    """会话机那一半：真的 `Runner.sync_memory`，一个座位一棵树，都在 `home` 下。
 
-    一间房一棵树（会话的家是那一间房的），所以两间房在这里各有各的 `$HOME`。
+    树在座位自己的目录里（`runner.memory_root`，按座位的执行配置），所以两间房、
+    同一间房的两个座位，在这里各有各的一棵。
     """
 
     def __init__(self, home: Path) -> None:
@@ -51,12 +63,15 @@ class _Session:
         self.runner = object.__new__(Runner)
         self.runner.launch = "test"
 
-    def tree(self, topic_id: uuid.UUID) -> Path:
-        os.environ["HOME"] = str(self.home / str(topic_id))
+    def tree(self, topic_id: uuid.UUID, agent: str = "cheese") -> Path:
+        seat = self.home / str(topic_id) / ".cheese/seats" / agent
+        os.environ["CHEESE_EXECUTION_CONFIG"] = str(
+            seat / "remote-session/execution.json"
+        )
         return memory_root()
 
     async def memory(self, session: SessionRef, request: dict) -> dict:
-        self.tree(session.topic_id)
+        self.tree(session.topic_id, session.agent_handle)
         return self.runner.sync_memory(request)
 
 
@@ -210,6 +225,12 @@ async def _site(factory, room_id: uuid.UUID) -> list[str]:
     return [record["content"] for record in records]
 
 
+async def _records(factory, room_id: uuid.UUID) -> list[dict]:
+    """Every record the platform kept in this room, its detail included."""
+    async with factory() as session:
+        return await for_site(session, room_id, since=None, until=None)
+
+
 async def test_the_room_reads_in_the_site_what_its_agent_was_told(
     business_db_factory, tmp_path, monkeypatch
 ):
@@ -327,15 +348,8 @@ async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
     assert await _index(factory, project_id) == (_INDEX, 1)
 
 
-async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers(
-    business_db_factory, tmp_path, monkeypatch
-):
-    """Two teammates in one room answer two people. Each seat's session is
-    given the shared memory and the private memory of the person its turn
-    answers, never the other person's, though both share the room's tree."""
-    monkeypatch.setenv("HOME", str(tmp_path))
-    factory = business_db_factory
-    project_id, _, room = await _setup(factory)
+async def _two_people(factory, project_id: uuid.UUID, index: str = "") -> None:
+    """alice 和 bob 在这个项目里各有一份 private 索引。"""
     async with factory() as session:
         for owner in ("alice", "bob"):
             await MemoryFileStore(session).write(
@@ -343,12 +357,25 @@ async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers
                 scope=MemoryFileScope.private,
                 owner_handle=owner,
                 path=INDEX_NAME,
-                content=f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
+                content=index or f"- [{owner} 的偏好]({owner}.md) — 只是 {owner} 的\n",
                 updated_by=owner,
                 expected_version=None,
                 writer=MemoryWriter.panel,
             )
         await session.commit()
+
+
+async def test_two_seats_working_for_two_people_at_once_each_hold_only_theirs(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Two teammates in one room answer two people at the same time. Each
+    seat's session is given the shared memory and the private memory of the
+    person its turn answers; the other person's is nowhere its file tools
+    reach, whichever seat reconciled last."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id)
     sessions = _Session(tmp_path)
     ledger = _ledger(factory, sessions)
     first = _seat(project_id, room)
@@ -363,7 +390,417 @@ async def test_a_seat_lays_down_only_the_private_memory_of_the_person_it_answers
     await ledger.sync(first)
     await ledger.sync(second)
 
-    tree = sessions.tree(room)
-    assert (tree / "private" / "bob" / INDEX_NAME).exists()
-    assert not (tree / "private" / "alice" / INDEX_NAME).exists()
-    assert (tree / "team" / INDEX_NAME).exists()
+    alices = sessions.tree(room, first.agent_handle)
+    bobs = sessions.tree(room, second.agent_handle)
+    assert (alices / "private" / "alice" / INDEX_NAME).exists()
+    assert not (alices / "private" / "bob").exists()
+    assert (bobs / "private" / "bob" / INDEX_NAME).exists()
+    assert not (bobs / "private" / "alice").exists()
+    assert (alices / "team" / INDEX_NAME).exists()
+    assert (bobs / "team" / INDEX_NAME).exists()
+
+
+async def test_a_private_memory_written_before_the_seat_turns_to_someone_else_reaches_its_owner(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """One seat answers alice, then bob. What alice's turn wrote into her
+    private memory is hers even when no reconciliation ran between the two
+    turns: bob's turn hands it to the platform as hers and takes it off the
+    tree, and her next turn lays it down again."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    original = "- [她的偏好](note.md) — 原来那一版\n"
+    edited = "- [她的偏好](note.md) — 她这一轮改过的\n"
+    note = (
+        "---\nname: alice-new\ndescription: 新记下的\ntype: feedback\n---\n\n"
+        "alice-unsynced-new-note\n"
+    )
+    await _two_people(factory, project_id, original)
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    (hers / INDEX_NAME).write_text(edited, encoding="utf-8")
+    (hers / "alice-new.md").write_text(note, encoding="utf-8")
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    await ledger.sync(seat)
+
+    assert not hers.exists()
+    async with factory() as session:
+        store = MemoryFileStore(session)
+        index = await store.get(
+            project_id, MemoryFileScope.private, "alice", INDEX_NAME
+        )
+        written = await store.get(
+            project_id, MemoryFileScope.private, "alice", "alice-new.md"
+        )
+    assert index is not None and index.content == edited
+    assert written is not None and written.content == note
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+
+    assert (hers / INDEX_NAME).read_text(encoding="utf-8") == edited
+    assert (hers / "alice-new.md").read_text(encoding="utf-8") == note
+
+
+_NOTE = "---\nname: first-note\ndescription: 她记下的第一条\ntype: feedback\n---\n\n"
+
+
+class _LosesOneAnswer(_Session):
+    """A session machine whose next answer is lost on the way back: the runner
+    did the work, the platform never heard."""
+
+    lose = False
+
+    async def memory(self, session: SessionRef, request: dict) -> dict:
+        answer = await super().memory(session, request)
+        if self.lose and "scopes" in request:
+            self.lose = False
+            raise ConnectionError("the answer did not come back")
+        return answer
+
+
+async def _alice_then_bob(factory, tmp_path, sessions, index: str = ""):
+    """One seat answers alice, then bob. alice's private memory is empty, or
+    holds ``index``."""
+    project_id, _, room = await _setup(factory)
+    if index:
+        await _two_people(factory, project_id, index)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    return project_id, room, ledger, seat, hers
+
+
+async def _alices(factory, project_id, path: str):
+    async with factory() as session:
+        return await MemoryFileStore(session).get(
+            project_id, MemoryFileScope.private, "alice", path
+        )
+
+
+async def test_a_first_private_memory_reaches_its_owner_when_the_seat_turns_to_someone_else(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """alice has no private memory yet; her turn writes the first one, and the
+    seat answers bob next with no reconciliation between. Her note is hers on
+    the platform, and not on the seat bob's turn works on."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    sessions = _Session(tmp_path)
+    project_id, room, ledger, seat, hers = await _alice_then_bob(
+        factory, tmp_path, sessions
+    )
+    hers.mkdir(parents=True, exist_ok=True)
+    (hers / "first-note.md").write_text(_NOTE + "alice-first-note\n", encoding="utf-8")
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    await ledger.sync(seat)
+
+    assert not hers.exists()
+    written = await _alices(factory, project_id, "first-note.md")
+    assert written is not None and "alice-first-note" in written.content
+
+
+async def test_a_private_memory_handed_back_is_in_its_owners_history_alone(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The note alice's turn wrote reaches the platform through the hand-back
+    when the seat turns to bob. It is a change like any other: in alice's
+    private history, as a turn's, and nowhere in the shared one."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    sessions = _Session(tmp_path)
+    project_id, room, ledger, seat, hers = await _alice_then_bob(
+        factory, tmp_path, sessions
+    )
+    hers.mkdir(parents=True, exist_ok=True)
+    (hers / "first-note.md").write_text(_NOTE + "alice-first-note\n", encoding="utf-8")
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    await ledger.sync(seat)
+
+    async with factory() as session:
+        alices, _ = await history.changes(
+            session, project_id, MemoryFileScope.private, "alice"
+        )
+        team, _ = await history.changes(session, project_id, MemoryFileScope.team, None)
+    noted = [c for c in alices if c.path == "first-note.md"]
+    assert [(c.writer, c.before) for c in noted] == [(MemoryWriter.turn, None)]
+    assert "alice-first-note" in (noted[0].after or "")
+    assert all("alice-first-note" not in (c.after or "") for c in team)
+
+
+async def test_a_private_memory_handed_back_on_a_lost_answer_still_reaches_its_owner(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The seat turns from alice to bob and hands her tree back, but the answer
+    carrying it is lost. Nothing of hers is gone: the next reconciliation hands
+    it back again, and her next turn lays it down."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    sessions = _LosesOneAnswer(tmp_path)
+    project_id, room, ledger, seat, hers = await _alice_then_bob(
+        factory, tmp_path, sessions, index="- [她的偏好](note.md) — 已经记着的一条\n"
+    )
+    hers.mkdir(parents=True, exist_ok=True)
+    (hers / "first-note.md").write_text(_NOTE + "alice-kept-note\n", encoding="utf-8")
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    sessions.lose = True
+    with pytest.raises(ConnectionError):
+        await ledger.sync(seat)
+
+    await ledger.sync(seat)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+
+    written = await _alices(factory, project_id, "first-note.md")
+    assert written is not None and "alice-kept-note" in written.content
+    assert "alice-kept-note" in (hers / "first-note.md").read_text(encoding="utf-8")
+
+
+async def test_an_owners_version_the_platform_overwrote_on_hand_back_is_kept_for_them(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """alice's turn edits her note while the platform's copy of it changes too;
+    the seat turns to bob before they are reconciled. The platform's version
+    wins, as it always does, and alice's version is kept where only she reads
+    it, her private chat — not in the room bob's turn works in."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    sessions = _Session(tmp_path)
+    project_id, room, ledger, seat, hers = await _alice_then_bob(
+        factory, tmp_path, sessions
+    )
+    async with factory() as session:
+        await MemoryFileStore(session).write(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="first-note.md",
+            content=_NOTE + "the platform's first version\n",
+            updated_by="alice",
+            expected_version=None,
+            writer=MemoryWriter.panel,
+        )
+        await session.commit()
+    await ledger.sync(seat)
+    (hers / "first-note.md").write_text(
+        _NOTE + "alice-unique-edit-4985\n", encoding="utf-8"
+    )
+    async with factory() as session:
+        store = MemoryFileStore(session)
+        row = await store.get(
+            project_id, MemoryFileScope.private, "alice", "first-note.md"
+        )
+        await store.write(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="first-note.md",
+            content=_NOTE + "the platform's newer version\n",
+            updated_by="alice",
+            expected_version=row.version,
+            writer=MemoryWriter.panel,
+        )
+        await session.commit()
+
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    await ledger.sync(seat)
+
+    kept = await _alices(factory, project_id, "first-note.md")
+    assert kept is not None and "newer version" in kept.content
+    async with factory() as session:
+        private = await TopicService(session).get_or_create_private(
+            project_id=project_id, user_handle="alice", named_teammate=named_teammate
+        )
+        await session.commit()
+    told_alice = await _told(factory, private.id) + json.dumps(
+        await _records(factory, private.id), ensure_ascii=False
+    )
+    assert "alice-unique-edit-4985" in told_alice
+    told_room = await _told(factory, room) + json.dumps(
+        await _records(factory, room), ensure_ascii=False
+    )
+    assert "alice-unique-edit-4985" not in told_room
+
+
+async def test_a_turn_that_worked_for_someone_without_reading_their_index_is_counted(
+    business_db_factory, tmp_path, monkeypatch, caplog
+):
+    """A turn that answers alice is told where her private index is, and the
+    rule is to read it before anything else. One line is logged for each turn
+    that worked for her and did not, so skips can be counted in production;
+    a turn that read it logs nothing."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id)
+    sessions = _Session(tmp_path)
+    sessions.runner = Runner(tmp_path / "state")
+    sessions.runner.session_id = "session-alice"
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice", pointed=True
+    )
+    await ledger.sync(seat)
+
+    def work(*blocks: dict) -> None:
+        for record in (
+            {"type": "assistant", "message": {"content": list(blocks)}},
+            {"type": "result", "result": "done"},
+        ):
+            sessions.runner.observe(
+                {**record, "session_id": "session-alice", "uuid": str(uuid.uuid4())}
+            )
+
+    caplog.set_level("INFO", logger="app.domain.agent.memory_ledger")
+    work(
+        {
+            "type": "tool_use",
+            "id": "read-index",
+            "name": "Read",
+            "input": {"file_path": prompt_path(f"private/alice/{INDEX_NAME}")},
+        }
+    )
+    await ledger.sync(seat)
+    assert "memory_private_index_unread" not in caplog.text
+
+    work({"type": "text", "text": "直接回答了"})
+    await ledger.sync(seat)
+    assert "memory_private_index_unread" in caplog.text
+    assert "speaker=alice" in caplog.text
+
+
+async def test_a_handoff_merged_once_is_not_merged_again_when_its_receipt_is_lost(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The seat turns from alice to bob and hands her tree back; the platform
+    merges it, but the word that it did never reaches the seat. alice then
+    deletes the note from her memory. The seat hands the same tree back again
+    on the next reconciliation: it is told taken and not merged a second time,
+    so her deletion stands."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id, "- [original](note.md) — original\n")
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    heard = sessions.memory
+    lost = {"once": False}
+
+    async def loses_the_receipt(ref, request):
+        if "acked" in request and not lost["once"]:
+            lost["once"] = True
+            raise ConnectionError("the receipt did not arrive")
+        return await heard(ref, request)
+
+    sessions.memory = loses_the_receipt
+    with pytest.raises(ConnectionError):
+        await ledger.sync(seat)
+    merged = await _alices(factory, project_id, "secret.md")
+    assert merged is not None
+    async with factory() as session:
+        await MemoryFileStore(session).delete(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="secret.md",
+            expected_version=merged.version,
+            updated_by="alice",
+            writer=MemoryWriter.panel,
+        )
+        await session.commit()
+
+    await ledger.sync(seat)
+
+    assert await _alices(factory, project_id, "secret.md") is None
+
+
+async def test_a_handoff_is_not_merged_again_when_its_receipt_goes_unanswered(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The word that the platform took alice's handed-back tree reaches no
+    session (the seat's session has gone, or the call to its machine failed),
+    so the seat still holds the handoff. alice deletes the note; when the seat
+    hands the same tree back on its next reconciliation, her deletion stands."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, room = await _setup(factory)
+    await _two_people(factory, project_id, "- [original](note.md) — original\n")
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+    seat = _seat(project_id, room)
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="alice"
+    )
+    await ledger.sync(seat)
+    hers = sessions.tree(room, seat.agent_handle) / "private" / "alice"
+    (hers / "secret.md").write_text(_NOTE + "alice-wants-this-forgotten-4985\n")
+    ledger.remember_turn(
+        room, (room, seat.agent_handle), acting="cheese", speaker="bob"
+    )
+    heard = sessions.memory
+    unanswered = {"once": False}
+
+    async def no_session_to_tell(ref, request):
+        if "acked" in request and not unanswered["once"]:
+            unanswered["once"] = True
+            return None
+        return await heard(ref, request)
+
+    sessions.memory = no_session_to_tell
+    await ledger.sync(seat)
+    merged = await _alices(factory, project_id, "secret.md")
+    assert merged is not None
+    async with factory() as session:
+        await MemoryFileStore(session).delete(
+            project_id=project_id,
+            scope=MemoryFileScope.private,
+            owner_handle="alice",
+            path="secret.md",
+            expected_version=merged.version,
+            updated_by="alice",
+            writer=MemoryWriter.panel,
+        )
+        await session.commit()
+
+    await ledger.sync(seat)
+
+    assert await _alices(factory, project_id, "secret.md") is None

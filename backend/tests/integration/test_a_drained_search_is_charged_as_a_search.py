@@ -17,7 +17,10 @@ from app.domain.usage.ledger import Ledger, payer_for_person
 from app.domain.usage.models import GATEWAY_SEARCH_MODEL, SEARCH_ROUTE, ResourceUsage
 from tests.integration.conftest import registered
 
-pytestmark = pytest.mark.anyio
+# The fake answers only for `gw.utc_today()`, which the drain reads too, held
+# still for each test (`pinned_clock`): a run across UTC midnight cannot split
+# the two reads.
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("pinned_clock")]
 
 SEARCH_USD = 0.000704
 

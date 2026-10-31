@@ -13,7 +13,7 @@ team 记忆的人都读得到；某个人 private 的改动只有他本人，管
 """
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from difflib import unified_diff
 
 from sqlalchemy import delete, literal, select, tuple_
@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.day_windows import utc_now
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileScope,
@@ -202,7 +203,7 @@ async def purge_expired(sessions: SessionFactory) -> int:
     async with sessions() as session:
         result = await session.execute(
             delete(MemoryFileChange).where(
-                MemoryFileChange.created_at < datetime.now(UTC) - RETENTION
+                MemoryFileChange.created_at < utc_now() - RETENTION
             )
         )
         await session.commit()

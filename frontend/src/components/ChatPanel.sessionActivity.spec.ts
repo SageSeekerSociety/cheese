@@ -27,6 +27,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { clockTime } from '@/lib/dateText'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { loadMarkdownReader } from '@/test/markdownReader'
@@ -103,6 +104,25 @@ async function flush() {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+const RESUME_DUE = '2026-10-30T19:20:00Z'
+const RESUME_HINT = () => `约 ${clockTime(Date.parse(RESUME_DUE))} 自动重试`
+
+/** 自动重试的一步（排上、开始）：一条运行记录，排在后端发出的第 `at` 帧。 */
+function resumeFrame(event: string, id: string, at: number, meta: Record<string, unknown> = {}): WsServerFrame {
+  const record: Block = {
+    id,
+    conversation_id: topic.id,
+    kind: 'event',
+    author_type: 'platform',
+    author: 'cheese',
+    content: '自动重试',
+    turn_id: 'failing',
+    meta: { event_type: event, seat: 'cheese-a', resume_id: 'resume-1', ...meta },
+    created_at: '2026-10-30T19:00:05Z',
+  }
+  return { type: 'run_record', record, at, stream: 'backend' }
+}
+
 beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
@@ -164,7 +184,7 @@ describe('session activity', () => {
       vi.advanceTimersByTime(30_000)
       expect(socket.sent).toContainEqual({ type: 'sync' })
 
-      socket.emit({ type: 'room_state', turn_ids: [], members: [] })
+      socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], at: 0, stream: 'backend' })
       await flush()
       expect(view.emitted('working')?.at(-1)).toEqual([false])
 
@@ -278,5 +298,79 @@ describe('session activity', () => {
     await flush()
 
     expect(queryClient.getQueryData<TopicProgress>(keys.roomProgress(topic.id))?.items).toEqual(items)
+  })
+
+  // 一轮没完成、平台约好几点自动重试：输入框上方说这位队友在等、约几点重试，打开
+  // 页面时（服务端答 sync 的 room_state）就说；重试开始了就不再说它在等。
+  it('the composer shows a teammate waiting for its automatic retry until the retry starts', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({
+      type: 'room_state',
+      turn_ids: [],
+      members: [],
+      resumes: [
+        {
+          conversation_id: topic.id,
+          seat: 'cheese-a',
+          resume_id: 'resume-1',
+          due_at: RESUME_DUE,
+          since: '2026-10-30T19:00:00Z',
+        },
+      ],
+      at: 1,
+      stream: 'backend',
+    })
+    await flush()
+    expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
+
+    socket.emit(resumeFrame('turn_resume_started', 'started-1', 2))
+    await flush()
+    expect(view.container.textContent).not.toContain(RESUME_HINT())
+  })
+
+  // 服务端答 sync 时先读库、再发现场。读库之后才排上的那一次自动重试，它的运行记录
+  // 先到页面；这一轮随后结束、不再定时核对，那份读早了的现场不能把它抹掉。
+  it('a room_state read before a retry was scheduled does not erase that wait', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'failing' })
+    socket.emit(resumeFrame('turn_resume_wait', 'wait-1', 7, { due_at: RESUME_DUE }))
+    socket.emit({ type: 'turn_finished', turn_id: 'failing' })
+    socket.emit({ type: 'room_state', turn_ids: [], members: [], resumes: [], at: 6, stream: 'backend' })
+    await flush()
+    expect(view.getByTestId('member-activity').textContent).toContain(RESUME_HINT())
+  })
+
+  // 重连时，服务端先发 subscribed、再补发这一轮里留着的旧帧；页面在 subscribed 时就
+  // 问了现场，补发的帧和那份现场谁先到都有可能。补发的那条排上记录说的队友已经移出
+  // 房间，现场说不欠了：它不该再回来。
+  it('a replayed wait from before the room_state does not bring back a retry the room no longer owes', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic], showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'other' })
+    socket.emit({ type: 'room_state', turn_ids: ['other'], members: [], resumes: [], at: 6, stream: 'backend' })
+    socket.emit(resumeFrame('turn_resume_wait', 'wait-1', 3, { due_at: RESUME_DUE }))
+    socket.emit({ type: 'turn_finished', turn_id: 'other' })
+    await flush()
+    expect(view.container.textContent).not.toContain(RESUME_HINT())
   })
 })

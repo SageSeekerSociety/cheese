@@ -18,6 +18,7 @@ CC 2.1.283 的记忆是一组文件，不是一张表：一条记忆一个 `.md`
 """
 
 import hashlib
+import posixpath
 import re
 from dataclasses import dataclass
 from enum import StrEnum
@@ -306,6 +307,30 @@ def prompt_path(path: str) -> str:
     存在」。
     """
     return f"~/{MEMORY_ROOT}/{path}"
+
+
+#: 文件工具手里的一条记忆路径：`~/.cheese/memory/...`，或者 shell 报出来的那个家
+#: 下面的同一段（`remote_execution/proxy.js` 的 `MEMORY_TAIL` 也这么认）。
+_MEMORY_TAIL = re.compile(r"(?:^|/)" + re.escape(MEMORY_ROOT) + r"/(.+)$")
+
+
+def private_owner(path: object) -> str | None:
+    """文件工具这一次读写落在谁的 private（或 personal）记忆上；不是谁一个人的
+    （team、记忆树外面、根本不是路径）就是 None。
+
+    runner 拿它给这一次调用和答它的结果盖章（``cheese.private``），会话记录只给
+    这个人看（`session_record.privacy`）。主人目录下的什么文件都算他的，冲突旁
+    路和没收的那一版也是；路径先规整一遍，`team/../private/x/` 绕不过去。
+    """
+    if not isinstance(path, str) or not path:
+        return None
+    found = _MEMORY_TAIL.search(posixpath.normpath(path.replace("\\", "/")))
+    if found is None:
+        return None
+    parts = found.group(1).split("/")
+    if len(parts) < 2 or parts[0] not in (PRIVATE_PREFIX, PERSONAL_PREFIX):
+        return None
+    return parts[1] if parts[1] not in ("", ".", "..") else None
 
 
 def prefix_of(scope: MemoryFileScope, owner_handle: str | None) -> str:

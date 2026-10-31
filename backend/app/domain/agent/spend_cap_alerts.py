@@ -16,7 +16,6 @@ are what keeps it from being said every tick.
 
 import logging
 from collections.abc import Callable
-from datetime import UTC, datetime
 
 from redis.asyncio import Redis
 
@@ -25,6 +24,7 @@ from app.core.config import settings
 from app.core.redis import get_redis_client
 from app.domain.agent.gateway_admin import AdminModel, GatewayAdmin, UsageWindow
 from app.domain.agent.gateway_models_helpers import LEDGER_START, _spend_cap
+from app.domain.day_windows import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -134,4 +134,4 @@ async def sweep(
     admin = GatewayAdmin(
         settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
     )
-    return await check(admin, redis(), today=datetime.now(UTC).date().isoformat())
+    return await check(admin, redis(), today=utc_now().date().isoformat())

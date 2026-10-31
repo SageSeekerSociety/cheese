@@ -912,9 +912,9 @@ async def test_a_turn_a_person_restarted_is_resumed_at_once_after_the_upgrade(
     tmp_path,
     monkeypatch,
 ):
-    """The seat was waiting out a rate limit hours long; a person told it to
-    carry on, which ends that wait, and the turn that started is cut short by
-    the upgrade's cap. It is resumed within seconds, not after the limit."""
+    """The seat was waiting out a rate limit; a person told it to carry on,
+    which ends that wait, and the turn that started is cut short by the
+    upgrade's cap. It is resumed within seconds, not after the limit."""
     monkeypatch.setattr(settings, "runner_drain_s", 0.5)
     project, topic = room
     hub = OldRunnerHub()
@@ -922,7 +922,7 @@ async def test_a_turn_a_person_restarted_is_resumed_at_once_after_the_upgrade(
     factory = client.test_request_factory
     limited = (
         "API Error: Server is temporarily limiting requests (not your usage limit)"
-        " · Rate limited. Please try again in 4 hours"
+        " · Rate limited. Please try again in 20 minutes"
     )
 
     async def exercise():

@@ -196,14 +196,19 @@ def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) 
 def reply_hook(payload: dict) -> dict | None:
     """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
     `insist`), reached on the socket it gave this session. A session with no
-    runner, or one that does not answer, ends as it would have."""
+    runner, or one that does not answer, ends as it would have. The runner
+    is handed the text of the turn's final message, which the build puts in
+    the hook's input (`last_assistant_message`, absent when it has none).
+    It is asked again after a turn it held (`stop_hook_active`): it holds a
+    turn for each of its two reasons at most once, and says when it is done."""
     path = os.environ.get(SESSION_SOCKET)
-    if not path or payload.get("stop_hook_active"):
+    if not path:
         return None
+    ending = {"last_words": str(payload.get("last_assistant_message") or "")}
     try:
         with dial_runner(path, 10) as connection:
             connection.sendall(
-                json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
+                json.dumps({"method": "reply_check", "params": ending}).encode() + b"\n"
             )
             answer = json.loads(connection.makefile("rb").readline())
     except (OSError, ValueError):
@@ -378,11 +383,25 @@ def prepare(
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
-        # The session's memory tree, in its own home on this host: the runner
-        # lays the platform's copy down and collects the agent's edits there
-        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
-        # reach it here and not on the executor (`proxy.js` `memoryPath`).
-        central_memory=str(home / ".cheese/memory"),
+        # The seat's memory tree, beside its execution config on this host:
+        # the runner lays the platform's copy down and collects the agent's
+        # edits there (`runner.memory_root`, from the same file), so its file
+        # tools reach it here and not on the executor (`proxy.js`
+        # `memoryPath`). Not in the room's home, which the room's seats share:
+        # two seats can be working for two people at once.
+        central_memory=str(directory / "memory"),
+        # What the session's namespace leaves it of the room's seats and of the
+        # session host's rooms (`namespace._keep_only`): its own seat, which
+        # holds its memory tree, and its own room's home. The launch names
+        # both roots (`device_launch`); a session it did not launch has none.
+        seat_only=[
+            [os.environ[root], str(own)]
+            for root, own in (
+                ("CHEESE_SEATS_ROOT", directory.parent),
+                ("CHEESE_HOMES_ROOT", home),
+            )
+            if os.environ.get(root) and not local
+        ],
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -1087,13 +1106,23 @@ def probed(config, call):
 def own_memory(config, call):
     """A file tool on the session's memory tree, which lives on this host
     (`prepare`'s `central_memory`). The plugin has already spelled the path
-    out; anything that resolves outside the tree is not admitted."""
+    out; it is admitted only when it is the very file that path names inside
+    the tree. Nothing that resolves outside it, and nothing reached through a
+    link inside it: whose memory a call touches is read off the path it names
+    (`memory.files.private_owner`), so a `team/` path that leads into somebody's
+    `private/` would hand that person's memory to whoever reads the call."""
     if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
         return False
     tool_input = call.get("tool_input") or {}
-    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    memory = os.path.realpath(config["central_memory"]) + os.sep
-    return os.path.realpath(str(path)).startswith(memory)
+    path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+    root = os.path.normpath(config["central_memory"])
+    named = os.path.normpath(path)
+    if not named.startswith(root + os.sep):
+        return False
+    real_root = os.path.realpath(root)
+    return os.path.realpath(named) == os.path.join(
+        real_root, os.path.relpath(named, root)
+    )
 
 
 def gateway(config):

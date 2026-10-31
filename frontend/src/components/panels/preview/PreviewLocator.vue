@@ -30,6 +30,7 @@ const props = withDefaults(
     /** 指的那一处在面板里的位置（面板内容坐标）。有就把框弹在它旁边；没有（键盘选中、
      *  那一处滚出了视野、面板太窄）就退回贴在可见区底边。 */
     anchor?: LocatorAnchor | null
+    maxHeight?: number
     /** 这一处是拖选出来的一段字。选字常常只是在读、在复制，不一定要写什么：这时先在
      *  选区下面浮一颗「添加批注」，点了才展开整张卡，不把刚选中的那段盖住。点一格、
      *  钉一点这类动作本身就是在指，直接出卡。 */
@@ -44,6 +45,7 @@ const props = withDefaults(
     canAskPersonal: false,
     commentError: undefined,
     anchor: null,
+    maxHeight: undefined,
     armFirst: false,
   }
 )
@@ -240,11 +242,13 @@ const placement = computed(() => {
   return { left, top, width, side: fitsBelow ? 'below' : 'above' }
 })
 const style = computed(() => {
-  if (!floating.value || !placement.value) return undefined
+  const bounds = props.maxHeight === undefined ? {} : { maxHeight: `${Math.max(0, props.maxHeight - EDGE * 2)}px` }
+  if (!floating.value || !placement.value) return bounds
   const { left, top, width } = placement.value
   const at = { left: `${left}px`, top: `${top}px` }
-  return armed.value ? at : { ...at, width: `${width}px` }
+  return armed.value ? at : { ...bounds, ...at, width: `${width}px` }
 })
+const scrolling = computed(() => props.maxHeight !== undefined && height.value >= props.maxHeight - EDGE * 2)
 // 框画出来以后量一次真实高度：量到之前先按一个常见的高度放，免得第一帧跳一下。
 function measureCard() {
   if (!armed.value && card.value?.offsetHeight) height.value = card.value.offsetHeight
@@ -334,7 +338,7 @@ function send(event: KeyboardEvent | MouseEvent) {
       ref="card"
       class="locator"
       data-locator-ui
-      :class="{ 'locator--floating': floating }"
+      :class="{ 'locator--floating': floating, 'locator--scrolling': scrolling }"
       :data-side="placement?.side"
       :style="style"
     >
@@ -494,6 +498,18 @@ function send(event: KeyboardEvent | MouseEvent) {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
+}
+.locator > * {
+  flex-shrink: 0;
+}
+.locator--scrolling {
+  overflow: auto;
+}
+/* Keep an expanded recipient menu in the card's scrollable content. */
+.locator--scrolling .locator__menu {
+  position: static;
+  max-width: 100%;
+  margin-top: 6px;
 }
 .locator--floating {
   position: absolute;

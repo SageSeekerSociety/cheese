@@ -34,6 +34,7 @@ from app.domain.memory.files import (
     prefix_of,
     without_entries,
 )
+from app.domain.memory.instructions import private_index_pointer
 from app.domain.memory.models import MemoryFileChange, MemoryFileRecord
 from app.domain.memory.writers import MemoryWriter
 
@@ -83,9 +84,6 @@ class IndexSection:
     label: str
     prefix: str
     text: str
-    #: private 那一份的主人；team 的是 None。注入时按它把这一段圈起来，现场只给
-    #: 本人看（`opening.PRIVATE_MEMORY_OPEN`）。
-    owner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -426,16 +424,16 @@ async def memory_index(
     speaker: str | None,
     shared_read_only: bool = False,
 ) -> MemoryIndex:
-    """这一轮注入的 L1 索引：team 一份，这一轮那一位（`turn_speaker`）的 private 一份。
+    """这一轮注入的 L1 索引：team 一份，加上 ``speaker`` 那一份 private 在哪
+    （只有一个人和芝士的私聊里有这一位，`turn_speakers.private_memory_for`）。
 
     ``shared_read_only``：私聊和私密频道里 team 只读（#3830）。在那里听到的话
     只有在场的人能读，写进全项目共看的 team 就成了别人的后门，所以记忆对账不收
     team 的改动（`memory_ledger`），这里把这件事说给 agent 听。
 
-    **只读这一位的。** 一间多人的房间里，这一轮的 agent 说的话、做的事房间里的人都
-    看得到，所以别人的 private 不进来（产品决定，2026-10-30）。private 只有本人看得
-    见（`routes/memory_files._readable`），注入进来的这一段在现场里也只给本人看
-    （`opening.PRIVATE_MEMORY_OPEN`）。
+    这一位的那一份不注入正文，只说它在哪、先读它
+    （`instructions.private_index_pointer`）：注入记进会话记录，而 agent 读那个文件
+    的那一次调用记录只给本人看。
 
     超预算照样注入（截断后），并在注入块里说清截断过：静默截断读起来就是「索引
     就这么长」，于是没有人会去修它。
@@ -452,13 +450,20 @@ async def memory_index(
         text = await store.index_text(project_id, scope, owner)
         if text is None:
             continue
+        if owner is not None:
+            sections.append(
+                IndexSection(
+                    label=label,
+                    prefix=prefix_of(scope, owner),
+                    text=private_index_pointer(owner),
+                )
+            )
+            continue
         fitted, warning = fit_index(text)
         if warning:
             warnings.append(f"{prefix_of(scope, owner)}/{INDEX_NAME}：{warning}")
         sections.append(
-            IndexSection(
-                label=label, prefix=prefix_of(scope, owner), text=fitted, owner=owner
-            )
+            IndexSection(label=label, prefix=prefix_of(scope, owner), text=fitted)
         )
     if shared_read_only:
         warnings.append(SHARED_READ_ONLY)

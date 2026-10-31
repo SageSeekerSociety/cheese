@@ -5,11 +5,12 @@
 的改动记成 ``turn``，整理的记成它那一轮。
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import update
 
+from app.domain.day_windows import utc_now
 from app.domain.memory import history
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
@@ -62,7 +63,9 @@ async def test_what_a_session_wrote_is_recorded_as_that_turn(
 
 
 @pytest.mark.anyio
-async def test_changes_older_than_the_retention_window_are_gone(business_db_factory):
+async def test_changes_older_than_the_retention_window_are_gone(
+    business_db_factory, pinned_clock
+):
     factory = business_db_factory
     project_id, _, _ = await _setup(factory)
     async with factory() as session:
@@ -86,9 +89,7 @@ async def test_changes_older_than_the_retention_window_are_gone(business_db_fact
         await session.execute(
             update(MemoryFileChange)
             .where(MemoryFileChange.id == old.id)
-            .values(
-                created_at=datetime.now(UTC) - history.RETENTION - timedelta(hours=1)
-            )
+            .values(created_at=utc_now() - history.RETENTION - timedelta(hours=1))
         )
         await session.commit()
 

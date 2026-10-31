@@ -23,6 +23,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     silence_reminder,
     stale_checklist_reminder,
+    still_working_reminder,
 )
 
 # Tool names and the statuses it passes them are English and are read literally:
@@ -74,6 +75,7 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
     said = (
         _said(publication_prompt("用户问了一件事", language))
         + _said(silence_reminder(10, language))
+        + _said(still_working_reminder(10, language))
         + _said(stale_checklist_reminder(10, language))
         + _said(blocked_report_reminder(language))
     )
@@ -83,7 +85,9 @@ def test_a_person_reading_chinese_is_spoken_to_in_chinese(
 
 def test_a_person_reading_english_is_spoken_to_in_english() -> None:
     contract = _said(publication_prompt("Somebody asked something", "en"))
-    reminder = _said(silence_reminder(10, "en"))
+    reminder = _said(silence_reminder(10, "en")) + _said(
+        still_working_reminder(10, "en")
+    )
     checklist = _said(stale_checklist_reminder(10, "en"))
     blocked = _said(blocked_report_reminder("en"))
     # The tool name survives the translation: it is how the model calls it.

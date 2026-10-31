@@ -26,7 +26,7 @@ from pydantic import BaseModel, StringConstraints
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.session_record_rows import hidden_private_memory, no_platform_reminders
+from app.api.session_record_rows import no_platform_reminders
 from app.api.topics_deps import _actor_in_place
 from app.api.write_access import Can, InChannel
 from app.core.errors import NotFoundError
@@ -84,10 +84,9 @@ async def session_records(
             search=q,
             turn_id=turn_id,
             limit=limit,
+            reader=actor.handle,
         )
-        return JSONResponse(
-            ok(_shaped(result["items"], result["next"], lines, actor.handle))
-        )
+        return JSONResponse(ok(_shaped(result["items"], result["next"], lines)))
     cursor = end = None
     if after is not None or before is not None:
         try:
@@ -105,17 +104,16 @@ async def session_records(
         author=author,
         search=q,
         limit=limit,
+        reader=actor.handle,
     )
     # Rendered by the json module rather than the response model: a record
     # is whatever the harness wrote, and pydantic gives up on one nested
     # past about 250 levels, where json goes on.
-    return JSONResponse(ok(_shaped(page.items, page.next, lines, actor.handle)))
+    return JSONResponse(ok(_shaped(page.items, page.next, lines)))
 
 
-def _shaped(items: list[dict], following: str | None, lines: bool, reader: str) -> dict:
-    """A page as the caller asked for it: raw records, or transcript rows,
-    either way without another person's private memory index."""
-    items = hidden_private_memory(items, reader)
+def _shaped(items: list[dict], following: str | None, lines: bool) -> dict:
+    """A page as the caller asked for it: raw records, or transcript rows."""
     if not lines:
         return {"items": items, "next": following}
     return {
@@ -140,7 +138,7 @@ def _rows(items: list[dict]) -> list[dict]:
 
 
 async def _channel_page(
-    db, conversations, *, after, before, newest, author, search, turn_id, limit
+    db, conversations, *, after, before, newest, author, search, turn_id, limit, reader
 ):
     def position(token):
         if token is None:
@@ -179,6 +177,7 @@ async def _channel_page(
             search=search,
             turn_id=turn_id,
             limit=limit + 1,
+            reader=reader,
         )
         for item in page.items:
             item["conversation_id"] = str(conversation)
@@ -214,13 +213,17 @@ async def session_record(
     place = await place_or_404(db, topic_id)
     if place.room.deleted_at is not None:
         raise NotFoundError(say("topicNotFound"))
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     try:
         at, harness, agent, sequence = service.decode_cursor(cursor)
     except ValueError:
         raise NotFoundError(say("cursorEventNotFound")) from None
     result = await service.read(
-        db, place.conversation_id, after=(at, harness, agent, sequence - 1), limit=1
+        db,
+        place.conversation_id,
+        after=(at, harness, agent, sequence - 1),
+        limit=1,
+        reader=actor.handle,
     )
     if not result.items or (
         result.items[0]["at"],

@@ -205,10 +205,15 @@ class Handler(BaseHTTPRequestHandler):
             {"item": index + 1, "status": "received", "bytes": len(raw)},
         )
         dump(state["dir"] / f"action-{index + 1}.json", action)
+        # `{"text": ...}` answers with those words and ends the turn; any
+        # other action is a tool call, and none the fixture's own words.
+        said = "ACCEPTANCE_DONE"
+        if action and "text" in action:
+            said, action = action["text"], None
         block = (
             {"type": "tool_use", "id": f"toolu_acceptance_{index}", **action}
             if action
-            else {"type": "text", "text": "ACCEPTANCE_DONE"}
+            else {"type": "text", "text": said}
         )
         message = {
             "id": f"msg_{index}",
@@ -242,7 +247,7 @@ class Handler(BaseHTTPRequestHandler):
                         "partial_json": json.dumps(action["input"]),
                     }
                     if action
-                    else {"type": "text_delta", "text": "ACCEPTANCE_DONE"},
+                    else {"type": "text_delta", "text": said},
                 },
             ),
             ("content_block_stop", {"type": "content_block_stop", "index": 0}),

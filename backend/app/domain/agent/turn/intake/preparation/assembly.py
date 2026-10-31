@@ -44,7 +44,7 @@ from app.domain.agent.turn.intake.preparation.gates import (
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, turn_speaker
+from app.domain.agent.turn_speakers import is_routine_run, private_memory_for
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -200,31 +200,25 @@ async def prepare(
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         phases_ms["identity"] = (time.monotonic() - started) * 1000
-        # 只加载这一轮那一位的 private 索引（team 那一份每间房都有）：多人的
-        # 房间里别人的 private 不进这一轮，进了就是读给房间里所有人的 agent 听。
-        # 这一位同时也是这一轮对账要点名的那一位（`MemoryLedger.remember_turn`），
-        # 所以「注入里看得见的」和「铺到会话目录里的」是同一份（`turn_speaker`）。
-        speaker = await turn_speaker(
-            session,
-            delivery_id,
-            pending,
-            private_owner,
-            # 实况文档写给负责人看：没人说话的那一轮按他的习惯写。
-            task_owner=(
-                task.owner_handle if task is not None and place.thread is None else None
-            ),
+        # private 只在一个人和芝士的私聊里带，那个人的那一份（`private_memory_for`）；
+        # 别的房间只有 team。这一位同时也是这一轮对账要点名的那一位
+        # （`MemoryLedger.remember_turn`），所以「告诉它去读的」和「铺到会话目录里
+        # 的」是同一份。
+        private_for = await private_memory_for(
+            session, agent.instance_id, private_owner=private_owner
         )
         memory = await memory_index(
             session,
             topic.project_id,
-            speaker=speaker,
+            speaker=private_for,
             shared_read_only=seats_only(topic),
         )
         prep.memory.remember_turn(
             topic.id,
             (place.conversation_id, agent.handle),
             acting=acting_agent,
-            speaker=speaker,
+            speaker=private_for,
+            pointed=any(section.prefix != "team" for section in memory.sections),
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)

@@ -17,10 +17,10 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.audience import seats_only
@@ -30,7 +30,11 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.queries import _agent_handle, _say_memory_change
+from app.domain.agent.queries import (
+    _agent_handle,
+    _say_handed_back,
+    _say_memory_change,
+)
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.memory import dream
 from app.domain.memory.dream_prompt import (
@@ -41,8 +45,14 @@ from app.domain.memory.dream_prompt import (
 )
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore, private_owners
-from app.domain.memory.models import MemoryDreamRunStatus
-from app.domain.memory.session import apply_tree, prefix_of_scope, read_tree
+from app.domain.memory.models import MemoryDreamRunStatus, MemoryHandoffApplied
+from app.domain.memory.session import (
+    MemoryChange,
+    apply_tree,
+    apply_withdrawn,
+    prefix_of_scope,
+    read_tree,
+)
 from app.domain.memory.writers import MemoryWriter
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
@@ -55,6 +65,17 @@ logger = logging.getLogger(__name__)
 #: to, and a bounded map is what keeps a long-lived process from growing one
 #: entry per room it has ever seen.
 MEMORY_TURNS_KEPT = 512
+
+#: How long a merged handoff's record is kept when its seat never confirmed it
+#: dropped the handoff (`MemoryHandoffApplied`). A seat that lost the
+#: confirmation keeps its handoff until it next reconciles, which is the next
+#: time somebody talks there; a room's home, and the seat in it, stays until the
+#: room is archived. So no bound covers every case: a room left untouched for
+#: longer than this after a lost confirmation hands the tree back once more,
+#: and it is merged again from its old baseline. A year is far past a room's
+#: ordinary quiet spells, and the records it keeps are one row per lost
+#: confirmation.
+HANDOFF_APPLIED_KEPT = timedelta(days=365)
 
 #: How long one consolidation call may take, and how much it may answer: the
 #: files it rewrites come back whole.
@@ -98,8 +119,12 @@ class _Turn:
 
     room_id: uuid.UUID
     acting: str
-    #: 这一轮那一位（`turn_speaker`）；None 时这一轮只有 team。
+    #: 这一轮带谁的 private（`turn_speakers.private_memory_for`：只有私聊里的那个
+    #: 人）；None 时这一轮只有 team。
     speaker: str | None
+    #: 这一轮的注入里有没有那一位的 private 索引在哪
+    #: （`instructions.private_index_pointer`）：有，这一轮就该先读它。
+    pointed: bool = False
 
 
 class MemoryLedger:
@@ -132,6 +157,7 @@ class MemoryLedger:
         *,
         acting: str,
         speaker: str | None,
+        pointed: bool = False,
     ) -> None:
         """记下一个座位（对话, agent）这一轮的记忆账：署谁的名、算谁的 private。
 
@@ -140,21 +166,19 @@ class MemoryLedger:
         读过的那一位，所以「注入里看得见的」和「铺到会话目录里的」是同一份。
         """
         self._turns.pop(seat, None)
-        self._turns[seat] = _Turn(room_id, acting, speaker)
+        self._turns[seat] = _Turn(room_id, acting, speaker, pointed)
         while len(self._turns) > MEMORY_TURNS_KEPT:
             del self._turns[next(iter(self._turns))]
 
     def _scopes(
         self, seat: tuple[uuid.UUID, str]
     ) -> list[tuple[MemoryFileScope, str | None]]:
-        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮那一位的
-        private（`turn_speaker`）。
+        """这一次对账要点名的那几棵树：team 一份，加这个座位这一轮带的那一位的
+        private（`turn_speakers.private_memory_for`：只有私聊里的那个人）。
 
         点过名的作用域才是这一次对账的范围（`memory.session` 的开头那一段）：
-        没点到的 private 既不铺也不收，数据库里那一份不会被这一次对账碰掉；会话目
-        录里上一轮铺下的别人那一份，会话那一侧会收走（`tree.prefixes_of`）。多人
-        的房间里别人的 private 不进这一轮（产品决定，2026-10-30），所以只点这个座
-        位自己的那一位，不点同一间房里别的座位的。
+        没点到的 private 不铺下去；会话目录里先前铺下的哪一棵这一次没点名，会话
+        交回来、从树上拿走，平台替那个人收下（`tree.withdrawn_prefixes`）。
         """
         turn = self._turns.get(seat)
         speaker = turn.speaker if turn is not None else None
@@ -163,12 +187,24 @@ class MemoryLedger:
             *([(MemoryFileScope.private, speaker)] if speaker else []),
         ]
 
+    def _writer_of(self, room_id: uuid.UUID, prefix: str) -> str:
+        """这间房里最近一轮答的是 ``prefix`` 那个人的座位，署的是谁的名；不知道
+        就是 system。"""
+        for turn in reversed(self._turns.values()):
+            if (
+                turn.room_id == room_id
+                and turn.speaker
+                and prefix_of_scope(MemoryFileScope.private, turn.speaker) == prefix
+            ):
+                return turn.acting or "system"
+        return "system"
+
     async def sync(self, session: SessionRef) -> None:
         """对一遍这个座位的会话的记忆账；同一间房的两场对账排队，不交错。
 
-        输入之前和会话停下来时各对一次账；一间房里几个座位的会话可能用的是同一
-        棵树。两场交错时，后一场读到的是前一场提交之前的数据库：它会把平台的旧版
-        铺回会话，盖掉刚落库的改动。
+        输入之前和会话停下来时各对一次账；一间房里几个座位各有各的树，对的是同
+        一份数据库。两场交错时，后一场读到的是前一场提交之前的数据库，铺下去的
+        就是平台的旧版；排队跑，每一场读到的都是前一场提交之后的那一份。
         """
         async with self._syncs.setdefault(session.topic_id, asyncio.Lock()):
             await self.sync_once(session)
@@ -208,6 +244,20 @@ class MemoryLedger:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
             return
+        if (
+            turn is not None
+            and turn.pointed
+            and answer.get("worked")
+            and turn.speaker not in (answer.get("indexes_read") or ())
+        ):
+            # 这一轮替他干了活，却没读他的 private 索引（规矩说每一轮先读，
+            # `instructions.MEMORY_INSTRUCTIONS`）。记一行，好在生产上数跳过了多少。
+            logger.info(
+                "memory_private_index_unread room=%s agent=%s speaker=%s",
+                topic_id,
+                session.agent_handle,
+                turn.speaker,
+            )
         async with self._sessions() as db:
             change = await apply_tree(
                 db,
@@ -218,15 +268,68 @@ class MemoryLedger:
                 updated_by=updated_by,
                 writer=MemoryWriter.turn,
             )
-            if change.is_empty() and not change.refused and not change.rejected:
-                # 一次对账大部分时候答的是这个。什么都没变就什么都不说：这条事
-                # 件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
-                return
-            # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
-            await _say_memory_change(
-                db, project_id, change, collected, writer_room=session.conversation_id
-            )
-            await db.commit()
+            # 上一轮那一位的 private，这一次没点名、会话交了回来：替那个人收下
+            # （`memory.session.apply_withdrawn`），只说给他本人
+            # （`queries._say_handed_back`）。提交之后才回一句收到，会话那一侧
+            # 才删它的那份交接（`runner.acknowledge`）：回答在路上丢了、这里没
+            # 提交成，下一次对账它还会再交一遍。
+            said = _said(change)
+            acked: list[str] = []
+            for token, given in sorted((answer.get("withdrawn") or {}).items()):
+                if not isinstance(given, dict):
+                    continue
+                acked.append(str(token))
+                if await db.get(MemoryHandoffApplied, str(token)) is not None:
+                    # 合过、提交过，只是会话那一侧没听到：不再合（它的基线比那
+                    # 一次合并旧，再合一遍会把主人之后删掉的东西写回去）。
+                    continue
+                db.add(MemoryHandoffApplied(token=str(token)))
+                await db.execute(
+                    delete(MemoryHandoffApplied).where(
+                        MemoryHandoffApplied.applied_at
+                        < func.now() - HANDOFF_APPLIED_KEPT
+                    )
+                )
+                said = True
+                prefix = str(given.get("prefix") or "")
+                handed, owners, kept = await apply_withdrawn(
+                    db,
+                    project_id,
+                    {prefix: given},
+                    updated_by=self._writer_of(topic_id, prefix),
+                )
+                if _said(handed) or kept:
+                    said = True
+                    await _say_handed_back(db, project_id, handed, owners, kept)
+            if _said(change):
+                # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
+                await _say_memory_change(
+                    db,
+                    project_id,
+                    change,
+                    collected,
+                    writer_room=session.conversation_id,
+                )
+            # 一次对账大部分时候什么都没变：那就什么都不说，也没有可提交的。这条
+            # 事件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
+            if said:
+                await db.commit()
+        if acked:
+            # 只有会话那一侧答了「这几份已经不在了」（`runner.acknowledge` 的
+            # ``dropped``），平台这边的记录才删：设备调用失败、座位上已经没有活
+            # 着的会话，这一问都只答一个 None，而那份交接还在那一侧，下一次对账
+            # 还会交回来，记录得留着挡住它。
+            answer = await self._compute.memory(session, {"acked": acked})
+            dropped = answer.get("dropped") if isinstance(answer, dict) else None
+            confirmed = [token for token in acked if token in (dropped or ())]
+            if confirmed:
+                async with self._sessions() as db:
+                    await db.execute(
+                        delete(MemoryHandoffApplied).where(
+                            MemoryHandoffApplied.token.in_(confirmed)
+                        )
+                    )
+                    await db.commit()
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 
@@ -410,7 +513,7 @@ class MemoryLedger:
         调用发在项目的整理 key 上（`project_gateway_key(dream=True)`），花费由
         `run_dream` 按 dream 结算。输入只有这一个作用域（private 那一份另带 team
         的索引），没有会话、没有工具、没有凭证，所以它读到的东西只能落回这一棵树。
-        写进去之后不在任何房间里说一声：每一条改动按整理的哪一轮记进改动记录，在记忆面板的“最近改动”里看、从那里恢复。
+        写进去之后不在任何房间里说一声：改了什么在记忆面板上看。
 
         要删的超过一半且超过 3 条，整份不写（`dream.refused_scopes`）。
         """
@@ -538,3 +641,8 @@ def _alert_refused(
         lines,
         key=f"memory-dream-refused:{project_id}",
     )
+
+
+def _said(change: MemoryChange) -> bool:
+    """这一份改动有没有要说的：改了什么，或者有被盖回去、没收下的。"""
+    return not change.is_empty() or bool(change.refused or change.rejected)

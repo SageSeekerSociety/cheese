@@ -38,12 +38,13 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -51,6 +52,11 @@ from pathlib import Path
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code import stuck
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.processes import (
+    end,
+    end_session,
+    started_by,
+)
 from app.domain.agent.harness.driven import lifecycle, runner
 
 if sys.platform == "win32":
@@ -58,22 +64,28 @@ if sys.platform == "win32":
     import portable
 from app.domain.memory.files import (
     INDEX_NAME,
-    MEMORY_ROOT,
+    PRIVATE_PREFIX,
     check_scoped_path,
     conflict_path,
+    private_owner,
     rejected_path,
 )
 from app.domain.memory.tree import (
     BULK_DELETE_MIN,
     BULK_DELETE_RATIO,
-    prefixes_of,
     sync_tree,
+    withdrawn_prefixes,
 )
+from app.domain.session_record.privacy import hidden_input
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
-# kills the reader, so the limit is a ceiling nothing legitimate reaches.
+# cannot be read, and the runner ends the session that wrote it (``_read``), so
+# the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
+#: How long the output of a session the runner could not read is still read
+#: after the session is gone, before its pipe is closed (``_read``).
+DRAIN_AFTER_EXIT_S = 1.0
 #: How long a launch must keep running before a greeting takes it as started
 #: (``Runner.starting``). A failing bootstrap or a missing program ends well
 #: inside it; a session that comes up costs a greeting no more than this.
@@ -235,86 +247,6 @@ def end_left_agent(state: Path) -> None:
     portable.terminate(pids)
 
 
-def end(pids: list[int]) -> None:
-    for number, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 1.0)):
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(pid, number)
-        deadline = time.monotonic() + wait
-        while pids and time.monotonic() < deadline:
-            time.sleep(0.1)
-            pids = [pid for pid in pids if _alive(pid)]
-        if not pids:
-            return
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def started_by(session: int) -> list[int]:
-    """What a session started and could still be running: its descendants.
-
-    A session's work is under it — the shell it started a command in, what that
-    shell runs, and the helpers it started for itself — so its descendants are
-    what has to be stopped for it to be let go of work it would otherwise wait
-    out (``Runner.release``). Its own process is not in the list: it is the one
-    being ended, and it should be the one to exit.
-    """
-    if sys.platform == "win32":
-        return [
-            pid
-            for pid in portable.tree([(session, portable.created(session))])
-            if pid != session
-        ]
-    children: dict[int, list[int]] = {}
-    for pid, parent in _processes():
-        children.setdefault(parent, []).append(pid)
-    found: list[int] = []
-    queue = [session]
-    while queue:
-        for child in children.get(queue.pop(), []):
-            found.append(child)
-            queue.append(child)
-    return found
-
-
-def _processes() -> list[tuple[int, int]]:
-    """Every process on this machine as (pid, parent), from /proc where there is
-    one and from ``ps`` where there is not."""
-    proc = Path("/proc")
-    if proc.is_dir():
-        pairs = []
-        for entry in proc.iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                # Past the name, which may itself hold a ')'.
-                _, parent = (entry / "stat").read_bytes().split(b")")[-1].split()[:2]
-            except (OSError, ValueError):
-                continue
-            pairs.append((int(entry.name), int(parent)))
-        return pairs
-    try:
-        listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
-        ).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pairs = []
-    for line in listing.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
-            pairs.append((int(fields[0]), int(fields[1])))
-    return pairs
-
-
 def transcript(config_dir: Path, session_id: str) -> Path | None:
     """Where this session's transcript is, whatever cwd wrote it."""
     for path in config_dir.glob(f"projects/*/{session_id}.jsonl"):
@@ -384,16 +316,51 @@ MEMORY_BASELINE = ".baseline.json"
 MEMORY_BASES = ".bases.json"
 
 
-def memory_root() -> Path:
-    """会话里那棵记忆树的根。
+#: The tools a session reaches its memory files with: the file tools the
+#: executor's client hands back to this host for a memory path
+#: (`remote_execution/client.NATIVE_TOOLS`, which runs on the other machine
+#: and is not importable here).
+FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+_PATH_ARGUMENT = re.compile(r'"(?:file_path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
-    用的是会话自己的 `$HOME`（`machine_launcher` 把它换成了这一间房的会话家），
-    不是机器主人的家：一个会话一个家，记忆的副本也就一间房一份。
+
+def live_arguments(tool: str, written: str) -> str:
+    """What the room is shown of a tool call's arguments, ``written`` so far.
+
+    The room watches a call being written before any record of it exists, so
+    the call is judged here the way its record will be (`files.private_owner`):
+    one on somebody's private memory shows `privacy.hidden_input` in place of
+    its arguments, to everyone, since the frame goes to the whole room. A file
+    tool shows nothing until its path is written out: the rest of its
+    arguments may come first, and are that person's if the path is."""
+    found = _PATH_ARGUMENT.search(written)
+    if found is None:
+        return "" if tool in FILE_TOOLS else written
+    try:
+        path = json.loads(f'"{found.group(1)}"')
+    except ValueError:
+        return ""
+    owner = private_owner(path)
+    if owner is None:
+        return written
+    return json.dumps(hidden_input(owner), ensure_ascii=False)
+
+
+def memory_root() -> Path:
+    """这个座位的会话那棵记忆树的根：座位自己的目录里，执行配置旁边
+    （`CHEESE_EXECUTION_CONFIG`，启动脚本按座位导出），`remote_execution/client`
+    的 `prepare` 也从同一个文件算出 `central_memory`，agent 写 `~/.cheese/memory/`
+    落到的就是这里。
+
+    不放在房间的家里：一间房的几个座位共用那个家，而两个座位可以同时在替两个人
+    干活，一棵共用的树上就会同时躺着两个人的 private，各自的会话都读得到对方的。
+    一个座位同一时刻只替一个人干活，换人时上一位的那一棵交回平台
+    （`tree.withdrawn_prefixes`）。
     """
-    home = os.environ.get("HOME") or ""
-    if not home:
-        raise RuntimeError("The session has no home directory to keep memory in")
-    return Path(home) / MEMORY_ROOT
+    config = os.environ.get("CHEESE_EXECUTION_CONFIG") or ""
+    if not config:
+        raise RuntimeError("The session has no seat directory to keep memory in")
+    return Path(config).parent / "memory"
 
 
 def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
@@ -437,6 +404,40 @@ def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
         for path, value in baseline.items()
         if isinstance(path, str) and isinstance(value, str)
     }
+
+
+#: 这个座位上一次铺下的 private 作用域（前缀 → ""），和基线放在一起。基线只记得
+#: 有文件的那几棵：铺下一棵空的、会话在里面写了第一条，下一轮换了人，只看基线
+#: 就认不出它要交回去。
+MEMORY_LAID = ".laid.json"
+#: 交接区里一份交接的名字：交出的时刻（纳秒，排序用）加一个随机串。
+_HANDOFF_TOKEN = re.compile(r"[0-9]{20}-[0-9a-f]{32}")
+
+
+def _handoff_root(root: Path) -> Path:
+    """交出去、平台还没回收到的那几棵（`Runner._hand_over`）：在记忆树旁边，不
+    在树里，所以 agent 的文件工具够不着它。"""
+    return root.parent / "memory-handoff"
+
+
+def _private_dirs(root: Path) -> set[str]:
+    """树上现有的 private 目录（`private/<handle>`）。"""
+    try:
+        return {
+            f"{PRIVATE_PREFIX}/{entry.name}"
+            for entry in (root / PRIVATE_PREFIX).iterdir()
+            if entry.is_dir() and not entry.is_symlink()
+        }
+    except OSError:
+        return set()
+
+
+def _remove_tree(root: Path, prefix: str) -> None:
+    """从树上拿走一整个 private 作用域，旁路文件一起。"""
+    owner = prefix.split("/", 1)[1] if "/" in prefix else ""
+    if prefix.startswith(f"{PRIVATE_PREFIX}/") and owner not in ("", ".", ".."):
+        if "/" not in owner:
+            shutil.rmtree(root / prefix, ignore_errors=True)
 
 
 def _write_memory(root: Path, path: str, content: str) -> None:
@@ -598,6 +599,14 @@ class Runner(runner.Runner[Journal]):
         # What each tool call in flight was, by its id, for the records that
         # bring its result back (``_stamp_calls``).
         self.calls: dict[str, dict] = {}
+        # The calls on someone's private memory file still waiting for their
+        # result: call id → owner (``_private_calls``).
+        self.private_calls: dict[str, str] = {}
+        # Since the platform last reconciled this tree (`sync_memory`): whether
+        # the session worked, and whose private index it read. The platform
+        # counts the turns that worked for someone without reading theirs.
+        self.worked_since_sync = False
+        self.indexes_read: set[str] = set()
         # Tool calls made on the main thread; an agent started by one of them
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
@@ -614,9 +623,14 @@ class Runner(runner.Runner[Journal]):
         self.ran = False
         self.settling: asyncio.Future | None = None
         self.exit_reported = False
+        # The session's stdout could no longer be read, and the runner ended it.
+        self.reader_failed = False
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # The arguments of the tool call being shown, as written so far; what
+        # the room is shown of them is `live_arguments`'s.
+        self.streaming_arguments = ""
         # The last frame read off the child's stdout, for the readout of what
         # a session is doing (`heartbeat`). None until a frame, and the work is
         # the one in flight when THAT frame arrived — never `last_work`, so a
@@ -707,13 +721,23 @@ class Runner(runner.Runner[Journal]):
         )
         if sys.platform == "win32":
             remember_agent(self.state, self.process.pid)
-        self.listener = asyncio.create_task(self._read())
+        self.listener = runner.watched(self._read())
         self.helpers = [
-            asyncio.create_task(self._tail()),
-            asyncio.create_task(self._expire()),
+            runner.watched(self._tail()),
+            runner.watched(self._expire()),
         ]
         await self.listen(LINE_LIMIT)
         return self.session_id
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        """The build asks a model that ends its turn with no visible text to
+        write some ("no visible output"), unless the call just before was one
+        of the tools named here. A reply in the room is how a turn here ends,
+        so the reply tools are those: without this, a session could not stop
+        right after chat_send, and every turn would be made to write closing
+        words only the session sees."""
+        terminal = ",".join(f"mcp__native__{tool}" for tool in runner.REPLY_TOOLS)
+        return {**super().agent_env(env), "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
 
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.
@@ -790,6 +814,7 @@ class Runner(runner.Runner[Journal]):
             process is not None
             and process.returncode not in (None, 0)
             and not self.proven
+            and not self.reader_failed
         )
         # Whatever the process still wrote is read before its ending is told.
         await self.stopped()
@@ -810,11 +835,14 @@ class Runner(runner.Runner[Journal]):
         if self.exit_reported:
             return
         self.exit_reported = True
-        self._drop_unread("exited")
+        kind = (
+            lifecycle.READER_FAILED if self.reader_failed else lifecycle.EXITED_MIDWAY
+        )
+        self._drop_unread(kind)
         if self.working:
             self._finish(
                 failure={
-                    "kind": lifecycle.EXITED_MIDWAY,
+                    "kind": kind,
                     "status": status,
                     "said": said,
                 },
@@ -945,12 +973,54 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
+            self.helpers.append(runner.watched(stuck.settle(self, fired)))
         self._watching()
 
     # --- stdout --------------------------------------------------------------
 
     async def _read(self) -> None:
+        """Read the session's stdout for as long as it writes, or end it.
+
+        A session this runner can no longer read would go on taking inputs it
+        is never seen to read, its work open with nothing left to close it,
+        while every answer says it is alive. Ending it reports all of that the
+        way any exit does (``_report_exit``), under its own failure.
+        """
+        assert self.process is not None and self.process.stdout is not None
+        try:
+            await self._take_lines()
+        except Exception:
+            print(
+                f"cheese-runner {self.launch}: the session's output can no longer "
+                "be read; ending the session",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc(file=sys.stderr)
+            self.reader_failed = True
+            # ``process.wait`` settles only once stdout is closed, and a pipe
+            # nobody reads stops at a full buffer: what the session still writes
+            # is read and let go while it is ended.
+            drain = asyncio.ensure_future(self._discard_output())
+            await asyncio.to_thread(end_session, self.process.pid)
+            # The session's own exit settles it, not its stdout's end: a process
+            # that escaped being ended can hold the pipe open for good.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(drain), DRAIN_AFTER_EXIT_S)
+            if not drain.done():
+                # asyncio has no public handle on a subprocess's pipes; closing
+                # this one is what lets ``process.wait`` see the exit.
+                pipe = self.process._transport.get_pipe_transport(1)  # type: ignore[attr-defined]
+                if pipe is not None:
+                    pipe.close()
+                await drain
+
+    async def _discard_output(self) -> None:
+        assert self.process is not None and self.process.stdout is not None
+        while await self.process.stdout.read(1 << 16):
+            pass
+
+    async def _take_lines(self) -> None:
         assert self.process is not None and self.process.stdout is not None
         while line := await self.process.stdout.readline():
             text = line.decode("utf-8", "replace").strip()
@@ -1063,6 +1133,7 @@ class Runner(runner.Runner[Journal]):
             if block.get("type") == "text":
                 self.show([{"type": "text", "text": block.get("text") or ""}], work)
             elif block.get("type") == "tool_use":
+                self.streaming_arguments = ""
                 self.show(
                     [
                         {
@@ -1089,8 +1160,45 @@ class Runner(runner.Runner[Journal]):
                 self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
-                block["arguments"] += str(delta.get("partial_json") or "")
+                self.streaming_arguments += str(delta.get("partial_json") or "")
+                block["arguments"] = live_arguments(
+                    str(block.get("name") or ""), self.streaming_arguments
+                )
                 self.shown()
+
+    def _private_calls(self, message: dict) -> dict[str, str]:
+        """The calls in this record on one person's private memory file, and
+        the results in it that answer such a call: call id → owner, stamped
+        on the record as ``cheese.private``.
+
+        The result says nothing of the file it came from, so the call is what
+        names the owner, and the result is matched to it here, where both
+        pass in order: a page read later can hold either one without the
+        other. Who may read what is stamped is `session_record.privacy`'s."""
+        content = (message.get("message") or {}).get("content")
+        marked: dict[str, str] = {}
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                given = block.get("input")
+                arguments = given if isinstance(given, dict) else {}
+                owner = private_owner(
+                    arguments.get("file_path") or arguments.get("notebook_path")
+                )
+                if owner is not None:
+                    self.private_calls[str(block.get("id"))] = owner
+                    marked[str(block.get("id"))] = owner
+                    path = arguments.get("file_path") or ""
+                    if block.get("name") == "Read" and str(path).endswith(
+                        f"/{INDEX_NAME}"
+                    ):
+                        self.indexes_read.add(owner)
+            elif block.get("type") == "tool_result":
+                call = str(block.get("tool_use_id"))
+                if (owner := self.private_calls.pop(call, None)) is not None:
+                    marked[call] = owner
+        return marked
 
     def _watch_marks(self, message: dict) -> dict:
         """What one transcript-shaped record says to the stuck-work clocks,
@@ -1194,8 +1302,14 @@ class Runner(runner.Runner[Journal]):
                 for block in (message.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
+                        name = str(block.get("name") or "")
+                        self.called(
+                            name.removeprefix("mcp__native__"), block.get("input")
+                        )
             if returned := self._watch_marks(message):
                 stamp["calls"] = returned
+            if private := self._private_calls(message):
+                stamp["private"] = private
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
@@ -1286,6 +1400,8 @@ class Runner(runner.Runner[Journal]):
         """The session starts working, on the input that woke it (None: no
         input of ours)."""
         how, work = sent or ("", None)
+        if how != "internal":
+            self.worked_since_sync = True
         if how == "send":
             self.working, self.work, self.unsolicited = True, work, False
         elif how == "internal":
@@ -1353,7 +1469,7 @@ class Runner(runner.Runner[Journal]):
             self.reply_settled()
         if self.compact_when_idle and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+            self.helpers.append(runner.watched(self._compact_now()))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1370,7 +1486,7 @@ class Runner(runner.Runner[Journal]):
             # was not the build's to move yet, and the message would wait for
             # it: move it too, as long as the message is still unread.
             if self.owed is not None and self.owed in self.sent:
-                self.helpers.append(asyncio.create_task(self._yield_again()))
+                self.helpers.append(runner.watched(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -1444,7 +1560,7 @@ class Runner(runner.Runner[Journal]):
         临时文件都不是这条规矩的一部分，给它们一个身份等于替 agent 认了一条它没
         写过的记忆。
         """
-        root = memory_root()
+        root = self.memory_root()
         found: dict[str, str] = {}
         emptied: set[str] = set()
         for prefix in sorted(managed):
@@ -1467,6 +1583,10 @@ class Runner(runner.Runner[Journal]):
                     found[path] = content
         return found, emptied
 
+    def memory_root(self) -> Path:
+        """This seat's memory tree: where its launch says (`memory_root`)."""
+        return memory_root()
+
     def sync_memory(self, params: dict) -> dict:
         """对一次账：平台这一份铺下来，会话改过的带回去。
 
@@ -1475,18 +1595,38 @@ class Runner(runner.Runner[Journal]):
 
         基线从**记忆树自己的根**上读、也写回那里（`MEMORY_BASELINE`）：它和这棵树
         同生同死，所以「树没了」不会被读成「会话删光了这棵树」。
+
+        这个座位上一次铺下、这一次没点名的 private（`MEMORY_LAID` 记着铺过哪几
+        棵，空的也算；`tree.withdrawn_prefixes`）不在这里合：整棵连同它那一段基线
+        和旁路文件挪进交接区（`_hand_over`），从树上拿走——这棵树这一轮是别人的。
+        交接区不在树里，agent 的文件工具够不着（`remote_execution/client.own_memory`）。
+        每一次的回答都带着交接区里还在的那几份（``withdrawn``），直到平台把它合进
+        数据库、提交、回一句收到（``acked``，`acknowledge`）才删：回答丢了，下一
+        次照样交，那个人写下的东西不会只活在一个丢掉的回答里。
+
+        没铺过、也没点名的 private 目录（会话替别人干活时写进了这个人的目录）既
+        不交也不留：它不是谁的记忆，交回去就是替别人往他的 private 里写了东西。
         """
+        if "scopes" not in params:
+            return self.acknowledge(params)
         scopes = memory_scopes(params)
-        root = memory_root()
+        root = self.memory_root()
         baseline = _recall_baseline(root)
-        managed = prefixes_of(scopes, baseline)
-        disk, emptied = self.read_memory(managed)
-        outcome = sync_tree(
-            scopes=scopes,
-            disk=disk,
-            baseline=baseline,
-            bases=_recall_baseline(root, MEMORY_BASES),
-        )
+        bases = _recall_baseline(root, MEMORY_BASES)
+        laid = set(_recall_baseline(root, MEMORY_LAID))
+        withdrawn = withdrawn_prefixes(scopes, baseline) | (laid - set(scopes))
+        disk, emptied = self.read_memory(set(scopes) | withdrawn)
+        for prefix in sorted(withdrawn):
+            self._hand_over(root, prefix, disk, baseline, bases)
+        for stray in _private_dirs(root) - set(scopes) - withdrawn:
+            print(
+                f"{ended(self.launch)}: memory sync removed {stray}, "
+                "which this seat never laid down",
+                file=sys.stderr,
+                flush=True,
+            )
+            _remove_tree(root, stray)
+        outcome = sync_tree(scopes=scopes, disk=disk, baseline=baseline, bases=bases)
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
             # 会被重新铺回去。说出来，因为下一次对账看到的还是同一棵树——同一条会
@@ -1507,7 +1647,8 @@ class Runner(runner.Runner[Journal]):
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
         # 到这里才从磁盘上消失：先算完再删，删的不是「还没看过的东西」。
         # 写空了的那一条也在这里清掉，下一轮的树里就没有一个空壳；批量删除被拦下
-        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。
+        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。交回去的那几
+        # 棵已经整棵挪走了。
         for path in set(disk) | set(baseline) | emptied:
             if path in outcome.files:
                 continue
@@ -1516,6 +1657,11 @@ class Runner(runner.Runner[Journal]):
         self._keep_refused(root, outcome.refused)
         _write_memory(root, MEMORY_BASES, json.dumps(outcome.bases))
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
+        _write_memory(
+            root,
+            MEMORY_LAID,
+            json.dumps({prefix: "" for prefix in scopes if prefix != "team"}),
+        )
         # `held` 跟着回去：会话这一侧的兜底挡下的那些删除，平台那一侧看不见
         # （`files` 里它们已经被放回去了）。整理那一轮要知道这件事——「这次删得
         # 太多」是它必须说出来的一句话，而不是只在会话机的 stderr 里响一次。
@@ -1525,7 +1671,80 @@ class Runner(runner.Runner[Journal]):
             "rejected": outcome.rejected,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
+            "withdrawn": self._handed(root),
+            "worked": self._worked(),
+            "indexes_read": self._indexes_read(),
         }
+
+    def _worked(self) -> bool:
+        """Whether the session worked since the platform last asked; asking
+        starts the count again. A runner built without a session has none."""
+        worked = getattr(self, "worked_since_sync", False)
+        self.worked_since_sync = False
+        return worked
+
+    def _indexes_read(self) -> list[str]:
+        """Whose private index the session Read since the platform last asked."""
+        read = sorted(getattr(self, "indexes_read", set()))
+        self.indexes_read = set()
+        return read
+
+    def _hand_over(
+        self,
+        root: Path,
+        prefix: str,
+        disk: dict[str, str],
+        baseline: dict[str, str],
+        bases: dict[str, str],
+    ) -> None:
+        """把 ``prefix`` 那一棵整棵挪进交接区：先写下一份完整的交接（原子写），
+        再从树上删。中间断了，树还在、交接也在，下一次再交一遍；平台按同一条三
+        方规矩合，同样的东西合两次结果一样。"""
+        within = f"{prefix}/"
+        sidecars: dict[str, str] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted((root / prefix).iterdir()):
+                path = f"{prefix}/{entry.name}"
+                if path in disk or not entry.is_file():
+                    continue
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    sidecars[entry.name] = entry.read_text(encoding="utf-8")
+        handover = {
+            "prefix": prefix,
+            "files": {
+                path[len(within) :]: content
+                for path, content in disk.items()
+                if path.startswith(within)
+            },
+            "baseline": {p: m for p, m in baseline.items() if p.startswith(within)},
+            "bases": {p: t for p, t in bases.items() if p.startswith(within)},
+            "sidecars": sidecars,
+        }
+        token = f"{time.time_ns():020d}-{uuid.uuid4().hex}"
+        _write_memory(_handoff_root(root), f"{token}.json", json.dumps(handover))
+        _remove_tree(root, prefix)
+
+    @staticmethod
+    def _handed(root: Path) -> dict[str, dict]:
+        """交接区里平台还没回过收到的那几份，按交出的先后。"""
+        handed: dict[str, dict] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted(_handoff_root(root).glob("*.json")):
+                with contextlib.suppress(OSError, ValueError):
+                    handed[entry.stem] = json.loads(entry.read_text(encoding="utf-8"))
+        return handed
+
+    def acknowledge(self, params: dict) -> dict:
+        """平台已经把这几份交接合进数据库、提交了（``acked``）：删掉它们，并答
+        上这一次确认已经不在交接区里的那几份（``dropped``）。平台只凭这一句删
+        它那边的记录：没有这一句，就不知道这一侧还会不会再交回来。"""
+        handoff = _handoff_root(self.memory_root())
+        dropped = []
+        for token in params.get("acked") or []:
+            if isinstance(token, str) and _HANDOFF_TOKEN.fullmatch(token):
+                (handoff / f"{token}.json").unlink(missing_ok=True)
+                dropped.append(token)
+        return {"dropped": dropped}
 
     @staticmethod
     def _keep_refused(root: Path, refused: dict[str, str]) -> None:
@@ -1795,7 +2014,7 @@ class Runner(runner.Runner[Journal]):
         # normally goes. A session already idle has no turn coming.
         if not self.working and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+            self.helpers.append(runner.watched(self._compact_now()))
         return {"requested": True, "already": False}
 
     async def _compact_now(self) -> None:
@@ -1873,7 +2092,7 @@ class Runner(runner.Runner[Journal]):
             # of its own, and is that work's to answer.
             if self.interrupting or (self.owed is not None and self.owed in self.sent):
                 return {}
-            reason = self.insist()
+            reason = self.insist(str(params.get("last_words") or ""))
             return {"reason": reason} if reason else {}
         if method == "run":
             # The session's own helper making a platform tool call

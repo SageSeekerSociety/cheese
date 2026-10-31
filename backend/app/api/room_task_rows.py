@@ -369,7 +369,7 @@ async def project_task_rows(
     # 第六次：哪几条活自己那位队友的会话在跑、在哪一次跑里 —— 那一格的「在做」。和上面
     # 那一半不是一回事：侧栏的呼吸绿看这段对话里有没有任何会话在跑，那一格只认这条活
     # 自己的队友（`agent.teammate_runs`）。
-    runs = await teammate_runs(db, tasks)
+    runs = await teammate_runs(db, [t for t in tasks if is_running(t.id)])
     items = []
     for task in tasks:
         card = cards.get(task.id)

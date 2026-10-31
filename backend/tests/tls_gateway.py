@@ -24,9 +24,9 @@ def _name(cn: str) -> x509.Name:
 
 
 def write_pki(
-    directory: Path, *, expires_in: datetime.timedelta
+    directory: Path, *, expires_in: datetime.timedelta, name: str = "localhost"
 ) -> tuple[str, str, str]:
-    """A CA and a ``localhost`` certificate it signed that expires ``expires_in``
+    """A CA and a certificate for ``name`` it signed that expires ``expires_in``
     from now (negative: already expired). Returns (ca, cert, key) file paths."""
     now = datetime.datetime.now(datetime.UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
@@ -63,14 +63,14 @@ def write_pki(
     expires = now + expires_in
     leaf = (
         x509.CertificateBuilder()
-        .subject_name(_name("localhost"))
+        .subject_name(_name(name))
         .issuer_name(ca.subject)
         .public_key(leaf_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(min(now, expires) - datetime.timedelta(days=30))
         .not_valid_after(expires)
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
+            x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False
         )
         .add_extension(
             x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),

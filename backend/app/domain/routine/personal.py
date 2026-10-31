@@ -58,6 +58,7 @@ from app.domain.assistant.models import (
     AssistantRoutine,
     AssistantRun,
 )
+from app.domain.day_windows import utc_now
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.happenings.models import Happening
@@ -203,7 +204,7 @@ def describe(routine: AssistantRoutine) -> str:
     if routine.spec.get("freq") == "once":
         at = local_time(datetime.fromisoformat(routine.spec["at"]), routine.timezone)
         day = f"{at.month}月{at.day}日"
-        if at.year != local_time(_now(), routine.timezone).year:
+        if at.year != local_time(utc_now(), routine.timezone).year:
             day = f"{at.year}年{day}"
         return f"{day} {at:%H:%M}"
     return str(schedule.describe(routine.spec, routine.timezone))

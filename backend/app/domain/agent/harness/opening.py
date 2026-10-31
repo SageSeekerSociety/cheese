@@ -20,7 +20,7 @@ from datetime import UTC
 
 from app.domain.agent.harness.notices import platform_prompt
 from app.domain.memory.files_store import MemoryIndex
-from app.domain.memory.instructions import memory_block, private_memory_section
+from app.domain.memory.instructions import memory_block
 from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 
@@ -500,14 +500,9 @@ def build_session_opening(
     elif doc is not None:
         sections["doc"] = "## 实况文档现在的内容\n\n这里还没有实况文档。"
     if keeps_memory and memory is not None and not memory.is_empty():
-        rendered = (
-            (section, f"### {section.label}（`{section.prefix}/`）\n{section.text}")
-            for section in memory.sections
-        )
-        # private 那一段圈起来：现场只给本人看（`private_memory_section`）。
         index_text = "\n\n".join(
-            private_memory_section(section.owner, text) if section.owner else text
-            for section, text in rendered
+            f"### {section.label}（`{section.prefix}/`）\n{section.text}"
+            for section in memory.sections
         )
         sections["memory"] = memory_block(index_text, memory.warnings)
     if environment:

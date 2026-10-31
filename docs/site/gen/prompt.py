@@ -273,22 +273,23 @@ class _Index:
         return not any(section.text.strip() for section in self.sections)
 
 
-#: The two indexes a turn actually carries: the project's, and one for whoever
-#: is speaking. One line per memory, never the body — that is the whole point of
-#: the index being short.
+#: What a turn carries of memory: the project's index, one line per memory and
+#: never the body — that is the whole point of the index being short — and, for
+#: whoever is speaking, where their private index is for the session to read
+#: (`memory.instructions.private_index_pointer`).
 INDEX_SECTIONS = [
     {
         "label": "项目共享（team）",
         "prefix": "team",
-        "owner": None,
         "text": "- [构建用 npm ci](build.md) — 不要用 npm install\n"
         "- [移动端发版前冻结合并](freeze.md) — 非关键 PR 排到发版之后",
     },
     {
         "label": "关于 zhangheng（private）",
         "prefix": "private/zhangheng",
-        "owner": "zhangheng",
-        "text": "- [回答短一点](short.md) — 结尾不要总结刚做了什么",
+        "text": "这一轮答的是 zhangheng。他的 private 记忆只有他本人看得到，索引在 "
+        "`~/.cheese/memory/private/zhangheng/MEMORY.md`：这一轮动手之前先用 Read "
+        "读它，正文在同一个目录下，需要时再读。",
     },
 ]
 

@@ -27,7 +27,10 @@ from tests.integration.conftest import project_service, registered
 from tests.integration.test_gateway_usage import FakeGateway
 from tests.support.dream_gateway import answer_dream_calls
 
-pytestmark = pytest.mark.anyio
+# The fake answers only for `gw.utc_today()`, which the drain reads too, held
+# still for each test (`pinned_clock`): a run across UTC midnight cannot split
+# the two reads.
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("pinned_clock")]
 
 
 class KeyedGateway(FakeGateway):

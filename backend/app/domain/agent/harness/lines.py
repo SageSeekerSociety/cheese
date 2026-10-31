@@ -11,8 +11,10 @@
 
 import re
 from collections.abc import Collection
+from datetime import UTC, datetime
 
 from app.core import raster_images
+from app.core.config import settings
 from app.domain.agent.harness.notices import strip_platform_notice
 from app.domain.block.authorship import speaker
 from app.domain.block.models import BlockKind
@@ -145,6 +147,33 @@ def addressee(b, *, recipient: str | None, recipient_instance_id=None) -> str | 
     return recipient_seat(recipient_meta)
 
 
+def waited_note(sent_at: datetime | None, now: datetime | None = None) -> str | None:
+    """The line under a message that reaches its reader long after it was sent:
+    when it was sent (UTC, as every time a tool shows) and how long ago.
+
+    A message can sit for days before a turn carries it — behind a turn that
+    never ended, or an input nothing would settle. Its line alone reads as if
+    just said, and the reader answers a stale question as a current one. Past
+    as long as a turn may go without a word (``turn_silence_timeout_s``) it is
+    no longer that.
+    """
+    if sent_at is None:
+        return None
+    waited_s = ((now or datetime.now(UTC)) - sent_at).total_seconds()
+    if waited_s <= settings.turn_silence_timeout_s:
+        return None
+    if waited_s >= 86400:
+        span = f"{int(waited_s // 86400)} 天"
+    elif waited_s >= 3600:
+        span = f"{int(waited_s // 3600)} 小时"
+    else:
+        span = f"{int(waited_s // 60)} 分钟"
+    return (
+        f"（这条发于 {sent_at.astimezone(UTC):%Y-%m-%d %H:%M} UTC，到现在已过 {span}；"
+        "回答前先确认现在的情况）"
+    )
+
+
 def prompt_line(
     b,
     *,
@@ -194,6 +223,9 @@ def prompt_line(
                 b, recipient=recipient, recipient_instance_id=recipient_instance_id
             ),
         )
+    waited = waited_note(getattr(b, "created_at", None))
+    if waited is not None:
+        line = f"{line}\n{waited}"
     if replied is None:
         return line
     return f"{line}\n{reply_quote(replied, recipient=recipient)}"

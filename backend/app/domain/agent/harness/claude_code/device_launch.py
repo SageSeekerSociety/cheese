@@ -446,6 +446,12 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 ROOM_CONFIG_DIR="$HOME/.claude"
 SEAT="{seat_home}"
 export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+# The session is kept to its own seat of this room, and to this room of the
+# machine (`remote_execution/namespace._keep_only`): a seat's memory tree holds
+# the private memory of the person its turn answers. A room's home is
+# `<homes>/<project>/<room>` (`device_provider.device_home_dir`).
+export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
+export CHEESE_HOMES_ROOT="$(dirname "$(dirname "$HOME")")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 # Conversation transcripts belong to the room for resume and transfer, while
 # settings, skills and generated instructions belong to this seat.

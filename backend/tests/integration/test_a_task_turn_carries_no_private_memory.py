@@ -1,8 +1,10 @@
-"""A turn in a task's own conversation reads the task owner's private memory.
+"""A turn in a task's own conversation carries nobody's private memory, the
+task owner's included.
 
-The task's document is written for its owner, the way he reads, so his
-preferences have to be in reach even on a turn he said nothing in (a platform
-instruction started it). Someone else's are not.
+A task's conversation is the shared room's: its session goes on to work for
+whoever speaks there next, and what it read for one person would still be in
+reach of the next one (`turn_speakers`). Only a person's private chat carries
+their private memory.
 """
 
 import uuid
@@ -10,7 +12,7 @@ import uuid
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.writers import MemoryWriter
 from tests.conftest import StubChannel, settle_turn
@@ -67,7 +69,7 @@ def _task(client) -> str:
     return task
 
 
-def test_a_task_turn_reads_its_silent_owners_memory(client, tmp_path):
+def test_a_task_turn_carries_nobodys_private_memory(client, tmp_path):
     task = _task(client)
     screen = Screen()
     service = ChatService(
@@ -88,5 +90,10 @@ def test_a_task_turn_reads_its_silent_owners_memory(client, tmp_path):
 
     client.portal.call(run)
 
-    assert OWNER_HOOK in screen.told, "the owner's private memory was not in reach"
-    assert BOB_HOOK not in screen.told
+    for absent in (
+        prompt_path(f"private/{OWNER}/{INDEX_NAME}"),
+        OWNER_HOOK,
+        prompt_path(f"private/bob/{INDEX_NAME}"),
+        BOB_HOOK,
+    ):
+        assert absent not in screen.told

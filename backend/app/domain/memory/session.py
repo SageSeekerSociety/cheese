@@ -8,9 +8,15 @@ agent 用自己手里的 Write/Edit 改会话目录里的 `.md`，平台这一�
 - **收回来**：把对账结果写回数据库，并把改动讲成一句话（`apply_tree`）。
 
 **删除只在自己点过名的作用域里认。** 会话机上那棵树里，这一轮没轮到的 private
-（别人的偏好）会被收走，收走之后它当然不在回来的那份树里；把「不在回来的树里」
-一律读成「被删了」，就是把一个没说话的人的偏好当成 agent 删掉的东西从数据库里抹
-掉。点名过的作用域才是这一次对账的范围，范围外的一律不碰。
+（别人的偏好）不在回来的那份树里；把「不在回来的树里」一律读成「被删了」，就是把
+一个没说话的人的偏好当成 agent 删掉的东西从数据库里抹掉。点名过的作用域才是这一
+次对账的范围。
+
+**没点名、会话却交回来的 private，替它的主人收。** 一个座位的树一次只放一个人
+的 private（`runner.memory_root`）；这个座位换了一位说话的人，上一位的 private
+这一次没点名，会话把它连同基线原样交回来、从树上拿走（`tree.withdrawn_prefixes`）。它里面可能有那一位的会话还没对过账的改动，所以这
+里拿数据库现在那一份跟它按同一条三方规矩合一次，合出来的就是那个人的
+（`apply_withdrawn`）。
 
 **正文没变就不写。** 每一次写入都会推高 `version`，而版本号是冲突判据——每轮对一
 次账就把所有行都推高一版，等于把这个判据作废。所以先比正文，一样就什么都不做。
@@ -24,12 +30,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.core.sentences import say
-from app.domain.memory.files import MemoryFileScope, scoped_prefix
+from app.domain.memory.files import (
+    PRIVATE_PREFIX,
+    MemoryFileError,
+    MemoryFileScope,
+    check_path,
+    scoped_prefix,
+)
 from app.domain.memory.files_store import (
     MemoryFileConflict,
     MemoryFileLimit,
     MemoryFileStore,
 )
+from app.domain.memory.tree import sync_tree
 from app.domain.memory.writers import MemoryWriter
 
 #: diff 里一条路径最多留几行。事件是给人扫一眼的，不是补丁文件；一整份被重写的
@@ -260,6 +273,81 @@ async def apply_tree(
         unindexed=unindexed,
         diffs=_diffs(before, files),
     )
+
+
+async def apply_withdrawn(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    withdrawn: object,
+    *,
+    updated_by: str,
+) -> tuple[MemoryChange, list[tuple[MemoryFileScope, str | None]], dict[str, str]]:
+    """会话交回来的那几棵没点名的 private 树（``withdrawn``：前缀 → 它在磁盘上的
+    ``files``、它那一段 ``baseline`` 和 ``bases``、树上的旁路文件 ``sidecars``），
+    合进它们主人的那一份。
+
+    合的规矩和 `sync_tree` 在会话那一侧对点名的树用的是同一条，只是平台这一份
+    此刻才读：会话改过、平台没动的收下；两边都动过的，索引按行合并，别的平台赢。
+    返回改了什么、收了哪几个作用域（说给谁听用），和那个人写下、却没有收进去的
+    那几版（路径 → 正文）：被平台盖回去的、超了上限的、树上还留着的旁路文件。
+    在点了名的树上它们留在会话目录里给写它的 agent 重读；这一棵已经离开了那个座
+    位，它们只能交给本人（`queries._say_handed_back`）。"""
+    if not isinstance(withdrawn, dict):
+        return MemoryChange(), [], {}
+    scopes: list[tuple[MemoryFileScope, str | None]] = []
+    disk: dict[str, str] = {}
+    baseline: dict[str, str] = {}
+    bases: dict[str, str] = {}
+    kept: dict[str, str] = {}
+    for prefix, given in withdrawn.items():
+        parts = str(prefix).split("/")
+        if (
+            len(parts) != 2
+            or parts[0] != PRIVATE_PREFIX
+            or parts[1] in ("", ".", "..")
+            or not isinstance(given, dict)
+        ):
+            continue
+        scopes.append((MemoryFileScope.private, parts[1]))
+        for name, content in (given.get("files") or {}).items():
+            try:
+                check_path(str(name))
+            except MemoryFileError:
+                continue
+            if isinstance(content, str):
+                disk[f"{prefix}/{name}"] = content
+        for table, into in (
+            (given.get("baseline"), baseline),
+            (given.get("bases"), bases),
+        ):
+            for path, value in (table or {}).items():
+                if str(path).startswith(f"{prefix}/") and isinstance(value, str):
+                    into[str(path)] = value
+        for name, content in (given.get("sidecars") or {}).items():
+            if isinstance(content, str) and "/" not in str(name):
+                kept[f"{prefix}/{name}"] = content
+    if not scopes:
+        return MemoryChange(), [], {}
+    stored = await read_tree(session, project_id, scopes)
+    merged = sync_tree(scopes=stored.scopes, disk=disk, baseline=baseline, bases=bases)
+    change = await apply_tree(
+        session,
+        project_id,
+        stored,
+        {
+            "files": merged.files,
+            "refused": merged.refused,
+            "rejected": merged.rejected,
+            "unindexed": list(merged.unindexed),
+        },
+        scopes=scopes,
+        updated_by=updated_by,
+        # 交回来的是那个人在一轮对话里写下的 private，只是那一轮的座位已经换了人。
+        writer=MemoryWriter.turn,
+    )
+    kept.update({path: body for path, body in change.refused.items() if body})
+    kept.update({path: disk[path] for path in change.rejected if path in disk})
+    return change, scopes, kept
 
 
 def _diffs(before: dict[str, str], files: dict[str, str]) -> dict[str, str]:

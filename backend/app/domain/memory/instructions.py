@@ -10,11 +10,11 @@ CC 的原文里，「记忆」不是一句话的授权，是一份完整的规�
    （一个项目一份），不是跟着一个仓库走。
 2. 「不该存」多了一段：芝士平台上进度、成员、任务状态、话题实况文档
    都已经是结构化的记录，写进记忆只会造出一份会过期的副本。
-3. 多人房间里的纠正怎么分流：个人偏好进**说话那个人的** private，项目规矩进
-   team。CC 面对一个人，这里的每间房都可能坐着好几个人。
+3. private 只在一个人和芝士的私聊里有：那里个人偏好进他的 private，项目规矩进
+   team。多人的房间里没有任何人的 private（`turn_speakers.private_memory_for`），
+   个人偏好在那里不记，项目规矩照样进 team。CC 面对一个人，这里的每间房都可能坐
+   着好几个人。
 """
-
-import re
 
 #: 会话里那份记忆副本的根，按 agent 在文件工具里该写的那个样子写：`~` 是会话
 #: 自己的家，在会话机上，runner 就在那里对账（`runner.memory_root`）。不写成
@@ -37,12 +37,17 @@ MEMORY_INSTRUCTIONS = f"""## 记忆（memory）
 - `team/`：**这个项目**所有人和所有芝士共看、共写的一份。它在每次会话开场同步，
   别人改了什么，你下次被叫起来时就读得到。
 - `private/<handle>/`：**你和某一个人之间**的那一份，只有本人看得见。
-  它按「人 × 项目」分开：换一个人、换一个项目都读不到。
+  它按「人 × 项目」分开：换一个人、换一个项目都读不到。只有在他和你的私聊里，
+  平台才给你他的这一份；多人的房间里没有任何人的 private。
 
 索引 `MEMORY.md` 是每一步都要动的东西：一条记忆一行，`- [标题](文件.md) — 一句钩子`。
-它没有 frontmatter，**永远不要把记忆正文写进索引**。会话开场注入的就是这两个索引
-（`team/MEMORY.md` 和这次说话那个人的 `private/<handle>/MEMORY.md`）；正文要自己
-去读那个文件。
+它没有 frontmatter，**永远不要把记忆正文写进索引**。会话开场注入的是 `team/MEMORY.md`
+这个索引，在私聊里再加上这个人的 private 索引在哪；正文要自己去读那个文件。
+
+**在私聊里，平台告诉过你这个人的 private 索引在哪，每一轮开工之前先用 Read 读一遍
+`private/<他的 handle>/MEMORY.md`**——同一个人连着几轮也每轮都读：上一
+轮之后它可能被他自己、别的房间或整理改过。平台不把它放进你的输入，因为输入房间里的人
+都看得到；你读它的那一次只有他本人看得到。
 
 ### 四种类型
 
@@ -224,11 +229,13 @@ type: user | feedback | project | reference
 - 写完整句子，像一篇短的小条目：把 `why` 说出来，不要只写 `what`；不要用只有
   当时在场的人才懂的简称（「那个修法」「上面查到的东西」）。
 
-### 多人房间里，纠正该写给谁
+### 纠正该写给谁
 
-一间房可以坐着好几个人，所以「这是一条 feedback」还差一句：**是对谁成立的**。
+「这是一条 feedback」还差一句：**是对谁成立的**。
 
-- 表达习惯、个人偏好、对某个人的工作方式的确认 → 说话那个人的 `private/<他的 handle>/`。
+- 表达习惯、个人偏好、对某个人的工作方式的确认 → 只在他和你的私聊里记，写进
+  他的 `private/<他的 handle>/`。多人的房间里没有任何人的 private：在那里听到的
+  个人偏好不记（写到别的地方就成了别人也读得到的东西）。
 - 项目规矩、全项目都该遵守的做法（测试策略、发布流程、构建上的硬约束）→ `team/`。
 - switch 不准：不要因为「反正是表扬」就把个人偏好写进 team。team 是所有人共写共
   看的，写错地方等于替整个项目定了规矩。
@@ -280,34 +287,16 @@ def memory_block(index_text: str, warnings: list[str] | None = None) -> str:
     return "\n\n".join(parts)
 
 
-#: 注入里某个人 private 那一段的两头。现场摊开的是会话的输入原文，房间里的人都读
-#: 得到；private 只有本人看得见（`routes/memory_files._readable`），所以这一段圈
-#: 起来，现场按读的人把别人的那一段换掉（`without_others_private`）。agent 读到的
-#: 是原样的全文。
-PRIVATE_MEMORY_OPEN = '<private-memory owner="{owner}">'
-PRIVATE_MEMORY_CLOSE = "</private-memory>"
-_PRIVATE_MEMORY = re.compile(
-    r'<private-memory owner="([^"]*)">.*?</private-memory>', re.DOTALL
-)
-# copy: needs product sign-off — the line 现场 shows in place of another
-# person's private memory index.
-_PRIVATE_MEMORY_HIDDEN = "（{owner} 的 private 记忆索引，只有本人看得到）"
+def private_index_pointer(owner: str) -> str:
+    """这一轮那一位的 private 记忆在注入里的样子：不是索引本身，是它在哪。
 
-
-def private_memory_section(owner: str, text: str) -> str:
-    """把某个人 private 那一段索引圈起来（见 `PRIVATE_MEMORY_OPEN`）。"""
-    return f"{PRIVATE_MEMORY_OPEN.format(owner=owner)}\n{text}\n{PRIVATE_MEMORY_CLOSE}"
-
-
-def without_others_private(text: str, reader: str | None) -> str:
-    """``text`` 里不是 ``reader`` 本人的 private 记忆那几段，换成一句占位。"""
-    if "<private-memory" not in text:
-        return text
-    return _PRIVATE_MEMORY.sub(
-        lambda m: (
-            m.group(0)
-            if reader and m.group(1) == reader
-            else _PRIVATE_MEMORY_HIDDEN.format(owner=m.group(1))
-        ),
-        text,
+    注入是会话的输入，输入原样记进会话记录，房间里的人都读得到；记录里哪一段是谁
+    的，只能按平台自己记下的结构认，不能按文字里的记号认——文字谁都写得进去
+    （team 的索引就是）。所以 private 索引不进输入，由 agent 自己读：那一次文件工
+    具调用落在 `private/<他>/` 下，runner 给调用和它的结果记上主人
+    （`cheese.private`），会话记录只给本人看（`session_record.privacy`）。"""
+    path = f"{MEMORY_DIR}/private/{owner}/MEMORY.md"
+    return (
+        f"这一轮答的是 {owner}。他的 private 记忆只有他本人看得到，索引在 `{path}`："
+        "这一轮动手之前先用 Read 读它，正文在同一个目录下，需要时再读。"
     )
