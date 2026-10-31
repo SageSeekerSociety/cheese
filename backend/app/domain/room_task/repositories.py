@@ -34,6 +34,10 @@ from app.domain.room_task.models import (
 )
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 def _uuids(name: str, values: Collection[uuid.UUID] | None):
     return bindparam(name, list(values or ()), type_=ARRAY(Uuid()))
 
@@ -95,7 +99,21 @@ class TaskRepository:
         self._session = session
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
-        return await self._session.get(Task, task_id)
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("task_row", task_id))
+            if found:
+                return cached
+        task = await self._session.get(Task, task_id)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("task_row", task_id),
+                task,
+                tables=frozenset({"tasks"}),
+            )
+        return task
 
     async def add(
         self,
@@ -135,6 +153,38 @@ class TaskRepository:
         that has since been deleted is a line it cannot write, not an error."""
         if not task_ids:
             return []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            cached_tasks: list[Task] = []
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_row", tid))
+                if found:
+                    if cached is not None:
+                        cached_tasks.append(cached)
+                else:
+                    missing.append(tid)
+            if not missing:
+                cached_tasks.sort(key=lambda t: (t.created_at, t.id))
+                return cached_tasks
+            stmt = (
+                select(Task)
+                .where(Task.id.in_(missing))
+                .order_by(Task.created_at, Task.id)
+            )
+            fetched = list((await self._session.scalars(stmt)).all())
+            by_id = {t.id: t for t in fetched}
+            for tid in missing:
+                remember(
+                    self._session,
+                    ("task_row", tid),
+                    by_id.get(tid),
+                    tables=frozenset({"tasks"}),
+                )
+            all_tasks = cached_tasks + fetched
+            all_tasks.sort(key=lambda t: (t.created_at, t.id))
+            return all_tasks
         stmt = (
             select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
         )

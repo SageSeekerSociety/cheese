@@ -362,6 +362,8 @@ class TopicService:
         if viewer_handle is None or not topics:
             return {}
         topic_ids = [t.id for t in topics]
+        if hasattr(self._members, "_repo"):
+            await self._members._repo.list_for_topics(topic_ids)
         joined = await self._members.joined_topic_ids(topics, viewer_handle, team=team)
         awaiting_card = await cards.reviewer_topic_ids(topic_ids, viewer_handle)
         pending = await decisions.decision_topic_ids(topic_ids, viewer_handle)

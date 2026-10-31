@@ -139,13 +139,14 @@ async def _task_actor(
 async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Actor:
     """Whoever may read this task, or this room's cards: the task's people, or
     whoever the room lets in."""
-    if place.task is not None:
-        actor, _room, _task = await _task_actor(place.conversation_id, db, resolver)
-        return actor
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
     )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
+    )
+    if place.task is not None and not actor.authenticated:
+        raise AuthenticationRequiredError()
     return actor
 
 

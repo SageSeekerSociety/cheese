@@ -165,6 +165,8 @@ async def task_rows(
     threads: Sequence[tuple[Task, Sequence[Block]]],
 ) -> list[dict]:
     """``threads`` (each task with the blocks to carry, often none) as rows."""
+    if not threads:
+        return []
     # The card each thread rides on, in ONE query for the whole room (the same
     # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
     # 人验收" are indistinguishable on screen — both are quiet — and the room

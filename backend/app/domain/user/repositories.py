@@ -28,18 +28,32 @@ class UserRepository:
         return await self.get_by_username(handle)
 
     async def get_by_username(self, username: str) -> User | None:
-        if self._session.autoflush:
-            await self._session.flush()
-        key = ("user_by_username", username)
-        found, cached = recall(self._session, key)
-        if found:
-            return cached
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            key = ("user_by_username", username)
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         stmt: Select[tuple[User]] = select(User).where(
             User.username == username, User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
         user = result.scalar_one_or_none()
-        remember(self._session, key, user, tables=frozenset({"user"}))
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("user_by_username", username),
+                user,
+                tables=frozenset({"user"}),
+            )
+            if user is not None:
+                remember(
+                    self._session,
+                    ("user_by_id", user.id),
+                    user,
+                    tables=frozenset({"user"}),
+                )
         return user
 
     async def search_accounts(self, q: str, limit: int) -> Sequence[tuple[str, str]]:
@@ -147,6 +161,12 @@ class UserRepository:
                 u = fetched.get(h)
                 if u is not None:
                     users[h] = u
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
                 remember(
                     self._session,
                     ("user_by_username", h),
@@ -156,11 +176,32 @@ class UserRepository:
         return users
 
     async def get_by_id(self, user_id: int) -> User | None:
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("user_by_id", user_id))
+            if found:
+                return cached
         stmt: Select[tuple[User]] = select(User).where(
             User.id == user_id, User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("user_by_id", user_id),
+                user,
+                tables=frozenset({"user"}),
+            )
+            if user is not None:
+                remember(
+                    self._session,
+                    ("user_by_username", user.username),
+                    user,
+                    tables=frozenset({"user"}),
+                )
+        return user
 
     async def is_username_taken(self, username: str) -> bool:
         """Case-insensitive, matching ``uq_user_username_lower`` — and a team's

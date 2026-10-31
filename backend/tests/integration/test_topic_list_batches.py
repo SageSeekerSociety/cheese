@@ -195,7 +195,23 @@ _ROOM_OF_UNION_SELECT = re.compile(
     re.IGNORECASE,
 )
 _TOPIC_MEMBERSHIPS_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM topic_memberships\b",
+    r"^\s*SELECT topic_memberships\b[^;]*?\bFROM topic_memberships\b",
+    re.IGNORECASE,
+)
+_USER_PROFILE_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM user_profile\b",
+    re.IGNORECASE,
+)
+_FAILED_TURN_BLOCKS_SELECT = re.compile(
+    r"^\s*SELECT blocks\.conversation_id, blocks\.turn_id, blocks\.created_at FROM blocks\b",
+    re.IGNORECASE,
+)
+_PROJECT_FORGES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_forges\b",
+    re.IGNORECASE,
+)
+_ACCEPT_CARDS_ALL_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM accept_cards\b",
     re.IGNORECASE,
 )
 
@@ -693,3 +709,102 @@ def test_channel_directory_deduplicates_topic_memberships_and_fallback_reads(cli
     assert _count(seen, _TOPICS_SELECT) == 2, [
         s for s in seen if _TOPICS_SELECT.search(s)
     ]
+
+
+def test_topic_members_deduplicates_room_of_profiles_bindings_and_instances(client):
+    """`GET /topics/{room_id}/members` reuses the resolved room without a
+    `room_of` UNION query, reads `user_profile` once via
+    `nickname_and_avatar_by_user_id`, and queries `topic_memberships`,
+    `agent_bindings IN (...)`, and `agent_instances` once each."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as seen:
+        r = client.get(f"/topics/{room_id}/members", headers=headers)
+    assert r.status_code == 200, r.text
+    items = r.json()["data"]["data"]
+    assert len(items) >= 2
+
+    assert _count(seen, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in seen if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(seen, _USER_PROFILE_SELECT) == 1, [
+        s for s in seen if _USER_PROFILE_SELECT.search(s)
+    ]
+    assert _count(seen, _AGENT_BINDINGS_IN_SELECT) == 1, [
+        s for s in seen if _AGENT_BINDINGS_IN_SELECT.search(s)
+    ]
+    assert _count(seen, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in seen if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(seen) <= 9, f"expected <= 9 SQL statements, got {len(seen)}: {seen}"
+
+
+def test_topic_list_and_room_header_deduplicate_memberships_and_failed_turns(client):
+    """`GET /topics?project_id=` and `GET /topics/{room_id}` each query
+    `topic_memberships` once (reusing cached pairs for `joined_topic_ids` and
+    `managed_topic_ids`) and query `FAILED_TURN_ROWS` blocks once across
+    `_unresolved_failures` and `MemberWaits.for_rooms`."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/topics?project_id={pid}", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert _count(list_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in list_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(list_sql, _FAILED_TURN_BLOCKS_SELECT) == 1, [
+        s for s in list_sql if _FAILED_TURN_BLOCKS_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as room_sql:
+        r_room = client.get(f"/topics/{room_id}", headers=headers)
+    assert r_room.status_code == 200, r_room.text
+    assert _count(room_sql, _FAILED_TURN_BLOCKS_SELECT) == 1, [
+        s for s in room_sql if _FAILED_TURN_BLOCKS_SELECT.search(s)
+    ]
+    assert len(room_sql) <= 23, (
+        f"expected <= 23 SQL statements on room header, got {len(room_sql)}: {room_sql}"
+    )
+
+
+def test_room_tasks_and_accept_cards_deduplicate_room_cards_and_forges(client):
+    """`GET /topics/{room_id}/tasks` avoids the `room_of` UNION query and
+    reuses `latest_and_counts_by_task`'s cards in `accepted_for_tasks`, while
+    `GET /topics/{task_id}/accept-card` reuses `PlaceResolver`'s room/task rows
+    and queries `project_forges` once."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    room_id = room_ids[0]
+
+    with counting_sql(client) as tasks_sql:
+        r_tasks = client.get(f"/topics/{room_id}/tasks?status=open", headers=headers)
+    assert r_tasks.status_code == 200, r_tasks.text
+    tasks_data = r_tasks.json()["data"]["data"]
+    assert len(tasks_data) == 2
+    task_id = tasks_data[0]["id"]
+
+    assert _count(tasks_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in tasks_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(tasks_sql, _ACCEPT_CARDS_ALL_SELECT) == 1, [
+        s for s in tasks_sql if _ACCEPT_CARDS_ALL_SELECT.search(s)
+    ]
+
+    with counting_sql(client) as cards_sql:
+        r_cards = client.get(f"/topics/{task_id}/accept-card", headers=headers)
+    assert r_cards.status_code == 200, r_cards.text
+    assert len(r_cards.json()["data"]["data"]) == 1
+
+    assert _count(cards_sql, _ALL_TASKS_SELECT) == 1, [
+        s for s in cards_sql if _ALL_TASKS_SELECT.search(s)
+    ]
+    assert _count(cards_sql, _PROJECT_FORGES_SELECT) == 1, [
+        s for s in cards_sql if _PROJECT_FORGES_SELECT.search(s)
+    ]
+    assert len(cards_sql) <= 10, (
+        f"expected <= 10 SQL statements on accept-card list, got {len(cards_sql)}: {cards_sql}"
+    )

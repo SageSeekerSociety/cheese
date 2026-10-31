@@ -640,6 +640,11 @@ async def describe_many(
     its task — 4,225 queries and 14 s for one `GET /topics/{id}/accept-card`.
     """
     approvals = await self._repo.approver_handles_by_card([c.id for c in cards])
+    reviewers = (
+        await self._repo.reviewer_handles_for_cards([c.id for c in cards])
+        if hasattr(self._repo, "reviewer_handles_for_cards")
+        else None
+    )
     trees = {
         tree.id: tree
         for tree in await TaskService(self._session).list_by_ids(
@@ -655,7 +660,16 @@ async def describe_many(
     for card in cards:
         out.append(
             await _render(
-                self, card, approvals, trees, rooms, projects, forges, hidden, summaries
+                self,
+                card,
+                approvals,
+                trees,
+                rooms,
+                projects,
+                forges,
+                hidden,
+                summaries,
+                reviewers=reviewers,
             )
         )
     return out
@@ -671,12 +685,18 @@ async def _render(
     forges: dict[tuple[uuid.UUID, str], forge_mod.Forge | None],
     hidden: dict[uuid.UUID, set[uuid.UUID]],
     summaries: dict[tuple[uuid.UUID, uuid.UUID], Any],
+    *,
+    reviewers: dict[uuid.UUID, list[str]] | None = None,
 ) -> dict:
     data = AcceptCardOut.model_validate(card).model_dump(mode="json")
     # 评审人在 `accept_card_reviewer` 表里，不在卡那一行上 —— 折成一句话补进来。
     # 一卡多人：`reviewer_handles` 是完整集合，`reviewer_handle` 是它的「、」拼接
     # （旧读者还在读那一个字段）。
-    handles = await self._repo.reviewer_handles(card.id)
+    handles = (
+        reviewers.get(card.id, [])
+        if reviewers is not None
+        else await self._repo.reviewer_handles(card.id)
+    )
     data["reviewer_handles"] = handles
     data["reviewer_handle"] = "、".join(handles)
     # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），

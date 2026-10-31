@@ -35,6 +35,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
     AGENT_CHECK_ROWS,
@@ -85,6 +86,10 @@ _INPUTS = table(
     column("conversation_id", Uuid),
     column("echoed_at", DateTime(timezone=True)),
 )
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 def _among(column, values, item_type):
@@ -251,6 +256,19 @@ class MemberWaits:
                 .order_by(Block.created_at)
             )
         ).all()
+        if isinstance(self._session, AsyncSession):
+            by_conv: dict[uuid.UUID, list[tuple[uuid.UUID | None, datetime]]] = {
+                cid: [] for cid in conversations
+            }
+            for cid, turn, at in failures:
+                by_conv.setdefault(cid, []).append((turn, at))
+            for cid, items in by_conv.items():
+                remember(
+                    self._session,
+                    ("failed_turn_blocks", cid),
+                    tuple(items),
+                    tables=frozenset({"blocks"}),
+                )
         if not failures:
             return {}
         since = failures[0][2]
@@ -504,17 +522,37 @@ class MemberWaits:
         answering normally) ends it. The member is whoever the turn was: the
         agent that wrote in it, or the one the message that started it was
         handed to."""
-        stmt = (
-            select(Block.conversation_id, Block.turn_id, Block.created_at)
-            .where(
-                _among(Block.conversation_id, topic_ids, Uuid),
-                Block.created_at >= since,
-                ~participant_blocks(),
-                FAILED_TURN_ROWS,
+        failures: list[tuple[uuid.UUID, uuid.UUID | None, datetime]] = []
+        missing: list[uuid.UUID] = []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            for tid in dict.fromkeys(topic_ids):
+                found_cache, cached = recall(self._session, ("failed_turn_blocks", tid))
+                if found_cache:
+                    for turn, at in cached:
+                        if at >= since:
+                            failures.append((tid, turn, at))
+                else:
+                    missing.append(tid)
+        else:
+            missing = list(topic_ids)
+        if missing:
+            stmt = (
+                select(Block.conversation_id, Block.turn_id, Block.created_at)
+                .where(
+                    _among(Block.conversation_id, missing, Uuid),
+                    Block.created_at >= since,
+                    ~participant_blocks(),
+                    FAILED_TURN_ROWS,
+                )
+                .order_by(Block.created_at)
             )
-            .order_by(Block.created_at)
-        )
-        failures = (await self._session.execute(stmt)).all()
+            failures.extend(
+                (cid, turn, at)
+                for cid, turn, at in (await self._session.execute(stmt)).all()
+            )
+            failures.sort(key=lambda row: row[2])
         owners = await self._turn_owners(
             topic_ids, since, {turn for _, turn, _ in failures if turn}
         )

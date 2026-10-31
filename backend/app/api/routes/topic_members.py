@@ -39,7 +39,7 @@ async def list_topic_members(
     topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     viewer = actor.handle if actor.authenticated else None
     items = await roster_rows(db, topic, viewer=viewer)
