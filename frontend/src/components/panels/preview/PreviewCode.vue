@@ -25,8 +25,8 @@ import { type LineRange, lineRangeIn, selectLines } from './codeSelection'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { fmtNum } from '@/lib/usageFormat'
 import { highlightLines, sourceOfLines, splitLines } from '@/lib/codeHighlight'
+import { fmtNum } from '@/lib/usageFormat'
 
 /** 一次摆多少行。见文件头量出来的那几个数：再多，滚动帧就从 16.7 ms 往上走。 */
 const CODE_WINDOW_LINES = 1_000
