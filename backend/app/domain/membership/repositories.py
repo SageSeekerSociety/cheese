@@ -362,6 +362,14 @@ class RoleRepository:
             )
 
     async def clear_role(self, *, project_id: uuid.UUID, user_handle: str) -> None:
+        if _can_cache(self._session) and not (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            found, cached = recall(
+                self._session, ("project_role_of", project_id, user_handle)
+            )
+            if found and cached is None:
+                return
         await self._session.execute(
             delete(ProjectRole).where(
                 ProjectRole.project_id == project_id,

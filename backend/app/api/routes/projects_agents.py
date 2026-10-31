@@ -365,6 +365,7 @@ async def deactivate_project_agent(
     project_id = at.project.id
     project = at.project
     service = AgentInstanceService(db)
+    await service.list_team(project_id)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     await service.deactivate(project, instance)
     return ok({"deleted": True})

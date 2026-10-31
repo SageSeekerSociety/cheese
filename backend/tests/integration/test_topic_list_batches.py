@@ -2612,8 +2612,8 @@ def test_project_invitations_avoid_agent_roster_role_lookup_and_profile_n_plus_o
     assert _count(inv_sql, _PROJECT_ROLE_DEFS_SELECT) == 0, [
         s for s in inv_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
     ]
-    assert len(inv_sql) <= 27, (
-        f"expected <= 27 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
+    assert len(inv_sql) <= 23, (
+        f"expected <= 23 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
     )
 
     client.post(
@@ -2642,4 +2642,77 @@ def test_project_invitations_avoid_agent_roster_role_lookup_and_profile_n_plus_o
     assert r_resp.status_code == 200, r_resp.text
     assert len(resp_sql) <= 12, (
         f"expected <= 12 SQL statements on POST /invitations/{{id}}/respond, got {len(resp_sql)}: {resp_sql}"
+    )
+
+
+_DELIVERIES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM deliveries\b",
+    re.IGNORECASE,
+)
+_PROJECT_ROLES_DELETE = re.compile(
+    r"^\s*DELETE\s+FROM\s+project_roles\b",
+    re.IGNORECASE,
+)
+
+
+def test_delivery_member_removal_and_agent_deactivation_deduplicate_sql(client):
+    """`Ledger.deliver` reads `notification_preference` once across in-app and
+    channel-intent handlers, reuses pinned `User` rows in `timezones_by_ids`,
+    and marks `deliveries` sent with `UPDATE ... RETURNING`; `DELETE
+    /projects/{id}/members/{handle}` reuses cached team role and skips
+    `DELETE FROM project_roles` when no role is recorded; and `DELETE
+    /projects/{id}/agents/{id}` loads `agent_instances` once."""
+    pid, _room_ids = _seed_populated_project(client)
+    post_project(client, json={"name": "Frank Proj"}, owner="frank")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as inv_sql:
+        r_inv = client.post(
+            f"/projects/{pid}/invitations",
+            json={"user_handle": "frank", "role": "member"},
+            headers=headers,
+        )
+    assert r_inv.status_code in (200, 201), r_inv.text
+    assert _count(inv_sql, _NOTIFICATION_PREF_SELECT) == 1, [
+        s for s in inv_sql if _NOTIFICATION_PREF_SELECT.search(s)
+    ]
+    assert _count(inv_sql, _DELIVERIES_SELECT) == 0, [
+        s for s in inv_sql if _DELIVERIES_SELECT.search(s)
+    ]
+    assert len(inv_sql) <= 23, (
+        f"expected <= 23 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
+    )
+
+    with counting_sql(client) as rem_sql:
+        r_rem = client.delete(
+            f"/projects/{pid}/members/bob",
+            headers=headers,
+        )
+    assert r_rem.status_code == 200, r_rem.text
+    assert _count(rem_sql, _PROJECT_ROLES_DELETE) == 0, [
+        s for s in rem_sql if _PROJECT_ROLES_DELETE.search(s)
+    ]
+    assert len(rem_sql) <= 14, (
+        f"expected <= 14 SQL statements on DELETE /projects/{{id}}/members/bob, got {len(rem_sql)}: {rem_sql}"
+    )
+
+    r_ag = client.post(
+        f"/projects/{pid}/agents",
+        json={"handle": "helper-b25", "display_name": "Helper B25"},
+        headers=headers,
+    )
+    assert r_ag.status_code in (200, 201), r_ag.text
+    aid = r_ag.json()["data"]["id"]
+
+    with counting_sql(client) as deact_sql:
+        r_deact = client.delete(
+            f"/projects/{pid}/agents/{aid}",
+            headers=headers,
+        )
+    assert r_deact.status_code == 200, r_deact.text
+    assert _count(deact_sql, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in deact_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(deact_sql) <= 6, (
+        f"expected <= 6 SQL statements on DELETE /projects/{{id}}/agents/{{id}}, got {len(deact_sql)}: {deact_sql}"
     )

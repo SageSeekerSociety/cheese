@@ -437,6 +437,10 @@ class TeamRepository:
             found, cached = recall(self._session, ("team_members", team_id))
             if found:
                 return any(r.user_id == user_id for r in cached)
+            for key_prefix in ("team_user_role", "team_member_role"):
+                found_role, role = recall(self._session, (key_prefix, team_id, user_id))
+                if found_role:
+                    return role is not None
         stmt: Select[tuple[TeamUserRelation]] = select(TeamUserRelation.id).where(  # type: ignore[assignment]
             and_(
                 TeamUserRelation.team_id == team_id,

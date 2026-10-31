@@ -23,9 +23,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import Select, delete, select, update
+from sqlalchemy import Select, delete, inspect, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from app.core.db import SessionFactory
 from app.domain import happenings
@@ -206,19 +207,34 @@ class Ledger:
 
     async def mark_sent(self, delivery_id: uuid.UUID) -> None:
         """确认回写 —— 这一笔送到了，补发不必再管它。"""
-        row = await self._session.get(Delivery, delivery_id)
-        if row is not None and row.sent_at is None:
-            row.sent_at = self._now()
-            row.state = "received"
+        if self._session.autoflush and (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            await self._session.flush()
+        now = self._now()
+        event_id = (
+            await self._session.execute(
+                update(Delivery)
+                .where(Delivery.id == delivery_id, Delivery.sent_at.is_(None))
+                .values(sent_at=now, state="received")
+                .returning(Delivery.event_id)
+            )
+        ).scalar_one_or_none()
+        if event_id is not None:
+            in_map = self._session.sync_session.identity_map.get(
+                self._session.sync_session.identity_key(Delivery, (delivery_id,))
+            )
+            if in_map is not None and not inspect(in_map).expired_attributes:
+                attributes.set_committed_value(in_map, "sent_at", now)
+                attributes.set_committed_value(in_map, "state", "received")
             await self._session.execute(
                 update(TimedDelivery)
                 .where(
-                    TimedDelivery.event_id == row.event_id,
+                    TimedDelivery.event_id == event_id,
                     TimedDelivery.delivered_at.is_(None),
                 )
-                .values(delivered_at=row.sent_at)
+                .values(delivered_at=now)
             )
-            await self._session.flush()
 
     async def resend_unsent(self, *, limit: int = 200) -> int:
         """Retry snapshotted recipients without duplicating committed intent.
