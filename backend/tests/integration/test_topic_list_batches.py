@@ -1344,3 +1344,136 @@ def test_edit_block_deduplicates_membership_count_agent_lookup_and_conversation_
     assert len(edit_sql) <= 10, (
         f"expected <= 10 SQL statements on PATCH /blocks/{{id}}, got {len(edit_sql)}: {edit_sql}"
     )
+
+
+_DOC_NODES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM document_nodes\b",
+    re.IGNORECASE,
+)
+_DOC_LINKS_DELETE = re.compile(
+    r"^\s*DELETE\s+FROM\s+document_links\b",
+    re.IGNORECASE,
+)
+_PROJECT_MEMBERS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_members\b",
+    re.IGNORECASE,
+)
+_TEAM_USER_REL_JOIN_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bJOIN team_user_relation\b",
+    re.IGNORECASE,
+)
+_ACCEPT_CARDS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM accept_cards\b",
+    re.IGNORECASE,
+)
+
+
+def test_create_project_document_skips_redundant_team_task_node_and_link_queries(
+    client,
+):
+    """`POST /projects/{project_id}/documents` reuses the cached `Project` for
+    `team_id`, skips `whose_document` on numbered project documents, avoids an
+    extra `SELECT documents.*` refresh after `set_content`, and skips querying
+    `document_nodes` or deleting `document_links` on a brand-new link-free doc."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as doc_sql:
+        r_doc = client.post(
+            f"/projects/{pid}/documents",
+            json={"title": "Spec Doc", "content": "plain markdown body"},
+            headers=headers,
+        )
+    assert r_doc.status_code == 200, r_doc.text
+    assert _count(doc_sql, _PROJECTS_SELECT) == 1, [
+        s for s in doc_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(doc_sql, _ALL_TASKS_SELECT) == 0, [
+        s for s in doc_sql if _ALL_TASKS_SELECT.search(s)
+    ]
+    assert _count(doc_sql, _DOC_NODES_SELECT) == 0, [
+        s for s in doc_sql if _DOC_NODES_SELECT.search(s)
+    ]
+    assert _count(doc_sql, _DOC_LINKS_DELETE) == 0, [
+        s for s in doc_sql if _DOC_LINKS_DELETE.search(s)
+    ]
+    assert len(doc_sql) <= 19, (
+        f"expected <= 19 SQL statements on POST /projects/{{id}}/documents, got {len(doc_sql)}: {doc_sql}"
+    )
+
+
+def test_list_project_members_deduplicates_project_members_owner_profile_and_team_roles(
+    client,
+):
+    """`GET /projects/{project_id}/members` reads `project_members` and
+    `"user" JOIN team_user_relation` once each and resolves the owner's profile
+    from the loaded team/member rows instead of issuing a separate query."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as mem_sql:
+        r_mem = client.get(f"/projects/{pid}/members", headers=headers)
+    assert r_mem.status_code == 200, r_mem.text
+    assert _count(mem_sql, _PROJECT_MEMBERS_SELECT) == 1, [
+        s for s in mem_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert _count(mem_sql, _TEAM_USER_REL_JOIN_SELECT) == 1, [
+        s for s in mem_sql if _TEAM_USER_REL_JOIN_SELECT.search(s)
+    ]
+    assert len(mem_sql) <= 15, (
+        f"expected <= 15 SQL statements on GET /projects/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    )
+
+
+def test_task_close_reopen_and_topic_children_avoid_redundant_lock_and_card_queries(
+    client,
+):
+    """`POST /topics/{task}/close`, `POST /topics/{task}/reopen`, and
+    `GET /topics/{id}/children` reuse identity-mapped task/room rows across
+    `lock_task_for_change` and `announce`, and `conclude_task` reads
+    `accept_cards` once."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as close_sql:
+        r_close = client.post(
+            f"/topics/{task_id}/close",
+            json={"conclusion": "done"},
+            headers=headers,
+        )
+    assert r_close.status_code == 200, r_close.text
+    assert _count(close_sql, _TOPICS_SELECT) == 1, [
+        s for s in close_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(close_sql, _ACCEPT_CARDS_SELECT) == 1, [
+        s for s in close_sql if _ACCEPT_CARDS_SELECT.search(s)
+    ]
+    assert len(close_sql) <= 18, (
+        f"expected <= 18 SQL statements on POST /topics/{{task}}/close, got {len(close_sql)}: {close_sql}"
+    )
+
+    with counting_sql(client) as reopen_sql:
+        r_reopen = client.post(
+            f"/topics/{task_id}/reopen",
+            json={},
+            headers=headers,
+        )
+    assert r_reopen.status_code == 200, r_reopen.text
+    assert len(reopen_sql) <= 17, (
+        f"expected <= 17 SQL statements on POST /topics/{{task}}/reopen, got {len(reopen_sql)}: {reopen_sql}"
+    )
+
+    with counting_sql(client) as child_sql:
+        r_child = client.get(f"/topics/{ch}/children", headers=headers)
+    assert r_child.status_code == 200, r_child.text
+    assert _count(child_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in child_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(child_sql) <= 4, (
+        f"expected <= 4 SQL statements on GET /topics/{{id}}/children, got {len(child_sql)}: {child_sql}"
+    )

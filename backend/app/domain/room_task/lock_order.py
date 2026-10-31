@@ -95,12 +95,24 @@ def _said_around(session: Session, task_ids: Iterable[uuid.UUID]) -> set[uuid.UU
     task_ids = list(task_ids)
     if not task_ids:
         return set()
+    rows: list[tuple[uuid.UUID, uuid.UUID | None]] = []
+    missing: list[uuid.UUID] = []
+    for tid in task_ids:
+        cached = session.identity_map.get(session.identity_key(Task, (tid,)))
+        if cached is not None:
+            rows.append((cached.room_id, cached.upgraded_from_block_id))
+        else:
+            missing.append(tid)
     connection = session.connection()
-    rows = connection.execute(
-        select(_TASK_ROWS.c.room_id, _TASK_ROWS.c.upgraded_from_block_id).where(
-            _TASK_ROWS.c.id.in_(task_ids)
+    if missing:
+        rows.extend(
+            (r[0], r[1])
+            for r in connection.execute(
+                select(_TASK_ROWS.c.room_id, _TASK_ROWS.c.upgraded_from_block_id).where(
+                    _TASK_ROWS.c.id.in_(missing)
+                )
+            ).all()
         )
-    ).all()
     around = {room_id for room_id, _origin in rows}
     origins = [origin for _room, origin in rows if origin is not None]
     if origins:

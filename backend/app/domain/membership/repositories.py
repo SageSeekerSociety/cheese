@@ -107,12 +107,26 @@ class MemberRepository:
         return await self._session.scalar(stmt)
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMember]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_member_rows", project_id))
+            if found:
+                return list(cached)
         stmt = (
             select(ProjectMember)
             .where(ProjectMember.project_id == project_id)
             .order_by(ProjectMember.created_at.asc())
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_rows", project_id),
+                tuple(rows),
+                tables=frozenset({"project_members"}),
+            )
+        return rows
 
     async def delete(self, member: ProjectMember) -> None:
         await self._session.delete(member)

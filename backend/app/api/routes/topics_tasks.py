@@ -304,6 +304,7 @@ async def conclude_task(
         machines=checkout_sweep.sweep,
     )
     close_pr_after_commit(db, task)
+    latest_card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     # 活关掉了，它还没结算的卡跟着作废：卡不能比它挂着的活活得久。判据和归档
     # 那条路共用（`review.archive`）；PR 怎么处置是上面 `task_pr` 的事，这里
     # 只让审阅停下来。
@@ -333,7 +334,7 @@ async def conclude_task(
     # The 支线 line under the message the task was made from is said by its AI
     # teammate, so whose teammate it is comes in here too.
     await tell_origin(db, task, ended, task_teammate=task_teammate)
-    out = await task_out(db, task, me=actor.handle or "")
+    out = await task_out(db, task, latest_card, me=actor.handle or "")
     await db.commit()
     return ok(out)
 

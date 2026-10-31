@@ -162,7 +162,7 @@ async def store(
     )
     changed = recorded is not None
     if changed:
-        await doc_links.sync(db, doc, content)
+        await doc_links.sync(db, doc, content, before=before)
     outside = (
         await tell_new_mentions(db, doc, before=before, after=content, actors=actors)
         if changed and not quiet

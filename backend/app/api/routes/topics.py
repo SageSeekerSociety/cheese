@@ -1087,7 +1087,7 @@ async def list_topic_children(
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     children = await TopicService(db).list_children(topic_id)
     # 综合 is every channel's parent: a private one is listed to its people only.
