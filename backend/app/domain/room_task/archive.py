@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.output_effects import hold_numbering_now
+from app.domain.conversation.numbering import hold_numbering_now
 from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService

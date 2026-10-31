@@ -28,7 +28,7 @@ from app.api.deps import get_work_runner
 from app.api.routes import topics_tasks
 from app.domain.agent.turn.intake import human
 from app.domain.block.adapters import platform_line
-from app.domain.block.output_effects import NumberingOutOfOrder
+from app.domain.conversation.numbering import NumberingOutOfOrder
 from app.domain.event_about import EventAbout
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task import closing, heard

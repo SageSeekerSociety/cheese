@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.ask import ask
+from app.domain.agent.ask import ask, owner_chat
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     owned_by_seat,
@@ -71,6 +71,26 @@ async def named_own_seats(session: AsyncSession, topic, content: str) -> list[st
         owners = {instance: username for instance, username in rows.all()}
         seats = {own: seat for own, seat in seats.items() if owners.get(own) in people}
     return list(seats.values())
+
+
+async def owner_chats_to_ask(
+    session: AsyncSession, room, seats: list[str]
+) -> list[uuid.UUID]:
+    """The private chats `ask_owner_to_join` would say something in when these
+    seats are seated in ``room`` now: one per personal agent among them not
+    seated there yet. Opened here if they are not yet, so a change can name
+    them with everything else it writes into (`conversation.numbering`)."""
+    if not seats or is_private_chat(room):
+        return []
+    seated = set(await TopicMemberService(session).agent_handles(room.id))
+    chats = []
+    for seat in seats:
+        if seat in seated:
+            continue
+        chat = await owner_chat(session, room.project_id, seat)
+        if chat is not None:
+            chats.append(chat[0].id)
+    return chats
 
 
 async def ask_owner_to_join(session: AsyncSession, room, seat: str) -> None:

@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -13,9 +13,10 @@ from app.core.sentences import say
 from app.core.work_context import parse_work_id
 from app.domain.block.adapters import dump_blocks_json
 from app.domain.block.models import BY_ASSISTANT_META_KEY, Block, BlockKind
-from app.domain.block.output_effects import append_output, hold_numbering
+from app.domain.block.output_effects import append_output
 from app.domain.block.queries import message_reply_target
 from app.domain.block.schemas import reply_preview
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -139,6 +140,8 @@ async def persist_human_message(
     by_assistant: bool = False,
     handoff: HumanHandoff | None = None,
     expects_agent: bool = False,
+    said_in: Callable[[AsyncSession, Place, str], Awaitable[Iterable[uuid.UUID]]]
+    | None = None,
 ) -> StoredHuman:
     async with sessions() as session:
         # A room's own line, or a task's conversation in it.
@@ -185,7 +188,16 @@ async def persist_human_message(
         # committed before it is read here, one after it lands after this
         # message. The task row is read without a lock of its own: a lock on
         # it would be a second one, which the changes take in the other order.
-        await hold_numbering(session, place.conversation_id)
+        # With every other conversation the message will say something in
+        # (``said_in``: the private chat a personal agent it seats asks its
+        # owner in), in one batch (`conversation.numbering`).
+        await lock_conversations(
+            session,
+            [
+                place.conversation_id,
+                *(await said_in(session, place, content) if said_in else ()),
+            ],
+        )
         if place.task is not None:
             # The place may be the request's copy, read before this
             # transaction began.

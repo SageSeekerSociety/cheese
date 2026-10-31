@@ -28,6 +28,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.event_about import EventAbout
@@ -643,6 +644,17 @@ class TopicService:
         结束了 —— 那句话要落在每条活自己的支线里（`PlatformLine` 写下去），房间
         自己那条归档的话落在房间上，而后来的谁打开这条支线，看到的是一句说到一半
         就没了的活。"""
+        # Every conversation archiving these rooms says something in — each
+        # room, where it is said (`_where_said`), each task in them and the
+        # 支线 it was made from — at once,
+        # before anything else is written (`conversation.numbering`).
+        said_in = {room.id for room in rooms}
+        for room in rooms:
+            said_in.add(await self._where_said(room))
+        said_in.update(
+            await self._repo.task_conversations_in([room.id for room in rooms])
+        )
+        await lock_conversations(self._session, said_in)
         titles = {room.id: room for room in rooms}
         for task_id, room_id in await close_tasks(
             self._session, [room.id for room in rooms]

@@ -1,93 +1,72 @@
-"""One lock order for a task and its conversation: the conversation's numbering
-first, then the task's row.
+"""A task and its conversation, in the one numbering order (`conversation.numbering`).
 
-Two locks meet whenever a task changes. Every block written into the task's
-conversation takes its numbering lock (the advisory lock of `block_numbered()`,
-`block.output_effects.hold_numbering`), and a change to the task takes its row.
-A message sent in the task takes only the first, and reads the task without
-locking it (`agent.turn.store.human`). A change that says so in the
-conversation and then writes the row (a teammate given back, the owner handed
-over) took them in this order; one that locked or wrote the row and then said
-so (a close, a rename, the write-up closers) took them in the other, and the two
-kinds aborted each other as deadlocks.
+A change to a task takes its conversation's numbering lock and then its row.
+The numbering comes first, in the batch of every conversation the transaction
+will write into (`conversation.numbering`); the row after. A message sent in a task
+takes only the numbering, and reads the task without locking it
+(`agent.turn.store.human`).
 
-So every transaction takes them in one order, numbering then row, and this
-module holds it there:
-
-- `lock_task_for_change` is how a change reads the task it is about to change:
-  the numbering, then the row FOR NO KEY UPDATE (what an UPDATE of the row
-  takes, so a row that a foreign key only shares, a title's or a delivery's,
-  does not wait on it).
-- A write of a task row the change did not lock first (an ORM flush, a bulk
-  `UPDATE tasks`, a `SELECT … FOR SHARE` / `FOR NO KEY UPDATE` of tasks) takes
-  the numbering of each task it names first, here, before the statement runs.
+- `lock_task_for_change` / `lock_tasks_for_change` is how a change reads the
+  tasks it is about to change: their numbering, with each one's room and the
+  支线 it came from (where a change says how it went) and every other
+  conversation it will say something in (``also``), in one batch; then each row FOR NO KEY
+  UPDATE, in id order (what an UPDATE takes, so a row a foreign key only
+  shares does not wait on it).
+- A task row written without them (an ORM flush, a bulk `UPDATE tasks`, a
+  `SELECT … FOR SHARE` / `FOR NO KEY UPDATE`) takes its numbering here before
+  the statement runs, under the same batch rule.
 - `SELECT … FOR UPDATE` of tasks is refused: it conflicts with the key share a
-  foreign key takes, and a transaction holding that share while it waits for
-  the numbering would close a cycle. Lock through `lock_task_for_change`, or
-  with ``key_share=True``.
-- A task write that names no task by id is refused: whose numbering it needs
-  cannot be told.
-- A task this transaction inserted is left out: nobody else sees its row until
-  it commits.
-
-Several tasks in one transaction (archiving a project, the overdue sweep) take
-every one of their numbering locks at once, in conversation id order, before
-any of their rows: `lock_tasks_for_change` with the whole set. Two such
-transactions over overlapping tasks then meet at the first task they share,
-and the one that waits holds nothing the other needs. A transaction that holds
-some numbering and then asks for another is refused
-(`block.output_effects.NumberingOutOfOrder`), wherever the ask comes from: the
-helpers, or a task row written later in the transaction. A line already
-written into any conversation counts as held: the insert took that
-conversation's numbering in the trigger. So a task is locked before anything
-is said anywhere else in its transaction (a close says how it ended in the
-room after locking the task; the reverse order is the one refused).
-
-A transaction that only writes lines, into several conversations and touching
-no task row, names them all first too where it can reach tasks' conversations
-(the failed-resume report, `agent.turn_resume`). Lines into several rooms'
-main lines in an order of their own are outside this rule.
+  foreign key takes. A task write that names no task by id is refused: whose
+  numbering it needs cannot be told.
 """
 
 import uuid
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from sqlalchemy import Delete, Select, Update, event
+from sqlalchemy import Delete, Select, Update, Uuid, column, event, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import ORMExecuteState, Session
 from sqlalchemy.sql import operators, visitors
 from sqlalchemy.sql.elements import BinaryExpression, BindParameter
 from sqlalchemy.sql.util import find_tables
 
-from app.domain.block.output_effects import hold_numbering, hold_numbering_now
+from app.domain.conversation.numbering import (
+    CREATED_KEY,
+    NUMBERING_HELD_KEY,
+    hold_numbering_now,
+    lock_conversations,
+    needed_in_flush,
+)
 from app.domain.room_task.models import Task
 
 _TASKS = "tasks"
 
 
 async def lock_task_for_change(
-    session: AsyncSession, task_id: uuid.UUID
+    session: AsyncSession, task_id: uuid.UUID, *, also: Iterable[uuid.UUID] = ()
 ) -> Task | None:
-    """``task_id`` read for a change, under the lock order above: its
-    conversation's numbering (a task's conversation id is its own), then its
-    row FOR NO KEY UPDATE, read again from the database. None when there is no
-    such task."""
-    await hold_numbering(session, task_id)
-    return await session.get(
-        Task, task_id, with_for_update={"key_share": True}, populate_existing=True
-    )
+    """``task_id`` read for a change: its conversation's numbering (a task's
+    conversation id is its own) with ``also`` in one batch, then its row FOR
+    NO KEY UPDATE, read again from the database. None when there is no such
+    task."""
+    found = await lock_tasks_for_change(session, [task_id], also=also)
+    return found[0] if found else None
 
 
 async def lock_tasks_for_change(
-    session: AsyncSession, task_ids: Iterable[uuid.UUID]
+    session: AsyncSession,
+    task_ids: Iterable[uuid.UUID],
+    *,
+    also: Iterable[uuid.UUID] = (),
 ) -> list[Task]:
-    """Every one of ``task_ids`` read for a change: all their numbering at
-    once, in id order, then each row FOR NO KEY UPDATE in that order. The
-    tasks that exist, in that order. The way a transaction touching several
-    tasks starts; a task it reaches afterwards is refused."""
+    """Every one of ``task_ids`` read for a change: their numbering with
+    ``also`` (every other conversation the change will write into) in one
+    batch, then each row FOR NO KEY UPDATE in id order. The tasks that exist,
+    in that order."""
     ordered = sorted(set(task_ids), key=str)
-    await session.run_sync(hold_numbering_now, ordered)
+    around = await session.run_sync(_said_around, ordered)
+    await lock_conversations(session, [*ordered, *around, *also])
     found = []
     for task_id in ordered:
         task = await session.get(
@@ -96,6 +75,41 @@ async def lock_tasks_for_change(
         if task is not None:
             found.append(task)
     return found
+
+
+_THREADS = table("threads", column("id", Uuid), column("root_block_id", Uuid))
+_TASK_ROWS = table(
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("upgraded_from_block_id", Uuid),
+)
+
+
+def _said_around(session: Session, task_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+    """Where a change to these tasks also says something: each one's room
+    (how it ended, what it left undone) and the 支线 under the message it was
+    made from (`review.task_landing.tell_origin`). A 支线 not opened yet is
+    opened by the change itself, and needs no lock. Read on the session's own
+    connection: it runs inside a flush or a statement's execution too."""
+    task_ids = list(task_ids)
+    if not task_ids:
+        return set()
+    connection = session.connection()
+    rows = connection.execute(
+        select(_TASK_ROWS.c.room_id, _TASK_ROWS.c.upgraded_from_block_id).where(
+            _TASK_ROWS.c.id.in_(task_ids)
+        )
+    ).all()
+    around = {room_id for room_id, _origin in rows}
+    origins = [origin for _room, origin in rows if origin is not None]
+    if origins:
+        around.update(
+            connection.execute(
+                select(_THREADS.c.id).where(_THREADS.c.root_block_id.in_(origins))
+            ).scalars()
+        )
+    return around
 
 
 def _names_tasks(table: Any) -> bool:
@@ -164,46 +178,30 @@ def _numbering_before_task_statements(state: ORMExecuteState) -> None:
             "a write or lock of tasks must name its tasks by id "
             "(tasks.id = … or tasks.id IN …) to take their numbering first"
         )
-    hold_numbering_now(state.session, _not_inserted_here(state.session, ids))
-
-
-@event.listens_for(Session, "before_flush")
-def _numbering_before_task_rows(session: Session, _context, _instances) -> None:
+    # A task named here and not yet held: its room and origin 支线 come in the
+    # same batch, as with `lock_task_for_change`.
     hold_numbering_now(
-        session,
-        _not_inserted_here(
-            session,
-            [
-                *(
-                    row.id
-                    for row in session.dirty
-                    if isinstance(row, Task) and session.is_modified(row)
-                ),
-                *(row.id for row in session.deleted if isinstance(row, Task)),
-            ],
-        ),
+        state.session, [*ids, *_said_around(state.session, _fresh(state.session, ids))]
     )
 
 
-#: `Session.info` key: the tasks this transaction inserted. Nobody else sees
-#: their rows until it commits, so writing them waits on nobody and needs no
-#: numbering first.
-_INSERTED = "tasks_inserted"
+@needed_in_flush
+def _task_rows_in_flush(session: Session) -> list[uuid.UUID]:
+    written = [
+        *(
+            row.id
+            for row in session.dirty
+            if isinstance(row, Task) and session.is_modified(row)
+        ),
+        *(row.id for row in session.deleted if isinstance(row, Task)),
+    ]
+    return [*written, *_said_around(session, _fresh(session, written))]
 
 
-def _not_inserted_here(session: Session, ids: Iterable[uuid.UUID]) -> list[uuid.UUID]:
-    inserted = session.info.get(_INSERTED, ())
-    return [task_id for task_id in ids if task_id not in inserted]
-
-
-@event.listens_for(Session, "after_flush")
-def _note_inserted_tasks(session: Session, _context) -> None:
-    new = [row.id for row in session.new if isinstance(row, Task)]
-    if new:
-        session.info.setdefault(_INSERTED, set()).update(new)
-
-
-@event.listens_for(Session, "after_transaction_end")
-def _forget_inserted_tasks(session: Session, transaction) -> None:
-    if transaction.parent is None:
-        session.info.pop(_INSERTED, None)
+def _fresh(session: Session, task_ids) -> list[uuid.UUID]:
+    """The tasks among these whose numbering this transaction does not hold
+    yet and that it did not create: a change reaching them now brings their
+    room and origin 支线 into the same batch."""
+    held = session.info.get(NUMBERING_HELD_KEY, {})
+    created = session.info.get(CREATED_KEY, ())
+    return [one for one in task_ids if one not in held and one not in created]

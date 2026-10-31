@@ -45,6 +45,16 @@ from app.domain.thread.services import answered_in, thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
 
+async def _owner_chats_named(session: AsyncSession, place: Place, content: str):
+    """The private chats a message seating the personal agents it names asks
+    their owners in (`own_calls.seat_if_named`)."""
+    return await own_calls.owner_chats_to_ask(
+        session,
+        place.room,
+        await own_calls.named_own_seats(session, place.room, content),
+    )
+
+
 async def prepare_human(
     session: AsyncSession,
     place: Place,
@@ -362,6 +372,7 @@ class HumanMessages:
         stored = await persist_human_message(
             self.sessions,
             prepare=partial(prepare_human, handoff=handoff),
+            said_in=_owner_chats_named,
             refuse=refuse_call,
             record_effects=record_human_effects,
             topic_id=topic_id,

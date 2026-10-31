@@ -248,6 +248,12 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
         return self.device_connection_secret or self.jwt_secret
 
     environment: str = "development"
+    # A transaction asking for a conversation's numbering lock after it holds
+    # others (`conversation.numbering`): raised when True, logged as an error
+    # otherwise. The tests raise, so a writer that reaches a second
+    # conversation late cannot pass CI; a deployment logs, so a writer the
+    # tests do not reach keeps working as it did and the log names it.
+    strict_numbering_order: bool = False
     # "This process was started by the deploy compose file" — a fact that does NOT
     # travel through the box's env file (#439). It is a literal in the compose
     # `environment:` block, beside STORAGE_LOCAL_PATH and HOME, so it survives the

@@ -61,7 +61,7 @@ from app.domain.agent.run_records import publish
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
-from app.domain.block.output_effects import hold_numbering_now
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of, room_of_thread, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery.models import Delivery
@@ -415,14 +415,18 @@ async def report_failed_deliveries(sessions: SessionFactory) -> int:
                 .with_for_update(of=TurnResume, skip_locked=True)
             )
         )
-        # Several conversations, tasks' among them, are told here: their
-        # numbering is taken at once, in one order, before the first line
-        # (`room_task.lock_order`), not as each line reaches its conversation.
-        await session.run_sync(
-            hold_numbering_now, [row.conversation_id for row in rows]
+        # Every conversation told here and its room, at once, before the first
+        # line (`conversation.numbering`), not as each line reaches its conversation.
+        rooms = {row.id: await room_of(session, row.conversation_id) for row in rows}
+        await lock_conversations(
+            session,
+            [
+                *(row.conversation_id for row in rows),
+                *(room for room in rooms.values() if room is not None),
+            ],
         )
         for row in rows:
-            room = await room_of(session, row.conversation_id)
+            room = rooms[row.id]
             row.dropped_at = _now()
             row.dropped_reason = DELIVERY_FAILED
             kept = await record(

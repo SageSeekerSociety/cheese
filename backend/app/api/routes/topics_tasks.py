@@ -73,7 +73,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
-from app.domain.agent.own_calls import ask_owner_to_join
+from app.domain.agent.own_calls import ask_owner_to_join, owner_chats_to_ask
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import (
     project_team,
@@ -479,9 +479,19 @@ async def update_task(
     teammate, and brings collaborators in or lets them go. A collaborator may
     only take themself off the list."""
     place, actor, task = await task_conversation(db, resolver, topic_id)
-    # Before anything else is locked: the task lock order (`lock_order`); the
+    # Before anything else is locked: the task lock order (`lock_order`), with
+    # the private chat a newly given personal agent's owner is asked in; the
     # task read above is read again under it.
-    await lock_task_for_change(db, task.id)
+    given = (
+        (body.agent_handle or "").strip() or None
+        if "agent_handle" in body.model_fields_set
+        else None
+    )
+    await lock_task_for_change(
+        db,
+        task.id,
+        also=await owner_chats_to_ask(db, place.room, [given] if given else []),
+    )
     if not actor.authenticated:
         raise ForbiddenError(say("taskOwnerOnly"))
     TaskService.require_open(task)

@@ -200,6 +200,9 @@ class TopicRepository:
     async def has_open_tasks(self, room_id: uuid.UUID) -> bool:
         return await reads.has_open_tasks(self, room_id=room_id)
 
+    async def task_conversations_in(self, room_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        return await reads.task_conversations_in(self, room_ids=room_ids)
+
     # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
 
     async def replied_to_me(

@@ -442,18 +442,24 @@ async def close_overdue(
     something else is being done or asked for in it — and, past
     `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
     now = datetime.now(UTC)
-    overdue = list(
-        await session.scalars(
-            select(Task.id).where(
+    overdue = (
+        await session.execute(
+            select(Task.id, Task.room_id).where(
                 Task.closing_since.is_not(None),
                 Task.closing_since < now - CLOSE_AT_THE_LATEST,
             )
         )
-    )
+    ).all()
     closed = []
-    # Every one of them at once, before any is looked at (`lock_order`); as in
-    # `close_after_summary`, a message being sent in one is seen, not stopped.
-    for task in await lock_tasks_for_change(session, overdue):
+    # Every one of them at once, with the rooms told what a close left undone
+    # (`review.room_notices.tell_room_undelivered`), before any is looked at
+    # (`lock_order`); as in `close_after_summary`, a message being sent in one
+    # is seen, not stopped.
+    for task in await lock_tasks_for_change(
+        session,
+        [task_id for task_id, _room in overdue],
+        also=[room_id for _task, room_id in overdue],
+    ):
         if task.closing_since is None:
             continue
         left = await unfinished_work(session, task.id)
