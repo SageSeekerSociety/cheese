@@ -67,3 +67,28 @@ def test_an_invitation_by_email_reaches_that_person(api_client, team):
 
     assert sent.status_code == 201, sent.text
     assert team["id"] in pending_team_ids(api_client, team["friend"])
+
+
+def test_one_account_cannot_test_a_long_list_of_addresses(
+    api_client, team, monkeypatch
+):
+    """Lookups are budgeted per account: past the budget the answer is 429,
+    whether or not the address has an account."""
+    from app.api.routes.users import directory
+
+    monkeypatch.setattr(directory, "LOOKUPS_PER_WINDOW", 2)
+    owner = team["owner"]
+    asked = [
+        api_client.get("/users/lookup", params={"q": q}, headers=auth(owner))
+        for q in (team["friend"].username, "nobody@example.invalid")
+    ]
+    assert [r.status_code for r in asked] == [200, 404]
+    refused = api_client.get(
+        "/users/lookup", params={"q": team["friend"].username}, headers=auth(owner)
+    )
+    assert refused.status_code == 429, refused.text
+    # Another account's budget is its own.
+    friend = api_client.get(
+        "/users/lookup", params={"q": owner.username}, headers=auth(team["friend"])
+    )
+    assert friend.status_code == 200, friend.text
