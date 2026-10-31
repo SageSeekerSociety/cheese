@@ -36,6 +36,7 @@ from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
 from app.domain.integration import periodic as integration_periodic
 from app.domain.machine import periodic as machine_periodic
+from app.domain.memory import periodic as memory_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
 from app.domain.review import periodic as review_periodic
@@ -97,6 +98,7 @@ PERIODIC_JOB_NAMES = (
     "task deadline sweep",
     "starter code pushes",
     "memory dream",
+    "memory history retention",
     "platform model roles refresh",
     "model spend cap alert",
     "relay balance check",
@@ -250,6 +252,7 @@ def periodic_jobs(
         machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    memory_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(
         jobs,
         sessions=sessions,

@@ -13,6 +13,7 @@ from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.opening import build_session_opening
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore, memory_index
+from app.domain.memory.writers import MemoryWriter
 from app.domain.session_record import service
 from app.domain.session_record.models import SessionRecord
 from tests.integration.conftest import (
@@ -60,6 +61,7 @@ def _opened_for_alice(
                     content=text,
                     updated_by="alice",
                     expected_version=None,
+                    writer=MemoryWriter.panel,
                 )
             opening = build_session_opening(
                 keeps_memory=True,

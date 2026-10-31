@@ -17,6 +17,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ResourceUsage
@@ -78,6 +79,7 @@ async def _dreaming_project(factory, tmp_path, fake):
             content=_note("rule"),
             updated_by="alice",
             expected_version=None,
+            writer=MemoryWriter.panel,
         )
         # Enough written since the last dream for one to run.
         await UsageRepository(session).add(
