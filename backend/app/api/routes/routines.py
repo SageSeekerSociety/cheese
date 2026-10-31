@@ -45,6 +45,7 @@ from app.domain.routine.models import Routine, RoutineRun, RoutineTemplate
 from app.domain.routine.service import RoutineService
 from app.domain.routine.templates import RoutineTemplateService
 from app.domain.routine.trigger import describe_trigger
+from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.windows import month_end, month_of, month_start
@@ -221,7 +222,12 @@ async def _manages_project(
 
 
 async def _sees_room(
-    db: AsyncSession, actor: Actor, project_id: uuid.UUID, topic_id: uuid.UUID
+    db: AsyncSession,
+    actor: Actor,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    room: Topic | None = None,
 ) -> bool:
     """May ``actor`` read what happens in this room: it is in the channel (the
     channel's own AI teammate included), or it manages the project.
@@ -232,8 +238,11 @@ async def _sees_room(
     """
     if not settings.authz_enforce_topic_access:
         return True
-    seated = await TopicMemberService(db).joined_ids(
-        [topic_id], actor.handle, team=project_team
+    members = TopicMemberService(db)
+    seated = (
+        await members.joined_topic_ids([room], actor.handle, team=project_team)
+        if room is not None
+        else await members.joined_ids([topic_id], actor.handle, team=project_team)
     )
     if topic_id in seated:
         return True
@@ -245,14 +254,23 @@ async def _viewer(
     resolver: ActorResolver,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
+    *,
+    room: Topic | None = None,
+    preload_roster: bool = False,
 ) -> Actor:
     """The caller, once it is settled that this room's rules are theirs to see."""
     actor = await resolver.resolve(project_id=project_id, topic_id=topic_id)
+    if preload_roster and room is not None:
+        await TopicMemberService(db)._repo.list_for_topic(room.id)
     await resolver.authorize_topic(
-        actor, project_id=project_id, topic_id=topic_id, enforce=True
+        actor, project_id=project_id, topic_id=topic_id, room=room, enforce=True
     )
     if not resolver.on_the_dev_credential(actor) and not await _sees_room(
-        db, actor, project_id, topic_id
+        db,
+        actor,
+        project_id,
+        topic_id,
+        room=room,
     ):
         raise ForbiddenError(say("routinesRoomMemberOnly"))
     return actor
@@ -262,7 +280,10 @@ async def _routine_actor(
     db: AsyncSession, resolver: ActorResolver, routine_id: uuid.UUID
 ) -> tuple[Routine, Actor]:
     row = await RoutineService(db).get(routine_id)
-    actor = await _viewer(db, resolver, row.project_id, row.topic_id)
+    room = await TopicService(db).get(row.topic_id)
+    if room is not None and isinstance(db, AsyncSession):
+        db.sync_session.info.setdefault("_pinned_rows", []).append(room)
+    actor = await _viewer(db, resolver, row.project_id, row.topic_id, room=room)
     return row, actor
 
 
@@ -298,7 +319,12 @@ async def _can_delete(db: AsyncSession, actor: Actor, row: Routine) -> bool:
 
 
 async def _present(
-    db: AsyncSession, actor: Actor, rows: list[Routine], *, admin: bool
+    db: AsyncSession,
+    actor: Actor,
+    rows: list[Routine],
+    *,
+    admin: bool,
+    fresh: bool = False,
 ) -> list[dict]:
     """The rows as this caller gets them, carrying the two flags the frontend
     draws buttons from: ``can_delete`` (may this caller take it away) and
@@ -317,12 +343,17 @@ async def _present(
     """
     service = RoutineService(db)
     archived = await service.archived_room_ids([r.topic_id for r in rows])
-    latest = await service.latest_run_statuses([r.id for r in rows])
+    latest = {} if fresh else await service.latest_run_statuses([r.id for r in rows])
     month = month_of(datetime.now(UTC))
-    credits = await service.credits_by_rule(
-        [r.id for r in rows],
-        since=month_start(month),
-        until=month_end(month),
+    run_ids = [r.id for r in rows if r.id in latest]
+    credits = (
+        await service.credits_by_rule(
+            run_ids,
+            since=month_start(month),
+            until=month_end(month),
+        )
+        if run_ids
+        else {}
     )
     return [
         _routine(
@@ -336,9 +367,22 @@ async def _present(
     ]
 
 
-async def _present_one(db: AsyncSession, actor: Actor, row: Routine) -> dict:
-    admin = await _manages_project(db, actor, row.project_id)
-    return (await _present(db, actor, [row], admin=admin))[0]
+async def _present_one(
+    db: AsyncSession,
+    actor: Actor,
+    row: Routine,
+    *,
+    admin: bool | None = None,
+    fresh: bool = False,
+) -> dict:
+    if admin is None:
+        if not _is_person(actor) or (
+            bool(actor.handle) and actor.handle == row.owner_handle
+        ):
+            admin = False
+        else:
+            admin = await _manages_project(db, actor, row.project_id)
+    return (await _present(db, actor, [row], admin=admin, fresh=fresh))[0]
 
 
 async def _speaker(db: AsyncSession, actor: Actor, room_id: uuid.UUID) -> str:
@@ -414,10 +458,19 @@ async def create_routine(
     topic_id: uuid.UUID, body: RoutineIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     place = await place_or_404(db, topic_id)
-    actor = await _viewer(db, resolver, place.project_id, topic_id)
-    room = await TopicService(db).get(place.room_id)
+    room = place.room or await TopicService(db).get(place.room_id)
     if room is None:
         raise NotFoundError(say("topicNotFound"))
+    if isinstance(db, AsyncSession):
+        db.sync_session.info.setdefault("_pinned_rows", []).append(room)
+    actor = await _viewer(
+        db,
+        resolver,
+        place.project_id,
+        topic_id,
+        room=room,
+        preload_roster=True,
+    )
     row = await RoutineService(db).create(
         topic=room,
         by=await _speaker(db, actor, room.id),
@@ -431,7 +484,7 @@ async def create_routine(
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
     )
-    presented = await _present_one(db, actor, row)
+    presented = await _present_one(db, actor, row, fresh=True)
     await db.commit()
     return ok(presented)
 
@@ -445,8 +498,12 @@ async def get_routine(
     service = RoutineService(db)
     runs, _ = await service.runs(row.id)
     month = month_of(datetime.now(UTC))
-    per_run = await service.credits_by_run(
-        runs, since=month_start(month), until=month_end(month)
+    per_run = (
+        await service.credits_by_run(
+            runs, since=month_start(month), until=month_end(month)
+        )
+        if runs
+        else {}
     )
     return ok(
         {
@@ -461,10 +518,16 @@ async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
+    admin = (
+        False
+        if not _is_person(actor)
+        or (bool(actor.handle) and actor.handle == row.owner_handle)
+        else await _manages_project(db, actor, row.project_id)
+    )
     row = await RoutineService(db).update(
         row, changes=body.model_dump(exclude_unset=True)
     )
-    presented = await _present_one(db, actor, row)
+    presented = await _present_one(db, actor, row, admin=admin)
     await db.commit()
     return ok(presented)
 
@@ -474,9 +537,15 @@ async def pause_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
+    admin = (
+        False
+        if not _is_person(actor)
+        or (bool(actor.handle) and actor.handle == row.owner_handle)
+        else await _manages_project(db, actor, row.project_id)
+    )
     # 看得到就改得动，暂停也一样：暂停停下的是执行，不是新工作。
     row = await RoutineService(db).pause(row)
-    presented = await _present_one(db, actor, row)
+    presented = await _present_one(db, actor, row, admin=admin)
     await db.commit()
     return ok(presented)
 
@@ -489,8 +558,13 @@ async def resume_routine(
     # A teammate may pause a rule, never start one again: what it paused, a
     # person decides to resume.
     _person(actor, say("routineResume"))
+    admin = (
+        False
+        if bool(actor.handle) and actor.handle == row.owner_handle
+        else await _manages_project(db, actor, row.project_id)
+    )
     row = await RoutineService(db).resume(row)
-    presented = await _present_one(db, actor, row)
+    presented = await _present_one(db, actor, row, admin=admin)
     await db.commit()
     return ok(presented)
 
@@ -554,8 +628,12 @@ async def list_runs(
     )
     month = month_of(datetime.now(UTC))
     window = {"since": month_start(month), "until": month_end(month)}
-    per_run = await service.credits_by_run(items, **window)
-    whole = await service.credits_by_rule([row.id], **window)
+    per_run = await service.credits_by_run(items, **window) if items else {}
+    whole = (
+        {}
+        if (not failed_only and total == 0)
+        else await service.credits_by_rule([row.id], **window)
+    )
     return ok(
         {
             **page([_run(r, credits=per_run.get(r.id)) for r in items], total),

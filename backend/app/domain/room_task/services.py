@@ -369,6 +369,10 @@ class TaskService:
         """
         return await self._repo.list_for_room(room_id)
 
+    async def list_in_rooms(self, room_ids: Collection[uuid.UUID]) -> list[Task]:
+        """Every piece of work across ``room_ids``, oldest first."""
+        return await self._repo.list_for_rooms(room_ids)
+
     async def open_branches_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's open work that has a branch, oldest first.
 

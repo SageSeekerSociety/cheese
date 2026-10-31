@@ -2244,3 +2244,127 @@ def test_create_project_consolidates_insert_and_skips_new_project_probes(client)
     assert len(proj_sql) <= 20, (
         f"expected <= 20 SQL statements on POST /projects, got {len(proj_sql)}: {proj_sql}"
     )
+
+
+_ACCEPT_CARDS_UPDATE = re.compile(
+    r"^\s*UPDATE\s+accept_cards\s+SET\b",
+    re.IGNORECASE,
+)
+_ROOM_CLEANUPS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM room_cleanups\b",
+    re.IGNORECASE,
+)
+
+
+def test_routine_routes_deduplicate_room_memberships_timezones_and_run_queries(client):
+    """`POST /topics/{id}/routines`, `GET /projects/{id}/routines`,
+    `PATCH /routines/{id}`, `POST /routines/{id}/pause`, `POST /routines/{id}/resume`,
+    and `GET /routines/{id}/runs` pass the loaded room into `authorize_topic`,
+    reuse cached `topic_memberships`, `user`, and `topics` rows, and skip
+    redundant `routine_runs` queries on rules with no runs."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            f"/topics/{ch}/routines",
+            json={
+                "title": "Daily Check",
+                "instructions": "Check daily",
+                "trigger": "schedule",
+                "spec": {"freq": "daily", "time": "09:00"},
+            },
+            headers=headers,
+        )
+    assert r_create.status_code in (200, 201), r_create.text
+    rid = r_create.json()["data"]["id"]
+    assert _count(create_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in create_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(create_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in create_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /topics/{{id}}/routines, got {len(create_sql)}: {create_sql}"
+    )
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/projects/{pid}/routines", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert len(list_sql) <= 8, (
+        f"expected <= 8 SQL statements on GET /projects/{{id}}/routines, got {len(list_sql)}: {list_sql}"
+    )
+
+    with counting_sql(client) as patch_sql:
+        r_patch = client.patch(
+            f"/routines/{rid}",
+            json={"title": "Daily Check Updated"},
+            headers=headers,
+        )
+    assert r_patch.status_code == 200, r_patch.text
+    assert _count(patch_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in patch_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(patch_sql) <= 7, (
+        f"expected <= 7 SQL statements on PATCH /routines/{{id}}, got {len(patch_sql)}: {patch_sql}"
+    )
+
+    with counting_sql(client) as pause_sql:
+        r_pause = client.post(f"/routines/{rid}/pause", json={}, headers=headers)
+    assert r_pause.status_code == 200, r_pause.text
+    assert len(pause_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /routines/{{id}}/pause, got {len(pause_sql)}: {pause_sql}"
+    )
+
+    with counting_sql(client) as resume_sql:
+        r_resume = client.post(f"/routines/{rid}/resume", json={}, headers=headers)
+    assert r_resume.status_code == 200, r_resume.text
+    assert len(resume_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /routines/{{id}}/resume, got {len(resume_sql)}: {resume_sql}"
+    )
+
+    with counting_sql(client) as runs_sql:
+        r_runs = client.get(f"/routines/{rid}/runs", headers=headers)
+    assert r_runs.status_code == 200, r_runs.text
+    assert _count(runs_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in runs_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(runs_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /routines/{{id}}/runs, got {len(runs_sql)}: {runs_sql}"
+    )
+
+
+def test_archive_and_unarchive_project_batch_tasks_cleanups_and_card_updates(client):
+    """`POST /projects/{id}/archive` and `POST /projects/{id}/unarchive` batch
+    room task reads in one query, reuse the locked project topics for child and
+    unarchive passes, batch `room_cleanups` reads, and update each converged
+    `accept_card` once instead of twice."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as arch_sql:
+        r_arch = client.post(f"/projects/{pid}/archive", json={}, headers=headers)
+    assert r_arch.status_code == 200, r_arch.text
+    assert _count(arch_sql, _TOPICS_SELECT) == 1, [
+        s for s in arch_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(arch_sql, _ACCEPT_CARDS_UPDATE) == 8, [
+        s for s in arch_sql if _ACCEPT_CARDS_UPDATE.search(s)
+    ]
+    assert len(arch_sql) <= 85, (
+        f"expected <= 85 SQL statements on POST /projects/{{id}}/archive, got {len(arch_sql)}: {arch_sql}"
+    )
+
+    with counting_sql(client) as unarch_sql:
+        r_unarch = client.post(f"/projects/{pid}/unarchive", json={}, headers=headers)
+    assert r_unarch.status_code == 200, r_unarch.text
+    assert _count(unarch_sql, _TOPICS_SELECT) == 1, [
+        s for s in unarch_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(unarch_sql, _ROOM_CLEANUPS_SELECT) == 1, [
+        s for s in unarch_sql if _ROOM_CLEANUPS_SELECT.search(s)
+    ]
+    assert len(unarch_sql) <= 24, (
+        f"expected <= 24 SQL statements on POST /projects/{{id}}/unarchive, got {len(unarch_sql)}: {unarch_sql}"
+    )

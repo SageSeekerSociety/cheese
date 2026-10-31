@@ -11,8 +11,9 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
+from app.core.request_facts import recall
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.numbering import lock_conversations
@@ -150,7 +151,27 @@ async def archived_room_ids(
     """
     if not topic_ids:
         return set()
+    if svc._session.autoflush:
+        await svc._session.flush()
+    archived: set[uuid.UUID] = set()
+    missing: list[uuid.UUID] = []
+    for tid in dict.fromkeys(topic_ids):
+        found, cached = recall(svc._session, ("topic_row", tid))
+        if found and (cached is None or not inspect(cached).expired_attributes):
+            if cached is not None and cached.status == TopicStatus.archived:
+                archived.add(tid)
+            continue
+        in_map = svc._session.sync_session.identity_map.get(
+            svc._session.sync_session.identity_key(Topic, (tid,))
+        )
+        if in_map is not None and not inspect(in_map).expired_attributes:
+            if in_map.status == TopicStatus.archived:
+                archived.add(tid)
+        else:
+            missing.append(tid)
+    if not missing:
+        return archived
     stmt = select(Topic.id).where(
-        Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
+        Topic.id.in_(missing), Topic.status == TopicStatus.archived
     )
-    return set((await svc._session.scalars(stmt)).all())
+    return archived | set((await svc._session.scalars(stmt)).all())
