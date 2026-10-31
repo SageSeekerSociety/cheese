@@ -1,8 +1,8 @@
 import { beforeEach, expect, it } from 'vitest'
 
-import { setLocale } from '@/i18n'
-
 import { webPickLabel } from './webPickLabel'
+
+import { setLocale } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
 
