@@ -122,6 +122,10 @@ class MemoryFileStore:
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        #: 一个实例是一次改动（一次对账、一轮整理、一个请求）：它记下的每一行都带
+        #: 这个 id，恢复一次删除时靠它找到同一次改动里拿掉的那一行索引
+        #: （`history._removed_index_line`）。
+        self.event_id = uuid.uuid4()
 
     def _record(
         self,
@@ -151,6 +155,7 @@ class MemoryFileStore:
                 path=path,
                 writer=writer,
                 changed_by=changed_by,
+                event_id=self.event_id,
                 before=before,
                 after=after,
             )

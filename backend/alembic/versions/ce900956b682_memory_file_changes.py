@@ -84,6 +84,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("changed_by", sa.String(64), nullable=False),
+        sa.Column("event_id", sa.Uuid(), nullable=False),
         sa.Column("before", sa.Text(), nullable=True),
         sa.Column("after", sa.Text(), nullable=True),
         sa.Column(
@@ -104,6 +105,9 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_memory_file_changes_created_at", "memory_file_changes", ["created_at"]
+    )
+    op.create_index(
+        "ix_memory_file_changes_event_id", "memory_file_changes", ["event_id"]
     )
 
 

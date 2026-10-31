@@ -170,27 +170,25 @@ async def _point_index_at(
 async def _removed_index_line(
     session: AsyncSession, row: MemoryFileChange
 ) -> str | None:
-    """删掉 ``row`` 那条记忆的同时从索引里拿掉的、指向它的那一行，原样。
+    """删掉 ``row`` 那条记忆的那一次改动里、从索引拿掉的指向它的那一行，原样。
 
-    索引的每一次改动也在这张表里，删记忆的 `forget` 和拿掉那一行在同一个事务、
-    同一个 `created_at`。所以找的是这次删除那一刻或之后、索引里第一次拿掉指向
-    它的行的那条记录，取它改之前的那一行。不从记忆正文重新生成：那一行的标题
-    是写它的人挑的，重新生成的未必是原样，也未必放得进一行的上限。
+    同一次改动（一次对账、一轮整理、面板上的一次删除）写下的每一行带同一个
+    `event_id`，删文件和改索引是其中的两行，谁先谁后取决于写它的那条路：对账和
+    整理先把改过的文件（索引在内）写完再删，面板先删再改索引。所以按 id 配，不
+    按时间。不从记忆正文重新生成那一行：那一行的标题是写它的人挑的，重新生成的
+    未必是原样，也未必放得进一行的上限。
     """
     edits = await session.scalars(
-        select(MemoryFileChange)
-        .where(
+        select(MemoryFileChange).where(
+            MemoryFileChange.event_id == row.event_id,
             MemoryFileChange.project_id == row.project_id,
             MemoryFileChange.scope == row.scope,
             MemoryFileChange.owner_handle == row.owner_handle,
             MemoryFileChange.path == INDEX_NAME,
-            MemoryFileChange.created_at >= row.created_at,
         )
-        .order_by(MemoryFileChange.created_at, MemoryFileChange.id)
     )
     for edit in edits:
-        kept = {entry.path for entry in parse_index(edit.after or "")}
-        if row.path in kept:
+        if any(entry.path == row.path for entry in parse_index(edit.after or "")):
             continue
         for line in (edit.before or "").splitlines():
             if any(entry.path == row.path for entry in parse_index(line)):

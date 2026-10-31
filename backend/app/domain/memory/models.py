@@ -276,6 +276,8 @@ class MemoryFileChange(UuidPk, Base):
             "created_at",
         ),
         Index("ix_memory_file_changes_created_at", "created_at"),
+        # 恢复一次删除时，找同一次改动里拿掉它那一行索引的那条记录。
+        Index("ix_memory_file_changes_event_id", "event_id"),
         CheckConstraint(
             "before IS NOT NULL OR after IS NOT NULL",
             name="ck_memory_file_changes_something",
@@ -312,6 +314,11 @@ class MemoryFileChange(UuidPk, Base):
     )
     #: 动手的那一个（人或芝士的 handle）。
     changed_by: Mapped[str] = mapped_column(String(64), default="")
+    #: 这一行属于哪一次改动：一次对账、一轮整理、面板上的一次删除、一次恢复各是
+    #: 一次，它写下的每一行都带同一个 id（`MemoryFileStore.event_id`）。删一条记忆
+    #: 和从索引里拿掉指向它的那一行是同一次改动里的两行，先后不定（对账先写后删，
+    #: 面板先删后写），恢复靠这个 id 而不是时间把它们配上。
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid)
     before: Mapped[str | None] = mapped_column(Text, nullable=True)
     after: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
