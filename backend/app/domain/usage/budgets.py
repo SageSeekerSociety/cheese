@@ -210,7 +210,10 @@ class CreditBudgets:
         ``with_gateway_spend``: the same statement also reads what each
         project's gateway key has spent, and leaves it for
         `UsageRepository.gateway_spend` to answer from. Admission prices the
-        key's budget from both; the other callers want the caps alone."""
+        key's budget from both; the other callers want the caps alone. Only a
+        call that reads the caps brings the spend: when they were already read
+        in this request, the spend is left to its own statement, as before, so
+        a caller that wants it saved asks this first (`routes/llm_proxy.py`)."""
         if not project_ids:
             return {}
         # Admitting a model call asks this, then asks it again for the budget
