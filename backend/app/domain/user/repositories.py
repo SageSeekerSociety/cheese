@@ -157,14 +157,20 @@ class UserRepository:
         rows = (await self._session.execute(stmt)).all()
         return {username: (nickname or username) for username, nickname in rows}
 
-    async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
-        """Batch handle → user. Roster-wide lookups run on every agent turn, so
-        they must not go N+1 over ``get_by_handle``."""
+    async def loaded_by_handles(
+        self, handles: Sequence[str]
+    ) -> tuple[dict[str, User], list[str]]:
+        """The users among ``handles`` this request has already read, without
+        a query, and the handles it knows nothing about yet. A handle known to
+        name nobody is in neither."""
         names = {h for h in handles if h}
         if not names:
-            return {}
+            return {}, []
         if self._session.autoflush:
             await self._session.flush()
+        return self._loaded_by_handles(names)
+
+    def _loaded_by_handles(self, names: set[str]) -> tuple[dict[str, User], list[str]]:
         users: dict[str, User] = {}
         missing: list[str] = []
         for h in names:
@@ -202,6 +208,17 @@ class UserRepository:
                 else:
                     still_missing.append(h)
             missing = still_missing
+        return users, missing
+
+    async def get_by_handles(self, handles: Sequence[str]) -> dict[str, User]:
+        """Batch handle → user. Roster-wide lookups run on every agent turn, so
+        they must not go N+1 over ``get_by_handle``."""
+        names = {h for h in handles if h}
+        if not names:
+            return {}
+        if self._session.autoflush:
+            await self._session.flush()
+        users, missing = self._loaded_by_handles(names)
         if missing:
             stmt: Select[tuple[User]] = select(User).where(
                 User.username.in_(missing), User.deleted_at.is_(None)
