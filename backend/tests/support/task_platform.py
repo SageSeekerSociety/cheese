@@ -1,9 +1,11 @@
 """A task's platform and forge, for the `cheese` CLI on a machine under test.
 
 The forge is a bare repository on disk. The platform is an HTTP server that
-answers the routes the CLI calls for a task — the task itself, its snapshots,
-the room's messages — over a real socket, so the CLI is exercised as it runs on
-a machine and not through stand-ins for its own functions.
+answers the routes the CLI calls for a task — the task itself and the room's
+messages — over a real socket, so the CLI is exercised as it runs on a machine
+and not through stand-ins for its own functions. A snapshot upload can only be
+recorded: the CLI no longer sends one, so a test that finds one here is seeing
+a regression.
 """
 
 import hashlib
@@ -64,8 +66,6 @@ class TaskPlatform:
         )
         self.snapshots: list[dict] = []
         self.room_messages: list[str] = []
-        #: The next this many requests for a snapshot's contents fail.
-        self.downloads_failing = 0
         platform = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -96,18 +96,6 @@ class TaskPlatform:
                 task = f"/projects/{platform.project}/git/tasks/{platform.task_id}"
                 if self.path == task:
                     return self.data(platform.task())
-                if self.path == f"{task}/snapshots/latest":
-                    if not platform.snapshots:
-                        return self.answer(404, b'{"error": {"message": "none"}}')
-                    row = platform.snapshots[-1]
-                    return self.data({k: v for k, v in row.items() if k != "bundle"})
-                if self.path.startswith(f"{task}/snapshots/"):
-                    if platform.downloads_failing:
-                        platform.downloads_failing -= 1
-                        return self.answer(503, b'{"error": {"message": "busy"}}')
-                    wanted = self.path.rsplit("/", 1)[1]
-                    row = next(r for r in platform.snapshots if r["id"] == wanted)
-                    return self.answer(200, row["bundle"], "application/x-git-bundle")
                 return self.answer(404, b"{}")
 
             def do_PUT(self):

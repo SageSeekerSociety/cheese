@@ -4,8 +4,8 @@ Claude Code does it from the Stop hook the platform installs; a driven harness
 (pi, Codex) has its runner ask the room's machine for the same checkpoint when a
 turn ends. Here the machine is a real executor whose `cheese-sync` is the
 platform's own script running the real CLI, and the task's work is a commit that
-was never pushed and a file nobody committed: after the turn, the commit is on
-the forge's task branch and the file is in the platform's snapshot.
+was never pushed: after the turn, that commit is on the forge's task branch. A
+file nobody committed stays on the machine, so a checkpoint does not upload it.
 """
 
 import asyncio
@@ -48,6 +48,11 @@ def machine(tmp_path, monkeypatch):
     bindir.mkdir()
     (bindir / "cheese").write_text(f'#!/bin/sh\nexec {sys.executable} {CLI} "$@"\n')
     (bindir / "cheese-sync").write_text(CHEESE_SYNC_SCRIPT)
+    # A command runs as the user's login shell. This runner's `/etc/profile`
+    # resets PATH, so the profile here keeps it instead — a room's own machine
+    # is one whose profile has the platform on PATH, and the fixture's `bin`
+    # is what stands in for that.
+    (home / ".bash_profile").write_text(f'export PATH="{bindir}:$PATH"\n')
     for program in bindir.iterdir():
         program.chmod(0o755)
     env = {
@@ -70,27 +75,24 @@ def machine(tmp_path, monkeypatch):
 
 
 async def checkpointed(platform, commit, tmp_path) -> None:
-    """The commit is on the task branch, and the file nobody committed is in
-    the platform's snapshot on top of it."""
+    """The commit is on the task branch, and nothing was uploaded for the file
+    nobody committed."""
     async with asyncio.timeout(4):
-        while platform.branch_head() != commit or not platform.snapshots:
+        while platform.branch_head() != commit:
             await asyncio.sleep(0.1)
-    snapshot = platform.snapshots[-1]
-    assert snapshot["head_sha"] == commit
+    deadline = asyncio.get_running_loop().time() + 2
+    while asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.1)
+    assert platform.snapshots == []
     reader = tmp_path / "reader.git"
     subprocess.run(
         ["git", "clone", "-q", "--bare", str(platform.forge), str(reader)], check=True
     )
-    bundle = tmp_path / "snapshot.bundle"
-    bundle.write_bytes(snapshot["bundle"])
-    git(reader, "bundle", "unbundle", str(bundle))
-    assert (
-        git(reader, "show", f"{snapshot['snapshot_sha']}:draft.md") == "not committed"
-    )
+    assert git(reader, "show", f"{commit}:report.txt") == "committed this turn"
 
 
 @pytest.mark.anyio
-async def test_a_pi_turn_ends_with_its_task_pushed_and_backed_up(tmp_path, machine):
+async def test_a_pi_turn_ends_with_its_task_pushed(tmp_path, machine):
     target, platform, commit = machine
     text = f"go {new_nonce()}"
     recording = tmp_path / "turn.json"
@@ -141,7 +143,7 @@ async def test_a_pi_turn_ends_with_its_task_pushed_and_backed_up(tmp_path, machi
 
 
 @pytest.mark.anyio
-async def test_a_codex_turn_ends_with_its_task_pushed_and_backed_up(tmp_path, machine):
+async def test_a_codex_turn_ends_with_its_task_pushed(tmp_path, machine):
     target, platform, commit = machine
     runner = CodexRunner(tmp_path / "state", AsyncMock())
     # As `codex/entry.py` wires the runner to the room's machine.

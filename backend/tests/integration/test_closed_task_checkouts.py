@@ -1,9 +1,10 @@
 """A closed task's checkout leaves the machines its room worked on.
 
 Whatever it holds that was not pushed: each turn's checkpoint already sent the
-task's work to its branch and snapshot. Only a checkout a process is still
-inside stays. A machine that was offline when the task closed — the one a room
-has left included — is swept when it connects again.
+task's commits to its branch, and what it did not commit is not carried
+anywhere. Only a checkout a process is still inside stays. A machine that was
+offline when the task closed — the one a room has left included — is swept when
+it connects again.
 """
 
 import asyncio
