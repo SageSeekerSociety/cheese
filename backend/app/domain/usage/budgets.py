@@ -4,8 +4,19 @@ import math
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from functools import cache
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import (
+    ARRAY,
+    DateTime,
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    delete,
+    func,
+    select,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +32,34 @@ from app.domain.usage.models import (
     ResourceUsage,
     WorkCreditOwner,
 )
+
+
+@cache
+def _caps_statement():
+    """Each budgeted project's cap and what it has spent since the budget
+    began. Put together once: admission asks it on every model call."""
+    return (
+        select(
+            ProjectCreditBudget.project_id,
+            ProjectCreditBudget.credits_limit,
+            func.coalesce(func.sum(ResourceUsage.credits), 0),
+        )
+        .outerjoin(
+            ResourceUsage,
+            and_(
+                ResourceUsage.project_id == ProjectCreditBudget.project_id,
+                ResourceUsage.created_at >= ProjectCreditBudget.since,
+                ResourceUsage.created_at
+                <= bindparam("now", type_=DateTime(timezone=True)),
+            ),
+        )
+        .where(
+            ProjectCreditBudget.project_id
+            == any_(bindparam("projects", type_=ARRAY(Uuid))),
+            ProjectCreditBudget.credits_limit.is_not(None),
+        )
+        .group_by(ProjectCreditBudget.project_id)
+    )
 
 
 class CreditBudgets:
@@ -213,24 +252,8 @@ class CreditBudgets:
             if found:
                 return cached
         rows = await self._session.execute(
-            select(
-                ProjectCreditBudget.project_id,
-                ProjectCreditBudget.credits_limit,
-                func.coalesce(func.sum(ResourceUsage.credits), 0),
-            )
-            .outerjoin(
-                ResourceUsage,
-                and_(
-                    ResourceUsage.project_id == ProjectCreditBudget.project_id,
-                    ResourceUsage.created_at >= ProjectCreditBudget.since,
-                    ResourceUsage.created_at <= datetime.now(UTC),
-                ),
-            )
-            .where(
-                ProjectCreditBudget.project_id.in_(project_ids),
-                ProjectCreditBudget.credits_limit.is_not(None),
-            )
-            .group_by(ProjectCreditBudget.project_id)
+            _caps_statement(),
+            {"projects": list(project_ids), "now": datetime.now(UTC)},
         )
         caps = {project_id: (limit, spent) for project_id, limit, spent in rows}
         if can_cache:

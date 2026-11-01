@@ -18,6 +18,7 @@ used to read some facts twice, or read facts nothing in it used:
   and helper that read it, a dozen times per admission (`core.credentials`).
 """
 
+import asyncio
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
@@ -197,3 +198,38 @@ async def test_admission_checks_the_agents_signature_once(client, monkeypatch):
     assert answer.json()["data"]["allow"] is True, answer.text
     token = room.agent["Authorization"].split()[1]
     assert signed.count(token) == 1
+
+
+async def test_admission_reads_packs_and_caps_with_statements_put_together_before(
+    client,
+):
+    """The two ledger reads admission makes on every model call are put
+    together once and run again with new values, not rebuilt each time."""
+    from app.domain.usage.budgets import CreditBudgets
+    from app.domain.usage.ledger import Ledger
+    from app.domain.usage.payers import payer_for_project
+
+    room = await _room(client)
+    ran: list[object] = []
+
+    async def once() -> None:
+        async with client.test_factory() as db:
+            execute = db.execute
+
+            async def recorded(statement, *args, **kwargs):
+                ran.append(statement)
+                return await execute(statement, *args, **kwargs)
+
+            payer = await payer_for_project(db, room.project_id)
+            db.execute = recorded  # type: ignore[method-assign]
+            await CreditBudgets(db).project_caps([room.project_id])
+            await Ledger(db).balances({room.project_id: payer})
+
+    # Two requests: each its own task, so neither answers from the other's
+    # request facts.
+    for _ in range(2):
+        await asyncio.create_task(once())
+    caps = [s for s in ran if "project_credit_budgets" in str(s)]
+    packs = [s for s in ran if "FROM compute_grants" in str(s)]
+    assert len(caps) == 2 and caps[0] is caps[1]
+    assert len(packs) == 2 and packs[0] is packs[1]
