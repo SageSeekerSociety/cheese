@@ -17,11 +17,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.policy import SeatPolicy
+from app.core.request_facts import recall, remember
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
     SpaceAdminRole,
     SpaceMember,
+)
+from app.domain.space.repositories import (
+    SpaceAdminRelationRepository,
+    SpaceRepository,
 )
 
 
@@ -74,24 +79,40 @@ GRANTS: dict[Seat, frozenset[Permission]] = {
 
 
 async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | None:
-    """Where the person sits in the space; ``None`` when they have no seat."""
-    role = await session.scalar(
-        select(SpaceAdminRelation.role).where(
-            SpaceAdminRelation.space_id == space_id,
-            SpaceAdminRelation.user_id == user_id,
-            SpaceAdminRelation.deleted_at.is_(None),
-        )
+    """Where the person sits in the space; ``None`` when they have no seat.
+
+    A problem's page asks it from each check that needs it (seeing the
+    problem, teaching it, the payload's own flags), so a request answers it
+    once; the next request asks again, and an admin stepped down is refused
+    there."""
+    key = ("space_seat", space_id, user_id)
+    cacheable = isinstance(session, AsyncSession)
+    if cacheable:
+        found, cached = recall(session, key)
+        if found:
+            return cached
+    seat: Seat | None = None
+    relation = await SpaceAdminRelationRepository(session).get_relation(
+        space_id, user_id
     )
-    if role is not None:
-        return Seat.owner if role == SpaceAdminRole.OWNER.value else Seat.admin
-    member = await session.scalar(
+    if relation is not None:
+        seat = Seat.owner if relation.role == SpaceAdminRole.OWNER.value else Seat.admin
+    elif await session.scalar(
         select(SpaceMember.id).where(
             SpaceMember.space_id == space_id,
             SpaceMember.user_id == user_id,
             SpaceMember.deleted_at.is_(None),
         )
-    )
-    return Seat.member if member is not None else None
+    ):
+        seat = Seat.member
+    if cacheable:
+        remember(
+            session,
+            key,
+            seat,
+            tables=frozenset({"space_admin_relation", "space_member"}),
+        )
+    return seat
 
 
 class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
@@ -103,8 +124,7 @@ class SpacePolicy(SeatPolicy[Space, Permission, Seat]):
     grants = GRANTS
 
     async def load(self, session: AsyncSession, id: int) -> Space | None:
-        space = await session.get(Space, id)
-        return None if space is None or space.deleted_at is not None else space
+        return await SpaceRepository(session).get_by_id(id)
 
     async def seat(
         self, session: AsyncSession, obj: Space, user_id: int
