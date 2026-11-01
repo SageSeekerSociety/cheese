@@ -14,6 +14,7 @@ from the row the moment enrollment succeeds.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
@@ -33,6 +35,8 @@ from app.domain.agent.harness.claude_code import (
 )
 from app.domain.agent.place import footprint_root
 from app.domain.machine import claude_dist, toolchain_dist
+from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.machine.supply import effective_spec, pick_offering
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -343,6 +347,74 @@ if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]
 fi
 echo "cheese.service active"
 """
+
+
+#: Characters of an image version kept: wide enough that two versions do not
+#: collide by accident, short enough to read on the admin page.
+IMAGE_VERSION_CHARS = 16
+
+#: What stands in for the parts of the script that name ONE machine (its
+#: origin, token and device), so a version can be taken of what every machine
+#: gets rather than of one machine's credentials.
+_VERSION_PLACEHOLDER = "image-version-placeholder"
+
+
+def bootstrap_digest(*, sandbox_disk: bool) -> str:
+    """A digest of the script a host enrolls with, with its per-machine
+    credentials held at a placeholder: a change to anything the machine is set
+    up with changes the digest, and no token can ever reach it."""
+    script = bootstrap_script(
+        origin=_VERSION_PLACEHOLDER,
+        token=_VERSION_PLACEHOLDER,
+        device_id=_VERSION_PLACEHOLDER,
+        sandbox_disk=sandbox_disk,
+    )
+    return hashlib.sha256(script.encode()).hexdigest()
+
+
+def host_image_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """What a host created now would be made of, as one value a host row keeps
+    and the sweep compares it against: the offering and its template, the size
+    the machine gets, its login user, and the script it enrolls with. Change any
+    of those and a host enrolled before is out of date, due to be rolled."""
+    payload = {
+        "offering": [
+            offering.get(key)
+            for key in (
+                "id",
+                "machineTypeName",
+                "zoneName",
+                "templateName",
+                "dataDiskGb",
+            )
+        ],
+        "spec": [int(cores), int(memory_mb), int(disk_gb)],
+        "user": settings.microcloud_login_user,
+        "bootstrap": bootstrap_digest(sandbox_disk=True),
+    }
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
+
+
+async def current_host_image_version(client: MicroCloudClient | None = None) -> str:
+    """The version a host created right now would record: the pool's offering
+    today, the size it asks for today, and the script it would enroll with.
+    Reads the provider, so call it with no lock held."""
+    offering = await pick_offering(client or MicroCloudClient())
+    spec = effective_spec(
+        offering,
+        cores=settings.microcloud_default_cores,
+        memory_mb=settings.microcloud_default_memory_mb,
+        disk_gb=settings.microcloud_default_disk_gb,
+    )
+    return host_image_version(
+        offering,
+        cores=spec["cores"],
+        memory_mb=spec["memoryMb"],
+        disk_gb=spec["diskGb"],
+    )
 
 
 def _last_result(state: RetryCallState):

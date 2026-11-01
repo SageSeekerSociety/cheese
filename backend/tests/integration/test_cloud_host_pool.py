@@ -222,6 +222,8 @@ def pool(client, monkeypatch):
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
+    # These tests are about the pool sized by demand: no fixed floor of hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     online: set[str] = set()
     monkeypatch.setattr(device_hub, "is_online", lambda device: device in online)
     return Case(client, FakeMicroCloud(), online)

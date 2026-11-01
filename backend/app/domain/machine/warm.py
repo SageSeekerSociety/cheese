@@ -26,6 +26,7 @@ from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     WarmMachine,
+    warm_pool_target,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import data_disk_gb, pick_offering
@@ -320,7 +321,12 @@ class WarmPoolService:
         database connection held through each machine's bootstrap, about a
         minute of SSH during which every request has one connection fewer;
         `_prepare` commits before the bootstrap starts.
+
+        None of this runs with a fixed pool size (``models.warm_pool_target``):
+        then the target is 0, so no machine is prepared, and the unused ones
+        already there are deleted by their age rule below.
         """
+        target = warm_pool_target()
         abandoned = (
             await self.session.scalars(
                 select(WarmMachine)
@@ -367,12 +373,7 @@ class WarmPoolService:
             expired = row.created_at < datetime.now(UTC) - timedelta(
                 seconds=settings.microcloud_warm_max_age_seconds
             )
-            if (
-                expired
-                or row.attempts >= 5
-                or row.state == "deleting"
-                or not settings.microcloud_warm_pool_size
-            ):
+            if expired or row.attempts >= 5 or row.state == "deleting" or not target:
                 if row.state != "deleting":
                     row.attempts = 0
                     row.state = "deleting"
@@ -420,7 +421,7 @@ class WarmPoolService:
         # Every sweep, not only one that would add a machine: a failed cleanup
         # may be a machine still running, and a full pool would never get here.
         unresolved = await self._settle_vanished_cleanups()
-        if len(active) >= settings.microcloud_warm_pool_size:
+        if len(active) >= target:
             return ""
         if unresolved >= UNRESOLVED_CLEANUP_LIMIT:
             return (

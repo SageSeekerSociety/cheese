@@ -240,6 +240,19 @@ class CloudHost(UuidPk, Timestamps, Base):
     released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # What a host created right now would be made of, as one digest: the
+    # enrollment script, the offering's identity and template, the machine's
+    # size and its login user (`enrollment.current_host_image_version`). The
+    # sweep rolls a host whose version is no longer current. NULL on a host from
+    # before this column existed, or claimed from the warm pool, which kept no
+    # record of what it was prepared from: unknown, and treated as out of date.
+    image_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Since when the host is being rebuilt: it takes no new sandbox, and is
+    # released as soon as no sandbox is on it — without the idle hold, since it
+    # is going anyway (`reaper.maintain`). NULL on a host that stays.
+    draining_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # A whole cloud VM for one session, not a host of sandboxes: created for
     # that session from ``microcloud_vm_offering_id``, its executor runs with
     # the whole machine (``host`` visibility, sudo), it takes no other session
@@ -463,3 +476,17 @@ def capacity(host: CloudHost) -> int:
         int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb
     ) // settings.cloud_sandbox_disk_gb
     return max(0, min(by_cores, by_memory, by_disk))
+
+
+def warm_pool_target() -> int:
+    """How many unused machines the warm pool keeps ready.
+
+    Zero with a fixed pool size: the pool already holds every host it wants,
+    and a host that is released is replaced directly, so a warm machine would
+    be one more machine running and billed for nothing — which is what the
+    fixed pool exists to stop. The warm sweep reads 0 as it always has read
+    "no machine wanted": the unused ones already there are deleted.
+    """
+    if settings.cloud_pool_fixed_hosts > 0:
+        return 0
+    return settings.microcloud_warm_pool_size

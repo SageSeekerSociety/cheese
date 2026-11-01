@@ -107,6 +107,8 @@ function spec(h: MachineHost | WarmMachineRow): string {
 /** 这一台此刻最该让人知道的一句：为什么坏、从什么时候起。 */
 function hostNote(h: MachineHost): string {
   if (h.phase === 'failed') return t('admin.machines.note.failed', { at: stamp(h.failed_at) })
+  if (h.draining && h.draining_since)
+    return t('admin.machines.note.draining', { for: since(h.draining_since) })
   if (h.phase === 'releasing') return t('admin.machines.note.releasing', { at: stamp(h.released_at) })
   if (h.phase === 'enroll_failing')
     return t('admin.machines.note.enrollFailing', { n: h.enroll_attempts, error: h.enroll_error ?? '' })
@@ -286,6 +288,7 @@ const hostsNote = computed(() =>
         t('admin.machines.kpi.hostsNote'),
         pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '',
         t('admin.machines.kpi.warm', { n: warm.value.length, target: pool.value.warm_target }),
+        pool.value.fixed_hosts ? t('admin.machines.kpi.fixed', { n: pool.value.fixed_hosts }) : '',
       ]
         .filter(Boolean)
         .join(' ')
@@ -389,6 +392,8 @@ const failureNote = computed(() =>
                 <span class="mc-mono c-ink">{{ h.hostname }}</span>
                 <span v-if="h.machine_id !== null" class="t-meta">#{{ h.machine_id }}</span>
                 <span v-if="h.whole_machine" class="chip-neutral">{{ t('admin.machines.vm') }}</span>
+                <span v-if="h.draining" class="chip-neutral">{{ t('admin.machines.draining') }}</span>
+                <span v-else-if="h.image_outdated" class="chip-neutral">{{ t('admin.machines.outdated') }}</span>
               </span>
               <span class="mc-phase">
                 <span class="status-dot" :class="phaseDot(h.phase)" />
@@ -571,6 +576,19 @@ const failureNote = computed(() =>
             hostIdle: duration(overview.config.host_idle_hold_s),
             vmIdle: duration(overview.config.vm_idle_s),
           })
+        }}
+      </p>
+      <p v-if="overview.pool.fixed_hosts" class="mc-foot">
+        {{
+          t(
+            overview.config.rebuild_after_days
+              ? 'admin.machines.fixedFoot'
+              : 'admin.machines.fixedFootNoAge',
+            {
+              n: overview.pool.fixed_hosts,
+              days: overview.config.rebuild_after_days,
+            }
+          )
         }}
       </p>
       <p class="mc-foot">

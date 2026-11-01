@@ -14,10 +14,17 @@ A host belongs to the platform, never to a project, room or session
 (`backend/app/domain/machine/services.py`, `HostPool`). A session that needs hands on cloud
 is given a home — its sandbox's directory — on any host with a free slot, whichever project
 it is from: hosts that can run it now first, and among those the fullest, so the others can
-empty and go. Only when no host has room does the pool take a ready warm machine, and only
-when the warm pool is empty too does it create a host, and the session waits for it. Users
-see their sandbox, never the host: the room hears 「正在准备沙箱」 and 「沙箱已就绪」, and no
-user-facing route lists hosts. The admin dashboard counts them.
+empty and go. Users see their sandbox, never the host: the room hears 「正在准备沙箱」 and
+「沙箱已就绪」, and no user-facing route lists hosts. The admin dashboard counts them.
+
+The pool has two ways to be sized. **Fixed** (`CLOUD_POOL_FIXED_HOSTS`, the default): the
+sweep keeps that many ordinary hosts up whatever the demand — an idle one is not released
+when its hold runs out, and hosts above the size are released by the usual rules until the
+pool is back at it. A session that finds every host full waits for the next sweep, which adds
+one. **Demand** (`CLOUD_POOL_FIXED_HOSTS=0`): as before, the pool adds a host when free
+slots run low, takes a ready warm machine if there is one, and lets idle hosts go after the
+hold. Either way the size and the cap are bounds, not promises: the provider failing, the
+cap, or a host with no data disk can keep the pool short.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -25,9 +32,11 @@ user-facing route lists hosts. The admin dashboard counts them.
 | `CLOUD_SANDBOX_IDLE_STOP_S` | 600 | A sandbox whose conversation runs no turn and whose session asked for no tool this long is destroyed. |
 | `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 900 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
 | `CLOUD_VM_BACKGROUND_CAP_S` | 3600 | The same keep-alive for a whole cloud VM's sandbox. Longer than a sandbox's, because a VM's idle release (1800 s) is longer than a sandbox's. |
-| `CLOUD_POOL_MIN_FREE_SLOTS` | 4 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. The default is one host's worth of sandboxes — the default host runs four — so the next host is under way once fewer than four slots are free; a deployment that creates a different host size sets this to that host's capacity. An idle host is not let go if that would take the free slots below it. |
-| `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. |
+| `CLOUD_POOL_FIXED_HOSTS` | 10 | How many ordinary hosts the pool keeps up whatever the demand (0 = off, the pool is sized by demand alone). The default leaves two of the cap's twelve places for whole cloud VMs. The sweep fills up to it, keeps an idle host past `CLOUD_HOST_IDLE_HOLD_S`, and releases hosts above it down to it. It also turns on rolling rebuilds; see below. |
+| `CLOUD_POOL_MIN_FREE_SLOTS` | 4 | Demand mode only: when the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. The default is one host's worth of sandboxes — the default host runs four — so the next host is under way once fewer than four slots are free; a deployment that creates a different host size sets this to that host's capacity. An idle host is not let go if that would take the free slots below it. |
+| `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. In fixed mode an idle host is not released unless the pool is over its size. |
 | `CLOUD_POOL_MAX_HOSTS` | 12 | The platform's cap on hosts, whole cloud VMs among them, protecting the cluster: the current 400 GB shared thin pool holds ten hosts' disks written full, so each place above ten over-commits it by a disk. It rises only as the storage behind it grows. A session that finds the pool full and every host full is told capacity is tight and to try later. |
+| `CLOUD_HOST_REBUILD_AFTER_DAYS` | 14 | Fixed mode only: a host older than this is rebuilt even on the current image (0 = age alone never rebuilds it). A host whose enrollment script, offering, template or size changed is rebuilt regardless of age. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
 | `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a VM sandbox, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 
@@ -43,6 +52,21 @@ sandboxes (its memory less a quarter, at least 1 GiB), nor more than fit on its 
 stores: four on the default host with a 64 GB data disk. There is no team or project quota on
 cloud. A running sandbox is charged in credits by the hour, from the same packs as model calls
 (`docs/manual/dev/billing.md`, 云端算力).
+
+### Hosts are rolled one at a time onto the current image
+
+A host row records the image it was made of (`cloud_hosts.image_version`,
+`enrollment.host_image_version`): a digest of the enrollment script, the offering and its
+template, the login user and the size the machine gets — not one machine's credentials, so
+two hosts of the same settings carry the same version. In fixed mode the sweep compares each
+accepting ordinary host against `enrollment.current_host_image_version()`, and against
+`CLOUD_HOST_REBUILD_AFTER_DAYS`. A host that differs, or that is older than the fallback
+age, is rebuilt: it is marked draining (`cloud_hosts.draining_since`), takes no new sandbox,
+and once its last sandbox is gone is released and deleted through the usual path; the next
+sweep's `grow` puts a fresh host in its place with the current version. At most one host
+drains at a time, and no host is drained while the others' free slots cannot hold what it
+carries — a rebuild never interrupts a running sandbox, it only waits it out. Demand mode
+does not rebuild (a host that empties is released and replaced by demand anyway).
 
 ### Each sandbox's disk has a limit of its own
 
@@ -122,7 +146,8 @@ four hours, a day) repeats it while it lasts. A person's computer's reading is n
 - A project whose credits ran out has its sandboxes destroyed as soon as its rooms run no
   turn, and the conversation is told so.
 
-A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S`. A session
+A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S` — in fixed
+mode only while the pool is over its size, since the size is what keeps a host up. A session
 that switches away leaves its sandbox after one best-effort checkpoint (`cheese sync --all`),
 whether or not the checkpoint went through; the sandbox it left is destroyed by the idle sweep
 like any other, and holds its slot until then. A host the provider fails before it is enrolled
@@ -233,8 +258,12 @@ lease is read there first, before anyone asks for a log.
 ## Warm capacity
 
 `MICROCLOUD_WARM_POOL_SIZE` sets the number of unused default CPU machines prepared by
-this deployment (0 disables replenishment; maximum 5). These machines use a platform
-account and have no team binding. When the host pool needs another host it takes one: a
+this deployment (0 disables replenishment; maximum 5). It applies to a pool sized by demand
+only: with `CLOUD_POOL_FIXED_HOSTS` above 0 the warm target reads as 0, the sweep deletes any
+unused warm machine through the same path a size of 0 always did, and a host being replaced
+in a rebuild is created directly — a warm machine would be one more machine running and
+billed for nothing, and a host taken from it carries no image version. These machines use a
+platform account and have no team binding. When the host pool needs another host it takes one: a
 durable reservation of the host is written first, then MicroCloud is asked to claim the
 machine into the platform's host account under the host's id as `claimKey`, and only
 then is the connected device handed to the pool's identity. A claim whose answer was lost

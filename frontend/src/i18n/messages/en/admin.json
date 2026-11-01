@@ -111,7 +111,8 @@
       "failures": "Provider failures",
       "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
       "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not.",
-      "warm": "Warm machines are counted separately: {n} now, target {target}."
+      "warm": "Warm machines are counted separately: {n} now, target {target}.",
+      "fixed": "The pool keeps {n} hosts up."
     },
     "alert": {
       "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
@@ -153,7 +154,8 @@
       "enrollFailing": "Enrollment attempt {n} failed: {error}",
       "offline": "Connector away for {for}",
       "idle": "Idle for {for}",
-      "vm": "Whole VM for {project}"
+      "vm": "Whole VM for {project}",
+      "draining": "Rolling rebuild started {for} ago; released and replaced once empty"
     },
     "when": {
       "waiting": "Waiting for {for}",
@@ -218,6 +220,10 @@
       "sandboxFiles": "Files {used} / {cap}",
       "sandboxRead": "Memory read {memory} · disk read {disk}",
       "foot": "Usage, each sandbox's disk among it, is read every {check}. A host past {disk} disk, {inodes} inodes or {memory} memory on two readings running is sent to the alert group; a sandbox at {near} of a limit is highlighted."
-    }
+    },
+    "draining": "Rebuilding",
+    "outdated": "Image out of date",
+    "fixedFoot": "The fixed pool keeps {n} ordinary hosts up; one whose enrollment script, template or size changed is replaced, and so is one older than {days} days — one at a time: it takes no new sandbox, then is released and replaced once empty.",
+    "fixedFootNoAge": "The fixed pool keeps {n} ordinary hosts up; one whose enrollment script, template or size changed is replaced — one at a time: it takes no new sandbox, then is released and replaced once empty."
   }
 }

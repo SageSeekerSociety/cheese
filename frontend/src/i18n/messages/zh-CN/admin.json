@@ -111,7 +111,8 @@
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
       "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算",
-      "warm": "温机另算：此刻 {n} 台，目标 {target} 台。"
+      "warm": "温机另算：此刻 {n} 台，目标 {target} 台。",
+      "fixed": "固定常开 {n} 台。"
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
@@ -153,7 +154,8 @@
       "enrollFailing": "注册第 {n} 次失败：{error}",
       "offline": "连接器已断开 {for}",
       "idle": "已空闲 {for}",
-      "vm": "{project} 的整机虚拟机"
+      "vm": "{project} 的整机虚拟机",
+      "draining": "正在滚动重建，已 {for}；等它空了就释放换新"
     },
     "when": {
       "waiting": "已等 {for}",
@@ -218,6 +220,10 @@
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
       "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
-    }
+    },
+    "draining": "重建中",
+    "outdated": "镜像过期",
+    "fixedFoot": "固定池常开 {n} 台普通宿主机；注册脚本、模板或规格变了的机器要换，满 {days} 天的机器也要换，一次只换一台：先不再接新沙箱，等空了再释放、补一台新的。",
+    "fixedFootNoAge": "固定池常开 {n} 台普通宿主机；注册脚本、模板或规格变了的机器要换，一次只换一台：先不再接新沙箱，等空了再释放、补一台新的。"
   }
 }

@@ -36,6 +36,8 @@ def test_a_persistently_failing_pool_says_so_once_then_again_on_recovery(
     client, monkeypatch, caplog
 ):
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    # A warm pool exists under a demand-sized pool; a fixed pool keeps hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
     monkeypatch.setattr(warm, "_health", warm.PoolHealth())
     cloud = FlakyCloud()
@@ -69,6 +71,8 @@ def test_a_pool_failing_for_long_is_reminded_of_at_the_reminder_interval(
     client, monkeypatch, caplog
 ):
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    # A warm pool exists under a demand-sized pool; a fixed pool keeps hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
     monkeypatch.setattr(warm, "_health", warm.PoolHealth())
     cloud = FlakyCloud()
