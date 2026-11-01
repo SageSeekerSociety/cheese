@@ -87,6 +87,31 @@ def persisted_notice(block: Block) -> str | None:
     return agent_notice(block)
 
 
+async def _owning_task(session: AsyncSession, doc: Document):
+    """The task whose living document ``doc`` is — its id, room, title and
+    where the title came from — or None. Saving a document asks who owns it
+    before the write and what it is called after; both answers are this one
+    row, read once per request."""
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("document_task", doc.id))
+        if found:
+            return cached
+    row = (
+        await session.execute(
+            select(
+                _tasks.c.id, _tasks.c.room_id, _tasks.c.title, _tasks.c.title_source
+            ).where(_tasks.c.document_id == doc.id)
+        )
+    ).first()
+    owner = None if row is None else tuple(row)
+    if can_cache:
+        remember(session, ("document_task", doc.id), owner, tables=frozenset({"tasks"}))
+    return owner
+
+
 async def whose_document(
     session: AsyncSession, doc: Document
 ) -> tuple[uuid.UUID | None, uuid.UUID | None]:
@@ -95,27 +120,8 @@ async def whose_document(
     project's own."""
     if doc.number is not None or doc.room_id is not None or doc.project_id is None:
         return None, None
-    can_cache = isinstance(session, AsyncSession)
-    if can_cache:
-        if session.autoflush:
-            await session.flush()
-        found, cached = recall(session, ("whose_document", doc.id))
-        if found:
-            return cached
-    owner = (
-        await session.execute(
-            select(_tasks.c.id, _tasks.c.room_id).where(_tasks.c.document_id == doc.id)
-        )
-    ).first()
-    res = (None, None) if owner is None else (owner[1], owner[0])
-    if can_cache:
-        remember(
-            session,
-            ("whose_document", doc.id),
-            res,
-            tables=frozenset({"tasks"}),
-        )
-    return res
+    owner = await _owning_task(session, doc)
+    return (None, None) if owner is None else (owner[1], owner[0])
 
 
 async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
@@ -124,16 +130,13 @@ async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
     unnamed)."""
     if doc.title:
         return doc.title
-    row = (
-        await session.execute(
-            select(_tasks.c.title, _tasks.c.title_source).where(
-                _tasks.c.document_id == doc.id
-            )
-        )
-    ).first()
-    if row is None or row.title_source == "placeholder" or not row.title:
+    owner = await _owning_task(session, doc)
+    if owner is None:
         return None
-    return row.title
+    _, _, title, title_source = owner
+    if title_source == "placeholder" or not title:
+        return None
+    return title
 
 
 def _project_of(doc: Document) -> uuid.UUID:
@@ -193,6 +196,9 @@ class DocumentWriter:
         author = actors[0]
         journal = DocumentJournal(self._session)
         await self._session.refresh(doc)
+        # The name the line shows it under, read now: the writes below end the
+        # request's remembered answers, and the owning task's row is in hand.
+        shown_title = await _shown_title(self._session, doc)
         previous_content = doc.content
         if previous_content == content:
             return None, None
@@ -289,7 +295,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: from_version,
             _DOC_ACTORS_KEY: everyone,
-            DOC_TITLE_KEY: await _shown_title(self._session, doc),
+            DOC_TITLE_KEY: shown_title,
             AGENT_NOTICE_META_KEY: for_agent,
             "detail_label": say("labelDocEditDiff"),
             "detail": "\n".join(
