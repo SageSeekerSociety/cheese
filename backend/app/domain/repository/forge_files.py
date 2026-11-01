@@ -10,6 +10,7 @@ from urllib.parse import quote
 from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.core.db import release_read_session
 from app.core.device_failures import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.core.errors import (
@@ -519,12 +520,21 @@ class ProjectFiles:
         key = _changed_files_key(self.project_id, *refs)
         redis = get_redis_client()
         if redis is not None:
+            # The comparison is the answer; a cache that is slow, down or holds
+            # something this code did not write is a miss, never the page's
+            # error. `request_limit_redis_timeout_s` is the request path's bound.
             try:
-                cached = await redis.get(key)
-            except RedisError:
+                cached = await asyncio.wait_for(
+                    redis.get(key),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
                 cached = None
             if cached is not None:
-                return json.loads(cached)
+                try:
+                    return json.loads(cached)
+                except (TypeError, ValueError):
+                    pass  # not a value this code wrote: compare instead
         comparison = await self.comparison(refs)
         if comparison is None:
             return []
@@ -533,8 +543,11 @@ class ProjectFiles:
         paths = [entry["filename"] for entry in comparison["files"]]
         if redis is not None:
             try:
-                await redis.set(key, json.dumps(paths), ex=_CHANGED_FILES_TTL)
-            except RedisError:
+                await asyncio.wait_for(
+                    redis.set(key, json.dumps(paths), ex=_CHANGED_FILES_TTL),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
                 pass
         return paths
 

@@ -512,9 +512,15 @@ async def _shared_get(key: str) -> bytes | None:
     redis = get_redis_client()
     if redis is None:
         return None
+    # A cache that does not answer within the request path's Redis bound is a
+    # miss: the body is in the bucket, and holding the page for a cache that
+    # may never answer costs more than the round trip it was saving.
     try:
-        body = await redis.get(_shared_key(key))
-    except RedisError:
+        body = await asyncio.wait_for(
+            redis.get(_shared_key(key)),
+            timeout=settings.request_limit_redis_timeout_s,
+        )
+    except (RedisError, TimeoutError):
         return None
     return body if isinstance(body, bytes) else None
 
@@ -524,8 +530,11 @@ async def _shared_put(key: str, body: bytes) -> None:
     if redis is None or len(body) > SHARED_SEALED_MAX_BYTES:
         return
     try:
-        await redis.set(_shared_key(key), body, ex=SHARED_SEALED_TTL_S)
-    except RedisError:
+        await asyncio.wait_for(
+            redis.set(_shared_key(key), body, ex=SHARED_SEALED_TTL_S),
+            timeout=settings.request_limit_redis_timeout_s,
+        )
+    except (RedisError, TimeoutError):
         pass
 
 

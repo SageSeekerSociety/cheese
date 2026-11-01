@@ -24,6 +24,19 @@ class _Store:
         self.values[key] = value.encode() if isinstance(value, str) else value
 
 
+class _Stalled:
+    async def get(self, key):
+        await asyncio.sleep(30)
+
+    async def set(self, key, value, ex=None):
+        await asyncio.sleep(30)
+
+
+class _Corrupt(_Store):
+    async def get(self, key):
+        return b"not json"
+
+
 class _Files(ProjectFiles):
     def __init__(self, head: str):
         super().__init__(None, uuid.uuid4(), uuid.uuid4())  # type: ignore[arg-type]
@@ -78,3 +91,19 @@ def test_without_the_cache_it_still_compares(monkeypatch):
     assert asyncio.run(files.changed_files()) == ["a1.py"]
     assert asyncio.run(files.changed_files()) == ["a1.py"]
     assert len(files.compared) == 2
+
+
+def test_a_cache_that_does_not_answer_is_a_miss(monkeypatch):
+    monkeypatch.setattr(forge_files, "get_redis_client", lambda: _Stalled())
+    files = _Files("a1")
+
+    assert asyncio.run(files.changed_files()) == ["a1.py"]
+    assert len(files.compared) == 1
+
+
+def test_an_undecodable_cache_entry_is_a_miss(monkeypatch):
+    monkeypatch.setattr(forge_files, "get_redis_client", lambda: _Corrupt())
+    files = _Files("a1")
+
+    assert asyncio.run(files.changed_files()) == ["a1.py"]
+    assert len(files.compared) == 1
