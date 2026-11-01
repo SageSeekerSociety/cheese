@@ -24,6 +24,7 @@ from sqlalchemy import case, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.task.models import (
     TaskMembership,
@@ -163,12 +164,23 @@ def stage_news(before: Sequence[dict], after: Sequence[dict]) -> StageNews:
 
 
 async def list_stages(session: AsyncSession, task_id: int) -> list[TaskStage]:
+    """The task's stages in order. A problem's progress asks them for the
+    claim's states and again for the payload; a request reads them once."""
+    key = ("task_stages", task_id)
+    cacheable = isinstance(session, AsyncSession)
+    if cacheable:
+        found, cached = recall(session, key)
+        if found:
+            return list(cached)
     stmt = (
         select(TaskStage)
         .where(TaskStage.task_id == task_id)
         .order_by(TaskStage.index.asc())
     )
-    return list((await session.execute(stmt)).scalars().all())
+    stages = list((await session.execute(stmt)).scalars().all())
+    if cacheable:
+        remember(session, key, stages, tables=frozenset({"task_stages"}))
+    return list(stages)
 
 
 async def list_stages_for_tasks(
