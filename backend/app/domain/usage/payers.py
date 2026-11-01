@@ -202,8 +202,9 @@ async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Pay
 
 
 def _payer_teams_key(team_ids: list[int]) -> tuple:
-    """The request fact `_payer_teams` answers from, for these sorted team ids."""
-    return ("payer_teams", tuple(team_ids))
+    """The request fact `_payer_teams` answers from, for these team ids in
+    any order."""
+    return ("payer_teams", tuple(sorted(set(team_ids))))
 
 
 async def project_with_payer(
