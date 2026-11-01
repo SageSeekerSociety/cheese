@@ -19,6 +19,7 @@ used to read some facts twice, or read facts nothing in it used:
   and helper that read it, a dozen times per admission (`core.credentials`).
 """
 
+import re
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
@@ -260,7 +261,47 @@ async def test_admission_reads_the_paying_team_with_its_plan(client, monkeypatch
         again = _admit(client, room)
 
     assert again.json()["data"]["allow"] is True, again.text
-    teams = [s for s in seen if "FROM team" in s and "team_user_relation" not in s]
+    teams = [
+        s
+        for s in seen
+        if re.search(r"(FROM|JOIN) team\b", s) and "team_user_relation" not in s
+    ]
     assert len(teams) == 1, teams
     assert "JOIN plans" in teams[0]
     assert [s for s in seen if s.startswith("SELECT plans.")] == []
+
+
+async def test_admission_reads_the_credentials_room_with_its_seat(client, monkeypatch):
+    """The access check reads the room a credential works in together with the
+    seat the agent holds there, where it asked for the seat separately."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    assert [s for s in seen if s.startswith("SELECT topic_memberships.")] == []
+    rooms = [s for s in seen if "FROM topics" in s]
+    assert len(rooms) == 1 and "topic_memberships" in rooms[0], rooms
+
+
+async def test_admission_reads_the_project_with_who_pays_for_it(client, monkeypatch):
+    """Admission reads the project and then asks who pays for it: the team
+    and its plan are read with the project, in one statement."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    projects = [s for s in seen if "FROM projects" in s]
+    assert len(projects) == 1 and "JOIN team" in projects[0], projects
+    assert [s for s in seen if s.startswith("SELECT team.")] == []

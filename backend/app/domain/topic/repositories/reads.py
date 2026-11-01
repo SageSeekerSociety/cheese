@@ -15,7 +15,7 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Uuid, any_, bindparam, column, func, literal, select, table
+from sqlalchemy import Uuid, and_, any_, bindparam, column, func, literal, select, table
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -24,7 +24,12 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.request_facts import recall, remember
 from app.domain.conversation.services import room_column
-from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat
+from app.domain.topic.models import (
+    Topic,
+    TopicMembership,
+    TopicStatus,
+    not_a_private_chat,
+)
 from app.domain.topic.repositories.statements import (
     _last_activity,
     _order_by,
@@ -63,11 +68,18 @@ async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
 
 
 async def room_of_conversation(
-    repo: pkg.TopicRepository, conversation_id: uuid.UUID
+    repo: pkg.TopicRepository,
+    conversation_id: uuid.UUID,
+    *,
+    member: str | None = None,
 ) -> Topic | None:
     """The row of the room a conversation is in — the room itself, or a task's
     or a 支线's room — in one statement, where `conversations.room_of` and
-    `get` took two. Answered from the request's facts when either is known."""
+    `get` took two. Answered from the request's facts when either is known.
+
+    With ``member``, the same statement reads the seat that handle holds in
+    the room, for the access check that asks it next
+    (`TopicMembershipRepository.roles_for_member` answers from the fact)."""
     if not _can_cache(repo._session):
         return await repo._session.scalar(_room_of_statement(conversation_id))
     if repo._session.autoflush:
@@ -75,7 +87,30 @@ async def room_of_conversation(
     found, room_id = recall(repo._session, ("conversation_room_id", conversation_id))
     if found:
         return await get(repo, room_id)
-    room = await repo._session.scalar(_room_of_statement(conversation_id))
+    if member is None:
+        room = await repo._session.scalar(_room_of_statement(conversation_id))
+    else:
+        row = (
+            await repo._session.execute(
+                _room_of_statement(conversation_id)
+                .add_columns(TopicMembership.role)
+                .outerjoin(
+                    TopicMembership,
+                    and_(
+                        TopicMembership.topic_id == Topic.id,
+                        TopicMembership.member_handle == member,
+                    ),
+                )
+            )
+        ).first()
+        room, role = (row[0], row[1]) if row is not None else (None, None)
+        if room is not None:
+            remember(
+                repo._session,
+                ("topic_member_role", room.id, member),
+                role,
+                tables=frozenset({"topic_memberships"}),
+            )
     if room is not None:
         remember(
             repo._session,

@@ -25,10 +25,11 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.team.services import team_service
 from app.domain.usage.models import Plan
@@ -169,7 +170,7 @@ async def _payer_teams(
         }
     if session.autoflush:
         await session.flush()
-    key = ("payer_teams", tuple(team_ids))
+    key = _payer_teams_key(team_ids)
     found, cached = recall(session, key)
     if found:
         return cached
@@ -198,3 +199,54 @@ async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Pay
 
     project = await ProjectService(session).get_or_404(project_id)
     return (await payers_for_projects(session, [project]))[project.id]
+
+
+def _payer_teams_key(team_ids: list[int]) -> tuple:
+    """The request fact `_payer_teams` answers from, for these team ids in
+    any order."""
+    return ("payer_teams", tuple(sorted(set(team_ids))))
+
+
+async def project_with_payer(
+    session: AsyncSession, project_id: uuid.UUID
+) -> Project | None:
+    """The project row, read with the team that pays for it and that team's
+    plan in one statement, for a caller about to ask who pays (model
+    admission, on every model call). What it read answers
+    `ProjectRepository.get` and `payers_for_projects` for the rest of the
+    request; without request facts it is the project alone."""
+    if not isinstance(session, AsyncSession):
+        return await session.get(Project, project_id)
+    if session.autoflush:
+        await session.flush()
+    found, cached = recall(session, ("project", project_id))
+    if found:
+        return cached
+    row = (
+        await session.execute(
+            select(Project, Team.plan_key, Team.personal_owner_user_id, Plan)
+            .outerjoin(
+                Team, and_(Team.id == Project.team_id, Team.deleted_at.is_(None))
+            )
+            .outerjoin(Plan, Plan.key == Team.plan_key)
+            .where(Project.id == project_id)
+        )
+    ).first()
+    project = row[0] if row is not None else None
+    remember(session, ("project", project_id), project, tables=frozenset({"projects"}))
+    if row is not None and project is not None and row[1] is not None:
+        _, plan_key, owner, plan = row
+        remember(
+            session,
+            _payer_teams_key([project.team_id]),
+            {project.team_id: (plan_key, owner is not None)},
+            tables=frozenset({"team"}),
+        )
+        if plan is not None:
+            remember(
+                session,
+                ("plan_terms", plan.key),
+                Terms.of(plan),
+                tables=frozenset({"plans"}),
+            )
+    return project
