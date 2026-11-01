@@ -55,11 +55,18 @@ function reload(): void {
 }
 
 function show(): void {
-  toast.warning(t('global.outdatedClient.message'), {
-    // The page cannot be used until it is refreshed; the button stays until it is.
+  // vuetify-sonner hands every option on to vue-sonner's toast (`...rest` in its
+  // `toast()`), whose `dismissible: false` refuses the swipe; its own option type
+  // leaves that key out, hence the variable rather than an inline literal.
+  const options: Parameters<typeof toast.warning>[1] & { dismissible: boolean } = {
+    // The page cannot be used until it is refreshed, and once failure notices are
+    // held this is the only thing it says: nothing may take it off screen, a timer
+    // or a swipe, and the button stays until it is used.
     duration: Number.POSITIVE_INFINITY,
+    dismissible: false,
     action: { label: t('global.outdatedClient.refresh'), onClick: reload },
-  })
+  }
+  toast.warning(t('global.outdatedClient.message'), options)
 }
 
 let asked = false
