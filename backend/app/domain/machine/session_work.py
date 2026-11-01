@@ -61,6 +61,7 @@ from app.domain.machine.lifecycle import (
     SandboxRemoving,
     frozen_sessions,
     thaw_if_asked,
+    use_session_work,
 )
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
@@ -1496,3 +1497,8 @@ async def _install(
 
 async def _another_attempt() -> bool:
     return True
+
+
+# Freezing a sandbox runs this module's checkpoint first; `lifecycle` cannot
+# import this module (it is imported by it), so it is handed the two it uses.
+use_session_work(checkpoint=checkpoint, restart_executor=restart_executor)

@@ -181,6 +181,18 @@ async def thaw_on_host(hub, device_id: str, resource: str) -> None:
         raise SandboxHomeError(str(answer["thaw_error"]))
 
 
+#: What freezing needs from `session_work` — its checkpoint and its way of
+#: starting an executor — handed in by `session_work` when it is imported
+#: (`use_session_work`). It imports this module, so this one may not import it.
+_SESSION_WORK: dict = {}
+
+
+def use_session_work(*, checkpoint, restart_executor) -> None:
+    """Give freezing the checkpoint a turn's Stop runs and the way to start a
+    session's executor for it. Called once by `session_work` on import."""
+    _SESSION_WORK.update(checkpoint=checkpoint, restart_executor=restart_executor)
+
+
 async def _checkpoint(hub, lease: dict, start) -> bool:
     """The session's one checkpoint, then the sandbox is stopped.
 
@@ -189,11 +201,12 @@ async def _checkpoint(hub, lease: dict, start) -> bool:
     have work in it that was never pushed. It is the same command a turn's
     Stop runs (`session_work.checkpoint`) and fails the same way: whatever
     happens, the sandbox is still frozen."""
-    # deferred-import: `session_work` imports `lifecycle` for `SandboxRemoving`
-    from app.domain.machine import session_work
-
+    checkpoint = _SESSION_WORK.get("checkpoint")
+    if checkpoint is None:
+        logger.warning("no checkpoint before freezing: session_work not loaded")
+        return False
     try:
-        return await session_work.checkpoint(lease, start)
+        return await checkpoint(lease, start)
     except Exception:
         logger.warning("checkpoint before freezing failed", exc_info=True)
         return False
@@ -340,6 +353,7 @@ class SandboxLifecycle:
     async def sweep(self) -> dict[str, int]:
 
         destroyed = await self.destroy_idle()
+        destroyed += await self._release_frozen_on_draining_hosts()
         for home in await metering.unpaid_sandboxes(self._session):
             if self._hub.is_online(home.device_id) and await self._destroy(
                 home.id,
@@ -349,6 +363,24 @@ class SandboxLifecycle:
             ):
                 destroyed += 1
         return {"destroyed": destroyed}
+
+    async def _release_frozen_on_draining_hosts(self) -> int:
+        """A host being rebuilt (`reaper._drain_one`) waits for its active
+        sandboxes to go idle, but a frozen one is not in use: it goes at
+        once, so the rebuild is not held up by work nobody is doing."""
+        if not settings.cloud_sandbox_freeze:
+            return 0
+        hosts = [
+            host
+            for host in await self._repo.live()
+            if host.draining_since is not None and host.device_id is not None
+        ]
+        await self._session.commit()
+        gone = 0
+        for host in hosts:
+            assert host.device_id is not None
+            gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
+        return gone
 
     async def destroy_idle(self) -> int:
         """Destroy every idle sandbox, and finish every removal left
@@ -758,9 +790,7 @@ class SandboxLifecycle:
                     # The same checkpoint a turn's Stop runs, so a freeze
                     # loses no more than a destroy would.
                     try:
-                        from app.domain.machine import session_work
-
-                        start = await session_work.restart_executor(
+                        start = await _SESSION_WORK["restart_executor"](
                             self._session, session_row, lease
                         )
                     except Exception:
@@ -917,6 +947,7 @@ class SandboxLifecycle:
         rows.sort(key=frozen_eviction_key)
         destroyed = 0
         for home in rows[:limit]:
+            assert home.frozen_at is not None  # selected by `frozen_at` set
             if await self._destroy(
                 home.id,
                 None,
@@ -959,6 +990,8 @@ class SandboxLifecycle:
         if not rows:
             return False
         home = min(rows, key=frozen_eviction_key)
+        # Both were selected for: on one of these hosts, and frozen.
+        assert home.host_id is not None and home.frozen_at is not None
         host = by_id[home.host_id]
         assert host.device_id is not None
         return await self._destroy(

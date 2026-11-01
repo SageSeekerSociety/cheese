@@ -387,9 +387,8 @@ def test_a_host_short_of_disk_lets_a_frozen_sandbox_go_first(icy):
 
 
 def rebuild_sweep(case) -> None:
-    """The pool's sweep (`reaper.maintain`), reaching the hosts through the
-    host programs this file uses: the sweep is where a host being rebuilt is
-    picked, and it destroys what a frozen sandbox must let go of."""
+    """The pool's sweep (`reaper.maintain`), which picks a host to rebuild,
+    then the sandbox sweep, which lets a rebuilt host's frozen sandboxes go."""
 
     async def go():
         async with case.client.test_request_factory() as db:
@@ -397,6 +396,8 @@ def rebuild_sweep(case) -> None:
             await db.commit()
 
     run(case, go)
+    # The sandbox sweep is what lets a draining host's frozen sandboxes go.
+    run(case, SandboxSweeper(case.client.test_request_factory).sweep)
 
 
 def test_a_host_being_rebuilt_lets_its_frozen_sandbox_go_at_once(icy, monkeypatch):

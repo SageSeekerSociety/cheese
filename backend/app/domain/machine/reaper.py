@@ -425,21 +425,6 @@ class PoolSweep:
         host.idle_since = None
         await self._session.commit()
         logger.info("cloud pool rebuilding stale host %s", host.hostname)
-        if settings.cloud_sandbox_freeze and host.device_id is not None:
-            # A frozen sandbox is not in use: it goes at once rather than
-            # waiting for the host to drain. An active one waits for idle as
-            # it always did. Deferred import: `lifecycle` imports this module.
-            from app.domain.machine.lifecycle import SandboxLifecycle
-
-            gone = await SandboxLifecycle(
-                self._session, hub=self._hub
-            ).destroy_frozen_on(host.device_id, host_id=host.id)
-            logger.info(
-                "cloud pool rebuilding stale host %s: %s frozen sandbox(es) gone",
-                host.hostname,
-                gone,
-            )
-            await self._session.commit()
 
     def _outdated(self, host: CloudHost, version: str, now: datetime) -> bool:
         """Whether a host no longer matches what a host created now would be:
