@@ -45,6 +45,15 @@
  * is undone at once, without a confirmation: it is his own, and undoing it only
  * puts the options back in front of him.
  *
+ * Some questions carry the platform's buttons instead of plain options: a
+ * teammate asking a person to decide a delivery that waits on them
+ * (`agent.ask.ask_to_decide`) offers 「接受 PR #1」 and 「关闭任务」. Such a button
+ * is not a reply: clicking it emits `decide` and the panel calls the card's own
+ * accept or the task's own close, the same request the card's and the task's
+ * buttons make. The question then closes when the delivery is decided, however
+ * it was decided (`decided`), and says how; that line is the card's, so nobody
+ * takes it back.
+ *
  * The one who answered can take it back: a question takes one answer, so a
  * misclick otherwise has no way out. That is the answerer's own line — nobody
  * else's — and it comes off the question, not out of the room: the message they
@@ -61,6 +70,8 @@
  * or the server refused it and the line sits in the room with 「重试」.
  */
 import type { Block } from '../../cx_types'
+import type { AskOption } from '../../lib/blockDisplay'
+import type { AskAction } from '../../types/ask'
 
 import { computed, ref, watch } from 'vue'
 
@@ -92,6 +103,8 @@ const emit = defineEmits<{
   /** 撤回自己的答复，或撤销自己的跳过：服务端是同一个动作。 */
   (e: 'withdraw'): void
   (e: 'skip'): void
+  /** 点了平台给的按钮（接受交付、关闭任务）：做那个动作，不是回一句话。 */
+  (e: 'decide', action: AskAction): void
 }>()
 
 const options = computed(() => askOptions(props.block) ?? [])
@@ -102,7 +115,8 @@ const askedAll = computed(() => !!meta.value.asked_all)
 const responses = computed(() => askAnswers(props.block))
 /** 提问方把题收起来了：撤回（不再等人答）或过期（还能答）。 */
 const closedByAsker = computed(() => askClosedByAsker(props.block))
-const withdrawn = computed(() => closedByAsker.value === 'withdrawn')
+// 撤回了，或者按钮要决定的交付已经有了结果：都不再等人答，选项收起。
+const withdrawn = computed(() => closedByAsker.value === 'withdrawn' || closedByAsker.value === 'decided')
 /** 真正的回答（不是跳过）：有一条，题就对所有人了结了。 */
 const answers = computed(() => responses.value.filter((a) => !a.skipped))
 const skips = computed(() => responses.value.filter((a) => a.skipped))
@@ -115,7 +129,7 @@ const mySkip = computed(() => props.viewer != null && skips.value.some((s) => s.
 const skipLines = computed(() => (skippedByAll.value ? skips.value : skips.value.filter((s) => s.by === props.viewer)))
 // 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
 // 一直有的权利，后端不看这两件事。
-const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
+const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer && !a.decided))
 // 点选项、在末行写自己的答案、跳过，都只给能回答这道题的人：点了名就是名单上的人，问所有人
 // 就是频道里谁都行（名单是问出口那一刻的人，后来进频道的也算），没点名也是谁都行。
 // 和服务端 `block.asked.may_answer` 同一条。
@@ -164,6 +178,8 @@ const choosing = computed(
 // 选项换掉之后那一行说明。提问方收起来的先说它；过期的那条只是不再等人，选项还在
 // 下面（见模板：这一行和选项可以同时出现）。
 const closedLine = computed(() => {
+  // 交付有了结果、而它相当于题上的某个按钮时，上面那一行答案已经说了是谁、点的哪个。
+  if (closedByAsker.value === 'decided') return answers.value.length ? '' : t('ask.replies.decided')
   if (closedByAsker.value) return t(`ask.replies.${closedByAsker.value}`)
   if (props.closed && !skippedByAll.value) return t('ask.replies.closed')
   return ''
@@ -188,10 +204,29 @@ const locked = computed(() => sent.value || !!props.answering)
 
 // 点一个选项：那几个字就是对这道题的回复。`disabled` 挡得住手，这里挡得住同一趟里
 // 又冒出来的第二下（键盘的数字键也走这里）。
-function pick(text: string) {
+function pick(option: AskOption) {
   if (locked.value || !canAnswer.value) return
+  // 平台的按钮不发消息：谁在做、做没做成由面板管（`useAskResponse.decide`），成了题自己
+  // 会随交付的结果收起来。
+  if (option.action) return emit('decide', option.action)
   sent.value = true
-  emit('reply', label(text))
+  emit('reply', label(option.text))
+}
+
+// 平台按钮上的字照看的人的语言写（库里存的是中文那一份，供芝士读）。
+function optionLabel(option: AskOption): string {
+  const action = option.action
+  if (action?.kind === 'accept')
+    return action.pr
+      ? t('roomNotice.askDecisionAcceptPr', { pr: `PR #${action.pr}` })
+      : t('roomNotice.askDecisionAccept')
+  if (action?.kind === 'close') return t('roomNotice.askDecisionClose')
+  return label(option.text)
+}
+// 一行答案说的是哪个按钮时，也照看的人的语言写。
+function answerText(text: string): string {
+  const option = options.value.find((o) => o.action && o.text === text)
+  return option ? optionLabel(option) : text
 }
 
 // 卡片有焦点时按 1–9 就是点第几个选项。末行输入框里的数字是在打字，不算；带修饰键的
@@ -203,7 +238,7 @@ function onCardKey(e: KeyboardEvent) {
   const option = options.value[Number(e.key) - 1]
   if (!option) return
   e.preventDefault()
-  pick(option.text)
+  pick(option)
 }
 
 function confirmWithdraw() {
@@ -286,10 +321,10 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
     <ul v-if="answers.length" class="ask-replies__answers">
       <li v-for="(answer, index) in answers" :key="index" class="ask-replies__row">
         <span class="ask-replies__answer">{{
-          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
+          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answerText(answer.text) })
         }}</span>
         <button
-          v-if="answer.by === viewer"
+          v-if="answer.by === viewer && !answer.decided"
           type="button"
           class="ask-replies__withdraw"
           :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
@@ -322,12 +357,12 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           type="button"
           class="ask-replies__option"
           :disabled="!canAnswer || locked"
-          @click="pick(option.text)"
+          @click="pick(option)"
         >
           <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
           <span class="ask-replies__body">
             <span class="ask-replies__label"
-              ><span class="ask-replies__text">{{ label(option.text) }}</span
+              ><span class="ask-replies__text">{{ optionLabel(option) }}</span
               ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
                 t('ask.replies.recommended')
               }}</span></span

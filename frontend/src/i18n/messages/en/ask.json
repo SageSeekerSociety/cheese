@@ -29,6 +29,7 @@
     "closed": "Closed — no longer waiting for an answer",
     "withdrawn": "The teammate took this question back",
     "expired": "This question is past its deadline — you can still answer",
+    "decided": "The delivery has been decided — no longer waiting for an answer",
     "withdraw": "Withdraw",
     "withdrawAria": "Withdraw your answer “{text}”",
     "withdrawTitle": "Withdraw this answer?",
@@ -39,6 +40,7 @@
     "undoSkip": "Undo",
     "undoSkipAria": "Undo the skip and answer this question",
     "skipFailed": "Couldn't skip the question",
+    "decideFailed": "That didn't go through. Try again later",
     "who": {
       "you": "{asker} asks you",
       "youAnd": "{asker} asks you and {people}",

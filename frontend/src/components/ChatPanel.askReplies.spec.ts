@@ -8,6 +8,9 @@
 //
 // 被问的人也可以不答：✕ 跳过这道题，房间里不出现任何消息，题上写着他跳过了；撤销
 // 之后题重新等他回答。
+//
+// 交付在等人决定时，芝士问的题带的是平台的按钮（「接受 PR #n」「关闭任务」）：点了
+// 不是回一句话，而是发卡上「采纳」、任务「关闭任务」发的那个请求。
 import type { Component } from 'vue'
 import type { Block, Topic } from '@/cx_types'
 
@@ -83,6 +86,28 @@ function question(
   } as unknown as Block
 }
 
+/** 交付在等人决定时问的那道题：两个平台按钮。`decided` 是交付已经定了的那一条。 */
+function decisionQuestion(topic: string, decided: string | null = null): Block {
+  const open = question(topic)
+  return {
+    ...open,
+    content: 'PR #7 还在等你决定。要我关掉这个任务吗？关掉后这份交付会作废。',
+    meta: {
+      ...open.meta,
+      options: [
+        {
+          text: '接受 PR #7',
+          action: { kind: 'accept', card: 'card-7', pr: 7, head_sha: 'abc123', deliverable_revision: null },
+        },
+        { text: '关闭任务', action: { kind: 'close', card: 'card-7', task: 'task-7' } },
+      ],
+      answer_log: decided
+        ? [{ kind: 'decided', option: decided, note: null, by: 'me', at: '2026-08-02T00:00:00Z', reply_id: null }]
+        : [],
+    },
+  } as unknown as Block
+}
+
 /** 提问方收起的一道题：撤回（不再等人答）或过期（还能答）。 */
 function closedByAsker(topic: string, kind: 'withdrawn' | 'expired'): Block {
   const open = question(topic)
@@ -102,6 +127,8 @@ let sent: Array<{ url: string; body: Record<string, unknown> }> = []
 let takenBack: string[] = []
 /** 跳过那一次请求（`POST …/skip`）。 */
 let skippedIds: string[] = []
+/** 平台按钮发的请求：卡的采纳、任务的关闭。 */
+let decisions: Array<{ url: string; body: Record<string, unknown> }> = []
 /** 拖住发消息那一次请求（不给就是不拖）：卡收起之前那一段只有靠它才看得见。 */
 let holdMessages: (() => Promise<void>) | null = null
 
@@ -115,6 +142,7 @@ beforeEach(() => {
   sent = []
   takenBack = []
   skippedIds = []
+  decisions = []
   holdMessages = null
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
@@ -147,6 +175,10 @@ beforeEach(() => {
         status: 200,
         json: async () => ({ code: 200, data: { ...question('skipped', null, ['me'], ['me']), id } }),
       }
+    }
+    if (/\/accept-cards\/[^/]+\/accept$|\/topics\/[^/]+\/close$/.test(String(url)) && init?.method === 'POST') {
+      decisions.push({ url: String(url), body: JSON.parse(String(init.body)) })
+      return { ok: true, status: 200, json: async () => ({ code: 200, data: {} }) }
     }
     if (String(url).endsWith('/messages') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
@@ -563,5 +595,38 @@ describe('只有被问到的人能点选项', () => {
     await fireEvent.click(getByRole('button', { name: /按项目/ }))
     await until(() => sent.length > 0)
     expect(sent[0].body.reply_to).toBe('q-t-chip-nobody')
+  })
+})
+
+describe('交付在等人决定时，题上的按钮就是卡上、任务上的那个动作', () => {
+  it('点「接受 PR #7」发的是卡的采纳，带着问的时候卡上那一版，不发消息', async () => {
+    history = [decisionQuestion('t-accept')]
+    const { getByRole } = await open('t-accept')
+    await fireEvent.click(getByRole('button', { name: /接受 PR #7/ }))
+    await until(() => decisions.length > 0)
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0].url).toContain('/accept-cards/card-7/accept')
+    expect(decisions[0].body.head_sha).toBe('abc123')
+    expect(sent).toHaveLength(0)
+  })
+
+  it('点「关闭任务」发的是任务的关闭，不发消息', async () => {
+    history = [decisionQuestion('t-close')]
+    const { getByRole } = await open('t-close')
+    await fireEvent.click(getByRole('button', { name: /关闭任务/ }))
+    await until(() => decisions.length > 0)
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0].url).toContain('/topics/task-7/close')
+    expect(sent).toHaveLength(0)
+  })
+
+  it('交付定了：按钮收起，写着是谁、相当于哪个按钮，没有撤回', async () => {
+    history = [decisionQuestion('t-decided', '关闭任务')]
+    const { container, queryByRole } = await open('t-decided')
+    await waitFor(() => expect(container.querySelector('.ask-replies')?.textContent).toContain('关闭任务'), {
+      timeout: 5_000,
+    })
+    expect(queryByRole('button', { name: /接受 PR #7/ })).toBeNull()
+    expect(queryByRole('button', { name: /撤回/ })).toBeNull()
   })
 })

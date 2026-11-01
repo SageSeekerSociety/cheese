@@ -17,7 +17,8 @@ Callers authorize the seat and commit; nothing here publishes or delivers.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.core.errors import (
     ConflictError,
@@ -27,15 +28,18 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.block.asked import (
+    DECIDED,
     EXPIRED,
     SKIPPED,
     WITHDRAWN,
+    answerable,
     answered,
     closed_by_the_asker,
     may_answer,
     skipped_by,
     skipped_by_all,
 )
+from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
@@ -332,3 +336,53 @@ async def expire_question(
     }
     await session.flush()
     return question
+
+
+async def settle_decision(
+    session, *, conversation_id, card_id, chosen: str | None, by: str
+) -> list[Block]:
+    """The delivery ``card_id`` was decided: the questions whose buttons decide
+    it (`agent.ask.ask_to_decide`) stop waiting, and say how it went.
+
+    A button does nothing but call the card's own route, so the decision is
+    made — and recorded here — wherever it is made: a click on one of these
+    buttons, the card's own button, a merge on the forge, the task closing.
+    ``chosen`` is the button kind the decision amounts to (``accept`` /
+    ``close``). Either way the question is closed with ``decided``, an entry
+    that is not an answer and that nobody withdraws: the decision is the
+    card's, and taking it off the question would offer buttons for a delivery
+    that is already decided. It names the button the decision amounts to when
+    the question offered one (``option``), and nothing when it did not (a
+    return, a void, a close it never offered). Returns the
+    questions it changed, for the caller to show once committed. Flush, not
+    commit.
+    """
+    rows = await session.scalars(
+        select(Block).where(
+            QUESTION_ROWS,
+            Block.conversation_id == conversation_id,
+            cast(Block.meta, JSONB).contains(
+                {"options": [{"action": {"card": str(card_id)}}]}
+            ),
+        )
+    )
+    changed = []
+    now = datetime.now(UTC)
+    for question in rows:
+        meta = dict(question.meta or {})
+        if not answerable(meta):
+            continue
+        offered = next(
+            (
+                option["text"]
+                for option in meta.get("options") or []
+                if ((option or {}).get("action") or {}).get("kind") == chosen
+            ),
+            None,
+        )
+        entry = {**_closed_entry(DECIDED, by=by, at=now), "option": offered}
+        question.meta = {**meta, "answer_log": [*(meta.get("answer_log") or []), entry]}
+        changed.append(question)
+    if changed:
+        await session.flush()
+    return changed

@@ -8,6 +8,7 @@
  */
 
 import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
+import type { AskAction } from '@/types/ask'
 import type { ThreadReply } from '@/types/threads'
 import type { RefNames } from './refChip'
 
@@ -152,12 +153,14 @@ export function artifactKind(block: Block): string {
   return fileLabel(block.content)
 }
 
-/** 一个选项。`text` 是提问方给的那几个字，`explain` 是他补的解释，没补就没有。 */
-export type AskOption = { text: string; explain?: string }
+/** 一个选项。`text` 是提问方给的那几个字，`explain` 是他补的解释，没补就没有；
+ *  `action` 是平台给的按钮要做的动作（`types/ask.ts`）。 */
+export type AskOption = { text: string; explain?: string; action?: AskAction }
 
 /** 答过这道题的一句话：谁说的、说的是什么。 */
-/** `skipped`：被问的人跳过了这道题、没有回答（`answer_log` 里 `kind: 'skipped'` 那一条）。 */
-export type AskAnswer = { by: string; text: string; skipped: boolean }
+/** `skipped`：被问的人跳过了这道题、没有回答（`answer_log` 里 `kind: 'skipped'` 那一条）。
+ *  `decided`：不是谁回的话，是题的按钮要决定的那份交付有了结果，`text` 是它相当于哪个按钮。 */
+export type AskAnswer = { by: string; text: string; skipped: boolean; decided?: boolean }
 
 /** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
 export function askOptions(block: Block): AskOption[] | null {
@@ -165,23 +168,32 @@ export function askOptions(block: Block): AskOption[] | null {
   if (!Array.isArray(opts) || !opts.length) return null
   // 只认 `{text}` 对象。`string[]` 是迁移前的形状，那之后没有一处还会写它。
   const out = opts.flatMap((o) => {
-    const item = o as { text?: unknown; explain?: unknown } | null
+    const item = o as { text?: unknown; explain?: unknown; action?: unknown } | null
     if (!item || typeof item !== 'object' || typeof item.text !== 'string') return []
-    return [{ text: item.text, ...(item.explain ? { explain: String(item.explain) } : {}) }]
+    const action = item.action as AskAction | undefined
+    return [
+      {
+        text: item.text,
+        ...(item.explain ? { explain: String(item.explain) } : {}),
+        ...(action && (action.kind === 'accept' || action.kind === 'close') ? { action } : {}),
+      },
+    ]
   })
   return out.length ? out : null
 }
 
-/** 提问方收回了这道题（`withdrawn`），或者它过了时效（`expired`）：题上 `answer_log`
- *  里的那一条。两者都不是回答（`answered` 仍为假）；撤回了就不再等人答，过期了还能答。 */
-export type AskClosed = 'withdrawn' | 'expired'
+/** 提问方收回了这道题（`withdrawn`），它过了时效（`expired`），或者它的按钮要决定的交付
+ *  已经有了结果（`decided`）：题上 `answer_log` 里的那一条。都不是回答（`answered` 仍为
+ *  假）；撤回了、有了结果就不再等人答，过期了还能答。 */
+export type AskClosed = 'withdrawn' | 'expired' | 'decided'
 
 /** 题是不是被提问方收起来了；没有就是 null。撤回和过期只会有一条（先到的那条作数）。 */
 export function askClosedByAsker(block: Block): AskClosed | null {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return null
   for (const entry of log as Record<string, unknown>[]) {
-    if (entry.kind === 'withdrawn' || entry.kind === 'expired') return entry.kind as AskClosed
+    if (entry.kind === 'withdrawn' || entry.kind === 'expired' || entry.kind === 'decided')
+      return entry.kind as AskClosed
   }
   return null
 }
@@ -195,9 +207,12 @@ export function askAnswers(block: Block): AskAnswer[] {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return []
   return (log as Record<string, unknown>[])
-    .filter((entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired')
+    .filter(
+      (entry) => entry.kind !== 'withdrawn' && entry.kind !== 'expired' && !(entry.kind === 'decided' && !entry.option)
+    )
     .map((entry: Record<string, unknown>) => ({
       by: String(entry.by ?? ''),
+      ...(entry.kind === 'decided' ? { decided: true } : {}),
       // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
       text:
         entry.kind === 'reject'

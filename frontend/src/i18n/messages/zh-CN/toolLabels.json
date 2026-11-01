@@ -86,6 +86,7 @@
   "cheeseReady": "标记可审阅",
   "cheeseRecalc": "重算表格公式",
   "cheeseRedeliver": "更换审阅中的交付物",
+  "cheeseCardAsk": "请人决定交付",
   "cheeseReopenTask": "重新打开任务",
   "cheeseReviewDecide": "处理审阅",
   "cheeseRoutine": "管理例行事务",

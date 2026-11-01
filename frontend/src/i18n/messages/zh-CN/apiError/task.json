@@ -81,5 +81,6 @@
   "claimHasNewerApplication": "这条申请已有更新的一份，处理新的那条",
   "taskClosedForStart": "这道题已经截止，不能再申请或开始做",
   "claimDeadlinePassedForStart": "你的提交截止时间已经过了，不能再开始做这道题",
-  "claimBeingChanged": "这份申请正在处理，过一会儿再试一次"
+  "claimBeingChanged": "这份申请正在处理，过一会儿再试一次",
+  "taskCloseWhileDeliveryWaits": "这件任务的交付还在等人决定，任务没有关：关掉会让这份交付作废，这个决定归人。用 cheese_card(action=ask) 在对话里问一句，给「接受」和「关闭任务」两个按钮；人点了「关闭任务」，任务才会关。"
 }

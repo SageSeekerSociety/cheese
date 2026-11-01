@@ -182,5 +182,8 @@
   "roomFileEditorSavedAside": "{path} had changed when {who} saved, so this copy was saved as {aside}, and {agent} was told",
   "ownAgentRoomConsent": "I was added to {room} (room ID: {room_id}). May I participate? I will wait for your approval before acting there.",
   "ownAgentRoomYes": "Yes",
-  "ownAgentRoomNo": "No"
+  "ownAgentRoomNo": "No",
+  "askDecisionAcceptPr": "Accept {pr}",
+  "askDecisionAccept": "Accept this delivery",
+  "askDecisionClose": "Close the task"
 }

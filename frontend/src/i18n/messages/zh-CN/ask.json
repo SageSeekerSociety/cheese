@@ -29,6 +29,7 @@
     "closed": "已结束，不再等回答",
     "withdrawn": "芝士收回了这道题",
     "expired": "这道题过期了，仍可以回答",
+    "decided": "交付已经有了结果，不再等回答",
     "withdraw": "撤回",
     "withdrawAria": "撤回你对「{text}」的回答",
     "withdrawTitle": "撤回这条回答？",
@@ -39,6 +40,7 @@
     "undoSkip": "撤销",
     "undoSkipAria": "撤销跳过，重新回答这道题",
     "skipFailed": "跳过失败",
+    "decideFailed": "没能做成，稍后重试",
     "who": {
       "you": "{asker} 问你",
       "youAnd": "{asker} 问你和 {people}",

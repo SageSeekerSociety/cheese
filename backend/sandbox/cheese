@@ -1056,7 +1056,8 @@ PLATFORM_TOOLS = ToolTable(
                     "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
                     "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
                     "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
-                    "任务、结论写一句结果。",
+                    "任务、结论写一句结果。交付（验收卡）还在等人决定时关不了：关掉会让交付"
+                    "作废，这归人决定，用 cheese_card 的 ask 问，人点了「关闭任务」才关。",
                     {
                         "conclusion": _text("关闭原因或最终说明"),
                         "reported_by": _text("需求提出者的 handle"),
@@ -1172,6 +1173,26 @@ PLATFORM_TOOLS = ToolTable(
                 ),
                 "ready": _verb(
                     "把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"
+                ),
+                "ask": _verb(
+                    "交付还在等人决定时，在对话里问一句，带上平台的按钮：accept 是「接受」，"
+                    "和卡上的采纳一样；close 是「关闭任务」，关掉后这份交付作废。只有人点了按钮"
+                    "才算：你不能替人接受，交付在等人时你也关不了任务。有人在对话里说要采纳"
+                    "（「采纳」「接受」「可以合了」），回一个只给 accept 的问题；说要关掉"
+                    "（「关掉吧」「不做了」），回一个只给 close 的；你认为任务该结束了，问一个"
+                    "两样都给的，例如「PR #1 还在等你决定。要我关掉这个任务吗？关掉后这份交付会"
+                    "作废。」。问完就停下，不要等：点了按钮，结果会告诉你。",
+                    {
+                        "question": _text("问的那句话，说清在等谁决定、点了会怎样"),
+                        "offer": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 2,
+                            "items": {"type": "string", "enum": ["accept", "close"]},
+                            "description": "给哪几个按钮：accept 接受交付，close 关闭任务",
+                        },
+                    },
+                    ["question", "offer"],
                 ),
             },
         ),
@@ -2891,6 +2912,15 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_card.ready":
         return {"method": "POST", "path": here + "/ready"}
+    if tool == "cheese_card.ask":
+        return {
+            "method": "POST",
+            "path": here + "/accept-card/ask",
+            "body": {
+                "question": args.get("question") or "",
+                "offer": list(args.get("offer") or []),
+            },
+        }
     if tool == "cheese_doc.list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_canvas.get":
@@ -5710,6 +5740,12 @@ _SAY = {
     "cheese_doc.list": _say_documents,
     "cheese_canvas.get": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_ask": _say_ask,
+    "cheese_card.ask": lambda a, d, e: (
+        "已在对话里问了，带着按钮（消息 id "
+        + "、".join(str(b.get("id")) for b in (d or {}).get("blocks") or [])
+        + "）。现在就停下，不要等：人点了「接受」或「关闭任务」，结果会告诉你；"
+        "他打字回复，回复会再把你叫起来。"
+    ),
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback.propose": lambda a, d, e: (
         f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"

@@ -151,6 +151,7 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_card.describe': 'toolLabels.cheeseDescribe',
   'cheese_card.redeliver': 'toolLabels.cheeseRedeliver',
   'cheese_card.ready': 'toolLabels.cheeseReady',
+  'cheese_card.ask': 'toolLabels.cheeseCardAsk',
   cheese_milestone: 'toolLabels.cheeseMilestone',
   'cheese_room.members': 'toolLabels.cheeseMembers',
   cheese_gh_token: 'toolLabels.cheeseGhToken',

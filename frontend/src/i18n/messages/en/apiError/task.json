@@ -81,5 +81,6 @@
   "claimHasNewerApplication": "This application has a newer one; decide the newer one instead",
   "taskClosedForStart": "This task has closed; it can no longer be applied for or started",
   "claimDeadlinePassedForStart": "Your hand-in deadline has passed, so you can no longer start this task",
-  "claimBeingChanged": "This application is being changed. Try again in a moment"
+  "claimBeingChanged": "This application is being changed. Try again in a moment",
+  "taskCloseWhileDeliveryWaits": "This task's delivery is still waiting for a person's decision, so the task was not closed: closing it would void the delivery, and that decision is theirs. Ask in the conversation with cheese_card(action=ask), offering the accept and close buttons; the task closes only when a person clicks close."
 }

@@ -40,6 +40,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.project.forgejo_tokens import ForgejoTokenError, credential_is_leased
 from app.domain.project.github_app import GitHubAppError
+from app.domain.review.services import AcceptService
 from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -376,3 +377,24 @@ async def sandbox_forge_token(
             ),
         }
     )
+
+
+@router.get("/forge-held")
+async def sandbox_forge_held(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """The project's pull requests that are deliveries waiting on a person,
+    and their branches: the forge proxy outside the sandbox refuses an agent
+    closing one of them, or deleting its branch (`forge_proxy.pr_close_targets`),
+    because that would void the delivery, which is the person's decision. Asked
+    on every such request, so a delivery filed a moment ago counts."""
+    token = credentials.presented(request.headers)
+    claims = scoped_token_claims(token) if token else None
+    if not claims or not claims.get("p"):
+        raise AuthenticationRequiredError("A scoped cheese token is required")
+    project_id = uuid.UUID(claims["p"])
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=None, allow_machine=True
+    )
+    numbers, branches = await AcceptService(db).held_pr_deliveries(project_id)
+    return ok({"numbers": numbers, "branches": branches})
