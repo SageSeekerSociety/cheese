@@ -14,7 +14,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.core import scoped_jwt
+from app.core import origins, scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, ValidationError
@@ -55,10 +55,12 @@ def content_host(label: str) -> str:
         local and settings.sites_scheme == "http"
     ):
         raise ValidationError(say("siteNeedsHttps"))
-    platform_host = urlsplit(settings.frontend_url).hostname or ""
+    platform_domains = {
+        tuple((urlsplit(origin).hostname or "").split(".")[-2:])
+        for origin in origins.all_origins()
+    }
     if not local and (
-        len(domain.split(".")) < 2
-        or domain.split(".")[-2:] == platform_host.split(".")[-2:]
+        len(domain.split(".")) < 2 or tuple(domain.split(".")[-2:]) in platform_domains
     ):
         # Conservative for multi-label suffixes such as co.uk: deployments can
         # use distinct top-level domains instead of relying on a stale PSL.
@@ -178,8 +180,7 @@ class SiteHostMiddleware:
         if is_exchange:
             if request.method != "POST":
                 return Response(status_code=405)
-            origin = urlsplit(settings.frontend_url)
-            if request.headers.get("origin") != f"{origin.scheme}://{origin.netloc}":
+            if not origins.is_ours(request.headers.get("origin")):
                 return Response(status_code=403)
             body = bytearray()
             async for chunk in request.stream():

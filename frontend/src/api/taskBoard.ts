@@ -2,8 +2,17 @@
 // 任务，地址 `/topics/{task}` ＋ `readSince`/`signal` 的清单）是两个东西 —— 名字只
 // 为避开它。返回的都是 payload（新栈），不再是整只 `{code,message,data}` 信封。
 //
-// 从旧网络栈搬过来时地址、查询、正文与超时一字未改：附件上传 60000 且带上传进度。
-import type { EncodedCursorPage, Page, Task, TaskMembership, TaskSubmission, TeamSummary } from '@/types'
+// 从旧网络栈搬过来时地址、查询、正文与超时一字未改。题目的材料在 `@/api/taskFiles`。
+import type {
+  EncodedCursorPage,
+  Page,
+  Task,
+  TaskMembership,
+  TaskProgress,
+  TaskStage,
+  TaskSubmission,
+  TeamSummary,
+} from '@/types'
 import type {
   AddTaskParticipantRequestData,
   PatchTaskParticipantRequestData,
@@ -12,13 +21,9 @@ import type {
   PostTaskRequestData,
   PostTaskSubmissionRequestData,
   PostTaskSubmissionReviewRequestData,
-  TaskAttachmentListResponseData,
   TaskInheritanceData,
   TaskParticipationInfo,
-  UploadTaskAttachmentResponseData,
 } from '@/types/taskBoard'
-
-import { AxiosProgressEvent } from 'axios'
 
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
@@ -41,35 +46,6 @@ export namespace TaskBoardApi {
 
   export const update = (taskId: number, data: PatchTaskRequestData) =>
     axiosRequest<{ task: Task }>({ url: `/tasks/${taskId}`, method: 'PATCH', data }, true)
-
-  /** 一道题上的材料清单。看得见这道题的人都拿得到，能不能下载在 `canDownload` 里。 */
-  export const listAttachments = (taskId: number) =>
-    axiosRequest<TaskAttachmentListResponseData>({ url: `/tasks/${taskId}/attachments`, method: 'GET' }, true)
-
-  /** 传一个文件并挂到这道题上（出题人本人或板管理员）。 */
-  export const uploadAttachment = (
-    taskId: number,
-    file: File,
-    onProgress?: (progressEvent: AxiosProgressEvent) => void
-  ) => {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    return axiosRequest<UploadTaskAttachmentResponseData>(
-      {
-        url: `/tasks/${taskId}/attachments`,
-        method: 'POST',
-        data: formData,
-        timeout: 60000,
-        onUploadProgress: onProgress,
-      },
-      true
-    )
-  }
-
-  /** 把一份材料从这道题上摘下来。存储上的对象留着（见后端 `TaskAttachmentService.remove`）。 */
-  export const removeAttachment = (taskId: number, attachmentId: number) =>
-    axiosMutation({ url: `/tasks/${taskId}/attachments/${attachmentId}`, method: 'DELETE' }, true)
 
   export const del = (taskId: number) => axiosMutation({ url: `/tasks/${taskId}`, method: 'DELETE' }, true)
 
@@ -150,11 +126,7 @@ export namespace TaskBoardApi {
     }>({ url: '/tasks', method: 'GET', params: finalParams }, true)
   }
 
-  export const addParticipant = (
-    taskId: number,
-    member: number,
-    data: AddTaskParticipantRequestData = { deadline: null }
-  ) =>
+  export const addParticipant = (taskId: number, member: number, data: AddTaskParticipantRequestData = {}) =>
     axiosRequest<{ task: Task }>(
       { url: `/tasks/${taskId}/participants`, method: 'POST', params: { member }, data },
       true
@@ -163,7 +135,8 @@ export namespace TaskBoardApi {
   export const join = (taskId: number, data: AddTaskParticipantRequestData, teamId?: number) =>
     axiosRequest<{
       participant: TaskMembership
-      project: { id: string; name: string; root_topic_id: string; team_id: number }
+      /** 开始了才有：直接开始的题当场建出来；申请制的题申请时是 null，通过后再开始才建。 */
+      project: { id: string; name: string; root_topic_id: string; team_id: number } | null
     }>(
       {
         url: `/tasks/${taskId}/participations/${teamId === undefined ? 'user' : 'team'}`,
@@ -218,11 +191,36 @@ export namespace TaskBoardApi {
       true
     )
 
-  export const createSubmission = (taskId: number, participantId: number, data: PostTaskSubmissionRequestData[]) =>
+  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。 */
+  export const createSubmission = (
+    taskId: number,
+    participantId: number,
+    data: PostTaskSubmissionRequestData[],
+    stage: string | null = null
+  ) =>
     axiosRequest<{ submission: TaskSubmission }>(
-      { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'POST', data },
+      {
+        url: `/tasks/${taskId}/participants/${participantId}/submissions`,
+        method: 'POST',
+        data,
+        params: stage ? { stage } : undefined,
+      },
       true
     )
+
+  /** 每个阶段上的进度：我的，和（批改的人才有）全体的分布。 */
+  export const progress = (taskId: number) =>
+    axiosRequest<TaskProgress>({ url: `/tasks/${taskId}/progress`, method: 'GET' }, true)
+
+  /** 把题目的阶段存成 `stages` 会让哪些领取被判未通过、哪些从未通过回来，因为哪几个阶段（只算不写）。 */
+  export const stageEffect = (taskId: number, stages: TaskStage[]) =>
+    axiosRequest<{
+      failing: number
+      reopening: number
+      failingNames: string[]
+      reopeningNames: string[]
+      failingStages: string[]
+    }>({ url: `/tasks/${taskId}/stages/effect`, method: 'POST', data: { stages } }, true)
 
   export const updateSubmission = (
     taskId: number,
@@ -245,6 +243,8 @@ export namespace TaskBoardApi {
       sort_by: 'createdAt' | 'updatedAt'
       sort_order: 'asc' | 'desc'
       queryReview?: boolean
+      /** 只要这个阶段（阶段的 id）的提交。 */
+      stage?: string
     }
   ) =>
     axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(

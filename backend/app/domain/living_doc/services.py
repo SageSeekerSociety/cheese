@@ -124,6 +124,7 @@ class Documents:
         not change keeps its id and its author; a new one is ``author``'s.
         ``keep_author`` leaves the document's own author as it was.
         """
+        prev_content = doc.content
         written = await self._repo.set_content(
             doc,
             content,
@@ -133,7 +134,11 @@ class Documents:
         if written is None:
             return None
         new_nodes = markdown_to_nodes(content)
-        existing = await self._repo.nodes(doc.id)
+        existing = (
+            []
+            if expected_version == 0 and not (prev_content or "")
+            else await self._repo.nodes(doc.id)
+        )
         matcher = difflib.SequenceMatcher(
             a=[n.content for n in existing],
             b=[n.content for n in new_nodes],
@@ -187,8 +192,10 @@ class DocumentJournal:
         action: str,
         operation_id: uuid.UUID,
         payload: dict,
+        locked: bool = False,
     ) -> DocumentOperation:
-        await self.lock(document_id)
+        if not locked:
+            await self.lock(document_id)
         fingerprint = payload_fingerprint(payload)
         row = await self.session.scalar(
             select(DocumentOperation).where(
@@ -343,11 +350,15 @@ class DocumentJournal:
         ``reasons`` are the reasons given for suggestions this store proposes;
         a suggestion proposed earlier keeps the reason it was stored with.
         """
-        kept = {
-            item.get("id"): item.get("reason")
-            for item in await self.suggestions(document_id)
-            if item.get("reason")
-        }
+        kept = (
+            {
+                item.get("id"): item.get("reason")
+                for item in await self.suggestions(document_id)
+                if item.get("reason")
+            }
+            if suggestions
+            else {}
+        )
         pending = [
             {
                 "id": str(item["id"]),

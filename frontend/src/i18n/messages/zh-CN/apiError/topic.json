@@ -12,6 +12,8 @@
   "channelManagerOnly": "只有频道管理者和项目管理员能管理这个频道",
   "channelManagerPersonOnly": "频道管理者只能是项目里的人",
   "channelPublicProjectManagerOnly": "只有项目管理员能把私密频道设为公开",
+  "channelSpeakersNone": "至少选择一个角色",
+  "channelSpeakersOnly": "这个频道的主线只有部分角色能发言",
   "contributorMustBeUser": "贡献署名必须指向真实用户：{handle}",
   "cursorEventNotFound": "游标事件不存在",
   "cursorMessageNotFound": "游标消息不存在",
@@ -32,12 +34,6 @@
   "roomUnderRoomUseSplit": "频道下面放的是任务，不是另一个频道：改为新建任务",
   "sinceAfterUntil": "since 不能晚于 until",
   "sinceUntilIso": "since/until 要是一个 ISO-8601 时刻",
-  "snapshotCheckFailed": "任务备份校验失败，未恢复任何文件",
-  "snapshotCommitInvalid": "任务备份的提交编号无效",
-  "snapshotFileMissing": "任务备份文件不存在",
-  "snapshotNone": "这条任务还没有未提交文件备份",
-  "snapshotNotBundle": "任务备份不是 Git bundle",
-  "snapshotTransferCorrupt": "备份传输校验失败，请重新同步",
   "sourceTopicInvalid": "source_topic_id 不是合法的频道 id",
   "sourceTopicRequired": "source_topic_id 必填",
   "stepNotFound": "步骤不存在",
@@ -63,5 +59,9 @@
   "topicMuteUntilPast": "静音的截止时间必须晚于现在",
   "topicNotifyLevelInvalid": "通知设置只能从三个档位里选",
   "unarchiveSignIn": "取消归档需要登录",
-  "unarchiveWhileSessionStopping": "频道里的 AI 队友正在停下并保存记录，完成后即可取消归档"
+  "unarchiveWhileSessionStopping": "频道里的 AI 队友正在停下并保存记录，完成后即可取消归档",
+  "threadRestoreNotYours": "只有开这条支线的人和频道管理员能把它放回来",
+  "threadRestoreSignIn": "恢复这条支线需要登录",
+  "threadNotFound": "找不到这条支线",
+  "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出"
 }

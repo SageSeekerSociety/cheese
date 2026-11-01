@@ -127,7 +127,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
-            kept = await read(session, topic_id)
+            kept = await read(session, topic_id, reader=None)
         stopped = [
             item for item in kept.items if item["record"].get("type") == "result"
         ]
@@ -147,7 +147,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # real document API and database rather than the shell HTTP fixture: a
         # private chat has no document of its own, so its draft is one of the
         # project's.
-        headers = {"X-Cheese-Token": screen.openings[0]["token"]}
+        headers = {"Authorization": f"Bearer {screen.openings[0]['token']}"}
         saved = client.post(
             f"/projects/{project_id}/documents",
             headers=headers,

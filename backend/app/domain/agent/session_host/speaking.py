@@ -41,26 +41,47 @@ async def send(
     about it is read (``read``). Raises ``InputUnconfirmed`` when the
     runner may have taken it and did not say so."""
     running = svc._started(ref)
-    text = prompt.text
-    if prompt.preface and not await _spoken_to(svc, ref, running):
-        text = f"{prompt.preface}\n\n{text}"
     try:
-        await _say(svc, ref, running, "send", prompt, text, work_id)
+        await _say(
+            svc,
+            ref,
+            running,
+            "send",
+            prompt,
+            await _text(svc, ref, running, prompt),
+            work_id,
+        )
     except _NotThere:
         if running.spec is None or running.access is None:
             raise InputUnconfirmed(accepted=False) from None
         # The runner let the session go since it was last read (it sat
-        # idle): started again on its conversation, it is told once more.
-        # The runner keeps the inputs it took by id, so one that did reach
-        # it is not taken twice.
+        # idle), before it was asked what it had heard or told this: started
+        # again on its conversation, it is told once more. The runner keeps
+        # the inputs it took by id, so one that did reach it is not taken
+        # twice.
         running.answering = False
         await svc.start(ref, running.spec, running.access)
         running = svc._started(ref)
         try:
+            text = await _text(svc, ref, running, prompt)
             await _say(svc, ref, running, "send", prompt, text, work_id)
         except _NotThere as exc:
             raise InputUnconfirmed(accepted=False) from exc.__cause__
     running.spoken_to = True
+
+
+async def _text(
+    svc: SessionHost, ref: SessionRef, running: _Running, prompt: Prompt
+) -> str:
+    """What is said: with the preface, to a session nothing was said to yet."""
+    if not prompt.preface:
+        return prompt.text
+    try:
+        spoken_to = await _spoken_to(svc, ref, running)
+    except (DeviceOffline, DeviceCallError) as exc:
+        running.spoken_to = None
+        raise _NotThere() from exc
+    return prompt.text if spoken_to else f"{prompt.preface}\n\n{prompt.text}"
 
 
 async def steer(
@@ -75,6 +96,14 @@ async def steer(
         await _say(svc, ref, running, method, prompt, prompt.text, work_id)
     except _NotThere as exc:
         raise InputUnconfirmed(accepted=False) from exc.__cause__
+
+
+async def act_as(svc: SessionHost, ref: SessionRef, acting: str) -> None:
+    """Have what the session's tools act with be ``acting`` from now on,
+    saying nothing to it: a long answer's credential renewed before it
+    runs out."""
+    running = svc._started(ref)
+    await svc._call(running, ref, "acting", {"platform_token": acting})
 
 
 async def _say(
@@ -98,6 +127,10 @@ async def _say(
     if prompt.acting is not None:
         params["platform_token"] = prompt.acting
     running.owed = True
+    if running.launched.epoch:
+        # Recorded before it leaves: an exit of the process it was handed to
+        # before must not be read as this one's (`delivery.receipts.hand_to`).
+        await svc._handing(ref, running, prompt.id)
     try:
         await svc._call(running, ref, method, params)
     except (DeviceOffline, DeviceCallError) as exc:

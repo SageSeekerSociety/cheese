@@ -29,7 +29,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
-from app.domain.identity.actor import Actor
+from app.domain.identity.actor import Actor, acted_by
 from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_CARD_REJECTED,
@@ -111,7 +111,7 @@ async def _card_actor(
     topic = await service._topic_or_404(card.topic_id)
     actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic.id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic.id
+        actor, project_id=topic.project_id, topic_id=topic.id, room=topic
     )
     # Deciding a review is the task side of the project (#3830).
     await require_role(db, actor, topic.project_id, Permission.tasks)
@@ -139,13 +139,14 @@ async def _task_actor(
 async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> Actor:
     """Whoever may read this task, or this room's cards: the task's people, or
     whoever the room lets in."""
-    if place.task is not None:
-        actor, _room, _task = await _task_actor(place.conversation_id, db, resolver)
-        return actor
-    actor = await resolver.resolve(topic_id=place.room_id, project_id=place.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+    actor = await resolver.resolve(
+        topic_id=place.conversation_id, project_id=place.project_id
     )
+    await resolver.authorize_topic(
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
+    )
+    if place.task is not None and not actor.authenticated:
+        raise AuthenticationRequiredError()
     return actor
 
 
@@ -496,6 +497,7 @@ async def accept_card(
         decided_by=actor.handle,
         head_sha=body.head_sha,
         deliverable_revision=body.deliverable_revision,
+        by_assistant=actor.by_assistant,
     )
     return ok(await svc.describe(card))
 
@@ -535,7 +537,12 @@ async def reject_card(
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("returnSignIn"))
     svc = _accept_service(db)
-    card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    card = await svc.reject(
+        card_id=card_id,
+        decided_by=actor.handle,
+        note=body.note,
+        by_assistant=actor.by_assistant,
+    )
     sent = await ReviewCommentService(db).send(card, actor.handle, body.comment_ids)
     described = await svc.describe(card)
     topic_id = card.topic_id
@@ -543,6 +550,7 @@ async def reject_card(
     reason = (card.note or "").strip()
     # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
     reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    who = acted_by(decided_by, by_assistant=card.decided_by_assistant)
     if sent:
         reason_line += "\n" + await comment_instruction(db, sent)
     task = await TaskService(db).get(card.task_id) if card.task_id else None
@@ -561,20 +569,26 @@ async def reject_card(
         topic=topic,
         task=task,
         content=(
-            f"{decided_by} 驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
+            f"{decided_by}{' 的芝士代他' if card.decided_by_assistant else ' '}"
+            f"驳回了任务 {card.task_id} 的验收卡。{reason_line}\n{action}"
         ),
         headline=(
-            say("cardRejectedFixing", who=f"<@{decided_by}>")
+            say("cardRejectedFixing", who=who)
             if actionable
-            else say("cardRejectedClosed", who=f"<@{decided_by}>")
+            else say("cardRejectedClosed", who=who)
         ),
-        meta=notice(
-            EVENT_CARD_REJECTED,
-            severity=SEVERITY_WARN,
-            who=WHO_CHEESE,
-            detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p) or None,
-            detail_label=say("labelRejectReason"),
-        ),
+        meta={
+            **notice(
+                EVENT_CARD_REJECTED,
+                severity=SEVERITY_WARN,
+                who=WHO_CHEESE,
+                detail="\n\n".join(p for p in (reason, comment_summary(sent)) if p)
+                or None,
+                detail_label=say("labelRejectReason"),
+            ),
+            # The reason is that person's own words, drawn as what they said.
+            "by": decided_by,
+        },
     )
     await db.commit()
     if sent:

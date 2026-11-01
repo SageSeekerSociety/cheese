@@ -42,6 +42,8 @@ class TopicRepository:
         number: int,
         environment: dict,
         title: str,
+        description: str | None = None,
+        members_only: bool = False,
         parent_id: uuid.UUID | None = None,
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
@@ -53,6 +55,8 @@ class TopicRepository:
             number=number,
             environment=environment,
             title=title,
+            description=description,
+            members_only=members_only,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
@@ -199,6 +203,9 @@ class TopicRepository:
 
     async def has_open_tasks(self, room_id: uuid.UUID) -> bool:
         return await reads.has_open_tasks(self, room_id=room_id)
+
+    async def task_conversations_in(self, room_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        return await reads.task_conversations_in(self, room_ids=room_ids)
 
     # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
 

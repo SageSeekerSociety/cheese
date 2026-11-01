@@ -1,7 +1,7 @@
 """The room's checklist, message edits and the silence rule are the same on
 every harness.
 
-`todo_write`, `chat_send` and `chat_edit` are platform tools, and each harness
+`todo_write`, `chat_send` and `cheese_chat` are platform tools, and each harness
 reaches the backend through code of its own: Claude Code through the plugin
 module that takes the model's tool call (`proxy.js`) and the session's MCP
 transport process it hands the call to, Codex through the handler app-server
@@ -105,7 +105,7 @@ def _relay(client) -> ThreadingHTTPServer:
             headers = {
                 name: value
                 for name, value in self.headers.items()
-                if name.lower() in ("content-type", "x-cheese-token", "x-cheese-turn")
+                if name.lower() in ("content-type", "authorization", "x-cheese-turn")
             }
             response = client.request(
                 self.command, self.path, content=body, headers=headers
@@ -232,7 +232,7 @@ def harness(request, client, room, tmp_path, monkeypatch):
         # then exactly the platform's table.
         tools.client.call = lambda method, params: {"tools": []}
         listed = asyncio.run(tools.discover())
-        assert {"todo_write", "chat_send", "chat_edit"} <= {
+        assert {"todo_write", "chat_send", "cheese_chat"} <= {
             tool["name"] for tool in listed
         }
 
@@ -293,7 +293,12 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
     [sent] = [b for b in blocks if b["content"] == "先看 issue"]
     with room_socket(client, topic, "alice") as ws:
         harness(
-            "chat_edit", {"message_id": sent["id"], "content": "先看 issue，再写测试"}
+            "cheese_chat",
+            {
+                "action": "edit",
+                "message_id": sent["id"],
+                "content": "先看 issue，再写测试",
+            },
         )
         edited = _next(ws, "block_updated")
     assert edited["id"] == sent["id"]
@@ -304,10 +309,11 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
 def test_a_message_through_any_harness_silences_the_reminder(
     client, stub_hooks, room, harness, monkeypatch
 ):
-    """`QuietSessionReminders.silence` picks the sessions that owe the room a
-    word by when it last heard one from them. That clock moves when
-    `chat_send` lands, so it has to land the same way from every harness — or
-    one harness is reminded forever, or never."""
+    """`QuietSessionReminders.silence` picks the sessions that owe a person an
+    answer (read their message, said nothing since) and those silent an
+    interval after their last word. Both clocks move when `chat_send` lands,
+    so it has to land the same way from every harness — or one harness is
+    reminded forever, or never."""
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
     quiet = QuietSessionReminders(chat, chat.compute)
@@ -338,11 +344,12 @@ def test_a_message_through_any_harness_silences_the_reminder(
 
         harness("chat_send", {"content": "我先核对一下当前流程。"})
         assert client.portal.call(quiet.silence, clock) == 0
-        # A checklist is not a word to the room: it does not reset the clock.
-        harness("todo_write", {"todos": PLAN})
+        # An interval later it is asked for a line on what it is doing, not
+        # to answer: the message landed and counted as its answer.
         clock += timedelta(seconds=threshold)
         assert client.portal.call(quiet.silence, clock) == 1
         assert len(notices) == 2
+        assert "分钟没在对话里说话" in notices[1] and "还没回" not in notices[1]
 
         client.portal.call(stub_hooks.stops, uuid.UUID(topic), "Finished")
         while ws.receive_json()["type"] != "done":

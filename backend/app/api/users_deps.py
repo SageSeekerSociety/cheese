@@ -80,6 +80,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.auth import SudoPurpose, create_access_token, verify_sudo_ticket
+from app.core import origins
 from app.core.client_address import resolved_client_address
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import (
@@ -160,6 +161,15 @@ async def _spend_sudo_ticket(
 REFRESH_COOKIE = "cheese_refresh"
 _REFRESH_COOKIE_PATH = f"{GATEWAY_MOUNT}/users/auth"
 
+# That path is why a page request carries no sign of the session at all: the
+# browser attaches the refresh cookie only under `/api/users/auth`. This one is
+# a marker with no value of its own, sent on every request to this origin, so
+# the edge can tell a visitor who is signed in here from one who is not
+# (`frontend/nginx/mainland/main.conf`, deciding whether to move them to the
+# deployment's other origin). It authenticates nothing and nothing reads it but
+# that rule; it lives exactly as long as the sign-in behind it.
+SIGNED_IN_COOKIE = "cheese_signed_in"
+
 
 def _set_refresh_cookie(
     response: Response, refresh_token: str, expires_at: datetime
@@ -167,14 +177,24 @@ def _set_refresh_cookie(
     """The cookie lasts as long as the sign-in behind it. Without a Max-Age
     the browser drops it when the session ends while the access token in
     localStorage survives, and the next refresh signs the user out."""
+    max_age = max(0, int((expires_at - datetime.now(UTC)).total_seconds()))
     response.set_cookie(
         REFRESH_COOKIE,
         refresh_token,
-        max_age=max(0, int((expires_at - datetime.now(UTC)).total_seconds())),
+        max_age=max_age,
         httponly=True,
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path=_REFRESH_COOKIE_PATH,
+    )
+    response.set_cookie(
+        SIGNED_IN_COOKIE,
+        "1",
+        max_age=max_age,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
     )
 
 
@@ -185,6 +205,13 @@ def _clear_refresh_cookie(response: Response) -> None:
         secure=settings.environment not in ("development", "test"),
         samesite="lax",
         path=_REFRESH_COOKIE_PATH,
+    )
+    response.delete_cookie(
+        SIGNED_IN_COOKIE,
+        httponly=True,
+        secure=settings.environment not in ("development", "test"),
+        samesite="lax",
+        path="/",
     )
 
 
@@ -296,10 +323,7 @@ def _require_same_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if origin is None:
         return
-    trusted = {
-        _origin_of(settings.frontend_url),
-        *map(_origin_of, settings.cors_origins),
-    }
+    trusted = {*origins.all_origins(), *map(_origin_of, settings.cors_origins)}
     same_host = urlsplit(origin).netloc == request.headers.get("host")
     if not same_host and _origin_of(origin) not in trusted:
         raise ForbiddenError("Cross-site request refused")

@@ -50,7 +50,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.identity.services import IdentityService
-from app.domain.living_doc.models import Document, DocumentComment
+from app.domain.living_doc.models import DocumentComment
 from app.domain.membership.roster import Member, roster_rows, rows_of
 from app.domain.mentions import (
     canonicalize_refs,
@@ -139,6 +139,7 @@ async def person_mentions(
     *,
     dm: bool,
     members: Sequence[Member] | None = None,
+    seating: Sequence[str] = (),
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -155,12 +156,17 @@ async def person_mentions(
     person's words through here, so an edit stores what sending stores.
 
     ``members`` is the project's `roster` when the caller already read it
-    (sending hands over the request's read); without it the roster is read."""
+    (sending hands over the request's read); without it the roster is read.
+
+    ``seating`` are seats the message would seat before it is read
+    (`own_calls.named_own_seats`): a preview reads the message as if they
+    already sat here, which sending makes true before it reads."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
         else []
     )
+    agent_handles += [s for s in seating if s not in agent_handles]
     # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
     # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
     # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
@@ -504,40 +510,47 @@ class CommentMentions:
 
 async def announce_comment_mentions(
     session: AsyncSession,
-    doc: Document,
+    project_id: uuid.UUID | None,
     room: Topic | None,
     comment: DocumentComment,
     *,
     title: str,
+    document_id: uuid.UUID | None = None,
+    room_path: str | None = None,
+    room_title: str | None = None,
     task_id: uuid.UUID | None = None,
 ) -> CommentMentions:
-    """Tell each person a document comment @s, once for that comment.
+    """Tell each person a comment's @s, once for that comment.
+
+    The comment hangs on a document (``document_id``) or on a file of a room
+    (``room_path``), and ``title`` names it either way — the document's title,
+    or the file's path.
 
     Only people of the project are told, never the writer, and never anyone who
-    cannot open the document: a task's document is read by whoever may enter
-    its channel, so in a private channel someone not seated in it is left out
-    and named back to the writer instead, as a message in that channel would
-    be (:func:`mentioned_outside`). An AI teammate is not told here: the
+    cannot open it: a task's document is read by whoever may enter its channel,
+    so in a private channel someone not seated in it is left out and named back
+    to the writer instead, as a message in that channel would be
+    (:func:`mentioned_outside`). An AI teammate is not told here: the
     document's own agent is handed the thread by the comment route, and a
     comment names no other. A comment an AI teammate wrote tells nobody.
 
     The delivery is keyed by the comment, so delivering it again tells
     nobody twice; :func:`comment_notified` reads the same key back."""
     author = comment.author
+    mentioned = [
+        h
+        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
+        if h != author
+    ]
+    if not mentioned or project_id is None:
+        return CommentMentions([], None)
     # What an AI teammate writes into a comment refers to people; it calls
     # nobody (its answer is read where it was asked).
     if await IdentityService(session).is_agent(author):
         return CommentMentions([], None)
-    if doc.project_id is None:
-        # A team's own document tells nobody yet (`api.doc_mentions`).
-        return CommentMentions([], None)
     members = TopicMemberService(session)
-    people = set(await members.project_people(doc.project_id, team=project_team))
-    named = [
-        h
-        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
-        if h != author and h in people
-    ]
+    people = set(await members.project_people(project_id, team=project_team))
+    named = [h for h in mentioned if h in people]
     if not named:
         return CommentMentions([], None)
     outside = None
@@ -556,7 +569,7 @@ async def announce_comment_mentions(
                 members_only=room.members_only,
             )
     if targets:
-        roster = await roster_rows(session, doc.project_id, team=project_team)
+        roster = await roster_rows(session, project_id, team=project_team)
         who = next(
             (r["name"] for r in roster if r.get("handle") == author and r.get("name")),
             author,
@@ -574,12 +587,22 @@ async def announce_comment_mentions(
                 id=event_id_for(NotificationType.MENTION, str(comment.id)),
                 type=NotificationType.MENTION,
                 payload={
-                    "projectId": str(doc.project_id),
-                    "documentId": str(doc.id),
+                    "projectId": str(project_id),
+                    # Which subject it hangs on. A file's comment names the
+                    # file; a document's names the document, which is what the
+                    # letter and the push title read to say where it was
+                    # (`notification.letter`, `notification.push`).
+                    **(
+                        {"documentId": str(document_id)}
+                        if document_id is not None
+                        else {"roomPath": room_path}
+                    ),
                     "commentId": str(comment.id),
+                    # The letter's headline and the email subject both name it.
                     "documentTitle": title,
-                    # What the email's headline names (`letter_for`).
-                    "topicTitle": title,
+                    # The room it hangs in, when the caller named it. A file's
+                    # title is a path, and a path is not a channel's name.
+                    "topicTitle": room_title or title,
                     "author": author,
                     "authorName": who,
                     "content": markdown_preview(comment.content, 200),

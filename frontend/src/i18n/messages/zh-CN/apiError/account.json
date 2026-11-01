@@ -21,7 +21,7 @@
   "signInForTask": "登录后才能查看这道赛题",
   "signInForTeam": "登录后才能查看这个团队",
   "signInUnavailable": "暂时无法完成登录，请稍后重试",
-  "taskCredentialOtherConversation": "任务里的 AI 队友只在自己那段对话里读写。要看同频道里别的任务说过什么，用 `cheese_chat_search` 带 channel 搜整个频道；要在那个任务里做事，交给那个任务里的队友",
+  "taskCredentialOtherConversation": "任务里的 AI 队友只在自己那段对话里读写。要看同频道里别的任务说过什么，用 `cheese_chat(action=search)` 带 channel 搜整个频道；要在那个任务里做事，交给那个任务里的队友",
   "teamMemberOnly": "只有这个团队的成员可以查看",
   "termsUpdatedRefresh": "协议已更新，请刷新页面后重新阅读",
   "tokenOtherProject": "这个 token 属于别的项目，不能在这里操作",

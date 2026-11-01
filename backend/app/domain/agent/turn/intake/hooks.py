@@ -6,19 +6,24 @@ Neither layer receives ChatService or a many-method private Host protocol.
 """
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.core import alerting
 from app.core.sentences import say
 from app.domain.agent import turn_resume
 from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.gateway_usage import OWN_ROUTE
+from app.domain.agent.models import TurnResume
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
+    is_provider_out_of_credit,
 )
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.room_events import post_system_event
@@ -51,6 +56,7 @@ from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_noti
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
+from app.domain.block.models import Block
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.notice_meta import (
     EVENT_TURN_TIMEOUT,
@@ -66,6 +72,24 @@ from app.domain.usage.credits import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _turn_ended_noticed(
+    sessions: async_sessionmaker, turn_id: uuid.UUID, meta: dict
+) -> bool:
+    """Whether this turn's ending already has its line of this kind."""
+    async with sessions() as session:
+        return (
+            await session.scalar(
+                select(Block.id)
+                .where(
+                    Block.turn_id == turn_id,
+                    Block.meta["event_type"].as_string() == meta.get("event_type"),
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
 
 class BeginTurn(Protocol):
@@ -123,9 +147,11 @@ class HookEvents:
         *,
         seat: str | None,
         route: str | None,
-    ) -> bool:
+    ) -> TurnResume | None:
+        """What the platform decided for this failure: a resume owed, one it
+        declined (``dropped_reason`` says why), or None when it never applied."""
         try:
-            row = await turn_resume.after_failure(
+            return await turn_resume.after_failure(
                 self.sessions,
                 project_id=project_id,
                 conversation_id=conversation_id,
@@ -134,14 +160,11 @@ class HookEvents:
                 result=result,
                 route=route,
             )
-            if row is None:
-                return False
-            return row.dropped_at is None
         except Exception:
             logger.exception(
                 "could not schedule a resume after turn %s failed", turn_id
             )
-            return False
+            return None
 
     async def accept(
         self,
@@ -332,9 +355,22 @@ class HookEvents:
                         own=state is not None and state.route == OWN_ROUTE,
                     )
                     resumable = True
-                error_line, error_code = line, meta.get("code")
+                    if is_provider_out_of_credit(event.text):
+                        # 上游服务的余额用完了：项目里的人补团队额度也没有用，只有
+                        # 平台管理员能处理。房间里那句已经说了，这里再叫一次管平台
+                        # 的人（`alerting` 自带重复窗口，同一个上游不会每小时刷）。
+                        alerting.send(
+                            "AI 中继余额已用完",
+                            [
+                                f"项目 {project_id}",
+                                "上游原文：" + (event.text or "").strip()[:400],
+                                "重试没有作用；补团队额度也没有用。",
+                            ],
+                            key="ai-relay-out-of-credit",
+                            when=time.time(),
+                        )
                 if resumable:
-                    recovering = await self._resume_later(
+                    resume = await self._resume_later(
                         project_id,
                         topic_id,
                         turn_id,
@@ -346,7 +382,21 @@ class HookEvents:
                         or (state.acting_agent if state is not None else None),
                         route=state.route if state is not None else None,
                     )
-                if not recovering:
+                    if resume is not None and resume.dropped_at is None:
+                        # The room hears that the turn stopped and when the
+                        # platform tries again; no error frame, nobody needs
+                        # to step in (`execute_event`).
+                        recovering = True
+                        line, meta = turn_resume.scheduled_notice(resume)
+                    elif (
+                        resume is not None
+                        and resume.dropped_reason == turn_resume.RECOVERS_LATE
+                    ):
+                        line, meta = turn_resume.late_notice(resume)
+                error_line, error_code = line, meta.get("code")
+                # Every failed turn says so in its conversation, once: a report
+                # delivered again finds the line it already left.
+                if not await _turn_ended_noticed(sessions, turn_id, meta):
                     room_meta = dict(meta)
                     if "error" in room_meta:
                         # Startup diagnostics are platform records. The room

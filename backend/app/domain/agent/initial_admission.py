@@ -21,6 +21,7 @@ from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
+    EVENT_TURN_QUEUED,
     SEVERITY_INFO,
     WHO_HUMAN,
     WHO_PLATFORM,
@@ -143,8 +144,10 @@ async def admitted_initial(
             await post_event(
                 topic_id,
                 say("upgradeMessageWaits", agent=f"<@{seat}>"),
+                # The message waits its turn behind the work under way, like
+                # any queued message: the platform's own running, not a failure.
                 meta=notice(
-                    EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_PLATFORM
+                    EVENT_TURN_QUEUED, severity=SEVERITY_INFO, who=WHO_PLATFORM
                 ),
             )
         yield pending or away

@@ -2,7 +2,7 @@
 
 三条判据，各自一句话：
 
-- **谁能传、谁能删、谁能改档**：这块板的所有者 / 管理员（``is_space_admin``）。
+- **谁能传、谁能删、谁能改档**：这块板的所有者 / 管理员（``space_seats.runs``）。
   资料库是板子级的公共设施，往里面放什么、放给谁看，是管理动作。
 - **谁能看到清单**：这块板的**成员**都能看 —— 但只看到「所有成员」那一档；
   「仅管理员」那一档的行对成员**根本不出现**（不是出现了点不开）。看不见板子的
@@ -33,16 +33,17 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import is_space_admin
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.storage import StorageBackend, generate_storage_key
 from app.domain.materials.models import Material
 from app.domain.materials.services import MaterialService
+from app.domain.space import permissions as space_seats
 from app.domain.space.models import (
     SpaceAdminRelation,
     SpaceMaterial,
     SpaceMaterialVisibility,
 )
+from app.domain.space.permissions import Permission as SpacePermission
 from app.domain.space.repositories import SpaceRepository
 
 _MIME_FAMILIES = (
@@ -194,7 +195,7 @@ class SpaceMaterialService:
     ) -> bool:
         if link.visibility == SpaceMaterialVisibility.MEMBERS.value:
             return await self._spaces.is_member(space_id=space_id, user_id=user_id)
-        return await is_space_admin(self._session, space_id=space_id, user_id=user_id)
+        return await space_seats.runs(self._session, space_id, user_id)
 
     async def may_read_outside_space(self, *, material_id: int, user_id: int) -> bool:
         """这份素材在**资料库这一侧**归谁读 —— 一道挂在通用读门上的闩。
@@ -255,7 +256,7 @@ class SpaceMaterialService:
     async def _managed_space_ids(
         self, *, space_ids: set[int], user_id: int
     ) -> set[int]:
-        """这些板子里，这个人是所有者或管理员的那几块 —— ``is_space_admin`` 的批量版。
+        """这些板子里，这个人是所有者或管理员的那几块 —— ``space_seats.runs`` 的批量版。
 
         判据与它逐字相同（管理员关系表里一条没软删的行），每次现查不缓存，撤权
         立刻生效的口径也一样；只是一条语句问完一批板子。
@@ -280,7 +281,6 @@ class SpaceMaterialService:
         content_type: str,
         visibility: str | None,
     ) -> dict:
-        await self._require_admin(space_id=space_id, user_id=user_id)
         chosen = _parse_visibility(visibility)
         kind = _type_for(content_type)
 
@@ -313,7 +313,6 @@ class SpaceMaterialService:
     async def set_visibility(
         self, *, space_id: int, user_id: int, material_id: int, visibility: str
     ) -> dict:
-        await self._require_admin(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
             raise NotFoundError("Material not found", data={"id": material_id})
@@ -328,7 +327,6 @@ class SpaceMaterialService:
         它」，不是「把文件毁掉」—— 同一份素材可能还被某道题的参考资料引用着，而
         对象删掉就没有回头路。
         """
-        await self._require_admin(space_id=space_id, user_id=user_id)
         link = await self._links.get_live(space_id=space_id, material_id=material_id)
         if link is None:
             raise NotFoundError("Material not found", data={"id": material_id})
@@ -366,16 +364,15 @@ class SpaceMaterialService:
     # ---- 判据 ----
 
     async def _require_member(self, *, space_id: int, user_id: int) -> bool:
-        """看不见这块板就 404（不是 403）；返回的是不是管理员。"""
-        if not await self._spaces.is_member(space_id=space_id, user_id=user_id):
-            raise NotFoundError(
-                "Resource space not found", data={"type": "space", "id": space_id}
-            )
-        return await is_space_admin(self._session, space_id=space_id, user_id=user_id)
-
-    async def _require_admin(self, *, space_id: int, user_id: int) -> None:
-        if not await self._require_member(space_id=space_id, user_id=user_id):
-            raise ForbiddenError("Only a board manager can perform this action")
+        """看不见这块板就 404（不是 403）；返回的是能不能管素材。传、改档、撤下来
+        由路由声明（``SpacePermission.manage_materials``），这里只给读的人用。"""
+        if not await space_seats.SPACE.allows(
+            self._session, space_id, user_id, space_seats.Permission.view
+        ):
+            raise NotFoundError.for_resource("space", space_id)
+        return await space_seats.SPACE.allows(
+            self._session, space_id, user_id, SpacePermission.manage_materials
+        )
 
 
 def _readable_by_a_member(visibilities: Sequence[str]) -> bool:

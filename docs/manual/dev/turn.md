@@ -72,9 +72,11 @@ steps:
 
 芝士的普通输出不进房间，要发言必须调用平台工具 `chat_send`。工具调用和它们的输出留在会话的原始记录里（`session_records`，见[会话记录](/dev/session-records)），施工现场从那里读；一轮很久没有发言时，平台会给它投一条内部提醒。平台工具表怎么送到每种骨架手里、机器够不着时哪些工具还在，见[平台工具与会话侧 MCP](/dev/mcp)；只有必须在机器上跑的动作才走 `cheese` 命令行，见[cheese CLI 原理](/dev/cli#sandbox)。
 
-人点名芝士说的话，芝士先在房间里回一句，再做别的：开这一轮的那条消息，和一轮进行中插进来的那条，都一样。从这条消息送进会话起，会话调 `chat_send` 或 `cheese_ask` 之前，除了读这个房间的聊天记录（`cheese_chat_list`、`cheese_chat_get`、`cheese_chat_search`、`cheese_chat_replies`），别的工具一律被拒，拒绝的原因会告诉它先回话。读房间不算回话：拒绝可能先于那条消息送到模型眼前，人的消息也常常只是一个 @、指着上面几条，不让它读，它只能回一句「还没看到你写了什么」。读文件、跑命令、查项目状态都照样被拒，那正是人在等的活。平台自己的通知、巡检、没有点名芝士的消息不算；分身向启动它的会话汇报，不受这条约束。规则写在所有骨架共用的 runner 里（`harness/driven/runner.py`），每种骨架只负责在自己的工具路径上照它拒绝：Claude Code 的函数钩子（`remote_execution/proxy.js`）、Codex 的动态工具（`codex/tools.py`）、pi 的扩展（`pi/platform.ts`）。
+人点名芝士说的话，芝士先在房间里回一句，再做别的：开这一轮的那条消息，和一轮进行中插进来的那条，都一样。从这条消息送进会话起，会话调 `chat_send` 或 `cheese_ask` 之前，除了读这个房间的聊天记录（`cheese_chat(action=list)`、`cheese_chat(action=get)`、`cheese_chat(action=search)`、`cheese_chat(action=replies)`），别的工具一律被拒，拒绝的原因会告诉它先回话。读房间不算回话：拒绝可能先于那条消息送到模型眼前，人的消息也常常只是一个 @、指着上面几条，不让它读，它只能回一句「还没看到你写了什么」。读文件、跑命令、查项目状态都照样被拒，那正是人在等的活。平台自己的通知、巡检、没有点名芝士的消息不算；分身向启动它的会话汇报，不受这条约束。规则写在所有骨架共用的 runner 里（`harness/driven/runner.py`），每种骨架只负责在自己的工具路径上照它拒绝：Claude Code 的函数钩子（`remote_execution/proxy.js`）、Codex 的动态工具（`codex/tools.py`）、pi 的扩展（`pi/platform.ts`）。
 
 一轮也不能在这时候结束：模型不调任何工具、只在自己那边写完就停，会话会被拦下一次，要它先在房间里回话。怎么拦是各骨架自己的：Claude Code 用 Stop 钩子把这一轮接着跑下去；Codex 没有能让一轮继续的东西，于是 runner 先不交出这一轮的结束，在同一件事里再开一轮带着提醒；pi 已经把最后一条写下了，于是 runner 给会话开一轮它自己的（房间照看后台任务唤醒的那种轮次记账）。只拦一次：拦过之后还是不回话，这一轮照常结束，runner 的日志记下这件事。
+
+回过一句也不等于回完了。先 `chat_send` 一句「收到」、接着干活、最后在自己那边写一段结论就停，人只看到那句「收到」，结论只进了现场，他会一直等下去。所以欠着回话的一轮，最后一次回话之后又调过别的工具，最后一条消息里还有字（去掉空白后非空），也会被拦下一次（`CLOSING_INSIST`）：要么用 `chat_send` 把它发出去，要么什么都不写就停。紧跟在回话后面的文字是在复述刚发的话，不拦；最后一条是空文本，也不拦。回话之后只记了自己的账也不算又干了活：改步骤清单（`todo_write`）、在看板上说这件任务在哪一步（`cheese_task(action=state)`），这两样只记这一轮自己的状态，不会产生人还不知道的结果（`BOOKKEEPING`，挨着 `REPLY_TOOLS`）；跑命令、写文件、改文档都算。每拦一次，runner 的日志记一行 `closing hold: message=… work=… after_reply=…`，写明回话之后调了哪些工具，用来看线上拦的频率、有没有拦出重复消息。每种骨架把会话自己调的每个工具告诉 runner（`called`），并把最后一条消息的字交给 `insist`：Claude Code 用 Stop 钩子输入里的 `last_assistant_message`，Codex 用这一轮最后一个 `agentMessage` 的文字（它之后又有工具调用之类的条目就算空），pi 用 `agent_end` 里最后一条 assistant 消息的文字。两种拦法分开记，同一条消息各拦至多一次，所以一轮至多被拦两次：先因为没回话被拦、回了一句再干活再用文字收尾，还会因为没发的结论再拦一次。Claude Code 的 build 在一轮停在空文本上时会自己追问要一段可见的回复，所以 runner 把回话工具登记成它的「终结工具」（`CLAUDE_CODE_TERMINAL_MCP_TOOLS`），回完话就停才是正常结束。
 
 消息只能在两次工具调用之间送到模型面前，所以人说话时如果芝士正卡在一条长命令上，这条命令会被转到后台继续跑，调用立刻返回，芝士马上读到消息（相当于在终端里按 Ctrl+B）：Claude Code 由 runner 发 `background_tasks` 控制请求，前台的 Bash 和分身一起转；Codex 的 Bash 在执行器上跑，由执行器停止等待、把命令交还成后台任务（`runtime.bash`）；pi 的 bash 由平台扩展接管，转成后台任务后用 `bash_read` / `bash_kill` 读和停；前台的分身（扩展的 `Task`）停止等待，转到后台接着做，结束时 runner 告诉会话（`pi/subagents.py`）。文件读写和 MCP 调用转不了，它们本来就短。
 
@@ -125,7 +127,7 @@ steps:
 
 一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
 
-换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_environment` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
+换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
 
 ### 会话按座位分开 {#seats-session}
 
@@ -168,7 +170,7 @@ AI 发起的点名有熔断：同一频道一小时最多叫起 `AGENT_MENTIONS_
 
 `meta.consumed_turn` 仍然是「某一轮读过这条」的痕迹，等待判定、编辑提醒和平台通知用它；它不再决定下一轮读什么，也不再把一条消息从别的座位那里收走。
 
-沉默提醒按座位算（`turn/steps/reminders.py`）：这一席的会话在干活、为手上这段工作读进去过一句人话，之后它署名的消息一句也没有，才叫它一声；别的队友说话不算它说了。
+沉默提醒按座位算（`turn/steps/reminders.py`）：这一席的会话在干活、为手上这段工作读进去过一句人话，从读到那句话或它之后最近一次署名发言起又沉默了一个阈值（`chat_progress_reminder_after_s`，十分钟），就叫它一声，沉默不断就每过一个阈值再叫一声；别的队友说话不算它说了。那句人话还没回时，叫它回话；回过了，叫它发一句短话，具体说正在做什么、接下来做什么，不 @ 人。一次只投一句。
 
 ### 几位队友同时干活时怎么不打架 {#seats-share}
 
@@ -202,8 +204,8 @@ AI 发起的点名有熔断：同一频道一小时最多叫起 `AGENT_MENTIONS_
 - 起名材料包含未读附件标记，不把文件名或路径当成附件内容。有附件、尚无后续文字解释的任务先保持「新任务」，等芝士说明、后续人话或实况文档补充后再尝试。转为任务时原消息同一轮的附件也一并保留。附件不算人发的独立消息，不会提前触发校准。
 - 首次命名也允许 `keep=true`：文字只是问候、称呼、指向未读附件，无法判断主题时，暂不起名，后续触发仍可继续首次命名。不是拿账号表过滤生成结果。
 - 新名字宽度超过侧栏一行（`title_width.py` 的 `TITLE_WIDTH`，12 个汉字宽）时，让模型重起，最多再问 2 次，几次加起来不超过 `topic_naming_timeout_seconds`。重问失败、答 keep 或始终太宽，就保留旧名；未起名的任务仍叫「新任务」。不按长度裁剪。校准和跟进时模型选择保留的旧名太宽，也可重问，但没有合格替代时仍保留原文。
-- 标题由谁定记在 `tasks.title_source`：`placeholder`、`auto`、`human`。人起的名（建任务时填的、之后改的）记为 `human`，此后平台不再自动改。芝士用 `cheese_task` 创建任务时写的标题、任务自己的会话用 `cheese_title` 起的名记为 `auto`，并算作已校准：只在跟进时可能再改。
+- 标题由谁定记在 `tasks.title_source`：`placeholder`、`auto`、`human`。人起的名（建任务时填的、之后改的）记为 `human`，此后平台不再自动改。芝士用 `cheese_task(action=open)` 创建任务时写的标题、任务自己的会话用 `cheese_room(action=rename)` 起的名记为 `auto`，并算作已校准：只在跟进时可能再改。
 - 自动改名按 `title_version` 比较后写入：生成期间有人改了名，这次结果作废。
 - 每次改名记进 `task_titles`，不在任务里发消息，只推送 `state: topics` 让侧栏刷新。
 - 项目设置 `task_naming = manual` 时平台不起名，芝士也不会被要求起名。
-- 平台起不了名（没配网关）时，没名字的任务每一轮都会提醒它自己的会话：弄清要做什么后用 `cheese_title` 起名。
+- 平台起不了名（没配网关）时，没名字的任务每一轮都会提醒它自己的会话：弄清要做什么后用 `cheese_room(action=rename)` 起名。

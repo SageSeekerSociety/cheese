@@ -4,8 +4,10 @@ import type { WebRect, WebViewport } from '@/lib/quotedContext'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { firstCodePoints } from '@/lib/codePoints'
 import { isWebPage } from '@/lib/fileKind'
 import { MCP_APP_MIME } from '@/lib/mcpAppBridge'
+import { webPickLabel } from '@/lib/webPickLabel'
 
 /** 网页预览里的「圈选」开关。
  *
@@ -25,27 +27,40 @@ interface PickOptions {
     web: (pick: FramePick) => void
     region: (payload: { url: string; rect: WebRect; viewport: WebViewport }) => void
   }
+  /** 这一段指不指得动（「看 / 批注 / 改」三段）。「改」那一段里圈选开不起来：开关要把
+   *  帧切进圈选态、遮罩要收键盘，只拦 `open` 的话这两样已经动过了。 */
+  allowed: () => boolean
 }
 
-export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote }: PickOptions) {
+export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote, allowed }: PickOptions) {
   const on = ref(false)
-  const target = computed<'runtime' | 'region' | null>(() => {
+  /** 这一帧能怎么圈，不管此刻让不让圈：关开关时要照它给帧发「关」，哪怕已经切出了批注。 */
+  const kind = computed<'runtime' | 'region' | null>(() => {
     const current = frame()
     if (!current) return null
     if (current.live) return 'region'
     // A third party's View has no cheese runtime injected, so there is no pick
     // bridge to switch on — the toggle would do nothing.
     if (current.mime === MCP_APP_MIME) return null
-    return isWebPage(current.label) ? 'runtime' : null
+    if (!isWebPage(current.label)) return null
+    // SVG 发出去是图，不是 HTML，内容域不往里装桥：帧里没人接开关。和应用一样盖遮罩框一块。
+    return /\.svg$/i.test(current.label) ? 'region' : 'runtime'
   })
+  // 指不动的那几段（看、改）里连开关都不摆：摆一颗按下去没反应的键比不摆更糟。
+  const target = computed(() => (allowed() ? kind.value : null))
 
   function set(value: boolean) {
+    if (value && !allowed()) return
     on.value = value
-    if (target.value === 'runtime') onRuntime(value)
+    if (kind.value === 'runtime') onRuntime(value)
   }
   function toggle() {
     if (target.value) set(!on.value)
   }
+  // 切到「改」那一段时把圈选收掉：开着圈选去改正文，鼠标按下去是在圈一块，不是在选字。
+  watch(allowed, (ok) => {
+    if (!ok && on.value) set(false)
+  })
 
   // 圈选期间 ESC 退出：应用那一档遮罩在宿主这边收键盘；有桥的那一档由帧把 ESC 交回来
   // （见 usePreviewEscape），这里再兜一道，两边都按得下。
@@ -68,7 +83,9 @@ export function usePreviewPick({ frame, previewUrl, onRuntime, open, quote }: Pi
   /** 帧的桥报回来的一处。帧那边报完已经自己关掉了，宿主这一侧的开关也收回来。 */
   function fromFrame(pick: FramePick) {
     set(false)
-    open(pick.selector, pick.text || (pick.tag ? `<${pick.tag}>` : ''), pick.selector)
+    // 卡头给人读的名字，引文和别的类型一样只留开头一段；选择器留在引用里交给芝士。
+    const label = webPickLabel(pick.label, pick.tag)
+    open(label, firstCodePoints(pick.text, 200), label)
     quote.web(pick)
   }
 

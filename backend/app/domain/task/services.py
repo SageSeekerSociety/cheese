@@ -9,15 +9,17 @@ from app.core.config import Settings, settings
 
 if TYPE_CHECKING:
     from app.domain.team.repositories import TeamRepository
-from app.auth.space_access import may_teach_task
+from app.auth import task_roles as task_seats
 from app.core.domain_errors import (
     TaskParticipantsReachedLimitError,
     TeamSizeNotEnoughError,
     TeamSizeTooLargeError,
 )
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.attachment.models import Attachment
 from app.domain.attachment.services import AttachmentService
+from app.domain.project.services import ClaimInProgressError
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -25,7 +27,13 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task import claims, package
 from app.domain.task.claims import members_claiming_through_another_team
+from app.domain.task.inputs import (
+    APPROVE_APPROVED,
+    APPROVE_DISAPPROVED,
+    APPROVE_NONE,
+)
 from app.domain.task.models import (
     Task,
     TaskMembership,
@@ -41,6 +49,7 @@ from app.domain.task.repositories import (
     TaskSubmissionReviewRepository,
     TaskSubmissionSchemaRepository,
 )
+from app.domain.task.stages import list_stages_for_tasks, stage_keys, stage_ref
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_NOT_SUBMITTED,
     refresh_completion_status,
@@ -48,10 +57,8 @@ from app.domain.task.submission_state import (
 )
 
 # Moved to ``task_service`` to keep this module under its size cap; re-exported
-# so ``from app.domain.task.services import TaskService`` still resolves (and it
-# is used below by ``ensure_task_visible_for_ordinary_user``).
-from app.domain.task.task_service import TaskService
-from app.domain.task.visibility_service import TaskVisibilityService
+# so ``from app.domain.task.services import TaskService`` still resolves.
+from app.domain.task.task_service import TaskService as TaskService
 from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
 
@@ -147,38 +154,10 @@ class TaskMembershipService:
         self,
         task_id: int,
         member_id: int,
+        is_team: bool,
     ) -> TaskMembership | None:
         return await self._repo.get_by_task_and_member(
-            task_id=task_id, member_id=member_id
-        )
-
-    async def has_live_claim(
-        self, *, task: Task, user_id: int, team_id: int | None
-    ) -> bool:
-        """Whether a project built from ``task`` has a claim behind it.
-
-        An individual task is claimed by the person; a team task by the team the
-        project belongs to. A claim is live unless it was rejected or withdrawn,
-        so a pending application counts: its workspace is opened at claim time.
-        """
-        if task.submitter_type == 1:
-            if team_id is None:
-                return False
-            membership = await self._repo.get_by_task_and_member(
-                task_id=task.id,  # type: ignore[arg-type]
-                member_id=team_id,
-            )
-            if membership is None or not membership.is_team:
-                return False
-        else:
-            membership = await self._repo.get_user_membership(
-                task_id=task.id,  # type: ignore[arg-type]
-                user_id=user_id,
-            )
-        return (
-            membership is not None
-            and membership.deleted_at is None
-            and membership.approved != 1
+            task_id=task_id, member_id=member_id, is_team=is_team
         )
 
     async def create_membership(
@@ -187,49 +166,55 @@ class TaskMembershipService:
         task: Task,
         member_id: int,
         is_team: bool,
-        approved: int,
-        deadline: datetime | None,
         email: str | None,
         phone: str | None,
         apply_reason: str | None,
         personal_advantage: str | None,
         remark: str | None,
     ) -> TaskMembership:
-        """Create a new TaskMembership row with扩展校验（人数上限、报名窗口、实名等）。"""
+        """领这道题。申请制的题（``START_APPLY``），新的一份申请等出题人通过
+        （``approved`` 2），名额、实名都在通过时看（``update_membership``），这里
+        只看团队那两条。直接开始的题（``START_DIRECT``），这一份当场就是通过的：
+        通过时看的那几条（``_check_approvable``，名额照样先锁题目那一行）在这里看，
+        截止时间是题目自己的（``claims.deadline_from``）。领题的人不定自己的截止
+        时间：申请制的在通过时定，个人的截止只由出题人在参与者名单上改。
 
-        # 参与人数上限校验 — 仅在 enforce_task_participant_limit_check 开启时生效
-        # （对齐 NT TaskMembershipEligibilityService.ensureTaskParticipantNotReachedLimit
-        # 与 applicationConfig.enforceTaskParticipantLimitCheck 默认 false）。
-        if (
-            settings.enforce_task_participant_limit_check
-            and approved == 0
-            and task.participant_limit is not None
-        ):
-            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
-            if approved_count >= task.participant_limit:
-                if getattr(task, "auto_reject_when_full", False):
-                    # 自动拒绝：将 approved 改为 DISAPPROVED (1)
-                    approved = 1
-                else:
-                    raise BadRequestError("Task participant limit reached.")
+        名额满了（通过的份数到了上限），新的申请也不收：申请了也通过不了。已经在等
+        的那些不受影响，出题人照常处理。
 
-        # 报名窗口校验（已移除 registration_start_at 和 registration_deadline）
+        导师不在这里记：领题不建项目，开始做这道题（建项目）那一刻同意的导师才记下
+        （``app.api.task_claims.start_claim``）。
+
+        领一道自己（或自己的团队）已经领着的题不是错：答的就是那一份（等着通过
+        的、已经通过的都算），调用方接着打开它的项目。被拒的那一份不算领着，可以
+        重新申请。
+
+        先拿下这一份领取（``try_lock_claim``，到提交为止）再看、再写：同一个人或
+        同一个团队同时点两次，后到的那次不等前一次（它可能正在代码仓库服务那边建
+        仓库），当场说「正在建，过一会儿再试」，再试时拿到的就是前一次领下的那一份。
+        数据库里还没有约束挡住重复的领取（#4824），已经有重复时
+        ``get_by_task_and_member`` 按通过的、再按最新的挑一份。"""
+
         now = datetime.now(UTC)
+        if not await self._repo.try_lock_claim(task.id, member_id, is_team):  # type: ignore[arg-type]
+            raise ClaimInProgressError(
+                say(
+                    "claimInProgress"
+                    if await self._would_start(task, member_id, is_team)
+                    else "claimBeingChanged"
+                )
+            )
 
-        # 已存在参与记录则拒绝（DISAPPROVED 除外，允许重新申请）
-        existing = await self.get_membership_by_task_and_member(
-            task_id=task.id,
-            member_id=member_id,  # type: ignore[arg-type]
+        existing = await self._repo.get_by_task_and_member(
+            task_id=task.id,  # type: ignore[arg-type]
+            member_id=member_id,
+            is_team=is_team,
         )
-        if (
-            existing is not None
-            and existing.deleted_at is None
-            and existing.approved != 1
-        ):
-            raise BadRequestError("Member already participating in this task.")
+        if existing is not None and existing.approved != APPROVE_DISAPPROVED:
+            return existing
 
         # 一个人一道题只领一次：团队来领时，队里不能有人已经通过别的团队领了它。
-        if is_team and approved != 1:
+        if is_team:
             already = await members_claiming_through_another_team(
                 self._repo._session,
                 task_id=task.id,  # type: ignore[arg-type]
@@ -241,33 +226,54 @@ class TaskMembershipService:
                     "through another team."
                 )
 
+        # 开始方式在这份领取写下之前重读，并且锁住不让它变（改开始方式的那一边
+        # 等这里提交）；题目整个截止了，不再收新的领取。
+        await claims.read_mode_for_claim(self._repo._session, task)
+        claims.refuse_claim_after_deadline(task, now)
+
         # 一个人不是团队：只有自己的那个团队不能领团队题，一个人去领个人题。
         if is_team:
             team = await self._repo._session.get(Team, member_id)
             if team is not None and team.personal_owner_user_id is not None:
                 raise BadRequestError("A team task is claimed by a team, not a person.")
 
-        # requireRealName：简化为只校验提交者本人
-        if task.require_real_name and self._realname_repo is not None and approved == 0:
-            has_identity = await self._realname_repo.has_identity(member_id)
-            if not has_identity:
-                raise BadRequestError("Missing required real name information.")
+        direct = claims.starts_now(task)
+        if direct:
+            await self._check_approvable(task, member_id=member_id, is_team=is_team)
+        elif task.participant_limit:
+            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
+            if approved_count >= task.participant_limit:
+                raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
 
         membership = TaskMembership(
             task_id=task.id,  # type: ignore[arg-type]
             member_id=member_id,
-            approved=approved,
+            approved=APPROVE_APPROVED if direct else APPROVE_NONE,
             is_team=is_team,
             email=email or "",
             phone=phone or "",
             completion_status=COMPLETION_STATUS_NOT_SUBMITTED,
             created_at=now,
             updated_at=now,
-            deadline=deadline,
+            deadline=claims.deadline_from(task, now) if direct else None,
             deleted_at=None,
             pitch=(apply_reason or "").strip(),
         )
         return await self._repo.save(membership)
+
+    async def _would_start(self, task: Task, member_id: int, is_team: bool) -> bool:
+        """Whether the claim request turned away by the claim lock is one that
+        makes a project, so the refusal says what is under way: a project being
+        made (a claim already approved, or a new one on a task started
+        directly), or otherwise an application being decided or written."""
+        held = await self._repo.get_by_task_and_member(
+            task_id=task.id,  # type: ignore[arg-type]
+            member_id=member_id,
+            is_team=is_team,
+        )
+        if held is not None and held.approved != APPROVE_DISAPPROVED:
+            return held.approved == APPROVE_APPROVED
+        return claims.starts_now(task)
 
     async def soft_delete_membership(self, membership: TaskMembership) -> None:
         membership.deleted_at = datetime.now(UTC)
@@ -287,51 +293,44 @@ class TaskMembershipService:
         """Update membership approval/deadline and basic contact fields.
 
         该方法实现 Kotlin `updateTaskMembership` 的一个精简子集：
-        - 审批通过时检查人数上限；
-        - TEAM 任务在审批时校验队伍人数是否满足 min/maxTeamSize；
-        - USER 任务在审批时（若 requireRealName）检查当前成员是否有实名记录；
+        - 审批通过时看 ``_check_approvable`` 那几条（名额、队伍人数、实名）；
+        - 审批通过而没给截止时间时，截止时间按题目定（``claims.deadline_from``）；
         - 不实现加密实名快照与事件广播，仅更新核心字段。
         """
 
         previous_approved = membership.approved
         new_approved = previous_approved if approved is None else approved
 
+        # 被拒的那一份，同一个人（或团队）后来又申请了：它成了旧账，处理新的那一份。
+        # 没有新的一份时，撤回拒绝照旧可以。先拿下这个成员在这道题上的领取锁
+        # （领题那条路拿的是同一把，到提交为止），再看有没有新的一份：正在写的
+        # 新申请要么已经提交、这里看得见，要么等这里提交后看见这份又活了的。
+        if (
+            previous_approved == APPROVE_DISAPPROVED
+            and new_approved != APPROVE_DISAPPROVED
+        ):
+            if not await self._repo.try_lock_claim(
+                task.id,  # type: ignore[arg-type]
+                membership.member_id,
+                membership.is_team,
+            ):
+                raise ClaimInProgressError(say("claimBeingChanged"))
+            if await claims.has_newer_claim(self._repo._session, membership):
+                raise BadRequestError(say("claimHasNewerApplication"))
+
         # 如果本次操作是"从非 APPROVED 变为 APPROVED"，做一些基础检查。
         is_approving = previous_approved != 0 and new_approved == 0
         if is_approving:
-            # 人数上限检查 — 仅在 enforce_task_participant_limit_check 开启时生效
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
-                approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
-                if approved_count >= task.participant_limit:
-                    raise TaskParticipantsReachedLimitError(
-                        task.id, task.participant_limit
-                    )  # type: ignore[arg-type]
-
-            # TEAM 任务时，检查队伍规模是否在 min/maxTeamSize 范围内。
-            if membership.is_team:
-                team_size = await self._repo.count_team_members(membership.member_id)
-                if task.min_team_size is not None and team_size < task.min_team_size:
-                    raise TeamSizeNotEnoughError(task.min_team_size, team_size)
-                if task.max_team_size is not None and team_size > task.max_team_size:
-                    raise TeamSizeTooLargeError(task.max_team_size, team_size)
-                # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
-            else:
-                # USER 任务 + requireRealName：检查该用户是否有实名。
-                if task.require_real_name and self._realname_repo is not None:
-                    has_identity = await self._realname_repo.has_identity(
-                        membership.member_id
-                    )
-                    if not has_identity:
-                        raise BadRequestError(
-                            "Cannot approve: user is missing required real name information."
-                        )
+            await self._check_approvable(
+                task, member_id=membership.member_id, is_team=membership.is_team
+            )
+            if deadline is None:
+                deadline = claims.deadline_from(task, datetime.now(UTC))
 
         # 应用字段更新
         if approved is not None:
             membership.approved = approved
+        deadline_moved = deadline is not None and deadline != membership.deadline
         if deadline is not None:
             membership.deadline = deadline
         if email is not None:
@@ -342,7 +341,43 @@ class TaskMembershipService:
         _ = reject_reason
 
         membership.updated_at = datetime.now(UTC)
-        return await self._repo.save(membership)
+        saved = await self._repo.save(membership)
+        # 截止时间挪了，这份领取的完成状态跟着重推：清扫按旧截止判了失败的，延到以后
+        # 又是没交；提前到已经过去的，没交的就读作失败。
+        if deadline_moved:
+            await refresh_completion_status(self._repo._session, saved)
+        return saved
+
+    async def _check_approvable(
+        self, task: Task, *, member_id: int, is_team: bool
+    ) -> None:
+        """What a claim has to meet the moment it is approved, whether the
+        publisher approves it or it starts approved (a task started directly).
+
+        - 名额只被通过了的申请占：通过时才看还有没有名额，participant_limit 的 0 是
+          「不限」。数名额和写下这一份通过要是一步，所以先锁题目那一行
+          （``hold_places``，到提交为止）。
+        - TEAM 任务：队伍人数在 min/maxTeamSize 之内。
+        - USER 任务 + requireRealName：这个人有实名记录。
+        """
+        if task.participant_limit:
+            await self._repo.hold_places(task.id)  # type: ignore[arg-type]
+            approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
+            if approved_count >= task.participant_limit:
+                raise TaskParticipantsReachedLimitError(task.id, task.participant_limit)  # type: ignore[arg-type]
+
+        if is_team:
+            team_size = await self._repo.count_team_members(member_id)
+            if task.min_team_size is not None and team_size < task.min_team_size:
+                raise TeamSizeNotEnoughError(task.min_team_size, team_size)
+            if task.max_team_size is not None and team_size > task.max_team_size:
+                raise TeamSizeTooLargeError(task.max_team_size, team_size)
+            # requireRealName 对 TEAM 的细粒度校验（所有成员实名）留待后续引入 team 视图服务时补齐。
+        elif task.require_real_name and self._realname_repo is not None:
+            if not await self._realname_repo.has_identity(member_id):
+                raise BadRequestError(
+                    "Cannot approve: user is missing required real name information."
+                )
 
     async def _rank_reasons(
         self,
@@ -418,7 +453,6 @@ class TaskMembershipService:
         registration_not_started = (
             task.registration_start_at is not None and now < task.registration_start_at
         )
-        registration_closed = False
 
         # Rank 规则只看题目所属的空间，与候选团队无关：两条路径共用，进分支前读一次。
         space: _RankSpace | None = None
@@ -450,19 +484,8 @@ class TaskMembershipService:
                     }
                 )
 
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
-                    }
-                )
-
-            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            # 名额满了（通过了的申请数到了上限；0 是不限）：题目页写「人数已满」。
+            if task.participant_limit:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -555,19 +578,9 @@ class TaskMembershipService:
                         "message": "Registration has not started yet.",
                     }
                 )
-            if registration_closed:
-                reasons.append(
-                    {
-                        "code": "REGISTRATION_CLOSED",
-                        "message": "Registration deadline has passed.",
-                    }
-                )
 
-            # 参与人数达到上限 — 仅在 enforce_task_participant_limit_check 开启时报告
-            if (
-                settings.enforce_task_participant_limit_check
-                and task.participant_limit is not None
-            ):
+            # 名额满了（通过了的申请数到了上限；0 是不限）：题目页写「人数已满」。
+            if task.participant_limit:
                 approved_count = await self._repo.count_approved_for_task(task.id)  # type: ignore[arg-type]
                 if approved_count >= task.participant_limit:
                     reasons.append(
@@ -654,6 +667,7 @@ class TaskMembershipService:
                 {
                     "team": {
                         "id": team_id,
+                        "handle": getattr(candidate, "handle", None),
                         "name": getattr(candidate, "name", None) or "",
                         "intro": getattr(candidate, "intro", None) or "",
                         "avatarId": getattr(candidate, "avatar_id", None),
@@ -741,6 +755,12 @@ class TaskSubmissionService:
             session=session,
         )
 
+    async def _stage_keys(self, task_id: int) -> list[str]:
+        """The task's stage ids in order; none without a session to read them."""
+        if self._session is None:
+            return []
+        return await stage_keys(self._session, task_id)
+
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
         return {
@@ -785,6 +805,7 @@ class TaskSubmissionService:
         membership: TaskMembership,
         entries: list[TaskSubmissionEntry],
         review: TaskSubmissionReview | None,
+        keys: Sequence[str],
     ) -> dict:
         member_summary = await self._build_member_summary(membership)
         submitter_summary = await self._build_submitter_summary(submission.submitter_id)
@@ -830,6 +851,10 @@ class TaskSubmissionService:
             "member": member_summary,
             "submitter": submitter_summary,
             "version": submission.version,
+            # The stage it hands in, by the stage's id (None without stages).
+            "stage": stage_ref(submission.stage, keys),
+            # 交的是题目的第几版；有版本之前交的是 None。
+            "packageRevision": submission.package_revision,
             "createdAt": created_ms,
             "updatedAt": updated_ms,
             "content": content_dtos,
@@ -837,22 +862,26 @@ class TaskSubmissionService:
         }
 
     async def _entries_from(
-        self, contents: list[dict], *, task_id: int, submitter_id: int
+        self, contents: list[dict], *, task_id: int, stage: int, submitter_id: int
     ) -> list[tuple[int, str | None, int | None, str | None]]:
         """Turn the request's entries into ``(index, text, attachment_id, prompt)``.
 
-        ``prompt`` is the name of the form item at the entry's position, read
-        now, so the entry keeps it however the form changes afterwards.
+        ``prompt`` is the name of the form item at the entry's position among
+        the items of the entry's stage, read now, so the entry keeps it however
+        the form changes afterwards.
 
         A file entry may only name a file the submitter uploaded. The submission
         view hands out the file's storage link and name, so accepting any id here
         would let a participant read someone else's upload by guessing its id.
         Checked before anything is written, so a refused request changes nothing.
         """
-        prompts = {
-            item.index: item.description
-            for item in await self._schema_repo.list_by_task_id(task_id)
-        }
+        prompts = dict(
+            enumerate(
+                item.description
+                for item in await self._schema_repo.list_by_task_id(task_id)
+                if item.stage == stage
+            )
+        )
         rows: list[tuple[int, str | None, int | None, str | None]] = []
         for idx, item in enumerate(contents):
             attachment_id_raw = item.get("attachmentId")
@@ -885,8 +914,10 @@ class TaskSubmissionService:
         participant_id: int,
         submitter_id: int,
         contents: list[dict],
+        stage: int = 0,
     ) -> dict:
-        """Create a new submission for a participant, bumping its version."""
+        """Create a new submission for a participant in one stage, bumping its
+        version (versions count across the membership's stages)."""
         membership = await self._membership_repo.list_memberships_for_task(
             task_id=task_id,
             approved=None,
@@ -902,13 +933,23 @@ class TaskSubmissionService:
         new_version = latest_version + 1
 
         entry_tuples = await self._entries_from(
-            contents, task_id=participant.task_id, submitter_id=submitter_id
+            contents,
+            task_id=participant.task_id,
+            stage=stage,
+            submitter_id=submitter_id,
         )
 
         submission = await self._submission_repo.create_submission(
             membership_id=participant_id,
             submitter_id=submitter_id,
             version=new_version,
+            stage=stage,
+            # 交的是题目的哪一版：题目之后再改，这一份按它交的那一版看。
+            package_revision=(
+                await package.current_number(self._session, participant.task_id)
+                if self._session is not None
+                else None
+            ),
         )
 
         await self._entry_repo.create_entries(
@@ -931,7 +972,16 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
+
+    async def stage_of_version(self, participant_id: int, version: int) -> int | None:
+        """The stage a live version of this membership hands in; None when there
+        is no such version."""
+        submission = await self._submission_repo.get_by_membership_and_version(
+            membership_id=participant_id, version=version
+        )
+        return submission.stage if submission is not None else None
 
     async def modify_submission(
         self,
@@ -961,7 +1011,10 @@ class TaskSubmissionService:
             raise NotFoundError.for_resource("submission", version)
 
         entry_tuples = await self._entries_from(
-            contents, task_id=participant.task_id, submitter_id=submitter_id
+            contents,
+            task_id=participant.task_id,
+            stage=submission.stage,
+            submitter_id=submitter_id,
         )
 
         # Soft-delete existing entries for this submission.
@@ -994,6 +1047,7 @@ class TaskSubmissionService:
             membership=participant,
             entries=entries,
             review=review if review is not None else None,
+            keys=await self._stage_keys(participant.task_id),
         )
 
     async def list_submissions(
@@ -1001,6 +1055,7 @@ class TaskSubmissionService:
         *,
         task_id: int,
         participant_id: int | None = None,
+        stage: int | None = None,
         all_versions: bool = False,
         query_review: bool = False,
         reviewed: bool | None = None,
@@ -1012,6 +1067,7 @@ class TaskSubmissionService:
         submissions = await self._submission_repo.list_submissions(
             task_id=task_id,
             participant_id=participant_id,
+            stage=stage,
             all_versions=all_versions,
             reviewed=reviewed,
             limit=limit,
@@ -1019,22 +1075,23 @@ class TaskSubmissionService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        total = await self._submission_repo.count_submissions(
-            task_id=task_id,
-            participant_id=participant_id,
-            all_versions=all_versions,
-            reviewed=reviewed,
+        # A first page that is not full holds every submission there is.
+        total = (
+            len(submissions)
+            if offset == 0 and len(submissions) < limit
+            else await self._submission_repo.count_submissions(
+                task_id=task_id,
+                participant_id=participant_id,
+                stage=stage,
+                all_versions=all_versions,
+                reviewed=reviewed,
+            )
         )
 
-        # Fetch memberships in batch
-        membership_ids = {s.membership_id for s in submissions}
-        memberships_for_task = await self._membership_repo.list_memberships_for_task(
-            task_id=task_id,
-            approved=None,
+        # The claims these submissions belong to, not the task's whole roster.
+        membership_map = await self._membership_repo.get_by_ids(
+            sorted({s.membership_id for s in submissions})
         )
-        membership_map = {
-            m.id: m for m in memberships_for_task if m.id in membership_ids
-        }
 
         submission_ids = [s.id for s in submissions]
         entries_by_submission = await self._entry_repo.list_by_submission_ids(
@@ -1046,6 +1103,7 @@ class TaskSubmissionService:
             else {}
         )
 
+        keys = await self._stage_keys(task_id)
         items: list[dict] = []
         for submission in submissions:
             membership = membership_map.get(submission.membership_id)
@@ -1060,6 +1118,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=keys,
             )
             items.append(dto)
 
@@ -1105,6 +1164,11 @@ class TaskSubmissionService:
             submission_ids
         )
 
+        stages_by_task = (
+            await list_stages_for_tasks(self._session, list({t.id for _, _, t in rows}))
+            if self._session is not None
+            else {}
+        )
         items: list[dict] = []
         for submission, membership, task in rows:
             entries = entries_by_submission.get(submission.id, [])
@@ -1114,6 +1178,7 @@ class TaskSubmissionService:
                 membership=membership,
                 entries=entries,
                 review=review,
+                keys=[stage.key for stage in stages_by_task.get(task.id, [])],
             )
             dto["taskId"] = task.id
             dto["taskTitle"] = task.name
@@ -1130,12 +1195,12 @@ class TaskSubmissionService:
     ) -> dict:
         """课程那一屏的三个数字：交了多少、还等多少人、多少份等着看。
 
-        **没交的人数 = 报名人数 − 交过东西的人数**（交过东西的人数就是
-        ``count_for_space``，因为那条查询每人只算最新一版）。``None`` 表示那个
-        数字这次拿不到 —— 前端对此的处理是整块不显示，而不是画一个 0。
+        **没交的人数 = 报名人数 − 交过东西的人数**；等着看的是每人每个阶段最新那
+        一版里还没评审的份数。``None`` 表示那个数字这次拿不到 —— 前端对此的处理是
+        整块不显示，而不是画一个 0。
         """
-        submissions = await self._submission_repo.count_for_space(
-            space_id=space_id, task_id=task_id, reviewed=None
+        submissions = await self._submission_repo.count_members_handed_in_for_space(
+            space_id=space_id, task_id=task_id
         )
         pending = await self._submission_repo.count_for_space(
             space_id=space_id, task_id=task_id, reviewed=False
@@ -1332,22 +1397,6 @@ class TaskSubmissionReviewService:
         )
 
 
-async def claim_backs_project(
-    session: AsyncSession, *, task_id: int, user_id: int, team_id: int | None
-) -> bool:
-    """Whether a project may be built from ``task_id`` for this person and team.
-
-    The entry point for other domains, so they need not wire the task
-    repositories themselves. A task that does not exist is a 404.
-    """
-    task = await TaskService(TaskRepository(session=session)).get_task(task_id)
-    if task is None:
-        raise NotFoundError.for_resource("task", task_id)
-    return await TaskMembershipService(
-        TaskMembershipRepository(session=session)
-    ).has_live_claim(task=task, user_id=user_id, team_id=team_id)
-
-
 async def count_distinct_participants(
     session: AsyncSession,
     *,
@@ -1382,66 +1431,20 @@ async def count_distinct_participants(
     )
 
 
-async def ensure_task_visible_for_ordinary_user(
-    *,
-    session: AsyncSession,
-    task: Task,
-    user_id: int,
-) -> None:
-    # 出题者或本版管理员不受 visibleTaskLimit 限制 —— 这道闸是给成员看的。
-    if await may_teach_task(session=session, task=task, user_id=user_id):
-        return
-    space = await SpaceRepository(session=session).get_by_id(task.space_id)
-    if space is None:
-        raise NotFoundError(
-            "Resource space not found", data={"type": "space", "id": task.space_id}
-        )
-    task_repo = TaskRepository(session=session)
-    if not await task_repo.is_task_visible_for_space_limit(
-        task=task,
-        visible_task_limit=space.visible_task_limit,
-    ):
-        raise NotFoundError(
-            "Resource task not found", data={"type": "task", "id": task.id}
-        )
-
-
 async def ensure_task_readable(
     *,
     session: AsyncSession,
     task: Task,
     user_id: int,
 ) -> None:
-    """「这道题在这个读者眼里存不存在」—— 题目详情与它的附属读路由共用的那一个判断。
-
-    三道闸，按顺序各答一句话：
-
-    1. **还没过审**（``approved == 2``，且未结项）：对出题者与本版管理员是草稿，
-       对其他人还不该存在 —— 403；
-    2. **看不见**（``TaskVisibilityService.can_view_task``）：题目自己设了可见范围
-       而这个人不在里面 —— 404，与「这道题不存在」同一句话；
-    3. **超出本板上限**（``visibleTaskLimit``）：对普通用户来说它就是看不见了 ——
-       404。
-
-    为什么要抽出来：材料清单（``/attachments``）是拿着 task id 取数的另一条读
-    路由，它只走了第 2 道 —— 而第 2 道在 ``access_control_enabled`` 为假（题目
-    默认值）时对任何登录用户都放行，于是 403 / 404 的题照旧把材料清单交出去。
-    「题看不见，清单也看不见」是同一件事，只该有一处判断。
-    """
-    if task.approved == 2 and task.ended_at is None:  # NONE = 未审批
-        if not await may_teach_task(session=session, task=task, user_id=user_id):
-            raise ForbiddenError(
-                "Only space admins or task creator can view unapproved tasks"
-            )
-    if not await TaskVisibilityService(session=session).can_view_task(
-        task=task, user_id=user_id
-    ):
+    """「这道题在这个读者眼里存不存在」—— 不经路由声明、按正文里的题目 id 读题的
+    几条路（草稿、芝士引用题目）用的那一个判断，判据在 ``task_roles.readable``：
+    还没过审的只给教它的人看，其余的要在板上看得见、没超出本板上限。看不见就是
+    404，与「这道题不存在」同一句话。"""
+    if not await task_seats.readable(session, task, user_id):
         raise NotFoundError(
             "Resource task not found", data={"type": "task", "id": task.id}
         )
-    await ensure_task_visible_for_ordinary_user(
-        session=session, task=task, user_id=user_id
-    )
 
 
 async def validate_and_get_category_id(

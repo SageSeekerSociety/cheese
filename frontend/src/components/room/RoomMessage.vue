@@ -15,7 +15,7 @@ import type { RefNames } from '../../lib/refChip'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
-import { isAgentHandle } from '../../lib/authorship'
+import { byAssistant, isAgentHandle } from '../../lib/authorship'
 import {
   artifactKind,
   artifactName,
@@ -24,7 +24,7 @@ import {
   isVideoBlock,
   replySnippet,
 } from '../../lib/blockDisplay'
-import { fileIcon } from '../../lib/fileKind'
+import { fileIcon, hasPagePreview, previewCanShowInRoom, suffixOf } from '../../lib/fileKind'
 import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -36,7 +36,9 @@ import UserAvatar from '../common/UserAvatar.vue'
 
 import ChecklistMessage from './ChecklistMessage.vue'
 import FileBlockMenu from './FileBlockMenu.vue'
+import MessageAppCard from './MessageAppCard.vue'
 import MessageEditor from './MessageEditor.vue'
+import MessageFileCard from './MessageFileCard.vue'
 import MessageQuote from './MessageQuote.vue'
 import RollingNumber from './RollingNumber.vue'
 
@@ -47,6 +49,8 @@ const props = defineProps<{
   block: Block
   /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
   askClosed?: boolean
+  /** 这一行上的那道题，我有一条答复还在路上：选项先不给点（`AskQuickReplies` 的 answering）。 */
+  askAnswering?: boolean
   /** 被回复的那一条；不在当前页时是随页带来的一行预览；没有就是 null。 */
   parent: Block | ReplyPreview | null
   parentName: string | null
@@ -88,7 +92,7 @@ const props = defineProps<{
    * 它就是那条消息，不是另一种东西。`time` 那一格这时装的是送达状态。
    * 没送出去的那条带「重试」和「编辑」：编辑把原文放回输入框。
    */
-  outgoing?: { error?: string; failed: boolean } | null
+  outgoing?: { error?: string; failed: boolean; slow?: boolean } | null
   /**
    * 正在改这条自己发过的消息：正文换成输入框，里面先放着原文。
    * `saving` 是保存请求还在路上。
@@ -112,6 +116,9 @@ const props = defineProps<{
    */
   foldPlain?: boolean
 }>()
+
+// 他自己的芝士替他写的这条：署名照旧是他，名字旁边标出来（docs/agent-principles.md 一、四）。
+const writtenByAssistant = computed(() => byAssistant(props.block))
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
 const personLabel = computed(() =>
@@ -171,6 +178,16 @@ const emit = defineEmits<{
 
 // 一份文件（附件或芝士摆出来的东西）：画成文件，旁边带 ⋯。
 const fileBlock = computed(() => props.block.kind === 'attachment' || props.block.kind === 'artifact')
+const canOpenFile = computed(() => props.block.kind === 'artifact' || previewCanShowInRoom(props.block.content))
+/** 芝士摆出来的「正在跑的应用」：内容是一句说明，不是文件路径。 */
+const APP_MIME = 'application/x-cheesex-app'
+/** 画成富卡片的那几种：能翻页的文档和表格，都是真文件（应用、MCP 视图不是）。 */
+const richFileCard = computed(
+  () =>
+    canOpenFile.value &&
+    props.block.mime_type !== APP_MIME &&
+    (hasPagePreview(props.block.content) || ['xlsx', 'xlsm'].includes(suffixOf(props.block.content)))
+)
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
@@ -217,6 +234,7 @@ const told = computed(() => toldByMessage(props.refs))
       'im-row--regroup': runStart && regroup,
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
+      'im-row--dim': !!outgoing && (outgoing.slow !== false || outgoing.failed),
       'im-row--active': active,
       'im-row--editing': editing,
     }"
@@ -265,6 +283,13 @@ const told = computed(() => toldByMessage(props.refs))
             {{ authorName }}
           </button>
           <ExternalTag v-if="external && !isAgent" />
+          <span
+            v-if="writtenByAssistant"
+            class="chip-neutral im-on-behalf"
+            data-testid="on-behalf-tag"
+            :title="t('work.onBehalf.tagHint', { name: authorName })"
+            >{{ t('work.onBehalf.tag') }}</span
+          >
           <span class="im-time">{{ time }}</span>
           <v-icon v-if="pinned && !fileBlock" size="13" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')"
             >mdi-pin</v-icon
@@ -285,10 +310,62 @@ const told = computed(() => toldByMessage(props.refs))
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
         <AttachmentVideo
           v-else-if="isVideoBlock(block)"
+          can-open
           :topic-id="topicId"
           :path="block.content"
+          @open="emit('open-file', block.content)"
           @download="emit('download', block)"
         />
+        <!-- 芝士摆出来给人看的一份东西（`cheese show`），或对话里发来的可预览文档附件：
+           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
+        <template v-else-if="canOpenFile">
+          <!-- 能翻页的文档（PDF、Word、幻灯片）和表格画成富卡片（封面、版本、改过没有，
+               底下自带打开/展开/下载）；芝士摆出来的应用画成带运行状态的卡片；其余（网页、
+               markdown、代码）照旧一颗小卡片。 -->
+          <MessageFileCard
+            v-if="richFileCard"
+            :topic-id="topicId"
+            :path="block.content"
+            :name="artifactName(block)"
+            :kind="artifactKind(block)"
+            :posted-at="block.created_at"
+            downloadable
+            @open="emit('open-file', block.content)"
+            @download="emit('download', block)"
+          />
+          <MessageAppCard
+            v-else-if="block.mime_type === APP_MIME"
+            :conversation-id="block.conversation_id || topicId"
+            :block-id="block.id"
+            :description="block.content"
+            @open="emit('open-file', block.content)"
+          />
+          <button
+            v-else
+            type="button"
+            class="im-artifact"
+            :title="t('work.room.message.openFile', { name: artifactName(block) })"
+            @click="emit('open-file', block.content)"
+          >
+            <span class="att-face im-artifact__face">
+              <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
+            </span>
+            <span class="im-artifact__text">
+              <span class="im-artifact__name">{{ artifactName(block) }}</span>
+              <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
+            </span>
+            <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
+          </button>
+          <BaseButton
+            v-if="block.kind === 'attachment' && !richFileCard"
+            kind="ghost"
+            size="sm"
+            icon="mdi-download-outline"
+            :title="t('work.room.message.downloadFile', { name: artifactName(block) })"
+            :aria-label="t('work.room.message.downloadFile', { name: artifactName(block) })"
+            @click="emit('download', block)"
+          />
+        </template>
         <BaseButton
           v-else-if="block.kind === 'attachment'"
           kind="ghost"
@@ -300,32 +377,11 @@ const told = computed(() => toldByMessage(props.refs))
         >
           <span class="text-truncate">{{ artifactName(block) }}</span>
         </BaseButton>
-        <!-- 芝士摆出来给人看的一份东西（`cheese show`）。后端一直在往时间线
-           写这样一块（kind=artifact，content 是路径），而这里一直没有认它的
-           分支，于是它掉进最下面那个兜底里，渲染成一行光秃秃的文件名——
-           和芝士随口说了个路径长得一模一样。
-           点它交给拿着面板的那一层去开，走的是 <&path> 芯片同一条线。 -->
-        <button
-          v-else-if="block.kind === 'artifact'"
-          type="button"
-          class="im-artifact"
-          :title="t('work.room.message.openFile', { name: artifactName(block) })"
-          @click="emit('open-file', block.content)"
-        >
-          <span class="att-face im-artifact__face">
-            <v-icon size="20">{{ fileIcon(block.content) }}</v-icon>
-          </span>
-          <span class="im-artifact__text">
-            <span class="im-artifact__name">{{ artifactName(block) }}</span>
-            <span class="im-artifact__kind t-meta">{{ artifactKind(block) }}</span>
-          </span>
-          <v-icon size="16" class="im-artifact__go">mdi-arrow-top-right</v-icon>
-        </button>
         <v-icon v-if="pinned" size="14" class="im-pin-mark" :aria-label="t('work.room.pin.pinned')">mdi-pin</v-icon>
         <FileBlockMenu
           :name="artifactName(block)"
-          :can-open="block.kind === 'artifact'"
-          :can-download="block.kind === 'attachment'"
+          :can-open="canOpenFile"
+          :can-download="block.kind === 'attachment' || richFileCard"
           :can-keep="
             (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId
           "
@@ -366,6 +422,7 @@ const told = computed(() => toldByMessage(props.refs))
         :asker="runStart ? undefined : authorName"
         :names="refs.mentionNames"
         :closed="askClosed"
+        :answering="askAnswering"
         :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
         @withdraw="emit('ask-withdraw', block)"
@@ -405,7 +462,10 @@ const told = computed(() => toldByMessage(props.refs))
         </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
-      <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
+      <MessageQuote
+        v-if="block.meta?.quoted_context && block.meta.quoted_context.kind !== 'viewing'"
+        :quote="block.meta.quoted_context"
+      />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
           outgoing.error ? t('work.room.outbox.failed', { reason: outgoing.error }) : t('work.room.outbox.undelivered')
@@ -473,9 +533,9 @@ const told = computed(() => toldByMessage(props.refs))
   line-height: var(--lh-14-loose);
   color: var(--faint);
 }
-/* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
-.im-row--pending .im-text,
-.im-row--pending .im-name {
+/* 发件箱: 慢请求、断网或正在输入预览时淡一档，正常快发不闪灰。 */
+.im-row--dim .im-text,
+.im-row--dim .im-name {
   opacity: 0.62;
 }
 /* 没送出去：一句为什么，后面两颗和事件行同一种中性小按钮。 */
@@ -577,6 +637,9 @@ const told = computed(() => toldByMessage(props.refs))
 .im-pin-mark {
   flex: none;
   color: var(--accent-ink);
+}
+.im-on-behalf {
+  flex: none;
 }
 .im-file-link {
   max-width: 100%;
@@ -754,47 +817,8 @@ const told = computed(() => toldByMessage(props.refs))
   border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
-/* 代码块和它右上角的两颗：自动换行、复制。悬停时才出现，没有悬停的设备上一直在。 */
-.md-content :deep(.md-pre) {
-  position: relative;
-}
-.md-content :deep(.md-pre-bar) {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  gap: 4px;
-  opacity: 0;
-  transition: opacity var(--dur-quick) var(--ease-standard);
-}
-.md-content :deep(.md-pre:hover .md-pre-bar),
-.md-content :deep(.md-pre-bar:focus-within) {
-  opacity: 1;
-}
-.md-content :deep(.md-code-btn) {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-  cursor: pointer;
-  transition: color var(--dur-quick) var(--ease-standard);
-}
-.md-content :deep(.md-code-btn:hover) {
-  color: var(--ink);
-}
-/* 换行开着时那颗按钮换个色，看得出这是个「现在生效」的开态（同 .rx-chip--mine）。 */
-.md-content :deep(.md-wrap-btn[aria-pressed='true']) {
-  color: var(--accent-ink);
-}
-@media (hover: none) {
-  .md-content :deep(.md-pre-bar) {
-    opacity: 1;
-  }
-}
+/* 代码块和它右上角的两颗：自动换行、复制。样式住在 `style.css` 的 `.md-content`
+   一段里——预览面板用的是同一个渲染器，只写在这一处的话那边就画不出样子。 */
 .md-content :deep(pre) {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -802,13 +826,6 @@ const told = computed(() => toldByMessage(props.refs))
   border-radius: var(--radius-md);
   max-width: 100%;
   overflow-x: auto;
-}
-/* 换行开着（那颗「自动换行」）：长行折进框里，横向滚动让位。默认不换行——一条命令、
-   一段长 URL 站在一行上比折成几截更好读。 */
-.md-content :deep(pre.md-wrap) {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow-x: hidden;
 }
 /* 代码块里的 <code> 是行内元素：它身上的边框会在每一行上各画一个框。 */
 .md-content :deep(pre code) {

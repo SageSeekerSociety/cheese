@@ -17,18 +17,20 @@ from app.api.task_deps import (
 from app.api.task_serialization import (
     _build_participant_user_info,
     _membership_to_api_model,
+    _ms,
     _task_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.task.claims import started_at_of
 from app.domain.task.repositories import (
     TaskRepository,
 )
@@ -47,7 +49,9 @@ router = APIRouter(prefix="/tasks")
 
 
 @router.post(
-    "/{taskId}/resubmit", summary="Resubmit Task", dependencies=[ROUTE_DECIDES]
+    "/{taskId}/resubmit",
+    summary="Resubmit Task",
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def resubmit_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -61,11 +65,6 @@ async def resubmit_task(
         raise NotFoundError("Task not found")
 
     # 重提审核是发布侧的动作：出题者或本版管理员都能做。
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError(
-            "Only the task creator or a board manager can resubmit "
-            "the task for approval."
-        )
 
     # 仅当当前状态为 DISAPPROVED(1) 时允许重提。
     if task.approved != 1:
@@ -86,6 +85,7 @@ async def resubmit_task(
 @router.get(
     "/{taskId}/participants",
     summary="Get Participants",
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def get_task_participants(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -107,9 +107,6 @@ async def get_task_participants(
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can view participants")
 
     approved_value: int | None = None
     if approved is not None:
@@ -138,11 +135,16 @@ async def get_task_participants(
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids(user_ids)
-        profile_map = await profile_repo.get_profiles_by_user_ids(user_ids)
-        # 「挑过的头像」单独问：档案上的 avatar_id 每个注册路径都写死了全局默认，
-        # 直接回它会让所有没挑过头像的人共用同一张脸。
-        avatar_map = await profile_repo.chosen_avatar_ids(user_ids)
+        # 「挑过的头像」按头像类型认，别回档案上的 avatar_id：每个注册路径都写死了
+        # 全局默认，直接回它会让所有没挑过头像的人共用同一张脸。档案和头像出自同一次
+        # 读取（profiles_and_chosen_avatars），不分两次读同一批档案行。
+        profile_map, avatar_map = await profile_repo.profiles_and_chosen_avatars(
+            user_ids
+        )
 
+    # 开始做的时刻（项目建好的那一下）：「数据」页签数谁开始做了却没动，从这里起算，
+    # 不从申请那一下。还没开始做的是 null。
+    started = await started_at_of(db, [m.id for m in memberships])
     participants = []
     for m in memberships:
         participant_info = _build_participant_user_info(
@@ -152,14 +154,14 @@ async def get_task_participants(
             team_map=team_map,
             avatar_map=avatar_map,
         )
-        participants.append(
-            _membership_to_api_model(
-                m,
-                participant_info=participant_info,
-                # 同上那一批 team_map，不另查一次。
-                team=team_map.get(m.member_id) if m.is_team else None,
-            )
+        model = _membership_to_api_model(
+            m,
+            participant_info=participant_info,
+            # 同上那一批 team_map，不另查一次。
+            team=team_map.get(m.member_id) if m.is_team else None,
         )
+        model["startedAt"] = _ms(started.get(m.id))
+        participants.append(model)
 
     return ok({"participants": participants})
 
@@ -167,6 +169,7 @@ async def get_task_participants(
 @router.get(
     "/{taskId}/participants/{participantId}",
     summary="Get Task Participant",
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def get_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -180,7 +183,7 @@ async def get_task_participant(
     返回体里带着报名者填的 ``email`` / ``phone``（``_membership_to_api_model``），而
     ``participantId`` 是小整数、可枚举 —— 从前这里那句 ``_ = auth_user`` 等于把报名
     表交给任何登录用户。单条是列表的一种取法，没有理由比列表更宽：看得了名单的人
-    （``may_teach_task``）才看得到单条。
+    （``task_roles.teaches``）才看得到单条。
 
     403 而不是 404，口径照抄列表版：同一个调用者在同一个资源上，列表版已经用 403
     说了「你看不了这份名单」；换 404 是另一句话（「这道题上没有这个人」），而调用者
@@ -190,9 +193,6 @@ async def get_task_participant(
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can view participants")
 
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
@@ -207,10 +207,9 @@ async def get_task_participant(
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids([membership.member_id])
-        profile_map = await profile_repo.get_profiles_by_user_ids(
+        profile_map, avatar_map = await profile_repo.profiles_and_chosen_avatars(
             [membership.member_id]
         )
-        avatar_map = await profile_repo.chosen_avatar_ids([membership.member_id])
     participant_info = _build_participant_user_info(
         membership,
         user_map=user_map,

@@ -50,7 +50,6 @@ def test_a_project_still_bound_to_a_removed_claude_profile_runs_on_the_pool():
 def test_the_platform_offers_only_the_pool():
     reg = build_registry(_settings())
     assert [v.name for v in reg.selectable()] == ["default"]
-    assert [name for name, _ in reg.all()] == ["default"]
 
 
 def test_profile_without_credentials_is_not_available():

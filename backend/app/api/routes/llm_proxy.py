@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from typing import Annotated
@@ -35,9 +36,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_in_its_room
 from app.api.deps import get_chat_service, get_db
-from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
+from app.api.machine_caller import Caller
+from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
+from app.api.model_keys import credit_refusal, task_credit_context_of
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.config import settings
 from app.core.db import async_session_factory, release_read_session
 from app.core.errors import (
@@ -50,7 +54,9 @@ from app.core.errors import (
 from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
+    held_by_a_machine,
     is_global_sandbox_token,
+    mint_scoped_token,
     personal_claims,
     scoped_token_claims,
 )
@@ -58,11 +64,11 @@ from app.core.sentences import listing, say
 from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
+from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -77,6 +83,14 @@ logger = logging.getLogger("cheesex.llm_proxy")
 # prefix sets the base to `https://host/api`. Living under `/api` here would
 # make this the one route that needs the prefix twice.
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# What a sandbox reaches on its platform socket: `/machine` plus its own path,
+# relayed by the device link owner (`app.api.machine_relay`).
+machine_router = APIRouter(prefix="/machine/llm", tags=["machine"])
+
+#: How long the credential made for one machine call lives: the length of the
+#: checks before the stream starts, which read it, and nothing after.
+_MACHINE_CALL_TOKEN_TTL_S = 300
 
 # What a rollout asks the backend it is about to stop (`deploy/deploy-docker.sh`).
 # The ingress never forwards `/_internal/`, so only the box itself reaches it.
@@ -109,6 +123,11 @@ _DROP_REQUEST_HEADERS = frozenset(
         "keep-alive",
         "transfer-encoding",
         "upgrade",
+        # Who a machine call is, as the device link owner vouched for it to
+        # this process; not the gateway's to see.
+        DEVICE_HEADER,
+        STATE_HEADER,
+        SECRET_HEADER,
     }
 )
 _DROP_RESPONSE_HEADERS = frozenset(
@@ -116,13 +135,23 @@ _DROP_RESPONSE_HEADERS = frozenset(
 )
 
 
-def _caller_token(request: Request) -> str:
-    """The scoped token, however Claude Code chose to present it: ANTHROPIC_AUTH_TOKEN
-    rides as a bearer, ANTHROPIC_API_KEY as x-api-key."""
-    auth = request.headers.get("authorization", "")
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return request.headers.get("x-api-key", "").strip()
+# What the proxy forwards: the model calls the harnesses make (Claude Code's
+# messages, Codex's responses, pi's OpenAI-compatible calls) and the model list
+# they read. Anything else the gateway answers — key, spend, team and model
+# administration — is the platform's to call with its master key, not a
+# session's with the project's key, so it is refused here.
+_MODEL_PATH = re.compile(
+    r"^v1/(?:messages(?:/count_tokens)?|chat/completions|completions|embeddings"
+    r"|responses(?:/[A-Za-z0-9_.-]+)*|models(?:/[A-Za-z0-9_.:-]+)?)$"
+)
+
+
+def _model_path(path: str) -> str:
+    """``path`` when it is a model call this proxy forwards; refused otherwise."""
+    clean = path.lstrip("/")
+    if ".." in clean.split("/") or not _MODEL_PATH.match(clean):
+        raise NotFoundError(say("modelPathNotProxied", path=path[:120]))
+    return clean
 
 
 def _upstream_url(path: str) -> str:
@@ -234,6 +263,16 @@ async def _projects_own_agent(
     )
 
 
+async def _admitted_session(request: Request) -> str:
+    """The session the metering proxy asks about: its token, in the body."""
+    try:
+        body = json.loads(await request.body() or b"{}")
+    except ValueError:
+        return ""
+    session = body.get("session") if isinstance(body, dict) else None
+    return session if isinstance(session, str) else ""
+
+
 # Registered BEFORE the catch-all below — FastAPI matches in declaration order,
 # and the catch-all would otherwise swallow this path and forward it upstream.
 @router.post("/admission", include_in_schema=False, dependencies=[ROUTE_DECIDES])
@@ -244,16 +283,20 @@ async def admission(
 ) -> dict:
     """Whether the caller's project can afford one more subscription turn.
 
-    The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request;
-    the Bearer is the sandbox's per-session scoped cheese token (#198), so the
-    project comes from verified claims rather than a spoofable header. The
-    gateway key rides along only when the proxy's own credential does too. The
+    The metering proxy calls this BEFORE forwarding a ``/v1/messages`` request,
+    as itself (the platform's own credential), naming the session it admits by
+    that session's scoped cheese token in the body (#198), so the project comes
+    from verified claims rather than a spoofable header; the gateway key rides
+    along only for it. A pi runner admitting a subagent asks as the session
+    itself, and gets the decision alone. The
     decision reads the same compute-grant balance the gateway brake prices in
     USD — one budget, two enforcement points. Refusing is this endpoint's only
     job: the proxy fails OPEN on transport errors (a broken brake must not be
     a broken platform) and keeps its rolling token cap as the backstop.
     """
-    token = _caller_token(request)
+    caller = credentials.presented(request.headers)
+    from_proxy = is_global_sandbox_token(caller)
+    token = await _admitted_session(request) if from_proxy else caller
     claims = scoped_token_claims(token) if token else None
     if not claims or not claims.get("p"):
         raise AuthenticationRequiredError("A scoped cheese token is required")
@@ -397,11 +440,6 @@ async def admission(
             }
         )
     pool = bound.supply
-    # A call made in the overview room while the project's memory is being
-    # consolidated is the dream's: it runs on the project's dream key, and the
-    # metering proxy writes the dream's kind on its usage line. Read before the
-    # read session is handed back below.
-    dreaming = await dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -413,8 +451,21 @@ async def admission(
         supply["work_id"] = (
             str(credit_context.work_id) if credit_context.work_id else ""
         )
-    if dreaming:
-        supply["kind"] = dream.DREAM_KIND
+
+    # The project key carries a budget worked out from the same payer, packs
+    # and caps this admission just read: worked out here, those reads are
+    # answered again in this transaction rather than made again on the key's
+    # own session (`project_gateway_key`).
+    project_key = pool == GATEWAY and refused is None and from_proxy
+    budget_target = UNKNOWN_TARGET
+    if project_key and project is not None and credit_context is None:
+        try:
+            budget_target = await chat._gateway_budget_target(db, project_uuid)
+        except Exception:
+            # The key's own read path answers a failure here as no key, which
+            # the proxy refuses; raised from the route it would read as the
+            # backend unreachable and let the call through unchecked.
+            logger.exception("admission budget target failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -433,16 +484,11 @@ async def admission(
                 await note_credits_refusal(
                     chat.session_factory, place_uuid, refused.message
                 )
-    # The key goes only to the metering proxy, which proves itself with its
-    # own credential beside the session's bearer. The bearer alone names the
-    # room, and the session holds that same token: answering it with the key
-    # would put a shared pool credential inside every room that can reach this
-    # route. Anyone else (a pi runner admitting a subagent) gets the decision.
-    if (
-        pool == GATEWAY
-        and refused is None
-        and is_global_sandbox_token(request.headers.get("x-cheese-token") or "")
-    ):
+    # The key goes only to the metering proxy, which asks as itself. The
+    # session holds its own token: answering that with the key would put a
+    # shared pool credential inside every room that can reach this route.
+    # Anyone else (a pi runner admitting a subagent) gets the decision.
+    if project_key:
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
@@ -452,7 +498,9 @@ async def admission(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            supply["key"] = await chat.project_gateway_key(
+                project_uuid, budget_target=budget_target
+            )
 
     return ok(
         {
@@ -508,11 +556,67 @@ async def proxy(
     db: Annotated[AsyncSession, Depends(get_db)],
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> StreamingResponse:
-    token = _caller_token(request)
+    return await _forward(
+        path, request, db, chat, credentials.presented(request.headers)
+    )
+
+
+@machine_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST"],
+    include_in_schema=False,
+    dependencies=[ROUTE_DECIDES],
+)
+async def machine_model(
+    path: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    caller: Caller,
+) -> StreamingResponse:
+    """The same model route, asked by a sandbox on its platform socket.
+
+    The sandbox holds no token; the caller is the session leasing it now
+    (``machine_caller``). The credential the checks below read is made here,
+    for this one call, and never leaves this process."""
+    token = mint_scoped_token(
+        project_id=caller.project_id,
+        topic_id=caller.conversation_id,
+        agent_handle=caller.agent_handle,
+        # As the session's own launch credential (`mint_session_token`): the
+        # seat may act project-wide where its roles allow.
+        access_scope="project",
+        ttl_s=_MACHINE_CALL_TOKEN_TTL_S,
+    )
+    return await _forward(
+        path,
+        request,
+        db,
+        chat,
+        token,
+        machine_conversation=uuid.UUID(caller.conversation_id),
+    )
+
+
+async def _forward(
+    path: str,
+    request: Request,
+    db: AsyncSession,
+    chat: ChatService,
+    token: str,
+    *,
+    machine_conversation: uuid.UUID | None = None,
+) -> StreamingResponse:
+    """``machine_conversation`` is the conversation a sandbox's call comes
+    from: it goes out on that conversation's machine key, capped per day
+    (`gateway_usage.MachineGatewayKey`), not on the session's own."""
+    path = _model_path(path)
     person = personal_claims(token) if token else None
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):
         raise AuthenticationRequiredError("A scoped cheese token is required")
+    if claims is not None and held_by_a_machine(claims):
+        raise ForbiddenError(say("modelCallFromMachineNeedsSocket"))
     if not settings.anthropic_base_url:
         raise GatewayUnavailableError("No model pool is configured for this deployment")
 
@@ -554,17 +658,24 @@ async def proxy(
                     status_code=400,
                     media_type="application/json",
                 )
-        dreaming = await dreams(db, project, claims)
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        if credit_context is not None:
+        if machine_conversation is not None:
+            key = await chat.project_gateway_key(
+                project_uuid,
+                credit_owner_handle=(
+                    credit_context.owner_handle if credit_context else None
+                ),
+                machine_conversation_id=machine_conversation,
+            )
+        elif credit_context is not None:
             key = await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            key = await chat.project_gateway_key(project_uuid, dream=dreaming)
+            key = await chat.project_gateway_key(project_uuid)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.
@@ -587,6 +698,10 @@ async def proxy(
         # its own; pi names none, so each call of a person's 芝士 landed on any
         # node and its cache hit only the system prompt.
         headers[SESSION_HEADER] = person.conversation_id
+    elif claims is not None and claims.get("t"):
+        # A teammate's session in a room: its conversation is the room's. Claude
+        # Code names its own session, which stays as it is.
+        headers.setdefault(SESSION_HEADER, str(claims["t"]))
     body = await request.body()
 
     client = httpx.AsyncClient(timeout=_TIMEOUT)

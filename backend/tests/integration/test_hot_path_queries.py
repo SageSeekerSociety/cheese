@@ -155,11 +155,12 @@ def test_topic_list_round_trips_do_not_grow_with_the_topic_count(client, bearer)
     # pays on every tick, so adding one is a deliberate act, not a rounding
     # error — the relative check below would let a constant cost slip through.
     # One of them reads which rooms' sessions their runners declare running
-    # (`session_states`), the board cell's 运行中. Three read which seat each
-    # room's teammate sits in (`addressable_agent_handles`: the rosters, and who
-    # on them is an agent), which a row's phrase names (「{agent}在做」).
-    assert small_count == 34, (
-        f"the topic list cost 34 statements; it now costs {small_count}.\n"
+    # (`session_states`), the board cell's 运行中. One reads which seat each
+    # room's teammate sits in (`addressable_agent_handles`: the room rosters,
+    # while `agents_among` reuses the project roster's cached agent-binding facts),
+    # which a row's phrase names (「{agent}在做」).
+    assert small_count == 23, (
+        f"the topic list cost 23 statements; it now costs {small_count}.\n"
         + "\n".join(small)
     )
 
@@ -316,6 +317,22 @@ def test_a_sent_message_groups_under_itself_without_a_second_write(client, beare
     assert len(reads) == 1, (
         "the write re-read its own row; only the route's read of the anchor "
         "it returns should ask for it by id:\n" + "\n".join(reads)
+    )
+    client_id_scans = [
+        s
+        for s in statements
+        if "FROM blocks" in s
+        and "blocks.author =" in s
+        and "ORDER BY blocks.created_at, blocks.id" in s
+    ]
+    assert not client_id_scans, (
+        "sending a message scanned blocks by author/client_id instead of "
+        "relying on idempotency_keys:\n" + "\n".join(client_id_scans)
+    )
+    topic_by_id = [s for s in statements if "FROM topics WHERE topics.id =" in s]
+    assert len(topic_by_id) == 1, (
+        "the route and writer read the room row more than once:\n"
+        + "\n".join(topic_by_id)
     )
     # The caller still gets the whole row back from that one INSERT.
     assert sent["seq"] > 0

@@ -170,7 +170,7 @@ export function docThreadStateEmpty(): DocThreadState {
 export function docThreadState(): DocThreadState {
   return {
     threads: [OPEN_THREAD, RESOLVED_THREAD],
-    activity: { 'th-open': { state: 'working', tool: 'cheese_doc_edit' } },
+    activity: { 'th-open': { state: 'working', tool: 'cheese_doc.edit' } },
     errors: {},
     busy: false,
     unknown: null,

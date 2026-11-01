@@ -323,6 +323,11 @@ def test_a_say_key_or_parameter_mismatch_names_the_call_site(monkeypatch):
 
 def test_only_retired_notices_stored_on_old_rooms_are_historical():
     assert HISTORICAL_NOTICE_KEYS == {
+        "memoryDreamChanged",
+        "memoryDreamRefused",
+        "memoryDreamRefusedDetail",
+        "labelWhichChanged",
+        "labelWhyStopped",
         "deployedTo",
         "deployFailedTo",
         "mainChecksFailed",
@@ -370,6 +375,7 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "policyResourceMachine",
         "sandboxReleasedDiskFull",
         "sandboxReleasedOverBudget",
+        "spaceTaskRequirementsChanged",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

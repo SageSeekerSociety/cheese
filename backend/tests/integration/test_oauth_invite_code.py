@@ -175,7 +175,7 @@ def test_an_open_signup_through_a_provider_credits_the_friend_who_invited(
     assert _portal.call(_inviter_of_new_account) == friend_id
 
 
-def test_an_open_signup_through_a_provider_lets_a_used_up_code_through(
+def test_an_open_signup_through_a_provider_refuses_a_used_up_code(
     api_client: TestClient, invite_code: str, db_session, _portal, monkeypatch
 ):
     monkeypatch.setattr(settings, "require_invite_code", False)
@@ -183,5 +183,5 @@ def test_an_open_signup_through_a_provider_lets_a_used_up_code_through(
     _loc, params = _create(
         api_client, _portal, "uid-late", "oauth_late", inviteCode=invite_code
     )
-    assert params["created"] == "true"
-    assert _account_exists(db_session, _portal, "oauth_late")
+    assert params["error_code"] == "INVALID_INVITE_CODE"
+    assert not _account_exists(db_session, _portal, "oauth_late")

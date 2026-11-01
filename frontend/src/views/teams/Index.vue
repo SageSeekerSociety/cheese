@@ -23,7 +23,6 @@ import type { JSONContent } from '@tiptap/core'
 
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import IndexView from './IndexView.vue'
 
@@ -31,6 +30,7 @@ import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const createTeamDialog = ref(false)
 const teamName = ref('')

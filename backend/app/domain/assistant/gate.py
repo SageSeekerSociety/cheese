@@ -83,7 +83,7 @@ CATEGORIES = {
     "remove_member": "移除成员",
     "lower_role": "降低成员的角色",
     "delete": "删除内容",
-    "to_everyone": "在综合频道发消息",
+    "to_everyone": "发给所有人的消息",
 }
 #: What a person who has set nothing is asked about.
 DEFAULT_ASK = tuple(CATEGORIES)
@@ -226,7 +226,7 @@ async def _said_and_done(
     if conversation is not None and conversation.place_kind == "routine":
         routine = await session.get(AssistantRoutine, uuid.UUID(conversation.place_id))
         if routine is not None and routine.words:
-            first = [f"[用户（建这条例行事务时说）] {routine.words}"]
+            first = [f"[用户（建这条自动化时说）] {routine.words}"]
     said = await session.execute(
         select(AssistantMessage.created_at, AssistantMessage.text).where(
             AssistantMessage.conversation_id == conversation_id,

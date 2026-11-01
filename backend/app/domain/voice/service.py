@@ -29,10 +29,11 @@ from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import QuotaExceededError, SystemBusyError, ValidationError
 from app.core.sentences import say
+from app.domain.day_windows import utc_now
 from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.usage.credits import spend_to_credits
-from app.domain.usage.ledger import Ledger, payer_for_project
+from app.domain.usage.ledger import Ledger, payer_for_person, payer_for_project
 from app.domain.voice.models import VoiceInput
 
 logger = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ class VoiceInputs:
         self._polish = polish
 
     async def spoken_today(self, user_id: int, now: datetime | None = None) -> float:
-        start = _today_start(now or datetime.now(UTC))
+        start = _today_start(now or utc_now())
         total = await self._session.scalar(
             select(func.coalesce(func.sum(VoiceInput.seconds), 0.0)).where(
                 VoiceInput.user_id == user_id, VoiceInput.created_at >= start
@@ -173,11 +174,13 @@ class VoiceInputs:
         self,
         *,
         user_id: int,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        project_id: uuid.UUID | None,
+        topic_id: uuid.UUID | None,
         audio: bytes,
         names: Iterable[str],
     ) -> Heard:
+        """Hear a recording said in a project's room, task or 支线, or, with
+        no project, to the person's own 芝士, which they pay for themselves."""
         seconds = wav_seconds(audio)
         if seconds > settings.voice_max_seconds + 1:
             raise ValidationError(
@@ -201,7 +204,12 @@ class VoiceInputs:
             raise SystemBusyError(say("voiceNotHeard")) from exc
         raw = heard.content.strip()
         await self._record(
-            project_id, topic_id, ASR_KIND, model_roles.model("voice_asr_model"), heard
+            user_id,
+            project_id,
+            topic_id,
+            ASR_KIND,
+            model_roles.model("voice_asr_model"),
+            heard,
         )
         self._session.add(
             VoiceInput(
@@ -211,7 +219,11 @@ class VoiceInputs:
                 seconds=seconds,
             )
         )
-        text = await self._tidy(polish, raw, names, project_id, topic_id) if raw else ""
+        text = (
+            await self._tidy(polish, raw, names, user_id, project_id, topic_id)
+            if raw
+            else ""
+        )
         await self._session.commit()
         return Heard(
             text=text or raw,
@@ -225,8 +237,9 @@ class VoiceInputs:
         polish: GatewayChat | None,
         raw: str,
         names: list[str],
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        user_id: int,
+        project_id: uuid.UUID | None,
+        topic_id: uuid.UUID | None,
     ) -> str:
         """The tidy text, or "" when tidying is unavailable or failed: what was
         heard still reaches the composer."""
@@ -243,6 +256,7 @@ class VoiceInputs:
             logger.warning("voice polish failed: %s", exc)
             return ""
         await self._record(
+            user_id,
             project_id,
             topic_id,
             POLISH_KIND,
@@ -253,15 +267,18 @@ class VoiceInputs:
 
     async def _record(
         self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
+        user_id: int,
+        project_id: uuid.UUID | None,
+        topic_id: uuid.UUID | None,
         kind: str,
         model: str,
         call: Completion,
     ) -> None:
         ledger = Ledger(self._session)
         await ledger.record(
-            await payer_for_project(self._session, project_id),
+            await payer_for_person(self._session, user_id)
+            if project_id is None
+            else await payer_for_project(self._session, project_id),
             credits=spend_to_credits(call.cost_usd)
             if settings.voice_input_charged
             else 0.0,

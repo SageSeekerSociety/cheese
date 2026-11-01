@@ -162,7 +162,7 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     id: 'manage-templates-view',
     title: 'ManageTemplatesView',
     about:
-      '「题目模板管理」那一屏的画面：一列模板，每行写着它定下的那几项（个人/团队、难度、默认领取天数、是否要实名），右边编辑 / 删除。去新建/编辑页、真删都归容器 `ManageTemplates.vue`。',
+      '「题目模板管理」那一屏的画面：一列模板，每行写着它定下的那几项（个人/团队、难度、默认限时天数、是否要实名），右边编辑 / 删除。去新建/编辑页、真删都归容器 `ManageTemplates.vue`。',
     file: 'src/views/spaces/detail/ManageTemplatesView.vue',
     component: ManageTemplatesView,
     needs: UI_T,

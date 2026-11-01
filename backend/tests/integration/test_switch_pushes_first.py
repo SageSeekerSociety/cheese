@@ -3,9 +3,10 @@
 The checkpoint (`cheese sync --all`) runs on the machine being left, and the
 switch happens whether or not it went through: a machine that is away, a push
 that fails or outlasts its wait, an executor that cannot start — none of them
-holds the room, for a person or for its agent. What such a lost checkpoint
-loses is held by the snapshot of the session's last turn. A cloud sandbox left
-behind is left to the idle sweep either way.
+holds the room, for a person or for its agent. The platform keeps only what
+was pushed, so work a lost checkpoint did not push stays on the machine being
+left and is not carried anywhere. A cloud sandbox left behind is left to the
+idle sweep either way.
 """
 
 import ast
@@ -150,7 +151,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
             new_device=new_device,
             lease=dict(session.work_lease),
             person=person,
-            agent={"X-Cheese-Token": agent_token},
+            agent={"Authorization": f"Bearer {agent_token}"},
             lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
             agent_handle=agent.username,
             path=f"/topics/{conversation_id}/sessions/{session.id}/environment",
@@ -238,11 +239,6 @@ FAILED_PUSHES = {
             "[cheese] 任务 t1 同步失败：rejected non-fast-forward"
         }
     },
-    "a closed task was not backed up": {
-        "value": {
-            "stdout": "Exit code 1\n[cheese] 已结束的任务 t2 同步失败：Connection reset"
-        }
-    },
     "the command failed": {"error": "Stop hook failed"},
     "it outlasted its wait": {"value": {"stdout": "", "backgroundTaskId": "task-slow"}},
     "no answer": TimeoutError("no answer"),
@@ -268,7 +264,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
     client, monkeypatch
 ):
     """Nothing is refused over work that could not be pushed, so the agent
-    switches on its own (`cheese_environment`) and never has to find a person
+    switches on its own (`cheese_session(action=environment)`) and never has to find a person
     to do it."""
     room = await _room(client)
     remote = _machines(monkeypatch, online=False)
@@ -426,12 +422,12 @@ async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch
 
 class _PushingMachine(_IdleMachine):
     """An idle session's machine whose push does what ``cheese sync`` does for
-    a task with commits not yet on its branch: ask the platform for that task's
-    branch, with the credential its executor was started with."""
+    a task with commits not yet on its branch: ask the platform on its
+    platform socket (`/machine/api/...`) for that task's branch."""
 
     def __init__(self, project_id, task_id):
         super().__init__()
-        self.path = f"/projects/{project_id}/git/tasks/{task_id}"
+        self.path = f"/machine/api/projects/{project_id}/git/tasks/{task_id}"
         self.task_id = task_id
         self.finishes = False
         self.answered = None
@@ -442,10 +438,16 @@ class _PushingMachine(_IdleMachine):
                 device_id, state, method, params, **kwargs
             )
         self.calls.append((device_id, method, params))
-        [token] = re.findall(r'"CHEESE_TOKEN": "([^"]+)"', self.installs[-1][1])
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as api:
-            asked = await api.get(self.path, headers={"X-Cheese-Token": token})
+            asked = await api.get(
+                self.path,
+                headers={
+                    "x-device-connection-secret": settings.device_connection_secret,
+                    "x-machine-device": device_id,
+                    "x-machine-state": state,
+                },
+            )
         self.answered = asked.status_code
         if asked.status_code != 200:
             said = (
@@ -465,6 +467,7 @@ async def test_an_executor_started_for_a_checkpoint_pushes_with_its_own_credenti
     """A switch starts an idle session's executor to checkpoint; the git routes
     let its push through as they would a push of a session started by a turn,
     and the switch does not wait for more than one."""
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
     room = await _room(client)
     task = delivery_task(client, room.topic_id, commit=False)
     machine = _PushingMachine(room.project_id, task.id)

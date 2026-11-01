@@ -16,6 +16,7 @@ from starlette.websockets import WebSocket
 from app.auth.caller import handle_named_by
 from app.auth.project_access import may_read_project
 from app.common.auth import verify_access_token
+from app.core import credentials
 from app.core.config import GATEWAY_MOUNT
 from app.domain.topic.services import TopicService
 
@@ -42,12 +43,12 @@ def credential(conn: Request | WebSocket, cookie_name: str) -> str | None:
     """The caller's session token: ``Authorization: Bearer`` (normal API calls),
     ``?token=`` (the iframe/WebSocket the frontend builds), or the path-scoped
     cookie the page load dropped (the iframe's own sub-requests)."""
-    header = conn.headers.get("authorization") or ""
-    if header.lower().startswith("bearer "):
-        token = header[7:].strip()
-        if token:
-            return token
-    return conn.query_params.get("token") or conn.cookies.get(cookie_name) or None
+    return (
+        credentials.presented(conn.headers)
+        or conn.query_params.get("token")
+        or conn.cookies.get(cookie_name)
+        or None
+    )
 
 
 async def may_view_topic(

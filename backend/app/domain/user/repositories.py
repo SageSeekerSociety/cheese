@@ -1,9 +1,10 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Select, and_, exists, func, or_, select
+from sqlalchemy import Select, and_, exists, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.avatars.models import Avatar
 from app.domain.day_windows import utc_day
 from app.domain.identity.models import AgentBinding
@@ -27,11 +28,56 @@ class UserRepository:
         return await self.get_by_username(handle)
 
     async def get_by_username(self, username: str) -> User | None:
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            key = ("user_by_username", username)
+            found, cached = recall(self._session, key)
+            if found and (cached is None or not inspect(cached).expired_attributes):
+                return cached
+            for obj in self._session.sync_session.identity_map.values():
+                if (
+                    isinstance(obj, User)
+                    and not inspect(obj).expired_attributes
+                    and obj.deleted_at is None
+                    and obj.username == username
+                ):
+                    remember(
+                        self._session,
+                        key,
+                        obj,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", obj.id),
+                        obj,
+                        tables=frozenset({"user"}),
+                    )
+                    return obj
         stmt: Select[tuple[User]] = select(User).where(
             User.username == username, User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("user_by_username", username),
+                user,
+                tables=frozenset({"user"}),
+            )
+            if user is not None:
+                self._session.sync_session.info.setdefault("_pinned_rows", []).append(
+                    user
+                )
+                remember(
+                    self._session,
+                    ("user_by_id", user.id),
+                    user,
+                    tables=frozenset({"user"}),
+                )
+        return user
 
     async def search_accounts(self, q: str, limit: int) -> Sequence[tuple[str, str]]:
         """(handle, 昵称) —— 按关键词找账号，给「加管理员」那个选择器用。
@@ -117,18 +163,116 @@ class UserRepository:
         names = {h for h in handles if h}
         if not names:
             return {}
-        stmt: Select[tuple[User]] = select(User).where(
-            User.username.in_(names), User.deleted_at.is_(None)
-        )
-        result = await self._session.execute(stmt)
-        return {u.username: u for u in result.scalars()}
+        if self._session.autoflush:
+            await self._session.flush()
+        users: dict[str, User] = {}
+        missing: list[str] = []
+        for h in names:
+            found, cached = recall(self._session, ("user_by_username", h))
+            if found and (cached is None or not inspect(cached).expired_attributes):
+                if cached is not None:
+                    users[h] = cached
+            else:
+                missing.append(h)
+        if missing:
+            in_map_by_name = {
+                obj.username: obj
+                for obj in self._session.sync_session.identity_map.values()
+                if isinstance(obj, User)
+                and not inspect(obj).expired_attributes
+                and obj.deleted_at is None
+            }
+            still_missing: list[str] = []
+            for h in missing:
+                u = in_map_by_name.get(h)
+                if u is not None:
+                    users[h] = u
+                    remember(
+                        self._session,
+                        ("user_by_username", h),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                else:
+                    still_missing.append(h)
+            missing = still_missing
+        if missing:
+            stmt: Select[tuple[User]] = select(User).where(
+                User.username.in_(missing), User.deleted_at.is_(None)
+            )
+            result = await self._session.execute(stmt)
+            fetched = {u.username: u for u in result.scalars()}
+            pinned = self._session.sync_session.info.setdefault("_pinned_rows", [])
+            for h in missing:
+                u = fetched.get(h)
+                if u is not None:
+                    pinned.append(u)
+                    users[h] = u
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                remember(
+                    self._session,
+                    ("user_by_username", h),
+                    u,
+                    tables=frozenset({"user"}),
+                )
+        return users
 
     async def get_by_id(self, user_id: int) -> User | None:
+        if isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("user_by_id", user_id))
+            if found and (cached is None or not inspect(cached).expired_attributes):
+                return cached
+            in_map = self._session.sync_session.identity_map.get(
+                self._session.sync_session.identity_key(User, (user_id,))
+            )
+            if (
+                in_map is not None
+                and not inspect(in_map).expired_attributes
+                and in_map.deleted_at is None
+            ):
+                remember(
+                    self._session,
+                    ("user_by_id", user_id),
+                    in_map,
+                    tables=frozenset({"user"}),
+                )
+                return in_map
         stmt: Select[tuple[User]] = select(User).where(
             User.id == user_id, User.deleted_at.is_(None)
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("user_by_id", user_id),
+                user,
+                tables=frozenset({"user"}),
+            )
+            if user is not None:
+                self._session.sync_session.info.setdefault("_pinned_rows", []).append(
+                    user
+                )
+                remember(
+                    self._session,
+                    ("user_by_username", user.username),
+                    user,
+                    tables=frozenset({"user"}),
+                )
+        return user
 
     async def is_username_taken(self, username: str) -> bool:
         """Case-insensitive, matching ``uq_user_username_lower`` — and a team's
@@ -209,7 +353,55 @@ class UserRepository:
         that keep naming them (``app.domain.account.deletion``)."""
         if not user_ids:
             return {}
-        stmt: Select[tuple[User]] = select(User).where(User.id.in_(list(user_ids)))
+        if not include_closed and isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[int, User] = {}
+            missing: list[int] = []
+            for uid in dict.fromkeys(user_ids):
+                found, cached = recall(self._session, ("user_by_id", uid))
+                if found and (cached is None or not inspect(cached).expired_attributes):
+                    if cached is not None:
+                        by_id[uid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(User, (uid,))
+                )
+                if (
+                    in_map is not None
+                    and not inspect(in_map).expired_attributes
+                    and in_map.deleted_at is None
+                ):
+                    by_id[uid] = in_map
+                    remember(
+                        self._session,
+                        ("user_by_id", uid),
+                        in_map,
+                        tables=frozenset({"user"}),
+                    )
+                else:
+                    missing.append(uid)
+            if not missing:
+                return by_id
+            stmt: Select[tuple[User]] = select(User).where(
+                User.id.in_(missing), User.deleted_at.is_(None)
+            )
+            result = await self._session.execute(stmt)
+            fetched = {u.id: u for u in result.scalars().all()}
+            pinned = self._session.sync_session.info.setdefault("_pinned_rows", [])
+            for uid in missing:
+                u = fetched.get(uid)
+                if u is not None:
+                    pinned.append(u)
+                    by_id[uid] = u
+                remember(
+                    self._session,
+                    ("user_by_id", uid),
+                    u,
+                    tables=frozenset({"user"}),
+                )
+            return by_id
+        stmt = select(User).where(User.id.in_(list(user_ids)))
         if not include_closed:
             stmt = stmt.where(User.deleted_at.is_(None))
         result = await self._session.execute(stmt)
@@ -328,6 +520,31 @@ class UserProfileRepository:
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.user_id: row for row in rows}
+
+    async def profiles_and_chosen_avatars(
+        self, user_ids: Sequence[int]
+    ) -> tuple[dict[int, UserProfile], dict[int, int]]:
+        """Live profiles and their non-default avatar ids in a single outerjoin."""
+        if not user_ids:
+            return {}, {}
+        stmt = (
+            select(UserProfile, Avatar.avatar_type)
+            .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+            .where(
+                and_(
+                    UserProfile.user_id.in_(list(user_ids)),
+                    UserProfile.deleted_at.is_(None),
+                )
+            )
+        )
+        rows = (await self._session.execute(stmt)).all()
+        profiles: dict[int, UserProfile] = {}
+        avatars: dict[int, int] = {}
+        for profile, avatar_type in rows:
+            profiles[profile.user_id] = profile
+            if avatar_type not in (None, "default") and profile.avatar_id is not None:
+                avatars[profile.user_id] = profile.avatar_id
+        return profiles, avatars
 
     async def usernames_by_user_ids(self, user_ids: Sequence[int]) -> dict[int, str]:
         """user_id -> handle. 通知里「谁做了这件事」要按 handle 链到那个人的主页。"""

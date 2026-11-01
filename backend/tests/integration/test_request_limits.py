@@ -30,6 +30,9 @@ def limits(monkeypatch):
         "request_concurrency",
         "request_queue_depth",
         "request_queue_timeout_s",
+        "request_ip_rate_per_s",
+        "request_ip_rate_burst",
+        "request_ip_concurrency",
     ):
         monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
     # The Redis-down warning is said at most once a minute per process, so a
@@ -40,8 +43,12 @@ def limits(monkeypatch):
     )
 
     def narrow(**values) -> None:
+        # The address limits follow the account ones unless a test sets its own:
+        # most cases here are about how a limit behaves, not whose it is.
         for name, value in values.items():
             monkeypatch.setattr(settings, f"request_{name}", value)
+            if name in ("rate_per_s", "rate_burst", "concurrency"):
+                monkeypatch.setattr(settings, f"request_ip_{name}", value)
 
     return narrow
 
@@ -131,6 +138,39 @@ async def test_a_burst_past_the_quota_is_refused_with_retry_after(limits) -> Non
     assert refused.headers["x-request-id"]
 
 
+async def test_an_exempt_account_is_not_limited_and_others_still_are(
+    limits, monkeypatch
+) -> None:
+    """dev names its shared development account so a load test from it measures
+    the backend; nobody else's quota changes."""
+    limits(rate_per_s=0.2, rate_burst=2)
+    handle = f"u-{uuid.uuid4().hex[:10]}"
+    monkeypatch.setattr(settings, "request_limit_exempt_handles", f"x, {handle}")
+    exempt = session_auth_headers(handle)
+    other = _user()
+    async with _client() as client:
+        free = [await client.get("/version", headers=exempt) for _ in range(6)]
+        counted = [await client.get("/version", headers=other) for _ in range(3)]
+
+    assert [r.status_code for r in free] == [200] * 6
+    assert "ratelimit" not in free[0].headers
+    assert [r.status_code for r in counted] == [200, 200, 429]
+
+
+async def test_an_address_has_room_for_everyone_behind_it(limits, monkeypatch) -> None:
+    """A request with no account is counted by its address, and an address is
+    a whole campus behind NAT: it gets the address limits, not one account's."""
+    monkeypatch.setattr(settings, "request_rate_burst", 2)
+    monkeypatch.setattr(settings, "request_rate_per_s", 0.2)
+    monkeypatch.setattr(settings, "request_ip_rate_burst", 5)
+    monkeypatch.setattr(settings, "request_ip_rate_per_s", 0.2)
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    async with _client() as client:
+        anonymous = [await client.get("/version") for _ in range(6)]
+    assert [r.status_code for r in anonymous] == [200] * 5 + [429]
+    assert anonymous[0].headers["ratelimit-policy"].startswith('"rate";q=5;')
+
+
 async def test_the_quota_comes_back_at_the_sustained_rate(limits) -> None:
     limits(rate_per_s=1.0, rate_burst=1)
     headers = _user()
@@ -163,7 +203,7 @@ async def test_a_forged_credential_is_counted_by_its_address(
         for attempt in (
             {"Authorization": f"Bearer {forged}"},
             {"Authorization": f"Bearer {uuid.uuid4().hex}"},
-            {"X-Cheese-Token": f"{uuid.uuid4().hex}.{uuid.uuid4().hex}"},
+            {"Authorization": f"Bearer {f'{uuid.uuid4().hex}.{uuid.uuid4().hex}'}"},
         ):
             assert (await client.get("/version", headers=attempt)).status_code == 429
         # A credential that does verify is its own principal.
@@ -176,10 +216,10 @@ async def test_each_agent_has_its_own_quota_however_it_presents_it(limits) -> No
     first = mint_scoped_token(project_id=project, agent_handle="agent-one")
     second = mint_scoped_token(project_id=project, agent_handle="agent-two")
     async with _client() as client:
-        # The cheese CLI sends X-Cheese-Token; Claude Code through the LLM
-        # proxy sends the same credential as a bearer. One agent, one quota.
+        # The cheese CLI sends a bearer; Claude Code through the LLM proxy
+        # may send the same credential as x-api-key. One agent, one quota.
         assert (
-            await client.get("/version", headers={"X-Cheese-Token": first})
+            await client.get("/version", headers={"Authorization": f"Bearer {first}"})
         ).status_code == 200
         assert (
             await client.get("/version", headers={"Authorization": f"Bearer {first}"})
@@ -188,7 +228,7 @@ async def test_each_agent_has_its_own_quota_however_it_presents_it(limits) -> No
             await client.get("/version", headers={"x-api-key": first})
         ).status_code == 429
         assert (
-            await client.get("/version", headers={"X-Cheese-Token": second})
+            await client.get("/version", headers={"Authorization": f"Bearer {second}"})
         ).status_code == 200
 
 
@@ -196,7 +236,7 @@ async def test_the_signing_secret_is_one_principal_of_its_own(limits) -> None:
     limits(rate_per_s=0.2, rate_burst=1)
     address = _address()
     async with _client(address=address) as client:
-        secret = {"X-Cheese-Token": SANDBOX_TOKEN}
+        secret = {"Authorization": f"Bearer {SANDBOX_TOKEN}"}
         assert (await client.get("/version", headers=secret)).status_code == 200
         assert (await client.get("/version", headers=secret)).status_code == 429
         assert (await client.get("/version", headers=_user())).status_code == 200

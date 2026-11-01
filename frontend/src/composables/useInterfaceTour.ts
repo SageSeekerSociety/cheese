@@ -8,12 +8,12 @@ import type { Topic } from '@/cx_types'
 
 import { watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { replayTour } from './useProjectTour'
 
 import { t } from '@/i18n'
 import { isUuid, projectRefusal, routeIds } from '@/lib/addresses'
+import { toast } from '@/lib/toast'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 频道清单还没读到时等它一会儿（刚打开项目的那一瞬）。等不到就照「没有」说，不晾着人。 */

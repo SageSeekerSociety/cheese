@@ -44,7 +44,7 @@ from app.domain.agent.turn.intake.preparation.gates import (
 from app.domain.agent.turn.intake.preparation.prompt import build_turn_prompt
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to
-from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
+from app.domain.agent.turn_speakers import is_routine_run, private_memory_for
 from app.domain.agent_instance.own import current_role
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
@@ -63,10 +63,13 @@ from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskProgress, TaskStatus, TaskTitleSource
 from app.domain.room_task.place import PlaceResolver
+from app.domain.task import package
 from app.domain.task import teaching as teaching_context
+from app.domain.task.claims import stages_for_project
 from app.domain.thread.services import thread_opening
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import conversation_progress, project_topics
+from app.domain.usage.alerts import agent_note
 
 if TYPE_CHECKING:
     from app.domain.agent.turn.intake import preparation as pkg
@@ -197,34 +200,25 @@ async def prepare(
         acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
         phases_ms["identity"] = (time.monotonic() - started) * 1000
-        # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
-        # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
-        #
-        # 只算**人**（`names_a_person`）：private 是「人 × 项目」的那一份，
-        # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
-        # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
-        # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
-        speakers = await turn_speakers(
-            session,
-            delivery_id,
-            pending,
-            private_owner,
-            # 实况文档写给负责人看：任务自己的会话每一轮都读他那一份。
-            task_owner=(
-                task.owner_handle if task is not None and place.thread is None else None
-            ),
+        # private 只在一个人和芝士的私聊里带，那个人的那一份（`private_memory_for`）；
+        # 别的房间只有 team。这一位同时也是这一轮对账要点名的那一位
+        # （`MemoryLedger.remember_turn`），所以「告诉它去读的」和「铺到会话目录里
+        # 的」是同一份。
+        private_for = await private_memory_for(
+            session, agent.instance_id, private_owner=private_owner
         )
         memory = await memory_index(
             session,
             topic.project_id,
-            speaker_handles=list(speakers),
+            speaker=private_for,
             shared_read_only=seats_only(topic),
         )
         prep.memory.remember_turn(
             topic.id,
             (place.conversation_id, agent.handle),
             acting=acting_agent,
-            speakers=speakers,
+            speaker=private_for,
+            pointed=any(section.prefix != "team" for section in memory.sections),
         )
         phases_ms["memory"] = (time.monotonic() - started) * 1000
         project = await load_project(session, topic.project_id)
@@ -238,6 +232,15 @@ async def prepare(
         # 赛题, or no `teaching` on the 项目集, is no query and no prompt
         # text — not a section that renders empty.
         teaching = await teaching_context.for_project(session=session, project=project)
+        # 题目的阶段与这个项目在各阶段上的状态：每一轮现读，交了、批了就跟着变。
+        stages = (
+            await stages_for_project(
+                session, task_id=project.external_task_id, team_id=project.team_id
+            )
+            if project is not None and project.external_task_id is not None
+            else []
+        )
+        task_package = await package.section_for_project(session, project)
         # 人和 agent 共同看的那一份（结论 7）：项目目标。它不是记忆，所以不走
         # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
         # 这正是共享记忆池做不到的两件事。
@@ -376,6 +379,18 @@ async def prepare(
         if bail is not None:
             return bail
         phases_ms["provider"] = (time.monotonic() - started) * 1000
+        # 额度快用完了就告诉这一轮一句（`usage.alerts.agent_note`）。一个越界
+        # 在一条对话里只说一次——这条活第一次开工的那一轮。读不出来不是这一轮
+        # 的事：算额度的错不该让一轮活开不了。
+        try:
+            credits_note = await agent_note(
+                session, topic.project_id, conversation_id=place.conversation_id
+            )
+        except Exception:
+            logger.exception(
+                "could not read the credit warning for %s", topic.project_id
+            )
+            credits_note = None
         prompt_text, replay_notice = await build_turn_prompt(
             session,
             place=place,
@@ -390,6 +405,7 @@ async def prepare(
             recipient_instance_id=recipient_instance_id,
             gone_files=gone_files,
             undecodable_files=undecodable_files,
+            credits_note=credits_note,
         )
         phases_ms["committed"] = (time.monotonic() - started) * 1000
     logger.info(
@@ -447,7 +463,13 @@ async def prepare(
         topic_refs_for_prompt=topic_refs_for_prompt,
         artifacts=artifact_refs,
         teaching=teaching,
-        skill_bodies=await carried_bodies(session, topic, carried_skills(agent, topic)),
+        stages=stages,
+        task_package=task_package,
+        skill_bodies=await carried_bodies(
+            session,
+            topic,
+            carried_skills(agent, topic, teaching.teaching.skills if teaching else ()),
+        ),
         turn_images=turn_images,
         untitled=untitled,
     )

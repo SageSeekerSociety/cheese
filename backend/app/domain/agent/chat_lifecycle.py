@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, turn_inputs
+from app.domain.agent.models import STOP_STOPPED
 from app.domain.agent.pending_messages import nudge_messages
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
@@ -35,6 +36,7 @@ from app.domain.agent.work_policy import work_policy
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import threads_of_rooms
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.topic.reads import load_topic
@@ -63,17 +65,20 @@ class TurnLifecycle:
         """Stop the work the teammate on rosters as ``seat`` still has running
         in this room: one taken off the room, whose every call there is now
         refused. What it wrote so far stays."""
+        if not seat or not seat.startswith(AGENT_HANDLE_PREFIX):
+            return
         async with self._sessions() as session:
             topic = await load_topic(session, topic_id)
             project = topic and await load_project(session, topic.project_id)
             agent = project and await AgentInstanceService(session).for_seat_handle(
                 project, seat
             )
+            if agent is None:
+                return
             # It sat in the room for the room's 支线 too: their work stops as well.
             threads = list(await threads_of_rooms(session, [topic_id]))
-        if agent is not None:
-            for conversation in (topic_id, *threads):
-                await self._compute.dismiss(conversation, agent.handle)
+        for conversation in (topic_id, *threads):
+            await self._compute.dismiss(conversation, agent.handle)
 
     async def stop_work(self, conversation_id: uuid.UUID) -> None:
         """Stop whatever a teammate is still doing in this conversation, a
@@ -171,7 +176,7 @@ class TurnLifecycle:
         try:
             async with self._sessions() as session:
                 closed = await AgentTurnRepository(session).close_one(
-                    topic_id, turn_id, datetime.now(UTC)
+                    topic_id, turn_id, datetime.now(UTC), reason=STOP_STOPPED
                 )
                 if closed:
                     await session.commit()
@@ -267,6 +272,10 @@ class TurnLifecycle:
         # 给的会话座位。
         state = self.live.hook_work.get((topic_id, work_id))
         agent = (state.acting_agent if state is not None else None) or agent_handle
+        if active and state is None and await self._interval_closed(work_id):
+            # A session still talking about a turn whose interval was closed
+            # (the sweep stopped it, and said so): it is not running again.
+            return
         if active:
             # A Working event is a session SPEAKING about a turn, not the step
             # that opened it: the mark belongs to that step, after its own await
@@ -286,6 +295,13 @@ class TurnLifecycle:
             naming.nudge(topic_id, "idle")
 
             nudge_messages(self, topic_id)
+
+    async def _interval_closed(self, work_id: uuid.UUID) -> bool:
+        """Whether ``work_id`` has an interval and it is closed. A turn with
+        no interval yet (a session starting one of its own) is not."""
+        async with self._sessions() as session:
+            row = await AgentTurnRepository(session).get(work_id)
+            return row is not None and row.stopped_at is not None
 
     async def _note_reachability(
         self,

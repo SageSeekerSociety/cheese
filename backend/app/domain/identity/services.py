@@ -9,9 +9,8 @@ binding — never from a column or a hard-coded handle check.
 the fallback identity only; every topic's 分身 gets its OWN row, handle
 ``cheese-<topic hex>``, so an action is attributable to the 分身 that took it and
 a single 分身 can be de-authorized (drop it from the topic roster) without waiting
-for its token to expire. This mirrors the device-screen agent (一个 agent 是一个
-屏幕, ``app.domain.agent.device_attribution``): identity per execution context,
-not one collapsed platform account.
+for its token to expire: identity per execution context, not one collapsed
+platform account.
 
 Display collapses even though identity forks: every agent user carries a profile
 whose nickname is 芝士, so the UI keeps showing one familiar name while the audit
@@ -24,6 +23,7 @@ from collections.abc import Sequence
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -66,26 +66,32 @@ class IdentityService:
         )
 
     async def ensure_agent_user(
-        self, *, handle: str = CHEESE_HANDLE, name: str = CHEESE_NAME
+        self,
+        *,
+        handle: str = CHEESE_HANDLE,
+        name: str = CHEESE_NAME,
+        newly_created: bool = False,
     ) -> User:
         """Idempotently ensure an agent user row + its platform binding + its
         display profile exist. Safe to call at every startup, from the migration
         and on every turn — never duplicates."""
-        user = await self._users.get_by_handle(handle)
+        created = False
+        user = None if newly_created else await self._users.get_by_handle(handle)
         if user is None:
             try:
                 user = await self._create_agent_user(handle=handle)
+                created = True
             except IntegrityError:
                 # Two first turns raced; the other one's row is the agent.
                 user = await self._users.get_by_handle(handle)
                 if user is None:
                     raise
-        if await self._bindings.get_for_user(user.id) is None:
+        if created or await self._bindings.get_for_user(user.id) is None:
             await self._bindings.add(user_id=user.id, kind=AgentBindingKind.platform)
         # The display name lives on the profile (the User row only carries the
         # handle). Without it every agent would render as its raw
         # ``cheese-<hex>`` handle instead of 芝士 — identity forks, display does not.
-        if await self._profiles.get_profile_by_user_id(user.id) is None:
+        if created or await self._profiles.get_profile_by_user_id(user.id) is None:
             try:
                 await self._profiles.create_profile(
                     user_id=user.id, nickname=name, intro="", avatar_id=1
@@ -111,7 +117,11 @@ class IdentityService:
         return await self.ensure_agent_user(handle=handle, name=CHEESE_NAME)
 
     async def ensure_instance_agent_user(
-        self, instance_id: uuid.UUID, display_name: str
+        self,
+        instance_id: uuid.UUID,
+        display_name: str,
+        *,
+        newly_created: bool = False,
     ) -> User:
         """Ensure the agent-user row for a project's agent (identity, display).
 
@@ -123,14 +133,30 @@ class IdentityService:
         return await self.ensure_agent_user(
             handle=agent_instance_handle(instance_id),
             name=display_name.strip() or CHEESE_NAME,
+            newly_created=newly_created,
         )
 
     async def is_agent(self, handle: str) -> bool:
         """True iff the handle names a user carrying an agent-binding."""
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("is_agent", handle)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
         user = await self._users.get_by_handle(handle)
-        if user is None:
-            return False
-        return await self._bindings.get_for_user(user.id) is not None
+        answer = (
+            await self._bindings.get_for_user(user.id) is not None
+            if user is not None
+            else False
+        )
+        remember(
+            self._session,
+            key,
+            answer,
+            tables=frozenset({"user", "agent_bindings"}),
+        )
+        return answer
 
     async def agents_among(self, handles: Sequence[str]) -> set[str]:
         """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，两次往返。
@@ -138,10 +164,30 @@ class IdentityService:
         名册要对整张表问这一句。逐个 ``is_agent`` 是 N+1——一个 30 人的项目就是 60
         次往返，而判据本身（带不带 agent-binding）一次就能全部问出来。
         """
-        if not handles:
+        wanted = [h for h in dict.fromkeys(handles) if h]
+        if not wanted:
             return set()
-        users = await self._users.get_by_handles(list(handles))
+        if self._session.autoflush:
+            await self._session.flush()
+        known: set[str] = set()
+        missing: list[str] = []
+        for h in wanted:
+            found, cached = recall(self._session, ("is_agent", h))
+            if found:
+                if cached:
+                    known.add(h)
+            else:
+                missing.append(h)
+        if not missing:
+            return known
+        users = await self._users.get_by_handles(missing)
         agent_ids = await self._bindings.agent_user_ids(
             [user.id for user in users.values()]
         )
-        return {handle for handle, user in users.items() if user.id in agent_ids}
+        found_agents = {
+            handle for handle, user in users.items() if user.id in agent_ids
+        }
+        tables = frozenset({"user", "agent_bindings"})
+        for h in missing:
+            remember(self._session, ("is_agent", h), h in found_agents, tables=tables)
+        return known | found_agents

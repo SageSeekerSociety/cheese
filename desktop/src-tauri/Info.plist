@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- What macOS shows the first time the page asks for the microphone, and
+	     the key WebKit looks for before it exposes recording at all: without
+	     it navigator.mediaDevices is undefined in the webview, so the
+	     composer's microphone is never drawn in the app while the same page
+	     in a browser has it. Tauri merges this file into the Info.plist it
+	     generates for the bundle. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>知是用麦克风把你说的话转成文字。</string>
+</dict>
+</plist>

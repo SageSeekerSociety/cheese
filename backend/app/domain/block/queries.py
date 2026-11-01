@@ -130,19 +130,6 @@ async def notices_after(
     return await BlockRepository(session).notices_after(conversation_id, after=after)
 
 
-async def client_delivery_bundle(
-    session: AsyncSession,
-    conversation_id: uuid.UUID,
-    *,
-    author: str,
-    client_id: str,
-) -> list[Block]:
-    """Read the ordered bundle already landed by a browser delivery."""
-    return await BlockRepository(session).client_delivery(
-        conversation_id, author=author, client_id=client_id
-    )
-
-
 async def turn_history(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> list[Block]:

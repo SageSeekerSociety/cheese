@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import delete, event, select
 
 from app.core.config import Settings, settings
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
@@ -44,6 +45,7 @@ from app.domain.machine.services import (
 )
 from app.domain.run_record.models import RunRecord
 from app.domain.user.repositories import UserRepository
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
@@ -256,9 +258,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
     return alice[0], hers, his, her_device, his_device
 
 
-LOST_LINE = (
-    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
-)
+LOST_LINE = str(say("sandboxLost"))
 
 
 def _warm_machine_ready(case: Case) -> str:
@@ -274,7 +274,7 @@ def _warm_machine_ready(case: Case) -> str:
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="warm-1",
                     name="warm-1",
-                    token="warm-token",
+                    token_digest=digest_token("warm-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),
@@ -730,7 +730,7 @@ def test_the_device_owner_admits_tool_calls_only_on_live_hosts(pool):
                     team_id=await enrollment_team(sql_device_service(db), owner.id),
                     device_id="host-device",
                     name="host",
-                    token="host-token",
+                    token_digest=digest_token("host-token"),
                     owner_user_id=owner.id,
                     supply=Supply.cloud,
                     created_at=datetime.now(UTC),

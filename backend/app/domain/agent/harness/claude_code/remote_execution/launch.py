@@ -4,6 +4,7 @@ import asyncio
 import base64
 import functools
 import hashlib
+import hmac
 import json
 import time
 from pathlib import Path
@@ -36,7 +37,7 @@ from app.domain.skill_library import (
 )
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
-# every task checkout with something unpushed backed up and pushed.
+# every task checkout with unpushed commits pushed.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
 exec cheese sync --all
 """
@@ -161,6 +162,11 @@ def payload_for(
         "platform_machine": platform_machine,
         "project": str(project_id),
         "resource": str(resource_id),
+        "proxy_proof": hmac.new(
+            settings.sandbox_signing_secret.encode(),
+            f"machine-proxy:{project_id}".encode(),
+            hashlib.sha256,
+        ).hexdigest(),
         "env": values,
         "environment": environment,
         # Where this room's package downloads come from. The addresses travel

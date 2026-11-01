@@ -5,16 +5,20 @@ import type { FileSource } from '../cx_types'
  *  幻灯片整页（或页里选中的一段文字）、页面上的一点、表格里的一格、渲染出来的正文里
  *  选中的一段，再加上网页预览里的三种：点一个元素、选一段文字、在没有注入桥的应用上
  *  圈一块区域。「指哪儿」这件事在每种查看器里本来就不一样，所以各带各的字段；共同的
- *  部分是文件身份和版本（`FileIdentity`）——只有 `web-region` 例外：一个应用没有版本
- *  可言，它凭页面地址定位（见 `WebRegionQuote`）。 */
+ *  部分是文件身份和版本（`FileIdentity`）——`web-region` 例外：一个应用没有版本可言，
+ *  它凭页面地址定位（见 `WebRegionQuote`）；`viewing` 也例外：它只说读者开着哪一份，
+ *  不指其中一处（见 `ViewingQuote`）。 */
 export type QuotedContext =
   | SlidePageQuote
   | PagePinQuote
   | SheetCellQuote
+  | SheetRangeQuote
   | TextRangeQuote
   | WebElementQuote
   | WebTextQuote
   | WebRegionQuote
+  | ImageRegionQuote
+  | ViewingQuote
 
 /** 带文件身份的那些引文共有的那一半：文件身份 + 版本。少了哪一样都指不回同一份东西。
  *
@@ -84,6 +88,22 @@ export type SheetCellQuote = Readonly<
   }
 >
 
+/** 表格里的一片：`start`/`end` 是区域两个角的 A1 地址（左上、右下），合起来就是表格
+ *  软件自己印的那个 `A1:C3`。
+ *
+ *  和单格一样，两个角都是文件本身给得出来的地址，受话人拿它们就能回到那一片；`text`
+ *  是这片格子里的内容按行摊平的那一份，受话人不打开文件也看得见里面是什么。CSV 没有
+ *  工作表名，`sheet` 就是空串。 */
+export type SheetRangeQuote = Readonly<
+  FileIdentity & {
+    kind: 'sheet-range'
+    sheet: string
+    start: string
+    end: string
+    text: string
+  }
+>
+
 /** 渲染出来的正文里选中的一段：`text` 是原文，`heading`/`prefix`/`suffix` 帮受话人分辨
  *  同一句话的哪一处出现（形状见 `markdownQuote.ts`）。
  *
@@ -117,6 +137,8 @@ export type WebElementQuote = Readonly<
     kind: 'web-element'
     selector: string
     tag: string
+    /** 给人读的名字（这一处的标题，或它所在那一节的标题）；老消息里没有。 */
+    label?: string
     text: string
     rect: WebRect
     viewport: WebViewport
@@ -130,6 +152,8 @@ export type WebTextQuote = Readonly<
     kind: 'web-text'
     selector: string
     tag: string
+    /** 给人读的名字（这一处的标题，或它所在那一节的标题）；老消息里没有。 */
+    label?: string
     text: string
     prefix: string
     suffix: string
@@ -146,6 +170,34 @@ export type WebRegionQuote = Readonly<{
   url: string
   rect: WebRect
   viewport: WebViewport
+}>
+
+/** 图片上框出的一块：坐标是**原图像素**，不是显示像素。图片没有视口，它自己有一份不变
+ *  的原图尺寸，位置直接记原图上的像素；显示出来是缩放的，读者改窗口大小也不改变这一块
+ *  指的原图上是哪一块。这和网页那一类刚好相反——那边非得记像素加视口，正是因为网页没有
+ *  一份稳定的原图。
+ *
+ *  `natural_width`/`natural_height` 是框的时候那张原图的尺寸：带上它，受话人不必先取一次
+ *  原图，就能把这一块按比例画回任何一种缩放下。 */
+export type ImageRegionQuote = Readonly<
+  FileIdentity & {
+    kind: 'image-region'
+    x: number
+    y: number
+    width: number
+    height: number
+    natural_width: number
+    natural_height: number
+  }
+>
+
+/** 读者发这条消息时右侧正开着的那一份（撰写框上那行「芝士会看到你在看什么」）。
+ *  只有文件，没有位置和版本：右栏开着的那一格未必读到了版本，指不出哪一版就不假装
+ *  指出来。它让「这里不对」「这页太挤」有个落点。见 `lib/viewingContext.ts`。 */
+export type ViewingQuote = Readonly<{
+  kind: 'viewing'
+  path: string
+  task_id: string | null
 }>
 
 export function frozenQuote(quote: QuotedContext): QuotedContext {
@@ -197,6 +249,11 @@ function isPositiveLength(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
+/** 一个正整数：原图尺寸用。后端收 `int`，1.5 或 "10" 都会吃 422。 */
+function isPositiveInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
 /** 量出来的一块地方。 */
 function isWebRect(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false
@@ -214,6 +271,10 @@ function isWebViewport(value: unknown): boolean {
 export function isQuotedContext(value: unknown): value is QuotedContext {
   if (!value || typeof value !== 'object') return false
   const q = value as Record<string, unknown>
+  // 「在看哪一份」只有路径：不带版本，也不带位置。
+  if (q.kind === 'viewing') {
+    return isText(q.path, 1, 1000) && (q.task_id === null || typeof q.task_id === 'string')
+  }
   // 应用上圈的一块区域是唯一不带文件身份的：它凭地址定位，先单独认下来。
   if (q.kind === 'web-region') {
     return isText(q.url, 1, 2048) && isWebRect(q.rect) && isWebViewport(q.viewport)
@@ -222,6 +283,7 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
   // 网页里点中的元素 / 选中的一段文字：选择器和标签是回到页面那一处的凭据。
   if (q.kind === 'web-element' || q.kind === 'web-text') {
     if (!isText(q.selector, 1, 256) || !isText(q.tag, 0, 32)) return false
+    if (q.label !== undefined && !isText(q.label, 0, 80)) return false
     if (!isWebRect(q.rect) || !isWebViewport(q.viewport)) return false
     if (q.kind === 'web-element') return isText(q.text, 0, 500)
     return isText(q.text, 1, 500) && isText(q.prefix, 0, 64) && isText(q.suffix, 0, 64)
@@ -246,12 +308,38 @@ export function isQuotedContext(value: unknown): value is QuotedContext {
       typeof q.value === 'string'
     )
   }
+  if (q.kind === 'sheet-range') {
+    // 两个角各是一个地址，后端都收 `min_length=1`；`sheet` 空串是 CSV 的正常形状；
+    // 摊平的那份内容可以是空（一格里本来就什么都没有）。
+    return (
+      typeof q.sheet === 'string' &&
+      typeof q.start === 'string' &&
+      q.start.length > 0 &&
+      typeof q.end === 'string' &&
+      q.end.length > 0 &&
+      typeof q.text === 'string'
+    )
+  }
   if (q.kind === 'text-range') {
     return (
       typeof q.text === 'string' &&
       (q.heading === null || typeof q.heading === 'string') &&
       typeof q.prefix === 'string' &&
       typeof q.suffix === 'string'
+    )
+  }
+  if (q.kind === 'image-region') {
+    // 原图像素：左上角可以贴边（0），宽高得真的框出东西来（后端 `gt=0`）。原图尺寸是
+    // 正整数——它来自图片自己，不是量出来的浮点数。
+    return (
+      isCoordinate(q.x) &&
+      q.x >= 0 &&
+      isCoordinate(q.y) &&
+      q.y >= 0 &&
+      isPositiveLength(q.width) &&
+      isPositiveLength(q.height) &&
+      isPositiveInt(q.natural_width) &&
+      isPositiveInt(q.natural_height)
     )
   }
   return false

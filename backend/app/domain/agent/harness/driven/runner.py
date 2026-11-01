@@ -17,8 +17,9 @@ import os
 import secrets
 import sys
 import time
+import traceback
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -103,6 +104,27 @@ def current_loop() -> asyncio.AbstractEventLoop | None:
         return None
 
 
+def watched(work: Coroutine) -> asyncio.Task:
+    """Run ``work`` in the background, and print its failure to the runner's
+    log the moment it fails.
+
+    A task keeps its exception until someone asks for it, and a runner asks its
+    background tasks only as it closes, gathering them with
+    ``return_exceptions``: one that died stopped doing its job, and nothing
+    anywhere said so.
+    """
+    task = asyncio.create_task(work)
+    task.add_done_callback(_say_failure)
+    return task
+
+
+def _say_failure(task: asyncio.Task) -> None:
+    if task.cancelled() or (error := task.exception()) is None:
+        return
+    print(f"runner task {task!r} failed:", file=sys.stderr, flush=True)
+    traceback.print_exception(type(error), error, error.__traceback__, file=sys.stderr)
+
+
 def socket_path(state: Path) -> str:
     """Where the connector will look, given this state directory.
 
@@ -155,26 +177,48 @@ def socket_path(state: Path) -> str:
 # Codex, a turn of the session's own for pi — and the rule is here. Once is the
 # limit: a session that still does not answer is let go, and the runner's log
 # says so.
+#
+# One early reply is not the whole answer either. A session that says "on it"
+# with chat_send, goes on working, and ends its turn on a message of plain text
+# has told the person nothing of how it went: that last message lands only in
+# the session's own record, and the person goes on waiting for the conclusion
+# it holds. So a turn that owed a reply, did more work after its last reply,
+# and ends on words of its own (the text of its final message, which each
+# harness hands `insist`) is held once too (`CLOSING_INSIST`): send them, or
+# end without them. Words that come straight after the last reply restate it,
+# and the turn ends; so does a turn that ends on nothing, and one whose only
+# calls since its reply kept its own books (`BOOKKEEPING`). Each harness tells
+# the runner every tool the session itself calls (`called`). The two reasons
+# are held separately, each at most once per message, and every hold for an
+# unsent conclusion is logged with the calls that came after the reply.
 
 #: The variable that names the file to the agent process and whatever it spawns.
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
-#: The platform tools that read the room's own messages: let through, and no answer.
+#: The platform tools that read the room's own messages: let through, and no
+#: answer. Each is one verb of `cheese_chat`, by its key (`<tool>.<action>`):
+#: editing a message of one's own is in the same tool and answers nobody.
 REPLY_READS = (
-    "cheese_chat_list",
-    "cheese_chat_get",
-    "cheese_chat_search",
-    "cheese_chat_replies",
+    "cheese_chat.list",
+    "cheese_chat.get",
+    "cheese_chat.search",
+    "cheese_chat.replies",
 )
+#: Calls that record the turn's own state — its step list, its line on the
+#: task board — and never produce anything the person has not been told: made
+#: after a reply, they are not more work it could owe them news of. By key, as
+#: `REPLY_READS`. A tool that can hit a blocker or produce a result (a command,
+#: a file, a document someone opens) is never one of these.
+BOOKKEEPING = ("todo_write", "cheese_task.state")
 REPLY_OWED = (
     "A person in this conversation has sent a message you have not answered yet. "
     "Reply to it in the conversation with chat_send first (or ask them with "
     "cheese_ask): answer it if you can; otherwise say what you understood and "
     "what you will do next — and if they asked you to stop, stop. If you have "
-    "not seen what they wrote, read the conversation with cheese_chat_list (or "
-    "cheese_chat_get / cheese_chat_search / cheese_chat_replies); every other "
-    "tool is refused until you have replied."
+    "not seen what they wrote, read the conversation with cheese_chat "
+    "(action=list, or get / search / replies); every other tool is refused "
+    "until you have replied."
 )
 
 
@@ -186,10 +230,20 @@ REPLY_INSIST = (
 )
 
 
+CLOSING_INSIST = (
+    "You are about to stop on a message the person who wrote to you in this "
+    "room will never see: you went on working after your last reply to them, "
+    "and only what you send with chat_send (or ask with cheese_ask) reaches "
+    "them. If this message says anything they have not been sent — a result, "
+    "a blocker, a question — send it to them now; if not, stop without "
+    "writing anything more."
+)
+
+
 # --- a turn's checkpoint --------------------------------------------------------
 #
 # A turn ends with its work in the project: on the room's machine every task
-# checkout holding something unpushed is backed up to the platform and pushed
+# checkout holding unpushed commits is pushed
 # (the executor's ``checkpoint`` control, which runs ``cheese sync --all``).
 # That is what a sandbox replaced after the turn comes back from, so it is the
 # same for every harness. Claude Code asks for it from its Stop hook
@@ -248,8 +302,12 @@ class Runner(Generic[J]):  # noqa: UP046
         self.token = secrets.token_hex(32)
         # The input a person is waiting on an answer to, while one is.
         self.owed: str | None = None
-        # Debts the session has already been held to once at a turn's end.
+        # Debts the session has already been held to once at a turn's end,
+        # for no reply at all and for a conclusion it kept to itself.
         self.insisted: set[str] = set()
+        self.held_closing: set[str] = set()
+        # The calls the session made since its last reply, by key.
+        self.since_reply: list[str] = []
         # 0 keeps the session however long it sits idle.
         self.idle_exit_s = idle_exit_s
         self.active_at = time.monotonic()
@@ -266,6 +324,15 @@ class Runner(Generic[J]):  # noqa: UP046
         # mark changes with every change of it, and from one runner to the next.
         self.live_blocks: list[dict] = []
         self.live_work: str | None = None
+        #: The calls of the work under way that came back, for a harness that
+        #: says so (``Writing.returned``).
+        self.live_returned: list[str] = []
+        #: The branches of a person's 芝士 that the work under way started or
+        #: moved, as they stand (``Writing.branches``).
+        self.live_branches: list[dict] = []
+        #: The calls of the work under way as they were made, by id
+        #: (``Writing.made``).
+        self.live_made: dict[str, dict] = {}
         self.live_epoch = uuid.uuid4().hex[:12]
         self.live_count = 0
         # What checkpoints a turn's work on the room's machine, given a request
@@ -314,6 +381,18 @@ class Runner(Generic[J]):  # noqa: UP046
         )
         written.replace(path)
         self.owed = identifier
+        self.since_reply = []
+
+    def called(self, tool: str, arguments: object = None) -> None:
+        """The session itself called ``tool``, by its name in the platform's
+        tool table, with ``arguments`` (a subagent's calls are not the
+        session's). A reply starts the count again."""
+        action = arguments.get("action") if isinstance(arguments, dict) else None
+        key = f"{tool}.{action}" if isinstance(action, str) and action else tool
+        if tool in REPLY_TOOLS:
+            self.since_reply = []
+        else:
+            self.since_reply.append(key)
 
     def reply_settled(self) -> None:
         """The turn is over: whatever it owed, it no longer holds a tool back."""
@@ -321,28 +400,43 @@ class Runner(Generic[J]):  # noqa: UP046
         reply_owed_path(self.state).unlink(missing_ok=True)
         reply_answered_path(self.state).unlink(missing_ok=True)
 
-    def insist(self) -> str | None:
-        """Asked as a turn is about to end: what to hold the session to, if
-        anything — `REPLY_INSIST` while a person is still unanswered, once per
-        message. A session that ends a second time without answering is let
-        go, and said so here, rather than kept going round."""
+    def insist(self, last_words: str) -> str | None:
+        """Asked as a turn is about to end, with the text of its final
+        message: what to hold the session to, if anything — `REPLY_INSIST`
+        while a person is still unanswered, `CLOSING_INSIST` when they were
+        answered but the session went on working and ends on words only it can
+        see. Each once per message: a session that ends the same way again is
+        let go, and said so here, rather than kept going round."""
         if self.owed is None:
             return None
         try:
-            answered = reply_answered_path(self.state).read_text().strip()
+            answered = reply_answered_path(self.state).read_text().strip() == self.owed
         except OSError:
-            answered = ""
-        if answered == self.owed:
+            answered = False
+        worked = any(key not in BOOKKEEPING for key in self.since_reply)
+        if answered and not (worked and last_words.strip()):
             return None
-        if self.owed in self.insisted:
+        held = self.held_closing if answered else self.insisted
+        if self.owed in held:
             print(
-                f"turn ended without a reply to {self.owed} after being held to it",
+                f"turn ended on words never sent to {self.owed} after being held to it"
+                if answered
+                else f"turn ended without a reply to {self.owed} after being held to it",
                 file=sys.stderr,
                 flush=True,
             )
             return None
-        self.insisted.add(self.owed)
-        return REPLY_INSIST
+        held.add(self.owed)
+        if answered:
+            # One line per hold: how often it fires, and after what, is what
+            # says whether it catches conclusions or repeats replies.
+            print(
+                f"closing hold: message={self.owed} work={self.turn_work()} "
+                f"after_reply={','.join(self.since_reply)}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return CLOSING_INSIST if answered else REPLY_INSIST
 
     # --- a turn's checkpoint -------------------------------------------------
 
@@ -420,9 +514,9 @@ class Runner(Generic[J]):  # noqa: UP046
             )
             os.chmod(socket_path(self.state), 0o600)
         if self.idle_exit_s:
-            self.idler = asyncio.create_task(self._idle())
+            self.idler = watched(self._idle())
         if self.process is not None:
-            self.ender = asyncio.create_task(self._announce_exit(self.process))
+            self.ender = watched(self._announce_exit(self.process))
 
     async def _announce_exit(self, process: asyncio.subprocess.Process) -> None:
         """The agent process ended: a read held now is answered at once, saying
@@ -524,6 +618,9 @@ class Runner(Generic[J]):  # noqa: UP046
                 "work_id": self.live_work,
                 # As they stand now: the harness goes on changing them in place.
                 "blocks": [dict(block) for block in self.live_blocks],
+                "returned": list(self.live_returned),
+                "branches": [dict(branch) for branch in self.live_branches],
+                "made": [dict(made) for made in self.live_made.values()],
             }
         return answer
 

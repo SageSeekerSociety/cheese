@@ -55,7 +55,7 @@ vi.mock('@/stores/agent', () => ({ openAgentConversation: vi.fn() }))
 
 const CATEGORIES = [
   { code: 'remove_member', label: '移除成员' },
-  { code: 'to_everyone', label: '在综合频道发消息' },
+  { code: 'to_everyone', label: '发给所有人的消息' },
 ]
 
 const ROUTINE = {
@@ -66,6 +66,8 @@ const ROUTINE = {
   state: 'active',
   paused: '',
   nextRunAt: new Date(Date.now() + 3600_000).toISOString(),
+  once: false,
+  conversationId: null,
   lastRun: { status: 'done', at: new Date().toISOString(), asked: 2, conversationId: 'c1' },
   weekCredits: 3.2,
 }
@@ -112,7 +114,7 @@ beforeEach(() => {
         summary: '在频道「综合」（项目「P」）发消息：\n收到',
         verdict: 'asked',
         stage: 'rule',
-        reason: '你设置了「在综合频道发消息」需要确认',
+        reason: '你设置了「发给所有人的消息」需要确认',
         at: new Date().toISOString(),
       },
       {
@@ -156,8 +158,8 @@ describe('芝士 settings', () => {
 
   it('lists routines with when they run and how the last run went; deleting asks first', async () => {
     const view = mount()
-    await waitFor(() => expect(view.getByText('每日待办')).toBeTruthy())
-    expect(view.getByText('每天 08:00（Asia/Shanghai）')).toBeTruthy()
+    await waitFor(() => expect(view.getByText('每天 08:00（Asia/Shanghai）')).toBeTruthy())
+    expect(view.getByText('列出待办')).toBeTruthy()
     expect(view.getByText('最近一次：2 项操作待你确认')).toBeTruthy()
     expect(view.getByText('近 7 天 3.2 点')).toBeTruthy()
 
@@ -168,11 +170,11 @@ describe('芝士 settings', () => {
     const deletes = view.getAllByRole('button', { name: '删除' })
     await fireEvent.click(deletes[deletes.length - 1])
     expect(setRoutineMock).not.toHaveBeenCalledWith('r1', 'delete')
-    await waitFor(() => expect(view.getByText('删除例行事务「每日待办」？')).toBeTruthy())
+    await waitFor(() => expect(view.getByText('删除自动化「每日待办」？')).toBeTruthy())
     const confirm = view.getAllByRole('button', { name: '删除' })
     await fireEvent.click(confirm[confirm.length - 1])
     await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('r1', 'delete'))
-    await waitFor(() => expect(view.getByText('暂无例行事务')).toBeTruthy())
+    await waitFor(() => expect(view.getByText('暂无自动化')).toBeTruthy())
   })
 
   it('what 芝士 remembers is edited and deleted from the page', async () => {
@@ -197,18 +199,29 @@ describe('芝士 settings', () => {
     expect(deleteMemoryMock).toHaveBeenCalledWith('formal-to-teachers')
   })
 
-  it('a one-off routine that ran says so, can only be deleted and leaves its place free', async () => {
+  it('a one-off waits with a way to call it off, and once it has run it leaves the list', async () => {
     routinesMock.mockResolvedValue({
       routines: [
-        { ...ROUTINE, id: 'r2', title: '提醒交报告', when: '10月22日 17:00 运行一次', state: 'done', nextRunAt: null },
+        { ...ROUTINE, id: 'w', when: '任务「接入搜索」提交审阅时', once: true, nextRunAt: null, lastRun: null },
+        {
+          ...ROUTINE,
+          id: 'r2',
+          when: '10月22日 17:00',
+          note: '提醒交报告',
+          once: true,
+          state: 'done',
+          nextRunAt: null,
+        },
       ],
       limit: 20,
     })
     const view = mount()
-    await waitFor(() => expect(view.getByText('提醒交报告')).toBeTruthy())
-    expect(view.getByText('已运行，3 天后自动删除')).toBeTruthy()
-    expect(view.getByText('0/20')).toBeTruthy()
+    await waitFor(() => expect(view.getByText('任务「接入搜索」提交审阅时')).toBeTruthy())
+    expect(view.getByText('等待中')).toBeTruthy()
+    expect(view.queryByText('提醒交报告')).toBeNull()
     expect(view.queryByRole('button', { name: '暂停' })).toBeNull()
-    expect(view.queryByRole('button', { name: '恢复' })).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(setRoutineMock).toHaveBeenCalledWith('w', 'delete'))
   })
 })

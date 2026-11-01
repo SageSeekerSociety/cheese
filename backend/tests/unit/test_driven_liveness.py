@@ -17,6 +17,7 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code import runner as claude_runner
+from app.domain.agent.harness.claude_code import stuck as claude_stuck
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     TURN_TIMEOUT_CODE,
@@ -181,9 +182,12 @@ def clocks(monkeypatch):
     and how often it looks, shortened."""
     monkeypatch.setattr(claude_runner, "WATCH_S", 0.05)
 
-    def set_clocks(*, no_progress_s: float = 0.0, unread_s: float = 0.0) -> None:
+    def set_clocks(
+        *, no_progress_s: float = 0.0, unread_s: float = 0.0, silent_s: float = 0.0
+    ) -> None:
         monkeypatch.setattr(settings, "agent_no_progress_s", no_progress_s)
         monkeypatch.setattr(settings, "agent_unread_grace_s", unread_s)
+        monkeypatch.setattr(settings, "agent_stuck_silence_s", silent_s)
 
     set_clocks()
     return set_clocks
@@ -228,6 +232,56 @@ def _takes_it_without_echo(channel: Scripted, topic: uuid.UUID, prompt: str) -> 
     channel.starts(topic)
     channel.begins(topic, prompt)
     channel.says(topic, "working on something else")
+
+
+def _deaf_to_the_interrupt(room: "Room") -> None:
+    """The session takes the interrupt and never ends the work itself: its
+    ``result`` records are dropped, as they are for a build that stopped
+    answering."""
+    for _key, runner in room.channel.sessions.items():
+        observed = runner.observe
+
+        def observe(record, _observed=observed):
+            if record.get("type") != "result":
+                return _observed(record)
+
+        runner.observe = observe
+
+
+def _says_nothing_at_all(channel: Scripted, topic: uuid.UUID, prompt: str) -> None:
+    """The build takes the work, reads it, and then produces nothing — no
+    words, no tool."""
+    channel.begins(topic, prompt)
+    channel.acknowledges(topic, prompt)
+
+
+async def test_a_session_that_says_nothing_at_all_is_ended_by_its_runner(
+    clocks, monkeypatch
+):
+    """The other two clocks both need something to go on: words said recently,
+    or an input still waiting to be read. A session whose process is alive and
+    whose build simply stopped answering has neither, so nothing would ever
+    report that its work ended — and everything that reads the work as still
+    running (the room's 「正在工作」, the task's state) keeps counting. The
+    runner reports the ending itself and stops the process."""
+    clocks(silent_s=0.3)
+    # How long the session gets to end it itself, after being interrupted.
+    monkeypatch.setattr(claude_stuck, "STUCK_GRACE_S", 0.1)
+    room = Room(Scripted(_says_nothing_at_all))
+    try:
+        await room.send("fix the login page")
+        # This one will not answer: the interrupt changes nothing, and no
+        # result ever follows it. Only the runner can report the ending.
+        _deaf_to_the_interrupt(room)
+        await _until(lambda: room.results())
+
+        (ended,) = room.results()
+        # The work ended as failed, and the room was told which clock saw it.
+        assert ended.is_error
+        (idle,) = room.facts(SessionIdle)
+        assert idle.failure == "stuck"
+    finally:
+        await room.close()
 
 
 async def test_the_runner_ends_work_whose_input_nobody_read(clocks):

@@ -1,11 +1,12 @@
 {
   "defaultTeammate": {
     "hint": "Projects created from this challenge (or category) start Cheese with this teammate's preset skills.",
-    "inherit": "Inherit (do not set here)",
+    "inherit": "Use the level above",
     "inheritHint": "Use whatever the level above sets",
     "loadFailed": "Couldn't load the presets; only inherit is available",
     "title": "Default teammate",
-    "willClear": "Saving clears the teammate set on this level"
+    "willClear": "Saving clears the teammate set on this level",
+    "inheritNone": "The category sets no default teammate"
   },
   "fields": {
     "learningGoals": "Learning goals",
@@ -25,11 +26,14 @@
     "materialsUpload": "Upload to the library",
     "mode": "Approach",
     "privatePrompt": "Private guidance for the setter",
-    "privatePromptHint": "Only the challenger and the board's managers see this; the AI teammate follows it but will not tell the student verbatim. Put reference answers, grading criteria and anything else that must not enter the student's materials here.",
+    "privatePromptHint": "Only the challenger and the space's admins see this; the AI teammate follows it but will not tell the student verbatim. Put reference answers, grading criteria and anything else that must not enter the student's materials here.",
     "spacePrompt": "Space requirements also in effect",
     "systemPrompt": "Additional requirements",
     "systemPromptPlaceholder": "For example: help read test output, don't hand over complete code",
-    "taskPrompt": "Requirements for this task"
+    "taskPrompt": "Requirements for this task",
+    "skills": "Skills",
+    "skillsHint": "Every AI teammate in a project built from this task carries these skills on every turn",
+    "skillsLoadFailed": "Could not load the skill list; the skills already chosen are kept"
   },
   "mode": {
     "example": "Explain with examples",
@@ -38,7 +42,7 @@
     "freeHint": "Help however the student asks",
     "guide": "Guide with questions",
     "guideHint": "Lead the student by asking; don't give the answer",
-    "inherit": "Use the space's",
+    "inherit": "Use the level above",
     "inheritNone": "The space sets no approach",
     "spec": "Goal first, then build",
     "specHint": "Ask for the goal and how to check it before writing"

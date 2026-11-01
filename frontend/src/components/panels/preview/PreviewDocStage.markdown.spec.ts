@@ -1,0 +1,233 @@
+/**
+ * Markdown 这一档的几件只有它自己有的事：空文件、大到正文取不回来的文件、
+ * 长文的目录，以及代码块的折行/复制。
+ *
+ * 为什么单独一个文件：`PreviewDocStage` 的分支是「按文件类型」分的，这几条判据只对
+ * markdown 成立（PDF 没有「空正文」这一说），和 `compact`、`versions` 那几份用例
+ * 关注的不是同一件事。
+ */
+import type { Component } from 'vue'
+
+import { ref } from 'vue'
+import { createVuetify } from 'vuetify'
+import * as components from 'vuetify/components'
+import * as directives from 'vuetify/directives'
+import { cleanup, render, waitFor } from '@testing-library/vue'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+
+import PreviewDocStage from './PreviewDocStage.vue'
+
+import { setLocale } from '@/i18n'
+import { previewBundles } from '@/test/panelBundles'
+
+const width = ref(1200)
+vi.mock('@vueuse/core', async (orig) => ({
+  ...(await orig<typeof import('@vueuse/core')>()),
+  useElementSize: () => ({ width, height: ref(800), stop: () => {} }),
+}))
+
+const vuetify = createVuetify({ components, directives })
+
+beforeEach(() => setLocale('zh-CN'))
+afterEach(() => {
+  cleanup()
+  width.value = 1200
+})
+
+const MARKDOWN = { label: 'Markdown', icon: 'mdi-language-markdown-outline', view: 'markdown' } as const
+
+function mount(previewFile: Record<string, unknown>) {
+  const bundles = previewBundles()
+  return render(PreviewDocStage as unknown as Component, {
+    props: {
+      topicId: 't1',
+      projectId: 'p1',
+      documentType: MARKDOWN,
+      documentName: 'notes.md',
+      documentSuffix: 'md',
+      previewFile: {
+        path: 'output/notes.md',
+        version: 'v1',
+        bytes: 10,
+        binary: false,
+        too_large: false,
+        ...previewFile,
+      },
+      docBytes: null,
+      docLoading: false,
+      docError: '',
+      docRendererMissing: false,
+      downloadError: '',
+      revs: bundles.revs,
+      fileHistory: bundles.fileHistory,
+      showHistory: false,
+    },
+    global: {
+      plugins: [vuetify],
+      stubs: { VMenu: { template: '<div><slot name="activator" :props="{}" /><slot /></div>' } },
+    },
+  })
+}
+
+it('空文件说一句「这个文件是空的」，不是一片空白', async () => {
+  // 空白和「预览坏了」在屏幕上长得一模一样：读者分不出是自己打开了一份空文件，
+  // 还是这一格没画出来。
+  const ui = mount({ content: '\n\n' })
+  await waitFor(() => expect(ui.getByText('这个文件是空的')).toBeTruthy())
+})
+
+it('大到正文没取回来的文件说清原因，并给下载', async () => {
+  // `too_large` 的 content 也是 null，但那份文件是文本、只是这次没取——不能落到
+  // 「不是文本」那一句上。
+  const ui = mount({ content: null, too_large: true })
+  await waitFor(() => expect(ui.getByText('这份文件太大，正文没有取回来')).toBeTruthy())
+  // 读不到正文时给出一条去处：这一档的「下载」摊在文档条上和提示里各有一处。
+  expect(ui.getAllByText('下载').length).toBeGreaterThan(0)
+})
+
+it('不是文本的 markdown（读成 null 且没超限）说「这个文件不是文本」，不是一片空白', async () => {
+  // 非 UTF-8 的 .md 在 `decode_text` 那里归到 binary、content 是 null。这一档要是没人
+  // 接住，屏幕上就是空白——和「文件空着」看上去一模一样。
+  const ui = mount({ content: null, too_large: false, binary: true })
+  await waitFor(() => expect(ui.getByText('这个文件不是文本')).toBeTruthy())
+  expect(ui.queryByText('这份文件太大，正文没有取回来')).toBeNull()
+})
+
+it('长文的目录：三个以上标题才出现，点了滚到那一节', async () => {
+  const source = '# 一\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n'
+  const ui = mount({ content: source })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelectorAll('h2').length).toBe(2), { timeout: 5000 })
+  const trigger = await waitFor(() => ui.getByTestId('md-outline'))
+  expect(trigger.textContent).toContain('大纲')
+  const items = ui.getAllByRole('menuitem').map((el) => el.textContent ?? '')
+  expect(items).toEqual(['一', '二', '三'])
+})
+
+it('两个标题的文档不摆目录：那是占位，不是导航', async () => {
+  const ui = mount({ content: '# 一\n\n正文。\n\n## 二\n\n正文。\n' })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelectorAll('h2').length).toBe(1), { timeout: 5000 })
+  expect(ui.queryByTestId('md-outline')).toBeNull()
+})
+
+it('光秃秃一行的空标题不进目录，也不占跳转的位子', async () => {
+  // 原文里一行 `##` 渲染成一个没有字的 h2。抽目录和跳转两处都要跳过它：只有一处跳过
+  // 的话，目录里第 3 条会落到第 4 个标题上，越往后错得越多。
+  const source = '# 一\n\n正文。\n\n##\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n'
+  const ui = mount({ content: source })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelectorAll('h2').length).toBe(3), { timeout: 5000 })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  const items = ui.getAllByRole('menuitem').map((el) => el.textContent ?? '')
+  expect(items).toEqual(['一', '二', '三'])
+
+  // 点第二条「二」要落到「二」上，不是落到那个空标题上。跳转读的是位置，happy-dom
+  // 量出来全是 0，所以给每个标题和正文根各造一个 top——按真实浏览器的样子减掉已经
+  // 滚过去的那一段（不减的话收敛不了，量到多少都补同一段）。
+  // 三个 h2 依次是「空标题 / 二 / 三」（「一」是 h1，不在这一批里）。
+  const headings = Array.from(md.querySelectorAll<HTMLElement>('h2'))
+  const tops = [0, 100, 300]
+  Object.defineProperty(md, 'getBoundingClientRect', { value: () => ({ top: 0, left: 0 }) })
+  headings.forEach((h, i) =>
+    Object.defineProperty(h, 'getBoundingClientRect', {
+      value: () => ({ top: tops[i] - md.scrollTop, left: 0 }),
+    })
+  )
+
+  await ui.getAllByRole('menuitem')[1].click()
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  // 目录第二条是「二」（空标题没进目录），落到它的 100 减掉 8px 留白。要是跳转没跳过
+  // 那个空标题，这里会落在 top 0 上、滚成 0——两种结果分得开。
+  expect(md.scrollTop).toBe(92)
+})
+
+it('同一份文件换成了没有标题的正文：目录按钮跟着消失，不是留在那儿按不动', async () => {
+  // 换正文只清本地那一份不够：新正文一个标题都没有时，「没变就不发」比出来两边都是空，
+  // 上一层手里那几条旧的会一直摆着。这一条走的是同一份文件（path 没变）换正文那条路。
+  const ui = mount({ content: '# 一\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n' })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  await ui.rerender({
+    documentType: MARKDOWN,
+    documentName: 'notes.md',
+    documentSuffix: 'md',
+    previewFile: {
+      path: 'output/notes.md',
+      content: '只剩一段正文，一个标题也没有。\n',
+      version: 'v2',
+      bytes: 10,
+      binary: false,
+      too_large: false,
+    },
+  })
+  const md = ui.getByTestId('markdown')
+  await waitFor(() => expect(md.textContent).toContain('只剩一段正文'), { timeout: 5000 })
+  await waitFor(() => expect(ui.queryByTestId('md-outline')).toBeNull())
+})
+
+it('同一份文件被轮询改成空文件：目录按钮跟着消失', async () => {
+  // 面板每 20 秒重读一次；文件在别处被清空时走的是「同一个 path、新 content」这条路。
+  // 三种「没有正文」的态画的都是状态面板，`mdRef` 没挂上——目录留着就是按不动的。
+  const ui = mount({ content: '# 一\n\n正文。\n\n## 二\n\n正文。\n\n## 三\n\n正文。\n' })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  await ui.rerender({
+    documentType: MARKDOWN,
+    documentName: 'notes.md',
+    documentSuffix: 'md',
+    previewFile: {
+      path: 'output/notes.md',
+      content: '   \n',
+      version: 'v2',
+      bytes: 4,
+      binary: false,
+      too_large: false,
+    },
+  })
+  await waitFor(() => expect(ui.getByText('这个文件是空的')).toBeTruthy())
+  expect(ui.queryByTestId('md-outline')).toBeNull()
+})
+
+it('换一份文件，上一份的目录不跟过来', async () => {
+  const ui = mount({ content: '# 甲\n\n正文。\n\n## 乙\n\n正文。\n\n## 丙\n\n正文。\n' })
+  await waitFor(() => expect(ui.getByTestId('md-outline')).toBeTruthy())
+  await ui.rerender({
+    documentType: MARKDOWN,
+    documentName: 'other.md',
+    documentSuffix: 'md',
+    previewFile: {
+      path: 'output/other.md',
+      content: '# 只有一个标题\n',
+      version: 'v1',
+      bytes: 10,
+      binary: false,
+      too_large: false,
+    },
+  })
+  // 新正文还没画出来时，那颗按钮不该已经按着旧的章节跳。
+  expect(ui.queryByTestId('md-outline')).toBeNull()
+})
+
+// ---- 代码块的两颗 ----
+//
+// 对话栏里的 Markdown 一直带「自动换行 / 复制」；预览这一档的 `MarkdownView` 漏了
+// `copyCode`，同一段命令在这儿只能左右拖。这几条盯的是这一档有没有交上去。
+
+const CODE = '# 命令\n\n```bash\ncheese worktree a-very-long-id && cd "$T" && git log --oneline\n```\n'
+
+it('预览里的代码块带「自动换行」和「复制」', async () => {
+  const ui = mount({ content: CODE })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelector('pre')).toBeTruthy(), { timeout: 5000 })
+  const bar = md.querySelector('.md-pre-bar')
+  expect(bar).toBeTruthy()
+  const labels = Array.from(bar!.querySelectorAll('button')).map((b) => b.textContent ?? '')
+  expect(labels.some((text) => text.includes('自动换行'))).toBe(true)
+  expect(labels.some((text) => text.includes('复制'))).toBe(true)
+})
+
+it('代码块的正文照原文画，没有被工具条吃掉', async () => {
+  const ui = mount({ content: CODE })
+  const md = await waitFor(() => ui.getByTestId('markdown'))
+  await waitFor(() => expect(md.querySelector('pre')).toBeTruthy(), { timeout: 5000 })
+  expect(md.querySelector('pre')!.textContent).toContain('cheese worktree a-very-long-id')
+})

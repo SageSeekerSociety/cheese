@@ -5,6 +5,7 @@ import { computed } from 'vue'
 
 import { t } from '@/i18n'
 import { quoteSummary } from '@/lib/quoteSummary'
+import { webPickLabel } from '@/lib/webPickLabel'
 
 const props = defineProps<{ quote: QuotedContext }>()
 
@@ -16,17 +17,18 @@ const summary = computed(() => quoteSummary(props.quote))
 const path = computed(() => ('path' in props.quote ? props.quote.path : ''))
 const identityLine = computed(() => {
   const quote = props.quote
-  if (!('path' in quote)) return ''
+  // 「在看哪一份」只有路径，没有来源和版本可说。
+  if (!('path' in quote) || quote.kind === 'viewing') return ''
   return (
     t(quote.source === 'committed' ? 'slides.sourceCommitted' : 'slides.sourceLive') +
     ' · ' +
     t('work.room.preview.readVersion', { version: quote.version })
   )
 })
-/** 网页引用说明在哪：有选择器就说选择器，否则说网址。 */
+/** 网页引用说明在哪：圈中的一处说它的名字（标题或标签），应用上框的一块说网址。 */
 const webWhere = computed(() => {
   const quote = props.quote
-  if (quote.kind === 'web-element' || quote.kind === 'web-text') return quote.selector
+  if (quote.kind === 'web-element' || quote.kind === 'web-text') return webPickLabel(quote.label, quote.tag)
   if (quote.kind === 'web-region') return quote.url
   return ''
 })
@@ -35,6 +37,17 @@ const pinWhere = computed(() =>
     ? t('work.room.preview.pinWhere', {
         left: Math.round(props.quote.x * 100),
         top: Math.round(props.quote.y * 100),
+      })
+    : ''
+)
+/** 图片上框的那一块：位置是原图像素，不是比例——图片有一份不变的原图。 */
+const imageWhere = computed(() =>
+  props.quote.kind === 'image-region'
+    ? t('work.room.preview.imageRegionWhere', {
+        x: props.quote.x,
+        y: props.quote.y,
+        w: props.quote.width,
+        h: props.quote.height,
       })
     : ''
 )
@@ -60,12 +73,18 @@ const rangeWhere = computed(() =>
     <div v-else-if="quote.kind === 'sheet-cell'" class="message-quote__text">
       {{ quote.value || t('work.room.preview.emptyCell') }}
     </div>
+    <div v-else-if="quote.kind === 'sheet-range'" class="message-quote__text">
+      <!-- An all-empty area flattens to tabs and newlines: truthy, but nothing a reader
+           reads. So this one tests for blank, not for falsy. -->
+      {{ quote.text.trim() ? quote.text : t('work.room.preview.emptyCell') }}
+    </div>
     <div v-else-if="quote.kind === 'page-pin'" class="message-quote__where">{{ pinWhere }}</div>
     <template v-else-if="quote.kind === 'web-element' || quote.kind === 'web-text'">
       <div class="message-quote__where">{{ webWhere }}</div>
       <div class="message-quote__text">{{ quote.text }}</div>
     </template>
     <div v-else-if="quote.kind === 'web-region'" class="message-quote__where">{{ webWhere }}</div>
+    <div v-else-if="quote.kind === 'image-region'" class="message-quote__where">{{ imageWhere }}</div>
   </details>
 </template>
 

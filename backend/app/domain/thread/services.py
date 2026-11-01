@@ -19,13 +19,19 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
-from app.domain.topic.models import Topic, not_a_private_chat
+from app.domain.topic.models import Topic, is_private_chat, not_a_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 
 async def _main_line_room(session: AsyncSession, block: Block):
     """The channel whose main line ``block`` is in, as ``(id, status)``; None
     when it is in a task, a 支线 or a private chat."""
+    if isinstance(session, AsyncSession):
+        cached = session.sync_session.identity_map.get(
+            session.sync_session.identity_key(Topic, (block.conversation_id,))
+        )
+        if cached is not None:
+            return None if is_private_chat(cached) else cached
     kind = await session.scalar(
         select(Conversation.kind).where(Conversation.id == block.conversation_id)
     )
@@ -52,7 +58,7 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
         raise ValidationError(say("threadOnlyUnderChannelMessage"))
     if room.status == "archived":
         raise ValidationError(say("roomArchivedUnarchiveFirst"))
-    await session.execute(
+    inserted = await session.scalar(
         insert(Thread)
         .values(
             id=uuid.uuid4(),
@@ -62,8 +68,9 @@ async def open_thread(session: AsyncSession, block_id: uuid.UUID, *, by: str) ->
             created_by=by,
         )
         .on_conflict_do_nothing(index_elements=[Thread.root_block_id])
+        .returning(Thread)
     )
-    thread = await Thread.of_root(session, block.id)
+    thread = inserted or await Thread.of_root(session, block.id)
     assert thread is not None
     return thread
 
@@ -197,19 +204,38 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     A person's message said in a 支线 without calling anyone is for this
     teammate, and calls it as an @ would: the conversation is the one held with
     it, not with the channel's default."""
-    meta = await session.scalar(
-        select(Block.meta)
-        .where(
-            or_(
-                Block.conversation_id == thread.id,
-                Block.id == thread.root_block_id,
-            ),
-            Block.kind == BlockKind.message,
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+    root = (
+        session.sync_session.identity_map.get(
+            session.sync_session.identity_key(Block, (thread.root_block_id,))
         )
-        .order_by(Block.created_at.desc(), Block.id.desc())
-        .limit(1)
+        if isinstance(session, AsyncSession) and not thread.reply_count
+        else None
     )
+    if root is not None and not any(
+        isinstance(obj, Block) and obj.conversation_id == thread.id
+        for obj in session.sync_session.identity_map.values()
+    ):
+        meta = (
+            root.meta
+            if root.kind == BlockKind.message
+            and ((root.meta or {}).get("agent_recipient") or {}).get("mentioned")
+            is True
+            else None
+        )
+    else:
+        meta = await session.scalar(
+            select(Block.meta)
+            .where(
+                or_(
+                    Block.conversation_id == thread.id,
+                    Block.id == thread.root_block_id,
+                ),
+                Block.kind == BlockKind.message,
+                Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+        )
     seat = recipient_seat((meta or {}).get("agent_recipient"))
     if seat is None or seat not in await TopicMemberService(session).agent_handles(
         thread.room_id

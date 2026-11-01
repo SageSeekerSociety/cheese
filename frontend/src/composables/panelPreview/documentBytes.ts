@@ -5,6 +5,10 @@
 // 取——PDF 那一边的 `enabled` 因此要看这个开关。挑法不跟着文件走：一份文档读成什么样是阅读
 // 习惯，不是这份文件的属性，换一份不该把它翻回去。
 //
+// 窄的一格里（手机、右栏被挤窄）Word 默认读网页那一份，再由 `PreviewPage` 按屏宽重排：分页
+// 那一份在 390 宽上正文只有六七个像素，读不了。读者自己按过开关就照他按的来，不再自动切。
+// 只有 Word：表格和演示稿各有自己为窄屏做的读法，网页那一份对它们并不更好读。
+//
 // 网页那一档里「整页引用」够不着：它要的是刚画出来的那一页和文件版本对得上（下面的
 // `slideContext`），而那一页在一个沙箱帧里，选中的字回不到这边。读者要指着整页说话就切回
 // 分页视图——那里的话仍然作数。
@@ -12,11 +16,13 @@ import type { DocumentIdentity } from '../../lib/documentIdentity'
 import type { PreviewState } from './previewState'
 import type { PanelPreviewProps } from './types'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
+import { previewSlideNotes } from '../../api/roomFiles'
 import { useDocumentBytes, useDocumentPage } from '../../lib/documentBytes'
 import { sameDocumentIdentity } from '../../lib/documentIdentity'
-import { pageViewOf } from '../../lib/fileKind'
+import { pageViewOf, SLIDE_SUFFIXES, suffixOf } from '../../lib/fileKind'
+import { NARROW_PX } from '../../lib/previewNarrow'
 
 export interface DocumentBytesDeps {
   props: PanelPreviewProps
@@ -29,7 +35,11 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
   const { props, state } = deps
 
   const docNonce = ref(0)
-  const docPage = ref(false)
+  /** 读者按过的那一下；null 是没按过，由宽窄决定。 */
+  const docPage = ref<boolean | null>(null)
+  /** 这一格窄不窄，由画它的那一层量了报上来（`setNarrow`）。量到之前按窗口猜一次，手机上
+   *  第一次取的就是网页那一份，不先白取一份 PDF。 */
+  const narrow = ref(typeof window !== 'undefined' && window.innerWidth < NARROW_PX)
   const docIdentity = computed<DocumentIdentity | null>(() => {
     const file = state.previewFile.value
     if (!props.topicId || !file) return null
@@ -42,7 +52,8 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     }
   })
   const canPage = computed(() => pageViewOf(docIdentity.value?.path))
-  const wantPage = computed(() => docPage.value && canPage.value)
+  const reflowable = computed(() => suffixOf(docIdentity.value?.path ?? '') === 'docx')
+  const wantPage = computed(() => canPage.value && (docPage.value ?? (narrow.value && reflowable.value)))
   const docSource = {
     topicId: () => docIdentity.value?.topicId ?? null,
     path: () => docIdentity.value?.path ?? null,
@@ -59,9 +70,10 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     rendererMissing: bytesRendererMissing,
   } = useDocumentBytes({
     ...docSource,
+    // markdown 和代码读的就是 `previewFile.content` 那段文字，不取字节。
     enabled: () =>
       !wantPage.value &&
-      ((!!state.documentType.value && state.documentType.value.view !== 'markdown') ||
+      ((!!state.documentType.value && !['markdown', 'code'].includes(state.documentType.value.view)) ||
         (!!props.path && state.isImageArtifact.value)),
   })
   const {
@@ -77,7 +89,10 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
   const docRendererMissing = computed(() => (wantPage.value ? pageRendererMissing.value : bytesRendererMissing.value))
 
   function toggleDocPage() {
-    docPage.value = !docPage.value
+    docPage.value = !wantPage.value
+  }
+  function setNarrow(value: boolean) {
+    narrow.value = value
   }
   const slideContext = computed(() => {
     const current = docIdentity.value
@@ -103,11 +118,52 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     docNonce.value += 1
   }
 
+  // ---- 演示稿的演讲者备注 ----
+  //
+  // 备注不在幻灯片上，而这一格拿到的是转换后的 PDF，所以它读不出来，得单独要一次。
+  // 只有演示稿问；慢一步回来的那一份是上一份文件的备注，贴到眼前这一版上就是错的，
+  // 所以回来时再核一次身份（和 `slideContext` 同一条纪律）。
+  const slideNotes = ref<string[]>([])
+  let notesKey = ''
+  let notesGeneration = 0
+  const slidesIdentity = () =>
+    state.documentType.value?.view === 'pages' && SLIDE_SUFFIXES.has(suffixOf(docIdentity.value?.path ?? ''))
+      ? docIdentity.value
+      : null
+  watch(
+    [slidesIdentity, () => docNonce.value],
+    async ([identity]) => {
+      if (!identity) {
+        slideNotes.value = []
+        notesKey = ''
+        return
+      }
+      const key = JSON.stringify([identity, docNonce.value])
+      if (key === notesKey) return
+      // 换一份文件先清空：留着上一份的备注，读者会在新稿子上看到旧稿子说的话。
+      slideNotes.value = []
+      const mine = ++notesGeneration
+      try {
+        const got = await previewSlideNotes(identity.topicId, identity.path, identity.taskId, identity.source)
+        if (mine !== notesGeneration) return
+        const current = slidesIdentity()
+        if (!current || JSON.stringify([current, docNonce.value]) !== key) return
+        notesKey = key
+        slideNotes.value = got.readable ? got.notes : []
+      } catch {
+        // 备注要不到不影响读这一页：那一块不摆就是了，报错留给正文那边说。
+        if (mine === notesGeneration) slideNotes.value = []
+      }
+    },
+    { immediate: true, flush: 'sync' }
+  )
+
   return {
     docBytes,
     docIdentity,
     docSnapshot,
     slideContext,
+    slideNotes,
     docLoading,
     docError,
     docRendererMissing,
@@ -118,6 +174,7 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
     canPage,
     docPageHtml,
     toggleDocPage,
+    setNarrow,
     refreshDocument,
   }
 }

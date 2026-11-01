@@ -58,7 +58,7 @@ vi.mock('../components/ProjectEnvironmentSettings.vue', () => ({
   default: { template: '<section>运行环境</section>' },
 }))
 vi.mock('../me', () => ({ myHandle: () => 'alice', myId: () => me.id }))
-vi.mock('../lib/desktopApp', () => ({ desktopCan: () => false, goAuthorize }))
+vi.mock('../lib/desktopApp', () => ({ desktopCan: () => false, goAuthorize, titleBarOverlay: () => false }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 
 /** 分支保护的 GET 形状：可写的那几项 + 两块只读附注。 */
@@ -330,5 +330,24 @@ describe('两个「连接」入口', () => {
     await waitFor(() => expect(section(container, '提交署名')).toBeTruthy())
 
     expect(container.querySelector('[data-testid="own-github"]')).toBeNull()
+  })
+
+  it('打开 AI 队友分栏时不请求未打开的仓库与分支保护接口，且默认模型只读一次', async () => {
+    vi.mocked(api.getProjectDefaultModel).mockResolvedValue({
+      model: null,
+      subagent_model: null,
+      deployment_default: 'sonnet',
+      choices: [],
+    })
+    await openSettings('agents')
+    await waitFor(() => expect(api.listProjectAgents).toHaveBeenCalledWith('project'))
+
+    expect(api.getUpstream).not.toHaveBeenCalled()
+    expect(api.getForgeConnection).not.toHaveBeenCalled()
+    expect(api.getCommitCredit).not.toHaveBeenCalled()
+    expect(api.getBranchProtection).not.toHaveBeenCalled()
+    expect(api.listProjectRoles).not.toHaveBeenCalled()
+    expect(api.getProjectCreditBudget).not.toHaveBeenCalled()
+    expect(api.getProjectDefaultModel).toHaveBeenCalledTimes(1)
   })
 })

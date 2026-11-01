@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { failureNoticesHeld } from '@/lib/toast'
+
 // 出错提示：从底部升起，过一会儿自己淡出。新的一条直接顶替旧的，不排队——排着的
-// 旧提示说的多半是已经过去的事。
+// 旧提示说的多半是已经过去的事。页面被告知版本过期之后不再出现：那时每个请求都因
+// 同一个原因被拒，「请刷新」那条提示是唯一该说的话（lib/toast.ts）。
 defineProps<{
   message: string | null
 }>()
@@ -15,7 +18,7 @@ const emit = defineEmits<{
            说的多半是已经过去的事。 -->
   <Transition name="toast">
     <v-alert
-      v-if="message"
+      v-if="message && !failureNoticesHeld"
       :key="message"
       type="error"
       density="compact"

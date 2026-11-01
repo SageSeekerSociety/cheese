@@ -24,7 +24,7 @@ where the old one did, and a person who disagrees renames the task. A project
 can turn automatic naming off (``settings.task_naming = "manual"``).
 
 Where the platform cannot name at all (no gateway), an unnamed task's own
-session is reminded to name it with `cheese_title` (`agent/room/turn.py`).
+session is reminded to name it with `cheese_room(action=rename)` (`agent/room/turn.py`).
 
 Everything here fails quietly: no gateway, no key, a timeout or an unusable
 answer means the task keeps its title until the next trigger. Quiet is not the

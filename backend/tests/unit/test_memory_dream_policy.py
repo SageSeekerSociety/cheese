@@ -1,14 +1,15 @@
 """整理记忆（dream）的判据：什么时候跑、什么时候不跑、什么时候不认账。
 
-这里测的是**规矩**，不是那轮会话跑得好不好（跑起来的那一半在集成测试里）。
-三条规矩各自有一个会让人吃亏的地方，所以各测各的：
+这里测的是**规矩**，不是那几次调用答得好不好（跑起来的那一半在集成测试里）。
+几条规矩各自有一个会让人吃亏的地方，所以各测各的：
 
 - **阈值和间隔都可以按项目配**，而配坏了要退回默认值而不是关掉整理——设置是给人
   改的，改坏一个字段不该静默地让一个项目的记忆再也没人整理。
 - **删得太多就当没删**：`removal_refused` 的两个条件（比例和条数）都要过。
-- **prompt 里那三段必须都在**：它们是照搬 CC 来的，掉一段不会报错，只会让整理
-  少做一件事——而少做的那件事（不许把 private 升进 team、不和 CLAUDE.md 抢着改）
-  是错的写法里最难发现的一类。
+- **prompt 里那几条必须都在**：它们是照搬 CC 来的，掉一条不会报错，只会让整理
+  少做一件事——而少做的那件事（修剪 team 要保守）是错的写法里最难发现的一类。
+- **一次调用的答案只按它说的改**：漏写一个文件不是删了它，一个带目录的名字整份
+  不认。
 """
 
 from datetime import UTC, datetime, timedelta
@@ -16,15 +17,21 @@ from datetime import UTC, datetime, timedelta
 from app.domain.memory.dream import (
     DEFAULT_MIN_INTERVAL,
     DEFAULT_THRESHOLD_OUTPUT_TOKENS,
+    DreamAnswerError,
     DreamSettings,
-    briefing,
+    dream_answer,
     dream_settings,
     due_decision,
     refused_scopes,
     removal_refused,
-    trim_scopes,
+    trim_tree,
 )
-from app.domain.memory.dream_prompt import DreamBriefing, dream_prompt
+from app.domain.memory.dream_prompt import (
+    PRIVATE_DREAM_SYSTEM,
+    TEAM_DREAM_SYSTEM,
+    private_dream_prompt,
+    team_dream_prompt,
+)
 from app.domain.memory.tree import BULK_DELETE_MIN
 
 _NOW = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
@@ -169,87 +176,71 @@ def test_the_index_always_makes_it_into_the_prompt():
         "MEMORY.md": "## 记忆\n- [a](a.md) — 讲 a",
         "a.md": "x" * 30_000,
     }
-    kept = trim_scopes({"team": files})["team"]
+    kept = trim_tree(files)
     assert "MEMORY.md" in kept
     assert "a.md" not in kept
 
 
 def test_a_small_tree_goes_in_whole():
     files = {"MEMORY.md": "- a", "a.md": "正文"}
-    assert trim_scopes({"team": files})["team"] == files
+    assert trim_tree(files) == files
 
 
-def test_a_briefing_keeps_every_scope_it_was_given():
-    scopes = {"team": {"MEMORY.md": "- a"}, "private/bob": {"MEMORY.md": "- b"}}
-    out = briefing(scopes, ["### <#1> 房间"], code_project=True)
-    assert set(out.scopes) == {"team", "private/bob"}
-    assert out.code_project
+# --- 照搬 CC 的那几条：掉一条不会报错，只会让整理少做一件事 ---------------
 
 
-# --- 照搬 CC 的那三段：掉一段不会报错，只会让整理少做一件事 ---------------
+def test_the_team_pass_is_told_to_prune_conservatively():
+    """修剪 team 拿不准就留着：跑偏一次就是别人的一条承重笔记被删掉。"""
+    assert "拿不准就留着" in TEAM_DREAM_SYSTEM
+    assert "不要删" in TEAM_DREAM_SYSTEM
 
 
-def test_the_dream_prompt_has_all_four_phases_in_order():
-    prompt = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    phases = [
-        "## 第一阶段 —— 摸底",
-        "## 第二阶段 —— 找新信号",
-        "## 第三阶段 —— 合并",
-        "## 第四阶段 —— 修剪，并把索引压回去",
-    ]
-    positions = [prompt.index(phase) for phase in phases]
-    assert positions == sorted(positions)
+def test_the_team_pass_reads_the_team_tree_and_nothing_else():
+    """整理只整理、不提取（#1336）：team 那一份的输入只有 team 的树。"""
+    prompt = team_dream_prompt({"MEMORY.md": "- [a](a.md) — a", "a.md": "A"})
+    assert "- [a](a.md) — a" in prompt
+    assert "房间" not in prompt
 
 
-def test_the_dream_prompt_keeps_the_two_hard_rules():
-    """两条规矩必须原样在：private 不许升进 team、和仓库的说明文件冲突只标注。
-
-    它们不影响「整理跑没跑起来」，只影响跑偏的那一次有没有人拦住——而跑偏一次就
-    是某个人的私人偏好被写进了全项目共看的那棵树，事后无从分辨哪一条本来是私人的。
-    """
-    for code_project in (True, False):
-        prompt = dream_prompt(
-            DreamBriefing(scopes={}, rooms=[], code_project=code_project)
-        )
-        assert "不许把 private 的内容升级进 team" in prompt
-        assert "拿不准就留着" in prompt
-    code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
-    assert "不要改说明文件" in code
+def test_the_private_pass_reads_the_persons_tree_and_the_team_index():
+    """private 那一份看得见两边，所以「只是重复了 team 的那条」只在这里删。"""
+    prompt = private_dream_prompt({"x.md": "X"}, "- [t](t.md) — t")
+    assert "X" in prompt and "- [t](t.md) — t" in prompt
+    assert "又说了一遍" in PRIVATE_DREAM_SYSTEM
+    assert "又说了一遍" not in TEAM_DREAM_SYSTEM
 
 
-def test_the_dream_prompt_says_what_it_may_write_and_what_it_may_not():
-    prompt = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    assert ".cheese/memory" in prompt
-    assert "删除" in prompt
+def test_both_passes_are_told_the_shape_of_the_answer():
+    for system in (TEAM_DREAM_SYSTEM, PRIVATE_DREAM_SYSTEM):
+        assert '"write"' in system and '"delete"' in system
 
 
-def test_a_code_project_is_told_about_its_repository_and_a_doc_project_is_not():
-    code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
-    doc = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=False))
-    assert "## 仓库\n" in code
-    assert "## 和仓库的说明文件核对" in code
-    assert "## 仓库\n" not in doc
-    assert "## 和仓库的说明文件核对" not in doc
-    assert "CLAUDE.md" not in doc
+# --- 一次调用的答案：只按它说的改 ---------------------------------------------
 
 
-def test_a_code_project_is_not_told_which_instruction_file_it_has():
-    """A hosted repository may have a CLAUDE.md, an AGENTS.md, or none: the
-    prompt has it look, and never says one is there or already in front of it."""
-    code = dream_prompt(DreamBriefing(scopes={}, rooms=[], code_project=True))
-    assert "AGENTS.md" in code
-    assert "CLAUDE.md 在仓库根目录" not in code
-    assert "系统提示词里有这个项目的 CLAUDE.md" not in code
-    assert "这一段其余跳过" in code
-
-
-def test_the_briefing_carries_the_rooms_into_the_prompt():
-    prompt = dream_prompt(
-        DreamBriefing(
-            scopes={"team": {"MEMORY.md": "- a"}},
-            rooms=["### <#7> 房间\n实况文档：\n在做 X"],
-            code_project=False,
-        )
+def test_an_answer_changes_only_what_it_names():
+    """模型漏写的文件原样留着：一次没提到不等于删掉。"""
+    before = {"MEMORY.md": "- [a](a.md) — a\n- [b](b.md) — b", "a.md": "A", "b.md": "B"}
+    answer = dream_answer(
+        before,
+        '{"write": {"MEMORY.md": "- [a](a.md) — a"}, "delete": ["b.md"],'
+        ' "summary": "删了 b"}',
     )
-    assert "<#7> 房间" in prompt
-    assert "MEMORY.md" in prompt
+    assert answer.tree == {"MEMORY.md": "- [a](a.md) — a", "a.md": "A"}
+    assert answer.summary == "删了 b"
+
+
+def test_an_answer_that_names_another_directory_is_refused_whole():
+    """一个带目录的名字可能落进别人的树：整份不认，一条都不写。"""
+    before = {"a.md": "A"}
+    for answer in (
+        '{"write": {"../alice/a.md": "x"}}',
+        '{"write": {"team/a.md": "x"}}',
+        '{"delete": ["../alice/a.md"]}',
+        "这不是 JSON",
+    ):
+        try:
+            dream_answer(before, answer)
+        except DreamAnswerError:
+            continue
+        raise AssertionError(f"accepted: {answer}")

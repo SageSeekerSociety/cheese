@@ -6,7 +6,7 @@ Every document is a Yjs document held by the collaboration service
 module signs. The service stores the document back here — the Yjs state and
 the Markdown it exports — and that store is the only path that records a new
 version (see ``store.py``). So a write that does not come from an editor (芝士's
-``cheese_doc_set`` and ``cheese_doc_edit``, a restore) cannot go to the
+``cheese_doc(action=set)`` and ``cheese_doc(action=edit)``, a restore) cannot go to the
 database either: the live document would overwrite it at its next store. It
 goes to the service, which applies it to the live document and stores it:
 ``replace`` for the whole document, ``edit`` for passages of it.
@@ -67,10 +67,28 @@ def document_name(document_id: uuid.UUID) -> str:
     return f"doc:{document_id}"
 
 
+#: A room file being edited together: ``roomfile:<the RoomFileCollab row's id>``.
+#: The service treats a name as opaque, so the two kinds coexist on one
+#: connection; only this backend reads the prefix.
+ROOM_FILE_PREFIX = "roomfile"
+
+
+def room_file_name(collab_id: uuid.UUID) -> str:
+    return f"{ROOM_FILE_PREFIX}:{collab_id}"
+
+
 def document_of(name: str) -> uuid.UUID:
     prefix, _, ident = name.partition(":")
     if prefix != "doc":
         raise ValueError(f"not a document: {name}")
+    return uuid.UUID(ident)
+
+
+def room_file_collab_of(name: str) -> uuid.UUID:
+    prefix, _, ident = name.partition(":")
+    if prefix != ROOM_FILE_PREFIX:
+        # i18n-exempt: a programming error the dispatcher already prevents.
+        raise ValueError(f"not a room file's collab state: {name}")
     return uuid.UUID(ident)
 
 
@@ -85,15 +103,18 @@ async def document_named(session: AsyncSession, name: str) -> Document | None:
 
 def sign_ticket(
     *,
-    document_id: uuid.UUID,
+    name: str,
     handle: str,
     agent: bool,
     read_only: bool,
     suggest_only: bool,
 ) -> str:
+    """A ticket opening one live document, under whichever name it goes by
+    (``doc:<id>``, ``roomfile:<id>``). The service only checks that the name
+    the browser asks for is the one this ticket was cut for."""
     return jwt.encode(
         {
-            "doc": document_name(document_id),
+            "doc": name,
             "sub": handle,
             "agent": agent,
             "ro": read_only,
@@ -269,15 +290,18 @@ _TELL_TIMEOUT_S = 3.0
 
 
 async def tell(document_id: uuid.UUID, frame: dict) -> None:
-    """Pass ``frame`` to everyone who has the document open: its comments were
-    written, a stored version moved on, an agent is answering a thread. Not a
-    record: whoever opens the document later reads the state itself, so a
+    """Pass ``frame`` to everyone who has this living document open."""
+    await tell_named(document_name(document_id), frame)
+
+
+async def tell_named(name: str, frame: dict) -> None:
+    """Pass ``frame`` to everyone who has this live document open, under
+    whichever name it goes by (``doc:<id>``, ``roomfile:<id>``). Its comments
+    were written, a stored version moved on, an agent is answering a thread.
+    Not a record: whoever opens the document later reads the state itself, so a
     frame the service never got is lost to nobody but the readers who missed a
     refresh, and is not worth failing the change it announces."""
-    url = (
-        settings.collab_internal_url.rstrip("/")
-        + f"/internal/documents/{document_name(document_id)}/tell"
-    )
+    url = settings.collab_internal_url.rstrip("/") + f"/internal/documents/{name}/tell"
     try:
         async with httpx.AsyncClient(
             timeout=_TELL_TIMEOUT_S, transport=transport
@@ -288,11 +312,11 @@ async def tell(document_id: uuid.UUID, frame: dict) -> None:
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
     except httpx.HTTPError:
-        _log.warning("could not tell document %s's readers", document_id)
+        _log.warning("could not tell %s's readers", name)
         return
     if response.status_code != 200:
         _log.warning(
-            "the collaboration service refused to tell document %s's readers: %s",
-            document_id,
+            "the collaboration service refused to tell %s's readers: %s",
+            name,
             response.status_code,
         )

@@ -1,10 +1,12 @@
 {
   "csv": "CSV 表格",
   "document": "文档",
+  "image": "图片",
   "file": "文件",
   "sheet": "表格",
   "slides": "幻灯片",
   "vector": "矢量图",
   "webPage": "网页",
-  "word": "Word 文档"
+  "word": "Word 文档",
+  "text": "文本"
 }

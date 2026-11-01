@@ -54,12 +54,18 @@ async def publish_run_messages(
             await session.scalars(select(Block).where(Block.id.in_(message_ids)))
         )
         runs = await runs_under(session, message_ids)
+
+        async def replying(
+            threads: list[uuid.UUID],
+        ) -> dict[uuid.UUID, list[str]]:
+            # This process's broker: who it is driving a turn for in each.
+            return {
+                thread: sorted(set(broker.activity.turn_agents(str(thread)).values()))
+                for thread in threads
+            }
+
         threads = await thread_reads.under_messages(
-            session,
-            message_ids,
-            replying=lambda thread: sorted(
-                set(broker.activity.turn_agents(str(thread)).values())
-            ),
+            session, message_ids, replying=replying
         )
         reactions = await BlockRepository(session).reactions_for_blocks(message_ids)
     for message in messages:
@@ -80,10 +86,16 @@ async def publish_run_messages(
 
 async def sweep(sessions: SessionFactory, *, chat, runner) -> dict[str, int]:
     began = now()
+    # Each kind of firing in a transaction of its own: each names every room
+    # it writes into first (`conversation.numbering`), and one transaction
+    # takes one such batch. Nothing ties a scheduled fire to an event fire.
     async with sessions() as session:
         scheduled = await _fire_schedules(session)
+        await session.commit()
+    async with sessions() as session:
         triggered = await _fire_events(session)
         await session.commit()
+    async with sessions() as session:
         started = [
             message
             for message in await session.scalars(

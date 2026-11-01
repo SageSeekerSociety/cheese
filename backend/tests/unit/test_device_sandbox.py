@@ -6,14 +6,23 @@ user namespaces, as CI's runner has; elsewhere they are skipped. The macOS
 ones are in `test_device_sandbox_macos.py`. The rest holds anywhere.
 """
 
+import base64
+import contextlib
+import datetime
+import errno
 import json
 import os
 import shutil
 import signal
+import socket
+import socketserver
+import ssl
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -29,7 +38,9 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import (
     payload_for,
     refused,
 )
+from app.domain.machine.caller import valid_proxy_proof
 from tests.support import bubblewrap
+from tests.tls_gateway import write_pki
 
 RUNNER = Path(environment_runner.__file__)
 
@@ -66,10 +77,13 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _payload(project, resource, *, sandbox, environment=None):
+def _payload(project, resource, *, sandbox, environment=None, site_forward=None):
     env = {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"}
     if environment is not None:
         env["CHEESE_ENVIRONMENT"] = json.dumps(environment)
+    if site_forward is not None:
+        # A private-control cloud machine (`machine_address.site_forward`).
+        env["CHEESE_SITE_FORWARD"] = site_forward
     # A machine a person enrolled: the platform installs nothing there.
     return payload_for(project, resource, env, sandbox=sandbox, platform_machine=False)
 
@@ -168,7 +182,9 @@ class Room:
     """One session's executor on this machine, started by the install the
     backend sends."""
 
-    def __init__(self, owner: Path, capsys, *, sandbox=True, environment=None):
+    def __init__(
+        self, owner: Path, capsys, *, sandbox=True, environment=None, site_forward=None
+    ):
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
@@ -179,6 +195,7 @@ class Room:
                     self.resource,
                     sandbox=sandbox,
                     environment=environment,
+                    site_forward=site_forward,
                 )
             )
         except RuntimeError:
@@ -450,3 +467,356 @@ def test_a_session_moved_from_a_sandbox_to_its_owners_machine_runs_outside_it(
     )
     assert cleanup.sandbox_release(room.home) is None
     assert environment_runner.sandbox_process(room.home) is None
+
+
+@sandboxed
+def test_a_room_dials_its_platform_socket_and_cannot_put_its_own_in_its_place(
+    rooms,
+):
+    """The connector serves a room's platform socket from outside its sandbox
+    (`cli/internal/host/machine.go`); the room is shown that directory
+    read-only. It reaches the socket, cannot unlink it or bind one of its own
+    there, and does not see another room's."""
+    room, other = rooms(), rooms()
+    socket_path = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"') == str(socket_path)
+
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(str(socket_path))
+    server.listen()
+
+    def answer():
+        conn, _ = server.accept()
+        with conn:
+            conn.sendall(b"outside heard " + conn.recv(64))
+
+    threading.Thread(target=answer, daemon=True).start()
+    try:
+        dial = (
+            "import os, socket; s = socket.socket(socket.AF_UNIX); "
+            's.connect(os.environ["CHEESE_PLATFORM_SOCKET"]); '
+            's.sendall(b"ping"); print(s.recv(64).decode())'
+        )
+        assert room.bash(f"python3 -c '{dial}'") == "outside heard ping"
+        replace = (
+            "import os, socket; p = os.environ['CHEESE_PLATFORM_SOCKET']\n"
+            "try:\n    os.unlink(p)\nexcept OSError as e:\n    print(e.errno)\n"
+            "try:\n    socket.socket(socket.AF_UNIX).bind(p + '.mine')\n"
+            "except OSError as e:\n    print(e.errno)\n"
+        )
+        assert room.bash(f'python3 -c "{replace}"').split() == [
+            str(errno.EROFS),
+            str(errno.EROFS),
+        ]
+        assert socket_path.exists()
+        assert (
+            other.bash(f'ls "{socket_path}" >/dev/null 2>&1 || echo hidden') == "hidden"
+        )
+    finally:
+        server.close()
+
+
+def test_a_platform_directory_someone_else_put_there_is_refused(tmp_path):
+    """The platform socket's directory has a fixed name in a shared /tmp; a
+    link planted there would put the socket where its maker can replace it."""
+    elsewhere = tmp_path / "theirs"
+    elsewhere.mkdir()
+    planted = tmp_path / "cheese-platform"
+    planted.symlink_to(elsewhere)
+    with pytest.raises(RuntimeError, match="not this user's own directory"):
+        confinement.own_directory(planted)
+    mine = confinement.own_directory(tmp_path / "mine")
+    assert mine.is_dir() and (mine.stat().st_mode & 0o777) == 0o700
+
+
+@linux
+def test_a_room_on_a_whole_machine_is_given_its_platform_socket_too(rooms):
+    """A room without a sandbox (a VM that is its own, or a machine its owner
+    gave over) makes its model calls on the platform socket as well: the
+    install makes the directory and names the socket."""
+    room = rooms(sandbox=False)
+    expected = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"') == str(expected)
+    made = expected.parent.lstat()
+    assert expected.parent.is_dir() and made.st_uid == os.getuid()
+    assert (made.st_mode & 0o777) == 0o700
+
+
+def _holds_no_credential(room):
+    assert room.bash('printf %s "${CHEESE_TOKEN-unset}"') == ""
+    assert room.bash('printf %s "${CHEESE_PROXY_PROOF-unset}"') == "unset"
+    assert room.bash('echo "$CHEESE_PLATFORM_SOCKET"')
+    assert room.bash('echo "$HTTPS_PROXY"').startswith("http://127.0.0.1:")
+    assert room.bash('echo "$SSL_CERT_FILE"').endswith("/ca-bundle.pem")
+    assert room.bash('echo "$NODE_EXTRA_CA_CERTS"').endswith("/ca.pem")
+    token_file = room.home / ".cheese" / "cheese-preview.token"
+    assert not token_file.exists() and not token_file.is_symlink()
+
+
+@sandboxed
+def test_an_isolated_room_holds_no_credential(rooms):
+    """Given its platform socket, a sandboxed room holds no credential of its
+    own: not in its environment, not in the file its preview helper could
+    read."""
+    _holds_no_credential(rooms(sandbox=True))
+
+
+def test_a_room_on_its_whole_machine_holds_no_credential(rooms):
+    """The same on a whole machine, which has the platform socket too."""
+    _holds_no_credential(rooms(sandbox=False))
+
+
+SITE = "site.invalid"
+REAL_TOKEN = "the-projects-own-forge-token"
+_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _pkt(line: str) -> bytes:
+    raw = line.encode()
+    return f"{len(raw) + 4:04x}".encode() + raw
+
+
+@pytest.fixture
+def site_forge(tmp_path, monkeypatch):
+    """The deployment's site on a machine that forwards it: a Forgejo under
+    `/forge` answering TLS for the site's name on the forward's loopback port,
+    with a certificate from a CA the machine trusts. It records the
+    credential of every request and answers only the project's own."""
+    ca, cert, key = write_pki(
+        tmp_path, expires_in=datetime.timedelta(days=30), name=SITE
+    )
+    # What the machine trusts, so the proxy outside the room verifies the
+    # site's certificate as it would the public one.
+    monkeypatch.setenv("SSL_CERT_FILE", ca)
+    seen: list[tuple[str, str]] = []
+    expected = {
+        "Basic " + base64.b64encode(f"o:{REAL_TOKEN}".encode()).decode(),
+        f"token {REAL_TOKEN}",
+    }
+
+    class Forge(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            if self.path == "/":
+                self._send(200, b"site")
+                return
+            if self.path == "/close":
+                self._send(200, b"site", Connection="close")
+                self.close_connection = True
+                return
+            if self.path == "/api/live":
+                if self.headers.get("Upgrade", "").lower() != "websocket":
+                    self._send(400, b"missing upgrade")
+                    return
+                self.send_response(101)
+                self.send_header("Connection", "Upgrade")
+                self.send_header("Upgrade", "websocket")
+                self.end_headers()
+                self.wfile.flush()
+                self.wfile.write(self.rfile.read(4))
+                self.wfile.flush()
+                self.close_connection = True
+                return
+            auth = self.headers.get("Authorization") or ""
+            seen.append((self.path, auth))
+            if auth not in expected:
+                self._send(401, b"", WWW_Authenticate='Basic realm="forge"')
+            elif self.path == "/forge/o/r.git/info/refs?service=git-upload-pack":
+                body = (
+                    _pkt("# service=git-upload-pack\n")
+                    + b"0000"
+                    + _pkt(f"{_SHA} refs/heads/main\0agent=fake\n")
+                    + b"0000"
+                )
+                self._send(
+                    200,
+                    body,
+                    Content_Type="application/x-git-upload-pack-advertisement",
+                )
+            elif self.path == "/forge/api/v1/repos/o/r":
+                self._send(
+                    200, b'{"full_name": "o/r"}', Content_Type="application/json"
+                )
+            else:
+                self._send(404, b"")
+
+        def _send(self, status, body, **headers):
+            self.send_response(status)
+            for name, value in headers.items():
+                self.send_header(name.replace("_", "-"), value)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Forge)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"{SITE}:{server.server_port}", seen
+    server.shutdown()
+    server.server_close()
+
+
+@contextlib.contextmanager
+def _platform_socket_of(room):
+    """What the platform answers on a room's platform socket for a Forgejo
+    project on the site: the room itself gets the placeholder, the proxy
+    outside it, with its proof, the project's own token (#4896)."""
+
+    class Platform(BaseHTTPRequestHandler):
+        def do_GET(self):
+            proof = self.headers.get("X-Cheese-Proxy-Proof") or ""
+            data = {
+                "kind": "forgejo",
+                "project_id": str(room.project),
+                "token": REAL_TOKEN
+                if valid_proxy_proof(str(room.project), proof)
+                else "placeholder",
+                "username": "o",
+                "repo": "o/r",
+                "url": f"https://{SITE}/forge/o/r.git",
+                "api_url": f"https://{SITE}/forge/api/v1",
+            }
+            raw = json.dumps({"data": data}).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *_):
+            pass
+
+    class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+        def get_request(self):
+            request, _ = super().get_request()
+            return request, ("socket", 0)
+
+    path = Path(runtime.platform_socket_directory(room.state)) / "platform.sock"
+    server = Server(str(path), Platform)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield
+    finally:
+        server.shutdown()
+        server.server_close()
+        path.unlink(missing_ok=True)
+
+
+def test_git_in_a_room_reaches_a_forge_on_the_forwarded_site_with_its_credential(
+    site_forge, rooms
+):
+    """On a machine that forwards the site, git in a room reaches the
+    project's forge on the site's name with the project's credential, not the
+    placeholder the room holds."""
+    forward, seen = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    # Git's credential helper hands over what the room was given.
+    helper = "!f() { echo username=o; echo password=placeholder; }; f"
+    with _platform_socket_of(room):
+        said = room.bash(
+            f"GIT_TERMINAL_PROMPT=0 git -c credential.helper= "
+            f"-c 'credential.helper={helper}' "
+            f"ls-remote https://{SITE}/forge/o/r.git 2>&1; echo exit=$?"
+        )
+    assert said.endswith("exit=0"), said
+    assert f"{_SHA}\trefs/heads/main" in said
+    assert not any("placeholder" in auth for _, auth in seen)
+
+
+def test_fj_in_a_room_reaches_a_forge_on_the_forwarded_site_with_its_credential(
+    site_forge, rooms
+):
+    """The same for fj: what it sends the project's forge on the site carries
+    the project's credential, not the placeholder."""
+    forward, seen = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    # The native fj the launcher runs, already on the machine: it calls the
+    # host it is given with the token its configuration holds, as fj does.
+    native = room.home / ".cheese/native/fj-0.6.0-cheese.2/fj"
+    native.parent.mkdir(parents=True)
+    native.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys, urllib.request\n"
+        "from pathlib import Path\n"
+        "host = sys.argv[sys.argv.index('--host') + 1]\n"
+        "keys = Path(os.environ['XDG_DATA_HOME']) / 'forgejo-cli/keys.json'\n"
+        "[entry] = json.loads(keys.read_text())['hosts'].values()\n"
+        "request = urllib.request.Request(host + 'api/v1/repos/o/r', "
+        "headers={'Authorization': 'token ' + entry['token']})\n"
+        "with urllib.request.urlopen(request, timeout=30) as response:\n"
+        "    print(json.load(response)['full_name'])\n"
+    )
+    native.chmod(0o755)
+    with _platform_socket_of(room):
+        said = room.bash("fj repo view 2>&1; echo exit=$?")
+    assert said.endswith("o/r\nexit=0"), said
+    assert not any("placeholder" in auth for _, auth in seen)
+
+
+def test_a_room_keeps_a_live_connection_to_the_site_beside_its_forge(site_forge, rooms):
+    """An upgraded site connection still exchanges bytes when the site and
+    forge share a hostname and use the credential proxy."""
+    forward, _ = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    check = room.home / "site-live.py"
+    check.write_text(
+        "import os, socket, ssl, urllib.parse\n"
+        "proxy = urllib.parse.urlsplit(os.environ['HTTPS_PROXY'])\n"
+        "sock = socket.create_connection((proxy.hostname, proxy.port), timeout=5)\n"
+        f"sock.sendall(b'CONNECT {SITE}:443 HTTP/1.1\\r\\nHost: {SITE}\\r\\n\\r\\n')\n"
+        "def headers(sock):\n"
+        "    data = b''\n"
+        "    while not data.endswith(b'\\r\\n\\r\\n'):\n"
+        "        part = sock.recv(1)\n"
+        "        assert part, data\n"
+        "        data += part\n"
+        "    return data\n"
+        "assert b' 200 ' in headers(sock)\n"
+        f"sock = ssl.create_default_context().wrap_socket(sock, server_hostname='{SITE}')\n"
+        f"sock.sendall(b'GET /api/live HTTP/1.1\\r\\nHost: {SITE}\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n\\r\\n')\n"
+        "reply = headers(sock)\n"
+        "assert b' 101 ' in reply, reply\n"
+        "sock.sendall(b'ping')\n"
+        "assert sock.recv(4) == b'ping'\n"
+        "sock.close()\n"
+        "print('live connection exchanged ping')\n"
+    )
+    with _platform_socket_of(room):
+        said = room.bash(f"{sys.executable} {check} 2>&1; echo exit=$?")
+    assert said.endswith("live connection exchanged ping\nexit=0"), said
+
+
+@pytest.mark.parametrize("close_response", [False, True])
+def test_a_room_can_query_its_forge_after_reading_the_site(
+    site_forge, rooms, close_response
+):
+    """A client can access its private forge after reading the site."""
+    forward, _ = site_forge
+    room = rooms(sandbox=False, site_forward=forward)
+    check = room.home / "site-then-forge.py"
+    check.write_text(
+        "import http.client, os, urllib.parse\n"
+        "proxy = urllib.parse.urlsplit(os.environ['HTTPS_PROXY'])\n"
+        "conn = http.client.HTTPSConnection(proxy.hostname, proxy.port, timeout=5)\n"
+        f"conn.set_tunnel('{SITE}',443)\n"
+        f"conn.request('GET',{'/close' if close_response else '/'!r})\n"
+        "response = conn.getresponse()\n"
+        "assert response.status == 200\n"
+        "assert response.read() == b'site'\n"
+        "conn.request('GET','/forge/api/v1/repos/o/r', headers={'Authorization':'token placeholder'})\n"
+        "response = conn.getresponse()\n"
+        "assert response.status == 200, response.status\n"
+        "assert b'o/r' in response.read()\n"
+        "conn.close()\n"
+        "print('site and private forge are reachable')\n"
+    )
+    with _platform_socket_of(room):
+        said = room.bash(f"{sys.executable} {check} 2>&1; echo exit=$?")
+    assert said.endswith("site and private forge are reachable\nexit=0"), said

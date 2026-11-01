@@ -114,10 +114,9 @@ four hours, a day) repeats it while it lasts. A person's computer's reading is n
 - **Destroyed**: the executor is stopped, whatever still holds the home (a dev server) is
   ended, and the home is deleted from the host; then its row goes and its slot is free. The
   room's 现场 records 「环境 N 分钟没有活动，已释放……」. Nothing of the sandbox is kept:
-  what lasts is the conversation, what the session pushed, and the snapshot each turn's
-  checkpoint uploads. The next tool call places the session in a new sandbox on any host
-  with a free slot, which starts from the task branch and restores the last turn's snapshot
-  like any new sandbox, and that call's result tells the agent once that it is in a new one. A tool call that arrives
+  what lasts is the conversation and the commits the session pushed. The next tool call
+  places the session in a new sandbox on any host with a free slot, which starts from the
+  task branch like any new sandbox, and that call's result tells the agent once that it is in a new one. A tool call that arrives
   while the home is being deleted waits for it to go. A deletion that does not finish is
   done again by a later sweep three minutes on.
 - A project whose credits ran out has its sandboxes destroyed as soon as its rooms run no

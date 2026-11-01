@@ -308,22 +308,19 @@ class DashboardService:
         from app.domain.user.repositories import UserProfileRepository, UserRepository
 
         user, visible = await self._projects_shown(handle, viewer=viewer)
-        profile = (
-            await UserProfileRepository(self._s).get_profile_by_user_id(user.id)
+        # 档案和「挑过的头像」出自同一次读取（profiles_and_chosen_avatars），不分两次
+        # 读同一行档案。
+        profiles, chosen = (
+            await UserProfileRepository(self._s).profiles_and_chosen_avatars([user.id])
             if user
-            else None
+            else ({}, {})
         )
+        profile = profiles.get(user.id) if user else None
         # 头像只回这个人**自己挑过**的那张：``profile.avatar_id`` 是原始 profile 值，
         # 注册时人人被写上全局默认那一行，直接回它会让没挑过的人显示一张共用的默认脸。
         # 前端的 ProfileView 靠 isChosenAvatar 兜住了这一层，后端不能只靠它。
         # 判据只有一处（``UserProfileRepository.chosen_avatar_ids``）；没挑过回 null。
-        chosen_avatar_id = (
-            (await UserProfileRepository(self._s).chosen_avatar_ids([user.id])).get(
-                user.id
-            )
-            if user is not None
-            else None
-        )
+        chosen_avatar_id = chosen.get(user.id) if user is not None else None
         is_self = viewer == handle
         ids = [project.id for project in visible]
         seated = await self._agent_of(handle)
@@ -464,6 +461,8 @@ class DashboardService:
                 .limit(50)
             )
         ).all()[::-1]
+        if not rows:
+            return []
         keys = {row.id: parse_user_scope_id(row.scope_id) for row in rows}
         project_ids = {key[0] for key in keys.values() if key is not None}
         readable = {
@@ -471,28 +470,36 @@ class DashboardService:
             for project_id in project_ids
             if await may_read_project(self._s, project_id=project_id, handle=handle)
         }
-        names = dict(
-            (
-                await self._s.execute(
-                    select(Project.id, Project.name).where(Project.id.in_(readable))
+        names = (
+            dict(
+                (
+                    await self._s.execute(
+                        select(Project.id, Project.name).where(Project.id.in_(readable))
+                    )
                 )
+                .tuples()
+                .all()
             )
-            .tuples()
-            .all()
+            if readable
+            else {}
         )
-        agents = {
-            (project_id, agent_handle): (display_name, name_source)
-            for project_id, agent_handle, display_name, name_source in (
-                await self._s.execute(
-                    select(
-                        AgentInstance.project_id,
-                        AgentInstance.handle,
-                        AgentInstance.display_name,
-                        AgentInstance.name_source,
-                    ).where(AgentInstance.project_id.in_(readable))
-                )
-            ).tuples()
-        }
+        agents = (
+            {
+                (project_id, agent_handle): (display_name, name_source)
+                for project_id, agent_handle, display_name, name_source in (
+                    await self._s.execute(
+                        select(
+                            AgentInstance.project_id,
+                            AgentInstance.handle,
+                            AgentInstance.display_name,
+                            AgentInstance.name_source,
+                        ).where(AgentInstance.project_id.in_(readable))
+                    )
+                ).tuples()
+            }
+            if readable
+            else {}
+        )
         out = []
         for row in rows:
             key = keys[row.id]

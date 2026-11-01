@@ -569,3 +569,34 @@ def test_a_page_cannot_bring_a_file_the_preview_would_not_serve(
     # Refused whole: neither the page nor the file was written.
     assert not library.room_file_exists(project_id, topic_id, "site/index.html")
     assert not library.room_file_exists(project_id, topic_id, "other/style.css")
+
+
+def test_every_origin_of_the_platform_embeds_a_preview_and_its_runtime_answers_it(
+    client, static_preview, monkeypatch
+):
+    """Served under several origins (`app.core.origins`), each one opens the
+    preview, may frame it, and is the one page its runtime talks to."""
+    alias = "https://alias.example"
+    monkeypatch.setattr(settings, "frontend_aliases", [alias])
+    _, topic_id, _, _ = static_preview
+    origin = preview_origin(topic_id)
+    grant = client.post(
+        f"/topics/{topic_id}/preview-session", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    exchange = client.post(
+        grant["url"],
+        data={"grant": grant["grant"]},
+        headers={"Origin": alias},
+        follow_redirects=False,
+    )
+
+    assert exchange.status_code == 303, exchange.text
+    page = client.get(origin + "/")
+    assert page.status_code == 200, page.text
+    ancestors = page.headers["content-security-policy"].split("frame-ancestors")[1]
+    assert alias in ancestors.split(";")[0].split()
+    runtime = client.get(origin + "/_cheese/runtime.js")
+    assert runtime.status_code == 200, runtime.text
+    assert f'"{alias}"' in runtime.text
+    assert f'"{settings.frontend_url}"' not in runtime.text

@@ -83,6 +83,18 @@ function question(
   } as unknown as Block
 }
 
+/** 提问方收起的一道题：撤回（不再等人答）或过期（还能答）。 */
+function closedByAsker(topic: string, kind: 'withdrawn' | 'expired'): Block {
+  const open = question(topic)
+  return {
+    ...open,
+    meta: {
+      ...open.meta,
+      answer_log: [{ kind, option: null, note: null, by: 'agent', at: '2026-08-02T00:00:00Z', reply_id: null }],
+    },
+  } as unknown as Block
+}
+
 let vuetify: ReturnType<typeof createVuetify>
 let history: Block[] = []
 let sent: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -90,6 +102,8 @@ let sent: Array<{ url: string; body: Record<string, unknown> }> = []
 let takenBack: string[] = []
 /** 跳过那一次请求（`POST …/skip`）。 */
 let skippedIds: string[] = []
+/** 拖住发消息那一次请求（不给就是不拖）：卡收起之前那一段只有靠它才看得见。 */
+let holdMessages: (() => Promise<void>) | null = null
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -101,6 +115,7 @@ beforeEach(() => {
   sent = []
   takenBack = []
   skippedIds = []
+  holdMessages = null
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
@@ -133,9 +148,11 @@ beforeEach(() => {
         json: async () => ({ code: 200, data: { ...question('skipped', null, ['me'], ['me']), id } }),
       }
     }
-    if (String(url).includes('/messages') && init?.method === 'POST') {
+    if (String(url).endsWith('/messages') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
       sent.push({ url: String(url), body })
+      // 停在路上的那一段：卡还没收起，题块也还没带着答案回来。
+      if (holdMessages) await holdMessages()
       return {
         ok: true,
         status: 200,
@@ -203,6 +220,24 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(sent[0].body.reply_to).toBe('q-t-click')
   })
 
+  // 卡片要等这条消息落库、题块再带着答案回来才收起；那一趟走完之前它还是「没答」的
+  // 样子，手快就会多点出几条，房间里真会多出几条消息。
+  it('手快连点两下，只发出一条', async () => {
+    history = [question('t-double')]
+    let release: () => void = () => {}
+    holdMessages = () => new Promise<void>((resolve) => (release = resolve))
+    const { getByRole } = await open('t-double')
+    const option = getByRole('button', { name: /按部门/ })
+    await fireEvent.click(option)
+    await fireEvent.click(option)
+    await fireEvent.click(option)
+    expect(sent).toHaveLength(1)
+    release()
+    // 发件箱一次只送一条：没挡住的那几下会排着队，放行之后一条接一条地出去。
+    await until(() => sent.length > 1, 50)
+    expect(sent).toHaveLength(1)
+  })
+
   it('任务关了、没人答过的题不再给点，说它不再等回答', async () => {
     history = [question('t-closed')]
     const { container, queryByRole } = await open('t-closed', { askClosed: true })
@@ -217,6 +252,34 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
+  })
+
+  it('芝士把题收回去了：选项收起，说它收回了', async () => {
+    history = [closedByAsker('t-taken-back', 'withdrawn')]
+    const { container, queryByRole } = await open('t-taken-back')
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      { timeout: 5_000 }
+    )
+    expect(queryByRole('button', { name: /按部门/ })).toBeNull()
+    expect(container.querySelector('.ask-replies__other')).toBeNull()
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('芝士收回了这道题')
+    // 收起了就没人答得成：点不了，题上也不会多出一条答复。
+    expect(container.querySelector('.ask-replies__skip')).toBeNull()
+  })
+
+  it('题过了时效：还摆在下面，说它过期了，照样能答', async () => {
+    history = [closedByAsker('t-expired', 'expired')]
+    const { container, getByRole } = await open('t-expired')
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      { timeout: 5_000 }
+    )
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('这道题过期了，仍可以回答')
+    await fireEvent.click(getByRole('button', { name: /按项目/ }))
+    await until(() => sent.length > 0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].body.reply_to).toBe('q-t-expired')
   })
 
   it('有人答过之后，快捷回复收成谁说了什么', async () => {

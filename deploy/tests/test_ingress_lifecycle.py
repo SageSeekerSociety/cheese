@@ -17,6 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from reserved_port import reserve_port
+
 ROOT = Path(__file__).resolve().parents[2]
 NGINX = [sys.argv[1] if len(sys.argv) > 1 else shutil.which("nginx") or "nginx"]
 REQUEST_STARTED = threading.Event()
@@ -24,7 +26,7 @@ REQUEST_STARTED = threading.Event()
 
 class Endpoint(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/slow":
+        if self.path.endswith("/slow"):
             REQUEST_STARTED.set()
             time.sleep(2)
         if self.headers.get("Upgrade", "").lower() == "websocket":
@@ -51,14 +53,15 @@ class Endpoint(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self):
+        body = json.dumps({"name": self.server.name, "path": self.path}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, *_args):
         pass
-
-
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def connect(port, path, host="app.example.test"):
@@ -100,13 +103,13 @@ def main():
         active = root / "active"
         active.mkdir()
         (root / "logs").mkdir()
-        for name in ("old", "new", "owner", "preview"):
+        for name in ("old", "new", "owner", "preview", "pool"):
             server = ThreadingHTTPServer(("127.0.0.1", 0), Endpoint)
             server.name = name
             threading.Thread(target=server.serve_forever, daemon=True).start()
             servers.append(server)
-        old, new, owner, preview = servers
-        api, public, app_api, app_frontend = [free_port() for _ in range(4)]
+        old, new, owner, preview, api_pool = servers
+        api, public, app_api, app_frontend = [reserve_port() for _ in range(4)]
         # The preview content host: preview-<32hex>.<domain>, and the same with a
         # -<22hex> resource suffix. Project hosts keep the plain form.
         preview_host = "preview-0123456789abcdef0123456789abcdef.example.net"
@@ -124,11 +127,17 @@ def main():
 
         # The box's own frontend ports live in frontend.conf, which every
         # app-router.conf includes, and follow every frontend switch.
-        box_port, box_direct = free_port(), free_port()
+        box_port, box_direct = reserve_port(), reserve_port()
 
         def configure(target):
             (active / "backend.conf").write_text(
                 f"upstream backend_active {{ server 127.0.0.1:{target.server_port}; }}\n"
+            )
+            # The serving slot's api pool, its realtime process the backup
+            # (deploy-docker.sh write_pool_upstream).
+            (active / "backend-pool.conf").write_text(
+                f"upstream backend_pool_active {{ server 127.0.0.1:{api_pool.server_port}; "
+                f"server 127.0.0.1:{target.server_port} backup; }}\n"
             )
             subprocess.run(["bash", str(ROOT / "deploy/llm-tunnel/configure-frontend-upstream.sh"),
                             str(active), str(target.server_port), str(box_port),
@@ -189,7 +198,7 @@ def main():
                 echo(sock)
             for target in (new, old):
                 def slow_request():
-                    with urllib.request.urlopen(f"http://127.0.0.1:{api}/slow", timeout=5) as response:
+                    with urllib.request.urlopen(f"http://127.0.0.1:{api}/debug/slow", timeout=5) as response:
                         return json.load(response)
 
                 REQUEST_STARTED.clear()
@@ -213,7 +222,7 @@ def main():
                 # The preview owner is never the business target, so its routes
                 # hold across the switch: the tunnel (both spellings, on api-front
                 # and on the front door) and every preview content host, while a
-                # project host still lands on whatever business target is serving.
+                # project host still lands on the business backend that is serving.
                 for port, path, host, expected in (
                     (api, "/preview/tunnel", "app.example.test", "preview"),
                     (api, "/api/preview/tunnel", "app.example.test", "preview"),
@@ -221,7 +230,8 @@ def main():
                     (public, "/api/preview/tunnel", "app.example.test", "preview"),
                     (api, "/", preview_host, "preview"),
                     (api, "/assets/app.js", preview_resource_host, "preview"),
-                    (api, "/", "example.net", target.name),
+                    # A project host's page is a plain read: the api pool.
+                    (api, "/", "example.net", "pool"),
                 ):
                     request = urllib.request.Request(
                         f"http://127.0.0.1:{port}{path}", headers={"Host": host}
@@ -229,6 +239,25 @@ def main():
                     with urllib.request.urlopen(request, timeout=3) as response:
                         actual = json.load(response)["name"]
                     assert actual == expected, f"{host}{path} -> {actual}, want {expected}"
+                # A plain read goes to the api pool; a write, a socket and a
+                # read of the realtime process's own state go to that process
+                # (backend/app/core/process_role.py).
+                # api-front's own port: the frontend has removed /api by here.
+                for method, path, expected in (
+                    ("GET", "/topics/t/blocks", "pool"),
+                    ("GET", "/projects", "pool"),
+                    ("GET", "/topics/t/status", target.name),
+                    ("GET", "/readyz", target.name),
+                    ("POST", "/topics/t/messages", target.name),
+                ):
+                    request = urllib.request.Request(
+                        f"http://127.0.0.1:{api}{path}", method=method,
+                        data=b"{}" if method == "POST" else None,
+                        headers={"Host": "app.example.test"},
+                    )
+                    with urllib.request.urlopen(request, timeout=3) as response:
+                        actual = json.load(response)["name"]
+                    assert actual == expected, f"{method} {path} -> {actual}, want {expected}"
                 # The owner's private RPC never crosses nginx, on either origin.
                 for port, host in ((api, "app.example.test"), (api, preview_host), (public, "app.example.test")):
                     request = urllib.request.Request(
@@ -241,6 +270,14 @@ def main():
                     except urllib.error.HTTPError as exc:
                         assert exc.code == 404, (host, exc.code)
                 print(f"PASS: business traffic switched to {target.name}; {len(sockets)} existing WebSockets survived 32s", flush=True)
+            # A box whose pool does not answer (stopped, starting, crashed) still
+            # serves its reads: the realtime process is the pool's backup.
+            api_pool.shutdown()
+            api_pool.server_close()
+            servers.remove(api_pool)
+            with urllib.request.urlopen(f"http://127.0.0.1:{api}/projects", timeout=5) as response:
+                assert json.load(response)["name"] == old.name
+            print("PASS: with the api pool down, plain reads fall back to the realtime process", flush=True)
             # api-front's own config changes too (a route, a body limit), and a
             # reload retires the workers holding every device link, terminal
             # and tunnel on it. Those keep serving past the 30 s deadline that

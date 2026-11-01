@@ -146,8 +146,22 @@ it('shows a png in the frame instead of calling it unreadable', async () => {
   })
   expect(postPreviewSession).toHaveBeenCalled()
   expect(screen.queryByText('这个文件不是文本')).toBeNull()
-  // 面板顶上写着这条预览是什么类型的字节。
-  expect(screen.getByText('image/png')).toBeTruthy()
+  // 地址栏里写着摆的是哪一份。
+  expect((screen.getByTestId('browser-address') as HTMLInputElement).value).toBe('output/趋势图.png')
+})
+
+it('shows a video deliverable in the video viewer instead of calling it unreadable', async () => {
+  getPreview.mockResolvedValue(artifact('output/演示.mp4', 'video/mp4'))
+  readPreviewFile.mockResolvedValue({ ...binaryFile('output/演示.mp4'), bytes: 5_000_000, too_large: true })
+
+  mount()
+
+  await waitFor(() => expect(screen.getByRole('button', { name: '打开视频' })).toBeTruthy())
+  expect(requestPreviewSession).not.toHaveBeenCalled()
+  expect(screen.queryByText('这个文件不是文本')).toBeNull()
+
+  // 视频还没打开时没有「此刻」可指：入口先关着，不交出一个谁也没选过的 00:00。
+  expect((screen.getByTestId('video-locate') as HTMLButtonElement).disabled).toBe(true)
 })
 
 it('still says a file the browser cannot draw is not text', async () => {

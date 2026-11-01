@@ -73,6 +73,29 @@ class SheetCellQuoteIn(BaseModel):
     value: str
 
 
+class SheetRangeQuoteIn(BaseModel):
+    """A rectangle of cells in a spreadsheet, corners addressed the way the file does.
+
+    `start` and `end` are the A1 forms of the two corners (top-left, bottom-right),
+    so the recipient can name and return to the rectangle without a conversion;
+    the range in `A1:C3` form is what spreadsheets themselves print, and it is also
+    what `quote` reads back. `text` is the region's contents flattened row by row —
+    enough for the recipient to see what is in it without opening the file.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["sheet-range"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    sheet: str
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    text: str
+
+
 class TextRangeQuoteIn(BaseModel):
     """A passage picked out of rendered document text.
 
@@ -141,6 +164,7 @@ class WebElementQuoteIn(BaseModel):
     task_id: uuid.UUID | None = None
     selector: str = Field(min_length=1, max_length=256)
     tag: str = Field(default="", max_length=32)
+    label: str = Field(default="", max_length=80)
     text: str = Field(default="", max_length=500)
     rect: WebRectIn
     viewport: WebViewportIn
@@ -162,6 +186,7 @@ class WebTextQuoteIn(BaseModel):
     task_id: uuid.UUID | None = None
     selector: str = Field(min_length=1, max_length=256)
     tag: str = Field(default="", max_length=32)
+    label: str = Field(default="", max_length=80)
     text: str = Field(min_length=1, max_length=500)
     prefix: str = Field(default="", max_length=64)
     suffix: str = Field(default="", max_length=64)
@@ -185,14 +210,60 @@ class WebRegionQuoteIn(BaseModel):
     viewport: WebViewportIn
 
 
+class ImageRegionQuoteIn(BaseModel):
+    """图片上框出的一块：坐标是**原图像素**，不是显示像素。
+
+    和网页那一类不同：图片没有视口，它自己有一份不变的原图尺寸，位置直接记原图上
+    的像素。显示是缩放的，读者改窗口大小、换设备都不改变这一块指的原图上是哪一块。
+    网页那边非得记像素加视口，正是因为网页没有一份稳定的原图。
+
+    `natural_width`/`natural_height` 是当时那张原图的尺寸：带上它，受话人不必先去
+    取一次原图，就能把这一块按比例画回任何一种缩放下。宽高为正——一个框不出东西来
+    的选区不是一处位置。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["image-region"]
+    path: str = Field(min_length=1)
+    source: Literal["live", "committed"]
+    version: str = Field(min_length=1)
+    task_id: uuid.UUID | None = None
+    x: float = Field(ge=0, allow_inf_nan=False)
+    y: float = Field(ge=0, allow_inf_nan=False)
+    width: float = Field(gt=0, allow_inf_nan=False)
+    height: float = Field(gt=0, allow_inf_nan=False)
+    natural_width: int = Field(gt=0, strict=True)
+    natural_height: int = Field(gt=0, strict=True)
+
+
+class ViewingQuoteIn(BaseModel):
+    """读者发这条消息时右侧正开着的那一份：只说是哪个文件，不说指着哪一处。
+
+    读者说「这里不对」「这页太挤」时，受话人得知道「这里」是哪一份。这条引用就是那份
+    上下文：它是读者看得见、能关掉的（撰写框上明写「芝士会看到你在看什么」），只在他
+    发消息时随消息走，不实时上报。没有版本：右栏开着的那一格未必读到了版本，指不出
+    哪一版就不假装指出来；受话人要的话去读文件的当前版。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["viewing"]
+    path: str = Field(min_length=1, max_length=1000)
+    task_id: uuid.UUID | None = None
+
+
 QuotedContextIn = Annotated[
     SlidePageQuoteIn
     | PagePinQuoteIn
     | SheetCellQuoteIn
+    | SheetRangeQuoteIn
     | TextRangeQuoteIn
     | WebElementQuoteIn
     | WebTextQuoteIn
-    | WebRegionQuoteIn,
+    | WebRegionQuoteIn
+    | ImageRegionQuoteIn
+    | ViewingQuoteIn,
     Field(discriminator="kind"),
 ]
 
@@ -220,6 +291,12 @@ class ChatMessageIn(BaseModel):
     reply_to: uuid.UUID | None = None
     attachments: list[ChatAttachmentIn] = Field(default_factory=list)
     quoted_context: QuotedContextIn | None = None
+    # The sender was shown that this message goes to an AI teammate (the
+    # composer's preview). When it no longer would, nothing is stored and the
+    # send is refused with who it is for now (409 `AddressingChanged`). It
+    # never makes a message call anyone: who is called is read from the
+    # message itself (invariant I13).
+    expects_agent: bool = False
 
     @model_validator(mode="after")
     def quote_is_bounded_message_data(self):
@@ -233,3 +310,27 @@ class ChatMessageIn(BaseModel):
             ):
                 raise ValueError(say("quoteTooLong", limit=100000))
         return self
+
+
+class ChatAddressingIn(BaseModel):
+    """A draft whose recipient the composer shows before it is sent."""
+
+    content: str = Field(default="", max_length=100000)
+    reply_to: uuid.UUID | None = None
+    # False for a send of attachments alone: no @ or reply calls anyone by it.
+    with_text: bool = True
+
+
+class AddressedAgentOut(BaseModel):
+    handle: str
+    name: str
+
+
+class ChatAddressingOut(BaseModel):
+    """Who a draft would be for if sent now (`preview_addressing`)."""
+
+    agent: AddressedAgentOut | None
+    reason: Literal["mention", "reply", "task", "private"] | None
+    people: list[str]
+    place: Literal["channel", "task", "private"]
+    task_status: Literal["open", "closed"] | None

@@ -38,11 +38,25 @@ from sqlalchemy import DateTime, String, column, exists, or_, select, table, upd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domain.agent.models import AgentTurn, Base
+from app.domain.agent import session_state
+from app.domain.agent.models import (
+    STOP_MACHINE_DESTROYED,
+    STOP_SWEEP,
+    STOP_TAKEN_OVER,
+    STOP_TASK_CLOSED,
+    STOP_UNDELIVERED,
+    AgentTurn,
+    Base,
+    SessionState,
+)
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
-from app.domain.delivery.receipts import terminate_inputs_of_dead_works
+from app.domain.delivery.models import NativeInput
+from app.domain.delivery.receipts import (
+    terminate_inputs_of_dead_works,
+    terminate_unread_of_session,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
@@ -345,7 +359,7 @@ async def _retire(db: AsyncSession, *, turn_id: uuid.UUID, at: datetime) -> None
     """End the interval. `stopped_at` is the whole of it — never a
     completion, never hook-work accounting."""
 
-    await AgentTurnRepository(db).close([turn_id], at)
+    await AgentTurnRepository(db).close([turn_id], at, reason=STOP_TAKEN_OVER)
 
 
 async def ensure_interval_and_input(
@@ -427,7 +441,7 @@ async def retire_failed_interval(
     closer. Exactly this id: a failure retires nobody else's interval.
     """
 
-    await AgentTurnRepository(db).close([turn_id], at)
+    await AgentTurnRepository(db).close([turn_id], at, reason=STOP_UNDELIVERED)
 
 
 async def open_interval_with_input(
@@ -481,6 +495,107 @@ async def stamp_delivery_fact(
         logger.exception("could not stamp delivery for turn %s", turn_id)
 
 
+async def close_turns_of_a_destroyed_machine(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    agent_handle: str,
+    harness: str,
+    native_session_id: str | None,
+    at: datetime,
+) -> set[uuid.UUID]:
+    """End the turns a session had open when the platform destroyed its machine,
+    and give up on every input that machine will never read.
+
+    The one authority that can say these turns are over is the platform itself:
+    it took the machine away, and the runner that would have reported their end
+    went with it — reachability is a lease on that runner, never an exit
+    (``harness/driven/lifecycle``). Without this the interval stays open and
+    the room keeps reporting the teammate at work, because
+    ``death_evidence.unknown_row`` reads it as "nobody has said it died" and
+    holds it open — correctly, since a machine merely out of reach looks
+    exactly the same and must not be judged dead (FB-56 legacy③).
+
+    So this is not that judgement being loosened. It fires only where the
+    platform did the destroying, and says nothing about a machine that stopped
+    answering.
+
+    What it ends is everything that machine was given, not only what was being
+    run on it when it went. A mid-turn addition (``input_id`` is not
+    ``work_id``) is left behind by the close of the turns: once its own turn
+    has stopped, no later step asks about it, and while it stays unfinished the
+    seat refuses every later message for good (``seat_has_unfinished_input``) —
+    eleven of them in the incident of 2026-10-23, with no session ever opened.
+    Its fate can never be reported either, because the runner that would have
+    reported it went with the machine, so the destruction ends it too, by the
+    session the machine held (``terminate_unread_of_session``).
+
+    Runs in the caller's transaction, under the destroyed home's lock, so the
+    close and the removal it belongs to land together. The seat's own state row
+    goes idle with it: its process is gone, so "running" is a fact nobody can
+    correct any more. That row is read by conversation rather than built from
+    the session's handle — it is keyed by the seat the agent ACTS under, which
+    is not the same string as the agent's own handle, and only the row itself
+    names both. Two seats in one conversation is a room seating two teammates;
+    the other one's session is still running and this destruction says nothing
+    about it, so nothing is written then.
+    """
+    open_ids = list(
+        await session.scalars(
+            select(AgentTurn.id).where(
+                AgentTurn.conversation_id == conversation_id,
+                or_(
+                    AgentTurn.agent_handle.is_(None),
+                    AgentTurn.agent_handle == agent_handle,
+                ),
+                AgentTurn.stopped_at.is_(None),
+            )
+        )
+    )
+    if open_ids:
+        claimed = await AgentTurnRepository(session).close(
+            open_ids, at, reason=STOP_MACHINE_DESTROYED
+        )
+        if claimed:
+            # Nothing will report whether these were read: the runner that
+            # would have is the process the destruction stopped.
+            await terminate_inputs_of_dead_works(
+                session, claimed, reason="machine_destroyed"
+            )
+    if native_session_id is not None:
+        # The turns this machine had open are not all it was given: an input
+        # written into it while it worked has no open turn to be collected once
+        # that turn stops, and would hold its seat for good.
+        await terminate_unread_of_session(
+            session,
+            harness=harness,
+            native_session_id=native_session_id,
+            reason="machine_destroyed",
+        )
+    seats = (
+        (
+            await session.execute(
+                select(SessionState)
+                .where(
+                    SessionState.conversation_id == conversation_id,
+                    SessionState.harness == harness,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(seats) == 1:
+        state = seats[0]
+        await session_state.declare(
+            session,
+            session_state.SeatKey(state.conversation_id, state.agent_handle, harness),
+            session_state.IDLE,
+        )
+    return set(open_ids)
+
+
 async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
     """Close turns the orphan sweep found dead, and end the inputs they held.
 
@@ -492,10 +607,49 @@ async def close_dead_turns(session_factory, turn_ids) -> set[uuid.UUID]:
     """
 
     async with session_factory() as session:
-        claimed = await AgentTurnRepository(session).close(turn_ids, datetime.now(UTC))
+        claimed = await AgentTurnRepository(session).close(
+            turn_ids, datetime.now(UTC), reason=STOP_SWEEP
+        )
         await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
         await session.commit()
         return claimed
+
+
+async def close_silent_turns(session_factory, records, notice, still_unheld) -> dict:
+    """Close turns the sweep found silent with nothing holding them, end the
+    inputs they held, and say so in each one's conversation — one transaction.
+
+    The rows are locked first and ``still_unheld`` is asked of each again once
+    the lock is held: recovery takes the same row before it picks a turn up
+    (``native_turns.begin``), so a session that came back while this waited is
+    seen here and its turn left open, and one that comes back after the lock
+    finds the turn closed and does not take it up.
+
+    The room's line is the only way the person waiting learns the turn is over,
+    so it may not be lost to a failure between the close and the line: either
+    both land, or neither does and the next sweep finds the row still open.
+    ``notice`` gives each record's ``(content, meta)``. Returns the claimed
+    turns, each with the payload of its line (None when its conversation is
+    gone), for the caller to publish after the commit.
+    """
+    # deferred-import: room_events reaches back into this domain's queries
+    from app.domain.agent.room_events import say_in
+
+    async with session_factory() as session:
+        turns = AgentTurnRepository(session)
+        locked = await turns.lock_open(records)
+        closing = [turn_id for turn_id in locked if still_unheld(records[turn_id])]
+        claimed = await turns.close(closing, datetime.now(UTC), reason=STOP_SWEEP)
+        await terminate_inputs_of_dead_works(session, claimed, reason="orphaned")
+        said = {}
+        for turn_id in claimed:
+            record = records[turn_id]
+            content, meta = notice(record)
+            said[turn_id] = await say_in(
+                session, record.topic_id, content, turn_id, meta=meta
+            )
+        await session.commit()
+    return said
 
 
 async def end_inputs_of_abandoned_work(session_factory, work_id) -> int:
@@ -586,10 +740,11 @@ async def open_turns(session_factory) -> dict:
     nothing will close a turn left open in it: the sweep keeps a delivered turn
     open until its session is known dead, and stopping the session
     (`ChatService.stop_work_in_closed_tasks`) leaves its row as it is. Such a
-    turn kept its room reading as busy, and its inputs refused the seat, for
-    good. They are ended here and never handed to the
-    sweep, which would otherwise offer the work again. A turn begun after the
-    close is not that work: someone asked about the finished task.
+    turn kept its room reading as busy for good. They are ended here and never
+    handed to the sweep, which would otherwise offer the work again. A turn
+    begun after the close is not that work: someone asked about the finished
+    task. The task's unread inputs are given up on with them
+    (`_give_up_inputs_of_closed_tasks`).
 
     Whether reading this can fail is the sweep's business, not this function's:
     it raises, and the callers that must survive a database blip say so where
@@ -613,8 +768,50 @@ async def open_turns(session_factory) -> dict:
             )
         )
         if ended:
-            await turns.close(ended, datetime.now(UTC))
-            await terminate_inputs_of_dead_works(session, ended, reason="task_closed")
+            await turns.close(ended, datetime.now(UTC), reason=STOP_TASK_CLOSED)
+        if await _give_up_inputs_of_closed_tasks(session) or ended:
             await session.commit()
         rows = await turns.open_turns()
     return {record.turn_id: record for record in rows}
+
+
+async def _give_up_inputs_of_closed_tasks(session) -> int:
+    """Give up on every unread input of a closed task, whatever work it was
+    filed under; how many.
+
+    The work of a closed task is over, and every input still unread in it
+    refuses its seat every later message (`seat_has_unfinished_input`). Keyed
+    by the task rather than by the turns its close ends, because the input that
+    leaks is one no open turn accounts for: a message said into a work that had
+    already stopped — at an earlier close of a task since reopened, say. Only
+    an input of a turn begun after the close is left alone: that is someone
+    asking about the finished task.
+
+    Given up on as `terminate_inputs_of_dead_works` does: whether the session
+    read them before the close is unknown, so their holds stay held.
+    """
+    after_close = (
+        exists()
+        .where(
+            AgentTurn.conversation_id == _tasks.c.id,
+            AgentTurn.started_at > _tasks.c.closed_at,
+            or_(
+                AgentTurn.id == NativeInput.work_id,
+                AgentTurn.id == NativeInput.execution_work_id,
+            ),
+        )
+        .correlate(NativeInput, _tasks)
+    )
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.conversation_id == _tasks.c.id,
+            _tasks.c.status == "closed",
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            ~after_close,
+        )
+        .values(terminated_at=datetime.now(UTC), termination=STOP_TASK_CLOSED)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]

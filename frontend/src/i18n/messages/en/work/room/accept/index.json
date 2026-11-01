@@ -17,6 +17,7 @@
   "conflictsWithMain": "Conflicts with the main branch",
   "createPr": "Create PR",
   "decidedBy": "Accepted by {'@'}{name}",
+  "decidedByAssistant": "Accepted by Cheese on behalf of {'@'}{name}",
   "delivering": "Accepted, merge not finished",
   "deliveringBy": "The version {who} accepted never merged into the main branch; click the button below to submit it again",
   "download": "Download",

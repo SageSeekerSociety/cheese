@@ -1168,9 +1168,10 @@ LINUX_NAMESPACES = pytest.mark.skipif(
 )
 
 
-def _enter(tmp_path, seen, command):
+def _enter(tmp_path, seen, command, seat_only=()):
     """`client.py enter` for a session whose executor holds the project at
-    `seen`, running `command` where the session would run."""
+    `seen`, running `command` where the session would run, left only the
+    `keep` of each `[cover, keep]` in ``seat_only``."""
     directory = tmp_path / "session"
     view = directory / "view"
     view.mkdir(parents=True)
@@ -1185,6 +1186,7 @@ def _enter(tmp_path, seen, command):
                 "central_workspace": str(view),
                 "central_config": str(directory / "config"),
                 "central_tmp": str(directory / "tmp"),
+                "seat_only": [list(pair) for pair in seat_only],
             }
         )
     )
@@ -1300,6 +1302,58 @@ def test_the_guard_admits_file_tools_on_the_sessions_memory_and_nothing_past_it(
     for tool in ("Glob", "Grep"):
         call = {"tool_name": tool, "tool_input": {"path": f"{memory}/team"}}
         assert _guard(session.target, call) == "deny", tool
+
+
+def test_the_guard_admits_no_memory_path_that_leads_somewhere_else_in_the_tree(
+    tmp_path, machine
+):
+    """Whose memory a file tool touches is read off the path it names
+    (`memory.files.private_owner`). A `team/` path that is a link into
+    somebody's `private/` would hand that person's memory to everyone who
+    reads the call, so a path inside the tree is admitted only when it is the
+    very file it names."""
+    session = Session(tmp_path / "guarded", machine)
+    memory = session.root / "home/.cheese/memory"
+    (memory / "team").mkdir(parents=True)
+    (memory / "private/alice").mkdir(parents=True)
+    (memory / "private/alice/note.md").write_text("alice-private")
+    (memory / "team/alias.md").symlink_to(memory / "private/alice/note.md")
+    (memory / "team/notes").symlink_to(memory / "private/alice")
+    target = json.loads(session.target.read_text())
+    session.target.write_text(json.dumps({**target, "central_memory": str(memory)}))
+    for path in (f"{memory}/team/alias.md", f"{memory}/team/notes/note.md"):
+        for tool in ("Read", "Write", "Edit"):
+            call = {"tool_name": tool, "tool_input": {"file_path": path}}
+            assert _guard(session.target, call) == "deny", (tool, path)
+    call = {
+        "tool_name": "Read",
+        "tool_input": {"file_path": f"{memory}/private/alice/note.md"},
+    }
+    assert _guard(session.target, call) == "allow"
+
+
+@LINUX_NAMESPACES
+def test_a_session_cannot_open_another_seats_tree_by_any_path(tmp_path):
+    """Two seats of one room work for two people at once. Each seat's memory
+    tree holds the private memory of the person its turn answers; a process
+    the session starts cannot open the other seat's tree, whatever path it
+    names, and still reads its own."""
+    seats = tmp_path / "room/.cheese/seats"
+    for seat, owner in (("for-alice", "alice"), ("for-bob", "bob")):
+        note = seats / seat / "remote-session/memory/private" / owner / "note.md"
+        note.parent.mkdir(parents=True)
+        note.write_text(f"{owner}-private\n")
+    alices = seats / "for-alice/remote-session/memory/private/alice/note.md"
+    bobs = seats / "for-bob/remote-session/memory/private/bob/note.md"
+    _, done = _enter(
+        tmp_path,
+        "/executor/owner/project",
+        f"cat {bobs}; cat {alices} || echo refused; ls {seats}",
+        seat_only=[[str(seats), str(seats / "for-bob")]],
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "bob-private\nrefused\nfor-bob\n", done.stdout
+    assert alices.read_text() == "alice-private\n"
 
 
 def test_a_new_command_id_is_new(machine):

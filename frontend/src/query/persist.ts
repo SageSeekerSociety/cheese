@@ -1,5 +1,5 @@
 // 项目清单在本标签页里存一份：冷打开（刷新页面）时左边栏的项目格子当场就有，不等
-// 那一次读。只存这一份 —— 别的数据打开页面时本来就要重读，存下来只会先画一份旧的。
+// 那一次读。频道清单、成员和最近去过的房间另存在 IndexedDB 里，见 `persistRooms`。
 //
 // 存在 sessionStorage：关掉标签页就没了，同一台机器上的下一个人拿不到。换了人登录
 // 时整份清掉（`forgetPersistedQueries`，见 services/account.ts）。
@@ -9,9 +9,11 @@ import { persistQueryClient } from '@tanstack/query-persist-client-core'
 
 import { rememberProjects } from '@/lib/addresses'
 import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
+import { peekEarlyProjects } from '@/lib/earlyProjects'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { forgetRoomCache } from '@/query/persistRooms'
 
 const STORAGE_KEY = 'cheesex.queries.v1'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
@@ -60,6 +62,9 @@ function seedKnownProjects(): void {
 /** 打开页面时调一次：先把存着的那份放回缓存，之后清单一变就存一份。 */
 export function persistProjectList(): void {
   seedKnownProjects()
+  void peekEarlyProjects().then((payload) => {
+    if (payload) rememberProjects(payload.data)
+  })
   persistQueryClient({
     queryClient,
     persister,
@@ -74,4 +79,5 @@ export function persistProjectList(): void {
 
 export function forgetPersistedQueries(): void {
   void persister.removeClient()
+  forgetRoomCache()
 }

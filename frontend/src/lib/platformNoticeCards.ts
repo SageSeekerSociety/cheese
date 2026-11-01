@@ -17,7 +17,6 @@ import type {
   MailOutcome,
   NoticeOccurrence,
   PlatformNotice,
-  WhoTag,
 } from './platformNotice'
 
 import { noticeText } from './noticeText'
@@ -31,23 +30,6 @@ function str(value: unknown): string {
 
 function meta(block: Block): Record<string, unknown> | null {
   return (block.meta as Record<string, unknown> | null) ?? null
-}
-
-// Catalog keys, looked up when a row is built so a language switch re-reads them.
-const WHO_LABEL: Record<WhoTag, string> = {
-  platform: 'work.room.notice.who.platform',
-  cheese: 'work.room.notice.who.cheese',
-  human: 'work.room.notice.who.human',
-}
-
-export function whoTag(block: Block): WhoTag | '' {
-  const who = str(meta(block)?.who)
-  return who in WHO_LABEL ? (who as WhoTag) : ''
-}
-
-function whoLabel(block: Block): string {
-  const who = whoTag(block)
-  return who ? t(WHO_LABEL[who]) : ''
 }
 
 /** detail 是一个人写的一句话（不是日志）的事件：这句话直接跟在那一行后面。 */
@@ -282,8 +264,6 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     return {
       mode: 'fold',
       line: noticeText(block),
-      who: whoTag(block),
-      whoLabel: whoLabel(block),
       count: run.length,
       ...(quote ? { quote } : {}),
       occurrences: quote ? [] : run.map(occurrenceOf).filter((o) => o.detail),

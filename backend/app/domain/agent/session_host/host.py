@@ -130,6 +130,7 @@ from app.domain.agent.session_host.starting import (
     RunnerUnsupported as RunnerUnsupported,
 )
 from app.domain.agent.session_state import SeatKey
+from app.domain.delivery.receipts import hand_to
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
@@ -181,6 +182,7 @@ class SessionHost:
         on_alive: Callable[[uuid.UUID], None] | None = None,
         records: Records | None = None,
         register: Callable[[SeatKey], Awaitable[int]] | None = None,
+        hand: Callable[[str, str, uuid.UUID, int], Awaitable[None]] | None = None,
         drivers: Mapping[str, Driver] | None = None,
     ):
         self._hub = hub
@@ -191,6 +193,10 @@ class SessionHost:
         #: reports in the lifecycle protocol: in the platform's database
         #: (`session_state.register`) unless told otherwise.
         self._registrar = register
+        #: Records which process an input is being handed to, in the books the
+        #: epochs come from (`delivery.receipts.hand_to`) unless told otherwise:
+        #: ``(harness, native conversation, input id, epoch)``.
+        self._hand = hand
         self._memory = memory
         #: Told the conversation of a session whose runner answered a read, on
         #: every pass that heard one: proof that the session is still there,
@@ -256,6 +262,29 @@ class SessionHost:
         return await session_state.register(
             self._session_factory or async_session_factory, key
         )
+
+    async def _handing(
+        self, ref: SessionRef, running: _Running, input_id: uuid.UUID
+    ) -> None:
+        """Record that ``input_id`` is being handed to the process ``running``
+        holds (`delivery.receipts.hand_to`)."""
+        args = (ref.harness, running.launched.conversation, input_id)
+        epoch = running.launched.epoch
+        if self._hand is not None:
+            await self._hand(*args, epoch)
+            return
+        # deferred-import: tests replace this name on app.core.db
+        from app.core.db import async_session_factory
+
+        async with (self._session_factory or async_session_factory)() as session:
+            await hand_to(
+                session,
+                harness=args[0],
+                native_session_id=args[1],
+                input_id=args[2],
+                epoch=epoch,
+            )
+            await session.commit()
 
     def _call(
         self, running: _Running, ref: SessionRef, method: str, params: dict, **kwargs
@@ -361,6 +390,9 @@ class SessionHost:
         self, ref: SessionRef, prompt: Prompt, *, work_id: uuid.UUID
     ) -> None:
         return await speaking.steer(self, ref, prompt, work_id=work_id)
+
+    async def act_as(self, ref: SessionRef, acting: str) -> None:
+        return await speaking.act_as(self, ref, acting)
 
     def answers(self, ref: SessionRef) -> bool | None:
         return speaking.answers(self, ref)
@@ -625,7 +657,15 @@ class SessionHost:
             running.answering = heard.get("alive") is not False
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                            branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 if (seat := running.seat) is not None:
@@ -742,7 +782,15 @@ class SessionHost:
             heard = subscription.heard
             if isinstance(live := heard.get("live"), dict):
                 await hand(
-                    Read(live.get("work_id"), Writing(tuple(live.get("blocks") or ())))
+                    Read(
+                        live.get("work_id"),
+                        Writing(
+                            tuple(live.get("blocks") or ()),
+                            returned=tuple(live.get("returned") or ()),
+                            branches=tuple(live.get("branches") or ()),
+                            made=tuple(live.get("made") or ()),
+                        ),
+                    )
                 )
             if heard.get("alive") is True and self._on_alive is not None:
                 # The runner answered. It may have had nothing to answer with:

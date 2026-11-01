@@ -2,7 +2,7 @@ import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { askAnswers, askOptions, isVideoBlock, replyBlock, replySnippet } from './blockDisplay'
+import { askAnswers, askClosedByAsker, askOptions, isVideoBlock, replyBlock, replySnippet } from './blockDisplay'
 import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
@@ -250,5 +250,17 @@ describe('答过这道题的每一句', () => {
         })
       )
     ).toEqual([{ by: 'u', text: '以上都不是', skipped: false }])
+  })
+
+  it('提问方收起的题不算有人答，也读得出是撤回还是过期', () => {
+    for (const kind of ['withdrawn', 'expired'] as const) {
+      const block = asked({
+        options: [{ text: 'a' }],
+        answer_log: [{ kind, option: null, note: null, by: 'cheese', at: '2026-10-05T00:00:00Z', reply_id: null }],
+      })
+      expect(askAnswers(block)).toEqual([])
+      expect(askClosedByAsker(block)).toBe(kind)
+    }
+    expect(askClosedByAsker(asked({ options: [{ text: 'a' }] }))).toBeNull()
   })
 })

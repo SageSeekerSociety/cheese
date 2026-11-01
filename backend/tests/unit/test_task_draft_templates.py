@@ -96,5 +96,5 @@ def test_a_template_the_space_lacks_is_refused_with_the_ones_it_has():
 
 def test_the_draft_names_the_space_templates():
     row = drafts.TaskDraft(id=1, user_id=1, space_id=7, fields={}, marks={}, version=0)
-    view = drafts.agent_view(row, SPACE)
+    view = drafts.agent_view(row, SPACE, private=True)
     assert "这个空间的模板：标准实验（一周的实验，交报告与代码）" in view

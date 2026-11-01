@@ -23,7 +23,7 @@ export interface SiteWindow {
 const WINDOWS = new Map<string, SiteWindow>()
 
 /** 这条记录自己的游标（后端每条都带着，往回翻就从这个值接着读）。 */
-function cursorOf(block: Block): string | null {
+export function cursorOf(block: Block): string | null {
   const cursor = (block.meta as { cursor?: unknown } | null | undefined)?.cursor
   return typeof cursor === 'string' ? cursor : null
 }

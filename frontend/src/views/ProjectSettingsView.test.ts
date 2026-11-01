@@ -238,7 +238,7 @@ describe('project settings', () => {
     ['admin', ALL, ['角色和权限', '频道', '项目地址', ...REST]],
     ['member', [], ['角色和权限', ...REST]],
     ['member', ['manage_channels'], ['角色和权限', '频道', ...REST]],
-    ['mentor', ['edit_settings'], ['角色和权限', '项目地址', ...REST]],
+    ['member', ['edit_settings'], ['角色和权限', '项目地址', ...REST]],
   ] as const)('lists the sections a %s with %j may use, in order', async (role, permissions, expected) => {
     asRole(role, [...permissions])
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])

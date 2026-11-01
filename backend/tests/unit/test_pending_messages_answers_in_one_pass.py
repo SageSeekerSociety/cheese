@@ -27,6 +27,7 @@ from sqlalchemy import event
 from app.domain.agent import pending_messages
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.input_holds import (
     seat_has_unfinished_input,
     seats_with_unfinished_input,
@@ -156,6 +157,8 @@ async def _seed(factory, *, per_conversation: int = 2):
 
 async def _more(factory, project_id, places, *, per_conversation):
     async with factory() as session:
+        # Every conversation written into, named first (`conversation.numbering`).
+        await lock_conversations(session, places)
         blocks = BlockRepository(session)
         for place in places:
             for index in range(per_conversation):

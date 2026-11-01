@@ -16,6 +16,8 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "tests"))
+from reserved_port import reserve_port  # noqa: E402
 
 
 class Upstream(BaseHTTPRequestHandler):
@@ -54,9 +56,7 @@ def main():
         (active / "backend.conf").write_text(
             f"upstream backend_active {{ server 127.0.0.1:{backend.server_port}; }}\n"
         )
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
+        port = reserve_port()
         source = (HERE / "nginx.conf").read_text()
         # Distribution builds may default to a root-owned absolute access log.
         temporary_paths = "\n".join(

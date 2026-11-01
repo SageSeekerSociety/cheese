@@ -12,10 +12,21 @@
       density="compact"
       class="sm__identity"
     ></v-select>
+    <!-- A staged task is handed in and graded stage by stage: pick the stage to read. -->
+    <TaskStageTimeline
+      v-if="stages.length"
+      class="sm__stages"
+      :stages="stages"
+      :statuses="progress?.mine?.stages"
+      selectable
+      :current="stage"
+      @select="stage = $event"
+    />
     <TaskSubmissionHistory
       v-if="taskData && currentParticipantId"
       :task-id="taskData.id"
       :participant-id="currentParticipantId"
+      :stage="stages[stage]?.id ?? null"
       :reviewable="false"
       hide-title
       :highlight-latest="true"
@@ -26,12 +37,13 @@
 </template>
 
 <script setup lang="ts">
-import type { Task } from '@/types'
+import type { Task, TaskProgress } from '@/types'
 import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
@@ -43,7 +55,21 @@ const props = defineProps<{
   isCreator?: boolean
   isAdmin?: boolean
   participationInfo?: TaskParticipationInfo
+  /** 每个阶段上的进度，题目页取的那一份。 */
+  progress?: TaskProgress | null
 }>()
+
+const stages = computed(() => props.taskData?.stages ?? [])
+/** 看哪个阶段的提交：默认第一个还没通过的。 */
+const stage = ref(0)
+watch(
+  () => props.progress?.mine?.stages,
+  (mine) => {
+    const open = mine?.findIndex((s) => s !== 'PASSED') ?? -1
+    stage.value = open >= 0 ? open : 0
+  },
+  { immediate: true }
+)
 
 // 状态
 const selectedIdentity = ref<number | null>(null)
@@ -143,6 +169,10 @@ onMounted(() => {
 <style scoped>
 .sm__identity {
   max-width: 240px;
+  margin-bottom: 16px;
+}
+
+.sm__stages {
   margin-bottom: 16px;
 }
 </style>

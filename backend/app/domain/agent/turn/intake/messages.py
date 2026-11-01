@@ -118,11 +118,20 @@ class RunnerIntake:
         quoted_context: dict | None = None,
         may_summon: bool = True,
         handoff: HumanHandoff | None = None,
+        by_assistant: bool = False,
+        expects_agent: bool = False,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
 
         ``may_summon`` is False for a person whose role does not let them use the
         project's AI teammates (#3830): the message is said, and wakes nobody.
+
+        ``expects_agent``: the sender was shown that this goes to an AI
+        teammate. When it no longer would, nothing is stored and
+        `AddressingChanged` is raised (`persist_human_message`).
+
+        ``by_assistant``: the person's own 芝士 wrote it for them
+        (`Actor.by_assistant`), and the message says so (``meta.by_assistant``).
 
         Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
@@ -147,6 +156,8 @@ class RunnerIntake:
             client_id=client_id,
             quoted_context=quoted_context,
             handoff=handoff,
+            by_assistant=by_assistant,
+            expects_agent=expects_agent,
         )
         turn_id = user_block_id
         recipient = next(
@@ -188,8 +199,17 @@ class RunnerIntake:
         if duplicate:
             return turn_id
         # A message to 芝士 in a channel's main line is answered in its 支线.
-        answer_in = await answer_place(
-            chat_service.session_factory, user_block_id if mentioned else None, topic_id
+        answer_in = (
+            topic_id
+            if not mentioned
+            or (
+                handoff is not None
+                and handoff.place is not None
+                and handoff.place.inner_id is not None
+            )
+            else await answer_place(
+                chat_service.session_factory, user_block_id, topic_id
+            )
         )
         self._schedule_message(
             chat_service,

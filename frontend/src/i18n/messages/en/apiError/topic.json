@@ -12,6 +12,8 @@
   "channelManagerOnly": "Only the channel's manager and the project's managers can manage this channel",
   "channelManagerPersonOnly": "A channel's manager must be a person in the project",
   "channelPublicProjectManagerOnly": "Only the project's managers can make a private channel public",
+  "channelSpeakersNone": "Choose at least one role",
+  "channelSpeakersOnly": "Only some roles can post in this channel's main line",
   "contributorMustBeUser": "A contribution credit must name a real user: {handle}",
   "cursorEventNotFound": "That event doesn't exist",
   "cursorMessageNotFound": "That message doesn't exist",
@@ -32,12 +34,6 @@
   "roomUnderRoomUseSplit": "What goes under a channel is a task, not another channel. Create a task instead",
   "sinceAfterUntil": "since can't be later than until",
   "sinceUntilIso": "since/until must be an ISO-8601 time",
-  "snapshotCheckFailed": "The task backup failed its check, so no files were restored",
-  "snapshotCommitInvalid": "The task backup's commit is invalid",
-  "snapshotFileMissing": "The task backup file doesn't exist",
-  "snapshotNone": "This task has no backup of uncommitted files yet",
-  "snapshotNotBundle": "The task backup isn't a Git bundle",
-  "snapshotTransferCorrupt": "The backup failed its transfer check. Sync again",
   "sourceTopicInvalid": "source_topic_id isn't a valid channel ID",
   "sourceTopicRequired": "source_topic_id is required",
   "stepNotFound": "This step doesn't exist",
@@ -63,5 +59,9 @@
   "topicMuteUntilPast": "The end of a mute must be in the future",
   "topicNotifyLevelInvalid": "Choose one of the three notification levels",
   "unarchiveSignIn": "Sign in to unarchive",
-  "unarchiveWhileSessionStopping": "The channel's AI teammate is stopping and saving its record. You can unarchive once that's done"
+  "unarchiveWhileSessionStopping": "The channel's AI teammate is stopping and saving its record. You can unarchive once that's done",
+  "threadRestoreNotYours": "Only whoever started this thread, or a channel admin, can restore it",
+  "threadRestoreSignIn": "Sign in to restore this thread",
+  "threadNotFound": "Thread not found",
+  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent"
 }

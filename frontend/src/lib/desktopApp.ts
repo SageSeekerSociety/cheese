@@ -201,6 +201,51 @@ export function openInBrowser(url: string): boolean {
   return true
 }
 
+/** Where the window goes after a landing page hands itself to the browser: the
+ *  page it came from when that is an ordinary page of the app, else the start
+ *  page. Never a page that could hand over again: the landing pages, and the
+ *  account pages, whose sign-in redirects to the page it was asked for. */
+function afterLeaving(): string {
+  const back = (window.history.state as { back?: unknown } | null)?.back
+  if (typeof back !== 'string' || !back.startsWith('/') || back.startsWith('//')) return '/'
+  const first = back.slice(1).split(/[/?#]/)[0].toLowerCase()
+  return ['previews', 'sites', 'account'].includes(first) ? '/' : back
+}
+
+/** Whether this run of a landing page repeats one that already handed it to the
+ *  browser: the same history entry (marked when it handed over), or the same
+ *  document loaded again in place (a reload, which the app also does by itself
+ *  when the page's process ends). A person following a link to it again is a new
+ *  history entry and a fresh load, so it is not. */
+function handedOverAlready(): boolean {
+  if ((window.history.state as { handedToBrowser?: unknown } | null)?.handedToBrowser) return true
+  const load = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined
+  return load?.type === 'reload' && load.name === window.location.href
+}
+
+/** A page that hands the reader to the content domain at the top level (a
+ *  preview, a published Site) is the browser's to show: in the app the window
+ *  would end up on a page someone else wrote, with no way back. In the app,
+ *  opens `path` in the browser through the app's own opener, once for each time
+ *  a person arrives at the page (`handedOverAlready`), and replaces this page
+ *  with where the window came from (`afterLeaving`). False outside the app,
+ *  where the caller goes on as in a browser. */
+export function leaveForBrowser(path: string): boolean {
+  const core = tauri()?.core
+  if (!core || !desktopCan('links')) return false
+  let opening: Promise<unknown> = Promise.resolve()
+  if (!handedOverAlready()) {
+    window.history.replaceState({ ...(window.history.state ?? {}), handedToBrowser: true }, '')
+    const url = new URL(path, window.location.origin).href
+    opening = core.invoke('plugin:opener|open_url', { url }).catch(() => {})
+  }
+  // Only once the app has answered: leaving the page while the call is in flight
+  // aborts its request, and Tauri then sends the call again another way, so the
+  // browser would open the page twice.
+  void opening.then(() => window.location.replace(afterLeaving()))
+  return true
+}
+
 /** Whether the app opens by itself, out of sight, when the person logs in to this computer. */
 export async function desktopOpensAtLogin(): Promise<boolean> {
   if (!desktopCan('autostart')) return false
@@ -258,16 +303,34 @@ export type BrowserSignInEntry = 'signin' | 'signup' | 'recover'
  * which on these pages means a sign-in code).
  */
 export async function signInInBrowser(entry: BrowserSignInEntry, target: string, invite = ''): Promise<string> {
-  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
   // If this does not land, the code that comes back has nothing to be traded
   // with and the sign-in fails the way it does for a code this app did not ask
   // for — a browser window the person can close.
-  storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
-  const query = new URLSearchParams({ entry, challenge: base64url(digest), ...(invite ? { invite } : {}) })
+  const challenge = await keepSignInVerifier(target)
+  const query = new URLSearchParams({ entry, challenge, ...(invite ? { invite } : {}) })
   const url = new URL(`/account/oauth/app?${query}`, window.location.origin).href
   window.open(url, '_blank')
   return url
+}
+
+/**
+ * Signs in with a provider whose sign-in runs on another origin of this
+ * deployment (the one its callback is registered on). The same hand-off as
+ * the app's: this page keeps the secret, the sign-in happens there, and the
+ * code comes back to this origin's AppSignInFinish.vue.
+ */
+export async function signInAtOrigin(origin: string, provider: string, target: string): Promise<void> {
+  const challenge = await keepSignInVerifier(target)
+  const query = new URLSearchParams({ entry: 'signin', challenge, provider, returnTo: window.location.origin })
+  window.location.assign(`${origin}/account/oauth/app?${query}`)
+}
+
+/** Keeps a new secret and where the sign-in is headed; returns the secret's hash. */
+async function keepSignInVerifier(target: string): Promise<string> {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)))
+  storageSetJson(SIGN_IN_VERIFIER_KEY, { verifier, target })
+  return base64url(digest)
 }
 
 /** The secret of the sign-in started last, and where it was headed; each is used at most once. */

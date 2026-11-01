@@ -159,7 +159,7 @@ def _room(case, environment: dict, title: str = "Room"):
 def _lease(case, seat, timeout=660):
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": timeout},
     )
 
@@ -320,6 +320,22 @@ def _pushed_on(case, device_id) -> bool:
 
 
 # --- choosing it -------------------------------------------------------------
+
+
+def test_a_projects_settings_say_what_each_sandbox_spec_is_and_costs(cloud):
+    """Where a project picks its default environment is where a reader learns
+    what each spec on offer is and what it costs: a spec named with nothing
+    beside it leaves the choice to a guess."""
+    case = cloud
+    specs = case.client.get(
+        f"/projects/{case.project_id}/compute-configs",
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["specs"]
+    assert {"standard", "vm"} <= {spec["spec"] for spec in specs}
+    about = [spec["description"] for spec in specs]
+    assert all(about) and len(set(about)) == len(about)
+    # Said in the reader's language: the sentence's key travels beside it.
+    assert all(spec["i18n"]["description"]["key"] for spec in specs)
 
 
 def test_a_room_can_give_its_new_agents_a_vm_sandbox(cloud):

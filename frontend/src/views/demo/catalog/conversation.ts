@@ -29,14 +29,14 @@ import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import { platformNotice } from '@/lib/platformNotice'
 
-/** 平台更新换掉 AI 队友运行的程序之后，房间里那一行：约几分钟后自动接着做（`turn_resume_wait`）。 */
+/** 平台更新换掉 AI 队友运行的程序之后，房间里那一行：这一轮没完成，约几点自动重试（`turn_resume_wait`）。 */
 const UPGRADE_RESUME_WAIT: Block = {
   id: 'catalog-upgrade-resume-wait',
   conversation_id: 'demo',
   kind: 'event',
   author_type: 'platform',
   author: 'cheese',
-  content: '平台更新后，<@cheese>要重新连上，这次做到一半的会在 1 分钟内接着做',
+  content: '这一轮没完成，约 14:33 自动重试（平台更新）',
   turn_id: 'catalog-turn',
   created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
   meta: {
@@ -44,11 +44,16 @@ const UPGRADE_RESUME_WAIT: Block = {
     severity: 'warn',
     who: 'platform',
     reason: 'runner_replaced',
-    i18n: { content: { key: 'turnResumeWaitRunnerReplaced', params: { minutes: 1, agent: '<@cheese>' } } },
+    i18n: {
+      content: {
+        key: 'turnResumeScheduled',
+        params: { time: '14:33', reason: { key: 'turnEndedRunnerReplaced', params: {} } },
+      },
+    },
   },
 }
 
-/** 同一件事没排上自动继续时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
+/** 同一件事没排上自动重试时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
 const UPGRADE_TURN_FAILED: Block = {
   id: 'catalog-upgrade-turn-failed',
   conversation_id: 'demo',
@@ -160,6 +165,14 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         expect: '先记一下：这个项目以后放课程资料',
       },
       {
+        name: '他的芝士替他发的',
+        note: '署名照旧是他；名字旁边标「芝士代发」（meta.by_assistant），悬停说是谁的芝士。',
+        props: roomMessageProps(WANG_LINES[0], {
+          block: { ...WANG_LINES[0].block, meta: { ...WANG_LINES[0].block.meta, by_assistant: true } },
+        }),
+        expect: '芝士代发',
+      },
+      {
         name: '点了名交给芝士',
         note: '<@handle> 渲染成可点的 chip，靠 refs 那张 handle→昵称的表。',
         props: roomMessageProps(WANG_LINES[1]),
@@ -244,7 +257,7 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         name: '本轮摘要',
         note: '一轮里的动作行折成一行，改动摘要挂在后面（「改了 1 个文件（+6 -0）」）。',
         props: roomNoticeProps(TURN_SUMMARY),
-        expect: '改动了 1 个文件',
+        expect: '修改了 1 个文件',
       },
       {
         name: '验收卡已递出',
@@ -274,13 +287,13 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '平台更新：自动接着做',
-        note: '更新换掉了上一版本起的程序，新程序接着同一段对话；这一行说约几分钟后自动接着做。',
+        note: '更新换掉了上一版本起的程序，新程序接着同一段对话；这一行说这一轮没完成、约几点自动重试。',
         props: upgradeNotice(UPGRADE_RESUME_WAIT),
-        expect: '平台更新后',
+        expect: '约 14:33 自动重试',
       },
       {
-        name: '平台更新：没排上自动继续',
-        note: '自动继续没排上时，这一行说改动都还在，给一个「重试」。',
+        name: '平台更新：没排上自动重试',
+        note: '自动重试没排上时，这一行说改动都还在，给一个「重试」。',
         props: upgradeNotice(UPGRADE_TURN_FAILED),
         expect: '平台更新打断了',
       },

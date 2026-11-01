@@ -60,7 +60,7 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
         sock = None
 
         def request(self, method, path, *, body, headers):
-            seen.append(headers["X-Cheese-Token"])
+            seen.append(headers["Authorization"].removeprefix("Bearer "))
 
         @staticmethod
         def getresponse():
@@ -153,7 +153,7 @@ def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
 
     class Connection:
         def request(self, method, path, *, body, headers):
-            seen.append(headers["X-Cheese-Token"])
+            seen.append(headers["Authorization"].removeprefix("Bearer "))
 
         def getresponse(self):
             return self
@@ -337,7 +337,7 @@ def central_transport(executor, tmp_path):
             self.wfile.write(data)
 
         def do_POST(self):
-            assert self.headers["X-Cheese-Token"] == "fixture"
+            assert self.headers["Authorization"] == "Bearer fixture"
             clients.append(self.client_address)
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             status = 200
@@ -431,8 +431,13 @@ def test_a_task_state_report_names_the_run_its_runner_says_it_is_in(
     result = process.call(
         "tools/call",
         {
-            "name": "cheese_task_state",
-            "arguments": {"id": "state", "session_id": "fixture", "state": "blocked"},
+            "name": "cheese_task",
+            "arguments": {
+                "id": "state",
+                "session_id": "fixture",
+                "action": "state",
+                "state": "blocked",
+            },
         },
     )
     assert "deny" not in json.loads(result["content"][0]["text"])
@@ -502,10 +507,11 @@ def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transpo
     response = process.call(
         "tools/call",
         {
-            "name": "cheese_app_save",
+            "name": "cheese_app",
             "arguments": {
                 "id": "save",
                 "session_id": "fixture",
+                "action": "save",
                 "code": "<p>x</p>",
                 "title": "试算",
                 "document": "fixture-doc",
@@ -1395,7 +1401,7 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
             else:
                 seen.append(body["method"])
                 assert 0 < body["timeout"] <= 660
-                assert self.headers["X-Cheese-Token"] == "execution-only"
+                assert self.headers["Authorization"] == "Bearer execution-only"
                 result = runtime.request(state, body["method"], body["params"])
             encoded = json.dumps(result).encode()
             self.send_response(200)
@@ -1483,7 +1489,7 @@ class LeasingPlatform:
                     }
                 else:
                     platform.seen.append(body["method"])
-                    assert self.headers["X-Cheese-Token"] == "execution-only"
+                    assert self.headers["Authorization"] == "Bearer execution-only"
                     result = runtime.request(state, body["method"], body["params"])
                 encoded = json.dumps(result).encode()
                 self.send_response(200)

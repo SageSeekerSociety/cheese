@@ -6,6 +6,7 @@ the connection that row names and what its owner is called.
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
@@ -17,7 +18,7 @@ from app.domain.agent_instance.own.connections import (
     logins_by_teams,
 )
 from app.domain.device.models import DeviceClaudeLoginRow
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import AGENT_HANDLE_PREFIX, agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle
@@ -58,7 +59,7 @@ async def owned_by_seat(
     """The owner of the agent that sits on rosters as ``seat_handle`` in this
     project, or None when that agent is not anyone's own (the project's 芝士,
     another teammate, a person)."""
-    if not seat_handle:
+    if not seat_handle or not seat_handle.startswith(AGENT_HANDLE_PREFIX):
         return None
     rows = await db.execute(
         select(*_OWNED)
@@ -112,12 +113,35 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
 
 
 async def owned_in_project(
-    db: AsyncSession, project_id: uuid.UUID
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    instances: Sequence[AgentInstance] | None = None,
 ) -> list[tuple[AgentInstance, int]]:
     """The project's personal agents and their owners, including inactive ones."""
     owner_id = func.coalesce(
         AccountConnection.owner_user_id, DeviceClaudeLoginRow.owner_user_id
     )
+    if instances is not None:
+        by_id = {instance.id: instance for instance in instances}
+        if not by_id:
+            return []
+        rows = await db.execute(
+            select(OwnAgent.instance_id, owner_id)
+            .outerjoin(
+                AccountConnection,
+                AccountConnection.id == OwnAgent.account_connection_id,
+            )
+            .outerjoin(
+                DeviceClaudeLoginRow, DeviceClaudeLoginRow.id == OwnAgent.login_id
+            )
+            .where(OwnAgent.instance_id.in_(list(by_id)), owner_id.is_not(None))
+        )
+        return [
+            (by_id[instance_id], owner)
+            for instance_id, owner in rows
+            if instance_id in by_id
+        ]
     rows = await db.execute(
         select(AgentInstance, owner_id)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)

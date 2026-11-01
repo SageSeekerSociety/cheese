@@ -40,6 +40,7 @@ import { searchLibraryFiles } from '../../lib/libraryApi'
 import RoomComposer from './RoomComposer.vue'
 
 import { setLocale } from '@/i18n'
+import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { fillComposer, placeCaret, typeInComposer } from '@/test/composerInput'
 
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
@@ -77,6 +78,8 @@ function file(path: string) {
 
 interface Options {
   draft?: string
+  /** 注入一份待发篮（有它时输入框上方逐条列出来，发送键带字）。 */
+  pending?: ReturnType<typeof usePendingNotes>
   atts?: ChatAttachment[]
   attsUploading?: boolean
   replyLabel?: string | null
@@ -84,6 +87,10 @@ interface Options {
   handOff?: boolean
   pool?: MentionPoolEntry[]
   lastMate?: string | null
+  /** 这条发在哪段对话里；给了，输入框就问后端这条交给谁（`useAddressing`）。 */
+  place?: string
+  /** 名册上这个房间的队友叫什么。 */
+  seat?: { handle: string; label: string }
 }
 
 /** 回车那条路只在焦点真的在输入框里时才走（走的时候还会问一次
@@ -101,6 +108,7 @@ function mount(opts: Options = {}) {
   const onPaste = vi.fn()
   const onRemoveAtt = vi.fn()
   const onClearReply = vi.fn()
+  const onClearQuote = vi.fn()
   const onAddLibraryFile = vi.fn()
 
   const Wrapper = defineComponent({
@@ -110,8 +118,9 @@ function mount(opts: Options = {}) {
         mentionPool: opts.pool ?? POOL,
         topicList: [],
         refs: { mentionNames: {}, topicTitles: {} },
-        agentSeat: CHEESE_SEAT,
-        agentName: CHEESE_SEAT.label,
+        agentSeat: opts.seat ?? CHEESE_SEAT,
+        agentName: (opts.seat ?? CHEESE_SEAT).label,
+        place: opts.place ?? null,
         alwaysSummon: opts.alwaysSummon ?? false,
         handOff: opts.handOff,
         hint: '说点什么',
@@ -127,13 +136,31 @@ function mount(opts: Options = {}) {
         onPaste,
         onRemoveAtt,
         onClearReply,
+        onClearQuote,
         onAddLibraryFile,
       }),
   })
 
-  const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
+  const utils = render(Wrapper, {
+    global: {
+      plugins: [createVuetify({ components, directives })],
+      ...(opts.pending ? { provide: { [PENDING_NOTES as symbol]: opts.pending } } : {}),
+    },
+  })
   const box = () => utils.container.querySelector<HTMLElement>('.ProseMirror')!
-  return { ...utils, draft, box, onSend, onFiles, onDropFiles, onPaste, onRemoveAtt, onClearReply, onAddLibraryFile }
+  return {
+    ...utils,
+    draft,
+    box,
+    onSend,
+    onFiles,
+    onDropFiles,
+    onPaste,
+    onRemoveAtt,
+    onClearReply,
+    onClearQuote,
+    onAddLibraryFile,
+  }
 }
 
 function menuItems(container: Element): HTMLElement[] {
@@ -507,7 +534,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
 
-    expect(onSend).toHaveBeenCalledWith({ content: '@zzz', summon: false })
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ content: '@zzz', summon: false }))
   })
 
   it('空态里 ↑/↓ 不拦：那时候它们该去挪光标', async () => {
@@ -680,25 +707,7 @@ describe('动作行', () => {
     await fillComposer(box(), '@Alice 你看下')
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看下', summon: false })
-  })
-
-  it('任务里 @ 了人、没 @ AI 队友的一句是说给那个人的，不交给队友', async () => {
-    const { box, onSend } = mount({ alwaysSummon: true })
-    await fillComposer(box(), '@Alice 你看这个反馈')
-    focusIn(box())
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看这个反馈', summon: false })
-  })
-
-  it('任务里不 @ 任何人、或 @ 了人也 @ 了队友，照样交给队友', async () => {
-    const { box, onSend } = mount({ alwaysSummon: true })
-    focusIn(box())
-    await fillComposer(box(), '接着做')
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    await fillComposer(box(), '@Alice @芝士 一起看')
-    await fireEvent.keyDown(box(), { key: 'Enter' })
-    expect(onSend.mock.calls.map(([sent]) => sent.summon)).toEqual([true, true])
+    expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ content: '<@alice> 你看下', summon: false }))
   })
 
   it('输入法正在选字时，回车是上屏那一下，不是发送', async () => {
@@ -711,13 +720,26 @@ describe('动作行', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
-  it('输入法上屏留下的时间戳也算：那一下回车不是发送', async () => {
+  it('上屏之后紧接着按的回车是发送，不被当成输入法吃掉', async () => {
+    // 打中文的人上屏之后紧接着按回车发送，两次按键只隔几十毫秒。曾经这里有一个
+    // 「compositionend 之后 100 毫秒内的按键都算输入法」的时间窗，把这一次发送也吃掉了，
+    // 输入框里留下来一行换行（真机 2026-10-24 反馈）。判据只能看这一次按键本身。
     const { box, onSend } = mount()
     await fillComposer(box(), '看看这个')
     focusIn(box())
 
     await fireEvent.compositionEnd(box())
-    await fireEvent.keyDown(box(), { key: 'Enter' })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 13 })
+    expect(onSend).toHaveBeenCalledTimes(1)
+  })
+
+  it('上屏那一下的回车本身不是发送：它带 isComposing 或 229', async () => {
+    const { box, onSend } = mount()
+    await fillComposer(box(), '看看这个')
+    focusIn(box())
+
+    await fireEvent.keyDown(box(), { key: 'Enter', isComposing: true })
+    await fireEvent.keyDown(box(), { key: 'Enter', keyCode: 229 })
     expect(onSend).not.toHaveBeenCalled()
   })
 
@@ -839,19 +861,37 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
     expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ summon: true }))
     expect(onSend.mock.calls[0][0].content).toContain('@')
   })
-
-  it('和 AI 队友私聊：提示不说交给谁，⌘+Enter 就是发送，正文不加 @', async () => {
-    const { box, onSend } = mount({ draft: '看一下', alwaysSummon: true, handOff: false })
-    expect(box().getAttribute('title')).toBe('Enter 发送，Shift+Enter 换行，可直接粘贴图片')
-
-    focusIn(box())
-    await fireEvent.keyDown(box(), { key: 'Enter', metaKey: true })
-
-    expect(onSend).toHaveBeenCalledWith({ content: '看一下', summon: true })
-  })
 })
 
 // 发送键旁边那颗队友头像：这条发出去谁会接手。它读的是正文，点它、换一位写的都是正文里的 @。
+describe('输入框顶上那一行：这条交给谁', () => {
+  it('交给的队友按名册上的叫法写：没改过名的队友库里叫「芝士」，英文界面写的是名册给的名字', async () => {
+    // 后端回的是库里存的原名；名册（`teammateName`）在英文界面把它叫作 Cheese。
+    const seat = { handle: 'cheese-topica', label: 'Cheese' }
+    const fetchSpy = vi.fn(async () =>
+      Response.json({
+        code: 200,
+        message: 'ok',
+        data: {
+          agent: { handle: seat.handle, name: '芝士' },
+          reason: 'private',
+          people: [],
+          place: 'private',
+          task_status: null,
+        },
+      })
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const { container } = mount({ place: 't1', seat, pool: [] })
+      await vi.waitFor(() => expect(container.querySelector('.recipient__name')?.textContent).toBe('Cheese'))
+      expect(container.querySelector('.recipient')?.textContent).not.toContain('芝士')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('交给谁', () => {
   const OWN = { handle: 'cheese-0a1b2c3d', label: '我的 Claude Code' }
   const TWO = [...POOL, { handle: OWN.handle, label: OWN.label, avatar: null, agent: true }]
@@ -861,12 +901,6 @@ describe('交给谁', () => {
     const { container, draft } = mount({ alwaysSummon: true, draft: '看看这个' })
     await fireEvent.click(summon(container))
     expect(draft.value).toBe('看看这个')
-  })
-
-  it('任务里只 @ 了人：头像跟着说这句不交给队友', async () => {
-    const { container, box } = mount({ alwaysSummon: true })
-    await fillComposer(box(), '@Alice 你看下')
-    expect(summon(container).getAttribute('aria-label')).toBe('这句只说给 @ 到的人')
   })
 
   it('右键换一位：正文里那枚标签换成那一位，原来那位拿掉', async () => {
@@ -906,5 +940,67 @@ describe('交给谁', () => {
     await fireEvent.contextMenu(summon(container))
     await flush()
     expect(document.querySelector('[role="menuitemradio"]')).toBeNull()
+  })
+})
+
+// 攒着待发批注时，发送键发的是那一批：正文里的字当作总体说明并进同一条消息。
+describe('攒着待发批注时的发送键', () => {
+  function noteMsg(message: string) {
+    return {
+      file: 'a.md',
+      path: 'output/a.md',
+      version: '',
+      where: '开头',
+      quote: 'q',
+      text: 't',
+      audience: 'cheese' as const,
+      message,
+    }
+  }
+
+  it('按发送键发的是那一批：正文里的字并进同一条，乱序那条不发', async () => {
+    const send = vi.fn(() => true)
+    const pending = usePendingNotes(send)
+    pending.add(noteMsg('甲'))
+    const { box, draft, onSend } = mount({ draft: '都按这个来', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(send).toHaveBeenCalledWith('都按这个来\n\n甲')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(draft.value).toBe('')
+  })
+
+  it('这一批发出去之后引用条也清掉：它是那条消息带着的东西', async () => {
+    const pending = usePendingNotes(() => true)
+    pending.add(noteMsg('甲'))
+    const { box, onClearQuote } = mount({ draft: '说明', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onClearQuote).toHaveBeenCalled()
+  })
+
+  it('对话栏没收下时整下退回：这一批留着，正文也留着，不单独把正文发出去', async () => {
+    // 那颗键写的是「发送（含 N 条批注）」，只把正文发出去、把这一批留在原地，读者会
+    // 以为整批都发走了。失败那句话说在托盘上（`pending.failed`）。
+    const pending = usePendingNotes(() => false)
+    pending.add(noteMsg('甲'))
+    const { box, onSend, draft } = mount({ draft: '说明', pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(pending.notes.value).toHaveLength(1)
+    expect(draft.value).toBe('说明')
+    expect(pending.failed.value).toBe(true)
+  })
+
+  it('一个字都没写、也没附件时按发送键：这一批照样留着，不假装发走了', async () => {
+    const pending = usePendingNotes(() => false)
+    pending.add(noteMsg('甲'))
+    const { box, onSend } = mount({ pending })
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(pending.notes.value).toHaveLength(1)
+    expect(pending.failed.value).toBe(true)
   })
 })

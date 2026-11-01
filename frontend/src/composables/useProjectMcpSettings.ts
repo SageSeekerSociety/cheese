@@ -17,13 +17,13 @@
 import type { McpServer, McpServerDraft, McpServerList } from '@/api'
 
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import {
   addMcpServer,
+  claimMcpHandoff,
   clearMcpSecret,
   connectMcpServer,
   disconnectMcpServer,
@@ -35,6 +35,7 @@ import {
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 
 export interface UseProjectMcpSettingsOptions {
@@ -229,21 +230,37 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
     return reason ? t('work.mcp.connectFailedWith', { name, reason }) : t('work.mcp.connectFailedNamed', { name })
   }
 
-  /** 从授权服务器回来：把结果说一次，再从地址栏拿掉，刷新不会再说一遍。 */
-  function consumeCallback() {
+  /** 从授权服务器回来：把结果说一次，再从地址栏拿掉，刷新不会再说一遍。
+   *
+   *  回调不存东西（`mcp_handoff`）：这一页登录着去领，领到的才是这次连接的结果。只有
+   *  发起连接的成员领得到 —— 别人点了同一条授权链接，令牌也进不了这个项目。 */
+  async function consumeCallback() {
     const route = nav?.route
     if (!route) return
-    const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = route.query
-    if (!result && !failure) return
+    const { mcp_handoff: handoff, ...landed } = route.query
+    let query: Record<string, unknown> = landed
+    if (typeof handoff === 'string' && handoff) {
+      try {
+        query = { ...landed, ...(await claimMcpHandoff(projectId(), handoff)).query }
+      } catch {
+        query = { ...landed, mcp_error: 'failed' }
+      }
+    }
+    const { mcp, mcp_result: result, mcp_error: failure, mcp_error_params: failureParams, ...rest } = query
+    if (!result && !failure) {
+      if (handoff) void nav?.navigate({ query: rest as typeof route.query, hash: route.hash }, { replace: true })
+      return
+    }
     const name = String(mcp ?? '')
     if (failure) toast.error(failureText(name, failure, failureParams))
     else toast.success(t('work.mcp.connectedNotice', { name }))
     // 换掉地址、不在身后留一条一样的：`hash` 原样带着，别把锚点也一起抹掉。
-    void nav?.navigate({ query: rest, hash: route.hash }, { replace: true })
+    void nav?.navigate({ query: rest as typeof route.query, hash: route.hash }, { replace: true })
   }
 
-  function enter() {
-    consumeCallback()
+  async function enter() {
+    // 先领回这次连接，再读列表：领到的那一条要出现在读回来的列表里。
+    await consumeCallback()
     void load()
   }
 

@@ -3,6 +3,7 @@
 import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -13,14 +14,21 @@ from app.core.sentences import say
 from app.domain.delivery_events import SettleCard
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.environment import project_environment
+from app.domain.project.forge import PreparedRepository
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
-from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.models import (
+    AiMode,
+    Project,
+    ProjectGitInstallation,
+    ProjectStarterPush,
+)
 from app.domain.project.ports import (
     Claim,
     ComputeCredits,
     DefaultTeammate,
     SeatMentors,
     SeedOverview,
+    StarterSource,
     TaskBrief,
     TaskTerms,
 )
@@ -41,6 +49,22 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
+
+
+class ClaimInProgressError(ConflictError):
+    """This team's claim of this task is being opened by another request right
+    now; asking again in a moment finds its project."""
+
+    retryable = True
+
+
+@dataclass(frozen=True)
+class ClaimedRepository:
+    """What a claim settled before taking its lock: the repository it made on
+    the forge, and the starter code that repository is to begin with."""
+
+    repository: PreparedRepository
+    starter: StarterSource | None
 
 
 def _intent_brief(intent: str) -> str:
@@ -65,13 +89,21 @@ class ProjectArchivedError(ConflictError):
         super().__init__(say("projectArchived"))
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 async def refuse_writes_if_archived(
     session: AsyncSession, project_id: uuid.UUID
 ) -> None:
     """Raise :class:`ProjectArchivedError` when this project is archived."""
-    archived_at = await session.scalar(
-        select(Project.archived_at).where(Project.id == project_id)
-    )
+    if _can_cache(session):
+        project = await ProjectRepository(session).get(project_id)
+        archived_at = project.archived_at if project is not None else None
+    else:
+        archived_at = await session.scalar(
+            select(Project.archived_at).where(Project.id == project_id)
+        )
     if archived_at is not None:
         raise ProjectArchivedError()
 
@@ -142,6 +174,7 @@ class ProjectService:
         self._close_tasks = close_tasks
         self._events = events
         self._seat_mentors = seat_mentors
+        self._pinned_rows: tuple[object, ...] = ()
 
     async def _seed_default_teammate(
         self,
@@ -149,8 +182,7 @@ class ProjectService:
         *,
         display_name: str | None = None,
         type_name: str | None = None,
-        prompt: str | None = None,
-        skills: Sequence[str] = (),
+        pack_prompt: str | None = None,
     ) -> None:
         """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
 
@@ -164,8 +196,7 @@ class ProjectService:
             project,
             display_name=display_name,
             type_name=type_name,
-            prompt=prompt,
-            skills=skills,
+            pack_prompt=pack_prompt,
         )
 
     async def _has_earmark(self, project: Project, task_id: int) -> bool:
@@ -235,6 +266,7 @@ class ProjectService:
         forge_kind: str = "forgejo",
         intent: str = "",
         project_id: uuid.UUID | None = None,
+        claimed: ClaimedRepository | None = None,
     ) -> Project:
         """Create a project and its root topic (= 项目本身, spec §6).
 
@@ -265,8 +297,10 @@ class ProjectService:
             external_task_id=external_task_id,
             intent=intent,
             project_id=project_id,
+            settings={"forge_kind": forge_kind},
         )
-        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
+        if (project.settings or {}).get("forge_kind") != forge_kind:
+            project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         number, environment = await self.channel_start(project)
         root = await self._topics.add(
             project_id=project.id,
@@ -276,7 +310,7 @@ class ProjectService:
             kind=TopicKind.root,
             created_by=owner_handle,
         )
-        await self._repo.set_root_topic(project, root.id)
+        await self._repo.set_root_topic(project, root.id, is_new_project=True)
         # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
@@ -293,16 +327,47 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
-        # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import provision_repository
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import bind_repository, provision_repository
 
         if forge_kind == "forgejo":
-            await provision_repository(project.id, self._session)
+            # A 题目's starter code is the repository's first commit (#4767):
+            # the archive as it is at this moment, so a later replacement
+            # reaches only later claims. The repository is created empty and
+            # the push runs after this transaction commits
+            # (`task.starter_jobs`): unpacking and pushing a large archive must
+            # not hold the claim open.
+            if claimed is not None:
+                # The claim made the repository before taking its lock.
+                source = claimed.starter
+                await bind_repository(self._session, claimed.repository)
+            else:
+                source = (
+                    await self._terms().starter(external_task_id)
+                    if external_task_id is not None
+                    else None
+                )
+                await provision_repository(
+                    project.id, self._session, initialize=source is None
+                )
+            if source is not None:
+                self._session.add(
+                    ProjectStarterPush(
+                        project_id=project.id,
+                        library_file_id=source.library_file_id,
+                        revision=source.revision,
+                        message=source.message,
+                    )
+                )
         # What the person said they wanted to do, carried into the project's
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
             await self._seed_overview(project, brief)
+        if self._pinned_rows:
+            self._session.sync_session.info.setdefault("_pinned_rows", []).extend(
+                self._pinned_rows
+            )
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -315,6 +380,7 @@ class ProjectService:
         if user is None:
             return None
         team = await team_service(self._session).ensure_personal_team(user.id)
+        self._pinned_rows = (user, team)
         return team.id
 
     async def for_participation(
@@ -327,23 +393,36 @@ class ProjectService:
         layer up and are handed in by whoever has them.
         """
 
-        # Serialize registration workspace creation for this task. Two teammates
-        # submitting together must not leave two projects for one application.
-        await self._repo.lock_external_task(task.id)
         team_id = (
             claim.member_id
             if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
-        projects = await self._repo.list_for_external_task(task.id)
-        for project in projects:
-            if project.team_id == team_id and team_id is not None:
-                return project
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
+            return found
+        # deferred-import: tests replace these names on app.domain.project.forge
+        from app.domain.project.forge import prepare_repository
+
+        # Two teammates submitting together must not leave two projects, or two
+        # repositories, for one application. This team's claim of this task is
+        # taken here, until commit, before the repository is made; a second
+        # claim arriving meanwhile is turned away at once (it asks again and
+        # finds the project) rather than waiting on the forge behind this one.
+        # No claim of another team or another task ever meets this lock.
+        if not await self._repo.try_lock_claim(task.id, team_id):
+            raise ClaimInProgressError(say("claimInProgress"))
+        if (found := await self.claimed_project(task.id, team_id)) is not None:
+            return found
+        starter = await self._terms().starter(task.id)
+        project_id = uuid.uuid4()
+        repository = await prepare_repository(project_id, initialize=starter is None)
         project = await self.create(
             name=task.name[:200],
             owner_handle=owner_handle,
             team_id=team_id,
             external_task_id=task.id,
+            project_id=project_id,
+            claimed=ClaimedRepository(repository=repository, starter=starter),
         )
         # The claimer agreed to the task's mentors before claiming; they join
         # the project it opened, once — a project reused on reapplication keeps
@@ -363,6 +442,17 @@ class ProjectService:
         )
         await self._seed_overview(project, brief)
         return project
+
+    async def claimed_project(
+        self, task_id: int, team_id: int | None
+    ) -> Project | None:
+        """The project this team already opened for this task, if any."""
+        if team_id is None:
+            return None
+        for project in await self._repo.list_for_external_task(task_id):
+            if project.team_id == team_id:
+                return project
+        return None
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
         """Whether a document is some project's goals document."""
@@ -392,14 +482,16 @@ class ProjectService:
         """
         return await self._repo.teams_for_projects(projects)
 
-    async def people(self, project_id: uuid.UUID) -> list[dict]:
+    async def people(
+        self, project_id: uuid.UUID, *, include_team_info: bool = True
+    ) -> list[dict]:
         """这个项目里的**人**：成员行、所属小队、所有者，合成的一张表。
 
         名册的两个来源之一，另一个是这个项目的队友；合起来那张表由
         ``membership/roster.py`` 的 ``roster()`` 给出，它是这里唯一的调用方。想问
         「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
         """
-        return await self._repo.people(project_id)
+        return await self._repo.people(project_id, include_team_info=include_team_info)
 
     async def person(self, handle: str) -> dict:
         """``{name, avatar_id}`` for someone not on the roster yet, by the same
@@ -486,7 +578,9 @@ class ProjectService:
         """
         await self._repo.lock_settings(project)
         before = dict(project.settings or {})
-        after = await self._repo.merge_settings(project, patch, remove=remove)
+        after = await self._repo.merge_settings(
+            project, patch, remove=remove, locked=True
+        )
         return [
             SettingChange(key, before.get(key), after.get(key))
             for key in sorted(MEMBER_SETTINGS & {*patch, *remove})
@@ -652,11 +746,7 @@ class ProjectService:
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
         await self._seed_default_teammate(
-            project,
-            type_name=terms.default_role,
-            # 题目包里的 prompt 与技能名（#944）：建项目时并进默认队友。
-            prompt=terms.prompt,
-            skills=terms.skills,
+            project, type_name=terms.default_role, pack_prompt=terms.pack_prompt
         )
         if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
             await self._grant_earmark(

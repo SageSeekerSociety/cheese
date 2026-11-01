@@ -49,16 +49,21 @@ async def text_as_sent(
     if place is None:
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
+    has_at = "@" in content or "@" in (block.content or "")
     by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
     if by_agent:
         text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await room_roster(session, topic.project_id, topic)
+        roster = (
+            await room_roster(session, topic.project_id, topic)
+            if has_at or "@" in text
+            else []
+        )
         return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
     project = await load_project(session, topic.project_id)
     if project is None:
         raise NotFoundError(say("projectNotFound"))
     # The teammate a task was given answers there, not the room's — the same
     # answer `prepare_human` gives the message writer.
-    agent = await _agent_at(session, place)
+    agent = await _agent_at(session, place) if has_at else None
     mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
     return SentText(topic, mentions.content, mentions.roster, False)

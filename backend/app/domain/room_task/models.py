@@ -47,7 +47,7 @@ class TaskStatus(enum.StrEnum):
 
 class TaskProgress(enum.StrEnum):
     """Where an open task's work stands between the facts the platform can
-    check: its AI teammate says it (`cheese_task_state`), and two of the
+    check: its AI teammate says it (`cheese_task(action=state)`), and two of the
     platform's own actions set it (a card returned or voided puts the task back
     to ``working``; a card filed clears it).
 
@@ -109,19 +109,6 @@ class TaskTitle(UuidPk, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()")
     )
-
-
-class TaskSnapshot(UuidPk, Timestamps, Base):
-    """An immutable backup of uncommitted work, separate from the review branch."""
-
-    __tablename__ = "task_snapshots"
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
-    )
-    head_sha: Mapped[str] = mapped_column(String(64))
-    snapshot_sha: Mapped[str] = mapped_column(String(64))
-    digest: Mapped[str] = mapped_column(String(64))
-    storage_key: Mapped[str] = mapped_column(String(1024))
 
 
 def people_of(
@@ -223,6 +210,11 @@ class Task(UuidPk, Timestamps, Base):
         JSON, default=list, server_default="[]", nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
+    # task is theirs, and its page says their 芝士 made it.
+    created_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     # Recorded when an authenticated agent opens the task's worktree. Dispatch
     # and room membership do not establish who performs the work.
     author_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.space_access import space_admin_ids
+from app.auth import task_roles as task_seats
 from app.core.errors import BadRequestError
 from app.core.sentences import say
 from app.domain.task.models import Task
@@ -35,7 +35,7 @@ async def set_mentors(
     users = await users_by_handle(session, handles)
     admin_ids: set[int] = set()
     if any(user.id != creator_user_id for user in users.values()):
-        admin_ids = await space_admin_ids(session, space_id=task.space_id)
+        admin_ids = await task_seats.space_teachers(session, task.space_id)
     for handle in handles:
         user = users.get(handle)
         if user is None:

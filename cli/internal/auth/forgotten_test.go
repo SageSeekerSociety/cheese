@@ -11,7 +11,7 @@ import (
 // server it cannot reach, or one that answers otherwise, leaves it as it was.
 func TestOnlyTheServersRefusalForgetsAToken(t *testing.T) {
 	known := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/connector/device/me" || r.Header.Get("X-Cheese-Session") != "kept" {
+		if r.URL.Path != "/connector/device/me" || r.Header.Get("Authorization") != "Bearer kept" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

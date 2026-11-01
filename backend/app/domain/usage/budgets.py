@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.project.services import ProjectService
@@ -201,6 +202,16 @@ class CreditBudgets:
     ) -> dict[uuid.UUID, tuple[float, float]]:
         if not project_ids:
             return {}
+        # Admitting a model call asks this, then asks it again for the budget
+        # its gateway key carries (`routes/llm_proxy.py`).
+        can_cache = isinstance(self._session, AsyncSession)
+        key = ("project_caps", frozenset(project_ids))
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         rows = await self._session.execute(
             select(
                 ProjectCreditBudget.project_id,
@@ -221,7 +232,15 @@ class CreditBudgets:
             )
             .group_by(ProjectCreditBudget.project_id)
         )
-        return {project_id: (limit, spent) for project_id, limit, spent in rows}
+        caps = {project_id: (limit, spent) for project_id, limit, spent in rows}
+        if can_cache:
+            remember(
+                self._session,
+                key,
+                caps,
+                tables=frozenset({"project_credit_budgets", "resource_usage"}),
+            )
+        return caps
 
     async def member_refusal(
         self, project_id: uuid.UUID, owner_handle: str | None

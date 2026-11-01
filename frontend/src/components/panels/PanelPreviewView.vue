@@ -23,15 +23,34 @@
 // 留在这里的还有全屏：它要的就是这个 DOM 节点，所以 `panelElement` 在这一只身上。
 
 import type { PreviewLocate } from '../../lib/previewQuestion'
+import type { QuotedContext } from '../../lib/quotedContext'
 import type { PreviewViewProps } from './preview/previewViewProps'
 
-import { defineAsyncComponent, ref } from 'vue'
-import { useFullscreen } from '@vueuse/core'
+import { computed, defineAsyncComponent, inject, nextTick, provide, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
+import { useEventListener, useFullscreen, useOnline, useResizeObserver } from '@vueuse/core'
 
+import {
+  MODE_KEYS,
+  PREVIEW_MODE,
+  shouldResetModeOnSessionEnd,
+  usePreviewMode,
+} from '../../composables/panelPreview/previewMode'
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
-import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
+import { readerText, videoMimeOf } from '../../lib/fileKind'
+import AttachmentVideo from '../AttachmentVideo.vue'
 
+import { KEPT_SELECTION } from './preview/keptSelection'
+import {
+  FLOATING_MIN_WIDTH,
+  type LocatorAnchor,
+  markPointer,
+  measureAnchor,
+  measureElementAnchor,
+  selectionIn,
+} from './preview/locatorAnchor'
+import PreviewComments from './preview/PreviewComments.vue'
 import PreviewDocStage from './preview/PreviewDocStage.vue'
 import PreviewFrameStage from './preview/PreviewFrameStage.vue'
 import PreviewHeadBar from './preview/PreviewHeadBar.vue'
@@ -42,6 +61,7 @@ import { usePreviewLocator } from './preview/usePreviewLocator'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { PENDING_NOTES } from '@/lib/pendingNotes'
 
 // The editor and its history only load once someone opens them: most previews
 // never do, and every panel that shows a preview would otherwise carry them.
@@ -50,10 +70,13 @@ const RoomFileEditor = defineAsyncComponent(() => import('./preview/RoomFileEdit
 const props = withDefaults(defineProps<PreviewViewProps>(), {
   agentName: () => t('work.room.defaultAgentName'),
   submitQuestion: undefined,
+  askPersonal: undefined,
   uploadAnnotation: undefined,
   active: true,
   path: null,
   autoReloaded: false,
+  // 链上「应用」那一段：没给就按「还没答」算，和刚打开面板时一样。
+  previewAppUp: false,
   frames: undefined,
   displayedFrame: null,
   navigation: 'idle',
@@ -61,9 +84,11 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   docIdentity: null,
   docSnapshot: null,
   slideContext: undefined,
+  slideNotes: () => [],
   docPage: false,
   canPage: false,
   docPageHtml: null,
+  snapshotTooLarge: false,
 })
 const emit = defineEmits<{
   'frame-load': [id: number, event: Event]
@@ -72,6 +97,12 @@ const emit = defineEmits<{
   refresh: []
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
   download: []
+  /** 小浏览器：后退、前进、重载帧里那一页（帧里的桥执行）。 */
+  history: [action: 'back' | 'forward' | 'reload']
+  /** 地址栏里敲了一个地址。 */
+  navigate: [path: string]
+  /** 按了「唤醒并重启应用」。 */
+  wake: []
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
   'document-changed': []
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
@@ -88,19 +119,11 @@ const emit = defineEmits<{
   'toggle-history': []
   /** 文档条上换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
   'toggle-doc-page': []
+  /** 文档这一格窄下来了 / 宽回去了（`PreviewDocStage` 量的）。 */
+  'doc-narrow': [narrow: boolean]
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
   'mention-click': [handle: string]
 }>()
-
-// 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
-// `allow-same-origin`。第三方 MCP View 不能带 —— `allow-scripts` 加
-// `allow-same-origin` 会把手写这份 HTML 的人放进内容域的存储里。同一个面板、
-// 同一个预览源，沙箱按这一帧的 mime 分：房内那套不变，第三方那套收紧（见
-// `lib/mcpAppBridge.ts`，宿主 CSP 也做了同样的收口）。
-const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
-function sandboxFor(mime?: string | null): string {
-  return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
-}
 
 const panelElement = ref<HTMLElement | null>(null)
 const {
@@ -120,30 +143,442 @@ async function fullscreen() {
   }
 }
 
+// 网页/应用那一档在不在屏幕上。两个地方要它，而它们必须给出同一个答案：决定挂不挂
+// `PreviewFrameStage`（它自带一条地址栏、一颗刷新钮），和告诉顶栏「这一格已经在自己
+// 刷新了，别再出一颗」。各写一份的话，改一边漏一边就会同时出现两颗刷新钮。
+const browsing = computed(() =>
+  props.frames ? props.frames.length > 0 || !!props.previewAppNote : !!props.previewUrl || !!props.previewAppNote
+)
+
 // 文档那一档的实例：钉在页上的一处要它当时那张图，换文件时又要它把那个钉撤掉。
 const docStage = ref<InstanceType<typeof PreviewDocStage> | null>(null)
+const isVideoArtifact = computed(() => !!props.previewFile && !!videoMimeOf(props.previewFile.path, props.previewMime))
+
+// ---- 看 / 批注 / 改 三段模式（原型里那一段，快捷键 1/2/3）----
+// 三段说的是「现在鼠标按下去算什么」：看什么都不指、批注指一处写一句话、改就地改正文。
+// 这里只做两件与它有关的事：开这一格时给下面一个口（`provide`），以及把「能不能指」
+// 传给定位层——`view` 那一段里拖选只是在读，不弹任何东西。
+//
+// 「改」这一段这一份开不开得起来：markdown 看协同会话、Office 那几种看后缀，**两种都要求
+// 不是手机**（手机上不给编辑器，负责人 2026-10-28 定；理由见 `PreviewDocStage`）。判据和
+// 那边同源，但那边还要等面板量出宽度，这一段不该跟着抖，所以按同样的三条在这里重算。
+const EDITABLE_OFFICE = new Set(['docx', 'xlsx', 'pptx'])
+const { mdAndUp } = useDisplay()
+const modeCanEdit = computed(
+  () =>
+    mdAndUp.value &&
+    (EDITABLE_OFFICE.has(props.documentSuffix) ||
+      (props.documentType?.view === 'markdown' && !!props.liveEdit?.canEdit.value))
+)
+const previewMode = usePreviewMode(
+  () => modeCanEdit.value,
+  () => props.previewFile?.path ?? props.previewUrl ?? ''
+)
+provide(PREVIEW_MODE, previewMode)
+
+// 读者自己这一台有没有网：断网时上面那条错误不能说成「预览加载失败」，而且连回来要
+// 自己重试一次——这一格没有别的入口会去重取。
+const online = useOnline()
+useEventListener(typeof window === 'undefined' ? null : window, 'online', () => {
+  if (props.active && (props.previewError || props.navigationError)) emit('refresh')
+})
+
+// 快捷键 1 / 2 / 3 切三段，照原型。焦点在输入框里时不抢——读者在写那句话，1/2/3 是那
+// 句话里的字。`Escape` 不归这里（那一条已经把持在 `usePreviewEscape`）。
+useEventListener(typeof window === 'undefined' ? null : window, 'keydown', (event: KeyboardEvent) => {
+  // 工作区里没被翻开的那几页是 `v-show` 藏着的，组件还挂着；不加这一句，看着预览却按
+  // 一下 2，藏起来的另一格里也悄悄换成了批注，切回去时模式已经不是走开时那一段。
+  if (!props.active) return
+  if (event.metaKey || event.ctrlKey || event.altKey) return
+  const mode = MODE_KEYS[event.key]
+  if (!mode) return
+  const target = event.target
+  if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)))
+    return
+  event.preventDefault()
+  previewMode.set(mode)
+})
+
+// 编辑器收起来了，正文又回到只读，模式还停在「改」的话接下来拖选一段什么都不弹
+// （`usePreviewLocator` 按「此刻真在编辑」拦），而屏幕上没有任何东西说明为什么——
+// 跟着关回「看」，让模式说的是眼前这件事。两种编辑各有一条路：
+//
+//  - Office 那几种开的是一个全屏对话框，关掉它 `props.editing` 由路径变回 null。
+//  - markdown 是就地的协同编辑（`liveEdit`），它的会话会自己结束——编辑器上那颗关闭键、
+//    服务端拒了、换了一份文件，都会让 `editingPath` 变回空串。`editing` 那一份只看
+//    「这一份文件改不改得动」，不看会话还在不在，所以会话结束它还是 true；只盯它的话
+//    模式会一直停在「改」，而且「改」那一颗再点也没有反应（值没变，watch 不触发）。
+//
+watch(
+  () => props.editing,
+  (now, before) => {
+    if (before && !now && previewMode.mode.value === 'edit') previewMode.set('view')
+  }
+)
+// 协同那条要再问一句「收起来的是不是眼前这一份」：读者换一份文件时，`liveEdit` 自己
+// 那个 `watch(state.previewFile)` 也会 `end()`，`editingPath` 同样从有变空——照上面那条
+// 直接收，「换文件」和「会话结束」就分不开，重置会落到哪一份上看 flush 的先后（可能是
+// 刚离开的那一份，把它的记忆抹掉；也可能是刚打开的那一份，顺手把它该开着的编辑会话
+// 也关掉）。会话自己结束时会停留在同一份上，换文件时已经不是了。
+watch(
+  () => props.liveEdit?.editingPath.value ?? '',
+  (now, before) => {
+    // 会话收起来了：把它记在**那一份**上的模式清掉，按路径，不按眼前这一份。眼前这一份
+    // 可能是读者刚换过来的（换文件也会让 `liveEdit` 收会话），它有自己的记忆，不该动；
+    // 而刚离开的那一份会话没了、模式还记着「改」，换回来时会卡在「模式说改、正文只读、
+    // 每次指认都被吞」那一态——清掉它才不会卡。
+    if (!shouldResetModeOnSessionEnd(before, now)) return
+    previewMode.forget(before)
+  }
+)
 
 const {
   locator,
   locatorNote,
+  queuedCount,
+  pendingElsewhere,
   annotateError,
   imageRegion,
   pageLocator,
+  quoted,
   pick,
+  openLocator,
   clearLocator,
+  queueLocator,
+  clearQueued,
+  sendQueued,
   sendLocator,
+  sendPersonalLocator,
   onImageRegion,
   onPageContext,
   onQuote,
   onCell,
+  onSheetRange,
   onMarkdownQuote,
+  onCodeLines,
+  onVideoLocate,
   onAnnotate,
 } = usePreviewLocator(props, {
+  // 显式递进去，不走 `inject`：提供它的是上面这个 `provide`，而 `inject` 只往祖先找，
+  // 同一个 setup 里提供的东西自己读不到（`useRevealGate` 那次踩的是同一个坑）。
+  mode: previewMode,
   onLocate: (payload) => emit('locate', payload),
+  // 个人芝士是全站那一条对话（不在项目里），登录了就有；带着这一处的原文和位置问过去，
+  // 面板自己会打开。答不上来的话由面板说，这里不发第二句。
+  onAskPersonal: (message) => props.askPersonal?.(message),
   onPickMode: (on) => emit('pick-mode', on),
   snapshot: (page) => docStage.value?.snapshot(page) ?? Promise.resolve(null),
   clearMark: () => docStage.value?.clearMark(),
 })
+
+/** 页面抛的那几条错要附进批注：开定位条，把那几行预填进去，指的位置是这一页。
+ *
+ *  和页上圈一处走的是同一个出口（`openLocator`）：读者在定位条上补一句「提交点了没反应」
+ *  再发，发出去的就是「这一页的这几个错 + 我要说的那句」。 */
+function openPageErrors(text: string) {
+  const frame = props.displayedFrame
+  const where = frame?.href || frame?.label || props.previewUrl || ''
+  openLocator(t('work.room.preview.pageErrors', { count: frame?.pageErrors?.length ?? 0 }), where, where)
+  locatorNote.value = text
+}
+
+/** 攒在待发篮里、还没发出去的那几处：正文里在那一句话末尾挂一颗序号，和篮里那一行
+ *  的编号对得上（原型里的 ②③）。序号说的是「这一条清单里的第几条」，所以按篮里的
+ *  顺序数，和 tray 上的编号同一个来源。 */
+const sharedPending = inject(PENDING_NOTES, null)
+/** 只取**这一份文件**上攒着的那几条：篮是整间房一份，换一份文件时它不清空（读者很可能
+ *  在几份文件上各指几处再一起发），而按字找位置只在这一份正文里找——拿着别的文件上的
+ *  一句话来这儿找，要么找不到，要么把序号挂到这一份里碰巧相同的那句话上。 */
+const pendingPins = computed(() => {
+  const here = props.previewFile?.path ?? ''
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'text-range' && note.path === here
+      ? [{ id: note.id, n: index + 1, quote: { ...note.anchor, heading: note.anchor.heading ?? null } }]
+      : []
+  )
+})
+/** 攒着的那几处落在表格上的：格子右上角挂一颗带序号的 pin，编号和待发篮里那一行对得上。
+ *  判据和正文那一档同一条——只认屏幕上这一份文件，序号取它在篮里的位置。 */
+const pendingSheetPins = computed(() => {
+  const here = props.previewFile?.path ?? ''
+  return (sharedPending?.notes.value ?? []).flatMap((note, index) =>
+    note.anchor?.kind === 'sheet-cell' && note.path === here
+      ? [{ id: note.id, n: index + 1, sheet: note.anchor.sheet, address: note.anchor.address }]
+      : []
+  )
+})
+
+// ---- 定位框弹在哪 ----
+// 读者指一处（选一段、点一格、钉一点）之后，框弹在那一处旁边，而不是贴在面板底下：
+// 眼睛在哪写字就在哪，指好几处时也看得出哪句话对着哪处。位置在打开那一刻记下：选中的
+// 一段记成一个 Range，点出来的一处记下松手的那一点；滚动和改尺寸时重算一次。
+// 记下的点只认刚刚那一下（键盘选中时没有点，框贴底），见 `preview/locatorAnchor.ts`。
+const POINTER_FRESH_MS = 1500
+const nodeElement = (node: Node) => (node instanceof Element ? node : node.parentElement)
+let lastPointer: (ReturnType<typeof markPointer> & { at: number }) | null = null
+let anchorRange: Range | null = null
+let anchorPointer: ReturnType<typeof markPointer> | null = null
+const locatorAnchor = ref<LocatorAnchor | null>(null)
+const locatorMaxHeight = ref<number>()
+const locatorRegionElement = ref<HTMLElement | null>(null)
+/** 这一处是拖选出来的一段字：框先只出一颗「添加批注」（见 PreviewLocator 的 armFirst）。 */
+const locatorFromSelection = ref(false)
+useEventListener(panelElement, 'pointerup', (event: PointerEvent) => {
+  const panel = panelElement.value
+  // 定位框自己的部件（那颗「添加批注」和整张卡）都标着 `data-locator-ui`：点它们不是在
+  // 指正文里的一处，别记成下一次指认的那一点。按标记找，不按类名——定位框以后再多一个
+  // 部件时，外面的守卫不用跟着改。
+  if (!panel || (event.target instanceof Element && event.target.closest('[data-locator-ui]'))) return
+  lastPointer = { ...markPointer(event, panel), at: performance.now() }
+})
+let placing = 0
+function placeLocator() {
+  // 滚动一帧可能来好几次事件：合成一帧量一次，免得每个事件都强制排一次版。
+  if (placing || !locator.value) return
+  placing = requestAnimationFrame(() => {
+    placing = 0
+    const panel = panelElement.value
+    locatorMaxHeight.value = panel?.clientHeight
+    // 图上框出来的那一块没有文字选区，也没有「松手的那一点」那么窄：位置取那块选区
+    // 在屏幕上的实际矩形（`.design-image__selection`），卡片才落在这一块旁边而不是角上。
+    locatorAnchor.value =
+      panel && locator.value
+        ? imageRegion.target.value
+          ? measureElementAnchor(panel, panel.querySelector('.design-image__selection'))
+          : measureAnchor(panel, anchorRange, anchorPointer)
+        : null
+    // 先出了按钮、之后面板窄到框只能贴底（拖窄右栏、开并排）：按钮无处可贴，改成直接出卡，
+    // 不能两样都不画。
+    if (panel && locatorFromSelection.value && panel.clientWidth < FLOATING_MIN_WIDTH)
+      locatorFromSelection.value = false
+  })
+}
+/** 底下的分页文档照这一份画底色：卡一打开，光标进输入框、页面上的选区就没了，
+ *  但读者还在看那一段。卡关掉（或者换了文件）就跟着清掉。 */
+const keptSelection = ref<Range | null>(null)
+provide(KEPT_SELECTION, keptSelection)
+
+watch(locator, (now) => {
+  if (!now) {
+    anchorRange = anchorPointer = lastPointer = null
+    locatorAnchor.value = null
+    locatorRegionElement.value = null
+    locatorFromSelection.value = false
+    keptSelection.value = null
+    return
+  }
+  const panel = panelElement.value
+  anchorRange = panel ? selectionIn(panel) : null
+  // 卡一打开焦点就进了输入框，页面上的选区没了：留下这一份副本，写批注的整段时间里
+  // 读者在说的那一段一直亮着（`PreviewPages` 照着它画底色）。
+  keptSelection.value = anchorRange
+  // 「批注」那一段里指一处直接出卡（原型：批注模式不走那颗小按钮）；「看」那一段才先出。
+  // 另外只有在正文里拖选一段字才先出按钮：表格里拖一片也会留下选区，但那是在指一片格子；
+  // 面板窄到框贴底时，一颗孤零零的按钮离选区太远，也直接出卡。
+  locatorFromSelection.value =
+    previewMode.mode.value === 'view' &&
+    !!panel &&
+    !!anchorRange &&
+    !anchorRange.collapsed &&
+    panel.clientWidth >= FLOATING_MIN_WIDTH &&
+    !nodeElement(anchorRange.commonAncestorContainer)?.closest('[data-locator-points]')
+  anchorPointer = lastPointer && performance.now() - lastPointer.at < POINTER_FRESH_MS ? lastPointer : null
+  lastPointer = null
+  void nextTick(() => {
+    locatorRegionElement.value = imageRegion.target.value
+      ? panelElement.value?.querySelector<HTMLElement>('.design-image__selection') ?? null
+      : null
+    placeLocator()
+  })
+})
+useEventListener(panelElement, 'scroll', placeLocator, { capture: true, passive: true })
+useResizeObserver(
+  () =>
+    [panelElement.value, locatorRegionElement.value].filter(
+      (element): element is HTMLElement => element instanceof HTMLElement
+    ),
+  placeLocator
+)
+
+useEventListener(typeof window === 'undefined' ? null : window, 'resize', placeLocator, { passive: true })
+
+// ---- 这一份文件上的评论 ----
+// 开着没有是这一格自己的事（和全屏、标注条一样）；线程和写入从 `comments` 递进来。
+const showComments = computed(() => props.comments?.open.value ?? false)
+const commentTarget = computed(() => props.comments?.target.value ?? null)
+// 读者此刻指着的那一处：页上一点、表里一格、正文一段、网页里一处。没指就是整份文件。
+const commentPick = computed(() => {
+  const anchor = pageLocator.anchor() ?? quoted.anchor()
+  const target = locator.value
+  if (!anchor && !target) return null
+  // 位置和原文两样都说：钉在页上时位置是「第 3 页」，原文是「从左 42%、从上 60%」，
+  // 只留一样就说不清指的是哪一页的哪一处。
+  const quote = [target?.label, target?.quote].filter((part) => part && part.trim()).join(' · ')
+  return { quote, anchor }
+})
+/** 发一条评论；成不成由这一栏自己说，发出去之后把指认撤掉。 */
+async function postFileComment(payload: { content: string; quote: string | null; anchor: QuotedContext | null }) {
+  await props.comments?.post(payload)
+  clearLocator()
+}
+
+/** 指认条上的「评论」出口：这句话挂成这一处的评论，不走对话。
+ *
+ *  指认本身不是指令——读者可能想叫队友改、也可能只想在那一处留一句话。两条出口并列，
+ *  由他点哪个来定。发完把评论栏打开，让读者看见这条落在哪儿（这一栏开着才读接口）。 */
+const commentError = ref('')
+/** 读者动了几次指认（换一处、取消、换文件）。发评论回来时拿它比一比：中途动过就说明
+ *  他已经不在这一处了，别再替他打开评论栏。 */
+const pickGeneration = ref(0)
+// 换了一处指认就把上一次那句话撤掉：它说的是上一处，留着会让读者以为新指的这处也失败了。
+// 撤掉指认的路不止一条（条上的取消、面板上的 Escape、换一份文件、选另一段），只在取消
+// 那条路上清是清不干净的——挂在指认本身变了这里，几条路一起覆盖。
+watch(locator, () => {
+  commentError.value = ''
+  pickGeneration.value += 1
+})
+/** 这条出口正发着：发一条要等一会儿，这期间再点一次会挂出两条一样的评论。
+ *
+ *  指认条那个 `busy` 只反映页上钉一处那条路（`pageLocator.sending`），评论这条路
+ *  它照不到，所以在自己这里挡一道。 */
+const commenting = ref(false)
+async function commentHere() {
+  const body = locatorNote.value.trim()
+  if (!body || !props.comments || commenting.value) return
+  // 先把这一处和这句话取下来：`postFileComment` 成功后会 `clearLocator`，那时两样都没了。
+  const target = commentPick.value
+  const pick = target?.quote ?? null
+  // 发之前记一笔：发回来时这个数变了，就说明读者中途取消或换了一处。
+  // 这条出口自己收尾（不走 `postFileComment`，那个函数发完就清掉指认，会把这一笔也搅进去）。
+  const before = pickGeneration.value
+  commentError.value = ''
+  commenting.value = true
+  try {
+    await props.comments.post({ content: body, quote: pick, anchor: target?.anchor ?? null })
+  } catch (cause) {
+    // 这条出口不经过评论栏，所以那边自己那句错误提示收不到；写在这儿，别让点了没反应。
+    // 中途换过那一处就不写了：这句话说的是上一处，落在新的这一处下面会让人以为它也失败了。
+    if (pickGeneration.value === before) {
+      commentError.value = cause instanceof Error ? cause.message : t('work.room.comments.postFailed')
+    }
+    return
+  } finally {
+    commenting.value = false
+  }
+  // 发的时候读者已经按了取消（指着的那一处没了）或换成了另一处：这条评论已经挂上去了，
+  // 但别再把评论栏打开——他刚刚明确表示不想留在这一处，弹出来的那一栏会盖住他正在做的事。
+  if (pickGeneration.value === before) {
+    clearLocator()
+    if (!props.comments.open.value) props.comments.toggle()
+  }
+}
+// 卡上写作者名字、画作者头像：都从名册那一包来（`usePanelPreview` 里那一份
+// `useDocPeople`），和文档评论栏同一处。缺名册时只剩 handle 和色块——那是没接线的
+// 样子，所以 `nameOf`/`avatarOf` 在这一栏是必填的 prop，不接就编译不过。
+const commentNameOf = (handle: string) => props.comments?.nameOf(handle) ?? handle
+const commentAvatarOf = (handle: string) => props.comments?.avatarOf(handle) ?? ''
+
+// ---- 把已有的评论画在文件上 ----
+//
+// 只画没解决的那几种，和概览文档一致（那边 `openThreads` 也是只看 open 的）：一条已经
+// 说完的评论还压在正文上，读者会以为它还等着人回。
+//
+// 而且只画**这一版**上记的那几处：评论记的是哪一版 + 哪一处，换了一版那一段话可能已经
+// 挪走或改过，照旧位置画会指到别的东西上。找不回来的（正文改了）就不画——比画错强。
+const focusedThread = ref<string | null>(null)
+/** 这份文件上还没解决、且记在**某一版**上的那几条，各自的锚点原样交回去。
+ *
+ *  什么样的锚点画得出来是每一档自己的事（正文按文字找、页按页码和比例找），这里只管
+ *  两条共用的判据：没解决、是这一种、记在要画的那一版上。分几处各写一遍的话，改了一处
+ *  就会漂。
+ *
+ *  `version` 是**屏幕上那一份**的版本，不是「文件现在这一版」：页上的字节可能还是上一版
+ *  的（新的一版还在路上，或者它转不出来了，旧的那份就那样留着）。照文件元数据放行的话，
+ *  新一版记下的页码和比例会画在旧一版的页上，指到完全不同的地方。`null` 表示连屏幕上是
+ *  哪一版都说不清——那就不画。 */
+function liveAnchors(kind: string, version: string | null): { id: string; anchor: Record<string, unknown> }[] {
+  if (!version) return []
+  return (props.comments?.threads.state.threads ?? []).flatMap((thread) => {
+    if (thread.state !== 'open') return []
+    const anchor = thread.comment.anchor as Record<string, unknown> | null | undefined
+    if (!anchor || anchor.kind !== kind) return []
+    if (!anchor.version || anchor.version !== version) return []
+    return [{ id: thread.comment.id, anchor }]
+  })
+}
+const threadAnchors = computed(() =>
+  liveAnchors('text-range', commentTarget.value?.version ?? null).flatMap(({ id, anchor }) => {
+    const text = anchor.text
+    if (typeof text !== 'string' || !text) return []
+    return [
+      {
+        id,
+        quote: {
+          text,
+          heading: (anchor.heading as string | null | undefined) ?? null,
+          prefix: (anchor.prefix as string | undefined) ?? '',
+          suffix: (anchor.suffix as string | undefined) ?? '',
+        },
+      },
+    ]
+  })
+)
+/** 分页文档上一页里指着的那几处：第几页 + 页内比例（`page-pin`）。
+ *
+ *  这一版按**屏幕上那份字节**算（`slideContext` 只在字节与文件版本核过、且没在加载、
+ *  没出错时才给得出），和「在页上指一处」那条路用的是同一道判据。 */
+const pageAnchors = computed(() =>
+  liveAnchors('page-pin', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const page = anchor.page
+    const x = anchor.x
+    const y = anchor.y
+    if (typeof page !== 'number' || typeof x !== 'number' || typeof y !== 'number') return []
+    return [{ id, page, x, y }]
+  })
+)
+/** 表格上指着的那几格：工作表名 + A1 地址（`sheet-cell`）。
+ *
+ *  地址是文件本身给得出来的坐标，不像页码要过一次转换；所以这一档只判形状，地址在
+ *  这一版里落不到任何一格上时由表格自己决定不画（表短了、那一格没画出来）。
+ *  这一版照样按**屏幕上那份字节**算（`slideContext`），理由和页上那几颗同一条。 */
+const sheetAnchors = computed(() => {
+  const version = props.slideContext?.version ?? null
+  // 两档的锚点只差在哪个字段是地址：单格是 `address`，一片的标记画在它左上角那一格
+  // （锚点里两个角都在，而表格只按格画）。取地址这一步写成一处，加一档时不会漏掉形状判定。
+  function pick(kind: string, field: 'address' | 'start') {
+    return liveAnchors(kind, version).flatMap(({ id, anchor }) => {
+      const sheet = anchor.sheet
+      const address = anchor[field]
+      if (typeof sheet !== 'string' || typeof address !== 'string' || !address) return []
+      return [{ id, sheet, address }]
+    })
+  }
+  return [...pick('sheet-cell', 'address'), ...pick('sheet-range', 'start')]
+})
+/** 图上框出来的那几处评论：原图像素的矩形，交给图片查看器按屏幕缩放画。
+ *
+ *  这一版同样按**屏幕上那份字节**算（`slideContext`），和页上那几颗、表里那几格同一条：
+ *  一份图换过一版之后，上一版那些位置说的就不是屏幕上这张了。 */
+const imageAnchors = computed(() =>
+  liveAnchors('image-region', props.slideContext?.version ?? null).flatMap(({ id, anchor }) => {
+    const { x, y, width, height } = anchor
+    if (
+      typeof x !== 'number' ||
+      typeof y !== 'number' ||
+      typeof width !== 'number' ||
+      typeof height !== 'number' ||
+      !(width > 0) ||
+      !(height > 0)
+    )
+      return []
+    return [{ id, region: { x, y, width, height } }]
+  })
+)
+/** 点了正文上某一颗标记：把那一串评论打开（评论栏开着才去读接口，见 `comments.ts`）。 */
+function openAnchor(id: string) {
+  focusedThread.value = id
+  if (!props.comments?.open.value) props.comments?.toggle()
+}
 
 // 帧里的 ESC 交给宿主：先退圈选，再收标注条，再退全屏，最后把焦点收回面板（判据在 usePreviewEscape）。
 const handleEscape = usePreviewEscape(panelElement, previewFull, fullscreen, clearLocator, () => !!locator.value, pick)
@@ -151,7 +586,9 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 </script>
 
 <template>
-  <div ref="panelElement" class="panel-preview" tabindex="-1">
+  <!-- 预览里选中一段有自己的「添加批注」，全局划词的「问芝士」在这里不出，免得一段选区上
+       同时冒出两颗按钮（见 AgentSelectionAsk 的 data-agent-select）。 -->
+  <div ref="panelElement" class="panel-preview" tabindex="-1" data-agent-select="off">
     <!-- 这一条管的都是「当前预览」：发布、新标签页打开、全屏、重读。指定了文件的那一
          格没有这些——文档和表格自己有一条带名字和下载的条，网页那一条在它自己的预览
          条上（见 PreviewFrameStage）。 -->
@@ -163,9 +600,10 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-file="previewFile"
       :displayed-frame="displayedFrame"
       :fullscreen-supported="fullscreenSupported"
-      :is-image-artifact="isImageArtifact"
+      :is-image-artifact="isImageArtifact || isVideoArtifact"
       :preview-full="previewFull"
       :refreshing="refreshing"
+      :browsing="browsing"
       @fullscreen="fullscreen"
       @refresh="emit('refresh')"
     />
@@ -177,7 +615,7 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
     <PreviewFrameStage
-      v-else-if="frames ? frames.length > 0 : previewUrl"
+      v-else-if="browsing"
       :topic-id="topicId"
       :path="path"
       :frame-name="frameName"
@@ -190,30 +628,52 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :preview-url="previewUrl"
       :preview-app-note="previewAppNote"
       :preview-tunnel-up="previewTunnelUp"
+      :preview-app-up="previewAppUp"
+      :app-snapshot="appSnapshot"
+      :snapshot-too-large="snapshotTooLarge"
+      :wake-steps="wakeSteps"
+      :wake-error="wakeError"
       :preview-error="previewError"
       :preview-read-error="previewReadError"
       :pick-target="pick.target.value"
       :pick-on="pick.on.value"
       :agent-name="agentName"
+      :versions="props.versions"
+      :show-history="showHistory"
+      :file-history="fileHistory"
+      :project-id="projectId"
+      @toggle-history="emit('toggle-history')"
+      @mention-click="emit('mention-click', $event)"
       @refresh="emit('refresh')"
       @frame-load="(id: number, event: Event) => emit('frame-load', id, event)"
       @frame-error="(id: number, event: Event) => emit('frame-error', id, event)"
       @toggle-pick="pick.toggle"
       @pick-region="pick.fromRegion"
       @download="emit('download')"
+      @history="emit('history', $event)"
+      @navigate="emit('navigate', $event)"
+      @wake="emit('wake')"
+      @annotate-errors="openPageErrors"
     />
+    <!-- 断网和「平台读不到」是两件事：能做的事不一样（先连上网 / 再去问平台），而且断网
+         这一条会自己恢复、不该催人按重试。原来两条共用「预览加载失败」加一句 fetch 错误，
+         读者看不出是自己没网。链上那一段说的也是同一件事（`lib/previewChain` 的 offline）。 -->
     <div v-else-if="previewError || navigationError" role="alert" class="text-center text-medium-emphasis py-8">
-      <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
-      <div>{{ t('work.room.preview.loadFailed') }}</div>
-      <div class="text-caption mt-1">{{ previewError || navigationError }}</div>
-      <div v-if="previewAppNote && !previewUrl" class="text-caption mt-1">
+      <v-icon size="32" class="mb-2" :class="online ? 'text-error' : 'text-warning'">{{
+        online ? 'mdi-alert-circle-outline' : 'mdi-wifi-off'
+      }}</v-icon>
+      <div>{{ online ? t('work.room.preview.loadFailed') : t('work.room.preview.offlineTitle') }}</div>
+      <div class="text-caption mt-1">
+        {{ online ? previewError || navigationError : t('work.room.preview.offlineBody') }}
+      </div>
+      <div v-if="online && previewAppNote && !previewUrl" class="text-caption mt-1">
         {{
           t(previewTunnelUp ? 'tasks.preview.appUnavailable' : 'tasks.preview.connectionUnavailable', {
             agent: agentName,
           })
         }}
       </div>
-      <BaseButton kind="secondary" size="sm" @click="emit('refresh')">{{
+      <BaseButton v-if="online" kind="secondary" size="sm" @click="emit('refresh')">{{
         t('work.room.preview.retryTarget')
       }}</BaseButton>
     </div>
@@ -261,20 +721,34 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
       :doc-loading="docLoading"
       :doc-error="docError"
       :doc-renderer-missing="docRendererMissing"
-      :download-error="downloadError"
       :slide-context="slideContext"
+      :slide-notes="slideNotes"
       :revs="revs"
       :file-history="fileHistory"
+      :versions="props.versions"
       :show-history="showHistory"
+      :anchors="threadAnchors"
+      :page-anchors="pageAnchors"
+      :sheet-anchors="sheetAnchors"
+      :pins="pendingPins"
+      :sheet-pins="pendingSheetPins"
+      :live-edit="props.liveEdit"
+      :active-anchor="focusedThread"
+      :named-tab="!!path"
+      @anchor="openAnchor"
+      @close-live-edit="props.liveEdit?.end()"
       @open-editor="emit('open-editor', $event)"
       @toggle-history="emit('toggle-history')"
       @toggle-doc-page="emit('toggle-doc-page')"
+      @narrow="emit('doc-narrow', $event)"
       @download="emit('download')"
       @mention-click="emit('mention-click', $event)"
       @quote="onQuote"
       @page-context="onPageContext"
       @cell="onCell"
+      @sheet-range="onSheetRange"
       @markdown-quote="onMarkdownQuote"
+      @code-lines="onCodeLines"
       @pin="pageLocator.onPin"
       @dropped="clearLocator"
     />
@@ -282,19 +756,46 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     <PreviewImageStage
       v-else-if="path && previewFile && isImageArtifact"
       :document-name="documentName"
+      :document-suffix="documentSuffix"
       :active="active"
       :preview-full="previewFull"
       :image-region="imageRegion"
-      :locator-note="locatorNote"
-      :locator="locator"
       :doc-error="docError"
       :annotate-error="annotateError"
+      :marks="imageAnchors"
+      :active-mark="focusedThread"
+      :path="path"
+      :topic-id="topicId"
+      :project-id="projectId"
+      :versions="props.versions"
+      :show-history="showHistory"
+      :file-history="fileHistory"
+      @toggle-history="emit('toggle-history')"
+      @mention-click="emit('mention-click', $event)"
+      @retry="emit('refresh')"
+      @download="emit('download')"
       @region="onImageRegion"
       @annotate="onAnnotate"
-      @update:locator-note="locatorNote = $event"
-      @send="sendLocator"
-      @cancel="clearLocator"
+      @mark="openAnchor"
     />
+    <div v-else-if="previewFile && isVideoArtifact" class="panel-preview__video">
+      <AttachmentVideo
+        variant="panel"
+        can-locate
+        :topic-id="topicId"
+        :path="previewFile.path"
+        @locate="onVideoLocate"
+        @download="emit('download')"
+      />
+    </div>
+    <!-- 认不出类型、但读得出文字的那些：`head` 有就摆出来（超上限的大文件这一支
+         也有，见 `textfile.text_payload`）。认得出类型的那几档在前面就接走了。 -->
+    <pre
+      v-else-if="previewFile && readerText(previewFile)"
+      class="preview-plain"
+      :class="{ 'preview-plain--cut': previewFile.too_large }"
+      >{{ readerText(previewFile) }}</pre
+    >
     <div v-else-if="previewFile && previewFile.content === null" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
       <div>{{ t('work.room.preview.notText') }}</div>
@@ -313,11 +814,58 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
     </div>
     <BaseEmptyState v-else icon="mdi-eye-off-outline" :title="t('work.room.preview.empty')" />
 
+    <!-- 这一份文件上的评论：开着的时候盖在右边，不挤预览的画面。图上圈着一块、标注条开着时
+         先收起来：矮的面板里它正落在标注条上，会盖住「取消」。 -->
+    <BaseButton
+      v-if="commentTarget && !imageRegion.target.value"
+      class="panel-preview__comments-toggle"
+      kind="secondary"
+      size="sm"
+      prepend-icon="mdi-comment-text-outline"
+      :title="t('work.room.comments.title')"
+      @click="props.comments?.toggle()"
+    >
+      {{ t('work.room.comments.title') }}
+    </BaseButton>
+    <PreviewComments
+      v-if="showComments && commentTarget"
+      class="panel-preview__comments"
+      :topic-id="commentTarget.topicId"
+      :path="commentTarget.path"
+      :version="commentTarget.version"
+      :author="props.comments?.author ?? ''"
+      :thread-state="props.comments!.threads.state"
+      :thread-actions="props.comments!.threads.actions"
+      :pick="commentPick"
+      :focus-id="focusedThread"
+      :writable="true"
+      :post="postFileComment"
+      :name-of="commentNameOf"
+      :avatar-of="commentAvatarOf"
+      :agent-name="agentName"
+      @clear-pick="clearLocator"
+      @close="props.comments?.toggle()"
+      @update:open-id="focusedThread = $event"
+    />
+
     <PreviewLocator
       v-model:note="locatorNote"
-      :target="imageRegion.target.value ? null : locator"
-      :busy="pageLocator.sending.value"
+      :target="locator"
+      :queued-count="queuedCount"
+      :pending-elsewhere="pendingElsewhere"
+      :busy="pageLocator.sending.value || commenting"
+      :can-comment="!!commentTarget"
+      :can-ask-personal="!!props.askPersonal"
+      :comment-error="commentError"
+      :anchor="locatorAnchor"
+      :max-height="locatorMaxHeight"
+      :arm-first="locatorFromSelection"
       @send="sendLocator"
+      @personal="sendPersonalLocator"
+      @queue="queueLocator"
+      @send-queued="sendQueued"
+      @clear-queued="clearQueued"
+      @comment="commentHere"
       @cancel="clearLocator"
     />
 
@@ -359,5 +907,46 @@ defineExpose({ handleEscape, handlePick: pick.fromFrame })
 .panel-preview:fullscreen {
   width: 100%;
   height: 100%;
+}
+.panel-preview__video {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--preview-min);
+  padding: 16px;
+}
+
+/* 认不出的类型里读得出文字的那些：按原文摆，自己滚。截断的那一份在顶上压一条
+   渐隐，读者一眼看得出底下还有、而且这一格给不到。 */
+.preview-plain {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 16px 24px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preview-plain--cut {
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 24px), transparent);
+}
+
+/* 评论栏盖在预览的右边：这一格是看东西的，评论是旁边的话，不该把画面挤窄。 */
+.panel-preview__comments {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: var(--z-raised);
+  width: min(340px, 100%);
+  box-shadow: var(--shadow-2);
+}
+.panel-preview__comments-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 64px;
+  z-index: var(--z-raised);
 }
 </style>

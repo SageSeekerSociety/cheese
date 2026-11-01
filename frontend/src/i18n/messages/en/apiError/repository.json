@@ -17,8 +17,6 @@
   "projectTaskNotFound": "This project has no such task",
   "revisionDiffNotFound": "There's no diff for this version",
   "subprocessNotKilled": "Child process pid={pid} still hasn't exited after SIGKILL",
-  "taskBackupNotFound": "This task has no such backup",
-  "taskBackupTooLarge": "A task backup can't exceed 512 MiB. Move large files to attachment storage",
   "taskBaseVersionMissing": "The version the task is compared against doesn't exist",
   "taskEndedCreateNew": "This task has ended. Create a new task",
   "taskFileChangedReload": "The file has been updated. Load it again before saving",

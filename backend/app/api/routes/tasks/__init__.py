@@ -12,9 +12,9 @@ include 顺序＝原来的声明顺序：它决定 first-match，改动后跑
 from fastapi import APIRouter
 
 from . import (
-    attachments,
     create,
     drafts,
+    files,
     lifecycle,
     participation,
     roster,
@@ -25,7 +25,7 @@ router = APIRouter(tags=["Tasks"])
 
 router.include_router(create.router)
 router.include_router(drafts.router)
-router.include_router(attachments.router)
+router.include_router(files.router)
 router.include_router(participation.router)
 router.include_router(lifecycle.router)
 router.include_router(roster.router)

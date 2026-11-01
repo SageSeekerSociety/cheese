@@ -2,8 +2,11 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, NotFoundError
-from app.domain.team.models import TeamRecruitmentPost
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
+from app.domain.team import permissions as team_seats
+from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
+from app.domain.team.permissions import Permission as TeamPermission
 from app.domain.team.recruitment_repositories import RecruitmentRepository
 from app.domain.team.repositories import TeamRepository
 
@@ -44,10 +47,19 @@ class RecruitmentService:
         team = await self._team_repo.get_by_id(team_id)
         if team is None:
             raise NotFoundError("Team not found", data={"type": "team", "id": team_id})
-        if not await self._team_repo.is_team_at_least_admin(team_id, actor_user_id):
+        if not await team_seats.TEAM.allows(
+            self._team_repo._session, team_id, actor_user_id, TeamPermission.recruit
+        ):
             raise ForbiddenError(
                 "Only team admins or owner can create recruitment posts"
             )
+        # Asked after the permission, not before: a personal team answers a
+        # non-member with the same 403 a shared one does, so the refusal tells
+        # nobody what kind of team they guessed the id of. To its owner: an ad
+        # asking people to join a team that takes nobody can only disappoint
+        # them, and a group that takes people is a shared team.
+        if team.personal_owner_user_id is not None:
+            raise BadRequestError(say("personalTeamTakesNoRecruits"))
         return await self._repo.create(
             team_id=team_id,
             title=title,
@@ -98,6 +110,18 @@ class RecruitmentService:
             )
         if post.created_by != actor_user_id:
             raise ForbiddenError("Only the post creator can edit this recruitment post")
+        # Editing the text or closing it is fine. Opening it again is not: the
+        # creator of a post on a personal team is that team's owner, so this is
+        # the route that could undo the withdrawal the migration made. This
+        # check is the guard — there is deliberately no trigger on
+        # team_recruitment_post (the release still serving during the deploy
+        # creates such posts, and one would fail it) — so do not drop it. The
+        # plaza's own read excludes a personal team's posts as well, which
+        # covers every other writer.
+        if status == RecruitmentStatus.OPEN.value:
+            team = await self._team_repo.get_by_id(post.team_id)
+            if team is not None and team.personal_owner_user_id is not None:
+                raise BadRequestError(say("personalTeamTakesNoRecruits"))
         return await self._repo.update(
             post,
             title=title,
@@ -121,8 +145,11 @@ class RecruitmentService:
                 "Recruitment post not found",
                 data={"type": "recruitment_post", "id": post_id},
             )
-        if not await self._team_repo.is_team_at_least_admin(
-            post.team_id, actor_user_id
+        if not await team_seats.TEAM.allows(
+            self._team_repo._session,
+            post.team_id,
+            actor_user_id,
+            TeamPermission.recruit,
         ):
             raise ForbiddenError(
                 "Only team admins or owner can delete recruitment posts"

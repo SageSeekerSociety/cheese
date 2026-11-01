@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { onInboxChange, reconnectDelay, startInboxLive } from './inboxLive'
+import { onAssistantChange, onInboxChange, reconnectDelay, startInboxLive } from './inboxLive'
 
 class FakeSocket {
   static opened: FakeSocket[] = []
@@ -77,6 +77,24 @@ describe('收件箱的实时连接', () => {
 
     stop()
     unsubscribe()
+  })
+
+  it('和芝士的哪段对话说了新的话，就告诉听的人是哪一段；收件箱不算有新的', async () => {
+    const said = vi.fn()
+    const inbox = vi.fn()
+    const unsubscribe = [onAssistantChange(said), onInboxChange(inbox)]
+    const stop = startInboxLive(async () => 'credential')
+    await flush()
+    const socket = FakeSocket.opened[0]
+    socket.open()
+    socket.frame(10)
+
+    socket.onmessage?.({ data: JSON.stringify({ kind: 'assistant', conversation: 'c1' }) })
+
+    expect(said).toHaveBeenCalledWith('c1')
+    expect(inbox).not.toHaveBeenCalled()
+    stop()
+    unsubscribe.forEach((off) => off())
   })
 
   it('重连时首帧的号变大了：断开期间来过，要叫一次', async () => {

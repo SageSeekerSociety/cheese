@@ -10,6 +10,7 @@ import uuid
 
 from sqlalchemy import (
     ColumnElement,
+    DateTime,
     Subquery,
     Uuid,
     any_,
@@ -29,7 +30,12 @@ from app.domain.conversation.models import Conversation, ConversationKind
 # Which room a task or a 支线 is in. Bare tables: ``room_task`` and ``thread``
 # depend on this domain, and importing back would make a cycle.
 _tasks = table("tasks", column("id", Uuid), column("room_id", Uuid))
-_threads = table("threads", column("id", Uuid), column("room_id", Uuid))
+_threads = table(
+    "threads",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("recycled_at", DateTime(timezone=True)),
+)
 _inside = union_all(
     select(_tasks.c.id, _tasks.c.room_id), select(_threads.c.id, _threads.c.room_id)
 ).subquery("inside")
@@ -43,13 +49,18 @@ _inside = union_all(
 #: 数组参数而不是 `IN` 列表：房间按百计，列表每个值绑一个参数，SQL 文本随长度变，
 #: 每次调用都要重新编译一遍。
 _threads_param = bindparam("threads_rooms", type_=ARRAY(Uuid))
+# 收起来的支线不算：它不再点亮它那间频道的红灯，里面的题也不再折回频道
+# （`thread/recycle.py`）。`recycled_at` 这一列因此两处都要读。
 _room_threads = select(
     _threads.c.id,
     _threads.c.room_id,
     _threads.c.id.in_(
         select(Conversation.id).where(Conversation.kind == ConversationKind.thread)
     ),
-).where(_threads.c.room_id == any_(_threads_param))
+).where(
+    _threads.c.room_id == any_(_threads_param),
+    _threads.c.recycled_at.is_(None),
+)
 
 
 async def project_of(
@@ -61,6 +72,15 @@ async def project_of(
 
 
 async def is_task(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        found_topic, cached_topic = recall(session, ("topic_row", conversation_id))
+        if found_topic and cached_topic is not None:
+            return False
+        found_task, cached_task = recall(session, ("task_row", conversation_id))
+        if found_task:
+            return cached_task is not None
     kind = await session.scalar(
         select(Conversation.kind).where(Conversation.id == conversation_id)
     )
@@ -79,10 +99,27 @@ async def is_inner(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
 async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUID:
     """The room a conversation is in: itself for a room, its room for a task
     or a 支线."""
+    can_cache = isinstance(session, AsyncSession)
+    if can_cache:
+        if session.autoflush:
+            await session.flush()
+        found_room, cached_room = recall(
+            session, ("conversation_room_id", conversation_id)
+        )
+        if found_room:
+            return cached_room
     room = await session.scalar(
         select(_inside.c.room_id).where(_inside.c.id == conversation_id)
     )
-    return room or conversation_id
+    resolved = room or conversation_id
+    if can_cache:
+        remember(
+            session,
+            ("conversation_room_id", conversation_id),
+            resolved,
+            tables=frozenset({"tasks", "threads"}),
+        )
+    return resolved
 
 
 async def rooms_of(
@@ -130,6 +167,12 @@ async def rooms_of_inner(
 async def _threads_in_rooms(
     session: AsyncSession, rooms: list[uuid.UUID]
 ) -> tuple[dict[uuid.UUID, uuid.UUID], dict[uuid.UUID, uuid.UUID]]:
+    """一间房的两份支线：全部，和「还当支线用」的那些。
+
+    两份都跳过**收起来**的（`recycled_at` 非空，`thread/recycle.py`）：一条死掉的
+    支线不再参与任何一行的红灯，里面的题、它给谁点过灯也不再折回频道。收起来只是
+    不再算数，内容一条不删。
+    """
     if not rooms:
         return {}, {}
     key = ("threads_in_rooms", tuple(rooms))
@@ -151,11 +194,13 @@ async def _threads_in_rooms(
 async def threads_of_rooms(
     session: AsyncSession, rooms: list[uuid.UUID]
 ) -> dict[uuid.UUID, uuid.UUID]:
-    """Every 支线 of these rooms, mapped to its room.
+    """Every open 支线 of these rooms, mapped to its room.
 
     A room's tasks are not among them, unlike `rooms_of_inner`: a task is a
     board of its own with a card of its own, and what is said in one is not the
-    room's own doings (`waits._last_said`)."""
+    room's own doings (`waits._last_said`). One that has been recycled is not
+    either (`thread/recycle.py`): it is out of the row's units for good, until
+    somebody restores it."""
     all_threads, _ = await _threads_in_rooms(session, rooms)
     return dict(all_threads)
 
@@ -171,7 +216,11 @@ async def threads_still_threads(
     conversation is a task's now. Treating it as a 支线 again folds a task's
     failures back under the room — a closed piece of work relights its channel
     — and lets what is said in the task clear the room's own failures. The
-    register (``conversations.kind``) is what tells the two apart."""
+    register (``conversations.kind``) is what tells the two apart.
+
+    A recycled 支线 is not among them either: it was folded into the room's row
+    until nobody came back to it, and folding it in again would put the room
+    back the way the recycling was for."""
     _, still_threads = await _threads_in_rooms(session, rooms)
     return dict(still_threads)
 

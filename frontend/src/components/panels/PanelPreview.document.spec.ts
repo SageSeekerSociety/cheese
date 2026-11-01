@@ -75,6 +75,29 @@ vi.mock('./preview/PreviewSheet.vue', () => ({
   },
 }))
 
+// 预览格里那份 markdown 换成协同编辑器之后，它绑真实协同文档（socket、Yjs），不该
+// 装进这一只面板的用例里。这一只要的是另一件事：**这一格真的把那一包递了下去**（
+// `PanelPreview` 摊 props 时漏掉它，「编辑」按钮就永远不出现，而组件自己的单测看不见
+// ——它直接挂的是 `PanelPreviewView`）。
+vi.mock('./preview/PreviewMarkdownLive.vue', () => ({
+  default: {
+    name: 'PreviewMarkdownLive',
+    props: ['live'],
+    emits: ['close'],
+    // 编辑器上那颗关闭键（真组件上也发这一个事件）：会话自己结束的那条路，走的
+    // 就是它——`editing` 那一份只看文件改不改得动，会话没了它还是 true。
+    template:
+      '<div data-testid="markdown-live" :data-path="live.editingPath.value">' +
+      '<button data-testid="live-close" @click="$emit(\'close\')">关闭</button></div>',
+  },
+}))
+
+// 那一包协同会话开的是一条真 socket（`useDocCollab`），这一只面板的用例不装它：
+// 换成一只什么都不连的替身。面板这一半要的只是「哪一份开着」那两件读得到。
+vi.mock('../../composables/useDocCollab', async () => ({
+  useDocCollab: (await import('../../test/fakeDocCollab')).useFakeDocCollab,
+}))
+
 // 编辑器（OnlyOffice）和草稿历史各有自己的 spec，这里要的只是它们和文档字节之间
 // 那个约定：改完、恢复完，面板按新版本重取这一页。两者的手势各按自己那一半的接口
 // 做：历史那一边叫取数那一包（`fileHistory.restore`，和真组件一样），编辑器那一边
@@ -144,6 +167,73 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
+/** 一份能直接改的 markdown，摆在预览格里。 */
+function editableMarkdown(content = '# 配置\n\n失败以后重试 3 次。\n') {
+  getPreview.mockResolvedValue(artifact('output/说明.md', 'text/markdown'))
+  readPreviewFile.mockResolvedValue({
+    path: 'output/说明.md',
+    content,
+    version: 'v1',
+    bytes: content.length,
+    binary: false,
+    too_large: false,
+  })
+}
+
+it('offers edit on a markdown file, and hands the panel its live session', async () => {
+  // 这一条盯的是「这一格真的把协同编辑那一包递下去了」：`PanelPreview` 摊 props 时漏了
+  // `live-edit`，这两条都会看不见——组件自己的单测直接挂 `PanelPreviewView`，看不到。
+  editableMarkdown()
+  const ui = mount()
+
+  // 编辑入口是文档条上的「改」那一段（原型里没有另一颗「编辑」键）。
+  const edit = await ui.findByTestId('preview-mode-edit')
+  expect((edit as HTMLButtonElement).disabled).toBe(false)
+  await fireEvent.click(edit)
+
+  // 点了是就地打开协同编辑器（不是发 `open-editor` 去开 OnlyOffice）。
+  const editor = await ui.findByTestId('markdown-live')
+  expect(editor.getAttribute('data-path')).toBe('output/说明.md')
+})
+
+it('切回「看」把协同编辑那一栏收掉：正文不再是编辑态', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+  await fireEvent.click(ui.getByTestId('preview-mode-view'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+})
+
+it('协同会话自己结束之后模式回到「看」：不然拖选什么都不弹，还没人知道为什么', async () => {
+  editableMarkdown()
+  const ui = mount()
+  await fireEvent.click(await ui.findByTestId('preview-mode-edit'))
+  await ui.findByTestId('markdown-live')
+
+  // 编辑器上那颗关闭键：会话收起来了，正文回到只读。
+  await fireEvent.click(ui.getByTestId('live-close'))
+  await waitFor(() => expect(ui.queryByTestId('markdown-live')).toBeNull())
+  // 模式跟着回到「看」——停在「改」的话，`usePreviewLocator` 会把每一次指认都吞掉，
+  // 而屏幕上没有任何东西说明为什么。
+  await waitFor(() => expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
+})
+
+it('手机上不摆「改」：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+  editableMarkdown()
+  const width = window.innerWidth
+  window.innerWidth = 400
+  try {
+    const ui = mount()
+    // 正文画出来了，说明这一档确实上了屏；只是「改」那一颗整个不出现。
+    await screen.findByTestId('markdown')
+    expect(ui.queryByTestId('preview-mode-edit')).toBeNull()
+    expect(ui.queryByTestId('markdown-live')).toBeNull()
+  } finally {
+    window.innerWidth = width
+  }
+})
+
 it('shows a Word report rather than offering it as a download', async () => {
   mount()
 
@@ -196,7 +286,7 @@ it('turns a pointed-at cell into a message naming the file and the address', asy
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这个数字应该按季度摊')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这个数字应该按季度摊')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -211,7 +301,7 @@ it('a CSV has no sheet, so its address is the cell alone', async () => {
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('sheet'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一行重复了')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一行重复了')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -224,7 +314,7 @@ it('turns a selected sentence into a message naming the page it came from', asyn
   const { emitted } = mount()
 
   await fireEvent.click(await screen.findByTestId('pages'))
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话和摘要对不上')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话和摘要对不上')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -257,7 +347,7 @@ it('turns a selected markdown sentence into a message naming its section', async
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这里也要写清楚')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这里也要写清楚')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -293,7 +383,7 @@ it('writes only the near side when the quote runs to the end of the document', a
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这一整段都要重写')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这一整段都要重写')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -326,7 +416,7 @@ it('says the quote is at the top of the file when nothing precedes it', async ()
   selection.addRange(range)
   await fireEvent.mouseUp(md)
 
-  await fireEvent.update(screen.getByPlaceholderText('说明要改什么'), '这句话要改')
+  await fireEvent.update(screen.getByPlaceholderText('输入修改要求或批注内容…'), '这句话要改')
   await fireEvent.click(screen.getByText('发送'))
 
   await waitFor(() => expect(emitted().locate).toBeTruthy())
@@ -404,12 +494,14 @@ it('关掉编辑器之后这一页按新版本重取，期间把这份文件交�
   expect(await screen.findByTestId('pages')).toBeTruthy()
   expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(1)
 
-  await fireEvent.click(screen.getByTestId('edit-file'))
+  await fireEvent.click(screen.getByTestId('preview-mode-edit'))
   // 编辑器里改的是房间里那一份，所以这一格之外也得有一份它的页签。
   expect((emitted()['open-file'] as unknown[][])[0][0]).toBe('output/评审简报.docx')
 
   await fireEvent.click(await screen.findByTestId('editor-close'))
   await waitFor(() => expect(previewDocumentPdfSnapshot).toHaveBeenCalledTimes(2))
+  // 对话框关了就回到只读：模式跟着关回「看」，否则接下来拖选什么都不弹。
+  await waitFor(() => expect(screen.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
 })
 
 it('恢复了一版之后这一页按新版本重取', async () => {

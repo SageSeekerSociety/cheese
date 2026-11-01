@@ -22,7 +22,7 @@ from app.domain.agent.project_feed import (
     UNREAD,
     tell_project_once_committed,
 )
-from app.domain.conversation.services import room_of
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -39,10 +39,12 @@ async def mark_topic_read(
     The cursor is per person, so whose it is comes from the verified
     credential — ``handle`` in the body is only an assertion checked against
     it (it used to BE the identity, letting anyone move anyone's cursor)."""
-    room_id = await room_of(db, topic_id)
-    topic = await TopicService(db).get_or_404(room_id)
+    place = await place_or_404(db, topic_id)
+    room_id, topic = place.room_id, place.room
     actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
-    await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=room_id)
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=room_id, room=topic
+    )
     handle = await resolver.resolve_recipient(
         requested=(body.get("handle") or "").strip() or None,
         project_id=topic.project_id,
@@ -63,7 +65,7 @@ async def set_topic_notify_level(
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     handle = await resolver.resolve_recipient(
         requested=None, project_id=topic.project_id, allow_anonymous=False

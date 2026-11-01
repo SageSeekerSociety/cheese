@@ -107,7 +107,6 @@ import type { Space } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -116,6 +115,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 export interface BasicInfoChange {
   name: string

@@ -1,31 +1,95 @@
 <template>
-  <!-- One answer of 芝士: the calls it made, one line each; what it wrote into a draft, as a card
-       with an undo per field; what it asks the person to confirm; what it published; then its words. -->
+  <!-- One answer of 芝士: what it said and the calls it made, in the order they happened (a run of
+       calls, one line each); what it wrote into a draft, as a card with an undo per field; what it
+       asks the person to confirm; what it published. -->
   <div class="at">
-    <template v-if="steps.length">
+    <section v-if="checklist?.length" class="at__todo" :aria-label="t('tasks.assistant.checklist.label')">
       <button
-        v-if="folded"
+        v-if="checklistFoldable"
         type="button"
         class="at__fold"
-        :aria-expanded="open"
-        :data-testid="'turn-steps-fold'"
-        @click="open = !open"
+        :aria-expanded="checklistOpen"
+        @click="checklistOpen = !checklistOpen"
       >
-        <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': open }">mdi-chevron-right</v-icon>
-        {{ t('tasks.assistant.steps.folded', { first: (calls[0] ?? steps[0]).verb, n: calls.length || steps.length }) }}
+        <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': checklistOpen }">mdi-chevron-right</v-icon>
+        {{ t('tasks.assistant.checklist.folded', { done: checklistDone, total: checklist.length }) }}
       </button>
-      <ul v-if="!folded || open" class="at__steps">
-        <li v-for="step in steps" :key="step.key" class="at__step" :class="`at__step--${step.state}`">
-          <span class="at__ico" aria-hidden="true">
-            <span v-if="step.state === 'run'" class="at__spin" />
-            <v-icon v-else-if="step.state === 'done'" size="14">mdi-check</v-icon>
-            <v-icon v-else size="14">mdi-close</v-icon>
+      <ol v-if="!checklistFoldable || checklistOpen" class="at__todo-list">
+        <li v-for="(item, i) in checklist" :key="i" class="at__todo-item" :class="`at__todo-item--${item.status}`">
+          <span class="at__todo-mark" role="img" :aria-label="t(CHECKLIST_SAID[item.status])">
+            <v-icon v-if="item.status === 'completed'" size="14">mdi-check</v-icon>
+            <span v-else-if="item.status === 'in_progress'" class="at__todo-dot" />
+            <span v-else class="at__todo-ring" />
           </span>
-          <span class="at__verb">{{ step.verb }}</span>
-          <span v-if="step.arg" class="at__arg" data-user-content>{{ step.arg }}</span>
-          <span v-if="step.state === 'failed' && step.error" class="at__err">{{ step.error }}</span>
+          <span data-user-content>{{ item.content }}</span>
         </li>
-      </ul>
+      </ol>
+    </section>
+    <template v-for="piece in pieces" :key="piece.key">
+      <slot v-if="piece.kind === 'text'" name="text" :text="piece.text" />
+      <template v-else>
+        <button
+          v-if="foldable(piece.steps)"
+          type="button"
+          class="at__fold"
+          :aria-expanded="opened.has(piece.key)"
+          :data-testid="'turn-steps-fold'"
+          @click="toggle(piece.key)"
+        >
+          <v-icon size="16" class="at__chev" :class="{ 'at__chev--open': opened.has(piece.key) }"
+            >mdi-chevron-right</v-icon
+          >
+          {{ folded(piece.steps) }}
+        </button>
+        <ul v-if="!foldable(piece.steps) || opened.has(piece.key)" class="at__steps">
+          <template v-for="row in stepRows(piece.steps)" :key="row.key">
+            <li v-if="row.kind === 'reads'" class="at__step" :class="`at__step--${readsState(row.steps)}`">
+              <span class="at__ico" aria-hidden="true">
+                <span v-if="readsState(row.steps) === 'run'" class="at__spin" />
+                <v-icon v-else size="14">mdi-check</v-icon>
+              </span>
+              <span class="at__verb">{{ readsLine(row.steps) }}</span>
+              <ul class="at__steps at__reads">
+                <li v-for="read in row.steps" :key="read.key" class="at__step">
+                  <span>{{ read.verb }}</span>
+                  <span v-if="read.arg" class="at__arg" data-user-content>{{ read.arg }}</span>
+                </li>
+              </ul>
+            </li>
+            <li v-else class="at__step" :class="[`at__step--${row.step.state}`, { 'at__step--act': acts(row.step) }]">
+              <span class="at__ico" aria-hidden="true">
+                <span v-if="row.step.state === 'run'" class="at__spin" />
+                <v-icon v-else-if="row.step.state === 'done'" size="14">mdi-check</v-icon>
+                <v-icon v-else size="14">mdi-close</v-icon>
+              </span>
+              <button
+                v-if="row.step.subagent?.steps.length"
+                type="button"
+                class="at__sub-open"
+                :aria-expanded="opened.has(`sub-${row.step.key}`)"
+                @click="toggle(`sub-${row.step.key}`)"
+              >
+                <span class="at__verb">{{ row.step.verb }}</span>
+                <span v-if="row.step.arg" class="at__arg" data-user-content>{{ row.step.arg }}</span>
+              </button>
+              <template v-else>
+                <span class="at__verb">{{ row.step.verb }}</span>
+                <span v-if="row.step.arg" class="at__arg" data-user-content>{{ row.step.arg }}</span>
+              </template>
+              <span v-if="row.step.subagent" class="at__sub-state">{{
+                t(`tasks.assistant.subagent.${row.step.subagent.status}`)
+              }}</span>
+              <span v-if="row.step.state === 'failed' && row.step.error" class="at__err">{{ row.step.error }}</span>
+              <ul v-if="row.step.subagent && opened.has(`sub-${row.step.key}`)" class="at__steps at__sub-steps">
+                <li v-for="done in row.step.subagent.steps" :key="done.key" class="at__step">
+                  <span class="at__verb">{{ done.verb }}</span>
+                  <span v-if="done.arg" class="at__arg" data-user-content>{{ done.arg }}</span>
+                </li>
+              </ul>
+            </li>
+          </template>
+        </ul>
+      </template>
     </template>
 
     <section
@@ -135,6 +199,8 @@
       }}</BaseButton>
     </div>
 
+    <AssistantRuleCard v-for="rule in rules" :key="rule.id" :rule="rule" />
+
     <AgentProposal
       v-for="proposal in proposals"
       :key="proposal.id"
@@ -148,37 +214,46 @@
 </template>
 
 <script setup lang="ts">
-// 芝士的一轮回答（`AssistantPanel` 里的一段）：它调的工具一行一步，答完收成一行「N 步」；
-// 写进草稿的改动是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个
-// 「查看题目」。话本身由外面那一层塞进默认插槽；话后面是它交给人的文件（一份一张卡，点了
-// 下载），和它替人起草、等人确认的消息和任务（`AgentProposal`）。只拿 props、只发事件。
-import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
-import type { AssistantHanded } from '@/stores/agentThread'
+// 芝士的一轮回答（`AssistantPanel` 里的一段）：说的话和调的工具按发生的顺序排开
+// （`interleave`），接连调的几个工具一行一步，答完每一组收成一行「N 步」；写进草稿的改动
+// 是一张卡，每格能撤销；留给人确认的地方是另一张卡；发布的结果带一个「查看题目」。默认
+// 插槽放话后面的一句（已停止、排队中）；再后面是它交给人的文件（一份一张卡，点了下载），
+// 它建的自动化（`AssistantRuleCard`），和它替人起草、等人确认的消息和任务（`AgentProposal`）。
+// 只拿 props、只发事件。
+import type { ChecklistItem, PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
+import type { AssistantHanded, AssistantRule } from '@/stores/agentThread'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import AgentProposal from '@/components/agent/AgentProposal.vue'
+import AssistantRuleCard from '@/components/assistant/AssistantRuleCard.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import { foldedLine, readsLine, stepRows } from '@/lib/assistantView'
 import { fmtBytes } from '@/lib/changesTree'
 import { leafOf } from '@/lib/libraryFolders'
 import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
 
 const props = withDefaults(
   defineProps<{
-    steps: PanelStep[]
+    /** 说的话和调的工具，按发生的顺序；话由外面那一层用 `text` 插槽画。 */
+    pieces: TurnPiece[]
+    /** 这一轮最后写下的进度清单，画在最上面。 */
+    checklist?: ChecklistItem[] | null
     changes: PanelChange[]
     results: PanelResult[]
     /** 替人起草、等人确认的消息和任务。 */
     proposals?: PanelProposal[]
     /** 这一轮交给人的文件：存在他的资料库里，点了下载。 */
     files?: AssistantHanded[]
+    /** 这一轮建或改的自动化。 */
+    rules?: AssistantRule[]
     /** 正在发出的那一件。 */
     sending?: number | null
     /** 这一轮还在答：步骤不收起。 */
     live?: boolean
   }>(),
-  { proposals: () => [], files: () => [], sending: null, live: false }
+  { proposals: () => [], files: () => [], rules: () => [], sending: null, live: false, checklist: null }
 )
 
 const emit = defineEmits<{
@@ -196,13 +271,48 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const open = ref(false)
+/** 读屏念出每一项做到哪了。 */
+const CHECKLIST_SAID = {
+  pending: 'tasks.assistant.checklist.pending',
+  in_progress: 'tasks.assistant.checklist.inProgress',
+  completed: 'tasks.assistant.checklist.completed',
+} as const
 
-/** 工具调用（推理的那几段不算步数）。 */
-const calls = computed(() => props.steps.filter((step) => !step.thinking))
+const checklistOpen = ref(false)
+const checklistDone = computed(() => (props.checklist ?? []).filter((item) => item.status === 'completed').length)
+/** 答完了、每一项都做完了：清单收成一行，点开再看。 */
+const checklistFoldable = computed(
+  () => !props.live && !!props.checklist?.length && checklistDone.value === props.checklist.length
+)
 
-/** 答完了、做了两步以上：收成一行，点开再看。 */
-const folded = computed(() => !props.live && props.steps.length > 1)
+/** 点开看过的那几组步骤。 */
+const opened = ref(new Set<string>())
+
+function toggle(key: string) {
+  const next = new Set(opened.value)
+  if (!next.delete(key)) next.add(key)
+  opened.value = next
+}
+
+/** 答完了、这一组做了两步以上：收成一行，点开再看。 */
+function foldable(steps: PanelStep[]): boolean {
+  return !props.live && steps.length > 1
+}
+
+/** 收起的那一行：做了什么，查阅了几项（`foldedLine`）。 */
+function folded(steps: PanelStep[]): string {
+  return foldedLine(steps)
+}
+
+/** 一组查阅还有一项没读完时转圈，都读完了打勾。 */
+function readsState(steps: PanelStep[]): 'run' | 'done' {
+  return steps.some((step) => step.state === 'run') ? 'run' : 'done'
+}
+
+/** 做了事的一步（改了东西、影响到别人）：加重，好和查阅分开。 */
+function acts(step: PanelStep): boolean {
+  return step.effect === 'changes' || step.effect === 'reaches others'
+}
 
 const notes = computed(() =>
   props.changes.filter((change) => change.notes.length).map((change) => ({ id: change.id, items: change.notes }))
@@ -218,6 +328,97 @@ function undoable(change: PanelChange): number {
 </script>
 
 <style scoped>
+.at__sub-open {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.at__sub-open:hover .at__verb {
+  color: var(--ink);
+}
+
+.at__sub-state {
+  color: var(--muted);
+}
+
+/* 分身做过的几步：缩在它那一行下面，左边一条细线连着。 */
+.at__steps.at__sub-steps {
+  flex-basis: 100%;
+  padding-left: 12px;
+  margin: 2px 0 2px 6px;
+  border-left: 1px solid var(--line);
+}
+
+.at__todo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.at__todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.at__todo-item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+}
+
+.at__todo-item--completed {
+  color: var(--muted);
+}
+
+.at__todo-item--in_progress {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.at__todo-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.at__todo-item--completed .at__todo-mark {
+  color: var(--ok-ink);
+}
+
+.at__todo-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.at__todo-ring {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--faint);
+  border-radius: 50%;
+}
+
 .at {
   display: flex;
   flex-direction: column;
@@ -310,6 +511,19 @@ function undoable(change: PanelChange): number {
 
 .at__verb {
   color: var(--text);
+}
+
+/* 做了事的一步：比查阅重一级。 */
+.at__step--act .at__verb {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 一组查阅里的每一项：缩在组那一行下面。 */
+.at__steps.at__reads {
+  flex-basis: 100%;
+  gap: 2px;
+  padding-left: 20px;
 }
 
 .at__arg {

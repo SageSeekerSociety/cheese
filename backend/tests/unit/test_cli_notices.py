@@ -12,6 +12,7 @@ import pytest
 
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
+    CONTROL_PLANE_UNAVAILABLE_CODE,
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
@@ -72,6 +73,40 @@ def test_a_models_spent_upstream_cap_is_not_retryable():
     assert classify_cli_notice(line) == MODEL_LIMIT_REACHED_CODE
     notice = cli_notice(line)
     assert notice is not None and not notice[1].get("retryable")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The admission check could not say which project this call is billed
+        # to, and the platform has a Claude login to fall back on.
+        "API Error: 503 cheese: task billing attribution is temporarily "
+        "unavailable; retry shortly. This is a server-side issue, usually "
+        "temporary — try again in a moment. If it persists, check "
+        "https://status.claude.com.（server_error）",
+        # The same 503 with no Claude login to fall back on: the control plane
+        # could not place the request at all.
+        "API Error: 503 cheese: the control plane could not say where this "
+        "request goes, and the platform has no Claude login to fall back on; "
+        "retry shortly",
+    ],
+)
+def test_the_metering_proxys_admission_outage_is_its_own_notice(line):
+    """The proxy's 503 when it cannot ask who the call is billed to is neither
+    an overloaded provider nor a spent account. It used to reach the room as
+    「平台的 AI 服务额度暂时不足」, because its own wording contains the word
+    "billing"; the readers were sent to wait for a top-up nobody owed, and the
+    turn was not resumed (a spent balance is not a wait)."""
+    assert classify_cli_notice(line) == CONTROL_PLANE_UNAVAILABLE_CODE
+    overloaded, notice = cli_notice("API Error: 502 Bad Gateway."), cli_notice(line)
+    assert overloaded is not None and notice is not None
+    # Not the overload card: the provider was never called.
+    assert notice[0] != overloaded[0]
+    # The platform's own temporary problem, offered with a retry, and the
+    # service's words kept whole.
+    assert notice[1]["who"] == "platform"
+    assert notice[1]["retryable"] is True
+    assert line in str(notice[1])
 
 
 def test_the_metering_proxys_offline_egress_is_its_own_notice():

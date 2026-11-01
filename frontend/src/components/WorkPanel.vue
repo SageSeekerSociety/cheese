@@ -34,13 +34,16 @@ import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
 
 import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
+import { useElementSize } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
+import { usePanelSplit } from '../composables/usePanelSplit'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
+import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -58,6 +61,7 @@ import PanelSiteHost from './work/PanelSiteHost.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
 
 import { useCommands } from '@/commands'
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -81,6 +85,8 @@ const props = withDefaults(
     // 打不开它，文件就是项目现在的样子。
     taskHasBranch?: boolean
     submitQuestion?: SubmitPreviewQuestion
+    /** 私下问个人芝士：页面递下来的能力（同 `submitQuestion`）。 */
+    askPersonal?: (message: string) => void
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
     // activityTick.
@@ -132,6 +138,7 @@ const props = withDefaults(
     taskReadOnly: false,
     taskHasBranch: true,
     submitQuestion: undefined,
+    askPersonal: undefined,
     working: false,
     agentControl: null,
     siteTurns: () => ({}),
@@ -155,6 +162,7 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'update:tab', key: string): void
+  (e: 'viewing', path: string | null): void
   // 预览面板里读者指着文档说的那一句，交给拿着对话的那一层；图上画过东西时
   // 随行带那张合成图。
   (e: 'locate', payload: PreviewLocate): void
@@ -174,6 +182,9 @@ const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview'
 const FILE_TAB = 'file:'
 // 自由区里的资料库文档，路径写成 `doc:<编号>`：和文件同一排页签，打开的是文档。
 const DOC_TAB = 'doc:'
+// AI 队友提议的一项技能，路径写成 `skill:<编号>`：读完就地决定存不存。内容由页面从插槽
+// 递进来（`#skill`），面板自己不取数。
+const SKILL_TAB = 'skill:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -204,6 +215,8 @@ function ensureFileFromUrl(key: string | null) {
   if (openFiles.value.some((f) => f.path === path)) return
   // 资料库文档的页签：名字等它自己读到了再补上。
   if (path.startsWith(DOC_TAB)) placeFile(path, { id: path.slice(DOC_TAB.length), title: '' })
+  else if (path.startsWith(SKILL_TAB))
+    placeFile(path, undefined, undefined, { id: path.slice(SKILL_TAB.length), title: '' })
   else placeFile(path)
 }
 
@@ -362,6 +375,13 @@ const {
   taskScoped: computed(() => !!props.taskId),
 })
 
+// 此刻面板上开着哪一份文件（撰写框上「芝士会看到你在看什么」那一行读它）。
+watch(
+  () => (active.value === 'preview' ? previewPath.value : tabFile(active.value, FILE_TAB, DOC_TAB)),
+  (path) => emit('viewing', path),
+  { immediate: true }
+)
+
 // ---- 这一格此刻有没有东西 ----
 // 四格永远都在、位置不变：人记得住「改动在第三格」，一格时有时无的 tab 栏两次打开
 // 可能不一样长。没东西的那一格字变浅，点进去是它自己的「暂无」。这里只回答有没有，
@@ -475,6 +495,17 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 const tabPanelId = `wp-panel-${useId()}`
 // 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
 const tabBodyRef = ref<HTMLElement | null>(null)
+const { width: bodyWidth } = useElementSize(tabBodyRef)
+const keyExists = (key: string) =>
+  tabs.value.some((tab) => tab.key === key) || openFiles.value.some((f) => fileKey(f.path) === key)
+const {
+  split,
+  canSplit,
+  toggle: toggleSplit,
+  shown,
+  sideClass,
+  drop: dropSplit,
+} = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
 const activeTabLabel = computed(() =>
   active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
@@ -604,10 +635,21 @@ const { exists: inRoomFiles } = useRoomFileProbe(topicId)
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
-function placeFile(path: string, document?: { id: string; title: string }, project?: OpenFileTab['project']) {
+function placeFile(
+  path: string,
+  document?: { id: string; title: string },
+  project?: OpenFileTab['project'],
+  skill?: OpenFileTab['skill']
+) {
   if (openFiles.value.some((f) => f.path === path)) return
   const next = [...openFiles.value]
-  const tab: OpenFileTab = { path, pinned: false, ...(document ? { document } : {}), ...(project ? { project } : {}) }
+  const tab: OpenFileTab = {
+    path,
+    pinned: false,
+    ...(document ? { document } : {}),
+    ...(project ? { project } : {}),
+    ...(skill ? { skill } : {}),
+  }
   const temp = next.findIndex((f) => !f.pinned)
   if (temp >= 0) next.splice(temp, 1, tab)
   else next.push(tab)
@@ -637,6 +679,13 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   const host = docRefs.get(document.id)
   if (host) host.reviewEdits(review)
   else waitingReviews.set(document.id, review)
+}
+/** 对话里那张技能提议卡：在自由区开一格，读完就地决定。 */
+async function openSkill(skill: { id: string; title: string }) {
+  const path = SKILL_TAB + skill.id
+  noteFileOrigin()
+  placeFile(path, undefined, undefined, { ...skill })
+  await setTab(fileKey(path))
 }
 function keepDocRef(id: string, el: unknown) {
   if (!el) {
@@ -678,6 +727,7 @@ async function closeFile(path: string) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
   const key = fileKey(path)
+  dropSplit(key)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
   const next = openFiles.value.filter((f) => f.path !== path)
@@ -715,6 +765,7 @@ defineExpose({
   showOverview,
   openFile,
   openDocument,
+  openSkill,
   siteBlock,
   previewShown,
   activeTab: () => active.value,
@@ -740,11 +791,23 @@ defineExpose({
         :files="openFiles"
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
+        :side="split"
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
       >
-        <template v-if="$slots['tab-actions']" #actions><slot name="tab-actions" /></template>
+        <template v-if="$slots['tab-actions'] || canSplit || split" #actions>
+          <BaseButton
+            v-if="canSplit || split"
+            size="sm"
+            :icon="split ? 'mdi-rectangle-outline' : 'mdi-view-split-vertical'"
+            data-testid="panel-split"
+            :aria-pressed="!!split"
+            :title="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
+            :aria-label="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
+            @click="toggleSplit"
+          /><slot name="tab-actions" />
+        </template>
       </PanelTabs>
 
       <!-- Panel content (not the tab strip) gets its own boundary: a tab that
@@ -764,21 +827,26 @@ defineExpose({
           <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
-          <div v-show="active === 'overview'" class="tabpane-slot" :class="enterClass('overview')">
+          <div v-show="shown('overview')" class="tabpane-slot" :class="[enterClass('overview'), sideClass('overview')]">
             <slot name="overview" />
           </div>
-          <div v-if="!taskId" v-show="active === 'threads'" class="tabpane-slot" :class="enterClass('threads')">
+          <div
+            v-if="!taskId"
+            v-show="shown('threads')"
+            class="tabpane-slot"
+            :class="[enterClass('threads'), sideClass('threads')]"
+          >
             <slot name="threads" />
           </div>
           <PanelSiteHost
             v-if="mounted.has('site')"
-            v-show="active === 'site'"
+            v-show="shown('site')"
             ref="siteRef"
-            :class="enterClass('site')"
+            :class="[enterClass('site'), sideClass('site')]"
             :agent-name="agentName"
             :topic-id="conversationId"
             :project-id="projectId"
-            :active="active === 'site'"
+            :active="shown('site')"
             :running-turns="siteTurns"
             :refresh-tick="refreshTick"
             :member-names="memberNames"
@@ -791,28 +859,31 @@ defineExpose({
           />
           <PanelChangesHost
             v-if="mounted.has('changes')"
-            v-show="active === 'changes'"
+            v-show="shown('changes')"
             ref="changesRef"
-            :class="enterClass('changes')"
+            :class="[enterClass('changes'), sideClass('changes')]"
             :topic-id="topicId"
             :task-id="taskId"
             :read-only="topic?.status === 'archived' || taskReadOnly"
             :project-id="projectId"
-            :active="active === 'changes'"
+            :active="shown('changes')"
             :refresh-tick="refreshTick"
             :agent-name="agentName"
             :member-names="memberNames"
           />
           <PanelPreviewHost
             v-if="mounted.has('preview')"
-            v-show="active === 'preview'"
+            v-show="shown('preview')"
             :submit-question="submitQuestion"
-            :class="enterClass('preview')"
+            :ask-personal="askPersonal"
+            :class="[enterClass('preview'), sideClass('preview')]"
             :topic-id="conversationId"
             :project-id="projectId"
-            :active="active === 'preview'"
+            :active="shown('preview')"
             :refresh-tick="refreshTick"
             :agent-name="agentName"
+            :members="members"
+            :agent-handle="agentHandle"
             @loaded="markPreviewSeen"
             @locate="emit('locate', $event)"
             @open-file="openFileTab"
@@ -823,16 +894,16 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoomFilesPanelHost
             v-if="mounted.has('files')"
-            v-show="active === 'files'"
-            :class="enterClass('files')"
+            v-show="shown('files')"
+            :class="[enterClass('files'), sideClass('files')]"
             :topic-id="taskId ?? topicId"
             :seats-only="!!topic?.members_only"
             @open="openConversationFile"
           />
           <RoutinePanelHost
             v-if="mounted.has('routines')"
-            v-show="active === 'routines'"
-            :class="enterClass('routines')"
+            v-show="shown('routines')"
+            :class="[enterClass('routines'), sideClass('routines')]"
             :topic-id="topicId"
             :project-id="projectId"
             :room-title="topic?.title ?? ''"
@@ -844,9 +915,9 @@ defineExpose({
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
               v-if="f.document && mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
+              v-show="shown(fileKey(f.path))"
               :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
-              :class="enterClass(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic="null"
               :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
               :activity-tick="activityTick"
@@ -860,25 +931,36 @@ defineExpose({
             />
             <ProjectFileTab
               v-else-if="f.project && mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
-              :class="enterClass(fileKey(f.path))"
+              v-show="shown(fileKey(f.path))"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :project-id="projectId ?? topic?.project_id ?? null"
               :channel-id="topicId"
               :path="f.path"
               :lines="f.project.lines"
               @open-task="emit('open-card', $event)"
             />
+            <div
+              v-else-if="f.skill && mounted.has(fileKey(f.path))"
+              v-show="shown(fileKey(f.path))"
+              class="panel-skill"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
+            >
+              <slot name="skill" :id="f.skill.id" />
+            </div>
             <PanelPreviewHost
               v-else-if="mounted.has(fileKey(f.path))"
-              v-show="active === fileKey(f.path)"
+              v-show="shown(fileKey(f.path))"
               :submit-question="submitQuestion"
-              :class="enterClass(fileKey(f.path))"
+              :ask-personal="askPersonal"
+              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic-id="conversationId"
               :project-id="projectId"
               :path="f.path"
-              :active="active === fileKey(f.path)"
+              :active="shown(fileKey(f.path))"
               :refresh-tick="refreshTick"
               :agent-name="agentName"
+              :members="members"
+              :agent-handle="agentHandle"
               @locate="emit('locate', $event)"
               @mention-click="emit('mention-click', $event)"
             />
@@ -890,6 +972,12 @@ defineExpose({
 </template>
 
 <style scoped>
+.panel-skill {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
 .work-panel {
   display: flex;
   flex-direction: column;
@@ -942,6 +1030,11 @@ defineExpose({
 .tabbody > * {
   flex: 1 1 auto;
   min-width: 0;
+}
+/* 并排时右边那一格：排在后面，中间一道分隔线。 */
+.tabbody > .tabpane--side {
+  order: 1;
+  border-left: 1px solid var(--line);
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

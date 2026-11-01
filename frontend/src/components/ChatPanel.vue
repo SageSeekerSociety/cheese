@@ -7,11 +7,12 @@
 // one RoomMessage already draws around a row — a composable knows what the room
 // is doing, a view knows what it looks like — and the views under ./chat are
 // those pieces: header, timeline, new-message pill, error toast.
+import type { PostedMessage } from '../api/messages'
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 import type { ChapterRow } from '../types/chapters'
 
-import { computed, ref, watch } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
@@ -26,6 +27,7 @@ import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
 import BookmarkRail from './chat/BookmarkRail.vue'
@@ -36,6 +38,7 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import AloneReceipt from './room/AloneReceipt.vue'
 import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import RoomComposer from './room/RoomComposer.vue'
@@ -105,10 +108,13 @@ const props = withDefaults(
     chapterable?: boolean
     /** 已经钉成章节的那几条（block id）。 */
     chapterIds?: ReadonlySet<string>
+    /** 这段对话自己的状态（任务开着还是关了）：变了，输入框上「交给谁」那一行重问一次。 */
+    placeState?: string | null
   }>(),
   {
     alwaysSummon: false,
     handOff: true,
+    placeState: null,
     showComposer: false,
     prHeader: false,
     hideHeader: false,
@@ -169,6 +175,18 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
+// 我发的一条没交给任何 AI 队友、而这个频道里只有我（后端回这条消息时说的 `alone`）：在它
+// 下面说一声，只说这一次。之后又有人说话、换了对话，这一行就不在了。
+const aloneAfter = ref<Block | null>(null)
+watch(
+  () => props.conversationId ?? props.topic?.id,
+  () => (aloneAfter.value = null)
+)
+function onPosted(block: PostedMessage) {
+  mentionOutside.offer(block)
+  aloneAfter.value = block.alone ? block : null
+}
+
 // 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
 // 把时间线包进了 `.timeline-zone`，滚动框的直接父元素已经不是包含输入区的那一层了。
 const chatRoot = ref<HTMLElement | null>(null)
@@ -185,7 +203,7 @@ const panel = useChatPanel({
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
-  onPosted: mentionOutside.offer,
+  onPosted,
   emit: panelEmit,
 })
 
@@ -246,11 +264,20 @@ const taskLines = computed(
     )
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
+const NO_TASKS: TaskLine[] = []
+const tasksByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  for (const [blockId, tasks] of taskOrigins.value) {
+    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
 function tasksUnder(blockId: string): TaskLine[] {
-  return (taskOrigins.value.get(blockId) ?? []).flatMap((task) => taskLines.value.get(task.id) ?? [])
+  return tasksByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -305,6 +332,7 @@ const {
   togglePicker,
   bar,
   barBlock,
+  kbdNav,
   reactionPickerFor,
   timeShownId,
   arrived,
@@ -334,6 +362,7 @@ const {
   removePendingAtt,
   retryPendingAtt,
   replyLabel,
+  replyTarget,
   editingId,
   editSaving,
   canEdit,
@@ -364,6 +393,22 @@ const {
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
+
+// 回执只挂在我那一条还是最后一条的时候（同一次发出去的附件跟在它后面，不算别人说话）。
+const aloneReceipt = computed(() => {
+  const mine = aloneAfter.value
+  if (!mine) return null
+  const messages = panel.timeline.messages.value
+  const at = messages.findIndex((m) => m.id === mine.id)
+  if (at < 0) return null
+  return messages.slice(at + 1).every((m) => m.turn_id === mine.turn_id) ? mine : null
+})
+// 「回复并 @芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
+function askAbout(block: Block) {
+  aloneAfter.value = null
+  setReply(block)
+  composerRef.value?.addAgentMention?.()
+}
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
 // 打开的那一刻做一次，删掉了不会再长回来。
@@ -412,12 +457,25 @@ const barEditable = computed(() => !!barBlock.value && canEdit(barBlock.value))
 // keeps its own input bar for the root topic), so it stays exposed.
 const submitQuestion = createQuestionSubmit({
   topic: () => props.topic,
+  conversationId: () => props.conversationId,
   agentSeat: () => agentSeat.value,
   mentionPool: () => mentionPool.value,
   topicList: () => props.topicList,
   send,
 })
 defineExpose({ send, linkDown, submitQuestion })
+
+// 看图浮层要的三样（lib/chatImages）：这段对话里有哪些图、右侧面板、输入框，都在这一层。
+provide(CHAT_IMAGE_ACTIONS, {
+  gallery: () => imagePaths(rows.value),
+  openInPanel: (path, tool) => {
+    handOffImageTool(path, tool)
+    emit('open-file', path)
+  },
+  attach: (file) => void addFiles([file]),
+  // 输入框此刻在不在、收不收：和上面那条「回到输入框」的判据同一个。
+  canAttach: () => !!props.topic && !!props.showComposer && !props.composerClosed && !!composerRef.value,
+})
 
 // 一个键从房间里任何地方回到这一栏的输入框（见 useComposerShortcut）。
 useComposerShortcut({
@@ -496,6 +554,7 @@ useComposerShortcut({
             :bar="bar"
             :bar-block="barBlock"
             :bar-editable="barEditable"
+            :kbd-nav="kbdNav"
             :reaction-picker-for="reactionPickerFor"
             :loading-history="loadingHistory"
             :has-more="hasMore"
@@ -570,7 +629,10 @@ useComposerShortcut({
             @keep="keepFile"
           >
             <template #timeline-start><slot name="timeline-start" /></template>
-            <template #timeline-end><slot name="timeline-end" /></template>
+            <template #timeline-end>
+              <AloneReceipt v-if="aloneReceipt" :agent-name="agentName" @ask="askAbout(aloneReceipt)" />
+              <slot name="timeline-end" />
+            </template>
           </ChatTimeline>
         </ErrorBoundary>
         <!-- Floating bookmark rail at the top-left of the timeline; hidden when empty. -->
@@ -651,6 +713,9 @@ useComposerShortcut({
           :hear-voice="hearVoice"
           :busy-agents="busyAgents"
           :last-mate="lastMate"
+          :place="conversationId ?? topic.id"
+          :reply-to="replyTarget?.id ?? null"
+          :place-state="placeState ?? null"
           @send="onComposerSend"
           @clear-reply="clearReply"
           @clear-quote="clearDraftQuote"

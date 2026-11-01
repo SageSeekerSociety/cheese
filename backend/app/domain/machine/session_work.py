@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token
+from app.core.sandbox_auth import bind_resource_token, for_a_machine
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
@@ -174,6 +174,13 @@ async def _session_author(db, project, handle: str) -> str:
     return await AgentInstanceService(db).ensure_identity(teammate)
 
 
+async def session_author(db, project, handle: str) -> str:
+    """``_session_author``, for the caller of a sandbox's platform-socket
+    request (`domain.machine.caller`): what the session's launch credential
+    names, and so what the request acts as."""
+    return await _session_author(db, project, handle)
+
+
 async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
     """Tell a device's owner that an agent session started working on it,
     and whether it runs there over the whole machine (``whole``: a
@@ -271,11 +278,10 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
     """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's unpushed commits go to its branch, and
-    what is not committed is backed up as a snapshot. Whatever happens — the
-    machine is away, the command fails or outlasts ``PUSH_WAIT_S`` — the caller
-    goes on: what a lost checkpoint loses is what changed since the last
-    turn's, which the platform snapshot of that turn already holds. Answers
+    --all``): every task checkout's unpushed commits go to its branch. What is
+    not committed is not kept. Whatever happens — the machine is away, the
+    command fails or outlasts ``PUSH_WAIT_S`` — the caller goes on: what a lost
+    checkpoint loses is what was committed since the last turn's push. Answers
     whether it ran to the end, for the log.
 
     The session's executor runs only while the session is in use, so ``start``
@@ -325,8 +331,8 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
     (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
-    cleanup goes on whatever they answer: what a lost checkpoint loses is held
-    by the snapshot of the session's last turn."""
+    cleanup goes on whatever they answer: what a lost checkpoint does not push
+    goes with the machine."""
     rows = list(
         await session.scalars(
             select(AgentSession).where(
@@ -360,7 +366,8 @@ def _executor_env(env, *, api, token, project_id, topic_id, author, work_resourc
             if key.startswith(("CHEESE_", "GIT_"))
         },
         "CHEESE_API": api,
-        "CHEESE_TOKEN": token,
+        # The machine's copy, marked as held there (`sandbox_auth.for_a_machine`).
+        "CHEESE_TOKEN": for_a_machine(token) if token else "",
         # Empty for a sandbox in no project (``holder``).
         "CHEESE_PROJECT": str(project_id or ""),
         "CHEESE_TOPIC": str(topic_id),

@@ -1,0 +1,49 @@
+
+Running 2 tests using 1 worker
+
+  ✘  1 tests/guide-bubble-does-not-cover-text.spec.ts:157:1 › the guide bubble covers no line of text when there is room for it (3.3s)
+  ✘  2 tests/guide-bubble-does-not-cover-text.spec.ts:178:1 › with nowhere free it covers the least text, not the spot nearest the target (3.2s)
+
+
+  1) tests/guide-bubble-does-not-cover-text.spec.ts:157:1 › the guide bubble covers no line of text when there is room for it 
+
+    Error: the bubble must not cover any text line
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m0[39m
+    Received: [31m32640[39m
+
+      173 |   // There is free space, so the whole promise applies: no readable line loses
+      174 |   // any of its area to the bubble.
+    > 175 |   expect(Math.round(covered), "the bubble must not cover any text line").toBe(0);
+          |                                                                          ^
+      176 | });
+      177 |
+      178 | test("with nowhere free it covers the least text, not the spot nearest the target", async ({
+        at /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/e19d1636-8b9b-4b85-99c1-c1679776d5a6/.cheese/tasks/f02c90ed-1d9d-4a50-bc46-31231dd3a968/e2e/tests/guide-bubble-does-not-cover-text.spec.ts:175:74
+
+    Error Context: test-results/guide-bubble-does-not-cove-966c9-t-when-there-is-room-for-it/error-context.md
+
+  2) tests/guide-bubble-does-not-cover-text.spec.ts:178:1 › with nowhere free it covers the least text, not the spot nearest the target 
+
+    Error: the bubble must cover exactly as little as the least-covering spot
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBeLessThanOrEqual[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: <= [32m4800[39m
+    Received:    [31m32800[39m
+
+      226 |     Math.round(covered),
+      227 |     "the bubble must cover exactly as little as the least-covering spot",
+    > 228 |   ).toBeLessThanOrEqual(Math.round(least));
+          |     ^
+      229 | });
+      230 |
+        at /home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/e19d1636-8b9b-4b85-99c1-c1679776d5a6/.cheese/tasks/f02c90ed-1d9d-4a50-bc46-31231dd3a968/e2e/tests/guide-bubble-does-not-cover-text.spec.ts:228:5
+
+    Error Context: test-results/guide-bubble-does-not-cove-016ec-the-spot-nearest-the-target/error-context.md
+
+  2 failed
+    tests/guide-bubble-does-not-cover-text.spec.ts:157:1 › the guide bubble covers no line of text when there is room for it 
+    tests/guide-bubble-does-not-cover-text.spec.ts:178:1 › with nowhere free it covers the least text, not the spot nearest the target 

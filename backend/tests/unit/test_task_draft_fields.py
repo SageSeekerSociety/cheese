@@ -49,7 +49,7 @@ def test_registration_locking_guidance_and_attachments_land_in_their_fields():
     fields = drafts.from_agent(
         {
             "registration_start": "2026-11-01 08:00",
-            "team_locking": "报名通过后锁定",
+            "team_locking": "申请通过后锁定",
             "ai_guidance": "先让学生写清需求再写代码",
             "attachments": [12],
         },
@@ -82,7 +82,7 @@ def test_guidance_adds_to_what_the_task_has_and_names_the_way_of_helping():
     assert fields["teachingOwn"] is True
 
     cleared = drafts.from_agent(
-        {"ai_mode": "沿用空间设置", "ai_guidance": ""}, SPACE, {}
+        {"ai_mode": "沿用上层设置", "ai_guidance": ""}, SPACE, {}
     )
     assert cleared["teachingOwn"] is False
 
@@ -96,6 +96,7 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
         fields={
             "name": "eBPF 延迟分析",
             "submitterType": "TEAM",
+            "startMode": "APPLY",
             "teamLockingPolicy": "LOCK_ON_APPROVAL",
             "mentors": ["wangli"],
             "accessControlEnabled": True,
@@ -104,13 +105,102 @@ def test_a_draft_says_its_new_fields_in_芝士s_words():
         },
     )
 
-    view = drafts.agent_view(row, SPACE)
+    view = drafts.agent_view(row, SPACE, private=True)
 
-    assert "team_locking: 报名通过后锁定" in view
+    assert "team_locking: 申请通过后锁定" in view
     assert "mentors: 王立（wangli）" in view
     assert "access: 本校邮箱" in view
     assert "课题说明.pdf（files/12）" in view
     assert "可以当导师的人：王立（wangli）、陈浩（chenhao）" in view
+
+
+def test_stages_are_written_on_the_persons_clock_and_items_name_their_stage():
+    """A due date is on the person's clock, as the task's deadline is. A stage
+    the task has keeps its id; a new one gets an id at once, so items and lines
+    — which 芝士 points at a stage by its id or its name — carry the stage's id
+    and follow it however the stages are later reordered."""
+    fields = drafts.from_agent(
+        {
+            "stages": [
+                {"name": "需求分析", "description": "交需求", "due": "2026-11-01"},
+                {"id": "a1b2c3", "name": "实现"},
+            ],
+            "submission": [
+                {"name": "需求文档", "kind": "文字", "stage": "需求分析"},
+                {"name": "代码", "kind": "文件", "stage": "a1b2c3"},
+            ],
+            "rubric": [{"item": "正确", "points": 60, "stage": "实现"}],
+        },
+        SPACE,
+        {},
+    )
+
+    assert [s["name"] for s in fields["stages"]] == ["需求分析", "实现"]
+    # The last minute of 1 November in Shanghai.
+    assert fields["stages"][0]["dueAt"] == 1793548740000
+    assert fields["stages"][1]["dueAt"] is None
+    new_id = fields["stages"][0]["id"]
+    assert new_id and fields["stages"][1]["id"] == "a1b2c3"
+    assert [e["stage"] for e in fields["submissionSchema"]] == [new_id, "a1b2c3"]
+    assert fields["rubric"][0]["stage"] == "a1b2c3"
+
+    view = drafts.agent_view(
+        TaskDraft(id=5, user_id=1, space_id=7, version=1, fields=fields),
+        SPACE,
+        private=True,
+    )
+    assert f"  1. 需求分析（id: {new_id}）｜截止 2026-11-01 23:59｜交需求" in view
+    assert "  - 代码（文件）｜阶段 实现（a1b2c3）" in view
+    assert "  2. 实现（id: a1b2c3）｜截止 不设" in view
+
+
+def test_a_draft_says_which_items_name_a_stage_it_does_not_have():
+    row = TaskDraft(
+        id=6,
+        user_id=1,
+        space_id=7,
+        version=1,
+        fields={
+            "name": "分阶段",
+            "descriptionMarkdown": "要求",
+            "submitterType": "USER",
+            "rank": 2,
+            "stages": [{"id": "a1", "name": "一"}],
+            "submissionSchema": [{"prompt": "代码", "type": "FILE", "stage": None}],
+            "rubric": [{"item": "正确", "points": 1, "stage": "gone"}],
+        },
+    )
+
+    # No stage is the first stage's; a stage the draft does not have is not.
+    assert drafts.missing(row) == ["rubric"]
+
+
+def test_two_stages_of_one_name_cannot_be_named_by_it():
+    with pytest.raises(BadRequestError) as refused:
+        drafts.from_agent(
+            {
+                "stages": [{"name": "实验"}, {"name": "实验"}],
+                "rubric": [{"item": "正确", "points": 60, "stage": "实验"}],
+            },
+            SPACE,
+            {},
+        )
+
+    assert refused.value.args and "实验" in str(refused.value)
+
+
+def test_an_item_naming_a_stage_the_draft_does_not_have_is_refused():
+    with pytest.raises(BadRequestError) as refused:
+        drafts.from_agent(
+            {
+                "stages": [{"id": "a1b2c3", "name": "实现"}],
+                "rubric": [{"item": "正确", "points": 60, "stage": 2}],
+            },
+            SPACE,
+            {},
+        )
+
+    assert "实现（a1b2c3）" in str(refused.value)
 
 
 def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():
@@ -122,11 +212,11 @@ def test_a_draft_nothing_is_written_in_says_so_and_takes_the_first_task():
         fields={"submitterType": "USER", "submissionSchema": []},
     )
 
-    assert "新题目，尚未填写" in drafts.agent_view(row, SPACE)
+    assert "新题目，尚未填写" in drafts.agent_view(row, SPACE, private=True)
     assert "第一道题写进它" in drafts.scene(row)
 
     row.fields = {**row.fields, "name": "课题 A"}
-    assert "尚未填写" not in drafts.agent_view(row, SPACE)
+    assert "尚未填写" not in drafts.agent_view(row, SPACE, private=True)
 
 
 def test_the_edit_page_changes_the_task_it_is_open_on():
@@ -136,3 +226,25 @@ def test_the_edit_page_changes_the_task_it_is_open_on():
 
     assert "修改题目页" in told and "「Lab 3 缓存模拟器」" in told
     assert "不新建草稿" in told
+
+
+def test_cheese_says_a_task_started_directly_locks_its_team_when_it_starts():
+    """No application on a task started directly: the team locks when it
+    starts, and that is what 芝士 reads back."""
+    row = TaskDraft(
+        id=6,
+        user_id=1,
+        space_id=7,
+        version=1,
+        fields={
+            "name": "eBPF 延迟分析",
+            "submitterType": "TEAM",
+            "startMode": "DIRECT",
+            "teamLockingPolicy": "LOCK_ON_APPROVAL",
+        },
+    )
+
+    view = drafts.agent_view(row, SPACE, private=True)
+
+    assert "team_locking: 开始做这道题后锁定" in view
+    assert "申请通过" not in view and "报名通过" not in view

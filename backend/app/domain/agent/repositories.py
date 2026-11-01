@@ -184,6 +184,13 @@ class AgentTurnRepository:
     async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
         return await self._session.get(AgentTurn, turn_id)
 
+    async def get_locked(self, turn_id: uuid.UUID) -> AgentTurn | None:
+        """``get``, row-locked until the caller's transaction ends (see
+        ``lock_open``)."""
+        return await self._session.get(
+            AgentTurn, turn_id, with_for_update=True, populate_existing=True
+        )
+
     async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
         """Stamp that admission refused this turn for spent credits (#715).
 
@@ -301,18 +308,38 @@ class AgentTurnRepository:
         )
         return set((await self._session.execute(stmt)).scalars())
 
+    async def lock_open(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Of these turns, the ones still open, row-locked until the caller's
+        transaction ends. Whoever decides a turn's fate — the sweep closing it,
+        recovery taking it up again — holds its row while deciding, so the two
+        are serialized and the second sees what the first did."""
+        ids = list(turn_ids)
+        if not ids:
+            return set()
+        stmt = (
+            select(AgentTurn.id)
+            .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
+            .with_for_update()
+        )
+        return set((await self._session.execute(stmt)).scalars())
+
     async def close(
-        self, turn_ids: Iterable[uuid.UUID], at: datetime
+        self,
+        turn_ids: Iterable[uuid.UUID],
+        at: datetime,
+        *,
+        reason: str | None = None,
     ) -> set[uuid.UUID]:
         """End these intervals. Closing is not deleting — the ids stay readable
-        next to the blocks that carry them."""
+        next to the blocks that carry them. ``reason`` is the closer naming
+        itself (``models.STOP_*``): the time says when, and only this says who."""
         ids = list(turn_ids)
         if not ids:
             return set()
         closed = await self._session.execute(
             update(AgentTurn)
             .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
-            .values(stopped_at=at)
+            .values(stopped_at=at, stop_reason=reason)
             .returning(AgentTurn.id, AgentTurn.conversation_id)
         )
         rows = closed.all()
@@ -365,7 +392,12 @@ class AgentTurnRepository:
         return set(rows)
 
     async def close_one(
-        self, topic_id: uuid.UUID, turn_id: uuid.UUID, at: datetime
+        self,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        at: datetime,
+        *,
+        reason: str | None = None,
     ) -> int:
         """End exactly one DELIVERED open interval, the one the Stop names (FB-56).
 
@@ -398,7 +430,7 @@ class AgentTurnRepository:
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
-            .values(stopped_at=at)
+            .values(stopped_at=at, stop_reason=reason)
             .returning(AgentTurn.conversation_id)
         )
         conversations = list(closed.scalars())

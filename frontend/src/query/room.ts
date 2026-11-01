@@ -4,7 +4,7 @@ import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRo
 import type { ChannelPin } from '@/types/channels'
 import type { ChapterRow } from '@/types/chapters'
 import type { TopicEnvironment } from '@/types/compute'
-import type { Thread, ThreadRow } from '@/types/threads'
+import type { Thread, ThreadLists, ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
@@ -52,14 +52,15 @@ export function chaptersQuery(conversationId: string) {
   })
 }
 
-/** 频道的支线，最近有回复的在前：概览里那一格和主线消息下面那一行读同一份。 */
+/** 频道的支线，两栏：开着的（最近有回复的在前）和收起来的（最近收的在前）。概览里
+ *  那一格和主线消息下面那一行读同一份 —— 后者只用 `open` 那一栏。 */
 export function threadsQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomThreads(roomId),
-    queryFn: (): Promise<ThreadRow[]> =>
+    queryFn: (): Promise<ThreadLists> =>
       fromSnapshot(keys.roomThreads(roomId), async () => {
-        const rows = await listThreads(roomId, 100)
-        return Array.isArray(rows) ? rows : []
+        const lists = await listThreads(roomId, 100)
+        return lists && Array.isArray(lists.open) ? lists : { open: [], recycled: [] }
       }),
   })
 }

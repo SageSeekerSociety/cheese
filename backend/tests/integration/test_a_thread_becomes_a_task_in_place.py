@@ -155,12 +155,15 @@ def test_the_message_shows_the_same_conversation_as_a_task(client, stub_hooks):
     root, thread, _ = _thread_with_a_turn(client, room)
     alice = session_auth_headers("alice")
 
-    listed = client.get(f"/topics/{room}/threads", headers=alice).json()["data"]
+    listed = client.get(f"/topics/{room}/threads", headers=alice).json()["data"]["open"]
     assert [t["id"] for t in listed] == [thread]
 
     client.post(f"/blocks/{root['id']}/upgrade", headers=alice)
 
-    assert client.get(f"/topics/{room}/threads", headers=alice).json()["data"] == []
+    assert (
+        client.get(f"/topics/{room}/threads", headers=alice).json()["data"]["open"]
+        == []
+    )
     main_line = client.get(f"/topics/{room}/blocks", headers=alice).json()["data"][
         "data"
     ]
@@ -204,7 +207,7 @@ def test_its_teammate_turns_the_thread_on_someones_word(client, stub_hooks):
         made = client.post(
             f"/topics/{thread}/teammate-tasks",
             json={"title": "登录验证码", "here": True},
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
     finally:
         if bearer is not None:
@@ -232,7 +235,7 @@ def test_asking_to_open_here_inside_a_task_hands_that_task_back(client, stub_hoo
         again = client.post(
             f"/topics/{thread}/teammate-tasks",
             json={"title": "再做一遍", "here": True},
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
         listed = client.get(
             f"/topics/{room}/tasks", headers=session_auth_headers("alice")

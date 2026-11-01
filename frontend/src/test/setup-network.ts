@@ -26,6 +26,15 @@ globalThis.fetch = async (input, init) => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  // Every composer asks who its draft is for (useAddressing). A test that is not
+  // about that is told: nobody in particular, in a channel.
+  if (new URL(url, 'http://test').pathname.endsWith('/messages/addressing')) {
+    const data = { agent: null, reason: null, people: [], place: 'channel', task_status: null }
+    return new Response(JSON.stringify({ code: 200, message: 'ok', data }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
   return trappedFetch(input, init)
 }
 

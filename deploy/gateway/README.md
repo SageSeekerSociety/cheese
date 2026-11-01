@@ -397,7 +397,7 @@ the answer reports; `patch_deepseek_search_cost.py` makes it count
 `test_deepseek_search_cost.py` holds the charge to tokens plus each search. A
 row that cannot search needs no price.
 
-The platform's own web search (`cheese_web_search`, backend `/web-search`) is
+The platform's own web search (`cheese_web(action=search)`, backend `/web-search`) is
 asked here too, at `/v1/search/deepseek-search` on the caller's own virtual
 key: `search_tools` in `config.yaml` names DeepSeek's search API, which the
 pinned LiteLLM has no provider for, so `deepseek_search.py` is one and

@@ -201,6 +201,8 @@ class AcceptCardOut(BaseModel):
     change_body: str | None = None
     status: AcceptStatus
     decided_by: str | None
+    #: ``decided_by``'s own 芝士 decided for them.
+    decided_by_assistant: bool = False
     decided_at: datetime | None
     note: str
     #: 这条 note 是「停住了」(error) 还是「还在走」(info)，空 note 是 None。

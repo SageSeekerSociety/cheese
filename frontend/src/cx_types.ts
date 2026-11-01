@@ -37,7 +37,7 @@ export interface Project {
   team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
   team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
   /** 我在这个项目里的位置和能做的事（#3830），按钮按它给，后端再判一次。 */
-  my_role?: 'owner' | 'admin' | 'member' | 'mentor' | null
+  my_role?: 'owner' | 'admin' | 'member' | null
   my_permissions?: string[]
   pending_transfer?: { id: string; to_handle: string } | null
   /** 所有者归档这个项目的时间；没归档是 null。 */
@@ -51,6 +51,12 @@ export interface Project {
    * catalog，所以服务端加第五个壳不需要前端发版。见 `@/lib/shell`。
    */
   shell?: Shell
+  /** 代码仓库从题目第几版的起始代码开始、放好了没有（只在单个项目那一行里有）；
+   *  没有起始代码是 null。`error` 是没放成的原因（`{ key, params }`）。 */
+  starter?: { revision: number; state: 'pending' | 'done' | 'failed'; error: unknown } | null
+  /** 项目来自的那道题：在哪个空间、叫什么、现在第几版（只在单个项目那一行里有）。
+   *  看的人看不到这道题的 `题目/` 时是 null。 */
+  task?: { id: number; space_id: number; name: string; version: number | null } | null
 }
 
 export interface ProjectSite {
@@ -176,6 +182,8 @@ export interface BlockMeta extends AskBlockMeta {
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
   quoted_context?: import('./lib/quotedContext').QuotedContext
+  // 作者自己的芝士替他写的（后端 `meta.by_assistant`）：署的是他的名，名字旁边标「芝士代发」。
+  by_assistant?: boolean
 }
 
 export interface ChecklistMeta {
@@ -221,10 +229,24 @@ export interface Block {
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
   // translates/classifies from this; content is the baked-text fallback.
   meta?: BlockMeta | null
+  // How a platform line is drawn (kind=event), decided by the backend's one
+  // table (`notice_meta.shown_as`); absent on anything else.
+  shown_as?: ShownAs | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   created_at: string
 }
+
+/**
+ * 一行平台事件在对话里看成什么（后端 `notice_meta.shown_as`）。
+ * - `hidden`：不给人看。
+ * - `result`：附在 AI 队友这次工作的消息下面，这次改了什么。
+ * - `card`：AI 队友交出来的一样东西，卡片。
+ * - `for_agent`：平台替 AI 队友说，要人来处理。
+ * - `happening`：频道里发生的事，居中一行。
+ * - `person`：一个人说的话（退回时写的理由）。
+ */
+export type ShownAs = 'hidden' | 'result' | 'card' | 'for_agent' | 'happening' | 'person'
 
 // Standard API envelope: {"code":200,"message":"ok","data":<payload>}
 export interface ApiEnvelope<T> {
@@ -282,6 +304,7 @@ export interface RoomTask {
   reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
   reporter_handle?: string | null // 提需求、需要关注结果的人，不必是下一步的行动人
   created_by?: string | null
+  created_by_assistant?: boolean // created_by 自己的芝士替他建的
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
   document_id?: string | null // 实况文档；第一次打开任务时才建
@@ -423,6 +446,9 @@ export type WsServerFrame =
   // The room's session state moved (a task started or finished, or the session
   // reported its model); the same shape `GET /topics/{id}/agent/control` answers.
   | { type: 'agent_control'; state: AgentControlState }
+  // 平台运行中记下的一件事（运行记录）：不进对话，现场和输入框上方那一行读它。
+  // `at`/`stream`：它在这个后端进程发出的帧里排第几（`room_state` 同一套数）。
+  | { type: 'run_record'; record: Block; at: number; stream: string }
   | import('./types/live').LiveFrame
   | import('./types/roomSocket').RoomStateFrame
   | import('./types/threads').ThreadActivityFrame
@@ -449,6 +475,9 @@ export interface ChatMessageBody {
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // Uploaded first, referenced here.
   quoted_context?: import('./lib/quotedContext').QuotedContext
+  // 发的人看到这条是「交给」AI 队友的。后端读到它此刻已经不交给任何一位时不发，回 409
+  // `AddressingChanged`，带着此刻的收件人。它不让任何一条消息叫醒谁（不变量 I13）。
+  expects_agent?: boolean
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
@@ -509,6 +538,8 @@ export interface ProjectInvitation {
   project_id: string
   invitee_handle: string
   inviter_handle: string
+  /** 邀请人自己的芝士替他发的。 */
+  invited_by_assistant?: boolean
   status: 'pending' | 'accepted' | 'declined' | 'revoked'
   created_at: string
   responded_at?: string | null
@@ -618,6 +649,14 @@ export interface FileContent {
   // null when the file must not be edited as text: `binary` (a text editor would
   // corrupt it on save) or `too_large` (never sent — it would freeze the tab).
   content: string | null
+  // The copy a READER sees: the whole text when the file fits, its opening
+  // PREVIEW_TEXT_BYTES otherwise, null only when the bytes are not text. Viewers
+  // take this, not `content` — an editor keeps taking `content`, which stays whole
+  // or absent so a save can never write a prefix back over the file.
+  // Optional only because callers that already hold the whole text (and the
+  // fixtures that stand in for them) need not repeat it; read it through
+  // `fileKind.readerText`, which falls back to `content`.
+  head?: string | null
   // Content id to echo back on save; a mismatch means someone wrote in between.
   // Present even for `too_large`; null means the file is gone.
   version: string | null
@@ -628,7 +667,7 @@ export interface FileContent {
   editable?: boolean
 }
 
-export type { PreviewInfo } from './types/preview'
+export type { PreviewInfo, PreviewSnapshot, PreviewWakeAnswer, PreviewWakeStatus } from './types/preview'
 
 // GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
 // answered without opening any of it. The 工作面板 offers a tab only where the
@@ -671,8 +710,6 @@ export interface Notification {
   read_at: string | null
   created_at: string
 }
-
-// ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
 export interface EnvironmentConfig {
   setup_script: string

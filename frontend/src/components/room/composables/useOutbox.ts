@@ -28,6 +28,9 @@ import { onScopeDispose, ref } from 'vue'
  */
 const SEND_TIMEOUT_MS = 30_000
 
+/** 发送在路上超过这么久才显示「发送中…」与半透明，正常几百毫秒内回来的发送不闪灰字。 */
+export const SLOW_SEND_MS = 500
+
 /** 连不上时，下一次再试之前等多久（逐次加长，封顶）。 */
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15_000]
 
@@ -41,7 +44,7 @@ export function useOutbox(options: {
   /** POST 这一条；兑现为落库的那一块。后端拒了就抛 `SendRefused`。 */
   send: (message: Outgoing, signal: AbortSignal) => Promise<Block>
   /** 落库的那一块回来了：画到时间线上（socket 上可能也会再来一遍，由时间线去重）。 */
-  onDelivered: (block: Block) => void
+  onDelivered: (block: Block, dimmed?: boolean) => void
 }) {
   const outbox = ref<Outgoing[]>([])
   let running = false
@@ -76,11 +79,16 @@ export function useOutbox(options: {
     const controller = new AbortController()
     inFlight = controller
     const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
+    const slowTimer = setTimeout(() => {
+      const live = outbox.value.find((o) => o.clientId === item.clientId)
+      if (live && live.state === 'sending') live.slow = true
+    }, SLOW_SEND_MS)
     try {
       const block = await options.send(item, controller.signal)
       retryAttempt = 0
+      const dimmed = !!outbox.value.find((o) => o.clientId === item.clientId)?.slow
       outbox.value = outbox.value.filter((o) => o.clientId !== item.clientId)
-      options.onDelivered(block)
+      options.onDelivered(block, dimmed)
       return 'next'
     } catch (error) {
       if (!outbox.value.some((o) => o.clientId === item.clientId)) return 'next'
@@ -91,9 +99,11 @@ export function useOutbox(options: {
       }
       // 链路问题（含超时、切走时被叫停）：回到队列，同一个 id 过一会儿再发。
       item.state = 'queued'
+      item.slow = true
       return 'stop'
     } finally {
       clearTimeout(timer)
+      clearTimeout(slowTimer)
       if (inFlight === controller) inFlight = null
     }
   }
@@ -118,7 +128,7 @@ export function useOutbox(options: {
   }
 
   /** 排一条，立刻交出去。返回它的 `client_id`（也是这次发送的 `request_id`）。 */
-  function enqueue(message: Pick<Outgoing, 'content' | 'replyTo' | 'atts' | 'quotedContext'>): string {
+  function enqueue(message: Pick<Outgoing, 'content' | 'replyTo' | 'atts' | 'quotedContext' | 'expectsAgent'>): string {
     const clientId = crypto.randomUUID()
     outbox.value.push({ clientId, ...message, state: 'queued' })
     void flush()
@@ -126,13 +136,13 @@ export function useOutbox(options: {
   }
 
   /** 落库的那一块到了（socket 上的回声，或重连后读回的历史）：本地这条有真身了。 */
-  function settle(block: Block): boolean {
+  function settle(block: Block): 'dimmed' | 'fast' | false {
     const clientId = (block.meta as Record<string, unknown> | null)?.client_id
     if (typeof clientId !== 'string') return false
     const i = outbox.value.findIndex((o) => o.clientId === clientId)
     if (i < 0) return false
-    outbox.value.splice(i, 1)
-    return true
+    const [removed] = outbox.value.splice(i, 1)
+    return removed?.slow ? 'dimmed' : 'fast'
   }
 
   function retry(clientId: string) {

@@ -315,7 +315,7 @@ def test_a_teammates_own_message_calls_nobody(client, stub_hooks):
     said = client.post(
         f"/topics/{thread}/messages",
         json={"request_id": str(uuid.uuid4()), "content": "我这边查完了"},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert said.status_code == 200, said.text
     _settle(client, thread)

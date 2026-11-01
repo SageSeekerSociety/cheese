@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import FRESH_TASKS_KEY
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import (
     Task,
@@ -32,6 +33,10 @@ from app.domain.room_task.models import (
     TaskTitleSource,
     people_of,
 )
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 def _uuids(name: str, values: Collection[uuid.UUID] | None):
@@ -95,7 +100,21 @@ class TaskRepository:
         self._session = session
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
-        return await self._session.get(Task, task_id)
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("task_row", task_id))
+            if found:
+                return cached
+        task = await self._session.get(Task, task_id)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("task_row", task_id),
+                task,
+                tables=frozenset({"tasks"}),
+            )
+        return task
 
     async def add(
         self,
@@ -110,10 +129,16 @@ class TaskRepository:
         contributor_handles: list[str] | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
         task_id: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> Task:
         """Create a task; its service assigns the branch before checkout."""
+        resolved_id = task_id if task_id is not None else uuid.uuid4()
+        if task_id is None and _can_cache(self._session):
+            self._session.sync_session.info.setdefault(FRESH_TASKS_KEY, set()).add(
+                resolved_id
+            )
         task = Task(
-            **({"id": task_id} if task_id is not None else {}),
+            id=resolved_id,
             project_id=project_id,
             room_id=room_id,
             number=await take_number(self._session, project_id, Numbered.task),
@@ -126,7 +151,8 @@ class TaskRepository:
             created_by=created_by,
         )
         self._session.add(task)
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
         return task
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
@@ -135,6 +161,38 @@ class TaskRepository:
         that has since been deleted is a line it cannot write, not an error."""
         if not task_ids:
             return []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            cached_tasks: list[Task] = []
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_row", tid))
+                if found:
+                    if cached is not None:
+                        cached_tasks.append(cached)
+                else:
+                    missing.append(tid)
+            if not missing:
+                cached_tasks.sort(key=lambda t: (t.created_at, t.id))
+                return cached_tasks
+            stmt = (
+                select(Task)
+                .where(Task.id.in_(missing))
+                .order_by(Task.created_at, Task.id)
+            )
+            fetched = list((await self._session.scalars(stmt)).all())
+            by_id = {t.id: t for t in fetched}
+            for tid in missing:
+                remember(
+                    self._session,
+                    ("task_row", tid),
+                    by_id.get(tid),
+                    tables=frozenset({"tasks"}),
+                )
+            all_tasks = cached_tasks + fetched
+            all_tasks.sort(key=lambda t: (t.created_at, t.id))
+            return all_tasks
         stmt = (
             select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
         )
@@ -380,6 +438,17 @@ class TaskRepository:
             )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_rooms(self, room_ids: Collection[uuid.UUID]) -> list[Task]:
+        """Every task across ``room_ids``, oldest first, in one query."""
+        if not room_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(Task.room_id.in_(list(room_ids)))
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_project(
         self,
         project_id: uuid.UUID,
@@ -387,6 +456,7 @@ class TaskRepository:
         accepted: bool | None = None,
         rooms: Collection[uuid.UUID] | None = None,
         status: str | None = None,
+        open_or_touched_since: datetime | None = None,
     ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
@@ -411,6 +481,17 @@ class TaskRepository:
             stmt = stmt.where(Task.room_id.in_(list(rooms)))
         if status is not None:
             stmt = stmt.where(Task.status == TaskStatus(status))
+        if open_or_touched_since is not None:
+            since = open_or_touched_since
+            stmt = stmt.where(
+                or_(
+                    Task.status == TaskStatus.open,
+                    Task.created_at >= since,
+                    Task.updated_at >= since,
+                    Task.accepted_at >= since,
+                    Task.closed_at >= since,
+                )
+            )
         stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
 

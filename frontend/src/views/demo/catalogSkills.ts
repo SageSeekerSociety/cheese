@@ -104,7 +104,7 @@ const SKILL_HEALTH = Object.fromEntries(
 
 /** 市场的一份目录：技能 / 插件各一条能装的，外加一条只读的 MCP。`plugin_total` 比摆出来
  *  的多 —— 插件页签那句「列出前 N 条，共 M 条」要用它。名字、说明就是卡片上的两行。 */
-const MARKET = {
+export const SKILL_MARKET = {
   skills: [
     {
       name: 'pdf',
@@ -228,7 +228,7 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
     component: SkillMarket,
     // 页签与 `v-icon` 是 Vuetify 的；卡片上的字走全局 `t()`。
     needs: UI_T,
-    args: { market: MARKET, deviceId: 'dev1' },
+    args: { market: SKILL_MARKET, deviceId: 'dev1' },
     states: [
       {
         name: '技能页签，有货品',

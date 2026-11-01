@@ -47,7 +47,7 @@
   "docOperationNoReceipt": "文档操作没有完整回执，不能重新应用",
   "docReceiptNeedsWriter": "操作回执需要已认证的写入者",
   "docReceiptNotFound": "没有这份文档操作回执",
-  "docReplaceHitsSuggestions": "文档里还有 {n} 处别人留下、还没处理的修改建议，整份覆盖会连它们一起丢掉。先让人处理这些建议，或者改用 cheese_doc_edit 逐处修改。",
+  "docReplaceHitsSuggestions": "文档里还有 {n} 处别人留下、还没处理的修改建议，整份覆盖会连它们一起丢掉。先让人处理这些建议，或者改用 cheese_doc(action=edit) 逐处修改。",
   "docRestoreNeedsWriter": "恢复文档需要已认证的写入者",
   "docVersionNotFound": "没有这份历史文档版本",
   "docWriterGone": "写入者账号已失效",
@@ -78,7 +78,7 @@
   "taskDocParticipantsOnly": "只有任务的负责人和协作者可以修改这个任务的文档，意见请在频道里提",
   "attachmentOriginalReadOnly": "对话里发来的原件不能修改，可以基于它新建一份",
   "docAgentDraftNeedsBlankOverview": "只能为还空着的项目总览起草",
-  "docWholeWriteNeedsBlank": "这份文档已有内容，只能逐处修改（cheese_doc_edit），不能整篇覆盖",
+  "docWholeWriteNeedsBlank": "这份文档已有内容，只能逐处修改（cheese_doc(action=edit)），不能整篇覆盖",
   "docTeamMembersOnly": "只有团队成员能打开团队的文档",
   "docTeamNotForAgent": "AI 队友读不到这份团队文档",
   "docTeamNoAgent": "团队文档里不能找 AI 队友",
@@ -91,5 +91,6 @@
   "docShareNotAllowed": "项目文档需要「分享文档」权限才能分享；团队和个人的文档只有创建者和团队管理员能分享",
   "docShareGone": "这条分享链接已失效",
   "docShareAppElsewhere": "这个小程序属于另一份文档，没有随这份文档分享",
-  "docShareImageUnavailable": "这张图片没有随文档分享"
+  "docShareImageUnavailable": "这张图片没有随文档分享",
+  "commentAnchorOtherFile": "这次的指认说的是另一份文件"
 }

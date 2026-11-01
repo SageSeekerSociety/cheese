@@ -29,10 +29,14 @@ from app.core.db import Base
 from app.domain.block.indexed_rows import (
     AGENT_CHECK_ROWS,
     COALESCED_ROWS,
+    CONSUMED_TURN,
+    CONSUMED_TURN_ROWS,
     EID,
     FAILED_TURN_ROWS,
     LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
+    PROMPTED_TURN,
+    PROMPTED_TURN_ROWS,
     QUESTION_ROWS,
     QUEUED_MESSAGE_ROWS,
     SHOWN_ROWS,
@@ -121,6 +125,13 @@ READ_FAILED_META_KEY = "read_failed"
 # 与 `consumed_turn` 成对：一个说「这是说给芝士的」，一个说「哪一轮已经读过了」。
 AGENT_NOTICE_META_KEY = "agent_notice"
 
+# A person's own 芝士 wrote this in their name, through a delegated credential
+# (`Actor.by_assistant`): the author is the person, whose authority it acted
+# with, and this says it was not the person typing. The room shows it beside
+# the name and the agents reading the room are told (`harness/lines.py`); a
+# message the person sent themselves has no such key.
+BY_ASSISTANT_META_KEY = "by_assistant"
+
 # When the author last edited this message (ISO-8601). Its presence is what the
 # room reads as 「已编辑」; see `app.domain.block.editing`.
 EDITED_AT_META_KEY = "edited_at"
@@ -161,6 +172,11 @@ def read_failed(block: "Block") -> str | None:
 def agent_notice(block: "Block") -> str | None:
     """What this block says to 芝士, or None when it says nothing to it."""
     return (block.meta or {}).get(AGENT_NOTICE_META_KEY) or None
+
+
+def by_assistant(block: "Block") -> bool:
+    """Whether the author's own 芝士 wrote this for them."""
+    return bool((block.meta or {}).get(BY_ASSISTANT_META_KEY))
 
 
 def prompt_attempts(block: "Block") -> int:
@@ -283,6 +299,18 @@ class Block(UuidPk, Timestamps, Base):
         # Whether a conversation already holds a hook event id: asked for every
         # room event that lands (`has_any_eid`), and almost always answered no.
         Index("ix_blocks_conversation_eid", "conversation_id", EID),
+        # The messages a turn was handed or read, looked up by turn id for the
+        # few failed turns a room waits on (`waits._turn_owners`).
+        Index(
+            "ix_blocks_prompted_turn",
+            PROMPTED_TURN,
+            postgresql_where=PROMPTED_TURN_ROWS,
+        ),
+        Index(
+            "ix_blocks_consumed_turn",
+            CONSUMED_TURN,
+            postgresql_where=CONSUMED_TURN_ROWS,
+        ),
         Index(
             "ix_blocks_coalesced",
             "conversation_id",

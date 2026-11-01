@@ -188,13 +188,14 @@
     "spaceTasks": "题目",
     "taskSubmissions": "我的提交",
     "taskSubmit": "提交",
-    "taskParticipants": "领取者",
+    "taskParticipants": "参与者",
     "taskData": "数据",
     "taskEdit": "编辑题目",
     "spaceAnalytics": "数据分析",
     "projectWorkspace": "项目工作台",
     "dm": "私聊",
     "artifact": "产物",
-    "member": "成员"
+    "member": "成员",
+    "taskVersions": "历史版本"
   }
 }

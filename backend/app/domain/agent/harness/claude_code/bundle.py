@@ -11,11 +11,14 @@ from pathlib import Path
 from app.domain.agent.harness.driven import bundle
 
 #: 会话机上也要用的平台模块。都是纯的：没有数据库、没有 IO，只有记忆长什么样、
-#: 两份合成哪一份。
+#: 两份合成哪一份，以及别人看到的 private 调用长什么样（现场实时显示和存下的
+#: 记录用同一个，`session_record.privacy.hidden_input`）。
 MEMORY_MODULES = (
     "domain/memory/__init__.py",
     "domain/memory/files.py",
     "domain/memory/tree.py",
+    "domain/session_record/__init__.py",
+    "domain/session_record/privacy.py",
 )
 
 
@@ -26,6 +29,8 @@ def build() -> bytes:
         (
             "domain/agent/harness/claude_code/journal.py",
             "domain/agent/harness/driven/lifecycle.py",
+            "domain/agent/harness/claude_code/stuck.py",
+            "domain/agent/harness/claude_code/processes.py",
             "domain/agent/harness/claude_code/runner.py",
             "domain/agent/harness/claude_code/entry.py",
         ),

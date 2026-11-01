@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.services import ProjectService
@@ -187,14 +188,19 @@ async def test_sql_device_service_persists_the_flow_in_the_database(
             team_id=await enrollment_team(sql_device_service(session), owner_id),
         )
         await session.commit()
-        device_id, token = device.device_id, device.token
+        device_id = device.device_id
 
     async with business_db_factory() as session:
         service = sql_device_service(session)
         polled = await service.poll(code)
+        await session.commit()
         assert polled["status"] == "approved"
-        assert polled["token"] == token
+        token = polled["token"] or ""
         # 同一个 token 能反查回这台设备
         verified = await service.verify_token(token)
         assert verified is not None
         assert verified.device_id == device_id
+        # 库里留下的只有摘要：拿它当令牌认不出任何设备
+        stored = await session.get(DeviceRow, device_id)
+        assert stored is not None and stored.token_digest not in (None, token)
+        assert await service.verify_token(stored.token_digest or "") is None

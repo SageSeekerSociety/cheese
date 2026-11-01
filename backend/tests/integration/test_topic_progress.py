@@ -44,7 +44,7 @@ def _room(client) -> tuple[str, dict]:
     ).json()["data"]
     thread = in_thread(client, t["id"], "user-1")
     token = mint_scoped_token(project_id=p["id"], topic_id=thread)
-    return thread, {"X-Cheese-Token": token}
+    return thread, {"Authorization": f"Bearer {token}"}
 
 
 def _write(client, topic_id: str, headers: dict, todos: list[dict], **extra):
@@ -65,7 +65,7 @@ def _task(client, room_id: str) -> tuple[str, dict]:
     with."""
     task = open_task(client, room_id, owner="user-1")
     token = mint_scoped_token(project_id=task["project_id"], topic_id=task["id"])
-    return task["id"], {"X-Cheese-Token": token}
+    return task["id"], {"Authorization": f"Bearer {token}"}
 
 
 def _chat(client, topic_id: str) -> list[dict]:
@@ -174,7 +174,7 @@ def test_the_last_write_puts_the_result_under_the_list(client):
 
 
 def test_text_written_over_a_checklist_is_no_longer_one(client):
-    """The agent can still edit its checklist message by hand (`chat_edit`).
+    """The agent can still edit its checklist message by hand (`cheese_chat(action=edit)`).
     What it writes is its own words, shown as written, and the next
     `todo_write` starts a fresh list rather than overwrite them."""
     topic, headers = _room(client)
@@ -297,7 +297,7 @@ def test_a_malformed_checklist_changes_nothing(client, todos):
 def test_a_caller_the_room_does_not_admit_writes_nothing(client):
     topic, headers = _room(client)
     other, _ = _room(client)
-    anonymous = {"X-Cheese-Token": ""}
+    anonymous = {"Authorization": ""}
     assert _write(client, topic, anonymous, PLAN).status_code == 401
     # The development token opens rooms but is nobody, and a list needs a writer.
     assert _write(client, topic, {}, PLAN).status_code == 403
@@ -471,12 +471,13 @@ def test_a_person_whose_role_does_not_speak_posts_no_checklist(client):
     """A project may take speaking away from a role; a checklist is speaking."""
     room = _shared_room(client)
     project = client.get(f"/topics/{room}").json()["data"]["project_id"]
-    grants = client.get(
+    roles = client.get(
         f"/projects/{project}/roles", headers=session_auth_headers("alice")
-    ).json()["data"]["grants"]
-    changed = client.put(
-        f"/projects/{project}/roles",
-        json={"grants": {"member": [g for g in grants["member"] if g != "speak"]}},
+    ).json()["data"]["roles"]
+    member = next(r for r in roles if r["key"] == "member")
+    changed = client.patch(
+        f"/projects/{project}/roles/member",
+        json={"permissions": [g for g in member["permissions"] if g != "speak"]},
         headers=session_auth_headers("alice"),
     )
     assert changed.status_code == 200, changed.text

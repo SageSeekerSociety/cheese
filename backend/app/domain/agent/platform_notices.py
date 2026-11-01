@@ -158,6 +158,22 @@ def memory_changed_notice(
     return line, meta
 
 
+def memory_handed_back_notice(kept: dict[str, str]) -> str:
+    """说给一个人私聊里的 agent 的那句：他的会话上次在别的房间写进他 private 记
+    忆的几版，没有收进去（平台那一份也动过、或者超了单条上限、或者是没处理完的
+    旁路副本），原文附在这里。那棵树已经离开了那个座位，没有旁路文件可读
+    （`queries._say_handed_back`）。"""
+    copies = "\n\n".join(
+        f"- `{prompt_path(path)}` 你那一版：\n```\n{body}\n```"
+        for path, body in sorted(kept.items())
+    )
+    return (
+        "这个人的 private 记忆里有几版是他的会话在别处写下、平台没有收进去的"
+        "（平台那一份也动过，或者超了单条上限，或者是还没处理完的旁路副本）。"
+        "原文都在下面；要留下哪一条，先读现在的那一份再写：\n\n" + copies
+    )
+
+
 def memory_rejected_notice(
     *, where: str, reasons: dict[str, str], unindexed: tuple[str, ...] = ()
 ) -> str:

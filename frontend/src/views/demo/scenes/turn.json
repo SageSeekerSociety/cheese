@@ -53,8 +53,8 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_worktree",
-          "arg": "c9d0 · 首页按钮改色",
+          "tool": "Bash",
+          "arg": "cheese worktree c9d0",
           "platform": true
         },
         {
@@ -135,7 +135,7 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_accept_request",
+          "tool": "cheese_card.request",
           "arg": "feat(home): amber primary button",
           "platform": true
         },

@@ -28,7 +28,6 @@
   "assistantChangeNoSuchPart": "This change doesn't include that item",
   "assistantChangeNotUndone": "This change hasn't been undone",
   "assistantFailed": "Cheese can't answer right now. Try again later.",
-  "assistantGateNotPassed": "This action has not been authorized",
   "assistantInviteThenAdmin": "Invite someone outside the project as a member first; they can be made an admin once they join",
   "assistantMemoryNotInRuns": "A routine's run does not save memories: the person is not there, and what it read is other people's words and the platform's records.",
   "assistantMemoryOff": "The person has turned memory off in their settings; nothing is saved or changed.",
@@ -36,14 +35,17 @@
   "assistantNoReviewCard": "This task has no review card yet",
   "assistantNotOpen": "Cheese isn't available yet. Try again later.",
   "assistantNotifyMeLimit": "You can send the person at most {max} notifications an hour. Put what you have to say into one.",
+  "assistantPanelIsThePersons": "This is where a person manages their Cheese; Cheese cannot act here for them",
   "assistantProposalBadState": "A draft can only be marked as sent or set aside",
   "assistantProposalSettled": "This draft has already been handled",
   "assistantRefUnknown": "\"{ref}\" is not a reference. A project's things are its short name and a path, such as ml-course/channels/3, ml-course/tasks/12, ml-course/tasks/12/review or ml-course/docs/5; the project itself is its short name.",
   "assistantRepeating": "Cheese started repeating the same passage over and over, so it was stopped. Try asking another way.",
+  "assistantPastCeiling": "Stopped at the {hours}-hour limit",
   "assistantRuleUnknown": "There is no \"{rule}\" kind",
   "assistantSettingUnknown": "No such setting; the ones that can be changed are {keys}",
   "assistantSettingValue": "{name} takes: {choices}",
   "assistantStillAnswering": "The last question is still being answered. Ask again when it's done.",
+  "assistantNotAnswering": "Cheese is not answering now; ask your question instead",
   "assistantWhoAmbiguous": "More than one person is called \"{who}\": {handles}. Ask which one, and try again with the handle",
   "assistantWhoUnknown": "No one is called \"{who}\", by handle or by name. Ask for their handle",
   "chatMessageEmpty": "The message is empty",
@@ -159,5 +161,6 @@
   "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "topicNotFound": "Channel not found",
   "turnForceStopped": "The platform stopped the AI teammate's work. Changes made so far are kept; send “continue” and it picks up where it left off",
-  "upstreamModelRequired": "The upstream model ID can't be empty"
+  "upstreamModelRequired": "The upstream model ID can't be empty",
+  "assistantCitesTooMany": "Cite at most {most} things in one question"
 }

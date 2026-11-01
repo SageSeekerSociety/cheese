@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.library import listing as library_listing
 from app.domain.library.shelf import Shelf
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -65,6 +66,9 @@ async def _fire_schedules(session: AsyncSession) -> int:
         )
     )
     busy = await _still_running(session, [routine.id for routine in rows])
+    # Every room told in this pass, at once, before the first line
+    # (`conversation.numbering`); a run's own 支线 is new and needs none.
+    await lock_conversations(session, [routine.topic_id for routine in rows])
     fired = 0
     for routine in rows:
         planned = routine.next_run_at
@@ -124,7 +128,10 @@ async def _events_for(
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
         for name, when in await library_listing.added_since(
-            session, Shelf.of_project(routine.project_id), since
+            # 「资料库新增」说的是项目自己放进来的；题目的材料不算。
+            session,
+            Shelf.of_project(routine.project_id, with_task=False),
+            since,
         ):
             found.append(
                 (
@@ -206,6 +213,8 @@ async def _fire_events(session: AsyncSession) -> int:
         due.append((routine, events))
     if not due:
         return 0
+    # As `_fire_schedules`: every room told in this pass, at once, first.
+    await lock_conversations(session, [routine.topic_id for routine, _events in due])
     ids = [routine.id for routine, _events in due]
     # One query for the hour behind every due rule: how many runs it started,
     # and whether its owner has been told of the limit already.

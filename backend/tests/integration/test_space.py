@@ -601,8 +601,8 @@ class TestSpacePermissions:
             json={"name": "Hacked Name"},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {resp.status_code}"
         )
 
     def test_delete_space_fails_for_non_admin(
@@ -614,8 +614,8 @@ class TestSpacePermissions:
             f"/spaces/{space_id}",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {resp.status_code}"
         )
 
 
@@ -893,7 +893,7 @@ class TestSpaceDomainGroups:
             json={"name": "Hacker", "domains": ["evil.com"]},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- update ---------------------------------------------------------------------
 
@@ -927,7 +927,7 @@ class TestSpaceDomainGroups:
             json={"name": "Hacked"},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- delete ---------------------------------------------------------------------
 
@@ -965,7 +965,7 @@ class TestSpaceDomainGroups:
             f"/spaces/{space_id}/domain-groups/{gid}",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- validation ----------------------------------------------------------------
 

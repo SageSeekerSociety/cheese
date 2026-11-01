@@ -254,9 +254,9 @@ def _host(client, project: str, task: str):
     class Host:
         environ = {"CHEESE_TOPIC": task, "CHEESE_PROJECT": project}
         headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, task, room_agent_seat(client, task)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, task, room_agent_seat(client, task))
+            }"
         }
         doc_versions: dict = {}
 
@@ -279,8 +279,9 @@ def test_what_cheese_changes_on_a_canvas_its_readers_see(client):
     host = _host(client, pid, task)
 
     said = cheese.run_platform_tool(
-        "cheese_canvas_edit",
+        "cheese_canvas",
         {
+            "action": "edit",
             "canvas": canvas,
             "changes": [
                 {"op": "add", "ref": "goal", "content": "十月上线新版搜索"},
@@ -317,7 +318,7 @@ def test_the_canvas_reads_as_its_cards_and_the_lines_between_them(client):
         ],
     )
     text = cheese.run_platform_tool(
-        "cheese_canvas_get", {"canvas": canvas}, _host(client, pid, task)
+        "cheese_canvas", {"action": "get", "canvas": canvas}, _host(client, pid, task)
     )
 
     assert "《项目地图》" in text
@@ -399,7 +400,7 @@ def test_reading_the_document_brings_its_canvas_as_text(client):
     _change(client, canvas, [{"op": "add", "content": "十月上线新版搜索"}])
     host = _host(client, pid, task)
 
-    read = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    read = cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
     body, _, canvases = read.partition("--- 文档里的画布")
     assert f":::canvas {canvas} 项目地图" in body
     assert "十月上线新版搜索" not in body
@@ -420,11 +421,14 @@ def test_reading_the_document_brings_its_canvas_as_text(client):
 def test_cheese_writing_a_new_canvas_block_is_told_which_canvas_it_got(client):
     pid, task, doc, _ = _task_canvas(client)
     host = _host(client, pid, task)
-    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc", {"action": "get"}, host)
 
     said = cheese.run_platform_tool(
-        "cheese_doc_set",
-        {"content": f"{_content(client, doc)}\n\n:::canvas new 依赖\n:::"},
+        "cheese_doc",
+        {
+            "action": "set",
+            "content": f"{_content(client, doc)}\n\n:::canvas new 依赖\n:::",
+        },
         host,
     )
 

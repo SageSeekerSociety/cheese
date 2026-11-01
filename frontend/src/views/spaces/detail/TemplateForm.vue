@@ -10,7 +10,6 @@ import type { TemplateDraft } from './templateDraft'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -19,6 +18,7 @@ import { blankTemplate } from './templateDraft'
 import TemplateFormView from './TemplateFormView.vue'
 
 import { closeOverlay } from '@/lib/backOut'
+import { toast } from '@/lib/toast'
 import { useSpaceStore } from '@/stores/space'
 
 const router = useRouter()

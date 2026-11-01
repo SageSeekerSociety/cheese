@@ -8,6 +8,11 @@
 先看懂两边改了什么，而 `MEMORY.md` 和记忆文件都是散文——自动合并散文的唯一结果
 是两句互相矛盾的话安静地并排躺在一起。拒绝一次写入是便宜的：agent 就在现场，
 重读一次就行。
+
+**每一次改动都在这里留一条记录（`memory_file_changes`）。** 改记忆的路有好几条——
+一轮对话收回来的、面板上的、整理的、方法确认时并掉的——它们全都经过 `write` /
+`delete`，所以记录写在这一层，写入方只要说清自己是哪一种（`writer`，必填），没有
+哪一条路能忘了记。记录和改动在同一个事务里：改动回滚，记录跟着没了。
 """
 
 import uuid
@@ -29,7 +34,9 @@ from app.domain.memory.files import (
     prefix_of,
     without_entries,
 )
-from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.instructions import private_index_pointer
+from app.domain.memory.models import MemoryFileChange, MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 
 
 class MemoryFileConflict(ConflictError):
@@ -115,6 +122,44 @@ class MemoryFileStore:
 
     def __init__(self, session: AsyncSession):
         self._session = session
+        #: 一个实例是一次改动（一次对账、一轮整理、一个请求）：它记下的每一行都带
+        #: 这个 id，恢复一次删除时靠它找到同一次改动里拿掉的那一行索引
+        #: （`history._removed_index_line`）。
+        self.event_id = uuid.uuid4()
+
+    def _record(
+        self,
+        *,
+        project_id: uuid.UUID | None,
+        scope: MemoryFileScope,
+        owner_handle: str | None,
+        path: str,
+        writer: MemoryWriter,
+        changed_by: str,
+        before: str | None,
+        after: str | None,
+    ) -> None:
+        """把这一次改动记进 `memory_file_changes`，和改动同一个事务。
+
+        personal 不记：它不在任何项目里，有自己那条撤销（`assistant.memory.put`
+        交回改之前的那一份）；正文没变也不记——一条没有差别的记录只会把真改过
+        的那几条淹掉。
+        """
+        if project_id is None or before == after:
+            return
+        self._session.add(
+            MemoryFileChange(
+                project_id=project_id,
+                scope=scope,
+                owner_handle=_owner(scope, owner_handle),
+                path=path,
+                writer=writer,
+                changed_by=changed_by,
+                event_id=self.event_id,
+                before=before,
+                after=after,
+            )
+        )
 
     async def list(
         self,
@@ -178,6 +223,7 @@ class MemoryFileStore:
         content: str,
         updated_by: str,
         expected_version: int | None,
+        writer: MemoryWriter,
     ) -> MemoryFileRecord:
         """写入一版；版本对不上就抛 :class:`MemoryFileConflict`，超了单条上限就抛
         :class:`MemoryFileLimit`。
@@ -196,6 +242,8 @@ class MemoryFileStore:
         （``begin_nested()`` 会先把待写对象 flush 出去，在外面 add 的那一行 INSERT
         落在保存点外面，回滚不掉）、撞上时**自己动手**回滚这一次保存点（让异常从
         ``async with`` 里传出去，等于把失败标记传给外层）、回滚之后再读一次。
+
+        ``writer`` 是这一次从哪条路来的，进改动记录（`_record`）。
         """
         check_path(path)
         row = await self.get(project_id, scope, owner_handle, path, for_update=True)
@@ -230,9 +278,30 @@ class MemoryFileStore:
                     path, expected_version, current.version
                 ) from None
             await savepoint.commit()
+            self._record(
+                project_id=project_id,
+                scope=scope,
+                owner_handle=owner_handle,
+                path=path,
+                writer=writer,
+                changed_by=updated_by,
+                before=None,
+                after=content,
+            )
+            await self._session.flush()
             return row
         if expected_version is None or expected_version != row.version:
             raise MemoryFileConflict(path, expected_version, row.version)
+        self._record(
+            project_id=project_id,
+            scope=scope,
+            owner_handle=owner_handle,
+            path=path,
+            writer=writer,
+            changed_by=updated_by,
+            before=row.content,
+            after=content,
+        )
         row.content = content
         row.version = row.version + 1
         row.updated_by = updated_by
@@ -247,6 +316,8 @@ class MemoryFileStore:
         owner_handle: str | None,
         path: str,
         expected_version: int | None,
+        updated_by: str,
+        writer: MemoryWriter,
     ) -> None:
         """删掉一条记忆；索引那一行由调用方一并删（它才看得见两份）。"""
         check_path(path)
@@ -255,6 +326,16 @@ class MemoryFileStore:
             raise MemoryFileMissing(say("memoryFileGone", path=path))
         if expected_version is not None and expected_version != row.version:
             raise MemoryFileConflict(path, expected_version, row.version)
+        self._record(
+            project_id=project_id,
+            scope=scope,
+            owner_handle=owner_handle,
+            path=path,
+            writer=writer,
+            changed_by=updated_by,
+            before=row.content,
+            after=None,
+        )
         await self._session.execute(
             delete(MemoryFileRecord).where(MemoryFileRecord.id == row.id)
         )
@@ -268,6 +349,7 @@ class MemoryFileStore:
         owner_handle: str | None,
         paths: Sequence[str],
         updated_by: str,
+        writer: MemoryWriter,
     ) -> tuple[str, ...]:
         """删掉几条记忆，连同索引里指向它们的那几行。返回真删掉的路径。
 
@@ -286,6 +368,8 @@ class MemoryFileStore:
                 owner_handle=owner_handle,
                 path=path,
                 expected_version=None,
+                updated_by=updated_by,
+                writer=writer,
             )
             gone = (*gone, path)
         index = await self.get(
@@ -302,6 +386,7 @@ class MemoryFileStore:
                     content=trimmed,
                     updated_by=updated_by,
                     expected_version=index.version,
+                    writer=writer,
                 )
         return gone
 
@@ -321,8 +406,8 @@ class MemoryFileStore:
 async def private_owners(session: AsyncSession, project_id: uuid.UUID) -> list[str]:
     """这个项目里有哪些人的 private 树，人名序。
 
-    一轮会话只铺在场的几个人的 private（`memory_index` 的预算那一段），而整理要
-    看的是**这个项目全部**的私人记忆：它是唯一一个把整棵树放在一起看的时刻，漏掉
+    一轮会话只铺这一轮那一位的 private（`memory_index`），而整理要看的是**这个
+    项目全部**的私人记忆：它是唯一一个把整棵树放在一起看的时刻，漏掉
     一个没说过话的人，等于他的记忆没有人整理。所以这里不问「谁在场」，问「谁有」。
     """
     rows = await session.scalars(
@@ -341,18 +426,19 @@ async def memory_index(
     session: AsyncSession,
     project_id: uuid.UUID,
     *,
-    speaker_handles: list[str],
+    speaker: str | None,
     shared_read_only: bool = False,
 ) -> MemoryIndex:
-    """这一轮注入的 L1 索引：team 一份，本轮发言人一人一份。
+    """这一轮注入的 L1 索引：team 一份，加上 ``speaker`` 那一份 private 在哪
+    （只有一个人和芝士的私聊里有这一位，`turn_speakers.private_memory_for`）。
 
     ``shared_read_only``：私聊和私密频道里 team 只读（#3830）。在那里听到的话
     只有在场的人能读，写进全项目共看的 team 就成了别人的后门，所以记忆对账不收
     team 的改动（`memory_ledger`），这里把这件事说给 agent 听。
 
-    **只读在场的这几个人。** 项目里的人可以很多，而每一轮要用的只是同席这几位
-    ——这不是权限（private 记忆只有本人和管理员看得见，另有一道闸），是预算：
-    索引是每一轮都要付的，付在一个没说话的人的偏好上是白付。
+    这一位的那一份不注入正文，只说它在哪、先读它
+    （`instructions.private_index_pointer`）：注入记进会话记录，而 agent 读那个文件
+    的那一次调用记录只给本人看。
 
     超预算照样注入（截断后），并在注入块里说清截断过：静默截断读起来就是「索引
     就这么长」，于是没有人会去修它。
@@ -363,14 +449,20 @@ async def memory_index(
     wanted: list[tuple[MemoryFileScope, str | None, str]] = [
         (MemoryFileScope.team, None, "项目共享（team）")
     ]
-    for handle in dict.fromkeys(speaker_handles):
-        if handle:
-            wanted.append(
-                (MemoryFileScope.private, handle, f"关于 {handle}（private）")
-            )
+    if speaker:
+        wanted.append((MemoryFileScope.private, speaker, f"关于 {speaker}（private）"))
     for scope, owner, label in wanted:
         text = await store.index_text(project_id, scope, owner)
         if text is None:
+            continue
+        if owner is not None:
+            sections.append(
+                IndexSection(
+                    label=label,
+                    prefix=prefix_of(scope, owner),
+                    text=private_index_pointer(owner),
+                )
+            )
             continue
         fitted, warning = fit_index(text)
         if warning:

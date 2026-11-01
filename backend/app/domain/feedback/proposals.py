@@ -198,7 +198,6 @@ class ProposalService:
         One card per fingerprint even if it was proposed several times, newest
         kept — the card that shows is the one a person can still act on.
         """
-        dismissed = await self._dismissed(topic_id)
         # Only blocks that carry a card. Every tool call a room's agent makes
         # also lands a block with meta, so "has meta" was nearly the whole
         # room: on dev on 2026-10-04 one room had 37,068 such blocks and 2
@@ -212,14 +211,18 @@ class ProposalService:
             .order_by(Block.created_at.desc())
         )
         rows = (await self._session.execute(stmt)).scalars().all()
+        pending = [
+            (row, payload)
+            for row in rows
+            if (payload := proposal_from_meta(row.meta or {})) is not None
+            and not payload.get(ACCEPTED_FEEDBACK_KEY)
+        ]
+        if not pending:
+            return []
+        dismissed = await self._dismissed(topic_id)
         seen: set[str] = set()
         cards: list[dict[str, Any]] = []
-        for row in rows:
-            payload = proposal_from_meta(row.meta or {})
-            if payload is None:
-                continue
-            if payload.get(ACCEPTED_FEEDBACK_KEY):
-                continue
+        for row, payload in pending:
             fingerprint = payload.get("fingerprint", "")
             if fingerprint in dismissed or fingerprint in seen:
                 continue

@@ -309,13 +309,24 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '标准沙箱',
-        note: '默认选中沙箱 · 标准；团队管理员可以指定两台团队设备，其中一台离线。',
+        note: '默认选中沙箱 · 标准；每种规格旁边是接口给的说明和每小时价格（这里的价格是示例）；团队管理员可以指定两台团队设备，其中一台离线。',
         props: {
           current: { kind: 'sandbox', spec: 'standard' },
           devices: COMPUTE_DEVICES.map((device) => ({ ...device, owned: true })),
           specs: [
-            { spec: 'standard', label: '标准' },
-            { spec: 'vm', label: '虚拟机' },
+            {
+              spec: 'standard',
+              label: '标准沙箱',
+              description:
+                '每位 AI 队友一个沙箱，在平台的机器上，只看得到自己的工作目录；按运行时长计费，每小时 5 点。',
+              i18n: { description: { key: 'specStandardAbout', params: { credits: 5 } } },
+            },
+            {
+              spec: 'vm',
+              label: '虚拟机沙箱',
+              description: '一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块；4 核 8 GiB，每小时 20 点。',
+              i18n: { description: { key: 'specVmAbout', params: { cores: 4, memory: 8, credits: 20 } } },
+            },
             { spec: 'team_devices', label: '团队设备' },
           ],
         },

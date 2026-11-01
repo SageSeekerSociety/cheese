@@ -11,17 +11,20 @@ Where a person sits, in this order:
    project belongs to, who stands above every project of the team. When the
    project's owner has left a shared team, the team's owner holds the project.
 2. **admin** — an admin of that team, unless they left this project.
-3. the role this project records for them (``project_roles``): admin, member
-   or mentor. Only for someone who is in the project, through the team or a
-   roster row; a row for someone who has since left grants nothing.
+3. the role this project records for them (``project_roles``): admin or one
+   of the project's own roles. Only for someone who is in the project, through
+   the team or a roster row; a row for someone who has since left grants
+   nothing.
 4. **member** — anyone else in the project, through the team or a roster row.
 
 Nobody else sits anywhere, and the 出题人 of the task the project was opened
-for and the admins of its space are nobody here unless they were made mentors.
+for and the admins of its space are nobody here unless they were seated as
+its mentors.
 
 An AI teammate is not a person and holds no role: it may do what a member may
 by default, and never what manages people, the project or every channel
-(:data:`AGENT_PERMISSIONS`). It works for whoever asked it; what it reads for
+(:data:`AGENT_PERMISSIONS`), and also what only an AI teammate does
+(``project_permissions.AGENT_ONLY``). It works for whoever asked it; what it reads for
 them is decided where it reads (``app.domain.agent.audience``).
 
 What only the owner does is not a permission; :func:`is_owner` answers it.
@@ -42,21 +45,27 @@ from app.core.errors import ForbiddenError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.identity.services import IdentityService
-from app.domain.membership.repositories import MemberRepository, RoleRepository
+from app.domain.membership.repositories import (
+    MemberRepository,
+    RoleRepository,
+    role_key,
+)
 from app.domain.project.models import (
     Project,
     ProjectMember,
     ProjectMemberExclusion,
     ProjectRole,
-    ProjectRoleGrant,
+    ProjectRoleDef,
 )
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
+    PEOPLE_PERMISSIONS,
     RANK,
+    Builtin,
     Permission,
-    Role,
     Seat,
+    Template,
     with_locks,
 )
 from app.domain.team.models import Team, TeamUserRelation
@@ -64,7 +73,8 @@ from app.domain.team.protocol import TeamMemberRole
 from app.domain.user.models import User
 from app.domain.user.repositories import UserRepository
 
-#: What an AI teammate may do in a project.
+#: What an AI teammate may do in a project: what it does alone, and what a
+#: person may short of managing.
 AGENT_PERMISSIONS: frozenset[Permission] = frozenset(Permission) - {
     Permission.manage_members,
     Permission.change_roles,
@@ -77,11 +87,30 @@ AGENT_PERMISSIONS: frozenset[Permission] = frozenset(Permission) - {
 
 
 @dataclass(frozen=True)
+class RoleDef:
+    """One role of a project, as everything that reads roles sees it."""
+
+    #: ``admin``, ``member``, or the id of one of the project's own roles.
+    key: str
+    #: The project's own name for it. None for a built-in role, whose name is
+    #: fixed, and for a templated role never renamed: whoever shows it writes
+    #: the built-in's or the template's name.
+    name: str | None
+    builtin: Builtin | None
+    template: Template | None
+    permissions: frozenset[Permission]
+    #: A built-in role whose permissions this project changed.
+    changed: bool = False
+
+
+@dataclass(frozen=True)
 class Standing:
     """A person's place in a project and everything it lets them do."""
 
     seat: Seat
     permissions: frozenset[Permission]
+    #: The key of the role they hold (``RoleDef.key``); ``owner`` for the owner.
+    role: str = "member"
     #: Their admin rank comes from the team (team owner or admin), so this
     #: project cannot change it.
     from_team: bool = False
@@ -92,13 +121,28 @@ async def _team_role(
 ) -> int | None:
     if team_id is None:
         return None
-    return await session.scalar(
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        key = ("team_user_role", team_id, user_id)
+        found, cached = recall(session, key)
+        if found:
+            return cached
+    role = await session.scalar(
         select(TeamUserRelation.role).where(
             TeamUserRelation.team_id == team_id,
             TeamUserRelation.user_id == user_id,
             TeamUserRelation.deleted_at.is_(None),
         )
     )
+    if isinstance(session, AsyncSession):
+        remember(
+            session,
+            ("team_user_role", team_id, user_id),
+            role,
+            tables=frozenset({"team_user_relation"}),
+        )
+    return role
 
 
 async def team_owner_handle(session: AsyncSession, team_id: int) -> str | None:
@@ -122,6 +166,11 @@ async def is_personal(session: AsyncSession, project: Project) -> bool:
     ) is not None
 
 
+_OWNER_TABLES = frozenset(
+    {"projects", "user", "team_user_relation", "project_members", "team"}
+)
+
+
 async def owner_of(session: AsyncSession, project: Project) -> str | None:
     """Who holds the project: its owner while they are still on its team, else
     the team's owner. A personal project's owner is its team's one person. A
@@ -130,7 +179,27 @@ async def owner_of(session: AsyncSession, project: Project) -> str | None:
     owner = project.owner_handle
     if project.team_id is None:
         return owner
+    if session.autoflush:
+        await session.flush()
+    key = ("owner_of", project.id, owner, project.team_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    resolved = await _resolve_owner_of(session, project, owner)
+    remember(session, key, resolved, tables=_OWNER_TABLES)
+    return resolved
+
+
+async def _resolve_owner_of(
+    session: AsyncSession, project: Project, owner: str | None
+) -> str | None:
     if owner:
+        if isinstance(session, AsyncSession):
+            found_team, team_roles = recall(
+                session, ("team_roles_by_handle", project.team_id)
+            )
+            if found_team and owner in team_roles:
+                return owner
         user = await UserRepository(session).get_by_username(owner)
         if (
             user is not None
@@ -146,32 +215,77 @@ async def owner_of(session: AsyncSession, project: Project) -> str | None:
     return await team_owner_handle(session, project.team_id) or owner
 
 
-async def _grants(
-    session: AsyncSession, project_id: uuid.UUID
-) -> dict[Role, frozenset[Permission]]:
-    return _grants_from(await RoleRepository(session).grants(project_id))
+def _permissions(names: list[str] | None) -> frozenset[Permission]:
+    return frozenset(
+        Permission(p) for p in names or [] if p in Permission._value2member_map_
+    )
 
 
-def _grants_from(changed: dict[str, list[str]]) -> dict[Role, frozenset[Permission]]:
-    out: dict[Role, frozenset[Permission]] = {}
-    for role in Role:
-        if role.value in changed:
-            granted = frozenset(
-                Permission(p)
-                for p in changed[role.value]
-                if p in Permission._value2member_map_
-            )
-        else:
-            granted = DEFAULT_GRANTS[role]
-        out[role] = with_locks(role, granted)
+def roles_from(rows: Sequence[ProjectRoleDef]) -> dict[str, RoleDef]:
+    """A project's roles from its role rows: the two built in, each with this
+    project's change if it made one, then its own in the order they were made."""
+    changed = {r.builtin: r for r in rows if r.builtin is not None}
+    out: dict[str, RoleDef] = {}
+    for builtin in Builtin:
+        row = changed.get(builtin.value)
+        granted = _permissions(row.permissions) if row else DEFAULT_GRANTS[builtin]
+        out[builtin.value] = RoleDef(
+            key=builtin.value,
+            name=None,
+            builtin=builtin,
+            template=None,
+            permissions=with_locks(builtin is Builtin.admin, granted),
+            changed=row is not None,
+        )
+    for row in rows:
+        if row.builtin is not None:
+            continue
+        out[str(row.id)] = RoleDef(
+            key=str(row.id),
+            name=row.name,
+            builtin=None,
+            template=Template(row.template)
+            if row.template in Template._value2member_map_
+            else None,
+            permissions=with_locks(False, _permissions(row.permissions)),
+        )
     return out
 
 
-async def role_grants(
+async def project_roles(
     session: AsyncSession, project_id: uuid.UUID
-) -> dict[Role, frozenset[Permission]]:
-    """What each role may do in this project now."""
-    return await _grants(session, project_id)
+) -> dict[str, RoleDef]:
+    """Every role of this project, by key."""
+    return roles_from(await RoleRepository(session).defs(project_id))
+
+
+def _held(roles: dict[str, RoleDef], recorded: str | None) -> Standing:
+    """Where someone in the project sits by the role recorded for them."""
+    role = roles.get(recorded or "") or roles[Builtin.member.value]
+    seat = Seat.admin if role.builtin is Builtin.admin else Seat.member
+    return Standing(seat=seat, permissions=role.permissions, role=role.key)
+
+
+def _team_admin(roles: dict[str, RoleDef]) -> Standing:
+    admin = roles[Builtin.admin.value]
+    return Standing(
+        seat=Seat.admin, permissions=admin.permissions, from_team=True, role=admin.key
+    )
+
+
+_STANDING_TABLES = frozenset(
+    {
+        "projects",
+        "user",
+        "agent_bindings",
+        "team_user_relation",
+        "project_members",
+        "project_member_exclusions",
+        "project_roles",
+        "project_role_defs",
+        "team",
+    }
+)
 
 
 async def standing(
@@ -194,7 +308,7 @@ async def standing(
     if found:
         return answer
     answer = await _standing(session, project_id, handle)
-    remember(session, key, answer)
+    remember(session, key, answer, tables=_STANDING_TABLES)
     return answer
 
 
@@ -212,9 +326,9 @@ async def _standing(
         if on_roster is None:
             return None
         return Standing(seat=Seat.member, permissions=AGENT_PERMISSIONS)
-    everything = frozenset(Permission)
+    everything = PEOPLE_PERMISSIONS
     if handle == await owner_of(session, project):
-        return Standing(seat=Seat.owner, permissions=everything)
+        return Standing(seat=Seat.owner, permissions=everything, role="owner")
     user = await UserRepository(session).get_by_username(handle)
     members = MemberRepository(session)
     excluded = await members.is_excluded(project_id=project_id, user_handle=handle)
@@ -224,18 +338,19 @@ async def _standing(
         else None
     )
     if team_role == TeamMemberRole.OWNER:
-        return Standing(seat=Seat.owner, permissions=everything, from_team=True)
-    grants = await _grants(session, project_id)
+        return Standing(
+            seat=Seat.owner, permissions=everything, from_team=True, role="owner"
+        )
+    roles = await project_roles(session, project_id)
     if team_role == TeamMemberRole.ADMIN and not excluded:
-        return Standing(seat=Seat.admin, permissions=grants[Role.admin], from_team=True)
+        return _team_admin(roles)
     on_roster = await members.get(project_id=project_id, user_handle=handle) is not None
     if not on_roster and (team_role is None or excluded):
         return None
     recorded = await RoleRepository(session).role_of(
         project_id=project_id, user_handle=handle
     )
-    role = Role(recorded) if recorded in Role._value2member_map_ else Role.member
-    return Standing(seat=Seat(role.value), permissions=grants[role])
+    return _held(roles, recorded)
 
 
 async def seats(
@@ -248,39 +363,45 @@ async def seats(
     if project is None or not handles:
         return {}
     owner = await owner_of(session, project)
-    grants = await _grants(session, project_id)
+    roles = await project_roles(session, project_id)
     recorded = await RoleRepository(session).roles(project_id)
     excluded = await MemberRepository(session).excluded_handles(project_id)
     team_roles: dict[str, int] = {}
     if project.team_id is not None:
-        rows = await session.execute(
-            select(User.username, TeamUserRelation.role)
-            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
-            .where(
-                TeamUserRelation.team_id == project.team_id,
-                TeamUserRelation.deleted_at.is_(None),
-                User.username.in_(handles),
-            )
+        found_tr, cached_tr = (
+            recall(session, ("team_roles_by_handle", project.team_id))
+            if isinstance(session, AsyncSession)
+            else (False, None)
         )
-        team_roles = {name: role for name, role in rows.all()}
-    everything = frozenset(Permission)
+        if found_tr and cached_tr is not None:
+            team_roles = {h: cached_tr[h] for h in handles if h in cached_tr}
+        else:
+            rows = await session.execute(
+                select(User.username, TeamUserRelation.role)
+                .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+                .where(
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                    User.username.in_(handles),
+                )
+            )
+            team_roles = {name: role for name, role in rows.all()}
+    everything = PEOPLE_PERMISSIONS
     out: dict[str, Standing] = {}
     for handle in handles:
         team_role = team_roles.get(handle)
         if handle == owner:
-            out[handle] = Standing(seat=Seat.owner, permissions=everything)
+            out[handle] = Standing(
+                seat=Seat.owner, permissions=everything, role="owner"
+            )
         elif team_role == TeamMemberRole.OWNER:
             out[handle] = Standing(
-                seat=Seat.owner, permissions=everything, from_team=True
+                seat=Seat.owner, permissions=everything, from_team=True, role="owner"
             )
         elif team_role == TeamMemberRole.ADMIN and handle not in excluded:
-            out[handle] = Standing(
-                seat=Seat.admin, permissions=grants[Role.admin], from_team=True
-            )
+            out[handle] = _team_admin(roles)
         else:
-            mark = recorded.get(handle)
-            role = Role(mark) if mark in Role._value2member_map_ else Role.member
-            out[handle] = Standing(seat=Seat(role.value), permissions=grants[role])
+            out[handle] = _held(roles, recorded.get(handle))
     return out
 
 
@@ -349,30 +470,21 @@ async def standings_in(
             )
         ).all()
     )
-    recorded = dict(
-        (
+    recorded = {
+        project_id: role_key(role, role_id)
+        for project_id, role, role_id in (
             await session.execute(
-                select(ProjectRole.project_id, ProjectRole.role).where(
+                select(
+                    ProjectRole.project_id, ProjectRole.role, ProjectRole.role_id
+                ).where(
                     ProjectRole.user_handle == handle,
                     ProjectRole.project_id.in_(ids),
                 )
             )
-        )
-        .tuples()
-        .all()
-    )
-    changed: dict[uuid.UUID, dict[str, list[str]]] = {}
-    for project_id, role, permissions in (
-        await session.execute(
-            select(
-                ProjectRoleGrant.project_id,
-                ProjectRoleGrant.role,
-                ProjectRoleGrant.permissions,
-            ).where(ProjectRoleGrant.project_id.in_(ids))
-        )
-    ).tuples():
-        changed.setdefault(project_id, {})[role] = list(permissions or [])
-    everything = frozenset(Permission)
+        ).tuples()
+    }
+    defs = await RoleRepository(session).defs_of(ids)
+    everything = PEOPLE_PERMISSIONS
     out: dict[uuid.UUID, Standing | None] = {}
     for p in projects:
         team_role = team_roles.get(p.team_id) if p.team_id is not None else None
@@ -384,25 +496,21 @@ async def standings_in(
             out[p.id] = await standing(session, p.id, handle)
             continue
         if p.owner_handle == handle:
-            out[p.id] = Standing(seat=Seat.owner, permissions=everything)
+            out[p.id] = Standing(seat=Seat.owner, permissions=everything, role="owner")
             continue
         if team_role == TeamMemberRole.OWNER:
             out[p.id] = Standing(
-                seat=Seat.owner, permissions=everything, from_team=True
+                seat=Seat.owner, permissions=everything, from_team=True, role="owner"
             )
             continue
-        grants = _grants_from(changed.get(p.id, {}))
+        roles = roles_from(defs.get(p.id, []))
         if team_role == TeamMemberRole.ADMIN and p.id not in excluded:
-            out[p.id] = Standing(
-                seat=Seat.admin, permissions=grants[Role.admin], from_team=True
-            )
+            out[p.id] = _team_admin(roles)
             continue
         if p.id not in on_roster and (team_role is None or p.id in excluded):
             out[p.id] = None
             continue
-        mark = recorded.get(p.id)
-        role = Role(mark) if mark in Role._value2member_map_ else Role.member
-        out[p.id] = Standing(seat=Seat(role.value), permissions=grants[role])
+        out[p.id] = _held(roles, recorded.get(p.id))
     return out
 
 
@@ -446,8 +554,8 @@ async def require_above(
 ) -> None:
     """Refuse unless ``actor`` sits above ``target`` here.
 
-    A person manages only those strictly below them: an admin manages members
-    and mentors, not another admin; the owner manages every admin. An admin
+    A person manages only those strictly below them: an admin manages everyone
+    holding another role, not another admin; the owner manages every admin. An admin
     rank that comes from the team is the team's to change, so only the team's
     owner moves it here. Someone not in the project is below everyone in it.
     """

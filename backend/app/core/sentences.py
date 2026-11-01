@@ -166,6 +166,13 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # The memory consolidation said what it changed, or why it stopped, in
+        # the overview; it is silent now, and old overview lines still say it.
+        "memoryDreamChanged",
+        "memoryDreamRefused",
+        "memoryDreamRefusedDetail",
+        "labelWhichChanged",
+        "labelWhyStopped",
         # A sandbox the disk guard stopped for holding the most of a full disk
         # or more than its budget: each sandbox now has a quota of its own and
         # is refused writes past it, and old room lines still name the stop.
@@ -224,6 +231,10 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        # A 题目's takers heard 「修改了提交内容或评分要点」 on every change to
+        # what it asks; the notice now says which thing changed
+        # (``spaceTaskChanged``), and old notifications still carry the key.
+        "spaceTaskRequirementsChanged",
     }
 )
 
@@ -259,6 +270,16 @@ def listing(items: Iterable[object], *, quoted: bool = False) -> NoticeList:
     """``items`` as one parameter of a sentence; ``quoted`` puts each in quotes
     (room titles, file names)."""
     return NoticeList(items, quoted)
+
+
+def size_text(n: int) -> str:
+    """A size limit as a sentence says it: in the largest of GB, MB and KB it
+    reaches, without trailing zeros — ``20 GB``, ``200 MB``, ``1.5 GB``. The
+    units are binary (1 GB = 1024³ bytes), as every limit here is set."""
+    for unit, scale in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if n >= scale:
+            return f"{round(n / scale, 1):g} {unit}"
+    return f"{n} B"
 
 
 class NoticeText(str):

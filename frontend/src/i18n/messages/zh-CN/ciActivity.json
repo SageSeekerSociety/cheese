@@ -22,6 +22,7 @@
     "backfilling": "最近一次扫描 {at}。还在回填历史：数据只覆盖 {from} 之后，还有 {owed} 次运行的作业没读",
     "error": "最近一次扫描没读完：{error}"
   },
+  "computedAt": "看板上的数字统计于 {at}，最多每分钟重算一次",
   "kpi": {
     "queue": "合并队列耗时 p50",
     "waitHosted": "等机器 p50（GitHub 托管）",

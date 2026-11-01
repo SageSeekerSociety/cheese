@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import NOT_MODEL_CALLS, ResourceUsage, call_count
+from app.domain.usage.models import (
+    GATEWAY_ROWS,
+    NOT_MODEL_CALLS,
+    ResourceUsage,
+    call_count,
+)
 
 #: Rows of model calls. A compute charge (``usage.compute``) or a web search
 #: the platform asked for (``SEARCH_ROUTE``) is a usage row too, for its credits, but
@@ -134,15 +139,17 @@ class UsageRepository:
         return [(d, p, k, float(c or 0.0)) for d, p, k, c in rows.all()]
 
     async def gateway_spend(self, project_ids: list[uuid.UUID]) -> dict:
-        """Project → USD its gateway key has been recorded spending, ever."""
+        """Project → USD its gateway key has been recorded spending, ever.
+
+        Read on every model admission. ``GATEWAY_ROWS`` is the literal predicate
+        of ``ix_resource_usage_gateway_spend``, which carries ``cost_usd``: the
+        sum comes from the index alone instead of every usage row of the
+        project fetched to test its route."""
         if not project_ids:
             return {}
         rows = await self._session.execute(
             select(ResourceUsage.project_id, func.sum(ResourceUsage.cost_usd))
-            .where(
-                ResourceUsage.project_id.in_(project_ids),
-                ResourceUsage.route == "gateway",
-            )
+            .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)
             .group_by(ResourceUsage.project_id)
         )
         return {pid: float(spent or 0.0) for pid, spent in rows}

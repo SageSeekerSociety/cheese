@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The app is bundled with the hardened runtime, which blocks the
+	     microphone for a process without this entitlement — the system then
+	     denies the request without ever asking the person. It is the audio
+	     half of what the page's voice input needs; Info.plist carries the
+	     sentence macOS shows when it does ask. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

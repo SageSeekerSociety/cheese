@@ -29,7 +29,8 @@ def served(text: str) -> str:
 def test_owner_mode_all_three_authorized_reads_share_the_owner(
     client, preview_config, monkeypatch
 ):
-    from app.api.routes import preview_sessions, topics_preview, topics_shown
+    from app.api import preview_app_state
+    from app.api.routes import preview_sessions, topics_shown
 
     _, topic = _project_topic(client)
     topic_id = uuid.UUID(topic["id"])
@@ -51,7 +52,7 @@ def test_owner_mode_all_three_authorized_reads_share_the_owner(
             raise AssertionError("owner mode read a business-backend hub")
 
     monkeypatch.setattr(settings, "preview_connection_mode", "owner")
-    for module in (preview_sessions, topics_preview, topics_shown):
+    for module in (preview_sessions, preview_app_state, topics_shown):
         monkeypatch.setattr(module, "inspect_owner", inspect)
         monkeypatch.setattr(module, "preview_hub", NoLocalHub())
     headers = session_auth_headers("alice")
@@ -80,7 +81,7 @@ def test_owner_mode_all_three_authorized_reads_share_the_owner(
     async def unavailable(*args, **kwargs):
         return Inspection(owner_incarnation="owner", state="transport_unavailable")
 
-    for module in (preview_sessions, topics_preview, topics_shown):
+    for module in (preview_sessions, preview_app_state, topics_shown):
         monkeypatch.setattr(module, "inspect_owner", unavailable)
     meta = client.get(f"/topics/{topic_id}/preview", headers=headers).json()["data"]
     assert not meta["tunnel_up"] and meta["url"] is None
@@ -191,6 +192,10 @@ def test_oversized_file_reports_the_version_its_session_check_uses(
     assert read.status_code == 200, read.text
     data = read.json()["data"]
     assert data["too_large"] is True and data["content"] is None
+    # `content` stays absent (an editor would write a prefix back), but a READER
+    # still gets the opening — which is what stops a big text file from
+    # announcing itself as "not text".
+    assert data["head"] is not None and data["head"].startswith("<html>")
     assert data["version"] == content_version(body)
     assert data["version"] == library.preview_file_version(
         project, topic, "web/huge.html"

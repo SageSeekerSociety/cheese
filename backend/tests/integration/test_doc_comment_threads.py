@@ -246,13 +246,13 @@ def test_real_member_authorization_and_agent_participation_even_permissive_dev(
     agent = room_agent_seat(client, room)
     client.headers.pop("Authorization")
     # The task's own session: its credential is minted in the task.
-    client.headers["X-Cheese-Token"] = mint_scoped_token(
+    client.headers["Authorization"] = "Bearer " + mint_scoped_token(
         project_id=project, topic_id=task
     )
     response = client.post(prefix + "/replies", json=mutation(1, content="agent reply"))
     assert response.status_code == 200, response.text
     assert response.json()["data"]["replies"][0]["comment"]["author"] == agent
-    client.headers.pop("X-Cheese-Token")
+    client.headers.pop("Authorization")
     client.headers.update(owner_headers)
     assert read(client, doc, root)["revision"] == 2
 

@@ -45,6 +45,7 @@ from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.receipts import held_blocks, register_input
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.run_record.models import RunRecord
 from app.domain.topic_membership.services import TopicMemberService
 from tests.integration.conftest import post_message
 from tests.integration.test_a_release_restarts_quiet_sessions import (
@@ -246,6 +247,16 @@ async def _said(client, topic) -> list[str]:
         return [str(block.content or "") for block in blocks]
 
 
+async def _recorded(client, topic) -> list[str]:
+    """The platform's own running for this conversation: kept as run records for
+    the 现场, not said in the room."""
+    async with client.test_request_factory() as db:
+        rows = await db.scalars(
+            select(RunRecord).where(RunRecord.conversation_id == topic)
+        )
+        return [str(row.content or "") for row in rows]
+
+
 @pytest.fixture
 def center(monkeypatch):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
@@ -351,7 +362,7 @@ async def test_a_working_old_runner_finishes_its_turn_and_is_replaced_once_idle(
     answered = client.post(
         f"/topics/{topic}/messages",
         json={"request_id": str(uuid.uuid4()), "content": "the login page is fixed"},
-        headers={"X-Cheese-Token": token, "X-Cheese-Turn": str(WORK)},
+        headers={"Authorization": f"Bearer {token}", "X-Cheese-Turn": str(WORK)},
     )
     assert answered.status_code == 200, answered.text
 
@@ -450,7 +461,12 @@ async def test_a_message_sent_meanwhile_waits_and_reaches_the_new_runner(
         service, old = held["service"], held["old"]
         assert not await _admitted(service, topic, first)
         assert not await _admitted(service, topic, second)
-        waiting = [line for line in await _said(client, topic) if "平台更新中" in line]
+        # Waiting out an update is the platform's own running: not said in the
+        # room, recorded once per drain for the 现场.
+        assert not [line for line in await _said(client, topic) if "平台更新中" in line]
+        waiting = [
+            line for line in await _recorded(client, topic) if "平台更新中" in line
+        ]
         assert len(waiting) == 1, "told once per drain, not once per message"
         async with client.test_request_factory() as db:
             kept = await db.get(Block, first)
@@ -912,9 +928,9 @@ async def test_a_turn_a_person_restarted_is_resumed_at_once_after_the_upgrade(
     tmp_path,
     monkeypatch,
 ):
-    """The seat was waiting out a rate limit hours long; a person told it to
-    carry on, which ends that wait, and the turn that started is cut short by
-    the upgrade's cap. It is resumed within seconds, not after the limit."""
+    """The seat was waiting out a rate limit; a person told it to carry on,
+    which ends that wait, and the turn that started is cut short by the
+    upgrade's cap. It is resumed within seconds, not after the limit."""
     monkeypatch.setattr(settings, "runner_drain_s", 0.5)
     project, topic = room
     hub = OldRunnerHub()
@@ -922,7 +938,7 @@ async def test_a_turn_a_person_restarted_is_resumed_at_once_after_the_upgrade(
     factory = client.test_request_factory
     limited = (
         "API Error: Server is temporarily limiting requests (not your usage limit)"
-        " · Rate limited. Please try again in 4 hours"
+        " · Rate limited. Please try again in 20 minutes"
     )
 
     async def exercise():

@@ -18,7 +18,9 @@ frame every member hears cannot carry them; each page asks for its own.
 - ``unread``: the unread marks of the project's rooms and tasks;
 - ``private_unread``: the unread counts of private chats (keyed by the other
   person, not by room: a private chat is not in the channel list);
-- ``notify_levels``: the levels the reader set on their rooms.
+- ``notify_levels``: the levels the reader set on their rooms;
+- ``situation``: the overview's 「现状」;
+- ``project``: the project's own row (where its starter code stands).
 
 A room only its people see — a private chat, a members-only channel — is never
 named to anyone else: its frames go to the people seated in it (`audience`,
@@ -58,6 +60,9 @@ PRIVATE_UNREAD = "private_unread"
 NOTIFY_LEVELS = "notify_levels"
 #: The overview's 「现状」 was rewritten (`project_situation`).
 SITUATION = "situation"
+#: The project's own row changed where its pages show it: its repository's
+#: starter code landed or failed (`task.starter_jobs`).
+PROJECT = "project"
 
 # The room a conversation is in, its project, and whether only its people see
 # it. Bare SQL: this module sits under the broker, below the domains whose

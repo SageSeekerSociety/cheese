@@ -192,7 +192,12 @@
       "respond": "答复待办",
       "member": "管理成员",
       "channel": "新建频道",
-      "fetch": "读取网页"
+      "fetch": "读取网页",
+      "settings": "改设置",
+      "announce": "发公告",
+      "category": "管理分类",
+      "invite_code": "管理邀请码",
+      "problem_review": "审核题目"
     }
   }
 }

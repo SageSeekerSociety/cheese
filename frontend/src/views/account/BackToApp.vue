@@ -8,6 +8,9 @@
   A sign-in is handed over only once the person says so, naming the account:
   any program on the computer can open this page with a challenge of its own,
   and someone already signed in here would otherwise hand it a sign-in unasked.
+  A sign-in started on another origin of this deployment (appSignIn.ts
+  pendingReturnOrigin) goes back there unasked: that code lands on a page of
+  ours, which holds the only secret it is good with.
   What it shows is BackToAppView.vue.
 -->
 <template>
@@ -27,7 +30,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { forgetAppChallenge, pendingAppChallenge } from './appSignIn'
+import { forgetAppChallenge, pendingAppChallenge, pendingReturnOrigin } from './appSignIn'
 import BackToAppView from './BackToAppView.vue'
 
 import { UserAuthApi } from '@/api/userAuth'
@@ -64,9 +67,17 @@ async function handOver() {
   }
   handing.value = true
   try {
-    const data = await UserAuthApi.startAppSignIn(challenge)
+    const returnTo = pendingReturnOrigin()
+    const data = returnTo
+      ? await UserAuthApi.startAppSignIn(challenge, returnTo)
+      : await UserAuthApi.startAppSignIn(challenge)
     forgetAppChallenge()
-    openApp(appLink(`/account/oauth/from-browser?${new URLSearchParams({ code: data.code })}`))
+    const page = `/account/oauth/from-browser?${new URLSearchParams({ code: data.code })}`
+    if (returnTo) {
+      window.location.assign(`${returnTo}${page}`)
+      return
+    }
+    openApp(appLink(page))
   } catch (e) {
     // Signed out here since this page opened: sign in again, and come back.
     if ((e as { response?: { status?: number } })?.response?.status === 401) {
@@ -101,6 +112,12 @@ onMounted(() => {
   }
   if (!myId()) {
     router.replace({ name: 'SignIn' })
+    return
+  }
+  // Back to the origin of this deployment the sign-in started on: the code
+  // can only land on a page of ours, so there is nothing to ask.
+  if (pendingReturnOrigin()) {
+    void handOver()
     return
   }
   asking.value = true

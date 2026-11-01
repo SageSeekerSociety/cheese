@@ -1,0 +1,23 @@
+{
+  "pages": "{n} pages",
+  "sheets": "{n} sheets",
+  "version": "v{n}",
+  "updated": "Updated to v{n}",
+  "cellsChanged": "{n} cells changed",
+  "updatedHint": "This message posted v{from}; it has since been saved as v{to}",
+  "cellChanged": "Changed since this message",
+  "sheetRows": "{n} rows · open to see all",
+  "sheetFailed": "Could not read this sheet. Open it to see.",
+  "slide": "Slide {n}",
+  "expand": "Expand here",
+  "collapse": "Collapse",
+  "download": "Download",
+  "morePages": "{n} more pages — see all on the right",
+  "appRunning": "Running live",
+  "appNoApp": "Machine online, app not running",
+  "appOffline": "Environment offline",
+  "appReplaced": "Replaced by a newer preview",
+  "appChecking": "Checking whether it is running…",
+  "app": "App",
+  "newWindow": "New window"
+}

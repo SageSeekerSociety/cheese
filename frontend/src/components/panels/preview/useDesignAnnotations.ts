@@ -36,6 +36,8 @@ export interface DesignAnnotationsOptions {
   canvasBusy: () => boolean
   /** 原图文件名，用来给合成出来的那张起名。 */
   alt: () => string
+  /** 屏幕上的图转过、翻过没有：笔画按原图像素记，命中测试要先折回去。 */
+  adjust?: () => { rotate: number; flip: boolean }
   /** 合成好了，交回给组件去发 `annotate`。 */
   emitAnnotate: (payload: AnnotatePayload) => void
 }
@@ -52,7 +54,12 @@ export function useDesignAnnotations(options: DesignAnnotationsOptions) {
     return {
       left: rect.left,
       top: rect.top,
-      scale: rect.width / natural.value.width,
+      width: rect.width,
+      height: rect.height,
+      naturalWidth: natural.value.width,
+      naturalHeight: natural.value.height,
+      scale: scale.value,
+      adjust: options.adjust?.(),
     }
   }
 

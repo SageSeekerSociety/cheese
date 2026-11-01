@@ -68,7 +68,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
   // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
   const people = computed(() => opts.people().filter((m) => !m.agent))
 
-  // ---- 负责人：转交、关闭、重新打开 ----
+  // ---- 转交（负责人）、关闭（负责人和协作者）、重新打开（角色有「新建任务和审阅」的人）----
   const actionError = ref<string | null>(null)
   async function close(conclusion: string): Promise<boolean> {
     if (!task.value) return false

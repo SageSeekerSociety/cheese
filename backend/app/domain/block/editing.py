@@ -129,6 +129,9 @@ async def edit_message[Sent: EditedText](
     # whose reading ended in a failure was never answered, and editing it
     # asks it again.
     already_read = consumed_turn(block) is not None and read_failed(block) is None
+    # A room's agent hears of an edit to a message it read; a task's message
+    # was never the room's, and its own session is told through the ledger.
+    in_room = not await is_task(session, block.conversation_id)
     await blocks.replace_content(block, sent.text, checklist=checklist)
     summoned = await notify_mentions(
         session,
@@ -137,9 +140,6 @@ async def edit_message[Sent: EditedText](
         editor,
         before=before,
     )
-    # A room's agent hears of an edit to a message it read; a task's message
-    # was never the room's, and its own session is told through the ledger.
-    in_room = not await is_task(session, block.conversation_id)
     notice = (
         await _tell_the_room(blocks, block, editor)
         if in_room and already_read

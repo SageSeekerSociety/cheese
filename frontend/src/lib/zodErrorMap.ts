@@ -9,6 +9,9 @@
  * 现在改成第一次要用时再装：`ensureZodErrorMap()` 只装一次，装在哪个 locale 上按
  * 当时的界面语言取，之后跟着 `i18n.global.locale` 走。`src/utils/form.ts` 在每个
  * 用到 zod 的表单都会先导入，那里触发一次即可（见那个文件的注释）。
+ *
+ * zod-i18n-map 3 不再随包发词表（它的 README 让用 CLI 拷进项目），两份词表放在
+ * `./zod-locales/` 下，升级这个包时按同一个 tag 一起换。
  */
 import { watch } from 'vue'
 import { z } from 'zod'
@@ -27,8 +30,8 @@ async function install(): Promise<void> {
   const [i18next, { zodI18nMap }, en, zh] = await Promise.all([
     import('i18next').then((m) => m.default),
     import('zod-i18n-map'),
-    import('zod-i18n-map/locales/en/zod.json'),
-    import('zod-i18n-map/locales/zh-CN/zod.json'),
+    import('./zod-locales/en.json'),
+    import('./zod-locales/zh-CN.json'),
   ])
   await i18next.init({
     lng: i18n.global.locale.value,
@@ -37,7 +40,8 @@ async function install(): Promise<void> {
       en: { zod: en.default },
     },
   })
-  z.setErrorMap(zodI18nMap)
+  // zod 4 的全局入口是 `z.config({ customError })`；`setErrorMap` 还留着但不在这里用。
+  z.config({ customError: zodI18nMap })
   // 界面切语言时词表也要切——原来这段 watch 在 main.ts，和 i18next 一起搬到这里。
   watch(i18n.global.locale, (locale) => {
     void i18next.changeLanguage(locale)

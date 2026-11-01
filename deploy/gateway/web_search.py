@@ -48,7 +48,7 @@ def not_run(model: object) -> str:
     return (
         f"Web search did not run: the model '{model}' on this platform answered "
         "without searching the web. Do not retry WebSearch with this model; read "
-        "pages whose address you know with WebFetch or cheese_fetch."
+        "pages whose address you know with WebFetch or cheese_web(action=fetch)."
     )
 
 

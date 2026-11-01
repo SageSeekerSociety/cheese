@@ -159,6 +159,13 @@ class AcceptCard(UuidPk, Timestamps, Base):
         default=AcceptStatus.pending,
     )
     decided_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # ``decided_by``'s own 芝士 made the decision for them (`Actor.by_assistant`):
+    # only the accept and reject a reviewer's 芝士 can reach set it, and every
+    # other write of ``decided_by`` clears it. The lines announcing the decision
+    # name it (`acted_by`).
+    decided_by_assistant: Mapped[bool] = mapped_column(
+        default=False, server_default="false"
+    )
     decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

@@ -380,6 +380,7 @@ class AcceptService:
         decided_by: str,
         head_sha: str | None = None,
         deliverable_revision: str | None = None,
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await _accept.accept(
             self,
@@ -387,6 +388,7 @@ class AcceptService:
             decided_by=decided_by,
             head_sha=head_sha,
             deliverable_revision=deliverable_revision,
+            by_assistant=by_assistant,
         )
 
     async def _accept_github(
@@ -481,10 +483,10 @@ class AcceptService:
             ref=ref,
         )
 
-    def _write_merge_mirror(
+    async def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
     ) -> None:
-        return merge_queue._write_merge_mirror(
+        return await merge_queue._write_merge_mirror(
             self, card=card, verdict=verdict, who=who, head_sha=head_sha
         )
 
@@ -869,8 +871,12 @@ class AcceptService:
             self, card=card, topic=topic, reason=reason
         )
 
-    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
-        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
+    async def _stop_accept_conflict(
+        self, card: AcceptCard, topic: Topic, status: PullRequestStatus
+    ) -> NoReturn:
+        return await _accept._stop_accept_conflict(
+            self, card=card, topic=topic, status=status
+        )
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str
@@ -899,10 +905,19 @@ class AcceptService:
         return await merge_queue._cancel_queued_accept(self, card=card)
 
     async def reject(
-        self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+        self,
+        *,
+        card_id: uuid.UUID,
+        decided_by: str,
+        note: str = "",
+        by_assistant: bool = False,
     ) -> AcceptCard:
         return await decisions.reject(
-            self, card_id=card_id, decided_by=decided_by, note=note
+            self,
+            card_id=card_id,
+            decided_by=decided_by,
+            note=note,
+            by_assistant=by_assistant,
         )
 
     async def revoke(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:

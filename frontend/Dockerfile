@@ -20,6 +20,9 @@ CMD ["pnpm", "dev"]
 
 FROM deps as build
 COPY . ./
+# The API generation the build bakes in (vite.config.ts) is the backend's file,
+# outside this context: it comes in through the named `api` context (build.yml).
+COPY --from=api api-generation /backend/api-generation
 ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
@@ -38,10 +41,15 @@ FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
 # The docs' two ways of being served; docker-entrypoint.sh picks one at start.
 COPY nginx/docs /etc/nginx/docs-modes
+COPY nginx/snippets /etc/nginx/snippets
+# The mainland redirect (MAINLAND_ENTRY): what it decides on, and the address
+# space it decides about. docker-entrypoint.sh writes the rest at start.
+COPY nginx/mainland /etc/nginx/mainland
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
 COPY scripts/docs-mode.sh /usr/local/bin/docs-mode
-RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode
+COPY scripts/mainland-redirect.sh /usr/local/bin/mainland-redirect
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode /usr/local/bin/mainland-redirect
 COPY --from=build /app/dist /usr/share/nginx/html
 # The docs built for a host of their own (DOCS_BASE=, build.yml), outside the
 # html root so no platform path reaches it.

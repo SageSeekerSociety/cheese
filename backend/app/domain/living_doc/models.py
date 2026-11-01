@@ -21,12 +21,14 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -195,11 +197,52 @@ class DocumentOperation(UuidPk, Base):
     )
 
 
+class CommentOperation(UuidPk, Base):
+    """A write to a room file's comment threads, remembered by operation id so
+    that a retry after an unknown outcome replays its receipt instead of
+    applying the write twice (``DocumentOperation`` does this for documents)."""
+
+    __tablename__ = "comment_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "room_id",
+            "room_path",
+            "actor",
+            "action",
+            "operation_id",
+            name="uq_comment_operation",
+        ),
+        Index("ix_comment_operations_room_path", "room_id", "room_path"),
+    )
+
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "topics.id",
+            ondelete="CASCADE",
+            name="fk_comment_operations_room_id_topics",
+        )
+    )
+    room_path: Mapped[str] = mapped_column(String(512))
+    actor: Mapped[str] = mapped_column(String(128))
+    action: Mapped[str] = mapped_column(String(32))
+    operation_id: Mapped[uuid.UUID] = mapped_column()
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    receipt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class DocumentComment(UuidPk, Base):
-    """A comment on a document: one that opens a thread (``thread_id`` None),
-    or a reply in one. Which words a thread is about is marked in the shared
-    document itself (``commentAnchor``, carrying the opening comment's id); the
-    opening comment keeps the quoted words for display."""
+    """A comment on a document or on a room file: one that opens a thread
+    (``thread_id`` None), or a reply in one.
+
+    A thread on a document marks the words it is about in the shared document
+    itself (``commentAnchor``, carrying the opening comment's id); the opening
+    comment keeps the quoted words for display. A room file has no shared text
+    to carry a mark, so the opening comment keeps where it points in
+    ``anchor`` — the place in it (a page, a cell, a passage, an element) and
+    the version it was read at."""
 
     __tablename__ = "document_comments"
     __table_args__ = (
@@ -208,11 +251,35 @@ class DocumentComment(UuidPk, Base):
             "(thread_id IS NULL) = (sequence IS NULL)",
             name="ck_document_comment_reply_sequence",
         ),
+        # A thread hangs on exactly one subject: a document, or a file of a room.
+        CheckConstraint(
+            "(document_id IS NULL) <> (room_id IS NULL)",
+            name="ck_document_comment_subject",
+        ),
+        CheckConstraint(
+            "room_id IS NULL OR room_path IS NOT NULL",
+            name="ck_document_comment_file_path",
+        ),
+        Index("ix_document_comments_room_path", "room_id", "room_path"),
     )
 
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True, nullable=True
     )
+    #: A file's thread hangs on the room holding it; ``room_path`` is its path
+    #: in that room, the same address the preview and `cheese show` use.
+    room_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "topics.id",
+            ondelete="CASCADE",
+            name="fk_document_comments_room_id_topics",
+        ),
+        nullable=True,
+    )
+    room_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #: Where a file's thread points, in the shapes a room message quotes
+    #: (`block/message_input`); ``anchor_quote`` is how it reads.
+    anchor: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     #: The comment that opened the thread this one replies in.
     thread_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("document_comments.id", ondelete="CASCADE"),

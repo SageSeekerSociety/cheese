@@ -45,6 +45,8 @@ const props = defineProps<{
   findOpen: boolean
   /** 「⋯」里给不给「删除文档」：只有项目资料库里的文档能单独删。 */
   deletable?: boolean
+  /** 「⋯」里给不给「导出 PDF」：接了打印那一条路时才有。 */
+  pdfable?: boolean
   /** 只能提修改建议（导师）：编辑方式里只有「建议」和「只读」。 */
   suggestOnly?: boolean
   /** 打的字记成修订（建议），还是直接改正文（编辑）。 */
@@ -57,6 +59,8 @@ const emit = defineEmits<{
   (e: 'toggle-editable'): void
   (e: 'history'): void
   (e: 'export'): void
+  /** 导出 PDF：同样的正文，印成 A4。 */
+  (e: 'export-pdf'): void
   (e: 'open-thread', id: string): void
   (e: 'toggle-find'): void
   (e: 'outline-select', pos: number): void
@@ -295,6 +299,12 @@ function pickHeading(pos: number) {
         <v-list density="compact" role="menu" :aria-label="t('work.room.doc.options')">
           <v-list-item role="menuitem" :title="t('work.room.doc.history')" @click="emit('history')" />
           <v-list-item role="menuitem" :title="t('work.room.doc.exportMarkdown')" @click="emit('export')" />
+          <v-list-item
+            v-if="pdfable"
+            role="menuitem"
+            :title="t('work.room.doc.exportPdf')"
+            @click="emit('export-pdf')"
+          />
           <template v-if="deletable">
             <v-divider class="my-1" />
             <v-list-item role="menuitem" :title="t('work.room.doc.share')" @click="emit('share')" />

@@ -6,12 +6,16 @@ so it reads ``health_report()`` in process, and a route module is not something
 a domain service may import (`app/.importlinter`, C1).
 """
 
+import os
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.api.admin_deps import PlatformAdminDep
+from app.api.response import ok, typed_response
+from app.core.client_address import resolved_client_address
 from app.core.health import _REQUIRED_CHECKS, health_report
 from app.core.metrics import registry
 
@@ -31,8 +35,31 @@ async def health_check() -> dict[str, Any]:
     return {"status": "ok"}
 
 
+class ClientAddressOut(BaseModel):
+    address: str | None
+
+
+@router.get(
+    "/client-address",
+    summary="The caller's own address, as the server sees it",
+    openapi_extra={"x-public": True},
+    **typed_response(ClientAddressOut),
+)
+async def client_address(request: Request) -> dict[str, Any]:
+    """The address the per-address request limits count this caller by, or
+    null when the server cannot tell it from a proxy's.
+
+    It is the caller's own address and nobody else's, so it is public: a check
+    from outside the deployment is the only way to see that the proxies in
+    front hand the visitor's address through (`core/client_address.py`).
+    """
+    return ok(ClientAddressOut(address=resolved_client_address(request)).model_dump())
+
+
 @router.get("/health/detailed", summary="Detailed health check")
-async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
+async def detailed_health_check(
+    request: Request, _admin: PlatformAdminDep
+) -> dict[str, Any]:
     """Per-check detail, for a platform admin.
 
     Gated because it names the platform's dependencies and how each one is
@@ -40,8 +67,27 @@ async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
     `/health`); while something required is down, `/readyz`'s 503 names which
     checks failed and each one's status, so an outage stays diagnosable with no
     session — the error text itself is only here.
+
+    ``serving`` says what answered and how it saw the caller: the cores and
+    load of the host (how many workers it can usefully run), and the client
+    address the per-address limits key on, beside the forwarded chain it was
+    resolved from. ``client_address`` is null when ``FORWARDED_ALLOW_IPS`` is
+    unset, empty or ``*``, and when ``peer`` — the address uvicorn ended on —
+    is itself one of the trusted proxies, so the chain named no client past
+    them. With a list configured, an address outside it is not null: uvicorn
+    takes the nearest one as ``peer``, which is why the raw chain and the list
+    are reported beside it.
     """
-    return await health_report()
+    report = await health_report()
+    report["serving"] = {
+        "cpus": os.cpu_count(),
+        "load": [round(value, 2) for value in os.getloadavg()],
+        "client_address": resolved_client_address(request),
+        "peer": request.client.host if request.client else None,
+        "forwarded_for": request.headers.get("x-forwarded-for"),
+        "forwarded_allow_ips": os.environ.get("FORWARDED_ALLOW_IPS", ""),
+    }
+    return report
 
 
 @router.get("/metrics", summary="Application metrics")
@@ -73,7 +119,7 @@ async def readiness_check() -> Any:
     failing dependency stays behind `/health/detailed`: this route is public,
     and that text can carry internal hosts and users.
     """
-    result = await health_report()
+    result = await health_report(domain=False)
     checks = result["checks"]
     unready = [
         name for name in _REQUIRED_CHECKS if checks.get(name, {}).get("status") != "up"

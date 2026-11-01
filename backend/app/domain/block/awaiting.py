@@ -21,6 +21,7 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Literal, overload
 
 from sqlalchemy import (
@@ -39,7 +40,13 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
-from app.domain.block.asked import Awaited, may_answer, settled, skipped_by
+from app.domain.block.asked import (
+    Awaited,
+    answerable,
+    may_answer,
+    settled,
+    skipped_by,
+)
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
     QUESTION_ROWS,
@@ -77,8 +84,8 @@ class AwaitingQueries:
         return await self._awaiting_an_answer(conversation_ids)
 
     async def awaiting_answer_blocks(self, conversation_ids):
-        """Return addressed person and exact question for each waiting
-        conversation."""
+        """Return addressed person, exact question, its text and when it was
+        asked, for each waiting conversation."""
         return await self._awaiting_an_answer(conversation_ids, with_blocks=True)
 
     @overload
@@ -93,7 +100,7 @@ class AwaitingQueries:
         self,
         place_ids: list[uuid.UUID],
         with_blocks: Literal[True],
-    ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID, str]]: ...
+    ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID, str, datetime]]: ...
 
     #: 频道、活、支线的 id 作为按名绑定的数组参数传入，查询本身建一次处处复用。
     #: 语句是只读的，并发执行不往语句上挂编译期状态。
@@ -125,6 +132,10 @@ class AwaitingQueries:
                 Block.meta,
                 Block.id,
                 Block.content,
+                # 这一行右边那个时刻是**题**问出来的时刻，不是频道最后被改的时刻
+                # （`awaiting_deps` 的频道行原先取 `topic.updated_at`，一道 10-13 的
+                # 题因此显示成 10-12）。
+                Block.created_at,
             )
             .where(
                 place_column == any_(cls._places_param),
@@ -155,7 +166,8 @@ class AwaitingQueries:
         selected = {}
         waiting: dict[uuid.UUID, Awaited] = {}
         contents: dict[uuid.UUID, str] = {}
-        for place_id, meta, block_id, content in (
+        asked_at: dict[uuid.UUID, datetime] = {}
+        for place_id, meta, block_id, content, created_at in (
             await self._session.execute(
                 self._awaiting_statement("places", self._build_places_statement),
                 {"places": query_ids},
@@ -168,9 +180,10 @@ class AwaitingQueries:
             waiting[place_id] = Awaited.of(meta)
             selected[place_id] = block_id
             contents[place_id] = content or ""
+            asked_at[place_id] = created_at
         if with_blocks:
             return {
-                place: (asked, selected[place], contents[place])
+                place: (asked, selected[place], contents[place], asked_at[place])
                 for place, asked in waiting.items()
             }
         for pid in query_ids:
@@ -214,11 +227,45 @@ class AwaitingQueries:
             if parent is None:
                 return []
             # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
-            # 经了结的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
-            # `_awaiting_an_answer` 一致（`block.asked.settled`）。
-            if settled(parent.meta) or not may_answer(parent.meta, reply.author):
+            # 经了结的题，否则第二个人再点一下就又记一条。判据是 `answerable`，不是
+            # `settled`：过期收起来的那道题仍答得上（题卡留着输入框），而撤回过、
+            # 有人答过、被所有人跳过的都答不上。
+            if not answerable(parent.meta) or not may_answer(parent.meta, reply.author):
                 return []
             return [parent]
+        asked_filter = (
+            *place,
+            QUESTION_ROWS,
+            # `meta` is json, not jsonb: cast to ask "does it name him". `@>` of
+            # a string holds for a list containing it and for the bare handle a
+            # backend from before the list wrote (blue/green deploys keep one
+            # running past the migration); json_array_length would raise on it.
+            or_(
+                cast(Block.meta, JSONB)["asked"].op("@>")(
+                    func.to_jsonb(cast(reply.author, Text))
+                ),
+                cast(Block.meta, JSONB)["asked"] == func.jsonb_build_array(),
+                cast(Block.meta, JSONB)["asked_all"].as_boolean().is_(True),
+            ),
+            Block.meta["answered"].as_string().is_(None),
+            Block.id != reply.id,
+            Block.created_at <= reply.created_at,
+        )
+        candidates = [
+            block.id
+            for block in (
+                await self._session.scalars(
+                    select(Block)
+                    .where(*asked_filter)
+                    .order_by(Block.created_at, Block.id)
+                )
+            ).all()
+            if may_answer(block.meta, reply.author)
+            and answerable(block.meta)
+            and reply.author not in skipped_by(block.meta)
+        ]
+        if not candidates:
+            return []
         spoke_before = (
             select(func.max(Block.created_at))
             .where(
@@ -233,22 +280,8 @@ class AwaitingQueries:
         stmt = (
             select(Block)
             .where(
-                *place,
-                QUESTION_ROWS,
-                # `meta` is json, not jsonb: cast to ask "does it name him". `@>` of
-                # a string holds for a list containing it and for the bare handle a
-                # backend from before the list wrote (blue/green deploys keep one
-                # running past the migration); json_array_length would raise on it.
-                or_(
-                    cast(Block.meta, JSONB)["asked"].op("@>")(
-                        func.to_jsonb(cast(reply.author, Text))
-                    ),
-                    cast(Block.meta, JSONB)["asked"] == func.jsonb_build_array(),
-                    cast(Block.meta, JSONB)["asked_all"].as_boolean().is_(True),
-                ),
-                Block.meta["answered"].as_string().is_(None),
-                Block.id != reply.id,
-                Block.created_at <= reply.created_at,
+                Block.id.in_(candidates),
+                *asked_filter,
                 or_(spoke_before.is_(None), Block.created_at > spoke_before)
                 if first_word_only
                 else true(),
@@ -257,13 +290,14 @@ class AwaitingQueries:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        # 了结了的不收（和 `_awaiting_an_answer` 的判据一致），他自己跳过的也不收：
-        # 跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
-        # `may_answer` 定，和点选项、跳过同一条。
+        # 答不上的不收（`answerable`，和点选项、跳过同一条）：已经有人答过、被所有人
+        # 跳过、或者被提问的那位撤回的；过期的除外，那道题还收回答。他自己跳过的也
+        # 不收：跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
+        # `may_answer` 定。
         return [
             block
             for block in (await self._session.scalars(stmt)).all()
             if may_answer(block.meta, reply.author)
-            and not settled(block.meta)
+            and answerable(block.meta)
             and reply.author not in skipped_by(block.meta)
         ]

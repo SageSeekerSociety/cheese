@@ -15,12 +15,14 @@ from collections.abc import Collection
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Uuid, any_, bindparam, func, select
+from sqlalchemy import Uuid, any_, bindparam, column, func, select, table
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.request_facts import recall, remember
 from app.domain.topic.models import Topic, TopicStatus, not_a_private_chat
 from app.domain.topic.repositories.statements import (
     _last_activity,
@@ -38,16 +40,55 @@ if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
 
 
+_TOPIC_ROW_TABLES = frozenset({"topics"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 async def get(repo: pkg.TopicRepository, topic_id: uuid.UUID) -> Topic | None:
-    return await repo._session.get(Topic, topic_id)
+    if not _can_cache(repo._session):
+        return await repo._session.get(Topic, topic_id)
+    if repo._session.autoflush:
+        await repo._session.flush()
+    key = ("topic_row", topic_id)
+    found, cached = recall(repo._session, key)
+    if found:
+        return cached
+    topic = await repo._session.get(Topic, topic_id)
+    remember(repo._session, key, topic, tables=_TOPIC_ROW_TABLES)
+    return topic
 
 
 async def get_many(repo: pkg.TopicRepository, topic_ids: set[uuid.UUID]) -> list[Topic]:
     if not topic_ids:
         return []
-    return list(
-        await repo._session.scalars(select(Topic).where(Topic.id.in_(topic_ids)))
-    )
+    if not _can_cache(repo._session):
+        return list(
+            await repo._session.scalars(select(Topic).where(Topic.id.in_(topic_ids)))
+        )
+    if repo._session.autoflush:
+        await repo._session.flush()
+    known: list[Topic] = []
+    missing: list[uuid.UUID] = []
+    for tid in topic_ids:
+        found, cached = recall(repo._session, ("topic_row", tid))
+        if found:
+            if cached is not None:
+                known.append(cached)
+        else:
+            missing.append(tid)
+    if not missing:
+        return known
+    rows = list(await repo._session.scalars(select(Topic).where(Topic.id.in_(missing))))
+    fetched = {t.id: t for t in rows}
+    for tid in missing:
+        t = fetched.get(tid)
+        if t is not None:
+            known.append(t)
+        remember(repo._session, ("topic_row", tid), t, tables=_TOPIC_ROW_TABLES)
+    return known
 
 
 async def list_for_project(
@@ -67,6 +108,19 @@ async def list_for_project(
     filters the flat list, so a kept topic's parent may be filtered out;
     callers that rebuild the tree should not combine it with the filter.
     """
+    cache_all = (
+        _can_cache(repo._session)
+        and sort is None
+        and order == "asc"
+        and active_since is None
+        and only_seen_by is None
+    )
+    if cache_all:
+        if repo._session.autoflush:
+            await repo._session.flush()
+        found, cached = recall(repo._session, ("project_topics_all", project_id))
+        if found:
+            return list(cached)
     stmt = _project_topics_stmt(
         repo,
         [project_id],
@@ -75,7 +129,20 @@ async def list_for_project(
         active_since=active_since,
         seen=None if only_seen_by is None else seen_by(only_seen_by),
     )
-    return list((await repo._session.scalars(stmt)).all())
+    rows = list((await repo._session.scalars(stmt)).all())
+    if _can_cache(repo._session):
+        if cache_all:
+            remember(
+                repo._session,
+                ("project_topics_all", project_id),
+                tuple(rows),
+                tables=_TOPIC_ROW_TABLES,
+            )
+        for row in rows:
+            remember(
+                repo._session, ("topic_row", row.id), row, tables=_TOPIC_ROW_TABLES
+            )
+    return rows
 
 
 async def ids_for_project(
@@ -95,6 +162,20 @@ async def ids_for_project(
     `unarchived` 排掉归档的频道：它们是只读的，里面没有还能推进的活。
     走的还是 `_project_topics_stmt`，所以筛选和排序只有那一份定义。
     """
+    cache_all = _can_cache(repo._session) and only_seen_by is None and not unarchived
+    if cache_all:
+        if repo._session.autoflush:
+            await repo._session.flush()
+        found_topics, cached_topics = recall(
+            repo._session, ("project_topics_all", project_id)
+        )
+        if found_topics:
+            return [t.id for t in cached_topics]
+        found_ids, cached_ids = recall(
+            repo._session, ("project_topic_ids_all", project_id)
+        )
+        if found_ids:
+            return list(cached_ids)
     stmt = _project_topics_stmt(
         repo,
         [project_id],
@@ -105,7 +186,15 @@ async def ids_for_project(
     ).with_only_columns(Topic.id)
     if unarchived:
         stmt = stmt.where(Topic.status != TopicStatus.archived)
-    return list((await repo._session.scalars(stmt)).all())
+    ids = list((await repo._session.scalars(stmt)).all())
+    if cache_all:
+        remember(
+            repo._session,
+            ("project_topic_ids_all", project_id),
+            tuple(ids),
+            tables=_TOPIC_ROW_TABLES,
+        )
+    return ids
 
 
 async def visible_unarchived_ids_for_projects(
@@ -347,3 +436,32 @@ async def count_for_project(
         )
     )
     return int((await repo._session.scalar(stmt)) or 0)
+
+
+async def task_conversations_in(
+    repo: pkg.TopicRepository, room_ids: list[uuid.UUID]
+) -> list[uuid.UUID]:
+    """Every task in these rooms, open or closed, and the 支线 each was made
+    from: the conversations archiving them may say something in (a task's
+    change says how it went where it came from too). 走裸表，理由同
+    `has_open_tasks`。"""
+    if not room_ids:
+        return []
+    tasks = table(
+        "tasks",
+        column("id", Uuid),
+        column("room_id", Uuid),
+        column("upgraded_from_block_id", Uuid),
+    )
+    threads = table("threads", column("id", Uuid), column("root_block_id", Uuid))
+    rows = (
+        await repo._session.execute(
+            select(tasks.c.id, threads.c.id)
+            .select_from(tasks)
+            .outerjoin(
+                threads, threads.c.root_block_id == tasks.c.upgraded_from_block_id
+            )
+            .where(tasks.c.room_id.in_(room_ids))
+        )
+    ).all()
+    return [one for row in rows for one in row if one is not None]

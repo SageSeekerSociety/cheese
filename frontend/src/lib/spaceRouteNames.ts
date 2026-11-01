@@ -17,6 +17,8 @@ export interface TaskRouteNames {
   edit: string
   /** 「数据」页签。 */
   insights: string
+  /** 「历史版本」页签；`?version=N` 落到第 N 版。 */
+  versions: string
   /** 这个空间的入口 —— 面包屑里「回到空间」那一格。 */
   spaceHome: string
 }
@@ -29,6 +31,7 @@ export const TASK_ROUTE_NAMES: TaskRouteNames = {
   submit: 'TasksSubmit',
   edit: 'TasksEdit',
   insights: 'TasksInsights',
+  versions: 'TasksVersions',
   spaceHome: 'SpacesDetail',
 }
 

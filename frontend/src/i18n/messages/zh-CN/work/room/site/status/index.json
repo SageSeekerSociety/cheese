@@ -5,6 +5,7 @@
   "elapsed": "已用 {span}",
   "queued": "排队中",
   "queuedBehind": "排队中，前面还有 {ahead} 个",
+  "resumeAt": "约 {time} 自动重试",
   "retrying": "重试中",
   "retryingCount": "重试中（第 {attempt} 次）",
   "sync_failed": "同步失败",

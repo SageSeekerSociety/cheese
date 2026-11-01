@@ -19,6 +19,14 @@
   "transportWriteFailure": "Service temporarily unavailable. The operation may have completed. Refresh to check before trying again. (HTTP {status})",
   "cancel": "Cancel",
   "updateFailed": "Couldn't update",
+  "outdatedClient": {
+    "message": "A new version of this page is out and this one can no longer be used. Copy anything not yet saved or sent before you refresh.",
+    "refresh": "Refresh"
+  },
+  "requiredUpdate": {
+    "message": "An important fix is out. Refresh to get it.",
+    "refresh": "Refresh"
+  },
   "desktop": {
     "macAppleSilicon": "Mac (Apple silicon)",
     "macIntel": "Mac (Intel)",
@@ -44,6 +52,8 @@
     "imageFailed": "Couldn't load the image (HTTP {status})",
     "fileReadFailed": "Couldn't read the file (HTTP {status})",
     "downloadFailed": "Download failed (HTTP {status})",
+    "downloadUnreachable": "Download failed — the network is unreachable. Check your connection and try again.",
+    "downloaded": "Downloaded to your browser's current download folder",
     "revisionFileName": "{name} (version {seq}){ext}"
   },
   "dialog": {

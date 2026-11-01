@@ -6,7 +6,7 @@
 
 清单空着的时候这一段以**短指针**出现：它问的是另一个问题——一个交文件的项目，第一
 次交付只能新建，而那一下起的名字会留在清单上。短指针只留三件不能少的（怎么新建、
-合并不用声明、细则去 cheese_accept_request 的说明看）；整套说明跟着清单走，不跟着每一轮
+合并不用声明、细则去 cheese_card(action=request) 的说明看）；整套说明跟着清单走，不跟着每一轮
 走（#1535 之前空清单也全量注入，指令:信息约 8:1）。指针不在的话，提示里一个字都没
 提产物，芝士只剩递卡被打回这一条路能知道要声明——而递卡是一整轮工作的最后一步。
 
@@ -105,6 +105,4 @@ def _accept_request_description() -> str:
     loader.exec_module(module)
     schemas = module.PLATFORM_TOOLS.schemas()
     schemas = schemas if isinstance(schemas, list) else list(schemas.values())
-    return next(
-        s["description"] for s in schemas if s["name"] == "cheese_accept_request"
-    )
+    return module.PLATFORM_TOOLS.actions("cheese_card")["request"]["description"]

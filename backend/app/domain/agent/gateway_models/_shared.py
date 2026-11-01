@@ -20,7 +20,6 @@ from app.core import model_roles
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.agent.gateway_admin import GatewayAdminError
 from app.domain.agent.gateway_models_helpers import (
-    _capped,
     _config_yaml,
     _daily_tokens,
     _host_of,
@@ -33,10 +32,13 @@ from app.domain.agent.gateway_models_helpers import (
     _usage_to_dict,
 )
 from app.domain.agent.models import GatewayAdminAudit
+from app.domain.day_windows import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from app.domain.agent import gateway_models as pkg
-    from app.domain.agent.gateway_admin import AdminModel, UsageWindow
+    from app.domain.agent.gateway_admin import AdminModel, ModelUsage, UsageWindow
 
 # 写操作的返回体要带一份 3.1 形状的模型项，而写接口的请求里没有 `days`。取列表页
 # 的默认窗口，好让「刚写完看到的这一项」和「列表里那一项」是同一个口径。
@@ -52,7 +54,7 @@ _WRITE_ERRORS = (GatewayAdminError, BadRequestError, NotFoundError)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return utc_now()
 
 
 def _today(service: pkg.GatewayModelsService) -> date:
@@ -100,11 +102,7 @@ async def _read_back(
         models = await service._models_raw()
         usage = await service._usage_window(start, end)
         found = next((m for m in models if m.name == name), None)
-        ledger = (
-            await service._ledger_window(end)
-            if found is not None and _capped([found])
-            else None
-        )
+        ledger = await service._cap_spend([found], end) if found is not None else None
     except GatewayAdminError:
         return _item_from_payload(name, data, model_id)
     if found is not None:
@@ -142,7 +140,9 @@ async def _record(
 
 
 def _item(
-    model: AdminModel, usage: UsageWindow, ledger: UsageWindow | None = None
+    model: AdminModel,
+    usage: UsageWindow,
+    ledger: Mapping[str, ModelUsage] | None = None,
 ) -> dict:
     offered = model.selectable and model.priced and not model.blocked
     item = {
@@ -172,7 +172,7 @@ def _item(
         # 还会让两处的数对不上）。
         "series": _daily_tokens(model.name, usage),
         # 这个模型的全部线路，按网关试它们的先后排好；config 的也在，只是只读。
-        # ``ledger`` 是终身账（`answers._ledger_window`），给每条线路「上限已用多少」。
+        # ``ledger`` 是终身账（`answers._cap_spend`），给每条线路「上限已用多少」。
         "sources": [_source_item(source, ledger) for source in model.sources],
     }
     if model.origin == "config":

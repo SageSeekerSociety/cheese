@@ -4,7 +4,7 @@
 // 发件箱自己见 room/composables/useOutbox（重试、退避、断线后接着送都是它的）；这里回答
 // 的是「送出去之后这间房该有什么反应」——落库的那条接进窗口、滚到底、点亮等待指示。
 import type { Ref } from 'vue'
-import type { PostedMessage } from '../../api/messages'
+import type { Addressing, PostedMessage } from '../../api/messages'
 import type { useTimeline } from '../../components/room/composables/useTimeline'
 import type { Block, ChatAttachment, ReplyPreview, Topic } from '../../cx_types'
 import type { QuotedContext } from '../../lib/quotedContext'
@@ -15,8 +15,6 @@ import { ApiError, attachmentRawUrl, downloadFile } from '../../api'
 import { postChatMessage } from '../../api/messages'
 import { SendRefused, useOutbox } from '../../components/room/composables/useOutbox'
 import { outgoingMessageBody } from '../../lib/outgoingMessage'
-
-import { t } from '@/i18n'
 
 /** 发件箱、发送、回复，和附件的下载。 */
 export function usePanelOutgoing(deps: {
@@ -65,11 +63,9 @@ export function usePanelOutgoing(deps: {
     return room ? attachmentRawUrl(room.id, m.content) : ''
   }
   async function downloadAttachment(m: Block) {
-    try {
-      await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
-    } catch (e) {
-      deps.errorMsg.value = e instanceof Error ? e.message : t('work.room.chat.downloadFailed')
-    }
+    // 成没成由 `downloadFile` 那一层弹一句（`lib/download`）。`errorMsg` 是房间那条
+    // 出错提示行，还给别的事用，下载不再往它上面写，否则失败会说两遍。
+    await downloadFile(imageUrl(m), m.content.split('/').pop() || 'file')
   }
 
   // 发件箱：已经打出去、库里还没有的那几条 —— 见 room/composables/useOutbox。
@@ -88,6 +84,14 @@ export function usePanelOutgoing(deps: {
       if (!room) return Promise.reject(new DOMException('no room', 'AbortError'))
       const body = outgoingMessageBody(item)
       return postChatMessage(room.id, body, signal).catch((error: unknown) => {
+        // 发的人看到的是「交给」队友，送到时已经不交给了（打字时任务关了）：这条没发。它从
+        // 发件箱回到输入框——原文、回复对象、附件都在——输入框就地问一句交给谁。
+        if (error instanceof ApiError && error.code === 'AddressingChanged') {
+          deps.awaitingReply.value = false
+          deps.composer().editSend(item)
+          deps.composer().composerRef.value?.askRecipient?.((error.data as Addressing | undefined) ?? null)
+          throw new SendRefused(error.message)
+        }
         // 4xx 是后端说了「不」（没权限、房间已归档、内容不合法）；408/429 和别的失败
         // 都是这一刻的事，发件箱会带同一个 id 再试。
         if (
@@ -101,11 +105,11 @@ export function usePanelOutgoing(deps: {
         throw error
       })
     },
-    onDelivered: (block) => {
+    onDelivered: (block, dimmed) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
       if (block.conversation_id !== deps.place()?.id) return
       deps.onPosted?.(block)
-      deps.delivered().add(block.id)
+      if (dimmed) deps.delivered().add(block.id)
       deps.pushBlock(block)
       deps.autoScroll()
     },
@@ -115,7 +119,8 @@ export function usePanelOutgoing(deps: {
     content: string,
     summon: boolean,
     attachments?: ChatAttachment[],
-    quotedContext?: QuotedContext
+    quotedContext?: QuotedContext,
+    expectsAgent = false
   ): boolean {
     const trimmed = content.trim()
     const atts = attachments?.length ? attachments : undefined
@@ -123,11 +128,15 @@ export function usePanelOutgoing(deps: {
     if (!trimmed && !atts) return false
     deps.errorMsg.value = null
     deps.paging().backToNewest()
-    deps
-      .sentNow()
-      .add(
-        enqueue({ content: trimmed, replyTo: deps.composer().replyTarget.value?.id ?? undefined, atts, quotedContext })
-      )
+    deps.sentNow().add(
+      enqueue({
+        content: trimmed,
+        replyTo: deps.composer().replyTarget.value?.id ?? undefined,
+        atts,
+        quotedContext,
+        expectsAgent,
+      })
+    )
     deps.composer().clearReply()
     // Local acceptance starts the waiting indicator, before delivery — where the
     // answer comes. A summon in a channel's main line is answered in its 支线,

@@ -7,17 +7,20 @@ this module supplies the runtime collaborators and verifies the complete set.
 
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from app.core.background import PeriodicJobs, PeriodicRunner
 from app.core.db import SessionFactory
 from app.domain import backend_log
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import PROJECT, tell_project
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
-from app.domain.agent_instance.adapters import task_teammate
+from app.domain.agent.session_state import running_conversations
+from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
 from app.domain.ci_activity import periodic as ci_activity_periodic
@@ -28,9 +31,12 @@ from app.domain.delivery.agent import (
 from app.domain.delivery.agent import (
     record_task_instruction,
 )
-from app.domain.delivery.ledger import settle_card
+from app.domain.delivery.ledger import deliver, settle_card
+from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
+from app.domain.integration import periodic as integration_periodic
 from app.domain.machine import periodic as machine_periodic
+from app.domain.memory import periodic as memory_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
 from app.domain.review import periodic as review_periodic
@@ -40,8 +46,11 @@ from app.domain.session_record import periodic as session_record_periodic
 from app.domain.task import periodic as task_periodic
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
-from app.domain.topic_membership.services import addressable_seat
+from app.domain.team.repositories import TeamRepository
+from app.domain.thread import periodic as thread_periodic
+from app.domain.topic_membership.services import TopicMemberService, addressable_seat
 from app.domain.usage import periodic as usage_periodic
+from app.domain.user.services import usernames_by_ids
 
 PERIODIC_JOB_NAMES = (
     "forge event subscriptions",
@@ -76,6 +85,8 @@ PERIODIC_JOB_NAMES = (
     "notification digest",
     "delivery resend",
     "docs question retention",
+    "question expiry",
+    "thread recycling",
     "turn resumes",
     "failed turn resume deliveries",
     "timed deliveries",
@@ -83,12 +94,48 @@ PERIODIC_JOB_NAMES = (
     "routines",
     "assistant routines",
     "assistant memory tidy",
+    "feishu authorization renewal",
     "task deadline sweep",
+    "starter code pushes",
     "memory dream",
+    "memory history retention",
     "platform model roles refresh",
     "model spend cap alert",
+    "relay balance check",
+    "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
 )
+
+
+async def credit_warning_team_people(session, team_id: int) -> list[str]:
+    """A team's people — everyone on its roster, agents left out."""
+    rows = await TeamRepository(session).list_members_of_team(team_id)
+    names = await usernames_by_ids(session, [row.user_id for row in rows])
+    return [handle for handle in names.values() if handle]
+
+
+async def credit_warning_project_people(session, project_id: uuid.UUID) -> list[str]:
+    """A project's people, by the same roster its channels read."""
+    return await TopicMemberService(session).project_people(
+        project_id, team=project_team
+    )
+
+
+async def credit_warning_notify(session, event_id, payload, handles) -> None:
+    """Deliver one crossing to each of ``handles`` through the ledger, whose
+    dedup key is what keeps a repeated sweep from telling anyone twice."""
+    now = datetime.now(UTC)
+    for handle in handles:
+        await deliver(
+            session,
+            DeliveryEvent(
+                id=event_id,
+                type=NotificationType.CREDIT_WARNING,
+                payload=payload,
+                occurred_at=now,
+            ),
+            address(Event(audience=(handle,)), Hand.participant),
+        )
 
 
 async def _nudge_gate(
@@ -186,7 +233,12 @@ def periodic_jobs(
         sessions=sessions,
     )
     usage_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, turn_starts=turn_starts
+        jobs,
+        sessions=sessions,
+        turn_starts=turn_starts,
+        team_people=credit_warning_team_people,
+        project_people=credit_warning_project_people,
+        notify=credit_warning_notify,
     )
     backend_log.register_periodic_jobs(jobs)
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
@@ -200,6 +252,7 @@ def periodic_jobs(
         machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    memory_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(
         jobs,
         sessions=sessions,
@@ -207,8 +260,18 @@ def periodic_jobs(
         get_runner=get_runner,
         assistants=assistants,
     )
-    task_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    integration_periodic.register_periodic_jobs(jobs, sessions=sessions)
+
+    async def starter_settled(project_id: uuid.UUID, room_id: uuid.UUID) -> None:
+        await tell_project(room_id, PROJECT, project_id=project_id)
+
+    task_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, starter_settled=starter_settled
+    )
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    thread_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, running=running_conversations
+    )
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

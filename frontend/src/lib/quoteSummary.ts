@@ -19,6 +19,11 @@ export function quoteSummary(quote: QuotedContext): string {
       return t('slides.quotedCell', {
         address: quote.sheet ? `${quote.sheet}!${quote.address}` : quote.address,
       })
+    case 'sheet-range':
+      // 一片写成表格软件自己印的那个 `A1:C3`，带上工作表名（CSV 没有）。
+      return t('slides.quotedRange', {
+        address: quote.sheet ? `${quote.sheet}!${quote.start}:${quote.end}` : `${quote.start}:${quote.end}`,
+      })
     case 'text-range':
       return t('slides.quotedPassage')
     case 'web-element':
@@ -27,6 +32,10 @@ export function quoteSummary(quote: QuotedContext): string {
       return t('slides.quotedWebText')
     case 'web-region':
       return t('slides.quotedWebRegion')
+    case 'image-region':
+      return t('slides.quotedImageRegion')
+    case 'viewing':
+      return t('slides.quotedViewing')
     default:
       return t('slides.quotedSource')
   }

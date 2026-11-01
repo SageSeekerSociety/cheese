@@ -52,6 +52,27 @@ const OWNED = '[data-feed-of]'
 /** 一条比可见区还高的消息里，↑↓ 一下滚多少：和浏览器自己按方向键滚的一档差不多。 */
 const LINE_PX = 40
 
+/** 这一列自己认的键：Tab 走进来、↑↓ 换一条、Home/End/PgUp/PgDn、Enter 进到这一条里、
+ *  Esc 出来。只有按这些键才算人是在用键盘走这一列，别的一概不算——包括 F1–F12 和
+ *  音量/媒体键：有的系统会把它们也递进网页，而浏览器的 :focus-visible 见到任何一次
+ *  按键都会给焦点中的元素画框，于是点过一条消息再按一下音量键，整行就亮起一圈。 */
+const TIMELINE_KEYS: ReadonlySet<string> = new Set([
+  'Tab',
+  'Enter',
+  'Escape',
+  'ArrowUp',
+  'ArrowDown',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+])
+
+/** 这一下按键是不是「在用键盘走这一列」（见 TIMELINE_KEYS）。 */
+export function isTimelineKey(event: KeyboardEvent): boolean {
+  return TIMELINE_KEYS.has(event.key)
+}
+
 export function useTimelineKeys(deps: TimelineKeysDeps) {
   const { scrollRef, contentRef, bar, showBarAt, touchOnly, reactionPickerFor, loadOlder } = deps
 

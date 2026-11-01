@@ -64,6 +64,8 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
             "resubmittable": True,
             "editable": True,
             "defaultDeadline": 30,
+            # The notices are about an application waiting on the publisher.
+            "startMode": "APPLY",
             "deadline": int(time.time() * 1000) + 7 * 86400 * 1000,
             "submissionSchema": [{"prompt": "源码", "type": "FILE"}],
         },
@@ -158,6 +160,30 @@ def test_changed_requirements_reach_those_who_claimed(
         n["contextMetadata"]["event"] for n in _notices(api_client, board["student"])
     ]
     assert events == ["requirementsChanged"]
+
+
+def test_hiding_the_rubric_tells_those_who_claimed_nothing(
+    api_client: TestClient, board: dict
+):
+    """Showing or hiding the rubric changes neither what to hand in nor how it is
+    scored; the edit page sends it on every save, so it must not tell anyone."""
+    resp = api_client.post(
+        f"/tasks/{board['task']}/participations/user",
+        json={},
+        headers=_auth(board["student"]),
+    )
+    assert resp.status_code == 200, resp.text
+
+    hidden = api_client.patch(
+        f"/tasks/{board['task']}",
+        json={"rubricPublic": False},
+        headers=_auth(board["teacher"]),
+    )
+    assert hidden.status_code == 200, hidden.text
+    events = [
+        n["contextMetadata"]["event"] for n in _notices(api_client, board["student"])
+    ]
+    assert "requirementsChanged" not in events
 
 
 def test_deadlines_are_reminded_twice_and_a_missed_one_is_told(

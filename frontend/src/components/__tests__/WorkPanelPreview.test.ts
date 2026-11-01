@@ -54,12 +54,16 @@ vi.mock('../../api', async () => {
     ...actual,
     // 总览里「进度」那一段会读它；这里不关心它，给一份空的。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    // 应用睡着时去取快照；这里都还没留过。
+    getPreviewSnapshot: vi.fn().mockResolvedValue(null),
+    putPreviewSnapshot: vi.fn().mockResolvedValue(null),
     getPreview: (...a: unknown[]) =>
       getPreview(...a).then(
         (preview: Record<string, unknown> | null) =>
           preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
       ),
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    roomFileRevisions: vi.fn().mockResolvedValue({ data: [], total: 0, path: '', version: null }),
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -166,8 +170,15 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('预览连接尚未建立或已断开')
-    expect(container.textContent).toContain('不代表小 C已停止工作')
+    // 一张「运行环境已休眠」的卡，连通链上说的是通道那一段：队友的电脑没连上。
+    expect(container.querySelector('[data-testid="preview-app-sleep"]')?.getAttribute('data-kind')).toBe('machine')
+    expect(container.textContent).toContain('运行环境已休眠')
+    // 链上断的那一段带着原因（悬停、点开都看得到）。
+    const reasons = [...container.querySelectorAll('.browser-chain__seg[data-state="down"]')].map((el) =>
+      el.getAttribute('title')
+    )
+    // 链上的话和卡上那几句同源（`chain.json`）：说的是「连不上」，不是「没连上平台」。
+    expect(reasons.join(' ')).toContain('连不上小 C的电脑')
     expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })
@@ -185,8 +196,14 @@ describe('预览面板：运行中的应用到不了的时候说什么', () => {
     await flush()
     await openPreview(container)
 
-    expect(container.textContent).toContain('应用预览暂不可用')
-    expect(container.textContent).toContain('预览连接正常，但应用没有响应。请让小 C检查应用是否正常运行。')
+    // 电脑在、应用没答：卡上请这间房的队友重启应用，链上「应用」那一段说清原因。
+    expect(container.querySelector('[data-testid="preview-app-sleep"]')?.getAttribute('data-kind')).toBe('app')
+    expect(container.textContent).toContain('请小 C重启应用')
+    // 链上断的那一段带着原因（悬停、点开都看得到）。
+    const reasons = [...container.querySelectorAll('.browser-chain__seg[data-state="down"]')].map((el) =>
+      el.getAttribute('title')
+    )
+    expect(reasons.join(' ')).toContain('小 C的电脑连着，应用没有应答')
     expect(container.textContent).not.toContain('芝士')
     expect(container.textContent).not.toContain('再 @')
   })

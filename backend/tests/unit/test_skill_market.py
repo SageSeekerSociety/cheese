@@ -99,12 +99,25 @@ def _client(
     *,
     broken: str = "",
     denied: str = "",
+    dropped: str = "",
+    drops: int = 1,
     auth: list | None = None,
     registry: list[dict] | None = None,
 ) -> httpx.AsyncClient:
+    """A market backed by a fake network.
+
+    ``dropped`` is a substring of the URL whose first ``drops`` requests end the
+    connection instead of answering — the way this machine loses one now and
+    then — and every later request is served as if nothing had happened.
+    """
+    dropped_times = {"n": 0}
+
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         host, path = request.url.host, request.url.path
+        if dropped and dropped in str(request.url) and dropped_times["n"] < drops:
+            dropped_times["n"] += 1
+            raise httpx.ConnectError("connection reset")
         if host == "registry.modelcontextprotocol.io":
             if broken == "mcp":
                 return httpx.Response(500)
@@ -140,9 +153,15 @@ def _client(
 @pytest.fixture(autouse=True)
 def _fresh_cache(monkeypatch):
     monkeypatch.setattr(settings, "github_token", "")
+    # 重试之间不真等：等待的时长本身不是这套测试要问的事。
+    monkeypatch.setattr(skill_market, "READ_BACKOFF_S", 0)
     skill_market._CACHE.clear()
+    # 每一条自带 client 的用例都绕开进程级连接池；跑完清掉，免得下一条借到
+    # 一条已经关掉的连接。
+    monkeypatch.setattr(skill_market, "_CLIENT", None)
     yield
     skill_market._CACHE.clear()
+    skill_market._CLIENT = None
 
 
 @pytest.mark.anyio
@@ -297,3 +316,118 @@ async def test_the_registry_is_asked_for_one_row_per_server():
 
     assert [card["name"] for card in got["mcp"]] == ["inference.sh", "docs-mcp"]
     assert any("version=latest" in url for url in seen)
+
+
+@pytest.mark.anyio
+async def test_a_dropped_connection_is_asked_again():
+    """这台机器会把连接掐掉再连上：同一份清单再问一次就好，不该丢掉整个货架。
+
+    实测 2026-10-26：到 ``api.github.com`` 的新连接有两三成被重置，重试之后就稳了。
+    """
+    seen: list[str] = []
+    got = await skill_market.catalogue(
+        _client(seen, dropped="skills/contents/.claude-plugin", drops=2)
+    )
+
+    assert [card["name"] for card in got["skills"]] == ["pdf", "docx"]
+    assert got["notes"] == []
+    # 两次被掐断，第三次答了。
+    assert sum("skills/contents/.claude-plugin" in url for url in seen) == 3
+
+
+@pytest.mark.anyio
+async def test_the_registry_is_asked_again_when_the_connection_drops():
+    got = await skill_market.catalogue(
+        _client([], dropped="registry.modelcontextprotocol.io", drops=1)
+    )
+
+    assert got["mcp"][0]["name"] == "Acme"
+    assert got["notes"] == []
+
+
+@pytest.mark.anyio
+async def test_a_shelf_lost_to_the_network_is_held_briefly_and_asked_again():
+    """一次抖动只该空一小会儿：网络回来了，下次打开就要自己好，不用等半小时。"""
+    seen: list[str] = []
+    first = await skill_market.catalogue(
+        _client(seen, dropped="skills/contents/.claude-plugin", drops=99)
+    )
+    assert first["skills"] == []
+    assert any("no answer" in note for note in first["notes"])
+
+    at, value, ttl = skill_market._CACHE["catalogue"]
+    assert ttl < skill_market.CACHE_SECONDS  # 丢过货架的这一次不该留半小时
+    # 一分钟后再打开，网络已经回来了：只把这次结果按时长老一分钟。
+    skill_market._CACHE["catalogue"] = (at - 61, value, ttl)
+
+    seen.clear()
+    second = await skill_market.catalogue(_client(seen))
+
+    assert [card["name"] for card in second["skills"]] == ["pdf", "docx"]
+    assert second["notes"] == []
+    assert seen  # 确实又问了一遍，不是把失败那份再端上来
+
+
+@pytest.mark.anyio
+async def test_a_refusal_is_answered_at_once_and_kept():
+    """403 是对方答了：不再问，也不为它把额度反复花掉，照常留半小时。"""
+    seen: list[str] = []
+    got = await skill_market.catalogue(
+        _client(seen, denied="anthropics/skills/contents")
+    )
+
+    assert got["skills"] == []
+    assert sum("skills/contents/.claude-plugin" in url for url in seen) == 1
+    assert skill_market._CACHE["catalogue"][2] == skill_market.CACHE_SECONDS
+
+
+@pytest.mark.anyio
+async def test_the_default_read_opens_one_pool_and_reuses_it(monkeypatch):
+    """整份市场只开一条连接：这一台机器上失败的正是新建 TLS，不是请求本身。
+
+    实测 2026-10-26（会话工作机）：到 api.github.com 新建 TLS 四十次里约十次被
+    重置，而一条长连接上的四十个请求全部答了。市场一份清单一个文件、描述又十几个，
+    让它们共用一条连接，是把这个失败面收掉的那一步。
+
+    这条钉的是「没有传 client 的默认路径」——原来那里每读一次就新建一个 client。
+    """
+    caller = _client([])  # 调用方自带的那一个，在打桩之前就建好
+    real = httpx.AsyncClient
+    opened: list[httpx.AsyncClient] = []
+
+    def counting(*args, **kwargs):
+        made = real(*args, **kwargs)
+        opened.append(made)
+        return made
+
+    monkeypatch.setattr(skill_market.httpx, "AsyncClient", counting)
+
+    await skill_market.catalogue(caller)
+    assert not opened  # 传进来的 client 是调用方的，默认路径不该再开
+
+    # 两次默认读（绕开缓存），只应开一条：第二条是借来的，不是新开的。
+    for _ in range(2):
+        skill_market._CACHE.clear()
+        await skill_market.catalogue()
+    assert len(opened) == 1
+
+    await skill_market.close_market_connections()
+
+
+@pytest.mark.anyio
+async def test_a_read_does_not_close_the_pool_it_borrowed():
+    """读完了不关池子：它归进程所有，关掉就等于下一个人又要新建 TLS。"""
+    await skill_market.catalogue(_client([]))
+    pool = skill_market.reuse_market_connections()
+    assert not pool.is_closed
+    await skill_market.close_market_connections()
+
+
+@pytest.mark.anyio
+async def test_closing_lets_the_next_read_open_a_fresh_pool():
+    first = skill_market.reuse_market_connections()
+    await skill_market.close_market_connections()
+
+    assert first.is_closed
+    assert skill_market.reuse_market_connections() is not first
+    await skill_market.close_market_connections()

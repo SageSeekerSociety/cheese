@@ -348,7 +348,7 @@ api = os.environ.get("CHEESE_API", "").rstrip("/")
 if blob is None and api:
     request = urllib.request.Request(
         api + "/connector/skill-bundles/" + want,
-        headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
+        headers={{"Authorization": "Bearer " + os.environ.get("CHEESE_TOKEN", "")}},
     )
     # The pause between attempts grows from this step; a test sets it to 0.
     step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))
@@ -446,6 +446,11 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 ROOM_CONFIG_DIR="$HOME/.claude"
 SEAT="{seat_home}"
 export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+# The session is kept to its own seat of this room
+# (`remote_execution/namespace._keep_only`): a seat's memory tree holds the
+# private memory of the person its turn answers. To its own room of the
+# machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
+export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 # Conversation transcripts belong to the room for resume and transfer, while
 # settings, skills and generated instructions belong to this seat.

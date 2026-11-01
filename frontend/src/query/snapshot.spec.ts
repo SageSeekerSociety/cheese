@@ -127,10 +127,13 @@ describe('进一个任务', () => {
     expectRoom('task', 'room')
     const row = queryClient.fetchQuery(roomTaskQuery('task'))
     const related = fromSnapshot(keys.taskRelated('task'), () => Promise.reject(new Error('asked')))
+    // 技能提议卡跟着提出它的那段对话走：任务页按任务去要，快照里那一格就是任务的。
+    const skills = fromSnapshot(keys.roomSkillProposals('task'), () => Promise.reject(new Error('asked')))
+    const roomSkills = keys.roomSkillProposals('room')
     settleRoom('task', 'room', {
       members: [member('alice')],
       feedback_proposals: [],
-      skill_proposals: [],
+      skill_proposals: [{ id: 'sk-1', source_topic_id: 'task' }],
       task: { id: 'task', title: '整理周报' },
       related: { origin: null, materials: [] },
       review_comments: { comments: [] },
@@ -138,6 +141,8 @@ describe('进一个任务', () => {
 
     expect((await row).id).toBe('task')
     expect(await related).toEqual({ origin: null, materials: [] })
+    expect(await skills).toEqual([{ id: 'sk-1', source_topic_id: 'task' }])
+    expect(queryClient.getQueryData(roomSkills)).toBeUndefined()
     expect(queryClient.getQueryData<{ data: unknown[] }>(keys.roomMembers('room'))?.data).toHaveLength(1)
     expect(api.getTask).not.toHaveBeenCalled()
   })

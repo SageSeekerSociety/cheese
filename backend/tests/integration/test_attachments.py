@@ -202,7 +202,7 @@ def test_a_video_gets_the_video_ceiling_and_every_other_file_keeps_its_own(
     assert refused.status_code == 422, refused.text
     assert refused.json()["error"]["i18n"] == {
         "key": "fileTooLarge",
-        "params": {"mb": 1},
+        "params": {"size": "1 MB"},
     }
 
     # An iPhone records HEVC in a QuickTime container: `.MOV`, video/quicktime.
@@ -232,7 +232,7 @@ def test_a_video_gets_the_video_ceiling_and_every_other_file_keeps_its_own(
     assert too_long.status_code == 422, too_long.text
     assert too_long.json()["error"]["i18n"] == {
         "key": "fileTooLarge",
-        "params": {"mb": 2},
+        "params": {"size": "2 MB"},
     }
 
 

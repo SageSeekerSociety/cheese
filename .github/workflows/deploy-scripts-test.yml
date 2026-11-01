@@ -73,7 +73,7 @@ jobs:
         run: bash deploy/tests/test-app-tier-health.sh
 
   # 112 s here (104 s of it the step itself), most of it the nginx install the
-  # step does for itself. No PyYAML: these three scripts import none and shell
+  # step does for itself. No PyYAML: these scripts import none and shell
   # out only to the `configure-*.sh` writers and nginx. 6 minutes is 3x.
   shell-tests-ingress:
     runs-on: ubuntu-latest
@@ -84,8 +84,11 @@ jobs:
       - name: Persistent ingress survives application switches
         run: |
           "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
+          python3 deploy/tests/test_reserved_port.py
           python3 deploy/tests/test_ingress_lifecycle.py
           python3 deploy/tests/test_front_door_tls.py
+          # The frontend image's own nginx, with the mainland redirect in it.
+          python3 deploy/tests/test_mainland_redirect.py
           python3 deploy/llm-tunnel/verify-sites.py
 
   # Everything else: 120 s here, led by the gateway group (72 s) and the failover
@@ -115,6 +118,12 @@ jobs:
 
       - name: Automatic release ordering
         run: python3 deploy/tests/test_auto_deploy.py
+
+      - name: Database backup cadence, retention, and freshness
+        run: python3 deploy/tests/test_r2_backups.py
+
+      - name: The dev deploy's fetches wait out reset connections
+        run: bash deploy/tests/test-git-fetch.sh
 
       - name: PR watcher follows the deploy that releases a merge
         run: python3 deploy/tests/test_pr_watch_deploy.py
@@ -165,6 +174,9 @@ jobs:
 
       - name: Foreign-container eviction
         run: bash deploy/tests/test-evict-foreign-container.sh
+
+      - name: Deployment merge survives a reset pulling its scratch images
+        run: bash deploy/tests/test-merge-deployment-pull.sh
 
       - name: CI runner job-started hook
         run: bash deploy/tests/test-ci-runner-job-hook.sh

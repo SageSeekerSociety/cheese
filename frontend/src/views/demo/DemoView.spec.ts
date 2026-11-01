@@ -126,7 +126,7 @@ describe('DemoView', () => {
     await waitFor(() => expect(view.getAllByRole('button').some((b) => /采纳/.test(b.textContent ?? ''))).toBe(true))
     expect(view.getAllByText('docs: add a welcome note', { exact: false }).length).toBeGreaterThan(0)
     // 本轮摘要由 collapseNotices 折出来：文件数和增删。
-    expect(view.getByText(/改动了 1 个文件/)).toBeTruthy()
+    expect(view.getByText(/修改了 1 个文件/)).toBeTruthy()
     // 步骤清单：三项都打勾，结果那一句在。
     expect(view.getByText('README.md 写好了，验收卡已递给王长鑫', { exact: false })).toBeTruthy()
     expect(fetchSpy).not.toHaveBeenCalled()

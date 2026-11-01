@@ -71,9 +71,11 @@ def test_publishing_needs_a_seat_in_this_room_not_an_agent_shaped_caller(client)
     assert joined.status_code == 200, joined.text
 
     headers = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"], topic_id=room["id"], agent_handle=seat
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'], topic_id=room['id'], agent_handle=seat
+            )
+        }"
     }
     refused = _publish(client, room["id"], headers)
     assert refused.status_code == 403, refused.text
@@ -119,9 +121,10 @@ def test_a_teammate_seats_only_in_the_project_that_built_it(client):
     )
     assert seated.status_code == 200, seated.text
 
-    # 人没有这条限制：同一个人在两个项目的房间里都坐得下（两个项目都在 alice 的
-    # 个人团队里，bob 在这个团队里）。
-    join_project_team(client, home["id"], "bob")
+    # 人没有这条限制：同一个人在两个项目的房间里都坐得下。两个项目各进各的团队——
+    # 个人团队只能有所有者一个人，夹具会把项目搬到共享团队里再加人。
+    for project in (home, elsewhere):
+        join_project_team(client, project["id"], "bob")
     for room in (theirs, ours):
         joined = client.post(
             f"/topics/{room['id']}/members",
@@ -171,9 +174,11 @@ def test_a_seat_in_the_root_room_is_not_a_seat_in_every_room(client):
             client,
             topic_id,
             {
-                "X-Cheese-Token": mint_scoped_token(
-                    project_id=project["id"], topic_id=topic_id, agent_handle=seat
-                )
+                "Authorization": f"Bearer {
+                    mint_scoped_token(
+                        project_id=project['id'], topic_id=topic_id, agent_handle=seat
+                    )
+                }"
             },
         )
 
@@ -219,7 +224,7 @@ def test_the_project_s_own_credential_speaks_in_every_room_of_it(client):
     room = _room(client, project, title="不是根房间")
     token, handle = _project_credential(client, project)
 
-    published = _publish(client, room["id"], {"X-Cheese-Token": token})
+    published = _publish(client, room["id"], {"Authorization": f"Bearer {token}"})
     assert published.status_code == 200, published.text
     assert published.json()["data"]["author"] == handle
 
@@ -251,7 +256,7 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
                     }
                 ]
             },
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert asked.status_code == 200, asked.text
 
@@ -278,7 +283,10 @@ def test_revoking_that_seat_closes_the_project_credential_too(client):
     room = _room(client, project, title="把它请出去的那个房间")
     token, handle = _project_credential(client, project)
 
-    assert _publish(client, room["id"], {"X-Cheese-Token": token}).status_code == 200
+    assert (
+        _publish(client, room["id"], {"Authorization": f"Bearer {token}"}).status_code
+        == 200
+    )
 
     removed = client.delete(
         f"/topics/{room['id']}/members/{handle}",
@@ -286,5 +294,5 @@ def test_revoking_that_seat_closes_the_project_credential_too(client):
     )
     assert removed.status_code == 200, removed.text
 
-    refused = _publish(client, room["id"], {"X-Cheese-Token": token})
+    refused = _publish(client, room["id"], {"Authorization": f"Bearer {token}"})
     assert refused.status_code == 403, refused.text

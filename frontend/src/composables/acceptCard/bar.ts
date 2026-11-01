@@ -68,7 +68,11 @@ export function useAcceptCardBar(host: AcceptCardBarHost) {
     return {
       icon: 'mdi-check-circle-outline',
       color: 'success',
-      title: accepted ? t('work.room.accept.decidedBy', { name: deciderName.value }) : t('work.room.accept.accepted'),
+      title: accepted
+        ? t(accepted.decided_by_assistant ? 'work.room.accept.decidedByAssistant' : 'work.room.accept.decidedBy', {
+            name: deciderName.value,
+          })
+        : t('work.room.accept.accepted'),
     }
   })
 

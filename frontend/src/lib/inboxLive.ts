@@ -13,12 +13,15 @@ import { BASE } from '@/api/http'
 
 /** 收件箱最新一行的 id 变了。 */
 export type InboxListener = () => void
+/** 和芝士的这段对话说了新的话：一个回答答完了，或例行事务运行了。 */
+export type AssistantListener = (conversation: string) => void
 
 const NAME = 'cheese-inbox-live'
 const FIRST_DELAY_MS = 1_000
 const MAX_DELAY_MS = 30_000
 
 const listeners = new Set<InboxListener>()
+const assistantListeners = new Set<AssistantListener>()
 
 /** 收件箱有新的一行时叫 `listener`；返回的函数取消。 */
 export function onInboxChange(listener: InboxListener): () => void {
@@ -28,6 +31,16 @@ export function onInboxChange(listener: InboxListener): () => void {
 
 function tell(): void {
   for (const listener of listeners) listener()
+}
+
+/** 和芝士的哪段对话说了新的话时叫 `listener`（别的标签页、别的设备上也算）；返回的函数取消。 */
+export function onAssistantChange(listener: AssistantListener): () => void {
+  assistantListeners.add(listener)
+  return () => assistantListeners.delete(listener)
+}
+
+function tellAssistant(conversation: string): void {
+  for (const listener of assistantListeners) listener(conversation)
 }
 
 /** 第 `attempt` 次重连前等多久：0 到 min(上限, 起步 × 2^attempt) 之间随机。 */
@@ -66,7 +79,8 @@ function connectOnce(
   token: string,
   stopped: AbortSignal,
   changed: () => void,
-  seen: { latest: number | null }
+  seen: { latest: number | null },
+  assistant: AssistantListener = () => {}
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let heard = false
@@ -75,10 +89,14 @@ function connectOnce(
     stopped.addEventListener('abort', stop)
     socket.onopen = () => socket.send(JSON.stringify({ token }))
     socket.onmessage = (event) => {
-      let frame: { kind?: string; latest?: number | null }
+      let frame: { kind?: string; latest?: number | null; conversation?: string }
       try {
         frame = JSON.parse(String(event.data))
       } catch {
+        return
+      }
+      if (frame.kind === 'assistant' && typeof frame.conversation === 'string') {
+        assistant(frame.conversation)
         return
       }
       if (frame.kind !== 'inbox') return
@@ -96,7 +114,12 @@ function connectOnce(
 }
 
 /** 这一页持着连接：断了重连，直到 `stopped`。 */
-async function holdConnection(issue: () => Promise<string>, stopped: AbortSignal, changed: () => void): Promise<void> {
+async function holdConnection(
+  issue: () => Promise<string>,
+  stopped: AbortSignal,
+  changed: () => void,
+  assistant: AssistantListener
+): Promise<void> {
   let attempt = 0
   // 同一段登录里跨重连记着：断开期间收件箱往前走了，重连的第一帧要叫一次。
   const seen: { latest: number | null } = { latest: null }
@@ -104,7 +127,7 @@ async function holdConnection(issue: () => Promise<string>, stopped: AbortSignal
     let heard = false
     try {
       // 每次都要一张新的：上一张可能已经随登录一起作废（服务端用 4401 关掉的那种）。
-      heard = await connectOnce(await issue(), stopped, changed, seen)
+      heard = await connectOnce(await issue(), stopped, changed, seen, assistant)
     } catch {
       // 凭证没要到（网络断了、登录过期）：和连不上一样，等一会儿再试。
     }
@@ -121,17 +144,28 @@ async function holdConnection(issue: () => Promise<string>, stopped: AbortSignal
 export function startInboxLive(issue: () => Promise<string>): () => void {
   const stop = new AbortController()
   const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(NAME) : null
-  if (channel) channel.onmessage = () => tell()
+  if (channel)
+    channel.onmessage = (event: MessageEvent) => {
+      const conversation = (event.data as { assistant?: unknown } | null)?.assistant
+      if (typeof conversation === 'string') tellAssistant(conversation)
+      else tell()
+    }
   const changed = () => {
     tell()
     channel?.postMessage('changed')
   }
+  const assistant = (conversation: string) => {
+    tellAssistant(conversation)
+    channel?.postMessage({ assistant: conversation })
+  }
 
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
   if (locks && channel) {
-    locks.request(NAME, { signal: stop.signal }, () => holdConnection(issue, stop.signal, changed)).catch(() => {})
+    locks
+      .request(NAME, { signal: stop.signal }, () => holdConnection(issue, stop.signal, changed, assistant))
+      .catch(() => {})
   } else {
-    void holdConnection(issue, stop.signal, changed)
+    void holdConnection(issue, stop.signal, changed, assistant)
   }
 
   return () => {

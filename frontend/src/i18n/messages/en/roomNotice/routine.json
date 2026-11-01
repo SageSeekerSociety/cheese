@@ -27,9 +27,14 @@
   "routineRunStarted": "Started “{title}”",
   "routineSkipped": "did not run",
   "routineSucceeded": "finished",
-  "assistantRoutineDone": "Routine “{routine}” finished",
-  "assistantRoutineAsked": "Routine “{routine}” has {count} actions waiting for you to confirm",
-  "assistantRoutineFailed": "Routine “{routine}” could not finish",
-  "assistantRoutinesNoCredits": "You are out of credits, so your routines are paused",
-  "assistantRoutinesAway": "You have not signed in for {days} days, so your routines are paused"
+  "assistantAnswered": "Cheese finished “{topic}”",
+  "assistantAnsweredAsks": "Cheese finished “{topic}”; {count} actions waiting for you to confirm",
+  "assistantAnsweredUntitled": "Cheese finished what you asked",
+  "assistantRoutineDone": "Automation “{routine}” finished",
+  "assistantRoutineAsked": "Automation “{routine}” has {count} actions waiting for you to confirm",
+  "assistantRoutineFailed": "Automation “{routine}” could not finish",
+  "assistantRoutinesNoCredits": "You are out of credits, so your automations are paused",
+  "assistantRoutinesAway": "You have not signed in for {days} days, so your automations are paused",
+  "assistantWaitFailed": "“{routine}” could not finish",
+  "assistantWaitGivenUp": "Stopped waiting for “{routine}”: it did not happen within {days} days"
 }

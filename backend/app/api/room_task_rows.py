@@ -22,9 +22,9 @@ reach one (C4 `routes-independent`).
 """
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,11 +64,14 @@ async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
     return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
-async def task_out(db, task, card=None, *, me: str) -> dict:
+_CARD_UNSET: Any = object()
+
+
+async def task_out(db, task, card: Any = _CARD_UNSET, *, me: str) -> dict:
     """The task with its board cell — what every route that hands a task back
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
-    if card is None:
+    if card is _CARD_UNSET:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     runs = await teammate_runs(db, [task])
@@ -97,7 +100,10 @@ async def task_out(db, task, card=None, *, me: str) -> dict:
         reviewer=reviewers[0] if reviewers else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
-    out["from_thread"] = task.id in await from_threads(db, [task.id])
+    out["from_thread"] = (
+        task.upgraded_from_block_id is not None
+        and task.id in await from_threads(db, [task.id])
+    )
     return out
 
 
@@ -162,6 +168,8 @@ async def task_rows(
     threads: Sequence[tuple[Task, Sequence[Block]]],
 ) -> list[dict]:
     """``threads`` (each task with the blocks to carry, often none) as rows."""
+    if not threads:
+        return []
     # The card each thread rides on, in ONE query for the whole room (the same
     # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
     # 人验收" are indistinguishable on screen — both are quiet — and the room
@@ -193,7 +201,9 @@ async def task_rows(
     choices = catalog(project.settings if project else None)
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
-    in_place = await from_threads(db, thread_ids)
+    in_place = await from_threads(
+        db, [t.id for t, _ in threads if t.upgraded_from_block_id is not None]
+    )
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -333,6 +343,7 @@ async def project_task_rows(
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
     incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
     running_of: Callable[[uuid.UUID], bool] | None = None,
+    last_activity_of: Mapping[uuid.UUID, datetime] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
@@ -358,7 +369,11 @@ async def project_task_rows(
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
     # 第四次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
-    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
+    last_said = (
+        last_activity_of
+        if last_activity_of is not None
+        else await TaskService(db).last_block_at_for_tasks(task_ids)
+    )
     # 第五次：哪几条活的会话此刻真在跑 —— 侧栏呼吸绿的「有一轮在跑」那一半。
     # 用 runner 报的会话状态，不用队友自己报的「在做」：那是纸面状态，会话可能已经停了。
     # 调用方已经读过（频道清单的 `at_work`）就直接用，不在这里多查一次。
@@ -369,7 +384,7 @@ async def project_task_rows(
     # 第六次：哪几条活自己那位队友的会话在跑、在哪一次跑里 —— 那一格的「在做」。和上面
     # 那一半不是一回事：侧栏的呼吸绿看这段对话里有没有任何会话在跑，那一格只认这条活
     # 自己的队友（`agent.teammate_runs`）。
-    runs = await teammate_runs(db, tasks)
+    runs = await teammate_runs(db, [t for t in tasks if is_running(t.id)])
     items = []
     for task in tasks:
         card = cards.get(task.id)
@@ -528,6 +543,25 @@ async def room_task_items(
         latest=latest,
     )
     return await task_rows(db, actor, topic.project_id, threads)
+
+
+async def room_snapshot_tasks(
+    db: AsyncSession, actor: Actor, topic, *, recent_done: int
+) -> dict[str, list[dict]]:
+    """The `tasks` of a channel's `room_snapshot` (`open` and `recent`),
+    hydrating both lists in one batched `task_rows` + `with_session_running`
+    pass instead of running the seven per-batch queries twice."""
+    service = TaskService(db)
+    open_threads = await service.threads_for_room(topic.id, limit=0, status="open")
+    recent_threads = await service.threads_for_room(
+        topic.id, limit=0, status="closed", latest=recent_done
+    )
+    combined = await with_session_running(
+        db,
+        await task_rows(db, actor, topic.project_id, [*open_threads, *recent_threads]),
+    )
+    split = len(open_threads)
+    return {"open": combined[:split], "recent": combined[split:]}
 
 
 async def with_session_running(db: AsyncSession, items: list[dict]) -> list[dict]:

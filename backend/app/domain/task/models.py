@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -5,6 +6,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -13,13 +15,17 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    UniqueConstraint,
+    and_,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
 from app.domain.task.indexed_rows import LIVE_ROWS, SWEEPABLE_ROWS
+from app.domain.task.inputs import APPROVE_DISAPPROVED
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
@@ -29,11 +35,13 @@ task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
 task_submission_schema_seq = Sequence("task_submission_schema_seq")
 task_access_domain_seq = Sequence("task_access_domain_seq")
-task_attachment_seq = Sequence("task_attachment_seq")
 
 
 class Task(Base):
     __tablename__ = "task"
+    __table_args__ = (
+        CheckConstraint("start_mode IN ('DIRECT', 'APPLY')", name="ck_task_start_mode"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, task_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -64,6 +72,12 @@ class Task(Base):
         "registration_start_at", DateTime(timezone=True), nullable=True
     )
     default_deadline: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # How a claim of this task starts (``inputs.START_DIRECT`` / ``START_APPLY``):
+    # straight away with the task's own deadline, or on the publisher's approval
+    # with ``default_deadline`` days from then.
+    start_mode: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="APPLY", server_default="APPLY"
+    )
     resubmittable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     rank: Mapped[int | None] = mapped_column("rank", Integer, nullable=True)
@@ -144,7 +158,7 @@ class TaskMembership(Base):
     __tablename__ = "task_membership"
     __table_args__ = (
         # 鉴权每次请求都问一次「这道题 × 这个人领没领」
-        # (`app.auth.domains.task`)，可见性判据也为每道候选题和每个读者打同样的
+        # (`app.auth.task_roles`)，可见性判据也为每道候选题和每个读者打同样的
         # 相关 EXISTS (`visibility_service`)：两者都按 task_id + member_id 取，
         # 所以这一列 `task_id` 也还上了 `task_membership.task_id` 的外键无索引债。
         Index(
@@ -187,6 +201,11 @@ class TaskMembership(Base):
     pitch: Mapped[str] = mapped_column(
         Text, nullable=False, default="", server_default=""
     )
+    # The task's mentors (handles) the claimant saw and agreed to when they
+    # applied or started (#3830): the ones seated in the project the claim
+    # opens. Someone added to the task afterwards is not, without new consent.
+    # NULL on claims made before it was recorded, which seat nobody.
+    agreed_mentors: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     completion_status: Mapped[str] = mapped_column(
         "completion_status", String(50), nullable=False, default="NOT_SUBMITTED"
@@ -205,6 +224,19 @@ class TaskMembership(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    @hybrid_property
+    def live_claim(self) -> bool:
+        """A claim that still stands: approved, or waiting for approval. A
+        rejected one, or one withdrawn (deleted), is not the person's. One
+        definition for both sides: the rows a list reads as the viewer's own
+        (``TaskRepository.joined_by``) and the ``joined`` flag on each row."""
+        return self.deleted_at is None and self.approved != APPROVE_DISAPPROVED
+
+    @live_claim.inplace.expression
+    @classmethod
+    def _live_claim_expression(cls):
+        return and_(cls.deleted_at.is_(None), cls.approved != APPROVE_DISAPPROVED)
+
 
 class TaskSubmissionSchemaEntry(Base):
     """Minimal mapping for task_submission_schema table (ElementCollection in Kotlin)."""
@@ -217,6 +249,50 @@ class TaskSubmissionSchemaEntry(Base):
     index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
     description: Mapped[str] = mapped_column("description", String, nullable=False)
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
+    # Which of the task's stages (``TaskStage.index``) this item is handed in
+    # under. 0 on a task without stages: it is one implicit stage.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
+
+
+def new_stage_key() -> str:
+    """A stage's id: stable for the stage's life, unique within its task."""
+    return secrets.token_hex(6)
+
+
+class TaskStage(Base):
+    """One stage of a task, as its publisher set it: a name, what it asks for,
+    and when it is due. A task's submission items and rubric lines each belong
+    to a stage, and a claim hands work in stage by stage; a stage is done when
+    one of its submissions is accepted (``submission_state``). A task without
+    rows here is one implicit stage, due by the claim's own deadline. Replaced
+    as a whole, like the submission form (``app.domain.task.stages``)."""
+
+    __tablename__ = "task_stages"
+    __table_args__ = (
+        UniqueConstraint("task_id", "key", name="uq_task_stages_task_id_key"),
+    )
+
+    task_id: Mapped[int] = mapped_column(
+        "task_id",
+        BigInteger,
+        ForeignKey("task.id", name="fk_task_stages_task_id_task"),
+        primary_key=True,
+    )
+    index: Mapped[int] = mapped_column("index", Integer, primary_key=True)
+    # The stage's id, stable across reorders: what a writer sends back so the
+    # submissions under a stage follow it (``stages.replace_stages``).
+    key: Mapped[str] = mapped_column(
+        "key", String(16), nullable=False, default=lambda: new_stage_key()
+    )
+    name: Mapped[str] = mapped_column("name", String(64), nullable=False)
+    description: Mapped[str] = mapped_column(
+        "description", Text, nullable=False, default=""
+    )
+    due_at: Mapped[datetime | None] = mapped_column(
+        "due_at", DateTime(timezone=True), nullable=True
+    )
 
 
 class TaskRubricItem(Base):
@@ -237,6 +313,10 @@ class TaskRubricItem(Base):
     item: Mapped[str] = mapped_column("item", String(64), nullable=False)
     points: Mapped[int] = mapped_column("points", Integer, nullable=False)
     criteria: Mapped[str] = mapped_column("criteria", Text, nullable=False, default="")
+    # The stage (``TaskStage.index``) whose submissions this line scores.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
 
 
 class TaskMentor(Base):
@@ -294,9 +374,17 @@ class TaskSubmission(Base):
         BigInteger, ForeignKey("task_membership.id"), nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The stage (``TaskStage.index``) this version hands in. Versions count
+    # across stages, so a membership's version still names one submission.
+    stage: Mapped[int] = mapped_column(
+        "stage", Integer, nullable=False, default=0, server_default="0"
+    )
     submitter_id: Mapped[int] = mapped_column(
         "submitter_id", Integer, nullable=False
     )  # references user.id
+    #: Which version of the 题目 this was handed in under
+    #: (``TaskPackageRevision.number``); None for the ones from before versions.
+    package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -399,44 +487,51 @@ class TaskSubmissionReview(Base):
     )
 
 
-class TaskAttachment(Base):
-    """一个文件挂在一道题上 —— 出题时带上的材料，领取者与审核者可以下载。
+class TaskPackageRevision(Base):
+    """One version of what a 题目 hands its takers (#4767 §一): its description,
+    its 阶段, what to hand in, its 评分要点 and its files. The first is written when the
+    题目 is published; every change to any of those writes the next, saying in
+    ``changes`` what changed, so a project taken from it can say 「题目已更新到第
+    N 版」 and what that version changed. A submission records the version it
+    was made under (``TaskSubmission.package_revision``).
 
-    **不是** ``attachment`` 表本身，也不是它的替代：那一行文件仍然在
-    ``attachment`` 里（type/url/meta，meta 里带着 filename / contentType /
-    storageKey / size / uploaderId），由 ``POST /attachments`` 上传、由
-    ``app.core.storage`` 落到存储上。这张表只回答「它属于哪道题」以及题目这一侧
-    的事情（下载次数、什么时候挂上、什么时候被拿下来）。两件事分开，是因为同一个
-    文件在不同的上下文里可以是不同东西：交作业时附上的那份属于某个 ``submission``，
-    出题人放在题目上的那份属于某道 ``task``，共用一行文件记录不等于共用一个语义。
-
-    删除是**软删这一行**，存储上的对象留着 —— 见 ``TaskAttachmentService.remove``
-    的说明。
+    ``changes`` names the parts: ``published`` on the first; ``description``,
+    ``stages``, ``submission``, ``rubric`` when those changed; ``files`` with the names
+    ``added``, ``replaced`` and ``removed``; ``starter`` with ``added``,
+    ``replaced`` or ``removed``.
     """
 
-    __tablename__ = "task_attachment"
+    __tablename__ = "task_package_revisions"
+    __table_args__ = (
+        Index(
+            "uq_task_package_revisions_task_id_number",
+            "task_id",
+            "number",
+            unique=True,
+        ),
+    )
 
-    id: Mapped[int] = mapped_column(BigInteger, task_attachment_seq, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("task.id"), nullable=False
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_task_package_revisions_task_id_task",
+        ),
+        nullable=False,
     )
-    # ``attachment.id`` 是 Integer（autoincrement），外键类型必须一致。
-    attachment_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("attachment.id"), nullable=False
-    )
-    download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
+    #: 第几版，从 1 数。
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Who made the change (``user.id``).
+    author_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    changes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    #: What the 题目's library held at this version: each name mapped to the
+    #: ``library_files.id`` it was then, so the history page can hand out the
+    #: files of any version. Null on versions recorded before it was kept.
+    files: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
 
 

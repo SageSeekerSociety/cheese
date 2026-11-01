@@ -29,6 +29,10 @@ interface PagePinDeps {
   /** 指了一处：把「文件 + 位置 + 原文」那三样摆进输入框。 */
   open: (label: string, quote: string, address: string) => void
   clear: () => void
+  /** 这一段指不指得动（「看 / 批注 / 改」三段，见 `previewMode`）。「改」那一段里不钉
+   *  页上的一点：这一支比 `open` 早，`pin.value` 在 `open` 之前就设上了——只拦 `open`
+   *  的话，卡不弹而那颗钉留着，下一处指认会带着上一个钉的截图发出去。 */
+  pointing: () => boolean
 }
 
 /** 指着页面上的一点说一句话。
@@ -75,6 +79,7 @@ export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
    *  比例换算成百分数是给人看的，那个数字和输入框里那句话是同一份东西，不重新算。 */
   function onPin(payload: PagePin) {
     if (!canUse(payload.context)) return
+    if (!deps.pointing()) return
     const where = t('work.room.preview.pinWhere', {
       left: Math.round(payload.x * 100),
       top: Math.round(payload.y * 100),
@@ -141,5 +146,23 @@ export function usePreviewPagePin(props: PagePinProps, deps: PagePinDeps) {
     }
   }
 
-  return { pin, canUse, onPin, send, sending }
+  /** 此刻钉着的那一点，按引用形状给出来（没钉、或那份上下文已不可信时 null）。
+   *  留下一条评论时，锚点要的就是它——和 `send` 拼的是同一份东西。 */
+  function anchor() {
+    const target = pin.value
+    if (!target || !canUse(target.context)) return null
+    const quotedContext = {
+      kind: 'page-pin' as const,
+      path: target.context.path,
+      source: target.context.source,
+      version: target.context.version,
+      task_id: target.context.taskId ?? null,
+      page: target.page,
+      x: target.x,
+      y: target.y,
+    }
+    return isQuotedContext(quotedContext) ? quotedContext : null
+  }
+
+  return { pin, canUse, onPin, send, sending, anchor }
 }

@@ -18,6 +18,6 @@ description: 每个任务那份实况文档给谁看、建议怎么组织、怎�
 
 怎么改：
 
-- 先用 `cheese_doc_get` 读当前版本，改其中几处用 `cheese_doc_edit`。`cheese_doc_set` 整份覆盖，适合从头写第一版，或者整份重写一份完全由你维护的文档，直接给写好的全文。
-- 改动直接生效。想先让人看过再定的，给 `cheese_doc_edit` 加 `suggest=true` 和一句 `reason`，改动作为建议留在文档里，由人接受或拒绝。
+- 先用 `cheese_doc(action=get)` 读当前版本，改其中几处用 `cheese_doc(action=edit)`。`cheese_doc(action=set)` 整份覆盖，适合从头写第一版，或者整份重写一份完全由你维护的文档，直接给写好的全文。
+- 改动直接生效。想先让人看过再定的，给 `cheese_doc(action=edit)` 加 `suggest=true` 和一句 `reason`，改动作为建议留在文档里，由人接受或拒绝。
 - 建第一版、整份重写，要用状态标签、提示框、折叠这些块，或者要画图时，先加载 `cheese-docs` 技能，里面有块的写法和一份示例。只改一两句话不用加载。

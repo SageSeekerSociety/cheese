@@ -28,7 +28,9 @@ import NavLink from '../common/NavLink.vue'
 
 import DocEditLine from './DocEditLine.vue'
 import MailDraftCard from './MailDraftCard.vue'
+import PersonSaid from './PersonSaid.vue'
 import RollingNumber from './RollingNumber.vue'
+import WorkCard from './WorkCard.vue'
 
 import { t } from '@/i18n'
 
@@ -92,10 +94,99 @@ const docNames = computed(() =>
 const docInTurn = computed(() => !!docLine.value && !!props.agent && docLineInTurn(props.block))
 
 const name = computed(() => (docLine.value && !docInTurn.value ? null : props.agent?.name ?? null))
-/** 没有署名的一行字：房间里发生的事，不是谁做的事。 */
-const happening = computed(() => {
-  const own = props.notice.mode === 'repeats' ? props.notice.rows[0].notice : props.notice
-  return own?.mode === 'plain' && !props.agent
+// 这一行看成什么，后端那一张表说了算（`Block.shown_as`）。合成一行的那一串看第一条。
+// 没带这一格的（还没经过那张表的数据）按原来的判据：没署名的淡行是频道里发生的事，
+// 其余是平台替队友说的话。
+const shownAs = computed(() => {
+  const own = props.notice.mode === 'repeats' ? props.notice.rows[0] : { block: props.block, notice: props.notice }
+  if (own.block.shown_as) return own.block.shown_as
+  return own.notice?.mode === 'plain' && !props.agent ? 'happening' : null
+})
+/** 没有署名的一行字：房间里发生的事，不是谁做的事。带着一件东西的那几种照旧是一行
+ *  记录：改了一份文档（DocEditLine，点它打开、看改了哪几处）、带按钮的动作行。 */
+const happening = computed(() => shownAs.value === 'happening' && !docLine.value && props.notice.mode !== 'action')
+/** 平台替 AI 队友说的话：它停下了、要人来处理。 */
+const forAgent = computed(() => shownAs.value === 'for_agent')
+
+// 退回时写下的理由：那个人说的话（PersonSaid）。
+const rejectedBy = computed(() => {
+  const by = (props.block.meta as Record<string, unknown> | null | undefined)?.by
+  return shownAs.value === 'person' && typeof by === 'string' && by ? by : null
+})
+const rejectedReason = computed(() => noticeText(props.block, 'detail'))
+
+// AI 队友交出来的东西：新建的文档、提议的技能和例行事务，画成一行小卡片。
+const proposal = computed<{
+  kind: 'skill' | 'routine'
+  id: string
+  title: string
+  over: boolean
+  outcome: string | null
+} | null>(() => {
+  const m = (props.block.meta as Record<string, unknown> | null | undefined) ?? {}
+  const kind = m.event_type === 'skill_proposed' ? 'skill' : m.event_type === 'routine_proposed' ? 'routine' : null
+  const id = kind === 'skill' ? m.skill_id : m.routine_id
+  if (!kind || typeof id !== 'string' || !id) return null
+  return {
+    kind,
+    id,
+    title: proposalTitle(m) || noticeText(props.block),
+    over: m.state === 'over',
+    outcome: m.state === 'over' ? proposalOutcome(m) : null,
+  }
+})
+// 还在等人的提议在右侧打开，读完再决定（资源 `skill` / `routine`）；已经定下来的去它
+// 自己的那一页看（`skill-page` / `routine-page`）。
+function openProposal(p: { kind: 'skill' | 'routine'; id: string; title: string; over: boolean }) {
+  emit('open-resource', p.over ? `${p.kind}-page` : p.kind, undefined, undefined, { id: p.id, title: p.title })
+}
+/** 人定下来以后卡上写的结果：那一句是哪一句（`meta.i18n.content.key`）就是哪个结果。 */
+const OUTCOMES: Record<string, string> = {
+  skillProposalSaved: 'work.room.workCard.saved',
+  skillProposalSavedBy: 'work.room.workCard.saved',
+  skillEditSaved: 'work.room.workCard.saved',
+  skillEditSavedBy: 'work.room.workCard.saved',
+  skillProposalNotSaved: 'work.room.workCard.notSaved',
+  skillProposalNotSavedBy: 'work.room.workCard.notSaved',
+  skillEditNotSaved: 'work.room.workCard.notSaved',
+  skillEditNotSavedBy: 'work.room.workCard.notSaved',
+  routineProposalConfirmed: 'work.room.workCard.confirmed',
+  routineProposalConfirmedBy: 'work.room.workCard.confirmed',
+  routineProposalDeleted: 'work.room.workCard.deleted',
+  routineProposalDeletedBy: 'work.room.workCard.deleted',
+}
+function proposalOutcome(m: Record<string, unknown>): string | null {
+  const i18n = m.i18n as { content?: { key?: unknown } } | undefined
+  const key = i18n?.content?.key
+  return typeof key === 'string' && OUTCOMES[key] ? t(OUTCOMES[key]) : null
+}
+/** 提议的那一项叫什么：句子的参数里有它（`meta.i18n.content.params.title`）。 */
+function proposalTitle(m: Record<string, unknown>): string {
+  const i18n = m.i18n as { content?: { params?: Record<string, unknown> } } | undefined
+  const title = i18n?.content?.params?.title
+  return typeof title === 'string' ? title : ''
+}
+// 平台替队友说的那一句：事故卡取正文的第一句，其余几档取它那一行。
+const forAgentLine = computed(() => {
+  const n = props.notice
+  if (n.mode === 'incident') return n.lead || n.incident.title
+  if (n.mode === 'fold') return n.line
+  if (n.mode === 'action') return n.text
+  return noticeText(props.block)
+})
+// 收在「详情」里的：原因、日志、服务原话。折起来的那一串，每一次的原文都在。
+const forAgentDetail = computed(() => {
+  const n = props.notice
+  if (n.mode === 'incident') return n.rest
+  if (n.mode === 'fold') return n.occurrences.map((occ) => occ.detail).join('\n\n')
+  return noticeText(props.block, 'detail')
+})
+const detailOpen = ref(false)
+const incidentCode = computed(() => (props.notice.mode === 'incident' ? props.notice.incident.code : undefined))
+
+const createdDoc = computed(() => {
+  const doc = docLine.value?.library
+  return doc && doc.created ? doc : null
 })
 
 // 外框（头像、名字、时间）；合成一行里的一条没有自己的外框。
@@ -103,9 +194,14 @@ const frame = computed(() =>
   props.inline
     ? {}
     : {
-        name: name.value,
-        handle: props.agent?.handle ?? null,
-        mark: docLine.value ? 'mdi-file-document-edit-outline' : undefined,
+        name: forAgent.value ? null : name.value,
+        handle: forAgent.value ? null : props.agent?.handle ?? null,
+        mark: forAgent.value
+          ? 'mdi-alert-circle-outline'
+          : docLine.value
+            ? 'mdi-file-document-edit-outline'
+            : undefined,
+        markAgent: forAgent.value ? props.agent : null,
         cont: props.cont,
         face: props.face ?? null,
         faceLabel: props.faceLabel ?? null,
@@ -125,15 +221,12 @@ const repeatsText = computed(() => {
   return repeatsLine(props.notice.rows, props.agent?.name ?? actor)
 })
 
-/** 本轮改动先列三个文件；其余的点一下再展开，不必去别处看。 */
-const FILES_SHOWN = 3
-const allFiles = ref(false)
+/** 这次改了哪些文件：收成一行，点开才列出来（和 Claude Code 一样），不必去别处看。 */
+const filesOpen = ref(false)
 const changes = computed(() => (props.notice.mode === 'turn-summary' ? props.notice.changes : null))
-const shownFiles = computed(
-  () => (allFiles.value ? changes.value?.files : changes.value?.files.slice(0, FILES_SHOWN)) ?? []
-)
-/** 「另 N 个文件」里的 N：没列出来的，包括后端就没有发过来的那几个。 */
-const hiddenFiles = computed(() => (changes.value ? changes.value.filesTotal - shownFiles.value.length : 0))
+const shownFiles = computed(() => (filesOpen.value ? changes.value?.files : null) ?? [])
+/** 点开之后「另 N 个文件」里的 N：后端就没有发过来的那几个。 */
+const hiddenFiles = computed(() => (changes.value && filesOpen.value ? changes.value.filesOmitted : 0))
 
 // 同类事件又来了一次：不加新行，这一行的计数滚一格、整行亮一下，说「又一次」。
 const repeats = computed(() => (props.notice.mode === 'fold' ? props.notice.count : 0))
@@ -196,7 +289,7 @@ const ACTION_META: Record<string, { btn: string }> = {
 <template>
   <!-- 房间里发生的事：居中一行淡字。Content may carry a <@handle> actor token
        (归档/加入…): render it through the SAME token→chip path as messages. -->
-  <div v-if="happening && notice.mode === 'repeats'" class="room-happening im-event">
+  <div v-if="happening && notice.mode === 'repeats'" class="room-happening im-event" :title="time || undefined">
     <button
       type="button"
       class="room-happening__repeats"
@@ -205,8 +298,8 @@ const ACTION_META: Record<string, { btn: string }> = {
       @click="repeatsOpen = !repeatsOpen"
     >
       <span v-html="renderPlain(repeatsText)" />
-      <v-icon size="14" aria-hidden="true">{{ repeatsOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon></button
-    ><span class="room-happening__time"> · {{ time }}</span>
+      <v-icon size="14" aria-hidden="true">{{ repeatsOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
+    </button>
     <template v-if="repeatsOpen">
       <RoomNotice
         v-for="row in notice.rows"
@@ -227,15 +320,21 @@ const ACTION_META: Record<string, { btn: string }> = {
       />
     </template>
   </div>
-  <div v-else-if="happening" class="room-happening im-event">
-    <span v-html="renderPlain(noticeText(block))" /><span v-if="time" class="room-happening__time"> · {{ time }}</span>
-    <template v-if="pinnedBlock">
-      <span class="room-happening__time"> · </span>
-      <button type="button" class="room-happening__go" @click="emit('jump', pinnedBlock)">
-        {{ t('work.room.pin.view') }}
-      </button>
-    </template>
+  <div v-else-if="happening" class="room-happening im-event" :title="time || undefined">
+    <span v-html="renderPlain(noticeText(block))" />
+    <button v-if="pinnedBlock" type="button" class="room-happening__go" @click="emit('jump', pinnedBlock)">
+      {{ t('work.room.pin.view') }}
+    </button>
   </div>
+  <!-- A rejection with its reason: the reviewer's own words, drawn as their message. -->
+  <PersonSaid
+    v-else-if="rejectedBy && rejectedReason"
+    :handle="rejectedBy"
+    :name="refs.mentionNames[rejectedBy] || rejectedBy"
+    :time="time"
+    :cue="t('work.room.notice.rejectedCue')"
+    :said="rejectedReason"
+  />
   <component
     :is="inline ? 'div' : AgentNoticeFrame"
     v-else
@@ -243,8 +342,56 @@ const ACTION_META: Record<string, { btn: string }> = {
     :class="{ 'notice-bump': bumped, 'notice-inline': inline }"
     @animationend="bumped = false"
   >
+    <!-- The platform says it for the teammate: what happened, the one thing to do,
+         and the reason folded under 详情. -->
+    <div v-if="forAgent" class="sys-row for-agent" data-testid="platform-notice" :data-error-code="incidentCode">
+      <div class="sys-line">
+        <span class="sys-text sys-lead" v-html="renderPlain(forAgentLine)" />
+        <span v-if="notice.mode === 'fold' && notice.count > 1" class="sys-num"
+          >×<RollingNumber :value="notice.count"
+        /></span>
+        <NavLink v-if="environmentAt" :to="environmentAt" class="sys-btn" data-testid="notice-environment">
+          {{ t('work.room.notice.goEnvironment') }}
+        </NavLink>
+        <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click="emit('retry')">
+          {{ t('work.room.retry.action') }}
+        </button>
+        <button
+          v-if="forAgentDetail"
+          type="button"
+          class="sys-more-toggle"
+          :aria-expanded="detailOpen"
+          @click="detailOpen = !detailOpen"
+        >
+          {{ t('work.room.notice.showDetail') }}
+          <v-icon class="sys-chev" :class="{ 'sys-chev--open': detailOpen }" size="14">mdi-chevron-right</v-icon>
+        </button>
+      </div>
+      <pre v-if="detailOpen && forAgentDetail" class="sys-detail">{{ forAgentDetail }}</pre>
+    </div>
+    <WorkCard
+      v-else-if="createdDoc"
+      icon="mdi-file-document-outline"
+      :title="createdDoc.title || t('work.room.workCard.untitled')"
+      :kind="t('work.room.workCard.doc')"
+      @open="
+        emit('open-resource', 'doc', block.turn_id ?? undefined, undefined, {
+          id: createdDoc.id,
+          title: createdDoc.title,
+        })
+      "
+    />
+    <WorkCard
+      v-else-if="proposal"
+      :icon="proposal.kind === 'skill' ? 'mdi-book-open-variant' : 'mdi-calendar-sync-outline'"
+      :title="proposal.title"
+      :kind="t(proposal.kind === 'skill' ? 'work.room.workCard.skill' : 'work.room.workCard.routine')"
+      :state="proposal.over ? proposal.outcome : t('work.room.workCard.toConfirm')"
+      :pending="!proposal.over"
+      @open="openProposal(proposal)"
+    />
     <div
-      v-if="notice.mode === 'incident'"
+      v-else-if="notice.mode === 'incident'"
       class="sys-row sys-row--danger platform-incident"
       role="alert"
       :data-error-code="notice.incident.code"
@@ -278,6 +425,16 @@ const ACTION_META: Record<string, { btn: string }> = {
     <div v-else-if="notice.mode === 'turn-summary'" class="sys-row turn-summary">
       <div class="sys-line">
         <span class="sys-text">
+          <button
+            v-if="notice.changes && notice.changes.files.length"
+            type="button"
+            class="sys-files-toggle"
+            :aria-expanded="filesOpen"
+            :aria-label="t('work.room.notice.changedFiles')"
+            @click="filesOpen = !filesOpen"
+          >
+            <v-icon class="sys-chev" :class="{ 'sys-chev--open': filesOpen }" size="14">mdi-chevron-right</v-icon>
+          </button>
           <template v-if="notice.changes">
             {{ t('work.room.notice.filesChanged', { n: notice.changes.filesTotal }) }}
             <span class="sys-num">+{{ notice.changes.added }} −{{ notice.changes.removed }}</span>
@@ -304,15 +461,7 @@ const ACTION_META: Record<string, { btn: string }> = {
           <span class="sys-files__removed">−{{ file.removed }}</span>
         </li>
       </ul>
-      <button
-        v-if="hiddenFiles > 0 && !allFiles && notice.changes!.files.length > FILES_SHOWN"
-        type="button"
-        class="sys-files-more"
-        @click="allFiles = true"
-      >
-        {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
-      </button>
-      <div v-else-if="hiddenFiles > 0" class="sys-files-rest">
+      <div v-if="hiddenFiles > 0" class="sys-files-rest">
         {{ t('work.room.notice.moreFiles', { n: hiddenFiles }) }}
       </div>
     </div>
@@ -377,23 +526,15 @@ const ACTION_META: Record<string, { btn: string }> = {
     <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
      什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
      条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
-    <details
-      v-else-if="notice.mode === 'fold'"
-      class="sys-row"
-      :class="{ 'sys-row--warn': notice.who === 'human' }"
-      data-testid="platform-notice"
-    >
+    <details v-else-if="notice.mode === 'fold'" class="sys-row" data-testid="platform-notice">
       <summary class="sys-line">
         <!-- 这一行里提到的人是 `<@handle>` token，和别的提示行一样画成名字，不露出原文。 -->
-        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }" v-html="renderPlain(notice.line)" />
+        <span class="sys-text" v-html="renderPlain(notice.line)" />
         <span v-if="notice.quote" class="sys-quote" data-user-content>{{
           t('work.room.notice.quote', { text: notice.quote })
         }}</span>
         <v-icon v-if="notice.occurrences.length" class="sys-chev" size="14">mdi-chevron-right</v-icon>
         <span v-if="notice.count > 1" class="sys-num">×<RollingNumber :value="notice.count" /></span>
-        <span v-if="notice.whoLabel" class="sys-who">{{
-          notice.who === 'cheese' ? t('work.room.notice.working', { name: name || agentName }) : notice.whoLabel
-        }}</span>
         <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
           {{ t('work.room.notice.goConfirm') }}
         </NavLink>
@@ -533,8 +674,40 @@ details.sys-row > summary::-webkit-details-marker,
   color: var(--faint);
   transition: transform var(--dur-base) var(--ease-standard);
 }
-details[open] > summary > .sys-chev {
+details[open] > summary > .sys-chev,
+.sys-chev--open {
   transform: rotate(90deg);
+}
+.sys-files-toggle,
+.sys-more-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.sys-files-toggle {
+  margin-right: 2px;
+}
+.sys-files-toggle .sys-chev {
+  margin-left: 0;
+}
+.sys-more-toggle {
+  gap: 2px;
+  font-size: 12px;
+}
+/* 平台替队友说的那一行：要做的那一步接在这句话后面，不推到行尾——隔着大半行空白，
+   看不出它是哪句话的。 */
+.for-agent .sys-text + .sys-btn,
+.for-agent .sys-btn {
+  margin-left: 0;
+}
+.sys-more-toggle:hover {
+  color: var(--ink);
 }
 /* 展开收起过渡高度，不跳（设计系统 §9.2）。不认 ::details-content 的浏览器照旧
    直接展开，什么都不缺。 */
@@ -669,19 +842,11 @@ details[open]::details-content {
   padding-left: 6px;
   color: var(--danger-ink);
 }
-.sys-files-more,
 .sys-files-rest {
   padding: 0;
   font-size: 12px;
   line-height: var(--lh-12);
   color: var(--muted);
-}
-.sys-files-more {
-  cursor: pointer;
-}
-.sys-files-more:hover {
-  color: var(--ink);
-  text-decoration: underline;
 }
 .sys-sep {
   color: var(--faint);
@@ -739,6 +904,7 @@ details[open]::details-content {
   text-decoration: underline;
 }
 .room-happening__go {
+  margin-left: 8px;
   padding: 0;
   border: 0;
   background: none;

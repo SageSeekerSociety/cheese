@@ -2,16 +2,28 @@
 import type { SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { DragGesture } from '@use-gesture/vanilla'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
+import { pageRatio } from './slidesContext'
 import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
 
+/** 幻灯片收成单栏的那条线，比文档那一档（`NARROW_PX` = 560）低。
+ *
+ *  演示稿一页就是一张 16:9 的图，缩到三百多像素宽仍然读得出；真正值得为它让出整栏的
+ *  只有手机。按文档那条线（560）收，桌面默认那一格 546 宽会永远看不到缩略图轨——
+ *  而轨道正是这一档最主要的翻页方式之一。 */
+const COMPACT_PX = 460
+
+/** 「标一处」（整页那一颗）只在批注模式里摆。 */
+const marking = usePreviewMarking()
 const props = withDefaults(
   defineProps<{
     data: ArrayBuffer | null
@@ -21,8 +33,18 @@ const props = withDefaults(
     rendererMissing?: boolean
     canDownload?: boolean
     context?: SlideSource
+    /** 每一页的演讲者备注，下标即页码（`notes[0]` 是第一页）。空的那几页是没有备注。 */
+    notes?: readonly string[]
   }>(),
-  { title: '', pending: false, error: '', rendererMissing: false, canDownload: false, context: undefined }
+  {
+    title: '',
+    pending: false,
+    error: '',
+    rendererMissing: false,
+    canDownload: false,
+    context: undefined,
+    notes: () => [],
+  }
 )
 const emit = defineEmits<{
   quote: [payload: { text: string; page: number }]
@@ -58,10 +80,41 @@ const ready = computed(() => !loading.value && !failure.value && count.value > 0
  *  松一档只会选出一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
-const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
+const showRail = computed(() => ready.value && !presenting.value && !narrow.value && (railOverride.value ?? true))
+/** 一页四周留的空。放映时上下各让出一点，底下那行提示不压在幻灯片上。 */
+const frame = computed(() => {
+  if (presenting.value) return { x: 24, top: 24, bottom: 44 }
+  if (narrow.value) return { x: 8, top: 8, bottom: 8 }
+  return { x: 16, top: 16, bottom: 16 }
+})
+// ---- 演讲者备注 ----
+//
+// 备注是**给讲的人看的**，摆在幻灯片**下面**那一条空闲里（原型也是这个位置）：一页 16:9
+// 的稿子按宽度缩到面板里之后，上下本来就空着，正好放一块不挤画面的正文。
+//
+// 放映时整块收掉，和工具栏一样：放映是把画面投给别人看，备注一旦跟着上屏，台下的每个
+// 人都读到了讲稿。真要在放映时自己看备注，那是「讲者视图」——另开一个窗口，不是这一层。
+//
+// 这一份有没有备注由「整份里有没有一段非空的」定：一份稿子只要有一页有备注，这一档就该
+// 让人找得到它在哪；某一页是空的，摆一句「这一页没有备注」，而不是把那一条整个抽掉——
+// 抽掉了读者不知道是这一页没有，还是这一档没有这个功能。
+const hasNotes = computed(() => props.notes.some((text) => text.trim()))
+const pageNote = computed(() => (props.notes[current.value - 1] ?? '').trim())
+const notesOpen = ref(true)
+const showNotes = computed(() => ready.value && hasNotes.value && notesOpen.value && !presenting.value)
+
+/** 读屏播报用：换页时说出来的是「第 4 页，共 6 页」，不是工具栏上那个数字框。 */
+const announcement = computed(() =>
+  ready.value ? t('slides.pageOf', { page: current.value, count: count.value }) : ''
+)
+
 let observer: ResizeObserver | null = null
 let restoreFocus: HTMLElement | null = null
 let textGeneration = 0
+const exitButton = ref<HTMLElement | null>(null)
+/** 放映时工具栏整个收掉（和原型一样），「放映」那颗按钮也跟着卸掉——退出放映后要还焦点
+ *  给它，所以单独留一个引用。 */
+const presentButton = ref<HTMLElement | null>(null)
 
 function go(page: number) {
   if (!Number.isFinite(page)) return
@@ -77,6 +130,7 @@ async function presentation() {
     presenting.value = false
     await nextTick()
     if (restoreFocus?.isConnected) restoreFocus.focus()
+    else if (presentButton.value) presentButton.value.focus()
     else root.value?.focus()
   } else {
     restoreFocus = window.document.activeElement instanceof HTMLElement ? window.document.activeElement : null
@@ -85,15 +139,49 @@ async function presentation() {
     root.value?.focus()
   }
 }
+/** 放映这一层里能落焦点的地方：这一层本身、底部那条上的按钮和页码框、右上角退出键。
+ *  Tab 只在这里面绕，不钻回后面的页面。 */
+function presentStops(): HTMLElement[] {
+  const stops: HTMLElement[] = []
+  if (root.value) stops.push(root.value)
+  const bar = root.value?.querySelector('.slides__bar--present')
+  if (bar) {
+    for (const el of bar.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input')) {
+      if (!el.disabled) stops.push(el)
+    }
+  }
+  if (exitButton.value) stops.push(exitButton.value)
+  return stops
+}
+/** 放映时点一下画面翻到下一页；到最后一页就停住（和原型一样，不绕回第一页）。 */
+function pointAdvance() {
+  if (!presenting.value || !ready.value) return
+  if (current.value < count.value) go(current.value + 1)
+}
 function keyboard(event: KeyboardEvent) {
   const active = window.document.activeElement
-  if (!root.value?.contains(active) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (!root.value?.contains(active) || event.altKey || event.ctrlKey || event.metaKey) return
+  // 放映是整屏的一层：焦点留在这一层里，Tab 不能再钻回后面的页面。
+  // 能落焦点的只有这一层自己和右上角那颗退出键。Shift+Tab 也算 Tab（反向绕一圈）。
+  if (presenting.value && event.key === 'Tab') {
+    const stops = presentStops()
+    if (!stops.length) return
+    event.preventDefault()
+    const at = stops.indexOf(active as HTMLElement)
+    const next = event.shiftKey ? (at <= 0 ? stops.length - 1 : at - 1) : (at + 1) % stops.length
+    stops[next]?.focus()
+    return
+  }
+  // Shift 只和 Tab 一起用（反向绕焦点圈）；Shift+方向键一概不管。
+  if (event.shiftKey) return
   if (event.key === 'Escape' && presenting.value) {
     event.preventDefault()
     void presentation()
     return
   }
   if (active instanceof HTMLElement && active.closest('input, textarea, select, [contenteditable="true"]')) return
+  // 焦点在缩略图轨里时，方向键归那条轨（在缩略图之间走），不在这里翻页。
+  if (active instanceof HTMLElement && active.closest('.slide-rail')) return
   if (!ready.value) return
   const page = {
     ArrowRight: current.value + 1,
@@ -116,7 +204,6 @@ function keyboard(event: KeyboardEvent) {
 useSelectionHighlight({
   sheets: () => (sheet.value ? [sheet.value] : []),
   layerClass: 'slide-text-layer',
-  paintClass: 'slide-hl',
 })
 
 function quote() {
@@ -134,12 +221,22 @@ function quote() {
   if (canQuote.value && props.context) {
     // 两侧的文字帮受话人分辨同一句话在这一页的哪一处出现（整页提问没有这个说法）。
     // 量的是这一页的文字层：`sheet` 里那块画布和文字层是同一个坐标系下的两层。
+    //
+    // 左上角那一点也量下去：攒着一起发的那几处要靠它在页上画序号。量一页画布的
+    // 内框，量不到就不带（和 `PreviewPages.onSelect` 同一条）。
+    const box = sheet.value.getBoundingClientRect()
+    const rect = range.getBoundingClientRect()
+    const spot =
+      box.width > 0 && box.height > 0
+        ? { x: pageRatio((rect.left - box.left) / box.width), y: pageRatio((rect.top - box.top) / box.height) }
+        : {}
     emit('pageContext', {
       text,
       page: current.value,
       scope: 'selection',
       context: { ...props.context },
       ...contextAround(sheet.value, range),
+      ...spot,
     })
     return
   }
@@ -167,13 +264,14 @@ async function askPage() {
   }
 }
 watch(
-  [current, revision, fit, size, sheet, presenting, ready],
+  [current, revision, fit, size, sheet, presenting, ready, narrow],
   () => {
     const host = sheet.value
     if (!host || !ready.value) return
+    const pad = frame.value
     void paint(current.value, host, {
-      width: Math.max(32, size.value.width - 32),
-      height: fit.value || presenting.value ? Math.max(32, size.value.height - 32) : undefined,
+      width: Math.max(32, size.value.width - 2 * pad.x),
+      height: fit.value || presenting.value ? Math.max(32, size.value.height - pad.top - pad.bottom) : undefined,
       text: true,
     })
   },
@@ -215,7 +313,7 @@ watch(
   () => {
     observer?.disconnect()
     observer = new ResizeObserver(() => {
-      narrow.value = (root.value?.clientWidth ?? 800) < 560
+      narrow.value = (root.value?.clientWidth ?? 800) < COMPACT_PX
       if (stage.value) size.value = { width: stage.value.clientWidth, height: stage.value.clientHeight }
     })
     if (root.value) observer.observe(root.value)
@@ -223,8 +321,37 @@ watch(
   },
   { flush: 'post' }
 )
+// ---- 左右滑翻页 ----
+//
+// 手指横着拖，这一页跟着走；松手时甩得够快、或者拖过了三分之一页宽，就翻到下一页 / 上一页，
+// 不够就弹回原处。只认手指：鼠标在页上拖是在选字。竖着的滑动留给浏览器（`touch-action:
+// pan-y`），这一格比一页高的时候照样能上下滚。
+const dragX = ref(0)
+let swipe: DragGesture | null = null
+watch(
+  stage,
+  (el) => {
+    swipe?.destroy()
+    swipe = null
+    if (!el) return
+    swipe = new DragGesture(
+      el,
+      ({ active, movement: [mx], swipe: [sx], last }) => {
+        if (!ready.value) return
+        dragX.value = active ? mx : 0
+        if (!last) return
+        const page = sx ? -sx : Math.abs(mx) > el.clientWidth / 3 ? -Math.sign(mx) : 0
+        if (page) go(current.value + page)
+      },
+      { axis: 'x', filterTaps: true, pointer: { touch: true } }
+    )
+  },
+  { flush: 'post' }
+)
+
 onBeforeUnmount(() => {
   textGeneration += 1
+  swipe?.destroy()
   observer?.disconnect()
   if (sheet.value) cancelPaint(sheet.value)
   if (presenting.value && restoreFocus?.isConnected) restoreFocus.focus()
@@ -232,85 +359,195 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
-  <section
-    ref="root"
-    class="slides"
-    :class="{ 'slides--presenting': presenting }"
-    tabindex="0"
-    :aria-label="t('slides.reader')"
-    @keydown="keyboard"
-  >
-    <header class="slides__toolbar">
-      <span v-if="title && !presenting" class="slides__title t-body">{{ title }}</span>
-      <button v-if="ready && !presenting" type="button" :aria-pressed="showRail" @click="railOverride = !showRail">
-        {{ t('slides.thumbnails') }}
-      </button>
-      <button type="button" :disabled="!ready || current <= 1" @click="go(current - 1)">
-        {{ t('slides.previous') }}
-      </button>
-      <form class="slides__jump" @submit.prevent="jumpTo">
-        <input
-          v-model="jump"
-          type="number"
-          min="1"
-          :max="count || 1"
+  <!-- 放映时整块挪到 body 下：面板外面有两层带 view-transition-name 的容器（话题页、面板页签区），
+       它们各自成一个绘制层级，留在里面的话 z-index 再高也压不过侧栏和分隔线，左边被侧栏盖住、
+       中间透出分隔线。不放映时原地渲染。 -->
+  <Teleport to="body" :disabled="!presenting">
+    <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the reader takes focus (tabindex 0) and turns pages with the arrow keys -->
+    <section
+      ref="root"
+      class="slides"
+      :class="{ 'slides--presenting': presenting, 'slides--narrow': narrow }"
+      :role="presenting ? 'dialog' : 'region'"
+      :aria-modal="presenting ? 'true' : undefined"
+      :aria-label="t(presenting ? 'slides.presenting' : 'slides.reader')"
+      tabindex="0"
+      @keydown="keyboard"
+    >
+      <!-- 工具栏只放次级动作；翻页、页码和「放映」在主区上方那一条里，和原型一致。
+           放映时整条收掉，画面铺满。 -->
+      <header v-if="!presenting" class="slides__toolbar">
+        <span v-if="title" class="slides__title t-body">{{ title }}</span>
+        <span class="slides__spacer" />
+        <button
+          v-if="ready && hasNotes"
+          type="button"
+          class="slides__tool"
+          :aria-pressed="showNotes"
+          data-testid="slides-notes-toggle"
+          @click="notesOpen = !notesOpen"
+        >
+          {{ t('slides.notes') }}
+        </button>
+        <button
+          v-if="ready && !narrow"
+          type="button"
+          class="slides__tool"
+          :aria-pressed="showRail"
+          @click="railOverride = !showRail"
+        >
+          {{ t('slides.thumbnails') }}
+        </button>
+        <button
+          v-if="!narrow"
+          type="button"
+          class="slides__tool"
           :disabled="!ready"
-          :aria-label="t('slides.pageNumber')"
-          @change="jumpTo"
-        />
-        <span class="t-meta" aria-live="polite">/ {{ count }}</span>
-      </form>
-      <button type="button" :disabled="!ready || current >= count" @click="go(current + 1)">
-        {{ t('slides.next') }}
-      </button>
-      <button v-if="!presenting" type="button" :disabled="!ready" :aria-pressed="fit" @click="fit = !fit">
-        {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
-      </button>
-      <button type="button" :disabled="!ready" @click="presentation">
-        {{ t(presenting ? 'slides.exit' : 'slides.present') }}
-      </button>
-      <button
-        v-if="context && !presenting"
-        type="button"
-        :disabled="!canAskPage || pageBusy"
-        :title="t('slides.wholePageHint')"
-        @click="askPage"
-      >
-        {{ t('slides.askPage') }}
-      </button>
-      <button v-if="canDownload && !presenting" type="button" @click="emit('download')">
-        {{ t('slides.download') }}
-      </button>
-    </header>
-    <div v-if="!ready && busy" class="slides__state" role="status">{{ t('slides.loading') }}</div>
-    <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state" role="alert">
-      <p>{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
-      <p v-if="problem" class="t-meta">{{ problem }}</p>
-    </div>
-    <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
-    <div v-else class="slides__body">
-      <SlideThumbRail
-        v-if="showRail"
-        :count="count"
-        :current="current"
-        :revision="revision"
-        :paint="paint"
-        :cancel-paint="cancelPaint"
-        @select="go"
-      />
-      <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
-      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a mouse selection on the slide is quoted; a keyboard selection has no counterpart yet -->
-      <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote">
-        <div ref="sheet" class="slides__sheet" :data-page="current" />
+          :aria-pressed="fit"
+          @click="fit = !fit"
+        >
+          {{ t(fit ? 'slides.fit' : 'slides.fitWidth') }}
+        </button>
+        <button
+          v-if="context && marking"
+          type="button"
+          class="slides__tool"
+          :disabled="!canAskPage || pageBusy"
+          :title="t('slides.wholePageHint')"
+          @click="askPage"
+        >
+          {{ t('slides.askPage') }}
+        </button>
+        <button v-if="canDownload" type="button" class="slides__tool" @click="emit('download')">
+          {{ t('slides.download') }}
+        </button>
+      </header>
+      <div v-if="!ready && busy" class="slides__state slides__state--loading" role="status">
+        <span class="slides__spinner" aria-hidden="true" />
+        <p>{{ t('slides.loading') }}</p>
       </div>
-    </div>
-    <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
-    <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
-      {{ problem || t('slides.rendererMissing') }}
-    </p>
-    <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
-  </section>
+      <div v-else-if="!ready && (rendererMissing || problem)" class="slides__state slides__state--failed" role="alert">
+        <svg class="slides__state-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2 1 21h22L12 2zm1 15h-2v2h2v-2zm0-8h-2v6h2V9z" />
+        </svg>
+        <p class="slides__state-title">{{ t(rendererMissing ? 'slides.rendererMissing' : 'slides.openFailed') }}</p>
+        <p v-if="problem" class="t-meta">{{ problem }}</p>
+      </div>
+      <BaseEmptyState v-else-if="!count" :title="t('slides.empty')" />
+      <div v-else class="slides__body">
+        <SlideThumbRail
+          v-if="showRail"
+          :count="count"
+          :current="current"
+          :revision="revision"
+          :paint="paint"
+          :cancel-paint="cancelPaint"
+          @select="go"
+        />
+        <div class="slides__main">
+          <!-- 一页上方那一条：‹ 4 / 6 › … 放映。页码本身是个能跳的输入框，看起来还是「4 / 6」。
+               放映时同一条挪到屏幕底部：翻页和跳页都还在手边，只是一片半透明的小胶囊。 -->
+          <div class="slides__bar" :class="{ 'slides__bar--present': presenting }">
+            <button
+              type="button"
+              class="slides__chev"
+              :aria-label="t('slides.previous')"
+              :title="t('slides.previous')"
+              :disabled="!ready || current <= 1"
+              @click="go(current - 1)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z" /></svg>
+            </button>
+            <form class="slides__jump" @submit.prevent="jumpTo">
+              <input
+                v-model="jump"
+                type="number"
+                min="1"
+                :max="count || 1"
+                :disabled="!ready"
+                :aria-label="t('slides.pageNumber')"
+                :title="t('slides.jumpTo')"
+                @change="jumpTo"
+              />
+              <span class="t-meta">/ {{ count }}</span>
+            </form>
+            <button
+              type="button"
+              class="slides__chev"
+              :aria-label="t('slides.next')"
+              :title="t('slides.next')"
+              :disabled="!ready || current >= count"
+              @click="go(current + 1)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4L13.2 12z" /></svg>
+            </button>
+            <span v-if="!presenting" class="slides__spacer" />
+            <span v-if="presenting" class="slides__bar-hint">{{ t('slides.presentHint') }}</span>
+            <button
+              v-if="!presenting"
+              ref="presentButton"
+              type="button"
+              class="slides__present"
+              :disabled="!ready"
+              @click="presentation"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 4h18v12H3zM3 18h18v2H3z" opacity=".45" />
+                <path d="M10 8v6l5-3z" />
+              </svg>
+              {{ t('slides.present') }}
+            </button>
+          </div>
+          <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
+          <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- a mouse selection on the slide is quoted and (while presenting) a click turns the page; the keyboard turns pages on the reader around it, which is why the stage itself is not focusable -->
+          <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @click="pointAdvance">
+            <!-- 幻灯片和它下面那条备注是一个整体：一起居中、一起滚。分开摆的话备注会贴在
+                 这一格的下沿，离幻灯片很远——读者看不出它说的是这一页。宽度也跟着幻灯片
+                 走（下面那一列按内容撑开，页宽由 `useSlidesPdf` 写死在页自己身上）。 -->
+            <div class="slides__column">
+              <div
+                ref="sheet"
+                class="slides__sheet"
+                :class="{ 'is-dragging': dragX !== 0 }"
+                :data-page="current"
+                :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
+              />
+              <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
+              <section
+                v-if="showNotes"
+                class="slides__notes"
+                data-testid="slides-notes"
+                :aria-label="t('slides.notes')"
+              >
+                <p v-if="pageNote" class="slides__notes-text">{{ pageNote }}</p>
+                <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
+              </section>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 放映没有工具栏；留一颗看得见的出口，触屏上没有 Esc 也退得出来（原型只有那句提示）。-->
+      <button
+        v-if="presenting"
+        ref="exitButton"
+        type="button"
+        class="slides__exit"
+        :aria-label="t('slides.exit')"
+        :title="t('slides.exit')"
+        @click="presentation"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z" />
+        </svg>
+      </button>
+      <p class="visually-hidden" aria-live="polite">{{ announcement }}</p>
+      <p v-if="ready && busy" class="slides__notice t-meta" role="status">{{ t('slides.loading') }}</p>
+      <p v-else-if="ready && (rendererMissing || problem)" class="slides__notice t-meta" role="alert">
+        {{ problem || t('slides.rendererMissing') }}
+      </p>
+      <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
+    </section>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -331,10 +568,20 @@ onBeforeUnmount(() => {
 .slides--presenting {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay);
-  /* 放映是整屏的：顶上那条工具栏（上一页 / 页码 / 下一页 / 退出）钻进刘海。让出顶部
-     安全区；底边不补，幻灯片照旧铺满——Home 横杠压在画面上是放映的常态。 */
+  /* 放映是一整层黑场：幻灯片之外什么都不留，和原型一样。 */
+  /* 整屏黑场：不透明的暗底，两套主题下一致。放映要独占整屏——图片浮层那层是 92% 透明
+     的（它要让底下的页面若隐若现），放一张幻灯片时那个「隐约」就是别人家的界面。 */
+  background: var(--present-ground);
+  color: var(--present-ink);
+  /* 挪到 body 下以后它和弹窗同在一层比高低：放在 Vuetify 弹窗下面一档，放映中按 ? 打开的
+     快捷键帮助、确认框这些照样盖在放映上面，而侧栏、分隔线都在它下面。 */
+  z-index: var(--z-overlay-below-vuetify);
+  /* 放映是整屏的：让出顶部安全区，底边不补（Home 横杠压在画面上是放映的常态）。 */
   padding-top: env(safe-area-inset-top, 0px);
+}
+/* 聚焦的是整层黑场，焦点圈画在屏幕边上没有意义；退出靠 Esc 和底下那行提示。 */
+.slides--presenting:focus-visible {
+  outline: none;
 }
 .slides__toolbar {
   display: flex;
@@ -342,23 +589,9 @@ onBeforeUnmount(() => {
   flex: none;
   align-items: center;
   gap: 4px;
-  padding: 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
-}
-
-/* 只有放映（整层铺满窗口）那一档才要：这时工具栏第一颗按钮落在窗口左上角，桌面版
-   macOS 里要让开三颗窗口按钮（style.css 的 --window-buttons-inset，别处恒为 0）。
-   嵌在工作面板里的时候它在页面中间，不写这一条。 */
-.slides--presenting .slides__toolbar {
-  padding-left: max(8px, var(--window-buttons-inset));
-}
-.slides__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1 1 96px;
 }
 .slides__toolbar button {
   padding: 4px 8px;
@@ -376,25 +609,116 @@ onBeforeUnmount(() => {
 .slides__jump input:focus-visible {
   outline: 2px solid var(--accent);
 }
-.slides__jump {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+.slides__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 96px;
 }
-.slides__jump input {
-  width: 52px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  background: var(--surface);
-  font-size: 13px;
+.slides__spacer {
+  flex: 1;
 }
 .slides__body {
   display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
+}
+.slides__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+/* 一页上方那一条：‹ 4 / 6 › … 放映。原型就在这个位置，字号 13、间距 4。 */
+.slides__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px 0;
+  font-size: 13px;
+}
+.slides__chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.slides__chev svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.slides__chev:hover:not(:disabled) {
+  background: var(--fill-2);
+  color: var(--text);
+}
+.slides__chev:disabled {
+  color: var(--faint);
+}
+.slides__chev:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.slides__jump {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+/* 看起来是「4 / 6」里的那个 4，点进去就能改。去掉数字框的上下箭头，免得它比字还显眼。 */
+.slides__jump input {
+  width: 2.2em;
+  padding: 2px 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.slides__jump input::-webkit-outer-spin-button,
+.slides__jump input::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+}
+.slides__jump input:hover:not(:disabled) {
+  border-color: var(--line-2);
+}
+.slides__jump input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.slides__present {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+}
+.slides__present svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+.slides__present:hover:not(:disabled) {
+  background: var(--fill-2);
+}
+.slides__present:disabled {
+  color: var(--faint);
+}
+.slides__present:focus-visible {
+  outline: 2px solid var(--accent);
 }
 .slides__stage {
   display: flex;
@@ -407,15 +731,188 @@ onBeforeUnmount(() => {
   padding: 16px;
   background: var(--canvas);
 }
+.slides--presenting .slides__stage {
+  padding: 24px 24px 44px;
+  background: transparent;
+  cursor: pointer;
+}
 .slides__sheet {
   position: relative;
   flex: none;
   background: var(--surface);
+  border-radius: 8px;
+  box-shadow: var(--shadow-2);
+  /* 松手弹回原处时有个过程；跟着手指走的那一段不能有，否则一路慢半拍。 */
+  transition: transform var(--dur-quick) var(--ease-standard);
+}
+.slides__sheet.is-dragging {
+  transition: none;
+}
+/* 窄处：一页铺满宽度，四周只留 8px；横着滑归翻页，竖着滑照旧滚。缩略图和「适合页面」
+   不摆——一栏缩略图在手机上要占掉三分之一屏，而一页本来就是按宽度铺的。 */
+.slides--narrow .slides__stage {
+  padding: 8px;
+  touch-action: pan-y;
+}
+.slides--narrow .slides__bar {
+  padding: 4px 8px 0;
+}
+/* 幻灯片加它下面那条备注：一列，宽由幻灯片定（页宽写死在页自己身上，这一列跟着撑开）。
+   靠上摆，上下多出来的空间留在下面——原型也是这么摆的。 */
+.slides__column {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+  /* 宽度由幻灯片说了算，不能被备注撑开：一段没有换行的长备注（中文里常见）会把这一列
+     撑到几千像素宽，幻灯片也跟着歪出屏幕。舞台的内容宽就是一页的宽（四周那圈 padding
+     之外正好留给页），所以卡在 100% 上即可。 */
+  min-width: 0;
+  max-width: 100%;
+}
+/* 幻灯片下面那一行：讲稿。不上边框、不铺底——它和幻灯片之间只隔一点空，读者一眼看得出
+   是同一条；画一条横贯面板的线会把这条绑到面板下沿上，离幻灯片太远。 */
+.slides__notes {
+  flex: none;
+  min-width: 0;
+  /* 一份备注可以很长，高度有个上限：再长就在自己里面滚，不把幻灯片挤小（读者是来看这一页
+     的）。上限按视口算，不用百分比——百分比要有一个定高祖先才生效，而这一列是内容撑开的。 */
+  max-height: 22vh;
+  overflow: auto;
+  margin-top: 10px;
+}
+.slides__notes-text {
+  margin: 0;
+  /* 13 / --muted：比正文小一档、比装饰色重一档。原型这一行用的是最淡的那个色和 12px，
+     一整段讲稿用那个色读起来吃力；讲的人和屏幕的距离也更远。 */
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.slides__notes-empty {
+  margin: 0;
+  color: var(--faint);
+}
+.slides__exit {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--present-fill);
+  color: var(--present-ink);
+}
+.slides__exit svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.slides__exit:hover {
+  background: var(--present-fill-2);
+}
+.slides__exit:focus-visible {
+  outline: 2px solid var(--present-ink);
+  outline-offset: 2px;
+}
+/* 放映时这一条落在屏幕底部，压在一小片半透明上：翻页和跳页都还在手边。 */
+.slides__bar--present {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--present-fill);
+  color: var(--present-ink);
+  transform: translateX(-50%);
+  cursor: default;
+}
+.slides__bar--present .slides__chev {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__chev:hover:not(:disabled) {
+  background: var(--present-fill-2);
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__chev:disabled {
+  color: var(--present-muted);
+  opacity: 0.45;
+}
+.slides__bar--present .slides__jump {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__jump input {
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__jump input:hover:not(:disabled) {
+  border-color: var(--present-fill-2);
+}
+.slides__bar--present .slides__jump input:focus {
+  border-color: var(--present-ink);
+  background: var(--present-fill);
+}
+.slides__bar-hint {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--present-fill-2);
+  color: var(--present-muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .slides__state {
-  padding: 32px 16px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 24px;
   color: var(--muted);
   text-align: center;
+  background: var(--canvas);
+}
+.slides__state p {
+  margin: 0;
+  max-width: 40ch;
+}
+.slides__state-title {
+  color: var(--text);
+  font-size: 15px;
+}
+.slides__state-icon {
+  width: 28px;
+  height: 28px;
+  fill: var(--faint);
+}
+.slides__state--loading {
+  gap: 12px;
+}
+.slides__spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: slides-spin 0.8s linear infinite;
+}
+@keyframes slides-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slides__spinner {
+    animation-duration: 2.4s;
+  }
+  .slides__sheet {
+    transition: none;
+  }
 }
 .slides__notice {
   margin: 0;
@@ -427,6 +924,7 @@ onBeforeUnmount(() => {
 }
 .slides__sheet :deep(canvas) {
   display: block;
+  border-radius: 8px;
 }
 /* 这一份和 PreviewPages 里 `.pv-text` 那一段是同一套写法：改一处时两处一起改。
  *
@@ -481,17 +979,12 @@ onBeforeUnmount(() => {
   background: transparent;
   color: transparent;
 }
-/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。 */
-.slides__sheet :deep(.slide-hl) {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-.slides__sheet :deep(.slide-hl path) {
-  fill: var(--accent-wash);
-}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和分页文档共用一份，两档的
+   选中底色才不可能变成两个颜色。 */
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;
   color: var(--danger-ink);
 }
 </style>
+
+<style src="./preview-selection-paint.css"></style>

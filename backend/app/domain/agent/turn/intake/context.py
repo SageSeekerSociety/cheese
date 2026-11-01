@@ -9,7 +9,7 @@ that already named ``preparation`` for one of them still resolves.
 """
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -26,6 +26,7 @@ from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.scopes import MemoryScope
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.place import Place, doc_text_of
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic.models import Topic
 from app.domain.topic.reads import open_rooms
@@ -55,14 +56,18 @@ async def living_doc_text(
     # document's note takes is left, so that second fit has nothing to cut.
     room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
     return (
-        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
+        fit_doc_to_budget(
+            text, room, full_read_hint="用 `cheese_doc(action=get)` 读全文"
+        )
         + canvases
     )
 
 
-def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
+def carried_skills(
+    agent: ResolvedAgent, topic: Topic, course: Sequence[str] = ()
+) -> list[str]:
     """这一轮谁带哪些技能进提示词：队友自己带的（userskill），没带就回落到这间房
-    点亮的。
+    点亮的；再加上项目所出自的题目给的（``course``，`Teaching.skills`）。
 
     userskill 存在 `agent_instances.configuration.skills`，出厂时从 preset 抄进来
     （`agent_instance/services.initial_configuration`），改它要 manager
@@ -70,7 +75,11 @@ def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
     队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
     都进提示词，只会让模型在互相冲突的规矩里挑一份。
 
-    两边都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
+    题目给的那几个（``course``）是出题人对项目里**每一个**队友说的，叠在上面这份之上，
+    不顶替它：后来加进项目的队友、自己带了技能的队友、回落到房间的队友都一样带上，
+    每一轮现读、叠在最后、去重。
+
+    都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
     这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
     """
     carried = [
@@ -78,7 +87,7 @@ def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
         for name in (agent.configuration or {}).get("skills") or []
         if isinstance(name, str)
     ]
-    return carried or list(topic.skills or [])
+    return list(dict.fromkeys([*(carried or topic.skills or []), *course]))
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -136,6 +145,12 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 项目所出自的题目的阶段，和这个项目在每个阶段上的状态
+    # (`task.claims.stages_for_project`)。题目不分阶段、或项目不出自题目时是空的。
+    stages: list[StageProgress]
+    # 从题目来的项目里「题目」那一段（`task.package.section_for_project`）：第几版、
+    # 材料在哪、这一版改了什么。别的项目是 None，开场里没有这一段。
+    task_package: str | None
     # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
     # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
     # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
@@ -235,7 +250,8 @@ class _MemoryBooks(Protocol):
         seat: tuple[uuid.UUID, str],
         *,
         acting: str,
-        speakers: tuple[str, ...],
+        speaker: str | None,
+        pointed: bool = False,
     ) -> None: ...
 
 

@@ -27,14 +27,14 @@ import type { Latest } from './RosterView.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { toast } from 'vuetify-sonner'
-import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
+import { toast } from '@/lib/toast'
 import { useEvents } from '@/views/tasks/events'
 
 const props = defineProps<{
@@ -97,25 +97,19 @@ function nameOf(id: number): string {
   return m?.member?.name ?? ''
 }
 
-/** 批准时顺手给这个人定截止：领取后 N 天（题目的「提交期限」），没设就 7 天。
- *  发题表单存的是天数，老数据里存的是毫秒，两种都换成天。 */
+/** 批准：这个人的截止时间由服务端在通过的那一刻定（申请制从这天起 N 天，直接开始的题
+ *  是题目的截止日期），项目也在这时建出来。 */
 async function approve(id: number) {
   const task = props.taskData
   if (!task) return
   busyId.value = id
-  const raw = task.defaultDeadline ?? 0
-  const days = raw >= 86_400_000 ? Math.round(raw / 86_400_000) : raw
   try {
-    await TaskBoardApi.updateParticipant(task.id, id, {
-      approved: 'APPROVED',
-      deadline: dayjs()
-        .add(days || 7, 'day')
-        .valueOf(),
-    })
+    await TaskBoardApi.updateParticipant(task.id, id, { approved: 'APPROVED' })
     toast.success(t('tasks.roster.approved', { name: nameOf(id) }))
     events.emit('participation-changed')
-  } catch {
-    toast.error(t('tasks.roster.approveFailed'))
+  } catch (e) {
+    // 服务端拒绝时说的那一句（比如名额已满）照原样给出题人看。
+    toast.error(axiosErrorMessage(e, t('tasks.roster.approveFailed')))
   } finally {
     busyId.value = null
   }

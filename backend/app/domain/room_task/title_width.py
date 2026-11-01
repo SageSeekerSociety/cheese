@@ -17,7 +17,7 @@ title in that one line.
 
 The places that tell an AI teammate how long a title may be all read the numbers
 below: ``naming_model.py`` (the platform naming a task), ``agent/harness/prompt.py``
-(the reminder to name an unnamed task) and ``cheese_task`` / ``cheese_title`` in
+(the reminder to name an unnamed task) and ``cheese_task(action=open)`` / ``cheese_room(action=rename)`` in
 ``backend/sandbox/cheese``, which cannot import this module and spells the
 number out. ``topics_tasks.py`` and ``topics_title.py`` hold the API to it;
 ``naming_model.py`` asks the model again when its title is too wide and preserves

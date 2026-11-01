@@ -3,7 +3,6 @@ import type { RememberedPlace } from '@/stores/workspace'
 
 import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useQuery } from '@tanstack/vue-query'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
@@ -12,7 +11,9 @@ import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { trackNavigations } from '@/lib/navigationProgress'
+import { lookupRef, refsVersion } from '@/lib/refDirectory'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
+import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
@@ -64,6 +65,8 @@ useAgentContext(() => {
           : null
   return {
     page,
+    label: pageLabel(page),
+    project: projectId && UUID.test(projectId) && store.projectName ? { id: projectId, name: store.projectName } : null,
     greeting: t('tasks.assistant.project.greeting'),
     starters: [
       t('tasks.assistant.project.starters.mine'),
@@ -72,6 +75,19 @@ useAgentContext(() => {
     ],
   }
 })
+/** 「当前页面」那枚标签上写的名字：频道、任务、支线、文档按引用的名字，别的页是项目。
+ *  名字还没问回来时先不写（`refsVersion` 让它回来后重算）。 */
+function pageLabel(page: { kind: 'doc' | 'topic' | 'project'; id: string } | null): string | undefined {
+  if (!page) return undefined
+  if (page.kind === 'project')
+    return store.projectName ? t('tasks.assistant.page.project', { name: store.projectName }) : undefined
+  void refsVersion.value
+  const found = lookupRef(page.id)
+  if (!found || found === 'missing' || found.kind === 'unreadable') return undefined
+  const key = { room: 'channel', task: 'task', thread: 'thread', document: 'doc' }[found.kind]
+  return t(`tasks.assistant.page.${key}`, { name: found.title || t('work.room.doc.untitled') })
+}
+
 /**
  * 这一页在项目里那一段地址：`tasks/318`、`overview`、`members/lisi`；项目首页是空串。
  * 地址里项目那一段用的是短名或编号（守卫 `canonicalAddress` 换过），所以按当前地址

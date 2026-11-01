@@ -4,8 +4,8 @@
   "category": "分类",
   "classify": "分类与标签",
   "completion": "完成期限",
-  "completionPrefix": "领取后",
-  "completionSuffix": "天内完成",
+  "completionPrefix": "限时",
+  "completionSuffix": "天，从申请通过那天算起",
   "content": "题目内容",
   "defaultDeadline": "默认完成期限",
   "description": "描述",
@@ -15,24 +15,25 @@
   "maxTeamSize": "最多人数",
   "minTeamSize": "最少人数",
   "more": {
-    "access": "可领取范围",
+    "access": "可参与范围",
     "accessAll": "空间全部成员",
     "accessDomains": "指定邮箱域名组",
     "noDomainGroups": "暂无邮箱域名组",
     "realName": "要求实名信息",
     "realNameHint": "包括姓名、学号、年级",
-    "summaryAll": "全部成员可领取",
+    "summaryAll": "全部成员可参与",
     "summaryDomains": "仅限 {names}",
     "summaryNoRealName": "无需实名",
     "summaryRealName": "需实名",
-    "summaryTeachingDefault": "AI 队友按空间设置辅导",
-    "summaryTeachingOwn": "本题另有 AI 队友辅导设置",
     "title": "更多设置"
   },
+  "dueOn": "截止日期",
   "name": "名称",
   "namePlaceholder": "例如：图像分类基线复现",
   "noCategories": "暂无分类",
   "noTopics": "暂无标签",
+  "opensNow": "立即开放",
+  "opensOn": "开放日期",
   "participantLimit": "人数上限",
   "participantType": "参与者类型",
   "participation": "参与",
@@ -59,7 +60,17 @@
     "verificationTitle": "身份验证"
   },
   "rank": "难度",
-  "registration": "报名时间",
+  "start": {
+    "apply": "申请制",
+    "applyHint": "出题人通过申请后才能开始做，限时从通过那天算起",
+    "direct": "直接开始",
+    "directHint": "点「开始做这道题」就开始；设了截止日期，所有人在这天之前提交",
+    "label": "开始方式",
+    "locked": "已经有人申请或开始做这道题，开始方式不能再改"
+  },
+  "applyEnd": "申请截止",
+  "applyStart": "申请开始",
+  "registration": "申请时间",
   "registrationEnd": "截止日期",
   "registrationStart": "开始日期",
   "submitterType": "参与方式",
@@ -70,12 +81,14 @@
   "teamLimit": "队伍数上限",
   "teamLocking": {
     "free": "允许变更",
-    "freeHint": "报名通过后仍可增减成员",
+    "freeHint": "申请通过后仍可增减成员",
+    "freeHintStart": "开始做这道题后仍可增减成员",
     "label": "队伍成员变更",
-    "locked": "报名通过后锁定",
-    "lockedHint": "以报名通过时的名单为准"
+    "locked": "申请通过后锁定",
+    "lockedHint": "以申请通过时的名单为准",
+    "lockedHintStart": "以开始做这道题时的名单为准",
+    "lockedStart": "开始做这道题后锁定"
   },
-  "teamLockingPolicyLockOnApproval": "报名通过后锁定",
   "teamSize": "每队人数",
   "teamSizeUnit": "人",
   "time": "时间",
@@ -91,9 +104,9 @@
     "teamSizeOrder": "最多人数不能少于最少人数"
   },
   "mentor": {
-    "require": "把导师加入领取者的项目",
+    "require": "把导师加入参与者的项目",
     "label": "导师",
-    "hint": "领取者同意后才能领取。导师能看到项目里的公开频道、文档和文件"
+    "hint": "学生同意导师加入后才能开始做。导师能看到项目里的公开频道、文档和文件"
   },
   "grading": {
     "title": "提交与评分",
@@ -118,6 +131,33 @@
     "addLine": "添加一项",
     "total": "合计 {n} 分",
     "nameRequired": "写了评分标准的项需要填写项目名称",
-    "public": "评分要点对学生可见"
-  }
+    "public": "评分要点对学生可见",
+    "stageTitle": "阶段 {n}：{name}",
+    "stageTotal": "本阶段 {n} 分"
+  },
+  "stages": {
+    "title": "阶段",
+    "none": "不分阶段",
+    "nameOf": "第 {n} 个阶段的名称",
+    "namePlaceholder": "例如：需求分析",
+    "due": "截止日期",
+    "dueOf": "第 {n} 个阶段的截止日期",
+    "descriptionOf": "第 {n} 个阶段的要求",
+    "descriptionPlaceholder": "这个阶段要做到什么",
+    "moveUp": "上移第 {n} 个阶段",
+    "moveDown": "下移第 {n} 个阶段",
+    "remove": "删除第 {n} 个阶段",
+    "nameRequired": "每个阶段都需要填写名称",
+    "add": "添加阶段",
+    "removeTitle": "删除第 {n} 个阶段？",
+    "removeConfirm": "删除",
+    "removeBody": "点「保存更改」后生效"
+  },
+  "brief": "说明",
+  "parts": {
+    "ai": "AI 的设置",
+    "aiHint": "用于从本题建出的项目",
+    "publish": "发布设置"
+  },
+  "dueNone": "不设截止"
 }

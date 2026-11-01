@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.space.services import SpaceService
 
 _NOW = datetime.now(UTC)
@@ -81,7 +81,7 @@ class TestListDomainGroups:
         }
 
         svc = _svc(group_repo=group_repo, domain_repo=domain_repo)
-        result = await svc.list_domain_groups(space_id=100, actor_user_id=42)
+        result = await svc.list_domain_groups(space_id=100)
 
         assert len(result) == 2
         assert result[0][0] is g1
@@ -97,7 +97,7 @@ class TestListDomainGroups:
         domain_repo.list_domains_for_groups.return_value = {}
 
         svc = _svc(group_repo=group_repo, domain_repo=domain_repo)
-        result = await svc.list_domain_groups(space_id=100, actor_user_id=42)
+        result = await svc.list_domain_groups(space_id=100)
         assert result == []
 
     @pytest.mark.anyio
@@ -115,7 +115,7 @@ class TestListDomainGroups:
         svc = _svc(
             group_repo=group_repo, domain_repo=domain_repo, admin_repo=admin_repo
         )
-        result = await svc.list_domain_groups(space_id=100, actor_user_id=42)
+        result = await svc.list_domain_groups(space_id=100)
 
         assert len(result) == 1
         assert result[0][0] is g
@@ -143,7 +143,6 @@ class TestCreateDomainGroup:
             name="物理学院",
             description="物理系",
             domains=["phy.edu.cn", "phys.edu.cn"],
-            actor_user_id=42,
         )
 
         assert group is g
@@ -167,7 +166,6 @@ class TestCreateDomainGroup:
                 name="   ",
                 description=None,
                 domains=["cs.edu.cn"],
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -182,7 +180,6 @@ class TestCreateDomainGroup:
                 name="学院",
                 description=None,
                 domains=[],
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -198,22 +195,6 @@ class TestCreateDomainGroup:
                 name="计算机学院",
                 description=None,
                 domains=["cs.edu.cn"],
-                actor_user_id=42,
-            )
-
-    @pytest.mark.anyio
-    async def test_raises_when_not_admin(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = None
-
-        svc = _svc(admin_repo=admin_repo)
-        with pytest.raises(ForbiddenError):
-            await svc.create_domain_group(
-                space_id=100,
-                name="test",
-                description=None,
-                domains=["cs.edu.cn"],
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -229,7 +210,6 @@ class TestCreateDomainGroup:
                 name="test",
                 description=None,
                 domains=["user@cs.edu.cn"],
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -246,7 +226,6 @@ class TestCreateDomainGroup:
             name="test",
             description=None,
             domains=["CS.EDU.CN", "Cs.Edu.cn", "cs.edu.cn"],
-            actor_user_id=42,
         )
         assert domains == ["cs.edu.cn"]
 
@@ -274,7 +253,6 @@ class TestUpdateDomainGroup:
             name="new_name",
             description=None,
             domains=None,
-            actor_user_id=42,
         )
 
         assert g.name == "new_name"
@@ -296,7 +274,6 @@ class TestUpdateDomainGroup:
             name=None,
             description="  new desc  ",
             domains=None,
-            actor_user_id=42,
         )
         assert g.description == "new desc"
 
@@ -315,7 +292,6 @@ class TestUpdateDomainGroup:
             name=None,
             description=None,
             domains=["new.edu.cn"],
-            actor_user_id=42,
         )
 
         assert domains == ["new.edu.cn"]
@@ -337,7 +313,6 @@ class TestUpdateDomainGroup:
                 name="test",
                 description=None,
                 domains=None,
-                actor_user_id=42,
             )
 
     @pytest.mark.anyio
@@ -357,7 +332,6 @@ class TestUpdateDomainGroup:
                 name="other",
                 description=None,
                 domains=None,
-                actor_user_id=42,
             )
 
 
@@ -376,7 +350,10 @@ class TestDeleteDomainGroup:
         domain_repo = AsyncMock()
 
         svc = _svc(group_repo=group_repo, domain_repo=domain_repo)
-        await svc.delete_domain_group(space_id=100, group_id=1, actor_user_id=42)
+        await svc.delete_domain_group(
+            space_id=100,
+            group_id=1,
+        )
 
         assert g.deleted_at is not None
         group_repo.save.assert_awaited_once_with(g)
@@ -390,13 +367,7 @@ class TestDeleteDomainGroup:
 
         svc = _svc(group_repo=group_repo, domain_repo=domain_repo)
         with pytest.raises(NotFoundError, match="domain group not found"):
-            await svc.delete_domain_group(space_id=100, group_id=999, actor_user_id=42)
-
-    @pytest.mark.anyio
-    async def test_raises_when_not_admin(self):
-        admin_repo = AsyncMock()
-        admin_repo.get_relation.return_value = None
-
-        svc = _svc(admin_repo=admin_repo)
-        with pytest.raises(ForbiddenError):
-            await svc.delete_domain_group(space_id=100, group_id=1, actor_user_id=42)
+            await svc.delete_domain_group(
+                space_id=100,
+                group_id=999,
+            )

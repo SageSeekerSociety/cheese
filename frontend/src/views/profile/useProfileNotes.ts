@@ -3,10 +3,9 @@
 import type { ProfileUnderstanding } from '@/cx_types'
 import type { ProfilePage } from './useProfilePage'
 
-import { toast } from 'vuetify-sonner'
-
 import { deleteUnderstanding } from '@/api'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { patchQuery } from '@/query/client'
 
 /**

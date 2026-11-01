@@ -4,10 +4,22 @@ import uuid
 from collections.abc import Collection, Iterable
 from datetime import datetime
 
-from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, select
+from sqlalchemy import (
+    Row,
+    Uuid,
+    and_,
+    any_,
+    bindparam,
+    delete,
+    func,
+    inspect,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.project.models import ProjectForge
 from app.domain.review.models import (
     AcceptApproval,
@@ -19,6 +31,12 @@ from app.domain.review.models import (
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
+
+_CARD_REVIEWER_TABLES = frozenset({"accept_card_reviewer", "accept_cards"})
+
+
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
 
 
 def _clean_handles(handles: Iterable[str]) -> list[str]:
@@ -83,6 +101,8 @@ class AcceptCardRepository:
         的地方（测试的夹具）只写这一列。回落只在这一种情况下发生：表里有行，
         以表为准，删光就是删光。
         """
+        if _can_cache(self._session):
+            return (await self.reviewer_handles_for_cards([card_id])).get(card_id, [])
         stmt = (
             select(AcceptCardReviewer.handle)
             .where(AcceptCardReviewer.card_id == card_id)
@@ -104,12 +124,65 @@ class AcceptCardRepository:
         """
         if not card_ids:
             return {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            out: dict[uuid.UUID, list[str]] = {}
+            unseen: list[uuid.UUID] = []
+            for cid in dict.fromkeys(card_ids):
+                hit, cached = recall(self._session, ("card_reviewer_handles", cid))
+                if hit:
+                    if cached:
+                        out[cid] = list(cached)
+                else:
+                    unseen.append(cid)
+            if not unseen:
+                return out
+            stmt = (
+                select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
+                .where(AcceptCardReviewer.card_id.in_(unseen))
+                .order_by(AcceptCardReviewer.created_at)
+            )
+            found: dict[uuid.UUID, list[str]] = {}
+            for card_id, handle in (await self._session.execute(stmt)).all():
+                found.setdefault(card_id, []).append(handle)
+            missing = [cid for cid in unseen if cid not in found]
+            if missing:
+                identity_map = self._session.sync_session.identity_map
+                still_missing: list[uuid.UUID] = []
+                for cid in missing:
+                    in_map = identity_map.get(
+                        self._session.sync_session.identity_key(AcceptCard, (cid,))
+                    )
+                    if in_map is not None and not inspect(in_map).expired_attributes:
+                        if in_map.reviewer_handle:
+                            found[cid] = [in_map.reviewer_handle]
+                    else:
+                        still_missing.append(cid)
+                if still_missing:
+                    cards = await self._session.scalars(
+                        select(AcceptCard).where(AcceptCard.id.in_(still_missing))
+                    )
+                    for card in cards:
+                        if card.reviewer_handle:
+                            found[card.id] = [card.reviewer_handle]
+            for cid in unseen:
+                handles = found.get(cid, [])
+                remember(
+                    self._session,
+                    ("card_reviewer_handles", cid),
+                    tuple(handles),
+                    tables=_CARD_REVIEWER_TABLES,
+                )
+                if handles:
+                    out[cid] = handles
+            return out
         stmt = (
             select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
             .where(AcceptCardReviewer.card_id.in_(card_ids))
             .order_by(AcceptCardReviewer.created_at)
         )
-        found: dict[uuid.UUID, list[str]] = {}
+        found = {}
         for card_id, handle in (await self._session.execute(stmt)).all():
             found.setdefault(card_id, []).append(handle)
         # 表里没有行的那些卡（这一刀之前建的、或夹具直接写列建的）读影子列，
@@ -193,12 +266,26 @@ class AcceptCardRepository:
         and therefore one PR, and two live cards on it would be two PRs racing
         each other on the same commits.
         """
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("task_accept_cards", task_id))
+            if found:
+                return list(reversed(cached))
         stmt = (
             select(AcceptCard)
             .where(AcceptCard.task_id == task_id)
             .order_by(AcceptCard.created_at.desc())
         )
-        return list((await self._session.scalars(stmt)).all())
+        rows = list((await self._session.scalars(stmt)).all())
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("task_accept_cards", task_id),
+                tuple(reversed(rows)),
+                tables=frozenset({"accept_cards"}),
+            )
+        return rows
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
         """Every card filed under this room: its tasks' cards, each carrying
@@ -249,6 +336,45 @@ class AcceptCardRepository:
         still one query."""
         if not task_ids:
             return {}, {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            latest: dict[uuid.UUID, AcceptCard] = {}
+            counts: dict[uuid.UUID, int] = {}
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_accept_cards", tid))
+                if found:
+                    if cached:
+                        latest[tid] = cached[-1]
+                        counts[tid] = len(cached)
+                else:
+                    missing.append(tid)
+            if not missing:
+                return latest, counts
+            stmt = (
+                select(AcceptCard)
+                .where(
+                    AcceptCard.task_id
+                    == any_(bindparam(None, missing, type_=ARRAY(Uuid)))
+                )
+                .order_by(AcceptCard.created_at, AcceptCard.id)
+            )
+            by_task: dict[uuid.UUID, list[AcceptCard]] = {tid: [] for tid in missing}
+            for card in (await self._session.scalars(stmt)).all():
+                if card.task_id is not None:
+                    by_task.setdefault(card.task_id, []).append(card)
+            for tid, cards in by_task.items():
+                remember(
+                    self._session,
+                    ("task_accept_cards", tid),
+                    tuple(cards),
+                    tables=frozenset({"accept_cards"}),
+                )
+                if cards:
+                    latest[tid] = cards[-1]
+                    counts[tid] = len(cards)
+            return latest, counts
         stmt = (
             select(AcceptCard)
             # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
@@ -260,8 +386,8 @@ class AcceptCardRepository:
             )
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
-        latest: dict[uuid.UUID, AcceptCard] = {}
-        counts: dict[uuid.UUID, int] = {}
+        latest = {}
+        counts = {}
         for card in (await self._session.scalars(stmt)).all():
             # Ordered oldest-first, so the last write per key is the newest.
             if card.task_id is not None:
@@ -414,6 +540,36 @@ class AcceptCardRepository:
         """
         if not task_ids:
             return []
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            cached_accepted: list[AcceptCard] = []
+            missing: list[uuid.UUID] = []
+            for tid in dict.fromkeys(task_ids):
+                found, cached = recall(self._session, ("task_accept_cards", tid))
+                if found:
+                    cached_accepted.extend(
+                        c for c in cached if c.status == AcceptStatus.accepted
+                    )
+                else:
+                    missing.append(tid)
+            if not missing:
+                cached_accepted.sort(
+                    key=lambda c: (c.decided_at is None, c.decided_at, c.id)
+                )
+                return cached_accepted
+            stmt = (
+                select(AcceptCard)
+                .where(
+                    AcceptCard.task_id.in_(missing),
+                    AcceptCard.status == AcceptStatus.accepted,
+                )
+                .order_by(AcceptCard.decided_at, AcceptCard.id)
+            )
+            fetched = list((await self._session.scalars(stmt)).all())
+            all_accepted = cached_accepted + fetched
+            all_accepted.sort(key=lambda c: (c.decided_at is None, c.decided_at, c.id))
+            return all_accepted
         stmt = (
             select(AcceptCard)
             .where(

@@ -19,12 +19,12 @@
 
 from datetime import UTC, datetime, timedelta
 
-import jwt
 import pytest
 from httpx import AsyncClient
 
 from app.common.auth import create_access_token
-from app.core.config import settings
+from app.core import credentials
+from app.core.credentials import Kind
 
 _UNREAD_COUNT = "/notifications/unread-count"
 _AGENT_USER_ID = 1
@@ -33,16 +33,14 @@ _AGENT_USER_ID = 1
 def _expired_token() -> str:
     """一个签名合法、但 15 分钟有效期早已过完的访问令牌。"""
     issued = datetime.now(UTC) - timedelta(hours=2)
-    return jwt.encode(
+    return credentials.mint(
+        Kind.ACCESS,
         {
             "sub": str(_AGENT_USER_ID),
-            "type": "access",
             "handle": "cheese",
             "iat": int(issued.timestamp()),
             "exp": int((issued + timedelta(minutes=15)).timestamp()),
         },
-        settings.jwt_secret,
-        algorithm="HS256",
     )
 
 

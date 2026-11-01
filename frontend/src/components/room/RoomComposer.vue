@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 输入区：打字、@ 补全、贴/拖/挑文件、以及「交给芝士」。
 //
-// **叫不叫芝士，只由正文里有没有 @ 它决定**，这里没有一个自己存着状态的开关。
-// 开关能和正文说不一样的话（亮着、正文里却没有 @），那时候「这条到底算不算叫了
-// 它」谁也答不上来，而只有开关那条是通的。三个入口（手打 @、点按钮、⌘/Ctrl+
-// Enter）写的都是同一个 @，你看得见，也能自己删。
+// **叫不叫芝士，只由这条消息本身决定**，这里没有一个自己存着状态的开关。开关能和
+// 正文说不一样的话（亮着、正文里却没有 @），那时候「这条到底算不算叫了它」谁也答不
+// 上来。三个入口（手打 @、点按钮、⌘/Ctrl+Enter）写的都是同一个 @，你看得见，也能
+// 自己删。这条最后交给谁由后端定（@、回复、任务负责人那几条规矩），输入框顶上那一行
+// 和那颗头像画的都是后端对这份草稿的回答（`useAddressing`），不在这里另算一遍。
 //
 // 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
 // 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
@@ -15,41 +16,44 @@
 // 东西（`MentionMenu.vue` / `ComposerChipRow.vue` / `ComposerActions.vue`）。
 import type { RowRefs } from '@/composables/useChatComposer'
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
+import type { VoiceHeard } from '@/composables/useVoiceInput'
+import type { Addressing } from '../../api/messages'
 import type { ChatAttachment, Topic } from '../../cx_types'
 import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { QuotedContext } from '../../lib/quotedContext'
 import type { RefNames } from '../../lib/refChip'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
+import { useAddressing } from '@/composables/useAddressing'
 import { useComposerText } from '@/composables/useComposerText'
+import { useComposerVoice } from '@/composables/useComposerVoice'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
-import { useVoiceInput, type VoiceHeard } from '@/composables/useVoiceInput'
 
 import { pastedTextName } from '../../lib/attachments'
-import {
-  expandComposerMentions,
-  mentionsAgent as containsAgentMention,
-  namesOnlyPeople,
-} from '../../lib/composerMentions'
+import { expandComposerMentions, mentionsAgent as containsAgentMention } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
+import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
+import ComposerRecipient from './ComposerRecipient.vue'
 import ComposerSummon from './ComposerSummon.vue'
+import ComposerViewing from './ComposerViewing.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
 import MentionMenu from './MentionMenu.vue'
+import PendingNotesTray from './PendingNotesTray.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const props = defineProps<{
   topic: Topic | null
@@ -89,13 +93,20 @@ const props = defineProps<{
   busyAgents?: string[]
   /** 我在这个频道里上一次交给的那位队友：头像平时画它，点一下就交给它。 */
   lastMate?: string | null
+  /** 这条发在哪段对话里（房间，或房间里的任务、支线）。不给就不问「交给谁」，那一行空着。 */
+  place?: string | null
+  /** 这条回复的那条消息的 id。 */
+  replyTo?: string | null
+  /** 这段对话自己的状态（任务开着还是关了）：变了，「交给谁」那一行重问一次。 */
+  placeState?: string | null
 }>()
 
 const checklistOpen = ref(false)
 
 const emit = defineEmits<{
   /** 发这一条。附件由房间补上——它才知道此刻待发条里有什么。 */
-  (e: 'send', message: { content: string; summon: boolean }): void
+  /** `expectsAgent`：发的人看到的是「交给」某位队友（送到时已经不交给了，后端退回来）。 */
+  (e: 'send', message: { content: string; summon: boolean; expectsAgent: boolean }): void
   (e: 'files', files: File[]): void
   (e: 'drop-files', event: DragEvent): void
   (e: 'paste', event: ClipboardEvent): void
@@ -109,6 +120,20 @@ const emit = defineEmits<{
 
 /** 正文。存在哪、谁清它、怎么跨刷新，全在房间那一层。 */
 const draft = defineModel<string>({ required: true })
+
+// 攒着的那几处批注（话题页注入的，见 `lib/pendingNotes`）。有它时输入框上方逐条列出来，
+// 发送键写清这一下带几条；没有这个（私聊、别处的输入框）就照旧。
+const pending = inject(PENDING_NOTES, null)
+/** 篮里攒着几条（含只留评论的那种，托盘上要列）。 */
+const pendingCount = computed(() => pending?.notes.value.length ?? 0)
+/** 这一下按发送键真的会带走几条批注：要满足两条——去处是交给芝士的（只留评论的不经
+ *  对话发），且没带附件（带附件时走的是附件 + 正文那条路，不含这一批）。不满足时发送
+ *  键就不写「含 N 条批注」，写了就是承诺它做不到的事。
+ *
+ *  「带附件时不带这一批」这条规矩**只**写在下面这一行；旁边 `sendDraft` 判批量时用的
+ *  就是它，不再另判一次附件——两处各写一遍的话，改一处漏一处就会一边说带得走、一边
+ *  又不带。 */
+const sendableCount = computed(() => (props.atts.length ? 0 : countSendable(pending?.notes.value ?? [])))
 /** 光标在正文里的位置（第几个字符前面）。 */
 const caret = ref(draft.value.length)
 
@@ -291,19 +316,29 @@ function mentionsAgent(expanded: string): boolean {
   return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
 }
 
-// 叫不叫它：@ 了它就叫；任务、私聊里不 @ 也叫，只有 @ 了人、没 @ 任何 AI 队友的那句
-// 是说给那几个人的，不叫（后端同一条规矩，见 `_names_only_people`）。
-function summons(expanded: string): boolean {
-  return (
-    mentionsAgent(expanded) || (props.alwaysSummon && !namesOnlyPeople(expanded, props.agentSeat, props.mentionPool))
-  )
-}
+// 这条草稿发出去交给谁：问后端（`useAddressing`）。问的就是发送时会发出去的那一份——展开
+// 成 <@handle> 之后的正文、回复对象、有没有正文——所以它说的就是发出去之后会发生的事。
+const { addressing, fresh: addressingFresh } = useAddressing({
+  ask: () => ({
+    place: props.place ?? null,
+    draft: {
+      content: expandMentions(draft.value),
+      reply_to: props.replyTo ?? undefined,
+      with_text: !!draft.value.trim() || !props.atts.length,
+    },
+  }),
+  version: () => props.placeState ?? null,
+})
 
-// 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
-// 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
-// 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
-// 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
-const summonOn = computed(() => summons(expandMentions(draft.value)))
+// 这条草稿现在交不交给队友。**读的是后端对这份草稿的回答**，不是一个单独存着的开关值，
+// 也不是浏览器照抄的一份规矩：@ 了它、回复它的消息、任务负责人在开着的任务里说话，
+// 都由后端那一处判定。刚改过草稿、回答还在路上的那一下，先看正文里有没有 @ 它——点头像、
+// ⌘/Ctrl+Enter 写进去的就是这一枚，按下去当场就要亮，不等一次来回。
+function goesToAgent(expanded: string): boolean {
+  if (addressingFresh.value) return !!addressing.value?.agent
+  return mentionsAgent(expanded) || !!addressing.value?.agent
+}
+const summonOn = computed(() => goesToAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
 // ⌘/Ctrl+Enter「发送并交给它」：和 AI 队友私聊时没有可交的人，这个组合键就是发送，
@@ -327,6 +362,9 @@ const mates = computed<Mate[]>(() => {
     if (m.agent && !list.some((x) => x.handle === m.handle)) list.push({ handle: m.handle, label: m.label })
   return list
 })
+function mateOf(agent: { handle: string; name: string }): Mate {
+  return mates.value.find((m) => m.handle === agent.handle) ?? { handle: agent.handle, label: agent.name }
+}
 // 正文里 @ 到的队友，按出现的顺序。
 const draftMates = computed<Mate[]>(() => {
   const out: Mate[] = []
@@ -353,13 +391,79 @@ const restingMate = computed<Mate | null>(
   () => mates.value.find((m) => m.handle === preferred.value) ?? mates.value[0] ?? null
 )
 // 名册还没到时头像照样画出来（按名字配色、灰着、点不动），这一行不会因为它晚到而跳一下。
-const shownMates = computed<Mate[]>(() =>
-  draftMates.value.length ? draftMates.value.slice(0, 2) : [restingMate.value ?? { handle: '', label: props.agentName }]
-)
+// 没 @ 谁、却交给了一位（回复了它、任务里不用 @）：画的是那一位。
+const shownMates = computed<Mate[]>(() => {
+  if (draftMates.value.length) return draftMates.value.slice(0, 2)
+  const agent = addressing.value?.agent
+  return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
+})
 // 任务负责人那里每句都交给队友：头像常亮，是规则不是开关。和 AI 队友私聊时没有这颗头像。
 const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
-const peopleOnly = computed(() => namesOnlyPeople(expandMentions(draft.value), props.agentSeat, props.mentionPool))
+const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
+// 「交给：」后面那位队友叫什么：和头像、名册同一个叫法（`mateOf`），不是库里存的原名——
+// 没改过名的队友库里存的是「芝士」，屏幕按读者的语言叫它。
+const recipientMateName = computed(() => {
+  const agent = addressing.value?.agent
+  return agent ? mateOf(agent).label : ''
+})
+// 「交给：」后面写的人名：@ 名单上的叫法，名单上没有就是 handle。
+function personName(handle: string): string {
+  return props.mentionPool.find((m) => m.handle === handle)?.label ?? handle
+}
+
+// ---- 打字的时候任务关了 ----
+//
+// 开着的任务里，负责人说的每句话都交给队友；任务一关，同一句话就只是讨论。打到一半的
+// 草稿不能就这样悄悄降成讨论发出去：那个人一直看着「交给」那一行在打字。所以记住这份
+// 草稿是在「任务交给队友」时写的（`heldFor`），任务关了之后第一次发，先就地问一句：
+// 「@ 它」还是「仅发布讨论」。草稿、回复对象、附件都原样留着。
+//
+// 记的是**这个人看着的那一行**：草稿非空的每一刻，那一行说「任务里交给队友」就记下。所以
+// 第一个字落下时那一行（空草稿问到的那一次）已经说了交给队友，就从这一刻算起——不等这份
+// 草稿自己的回答；一路打字、它第一次问到时任务已经关了，也照样先问。
+const heldFor = ref<Mate | null>(null)
+const askingRecipient = ref(false)
+watch([addressing, () => !!draft.value.trim()], ([now, typed]) => {
+  if (!typed) {
+    heldFor.value = null
+    askingRecipient.value = false
+    return
+  }
+  if (!now) return
+  if (now.reason === 'task' && now.agent) heldFor.value = mateOf(now.agent)
+  else if (now.task_status !== 'closed') heldFor.value = null
+})
+watch(
+  () => props.place,
+  () => {
+    heldFor.value = null
+    askingRecipient.value = false
+  }
+)
+/** 这一下发出去会不会把「交给队友」悄悄降成讨论。 */
+function wouldDowngrade(): boolean {
+  const now = addressing.value
+  return !!heldFor.value && !!now && !now.agent && now.task_status === 'closed'
+}
+function sendToHeldMate() {
+  const mate = heldFor.value
+  heldFor.value = null
+  askingRecipient.value = false
+  sendDraft({ summon: true, to: mate })
+}
+function postAsDiscussion() {
+  heldFor.value = null
+  askingRecipient.value = false
+  sendDraft()
+}
+/** 送到时后端说这条已经不交给队友了（`AddressingChanged`）：房间把草稿放回来之后叫这个，
+ *  就地问同一句。 */
+function askRecipient(now: Addressing | null) {
+  const shown = heldFor.value ?? (addressing.value?.agent ? mateOf(addressing.value.agent) : null)
+  heldFor.value = shown ?? restingMate.value
+  askingRecipient.value = !!heldFor.value && !now?.agent
+}
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -384,7 +488,7 @@ function withoutMention(text: string, mate: Mate): string {
 
 // 点一下头像：它不改任何隐藏状态，它只是替你打那个 @，写完你看得见、也能自己删掉。
 function toggleSummon() {
-  if (!summonOn.value) draft.value = withAgentMention(draft.value)
+  if (!draftMates.value.length) draft.value = withAgentMention(draft.value)
   else draft.value = draftMates.value.reduce(withoutMention, draft.value)
   void nextTick(() => composerInput.value?.focus?.())
 }
@@ -402,17 +506,27 @@ function summonOff() {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
+// 输入法（IME）那一下按键的判定：认的是**这一次按键本身**是不是上屏/选字那一下，
+// 不是「离上屏近不近」。
+//
+// 上屏那一下按的键，Chromium 报 isComposing，Safari 在 compositionend 之后补的尾巴
+// keydown 报 keyCode 229（它甚至比 compositionend 还晚，所以自己记的那份 `composing`
+// 那时已经是 false）；普通的发送回车两个都不带。所以这三条就够。
+//
+// 曾经这里多一条「compositionend 之后 100 毫秒内的按键都算输入法」的时间窗。它把上屏
+// 之后紧接着按的、真要发送的那个回车也吃掉——打字快的人每次上屏后的回车都变成换行
+// （2026-10-24 反馈）。窗口按毫秒算就必然如此：同一次输入法里「上屏」和「发送」是两次
+// 相邻的按键，快的只隔几十毫秒，没有时间窗能分开它们，能分开它们的是事件本身的属性。
+// 仓库里其余同类判断（`MessageEditor.vue` 等二十来处）也都是只看事件属性，没有时间窗。
 let composing = false
-let compositionEndedAt = -1e9
 function onCompositionStart() {
   composing = true
 }
-function onCompositionEnd(e: CompositionEvent) {
+function onCompositionEnd() {
   composing = false
-  compositionEndedAt = e.timeStamp
 }
 function isImeKey(e: KeyboardEvent) {
-  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
+  return composing || e.isComposing || e.keyCode === 229
 }
 
 // 触摸屏上回车是换行。软键盘没有 Shift 这一层，所以「Enter 发送 / Shift+Enter
@@ -481,212 +595,67 @@ function onComposerKey(e: KeyboardEvent) {
 // `summon: true` = ⌘/Ctrl+Enter「发送并交给它」。它把 @ 写进正文再发，而不是在帧
 // 上把 summon 悄悄置真：时间线上那条消息必须自己说明它叫了谁，否则读的人看到的
 // 是一条谁也没 @ 的消息，芝士却动了。
-function sendDraft(opts?: { summon?: boolean }) {
+function sendDraft(opts?: { summon?: boolean; to?: Mate | null }) {
   if (props.attsUploading) return
+  // 攒着待发批注时，这一下发的就是那一批：输入框里的字当作「总体说明」并进同一条消息，
+  // 而不是先发一条空话再发那批（原型里发送键写的就是「发送（含 N 条批注）」）。
+  if (sendableCount.value > 0) {
+    const summary = expandMentions(draft.value)
+    if (pending?.send(summary)) {
+      draft.value = ''
+      // 引用条和正文一样，是这一条消息带着的东西：这一批发出去就算用掉了。走
+      // `emit('send')` 那条老路时由 `useChatComposer` 清（它调 `clearDraftQuote`），
+      // 这条捷径绕过了它——不清的话，选着的那一处会搭在下一条消息上。
+      emit('clear-quote')
+      return
+    }
+    // 没发出去（对话栏那一刻收不下）：这一批留着，输入框里的字也留着，按原样退回去。
+    // 不往下走老路——那颗键写的是「发送（含 N 条批注）」，只把正文发出去、把这一批留在
+    // 原地，读者会以为整批都发走了。失败那句话说在托盘上（`pending.failed`，三个发送入口
+    // 共用一条），所以这里不必再报一次。
+    return
+  }
   if (!draft.value.trim() && !props.atts.length) return
-  const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  emit('send', { content, summon: summons(content) })
-}
-
-// ---- 语音输入 ----
-//
-// 说一段，后端听写、整理成字，落在开口时光标所在的地方（人这期间接着打字，那个位置
-// 跟着走）。落下来的是整理后的那一版；旁边那颗「还原原话」换成一字不差的转写，再点
-// 换回来。整理后和原话里的「@名字」都按名册展开成标签，和手打的 @ 一样。
-const VOICE_MAX_SECONDS = 60 // 和后端 voice_max_seconds 同一个数
-const SWAP_LINGER_MS = 8000
-const canVoice = computed(
-  () =>
-    !!props.topic &&
-    !!props.hearVoice &&
-    typeof navigator !== 'undefined' &&
-    !!navigator.mediaDevices?.getUserMedia &&
-    typeof window.AudioContext === 'function'
-)
-/** 刚落下的一段：在正文里的起点、两种写法、现在显示的是哪一种。 */
-let landed: { at: number; polished: string; raw: string; showing: 'polished' | 'raw' } | null = null
-const voiceSwap = ref<'raw' | 'polished' | null>(null)
-let swapTimer = 0
-let ownEdit = false
-
-const voice = useVoiceInput({
-  maxSeconds: VOICE_MAX_SECONDS,
-  hear: (wav) => props.hearVoice!(wav),
-  onHeard: (heard) => landVoice(heard.text, heard.raw),
-})
-const voiceOpen = computed(() => voice.state.value !== 'idle')
-
-// 一开口就在光标处放一枚占位：录着时写「正在听」，整理中写「正在整理」——字会落在这儿。
-// 回到空闲（落了字、取消、出错）就收起。
-watch(voice.state, (now, was) => {
-  if (now === 'recording')
-    composerInput.value?.voiceMarks({ slot: caret.value, slotLabel: t('work.room.composer.voice.listening') })
-  else if (now === 'thinking')
-    composerInput.value?.voiceMarks({ slotLabel: t('work.room.composer.voice.thinking'), slotThinking: true })
-  else if (was) composerInput.value?.voiceMarks({ slot: null })
-})
-
-function writeAt(at: number, from: string, to: string) {
-  ownEdit = true
-  draft.value = draft.value.slice(0, at) + to + draft.value.slice(at + from.length)
-  caret.value = at + to.length
-  void nextTick(() => (ownEdit = false))
-}
-
-function landVoice(text: string, raw: string) {
-  const at = Math.min(composerInput.value?.voiceSlot() ?? caret.value, draft.value.length)
-  const polished = expandMentions(text.trim())
-  const exact = expandMentions(raw.trim())
-  if (!polished) return
-  writeAt(at, '', polished)
-  // 记号按编辑器里的正文算位置，要等它把这段字放进去之后再标。
-  void nextTick(() => {
-    composerInput.value?.voiceMarks({ slot: null, landed: [at, at + polished.length] })
-    reveal(polished.length)
+  if (!opts?.summon && wouldDowngrade()) {
+    askingRecipient.value = true
+    return
+  }
+  const content = expandMentions(
+    opts?.summon ? withAgentMention(draft.value, opts.to ?? restingMate.value) : draft.value
+  )
+  // 那一行此刻写着交给谁，发出去就是在说「我要交给它」：送到时不交给了，后端不发、退回来
+  // （`expects_agent`），由后端按发送那一刻的状态再判一次。带的是屏幕上那一行，不论它是
+  // 不是对这份草稿问到的——刚改了一个字就按发送，那人看着的仍是那一行。
+  const expectsAgent = !opts?.summon && !!addressing.value?.agent
+  emit('send', {
+    content,
+    summon: opts?.summon ? mentionsAgent(content) || summonOn.value : summonOn.value,
+    expectsAgent,
   })
-  landed = { at, polished, raw: exact, showing: 'polished' }
-  showSwap(polished !== exact ? 'raw' : null)
-  composerInput.value?.focus()
 }
 
-// 落字：整段先占好位置（输入框一次长到位，不一个字一个字地撑高），再从头逐字显出来，
-// 每 28ms 两个字，前沿四个字半透明。显完了那层琥珀浅底再慢慢退掉。减弱动效时一次显完。
-const REVEAL_STEP_MS = 28
-let revealTimer = 0
-function reveal(length: number) {
-  window.clearInterval(revealTimer)
-  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
-  let shown = 0
-  composerInput.value?.voiceMarks({ revealed: 0 })
-  revealTimer = window.setInterval(() => {
-    shown += 2
-    if (shown >= length) {
-      window.clearInterval(revealTimer)
-      composerInput.value?.voiceMarks({ revealed: null })
-    } else composerInput.value?.voiceMarks({ revealed: shown })
-  }, REVEAL_STEP_MS)
-}
-onBeforeUnmount(() => window.clearInterval(revealTimer))
-
-function showSwap(to: 'raw' | 'polished' | null) {
-  window.clearTimeout(swapTimer)
-  voiceSwap.value = to
-  if (to) swapTimer = window.setTimeout(() => (voiceSwap.value = null), SWAP_LINGER_MS)
-}
-
-/** 换成另一种写法：只换那一段，前后别人打的字不动。那一段已经被改过就不换了。 */
-function swapVoice() {
-  if (!landed) return
-  const shown = landed.showing === 'polished' ? landed.polished : landed.raw
-  const next = landed.showing === 'polished' ? landed.raw : landed.polished
-  if (draft.value.slice(landed.at, landed.at + shown.length) !== shown) return showSwap(null)
-  writeAt(landed.at, shown, next)
-  landed.showing = landed.showing === 'polished' ? 'raw' : 'polished'
-  const at = landed.at
-  void nextTick(() => composerInput.value?.voiceMarks({ landed: [at, at + next.length] }))
-  showSwap(landed.showing === 'polished' ? 'raw' : 'polished')
-  composerInput.value?.focus()
-}
-
-// 人自己动了正文，那颗换写法的按钮就该走了：它说的那一段可能已经不是它了。
-watch(draft, () => {
-  if (ownEdit || !voiceSwap.value) return
-  showSwap(null)
-  landed = null
+// ---- 语音输入（useComposerVoice）----
+const {
+  VOICE_MAX_SECONDS,
+  canVoice,
+  voice,
+  voiceOpen,
+  voiceSwap,
+  swapVoice,
+  onVoice,
+  onVoiceKey,
+  holding,
+  dragX,
+  armed,
+} = useComposerVoice({
+  draft,
+  caret,
+  editor: composerInput,
+  enabled: () => !!props.topic && !!props.hearVoice,
+  hear: (wav) => props.hearVoice!(wav),
+  expand: (text) => expandMentions(text),
+  isImeKey,
 })
-
-// 按住说话：一开始录，动作行就换成录音条，按着的那颗麦克风连同它抓着的指针一起被卸掉，
-// 它自己再也听不到松手。所以松手在 window 上等，和按钮在不在无关。
-// 只认按着麦克风的那根手指：另一根手指在别处点一下、滚一下，不算松手。录音一结束（说完、
-// 取消、出错）就不再等，免得这一次的松手去结束下一段录音。系统把指针收走（来电、系统
-// 手势）不是「说完了」，这一段丢掉，免得半句话落进正文。
-//
-// 按着的时候往左拖：录音条跟着手指挪（阻尼一半），拖过 90px 就「松手取消」，拖回来又恢复。
-let stopHold: (() => void) | null = null
-const DROP_PX = 90
-const holding = ref(false)
-const dragX = ref(0)
-const armed = ref(false)
-function onVoice(how: 'tap' | 'hold' | 'release' | 'cancel', pointerId?: number, x?: number) {
-  if (how === 'release') {
-    if (armed.value) {
-      stopHold?.()
-      return void voice.cancel()
-    }
-    return void voice.finish()
-  }
-  if (how === 'cancel') {
-    stopHold?.()
-    voice.cancel()
-    return
-  }
-  // 一段录音没完，就不再开第二段：第二根手指在动作行换走之前也按在麦克风上，不算新的开始。
-  if (voice.state.value !== 'idle') {
-    if (how === 'tap' && voice.state.value === 'recording') void voice.finish()
-    return
-  }
-  if (how === 'hold') {
-    stopHold?.()
-    const release = (e: PointerEvent) => {
-      if (pointerId !== undefined && e.pointerId !== pointerId) return
-      const drop = armed.value
-      stopHold?.()
-      if (drop) voice.cancel()
-      else void voice.finish()
-    }
-    const cancel = (e: PointerEvent) => {
-      if (pointerId !== undefined && e.pointerId !== pointerId) return
-      stopHold?.()
-      voice.cancel()
-    }
-    const move = (e: PointerEvent) => {
-      if ((pointerId !== undefined && e.pointerId !== pointerId) || x === undefined) return
-      const dx = Math.min(0, e.clientX - x)
-      dragX.value = Math.max(-DROP_PX, dx / 2)
-      armed.value = dx < -DROP_PX
-    }
-    window.addEventListener('pointerup', release)
-    window.addEventListener('pointercancel', cancel)
-    window.addEventListener('pointermove', move)
-    holding.value = true
-    stopHold = () => {
-      window.removeEventListener('pointerup', release)
-      window.removeEventListener('pointercancel', cancel)
-      window.removeEventListener('pointermove', move)
-      holding.value = false
-      dragX.value = 0
-      armed.value = false
-      stopHold = null
-    }
-  }
-  void voice.start()
-}
-watch(voice.state, (now) => {
-  if (now !== 'recording') stopHold?.()
-})
-onBeforeUnmount(() => stopHold?.())
-
-/** 录音时的键：Enter 说完、Esc 不要了；Alt+V 开始，录着时再按一次说完。认领了返回 true。 */
-function onVoiceKey(e: KeyboardEvent): boolean {
-  if (e.altKey && e.code === 'KeyV' && canVoice.value && !isImeKey(e)) {
-    e.preventDefault()
-    if (voice.state.value === 'idle') void voice.start()
-    else void voice.finish()
-    return true
-  }
-  if (!voiceOpen.value) return false
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    voice.cancel()
-    return true
-  }
-  if (e.key === 'Enter' && !e.shiftKey && !isImeKey(e)) {
-    e.preventDefault()
-    void voice.finish()
-    return true
-  }
-  return false
-}
 
 // 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。
 const reminderOpen = ref(false)
@@ -700,14 +669,20 @@ function onReminderSet(at: Date) {
   toast.success(t('work.room.reminder.set', { when }))
 }
 
-// 发送键亮不亮：有字，或者有东西跟着走。
-const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0)
+// 发送键亮不亮：有字、有东西跟着走，或者攒着待发批注（那一下发的是那一批）。
+const canSend = computed(() => !!draft.value.trim() || props.atts.length > 0 || pendingCount.value > 0)
 
 defineExpose({
   /** @ 完人、点完按钮、起手草稿写完之后要把光标还回来——这是最烦人的一处。 */
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
+  /** 在正文前面 @ 上这个频道平时交给的那位（「回复并 @芝士」）。已经 @ 了队友就不动。 */
+  addAgentMention() {
+    if (summonReady.value) draft.value = withAgentMention(draft.value)
+    void nextTick(() => composerInput.value?.focus?.())
+  },
+  askRecipient,
 })
 </script>
 
@@ -780,14 +755,29 @@ defineExpose({
           <v-icon size="14">mdi-close</v-icon>
         </button>
       </div>
+      <div v-else-if="askingRecipient && heldFor" key="recipient" class="composer-strip" role="status">
+        <span class="composer-strip__text">
+          {{ t('work.room.composer.recipient.closedAsk', { name: heldFor.label }) }}
+        </span>
+        <BaseButton kind="ghost" size="sm" @click="sendToHeldMate">
+          {{ t('work.room.composer.recipient.closedAskAgent', { name: heldFor.label }) }}
+        </BaseButton>
+        <BaseButton kind="ghost" size="sm" @click="postAsDiscussion">
+          {{ t('work.room.composer.recipient.closedAskPost') }}
+        </BaseButton>
+      </div>
       <div v-else-if="$slots.strip" key="outside" class="composer-strip composer-strip--slot">
         <slot name="strip" />
       </div>
     </Transition>
+    <!-- 攒着的待发批注逐条列在输入框上方：加了几处、分别是哪一处、要改什么，一眼看得全；
+         一次发出去，芝士一轮改完。 -->
+    <PendingNotesTray class="composer-pending" />
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
+      <ComposerRecipient :addressing="addressing" :agent-name="recipientMateName" :name-of="personName" />
       <!-- 这条消息带着的东西：回复的那条在最前，然后是引用，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"
@@ -807,7 +797,7 @@ defineExpose({
         v-model:caret="caret"
         class="composer-input"
         :names="chipNames"
-        :placeholder="hint"
+        :placeholder="sendableCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : hint"
         :label="hint"
         :title="keysTitle"
         @keydown="onComposerKey"
@@ -819,6 +809,7 @@ defineExpose({
         :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
+        :pending-count="sendableCount"
         :show-image-picker="!mdAndUp"
         :enter-sends="enterSends"
         :can-checklist="!!postChecklist"
@@ -834,7 +825,7 @@ defineExpose({
         @voice-done="voice.finish()"
         @voice-swap="swapVoice"
       >
-        <template #chips><slot name="composer-chips" /></template>
+        <template #chips><ComposerViewing :suppressed="!!quote" /><slot name="composer-chips" /></template>
         <template v-if="summonShown" #summon>
           <ComposerSummon
             :guided="!!guided"
@@ -883,6 +874,12 @@ defineExpose({
      12px 就是那两个类本来给的值。
      手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+}
+/* 待发篮和输入框之间那一道缝：`.composer` 是纯块级（没有 gap），不加这一条两块的
+   描边会贴在一起，看着像一个盒子里挤了两块东西。只给篮子加，别动 `.composer`——
+   上面那条提示条是贴着输入框圆角顶的，拉开缝那对圆角就不成立了。 */
+.composer-pending {
+  margin-bottom: 8px;
 }
 /* 输入框上方的提示条：贴在盒子顶上的一片，安静的底。同一时刻只有一条（模板里是
    v-if 链），所以它们用同一种样子——语音没成、长文转附件、@ 了频道外的人。 */

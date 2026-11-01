@@ -2,9 +2,15 @@
 
 Before this, such a seat stayed idle until a person or another agent poked it
 (`resumable_failures` has the measurement). Now the failure is classified as it
-lands (`after_failure`, called from the hook intake before any failure
-card is posted), and a resumable one leaves a `TurnResume` row due after a
-backoff, or at the reset the service named. A clock (`hand_due`) turns a due
+lands (`after_failure`, called from the hook intake before the turn's line is
+posted), and a resumable one leaves a `TurnResume` row due after a backoff, or
+at the reset the service named — when that is within `RESUME_HORIZON`. A
+recovery dated further out is written as dropped (`RECOVERS_LATE`): the turn
+has failed, and nothing is owed.
+
+Either way the conversation is told (`scheduled_notice`, `late_notice`): the
+person who asked sees that the turn did not finish and whether the platform
+will try again, and when. A clock (`hand_due`) turns a due
 row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
 so admission, leases, the closed-task check and the 30-second dispatch all stay
 the ledger's, exactly as for a timed delivery.
@@ -40,6 +46,7 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Final
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -53,6 +60,7 @@ from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.own_limit import refused_until
 from app.domain.agent.resumable_failures import (
+    RESUME_HORIZON,
     SUBSCRIPTION_COOLING,
     Resumable,
     classify,
@@ -61,6 +69,7 @@ from app.domain.agent.run_records import publish
 from app.domain.agent.service import AgentResult
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import room_of, room_of_thread, rooms_of
 from app.domain.delivery.agent import instance_for_seat, record_agent
 from app.domain.delivery.models import Delivery
@@ -109,6 +118,13 @@ SEAT_RAN_AGAIN: Final = "seat_ran_again"
 CLOSED: Final = "conversation_closed"
 SEAT_GONE: Final = "seat_gone"
 DELIVERY_FAILED: Final = "delivery_failed"
+#: The failure dates its recovery beyond `RESUME_HORIZON`: not a passing fault.
+#: The row's ``due_at`` keeps when it said the service comes back.
+RECOVERS_LATE: Final = "recovers_late"
+
+#: The clock a room line names a time on: the platform says recovery times in
+#: Beijing time (docs/spec.md, 供应商错误结构化呈现), as the credit alerts do.
+_CLOCK: Final = ZoneInfo("Asia/Shanghai")
 
 _SAID_MAX: Final = 4000
 
@@ -138,7 +154,9 @@ async def after_failure(
     now: datetime | None = None,
 ) -> TurnResume | None:
     """Schedule this seat's resume when its failure is one that passes by
-    itself; the row written, or None when nothing was scheduled."""
+    itself, soon. What was decided: the row, owed or written as dropped with
+    its reason (`RECOVERS_LATE`, a spent streak), or None when the failure is
+    not one the platform waits out at all."""
     now = now or _now()
     reset = refused_until(result.rate_limit, now)
     if route == OWN_ROUTE and reset is not None:
@@ -155,6 +173,18 @@ async def after_failure(
         return None
     recorded: tuple[dict, uuid.UUID | None] | None = None
     async with sessions() as session:
+        decided = await session.scalar(
+            select(TurnResume).where(
+                TurnResume.conversation_id == conversation_id,
+                TurnResume.recipient_handle == seat,
+                TurnResume.failed_turn_id == failed_turn_id,
+            )
+        )
+        if decided is not None:
+            # The same failure reported again (the runner delivers a report
+            # until its follow-through is done): what was decided for it the
+            # first time stands, with the time the room was already told.
+            return decided
         instance = await instance_for_seat(session, project_id, seat)
         if instance is None or not instance.is_active:
             return None
@@ -275,7 +305,12 @@ async def _record_schedule(
 ) -> tuple[dict, uuid.UUID | None] | None:
     """Keep the recovery outcome in the transaction that schedules it."""
     dropped = row.dropped_at is not None
-    if dropped:
+    if dropped and row.dropped_reason == RECOVERS_LATE:
+        content = say(
+            "turnResumeRecoversLate",
+            minutes=round(RESUME_HORIZON.total_seconds() / 60),
+        )
+    elif dropped:
         key = (
             "turnResumeExhausted"
             if row.dropped_reason == ATTEMPTS_USED_UP
@@ -306,6 +341,8 @@ async def _record_schedule(
             ),
             "reason": row.dropped_reason if dropped else row.reason,
             "resume_id": str(row.id),
+            # The composer shows the wait until then (`waiting`).
+            **({} if dropped else {"due_at": row.due_at.isoformat()}),
         },
         turn_id=row.failed_turn_id,
         seat=row.recipient_handle,
@@ -325,6 +362,60 @@ _WAIT_KEYS: Final = {
     "quota_reset": "turnResumeWaitQuotaReset",
     "runner_replaced": "turnResumeWaitRunnerReplaced",
 }
+
+
+#: What failed, as the room line names it (`scheduled_notice`, `late_notice`).
+_REASON_KEYS: Final = {
+    "rate_limited": "turnEndedRateLimited",
+    "overloaded": "turnEndedOverloaded",
+    "stream_ended": "turnEndedStreamEnded",
+    "unreachable": "turnEndedUnreachable",
+    "egress_offline": "turnEndedEgressOffline",
+    "subscription_cooling": "turnEndedSubscriptionCooling",
+    "quota_reset": "turnEndedQuotaReset",
+    "runner_replaced": "turnEndedRunnerReplaced",
+}
+
+
+def scheduled_notice(row: TurnResume) -> tuple[str, dict]:
+    """The conversation's line for a failed turn the platform will start again:
+    that it did not finish, why, and about when the retry comes. The composer
+    shows the wait from the resume itself (`waiting`, the run records)."""
+    local = row.due_at.astimezone(_CLOCK)
+    return say(
+        "turnResumeScheduled",
+        time=local.strftime("%H:%M"),
+        reason=say(_REASON_KEYS[row.reason]),
+    ), {
+        **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
+        "reason": row.reason,
+        "resume_id": str(row.id),
+    }
+
+
+def late_notice(row: TurnResume) -> tuple[str, dict]:
+    """The conversation's line for a failed turn whose service comes back past
+    `RESUME_HORIZON`: why it failed, when the service expects to be back, and
+    what the person can do meanwhile. Nothing will retry it."""
+    local = row.due_at.astimezone(_CLOCK)
+    return say(
+        "turnFailedRecoversLate",
+        reason=say(_REASON_KEYS[row.reason]),
+        month=local.month,
+        day=local.day,
+        time=local.strftime("%H:%M"),
+    ), notice(
+        EVENT_TURN_FAILED,
+        severity=SEVERITY_ERROR,
+        who=WHO_HUMAN,
+        detail=say(
+            "hintAndServiceWords",
+            hint=say("turnFailedRecoversLateHint"),
+            said=row.said,
+        ),
+        detail_label=say("labelDetails"),
+        retryable=True,
+    )
 
 
 async def started_on_receipt(
@@ -414,8 +505,18 @@ async def report_failed_deliveries(sessions: SessionFactory) -> int:
                 .with_for_update(of=TurnResume, skip_locked=True)
             )
         )
+        # Every conversation told here and its room, at once, before the first
+        # line (`conversation.numbering`), not as each line reaches its conversation.
+        rooms = {row.id: await room_of(session, row.conversation_id) for row in rows}
+        await lock_conversations(
+            session,
+            [
+                *(row.conversation_id for row in rows),
+                *(room for room in rooms.values() if room is not None),
+            ],
+        )
         for row in rows:
-            room = await room_of(session, row.conversation_id)
+            room = rooms[row.id]
             row.dropped_at = _now()
             row.dropped_reason = DELIVERY_FAILED
             kept = await record(
@@ -484,6 +585,10 @@ def _wait(
                 # operator resets them, or someone moves the project off the
                 # subscription. Neither is the platform's to do.
                 return None, NO_RESET
+    if stated is not None and stated > RESUME_HORIZON.total_seconds():
+        # Back only after anybody waiting has moved on: the turn fails, and
+        # the row keeps when the service said it returns.
+        return stated, RECOVERS_LATE
     if stated is not None:
         # Spread the seats that waited on the same reset over a short span.
         return stated + _AFTER_RESET_S + random.uniform(
@@ -517,6 +622,7 @@ async def _streak(
         CLOSED,
         SEAT_GONE,
         DELIVERY_FAILED,  # no resumed turn started; a later manual retry is a new streak
+        RECOVERS_LATE,  # the turn failed outright; whoever tries again starts afresh
     ):
         return 0
     since = previous.handed_at or previous.failed_at
@@ -618,6 +724,34 @@ async def hand_due(
     for payload, room in stopped:
         await publish(payload, room=room)
     return handed
+
+
+async def waiting(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
+    """The resumes this conversation is still owed, as the room is told them
+    when it asks for its state (the `room_state` frame): whose, when it is
+    due, and since when it has waited. A row the clock would drop when due
+    (`_no_longer_applies`) is not one: nothing will retry it."""
+    rows = list(
+        await session.scalars(
+            select(TurnResume)
+            .where(TurnResume.conversation_id == conversation_id, _owed())
+            .order_by(TurnResume.due_at)
+        )
+    )
+    if not rows:
+        return []
+    room = await room_of(session, conversation_id)
+    return [
+        {
+            "conversation_id": str(row.conversation_id),
+            "seat": row.recipient_handle,
+            "resume_id": str(row.id),
+            "due_at": row.due_at.isoformat(),
+            "since": row.failed_at.isoformat(),
+        }
+        for row in rows
+        if await _no_longer_applies(session, row, room) is None
+    ]
 
 
 async def _no_longer_applies(

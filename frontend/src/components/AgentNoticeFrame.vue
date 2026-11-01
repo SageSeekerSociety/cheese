@@ -29,6 +29,9 @@ const props = defineProps<{
   faceStatus?: string | null
   /** 不署名那一行头像列里的记号：默认是平台的；一条改文档的记录换成文档的。 */
   mark?: string
+  /** 平台替这位队友说的话：头像列里是它的小头像（不是它说的，所以不署名字），一间房
+   *  坐着几位队友时认得出是哪一位停下了。 */
+  markAgent?: { name: string; handle: string | null } | null
 }>()
 
 const liveLabel = computed(() =>
@@ -70,7 +73,10 @@ const liveName = computed(() =>
     </div>
   </div>
   <div v-else class="notice-row">
-    <span class="notice-row__mark" :title="mark ? undefined : t('work.room.notice.platform')">
+    <span v-if="markAgent" class="notice-row__mark" :title="markAgent.name" :aria-label="markAgent.name" role="img">
+      <CheeseAvatar :size="20" :name="markAgent.name" :handle="markAgent.handle" />
+    </span>
+    <span v-else class="notice-row__mark" :title="mark ? undefined : t('work.room.notice.platform')">
       <span class="notice-row__platform" aria-hidden="true">
         <v-icon size="12">{{ mark ?? 'mdi-server' }}</v-icon>
       </span>

@@ -7,6 +7,7 @@ covers:
   - backend/app/domain/room_cleanup/retire.py
   - backend/app/domain/agent/device_storage.py
   - backend/scripts/retained_files.py
+  - backend/scripts/purge_task_snapshots.py
   - deploy/README-room-cleanup.md
   - deploy/dev-box-disk-cleanup.sh
   - deploy/reclaim-room-caches.sh
@@ -24,7 +25,7 @@ covers:
 ## 归档不等于立刻删 {#archive}
 
 - 没归档的房间保留它正在跑的环境。**归档创建一条持久的回收操作，不立刻销毁机器**：默认宽限五分钟（`TOPIC_ARCHIVE_CLEANUP_DELAY_S=300`，改它只影响以后的归档）。
-- 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。清理不检查发布，不因为没推送的改动保留目录。
+- 停下会话之前，房间的每条会话在它的机器上做一次尽力而为的 checkpoint（`session_work.checkpoint_room`，由启动这次清理的一方交给 `sweep_retired_storage`），推没推上去都照常往下走：推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。清理不检查发布，不因为没推送的改动保留目录。
 - 云端宿主机上的房间目录删掉之后，它们在宿主机上占的位置还给云主机池（`HostPool.forget_device_homes`）。宿主机本身由池子在空闲一段时间后释放，房间清理从不删宿主机。
 - 进度从 `GET /topics/{id}/cleanup` 读：阶段、期限、已完成的资源数、最近一次失败。
 
@@ -62,7 +63,7 @@ covers:
 
 ## 旧房间的文件 {#kept-room-files}
 
-有执行器之前的房间直接在自己的目录（home 下的 `room/`）里干活，后面没有仓库，那里的文件不在任何分支、也不在任何快照里。这样的 home（没有执行器标记、`room/` 不是 git 检出又不是空的，`resource_cleanup.kept_room_files`）在删之前，`room/` 打成一个 tar.gz 送进私有存储（`kept-room-files/<项目>/<资源>.tar.gz`），保留三十天（`device_storage.RETENTION`），到期由清理的定时器删掉。
+有执行器之前的房间直接在自己的目录（home 下的 `room/`）里干活，后面没有仓库，那里的文件不在任何分支上。这样的 home（没有执行器标记、`room/` 不是 git 检出又不是空的，`resource_cleanup.kept_room_files`）在删之前，`room/` 打成一个 tar.gz 送进私有存储（`kept-room-files/<项目>/<资源>.tar.gz`），保留三十天（`device_storage.RETENTION`），到期由清理的定时器删掉。
 
 - 两个时机。自有设备每次连上来，以及房间清理的定时器每小时最多一次扫一遍已连着的自有设备（`keep_room_files_due`，一台跨过部署一直连着的设备不会再连一次），它上面还没看过的每个 home 都看一次（`keep_device_room_files`），有文件的当场送走，并在那段对话里说一次文件保留到哪天、找平台管理员取回；没文件的也记一行，下次不再看。房间清理删 home 时把上传地址交给 `remove`（`room_files_upload_url`），还没送过的在同一条命令里先送再删；已经送过的传 `-`，不再送一遍。所以这样的 home 不会在没有副本时被删。
 - 记在 `kept_room_files` 表里：哪台设备、哪个 home、存储里的键、大小、到期时间、告诉了哪段对话。同一个 home 同时只由一个进程打包上传：先插入或接过它那一行并记下 `looking_since`，插不进、接不过的进程就不碰它（部署时新旧两个后端会同时扫同一台设备）；送到一半进程没了的，过了 `CLAIM_STALE` 由下一次扫的接着送。
@@ -75,6 +76,15 @@ covers:
 - 压好之后用预签名 PUT 传进私有桶 `transcripts/rooms/<项目>/<房间>/<资源>.tar.gz`，后端按主机报的大小和 MD5 核对桶里那份。桶里那份没有任何代码删。
 - 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉主机上的压缩包，操作变成 `complete`；前提是桶里那份核对过。还没传上去的（当时传失败，或者在有上传之前就留下的）先传，传不上去就留在主机上，过一阵再试。
 - 记录还在保留期内的时候取消归档，**什么都不会被还原**：房间拿到新的资源代际，agent 开新会话；那份压缩包按原计划到期。再归档一次，新代际的记录会在旁边存成第二份。
+
+## 一次性清理：任务快照 {#task-snapshot-purge}
+
+沙箱只推提交，平台不再存任务快照，读写快照的接口也已删掉。私有桶里 `task-snapshots/` 下的存量不导出，在部署机上手动跑一次清掉：
+
+    docker compose exec backend python -m scripts.purge_task_snapshots          # 只数
+    docker compose exec backend python -m scripts.purge_task_snapshots --apply  # 删
+
+它按前缀翻页列、逐个删，重复跑第二遍是零，不需要停机。`task_snapshots` 表在后一个发布里删掉（`c1ddf6d2257f`）。
 
 ## 独立时钟 {#timer}
 
@@ -110,5 +120,5 @@ covers:
 ## 边界与坑 {#traps}
 
 - 宽限只影响以后的归档，改配置不会让已经排上队的操作提前或推迟。
-- 记录保留的是**会话记录**，不是工作成果：工作成果靠提交与推送，以及每一轮 Stop checkpoint 留在平台上的快照（见[执行通道](/dev/execution)）。
+- 记录保留的是**会话记录**，不是工作成果：工作成果只靠提交与推送（见[执行通道](/dev/execution)）。
 - 三条磁盘回收全部默认只报告、要 `--apply` 才删；`--needed` 只是一个「要不要跑」的条件。

@@ -2,11 +2,12 @@ import type { ApiEnvelope, ChatAttachment, DocumentRevision, FileSource, ListPay
 import type { DocumentTemplate, RoomOutput } from '../types/roomOutput'
 
 import { t } from '../i18n'
+import { announceDownload, announceDownloadFailure, saveBlob } from '../lib/download'
 import { refusalWords } from '../lib/noticeText'
 import { createPreviewPdfReader } from '../lib/previewPdf'
 import { postFormWithProgress } from '../lib/xhrUpload'
 
-import { authHeaders, BASE, ensureFreshToken, request } from './http'
+import { authHeaders, BASE, downloadBytes, ensureFreshToken, request } from './http'
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
@@ -111,6 +112,20 @@ export async function hearVoice(topicId: string, wav: Blob): Promise<{ text: str
   return body.data
 }
 
+/** 对自己的芝士说的一段：不在哪个频道里，听写的方式和额度都和频道里的一样。 */
+export async function hearAssistantVoice(wav: Blob): Promise<{ text: string; raw: string }> {
+  const form = new FormData()
+  form.append('file', wav, 'voice.wav')
+  const { status, body } = await postFormWithProgress<ApiEnvelope<{ text: string; raw: string }>>(
+    `${BASE}/assistant/voice`,
+    form,
+    authHeaders()
+  )
+  if (status < 200 || status >= 300 || !body || body.code !== 200)
+    throw new Error(refusalWords(body) || t('global.request.uploadFailed', { status }))
+  return body.data
+}
+
 // <img src=…> URL for an uploaded attachment (binary raw endpoint).
 //
 // 注意这不是一个可以挂在 <img src> 上的地址：raw 端点从 Authorization 头认人，
@@ -149,16 +164,21 @@ export async function rawImageUrl(rawUrl: string): Promise<string> {
   return URL.createObjectURL(await res.blob())
 }
 
-/** A video object URL fetched with Authorization; the browser can then seek it. */
-/** The address a `<video>` plays a video attachment from, streaming it.
+/** The address a `<video>` plays a video attachment from, streaming it, and how
+ *  many bytes the whole recording is (from the one range request below).
  *
  *  The element fetches the recording itself, one byte range at a time, and none
  *  of those requests can carry Authorization. So this reads the first byte with
  *  the header, and the response leaves a cookie scoped to this room's raw path
  *  (backend `remember_for_media`); the element's own requests to the same URL
  *  carry it. Nothing is downloaded up front, so a long recording starts playing
- *  at once and seeking reads only the part it lands on. */
-export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
+ *  at once and seeking reads only the part it lands on. The same response's
+ *  `Content-Range` carries the total size, so the card can say how big the file
+ *  is without a second request. */
+export async function attachmentMediaUrl(
+  topicId: string,
+  path: string
+): Promise<{ url: string; bytes: number | null }> {
   const url = attachmentRawUrl(topicId, path)
   // no-store: a cached answer would skip the response that renews the cookie,
   // and once the old one expires the player's own range requests get 401.
@@ -168,7 +188,8 @@ export async function attachmentMediaUrl(topicId: string, path: string): Promise
   })
   if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
   await res.body?.cancel()
-  return url
+  const total = Number(res.headers.get('Content-Range')?.split('/').at(-1))
+  return { url, bytes: Number.isFinite(total) && total > 0 ? total : null }
 }
 
 /** A published file's bytes, for a viewer that draws them in the page. */
@@ -237,68 +258,44 @@ export async function previewDocumentPdf(
   return (await previewDocumentPdfSnapshot(topicId, path, task, source)).bytes
 }
 
-// Downloads carry the same credentials as API requests, including token-only sessions.
-export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
-  const res = await fetch(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, { headers: authHeaders() })
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const url = URL.createObjectURL(await res.blob())
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
-// ---- 房间文件：草稿历史与在线编辑 ----
-
-/** 房间文件保存过的一版。`source` 说字节从哪条路进来：编辑器、芝士、恢复、上传。 */
-export interface RoomFileRevision {
-  id: string
-  path: string
-  seq: number
-  version: string
-  size: number
-  author: string
-  author_kind: 'human' | 'agent' | 'unknown'
-  source: 'baseline' | 'upload' | 'template' | 'ai' | 'editor' | 'restore' | 'scheduled'
-  note: string | null
-  /** 存下这一版的那次编辑会话；和自己打开时的那个相同，就是自己刚存的。 */
-  editor_key: string | null
-  created_at: string
-}
-
-export function roomFileRevisions(
+/** 一份演示稿每一页的演讲者备注。
+ *
+ *  备注不在幻灯片上，而这一格拿到的是**转换后的 PDF**——所以它是这一档唯一读不出来的
+ *  东西。从服务端要，是因为那一边本来就有这份 pptx 的字节（正在转它）；让浏览器为了
+ *  几 KB 的文本再下一次原稿（上限 200MB）不值当。
+ *
+ *  `readable` 为假是「这份不是读得开的演示稿」；`notes` 里那一页是空串是「这一页没有
+ *  备注」。两件事分开说，否则一份读不开的文件会和一份没有备注的稿子长得一样。 */
+export function previewSlideNotes(
   topicId: string,
-  path: string
-): Promise<{ data: RoomFileRevision[]; total: number; path: string; version: string | null }> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions?path=${encodeURIComponent(path)}`)
-}
-
-export function restoreRoomFileRevision(topicId: string, revisionId: string): Promise<RoomFileRevision> {
-  return request(`/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revisionId)}/restore`, {
-    method: 'POST',
-  })
-}
-
-export async function downloadRoomFileRevision(topicId: string, revision: RoomFileRevision): Promise<void> {
-  const res = await fetch(
-    `${BASE}/topics/${encodeURIComponent(topicId)}/files/revisions/${encodeURIComponent(revision.id)}/raw`,
-    { headers: authHeaders() }
+  path: string,
+  task?: string | null,
+  source: FileSource = 'live'
+): Promise<{ notes: string[]; readable: boolean; version: string }> {
+  const from = task ? `&task=${encodeURIComponent(task)}` : ''
+  return request<{ notes: string[]; readable: boolean; version: string }>(
+    `/topics/${encodeURIComponent(topicId)}/attachments/notes?path=${encodeURIComponent(path)}&source=${source}${from}`
   )
-  if (!res.ok) throw new Error(t('global.request.downloadFailed', { status: res.status }))
-  const blob = await res.blob()
-  const leaf = revision.path.split('/').pop() ?? 'file'
-  const dot = leaf.lastIndexOf('.')
-  const [base, ext] = dot > 0 ? [leaf.slice(0, dot), leaf.slice(dot)] : [leaf, '']
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = t('global.request.revisionFileName', { name: base, seq: revision.seq, ext })
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+
+// Downloads carry the same credentials as API requests, including token-only sessions.
+//
+// 成没成、失败了怎么说，都在 `lib/download` 那一层定：这里只负责带凭证取字节、把
+// 字节交给浏览器，下完说一句话。所有下载入口都汇到这一个函数上（附件、资料库、预览、
+// 验收交付物、产物、任务文件、项目导出…），所以成功提示和失败提示各写一次就够。
+export async function downloadFile(rawUrl: string, filename: string): Promise<void> {
+  try {
+    const bytes = await downloadBytes(`${rawUrl}${rawUrl.includes('?') ? '&' : '?'}download=true`, authHeaders())
+    saveBlob(bytes, filename)
+    announceDownload()
+  } catch (cause) {
+    // 说过一次就不再往上抛：调用点各自那行红字已经撤掉，再抛一次没人接，只会多一条
+    // 没人看的 unhandled rejection。
+    announceDownloadFailure(cause)
+  }
+}
+
+// ---- 房间文件：在线编辑（草稿历史在 ./roomFileRevisions） ----
 
 export function copyIntoRoom(
   topicId: string,
@@ -365,5 +362,21 @@ export function newFromTemplate(
   return request(`/topics/${encodeURIComponent(topicId)}/files/new`, {
     method: 'POST',
     body: JSON.stringify({ template, path }),
+  })
+}
+
+/** 把一份文本房间文件的新内容存回去。
+ *
+ *  `version` 是读它时那份内容给的版本；这份文件在那之后被别人改过，后端答 409（带上
+ *  现在那一版），而不是把这版直接盖上去——别人的改动不能无声地没了。 */
+export function writeRoomTextFile(
+  topicId: string,
+  path: string,
+  content: string,
+  version: string | null
+): Promise<{ path: string; version: string; seq: number }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files/text`, {
+    method: 'POST',
+    body: JSON.stringify({ path, content, version }),
   })
 }

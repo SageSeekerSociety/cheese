@@ -3,7 +3,12 @@
   "limit": "单个文件不超过 {size}",
   "remove": "移除 {name}",
   "removeFailed": "「{name}」移除失败：{error}",
+  "replace": "替换 {name}",
+  "replaceFailed": "「{name}」替换失败：{error}",
+  "replaceWith": "选择新的一版",
   "title": "附件",
   "uploadFailed": "「{name}」上传失败：{error}",
-  "uploading": "上传中…"
+  "uploading": "上传中…",
+  "uploadingPercent": "上传中 {percent}%",
+  "processing": "处理中…"
 }

@@ -687,6 +687,158 @@ def platform_file(platform_dir, name):
         os.close(directory)
 
 
+#: Where `transcript_view.py` mounts this session's transcript, before it is
+#: bound at the path the build names. Beside the room's own platform directory,
+#: so the mount belongs to this room and the teardown can find it.
+TRANSCRIPT_VIEW = "transcript-view"
+#: The FUSE devices and config a machine needs before a view can be mounted,
+#: and the file the `user_allow_other` line goes in (`fuse_is_mountable`).
+DEV_FUSE = "/dev/fuse"
+FUSE_CONF = "/etc/fuse.conf"
+
+
+def start_transcript_view(home, release, config, platform_machine):
+    """Serve this session's transcript out here, and bind it where the build
+    names it (`transcript_view`). Started before the sandbox, and never waited
+    for: a machine without FUSE, or a session whose transcript is not written
+    yet, keeps the transcript at the path it always was — unreachable — and
+    the room runs exactly as it did.
+
+    Out here rather than inside, because a bubblewrap sandbox has no
+    `/dev/fuse` of its own: the view is this side's, and the sandbox reads it
+    through the machine's own read-only `/home`. It is given the room's scoped
+    environment, which is what names the room and carries the credential the
+    relay is asked with — the same environment the room's tools get.
+
+    Started wherever the room is, not only where it is sandboxed: a room given
+    the whole machine runs its tools here too, and the transcript is on the
+    session host either way. What the view needs is FUSE, not a sandbox."""
+    view = home / PLATFORM_DIR / TRANSCRIPT_VIEW
+    script = release / "remote-execution/transcript_view.py"
+    if not script.exists():
+        return
+    if not fuse_is_mountable(platform_machine):
+        return
+    with platform_file(home / PLATFORM_DIR, "transcript-view.log") as log:
+        subprocess.Popen(
+            [sys.executable, str(script), str(view)],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            env={**os.environ, **config["env"], **transcript_view_env()},
+            start_new_session=True,
+        )
+
+
+def fuse_is_mountable(platform_machine):
+    """Whether this machine can mount a FUSE view at all, making it able where
+    this may.
+
+    Three things the view needs that a machine need not have: `/dev/fuse`, a
+    `fusermount` (the library calls it by name to mount), and `user_allow_other`
+    in `/etc/fuse.conf` — the view is mounted by this room's user and read by
+    root through a bind, and FUSE refuses a second reader without it.
+
+    The library itself is not checked here: it is handed over as a path
+    (`transcript_view_env`) from the copy cheesehost places (`devenv.Ensure`
+    places `fuse-runtime`, pinned in `agent/toolchain.py`), and a machine
+    without it fails into the view's own silent exit.
+
+    The `user_allow_other` line is written as root where `platform_machine`
+    says the platform owns the machine. That line used to be installed by
+    `deploy/deploy-docker.sh` on the box that runs a deploy — which is the
+    *session* host, and the view is never mounted there: the executor is a pool
+    host, a machine the deploy script never touches. So it belongs here, on the
+    machine that mounts, and only on one the platform provisioned. A machine a
+    person enrolled is left alone: without the line the view is simply not
+    mounted and the room runs as it always did."""
+    if not Path(DEV_FUSE).exists():
+        return False
+    if shutil.which("fusermount") is None and shutil.which("fusermount3") is None:
+        return False
+    if _user_allow_other():
+        return True
+    if not platform_machine:
+        return False
+    return _grant_user_allow_other()
+
+
+def _user_allow_other():
+    try:
+        text = Path(FUSE_CONF).read_text()
+    except OSError:
+        return False
+    return any(
+        line.strip() == "user_allow_other"
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def _grant_user_allow_other():
+    """Append `user_allow_other`, as root, where the platform owns the machine.
+
+    Through `sudo -n`, like every other root step here (`sandbox_tools`): a
+    machine that does not give this process root answers with an error rather
+    than a password prompt, and the room keeps running without the view. The
+    line is appended only when it is absent, read back through `sh` so there is
+    no window in which two rooms both decide to add it.
+
+    `subprocess.SubprocessError` is caught with the rest: `sudo` runs with a
+    `timeout`, and a root call that hangs raises `TimeoutExpired` — not an
+    `OSError` — out of a step that runs on every room start and must never be
+    what fails one. The view is optional; the room is not."""
+    try:
+        sudo(
+            [
+                "sh",
+                "-c",
+                "grep -qxF user_allow_other /etc/fuse.conf 2>/dev/null"
+                " || echo user_allow_other >> /etc/fuse.conf",
+            ],
+            "allowing the transcript view to be read",
+        )
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+    return _user_allow_other()
+
+
+def transcript_view_env():
+    """What the view needs in its environment to find FUSE on this machine.
+
+    `fusepy` looks for `libfuse` through `find_library`, which asks the loader
+    for a name in the machine's own library paths — and `ldconfig` is root's to
+    change. So a host the platform did not provision has no way to be given it
+    there, and this is the one that works without root: `FUSE_LIBRARY_PATH`,
+    which `fusepy` honours ahead of the search, pointed at the copy cheesehost
+    placed under the platform's own runtime. A machine that has neither the
+    runtime nor a system libfuse gets nothing here, and the view's own import
+    fails into its silent exit (`transcript_view.main`).
+
+    Nothing else comes from here. `fusermount` is found on PATH and `/dev/fuse`
+    is the kernel's; the runtime supplies only the library."""
+    library = placed_libfuse()
+    return {"FUSE_LIBRARY_PATH": str(library)} if library else {}
+
+
+def placed_libfuse():
+    """The placed `libfuse.so.2`, or None.
+
+    Under the platform's runtime beside bwrap and the host tools, which is
+    where cheesehost places what a machine lacks (`cli/internal/devenv`): one
+    directory per tool, the archive's own top level removed, so the file is
+    directly inside. A copy built for another architecture would not load, but
+    the directory is per machine and cheesehost places the one for the machine
+    it runs on, so its own name is the whole lookup.
+
+    `devenv.Ensure` places it beside those two, from the release
+    `agent/toolchain.py` pins; a machine that could not fetch it answers None
+    here, which is the same path as a machine that has no FUSE at all."""
+    root = execution_root(Path.home()) / "runtime"
+    candidate = root / "fuse-runtime" / "libfuse.so.2"
+    return candidate if candidate.exists() else None
+
+
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
@@ -900,6 +1052,7 @@ def start_sandbox(
     env,
     connect,
     release,
+    platform=None,
     **options,
 ):
     """Start `argv` in a sandbox (`confinement.sandbox_argv`) and, with `connect`, give
@@ -928,6 +1081,7 @@ def start_sandbox(
                 claude.parent,
             ],
             sockets=sockets,
+            platform=platform,
             env=env,
             **options,
         )
@@ -953,6 +1107,7 @@ def start_sandbox(
                 workdir=home / CHECKOUT_DIR,
                 claude=claude,
                 sockets=sockets,
+                platform=platform,
                 fds=fds,
                 programs=[execution_root(owner) / "runtime/git"],
                 network=connect,
@@ -998,6 +1153,9 @@ def start_sandbox(
 
 @contextlib.contextmanager
 def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, disk=None):
+    payload.pop("proxy_proof", None)
+    if sys.platform != "win32":  # Before every path below: its room holds none (docs).
+        payload["env"]["CHEESE_TOKEN"] = ""
     project, resource = (
         str(uuid.UUID(payload["project"])),
         str(uuid.UUID(payload["resource"])),
@@ -1070,16 +1228,14 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         if policy is not None:
             for name, value in policy["environment"](mirrors, store).items():
                 package_env.setdefault(name, variables.get(name, value))
-        # How many test workers this room's tools may start, from its CPU quota
-        # (`worker_quota`), defaulted the same way.
+        # Test workers this room may start, by CPU quota (`worker_quota`).
         quota = shipped(release, "worker_quota")
         for name, value in quota["environment"](payload.get("sandbox")).items():
             package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
-            # Except, on Windows, the one the connector sets for every command:
-            # Claude Code finds its shell there, and without it takes whatever
-            # Git the machine happens to have installed, or none.
+            # Except Windows' one from the connector: Claude Code's shell, or it
+            # takes whatever Git the machine has, or none.
             if sys.platform == "win32" and name == "CLAUDE_CODE_GIT_BASH_PATH":
                 continue
             if (
@@ -1149,7 +1305,14 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         recorded = platform_dir / "executor"
         state = executor_state(home, anchors, bool(payload.get("sandbox")))
         token = Path(PLATFORM_DIR) / "cheese-preview.token"
-        spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
+        if sys.platform == "win32":
+            spared(disk, home, lambda: write_beneath(home, token, env["CHEESE_TOKEN"]))
+        else:
+            directory = beneath(home, PLATFORM_DIR)
+            try:
+                remove_beneath(directory, token.name)
+            finally:
+                os.close(directory)
         previous = read_json_beneath(home, Path(PLATFORM_DIR) / "executor/config.json")
         if previous is not None:
             # The running executor is reached with the release staged above,
@@ -1267,6 +1430,55 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True, dis
         yield home, config, state, env
 
 
+def start_forge_proxy(owner, platform, release, env, proxy_proof):
+    """Start the host-side forge CA proxy and preview relay outside the sandbox."""
+    if sys.platform == "win32":
+        return
+    script = release / "remote-execution/forge_proxy.py"
+    if not script.is_file() or shutil.which("openssl") is None:
+        return
+    confinement = runpy.run_path(str(release / "remote-execution/confinement.py"))
+    confinement["own_directory"](platform)
+    ca_dir = execution_root(owner) / "ca"
+    record = platform / "forge-proxy.json"
+    if record.is_file():
+        with contextlib.suppress(OSError, ValueError, KeyError, TypeError):
+            pid = int(json.loads(record.read_text())["pid"])
+            os.kill(pid, 15)
+    for name in ("forge.sock", "preview.sock"):
+        (platform / name).unlink(missing_ok=True)
+    log_path = platform / "forge-proxy.log"
+    with open(log_path, "a", opener=lambda p, flags: os.open(p, flags, 0o600)) as log:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                "--platform-dir",
+                str(platform),
+                "--ca-dir",
+                str(ca_dir),
+                f"--api-url={env.get('CHEESE_API', '')}",
+                f"--preview-url={env.get('CHEESE_PREVIEW_URL', '')}",
+                f"--site-forward={env.get('CHEESE_SITE_FORWARD', '')}",
+            ],
+            cwd=str(platform),
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            env={**os.environ, "CHEESE_PROXY_PROOF": proxy_proof},
+            start_new_session=True,
+        )
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if (
+            (platform / "forge.sock").exists()
+            and (platform / "preview.sock").exists()
+            and (platform / "ca-bundle.pem").is_file()
+        ):
+            break
+        time.sleep(0.02)
+
+
 def configure(payload):
     try:
         configure_idle(payload)
@@ -1278,6 +1490,7 @@ def configure(payload):
 
 
 def configure_idle(payload):
+    proxy_proof = payload.pop("proxy_proof", "")
     platform_machine = bool(payload.get("platform_machine"))
     # Refused before anything of the room's is touched where the machine
     # cannot make the sandbox; a Cloud machine is given what it lacks below,
@@ -1337,6 +1550,12 @@ def configure_idle(payload):
             ("execution-owner.json", {"resource": home.name}),
         ):
             write_beneath(home, Path(PLATFORM_DIR) / name, json.dumps(value))
+        # The session's transcript, readable at the path the build names after a
+        # compaction. Started before the sandbox so the mount is in place by the
+        # time a session reads it, out here because the sandbox has no
+        # `/dev/fuse` of its own, and wherever the room runs: a room given the
+        # whole machine reads the same path the same way.
+        start_transcript_view(home, release, config, platform_machine)
         with platform_file(platform_dir, "executor-bootstrap.log") as output:
             argv = [
                 sys.executable,
@@ -1357,6 +1576,12 @@ def configure_idle(payload):
                 # sandbox; the directory it is in is hidden too (`confinement.HIDDEN_MOUNTS`).
                 env = {k: v for k, v in env.items() if k != "WSL_INTEROP"}
                 directory = Path(runtime["socket_directory"](state))
+                # Where the connector serves this sandbox's platform socket
+                # (`cli/internal/host/machine.go`); made here, before the
+                # sandbox, so the sandbox is shown it from the start.
+                platform = Path(runtime["platform_socket_directory"](state))
+                start_forge_proxy(Path.home(), platform, release, env, proxy_proof)
+                env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                 # The service makes this link in the /tmp it is shown, which is
                 # its own; clients outside dial the machine's.
                 public = Path(runtime["socket_path"](state))
@@ -1370,6 +1595,7 @@ def configure_idle(payload):
                     home=home,
                     claude=Path(config["claude"]),
                     sockets=directory,
+                    platform=platform,
                     limits=config["sandbox"],
                     env=env,
                     connect=platform_machine,
@@ -1394,6 +1620,16 @@ def configure_idle(payload):
                         argv, env=env, **options
                     )
                 else:
+                    # A whole machine (a VM that is the session's own, or one
+                    # its owner gave over) has no sandbox to bind the platform
+                    # socket into, and needs it all the same: its model calls
+                    # take no token either.
+                    platform = Path(runtime["platform_socket_directory"](state))
+                    runpy.run_path(str(release / "remote-execution/confinement.py"))[
+                        "own_directory"
+                    ](platform)
+                    start_forge_proxy(Path.home(), platform, release, env, proxy_proof)
+                    env["CHEESE_PLATFORM_SOCKET"] = str(platform / "platform.sock")
                     process = subprocess.Popen(
                         argv, start_new_session=True, env=env, **options
                     )

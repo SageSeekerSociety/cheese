@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
@@ -80,6 +81,10 @@ class Place:
         )
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 class PlaceResolver:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -87,24 +92,123 @@ class PlaceResolver:
     async def resolve(self, place_id: uuid.UUID) -> Place | None:
         """The room ``place_id`` names. A task's id names no room: routes
         addressed by room stay closed to it."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("topic_row", place_id))
+            if found:
+                return Place(room=cached) if cached is not None else None
         room = await self._session.get(Topic, place_id)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("topic_row", place_id),
+                room,
+                tables=frozenset({"topics"}),
+            )
         return Place(room=room) if room is not None else None
+
+    async def task_place(self, task_id: uuid.UUID) -> Place | None:
+        """The task ``task_id`` names and its room, without probing ``topics``
+        or ``threads`` for ``task_id`` first."""
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found_task, cached_task = recall(self._session, ("task_row", task_id))
+            if found_task:
+                task = cached_task
+            else:
+                task = await self._session.get(Task, task_id)
+                remember(
+                    self._session,
+                    ("task_row", task_id),
+                    task,
+                    tables=frozenset({"tasks"}),
+                )
+        else:
+            task = await self._session.get(Task, task_id)
+        if task is None:
+            return None
+        room_place = await self.resolve(task.room_id)
+        return (
+            Place(room=room_place.room, task=task) if room_place is not None else None
+        )
 
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
         a 支线's. A 支线 that became a task shares its id and is the task."""
+        if _can_cache(self._session):
+            in_map = self._session.sync_session.identity_map.get(
+                self._session.sync_session.identity_key(Task, (conversation_id,))
+            )
+            if in_map is not None:
+                room_place = await self.resolve(in_map.room_id)
+                return (
+                    Place(room=room_place.room, task=in_map)
+                    if room_place is not None
+                    else None
+                )
         place = await self.resolve(conversation_id)
         if place is not None:
             return place
-        task = await self._session.get(Task, conversation_id)
+        if _can_cache(self._session):
+            found_task, cached_task = recall(
+                self._session, ("task_row", conversation_id)
+            )
+            if found_task:
+                task = cached_task
+            else:
+                task = await self._session.get(Task, conversation_id)
+                remember(
+                    self._session,
+                    ("task_row", conversation_id),
+                    task,
+                    tables=frozenset({"tasks"}),
+                )
+        else:
+            task = await self._session.get(Task, conversation_id)
         if task is not None:
-            room = await self._session.get(Topic, task.room_id)
-            return Place(room=room, task=task) if room is not None else None
+            room_place = await self.resolve(task.room_id)
+            return (
+                Place(room=room_place.room, task=task)
+                if room_place is not None
+                else None
+            )
         thread = await self._session.get(Thread, conversation_id)
         if thread is not None:
-            room = await self._session.get(Topic, thread.room_id)
-            return Place(room=room, thread=thread) if room is not None else None
+            room_place = await self.resolve(thread.room_id)
+            return (
+                Place(room=room_place.room, thread=thread)
+                if room_place is not None
+                else None
+            )
         return None
+
+    async def inner_place(self, conversation_id: uuid.UUID) -> Place | None:
+        """The task or 支线 ``conversation_id`` names and its room, checking
+        ``tasks`` and ``threads`` before falling back to ``topics``."""
+        task_place = await self.task_place(conversation_id)
+        if task_place is not None:
+            return task_place
+        thread = await self._session.get(Thread, conversation_id)
+        if thread is not None:
+            room_place = await self.resolve(thread.room_id)
+            return (
+                Place(room=room_place.room, thread=thread)
+                if room_place is not None
+                else None
+            )
+        return await self.resolve(conversation_id)
+
+
+async def inner_place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
+    """The task or 支线 ``place_id`` names (or its room for authorization on a
+    channel id), without probing ``topics`` first when ``place_id`` is a task
+    or 支线."""
+    place = await PlaceResolver(session).inner_place(place_id)
+    if place is None:
+        raise NotFoundError(say("topicNotFound"))
+    return place
 
 
 async def place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:

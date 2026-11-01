@@ -1,0 +1,13 @@
+{
+  "type": "machine.close",
+  "origin": "device",
+  "why": "The sandbox's connection is gone. `error` is absent when it closed cleanly, as with execution.result.",
+  "frame": {
+    "t": "machine.close",
+    "id": "machine-5b1e0c9d2f7a4e86b3c1d0a9f8e7d6c5"
+  },
+  "meaning": {
+    "stream_id": "machine-5b1e0c9d2f7a4e86b3c1d0a9f8e7d6c5",
+    "error": ""
+  }
+}

@@ -443,7 +443,12 @@ async def push_fix(
 
 
 async def reject(
-    self: pkg.AcceptService, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+    self: pkg.AcceptService,
+    *,
+    card_id: uuid.UUID,
+    decided_by: str,
+    note: str = "",
+    by_assistant: bool = False,
 ) -> AcceptCard:
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
@@ -456,6 +461,7 @@ async def reject(
     # 退回也是结局：等验收人动手的那几句一起收掉。
     await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
+    card.decided_by_assistant = by_assistant
     card.decided_at = decided = datetime.now(UTC)
     await _back_to_work(self, card, at=decided)
     notes.record(card, None, note)
@@ -487,6 +493,7 @@ async def revoke(
     # 别的话躺在谁的收件箱里的情况，收一遍是空转。
     await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
+    card.decided_by_assistant = False
     card.decided_at = datetime.now(UTC)
 
     # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
@@ -658,6 +665,7 @@ async def _override_github_checks(
         )
         raise ValidationError(say("prNewCommitsDuringOverride", number=number))
     if result.queued:
+        card.decided_by_assistant = False
         await self._record_queue_entry(card, decided_by)
         return card
     if result.sha is None:
@@ -683,6 +691,7 @@ async def _override_github_checks(
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, decided_by)
     card.decided_by = decided_by
+    card.decided_by_assistant = False
     card.decided_at = now
     await self._finish_pr_accept(card=card, topic=topic, headline=headline)
     logger.warning(
@@ -769,6 +778,7 @@ async def void(
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:
         card.decided_by = decided_by
+        card.decided_by_assistant = False
     if card.decided_at is None:
         card.decided_at = datetime.now(UTC)
 

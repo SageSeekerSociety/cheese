@@ -25,6 +25,10 @@ WOKEN_TURN_END_S = 15.0
 # it starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
 
+# The thread's items that are not a call the session made: what it wrote and
+# thought, a message read in, and the thread's own compaction.
+NOT_CALLS = frozenset({"agentMessage", "reasoning", "userMessage", "contextCompaction"})
+
 
 class Skills(Protocol):
     """Where the project's skills are mirrored for Codex, and keeping them so."""
@@ -89,6 +93,9 @@ class Runner(runner.Runner[Journal]):
         self.syncing: asyncio.Future[bool] | None = None
         # A woken turn is being ended for a person's message (`_end_woken_turn`).
         self.ending_woken = False
+        #: The text of the thread's last message, until anything else happens
+        #: in its turn: what the turn ends on, if it ends now (`insist`).
+        self.last_words = ""
         self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
@@ -97,7 +104,7 @@ class Runner(runner.Runner[Journal]):
         # print is said to the session through `tell`.
         self.monitors: Monitors | None = None
         # Where the session's own request to compact has got to, if it made
-        # one (`cheese_compact`): "" for none, "asked" while the turn it asked
+        # one (`cheese_session(action=compact)`): "" for none, "asked" while the turn it asked
         # in is still running, "sent" once app-server has the request and the
         # thread's compaction has not finished. Set from the thread the tool
         # call runs on (`tools.RemoteTools`), read here.
@@ -278,6 +285,20 @@ class Runner(runner.Runner[Journal]):
                 if self.session is not None:
                     self.session.observe(event)
                 return
+        if same_thread and method == "turn/started":
+            self.last_words = ""
+        elif same_thread and method in ("item/started", "item/completed"):
+            # A message the model writes is the turn's last words until it
+            # does anything else: a tool call, a command, a message read in.
+            kind = item.get("type")
+            if kind == "agentMessage":
+                if method == "item/completed":
+                    self.last_words = str(item.get("text") or "")
+            elif kind != "reasoning":
+                self.last_words = ""
+            if method == "item/started" and kind not in NOT_CALLS:
+                # A platform tool by its name in the table; Codex's own by kind.
+                self.called(str(item.get("tool") or kind), item.get("arguments"))
         ends = (
             self.session is not None
             and event.get("method") == "turn/completed"
@@ -291,7 +312,7 @@ class Runner(runner.Runner[Journal]):
         # reply, and does not settle it: their own turn, next, owes it.
         handed_on = ends and self.ending_woken
         reason = (
-            self.insist()
+            self.insist(self.last_words)
             if ends
             and not handed_on
             and (params.get("turn") or {}).get("status") == "completed"
@@ -348,7 +369,7 @@ class Runner(runner.Runner[Journal]):
     # --- the session compacting itself ---------------------------------------
 
     def request_compact(self) -> str:
-        """The session asked to compact its own context (`cheese_compact`):
+        """The session asked to compact its own context (`cheese_session(action=compact)`):
         whether this is the request that will be acted on.
 
         Asked for once — a request still waiting and one already running are

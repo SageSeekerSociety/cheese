@@ -42,6 +42,8 @@ from app.domain.routine.service._shared import (
 )
 from app.domain.thread.services import answered_in
 
+_OPEN = (RunStatus.queued.value, RunStatus.running.value)
+
 
 def run_prompt(routine: Routine, run: RoutineRun) -> str:
     lines = [
@@ -58,7 +60,7 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
         "放进房间，文件名带上日期。",
         "",
         "做完后必须交回结果，成功失败都要交：",
-        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        f'cheese_routine(action=report, run="{run.id}", status="succeeded" 或 "failed", '
         'summary="结果，或失败原因", outputs=["房间里的结果文件路径"])',
         "成功时的 summary 会作为你的一条消息发在频道主线上，频道里的人直接读它："
         "写清结论，可以分几点，不用在这里再发一遍。",
@@ -68,16 +70,37 @@ def run_prompt(routine: Routine, run: RoutineRun) -> str:
 
 
 def _offered_before(routine_id: uuid.UUID):
-    """The feedback earlier runs of this rule already handed to a teammate.
+    """Each report earlier runs of this rule handed to a teammate: when it was
+    last handed out, and whether a run that has it is still going.
 
     A run that failed does not count: never delivered, never started, or the
-    work it was read into failed — those reports may be handed out again.
+    work it was read into failed. Nor does a run that ended: whatever the
+    teammate did that needs no second look is on the report itself (it holds
+    the claim, or the report moved on), so a report still waiting after its run
+    ended was given up on and is offered again (`feedback.triage.untriaged`).
     """
-    return select(
-        func.jsonb_array_elements_text(RoutineRun.feedback_offered).cast(Uuid)
-    ).where(
-        RoutineRun.routine_id == routine_id,
-        RoutineRun.status != RunStatus.failed.value,
+    runs = (
+        select(
+            func.jsonb_array_elements_text(RoutineRun.feedback_offered)
+            .cast(Uuid)
+            .label("feedback_id"),
+            RoutineRun.created_at.label("at"),
+            RoutineRun.status.in_(_OPEN).label("open"),
+        )
+        .where(
+            RoutineRun.routine_id == routine_id,
+            RoutineRun.status != RunStatus.failed.value,
+        )
+        .subquery()
+    )
+    return (
+        select(
+            runs.c.feedback_id,
+            func.max(runs.c.at).label("last_at"),
+            func.bool_or(runs.c.open).label("open"),
+        )
+        .group_by(runs.c.feedback_id)
+        .subquery()
     )
 
 
@@ -144,7 +167,7 @@ async def _fire(
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
         batch = await feedback_triage.untriaged(
-            session, batch_size, exclude=_offered_before(routine.id)
+            session, batch_size, offered=_offered_before(routine.id)
         )
         if not batch:
             # Nothing waiting is not news: no turn, no message, and no daily
@@ -199,10 +222,6 @@ async def _fire(
                 "topicId": str(routine.topic_id),
                 "eventType": EVENT_ROUTINE_RUN,
                 "severity": SEVERITY_INFO,
-                # 这一轮跑的是主人交代的活，所以它读主人的 private 记忆（组装那一
-                # 轮的时候从这一笔投递上认出来）。写在这里而不是规则表上：读的那
-                # 一侧（agent）不认识周期任务这个域，而这一笔它本来就在读。
-                "routineOwner": routine.owner_handle,
             },
             occurred_at=stamp,
         ),

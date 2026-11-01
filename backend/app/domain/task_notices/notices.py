@@ -13,18 +13,26 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.sentences import NoticeText, notice_keys, notice_message, say
+from app.core.sentences import (
+    NoticeText,
+    listing,
+    notice_keys,
+    notice_message,
+    say,
+)
 from app.domain.addressing import Event, Hand, address
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
+from app.domain.notification.preferences import DEFAULT_TIMEZONE, local_time
 from app.domain.space.models import Space
 from app.domain.task.models import Task, TaskMembership, TaskSubmission
+from app.domain.task.stages import StageNews
 from app.domain.team.models import TeamUserRelation
 from app.domain.user.models import User
 
@@ -180,11 +188,72 @@ async def reviewed(
     )
 
 
-async def requirements_changed(
-    session: AsyncSession, *, task: Task, by: int, at: datetime
+def _change_clauses(
+    renamed_to: str | None, requirements: bool, stages: StageNews, zone: str | None
+) -> list[NoticeText]:
+    """What changed, one clause each, due times on the reader's clock."""
+    clauses = []
+    if renamed_to is not None:
+        clauses.append(say("spaceTaskChangedName", name=renamed_to))
+    if requirements:
+        clauses.append(say("spaceTaskChangedRequirements"))
+    for before, after in stages.renamed:
+        clauses.append(say("spaceTaskChangedStageName", stage=before, name=after))
+    if stages.added:
+        clauses.append(
+            say(
+                "spaceTaskChangedStagesAdded", stages=listing(stages.added, quoted=True)
+            )
+        )
+    if stages.removed:
+        clauses.append(
+            say(
+                "spaceTaskChangedStagesRemoved",
+                stages=listing(stages.removed, quoted=True),
+            )
+        )
+    for name, due_ms in stages.due_moved:
+        if due_ms is None:
+            clauses.append(say("spaceTaskChangedStageDueCleared", stage=name))
+            continue
+        due = local_time(datetime.fromtimestamp(due_ms / 1000, tz=UTC), zone)
+        clauses.append(
+            say(
+                "spaceTaskChangedStageDue",
+                stage=name,
+                due=f"{due:%Y-%m-%d %H:%M}",
+                zone=_zone_name(due.tzinfo),
+            )
+        )
+    return clauses
+
+
+def _zone_name(zone: object) -> NoticeText | str:
+    """Beijing time by its name in the reader's language; any other zone by its
+    IANA name, which reads the same in every language."""
+    name = str(zone)
+    return say("timeZoneBeijing") if name == DEFAULT_TIMEZONE else name
+
+
+async def task_changed(
+    session: AsyncSession,
+    *,
+    task: Task,
+    old_name: str,
+    requirements: bool,
+    stages: StageNews,
+    by: int,
+    at: datetime,
 ) -> None:
-    """What to hand in, or how it is scored, changed: everyone who claimed the
-    题目 and was not turned down hears it."""
+    """The 题目's name, what to hand in, how it is scored, or which stages there
+    are, what they are called and when they are due changed: everyone who
+    claimed the 题目 and was not turned down hears it, in one notice that says
+    what changed. The notice names the 题目 as they knew it (``old_name``), so a
+    renamed one reads 「旧名」改名为「新名」. A stage's new due time is written on
+    each reader's own clock."""
+    renamed_to = task.name if task.name != old_name else None
+    if not (renamed_to or requirements or stages):
+        return
     memberships = list(
         await session.scalars(
             select(TaskMembership).where(
@@ -198,20 +267,32 @@ async def requirements_changed(
         return
     space = await session.get(Space, task.space_id)
     people = {u for ids in (await claimers(session, memberships)).values() for u in ids}
-    await tell(
-        session,
-        event_id=uuid.uuid5(_CHANGED, f"{task.id}:{at.isoformat()}"),
-        type_=NotificationType.TASK_NOTICE,
-        body=payload(
-            task,
-            space,
-            say("spaceTaskRequirementsChanged", task=task.name),
-            event="requirementsChanged",
-        ),
-        user_ids=people,
-        at=at,
-        leave_out=by,
-    )
+    # A due time is said on the reader's clock, so readers on different clocks
+    # get the sentence each can read; the rest of it is the same for all.
+    by_zone: dict[str | None, set[int]] = {}
+    if stages.due_moved and people:
+        rows = await session.execute(
+            select(User.id, User.timezone).where(User.id.in_(people))
+        )
+        for user_id, zone in rows:
+            by_zone.setdefault(zone, set()).add(int(user_id))
+    else:
+        by_zone[None] = people
+    for zone, user_ids in by_zone.items():
+        content = say(
+            "spaceTaskChanged",
+            task=old_name,
+            changes=listing(_change_clauses(renamed_to, requirements, stages, zone)),
+        )
+        await tell(
+            session,
+            event_id=uuid.uuid5(_CHANGED, f"{task.id}:{at.isoformat()}:{zone or ''}"),
+            type_=NotificationType.TASK_NOTICE,
+            body=payload(task, space, content, event="requirementsChanged"),
+            user_ids=user_ids,
+            at=at,
+            leave_out=by,
+        )
 
 
 async def personal_deadline_changed(

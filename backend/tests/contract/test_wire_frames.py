@@ -146,3 +146,42 @@ async def test_the_heartbeat_the_connector_writes_keeps_its_link_watched() -> No
     assert hub.silence_allowed("dev") is None
     await hub.on_device_message("dev", _only("heartbeat")["frame"])
     assert hub.silence_allowed("dev") == LINK_SILENCE_S
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        f
+        for f in FIXTURES
+        if f["type"].startswith("machine.") and f["origin"] == "server"
+    ],
+    ids=lambda f: f"{f['type']}-down",
+)
+def test_the_backend_writes_the_machine_frames_in_the_fixtures(fixture) -> None:
+    meaning = fixture["meaning"]
+    if fixture["type"] == "machine.data":
+        built = device_link.machine_data(
+            meaning["stream_id"], meaning["payload"].encode()
+        )
+    else:
+        built = device_link.machine_close(meaning["stream_id"])
+    assert built == fixture["frame"]
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        f
+        for f in FIXTURES
+        if f["type"].startswith("machine.") and f["origin"] == "device"
+    ],
+    ids=lambda f: f"{f['type']}-up",
+)
+def test_a_machine_frame_up_is_read_as_the_connector_wrote_it(fixture) -> None:
+    parsed = device_link.LinkMsg.parse(fixture["frame"])
+    meaning = fixture["meaning"]
+    assert parsed.id == meaning["stream_id"]
+    if "state" in meaning:
+        assert parsed.path == meaning["state"]
+    if "payload" in meaning:
+        assert parsed.decoded_data() == meaning["payload"].encode()

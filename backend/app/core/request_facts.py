@@ -164,7 +164,8 @@ def _forget_before_dml(state: ORMExecuteState) -> None:
 
 @event.listens_for(Session, "after_commit")
 def _forget_after_commit(session: Session) -> None:
-    forget(session)
+    if not session.in_nested_transaction():
+        forget(session)
 
 
 @event.listens_for(Session, "after_rollback")

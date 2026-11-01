@@ -154,6 +154,13 @@ def push_text(
         doc = str(payload.get("documentTitle") or "").strip()
         title = in_language(say("pushMentionedInDoc", who=who, doc=doc), locale)
         return (title, str(payload.get("content") or "").strip())
+    if type_ is NotificationType.MENTION and payload.get("roomPath"):
+        # Mentioned in a comment on a room file (`api.routes.file_comments`):
+        # the file is where, whichever channel it belongs to.
+        who = str(payload.get("authorName") or payload.get("author") or "").strip()
+        file = str(payload.get("documentTitle") or "").strip()
+        title = in_language(say("pushMentionedInFile", who=who, doc=file), locale)
+        return (title, str(payload.get("content") or "").strip())
     if type_ in _SAID_IN_ROOM and room:
         who = str(payload.get("authorName") or payload.get("author") or "").strip()
         title = in_language(say(_SAID_IN_ROOM[type_], who=who, room=room), locale)
@@ -199,6 +206,14 @@ def push_link(payload: dict[str, Any]) -> str:
     # panel, over their inbox.
     if conversation := payload.get("assistantConversation"):
         return f"/inbox?assistant={conversation}"
+    # 额度快用完了（`usage.alerts`）：这一条没有房间，去能处理它的那一页 —— 团队额度
+    # 在团队的额度页，项目预算和成员上限在项目的设置里。站内通知的渲染器认同两个键。
+    if handle := payload.get("teamHandle"):
+        return f"/teams/{handle}/credits"
+    if payload.get("event") == "credit_warning" and (
+        budget_project := payload.get("projectId")
+    ):
+        return f"/projects/{budget_project}/settings/environment"
     project_id = payload.get("projectId")
     topic_id = payload.get("topicId")
     task_id = payload.get("taskId")

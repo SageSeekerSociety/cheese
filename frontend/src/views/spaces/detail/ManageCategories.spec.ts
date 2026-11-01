@@ -131,13 +131,13 @@ describe('项目集设置：默认队友', () => {
     expect(data.defaultRole).toBe('academic-research')
   })
 
-  it('本来写过、现在选回「继承」：保存交空串，明确清掉这一格', async () => {
+  it('本来写过、现在选回「沿用上层设置」：保存交空串，明确清掉这一格', async () => {
     const view = mount([category({ defaultRole: 'academic-research' })])
 
     await fireEvent.click(view.getByLabelText('编辑分类'))
     const picker = await view.findByTestId('default-teammate')
     await fireEvent.mouseDown(within(picker).getByRole('combobox', { name: '默认队友' }))
-    await fireEvent.click(await view.findByRole('option', { name: /继承/ }))
+    await fireEvent.click(await view.findByRole('option', { name: /沿用上层设置/ }))
 
     await fireEvent.click(view.getByRole('button', { name: '确认' }))
     await waitFor(() => expect(updateCategory).toHaveBeenCalledTimes(1))

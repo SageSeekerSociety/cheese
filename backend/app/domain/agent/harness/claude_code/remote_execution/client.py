@@ -159,7 +159,7 @@ NATIVE_TOOLS = (
 PRIVATE_INSTRUCTIONS = (
     "This chat has 64 MiB of temporary scratch space at /work. "
     "Use shell and file tools for drafts and small processing tasks. "
-    "Save finished documents through cheese_doc_set and publish artifacts "
+    "Save finished documents through cheese_doc(action=set) and publish artifacts "
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
@@ -196,14 +196,19 @@ def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) 
 def reply_hook(payload: dict) -> dict | None:
     """The Stop hook: may this turn end? The runner decides (`driven/runner.py`
     `insist`), reached on the socket it gave this session. A session with no
-    runner, or one that does not answer, ends as it would have."""
+    runner, or one that does not answer, ends as it would have. The runner
+    is handed the text of the turn's final message, which the build puts in
+    the hook's input (`last_assistant_message`, absent when it has none).
+    It is asked again after a turn it held (`stop_hook_active`): it holds a
+    turn for each of its two reasons at most once, and says when it is done."""
     path = os.environ.get(SESSION_SOCKET)
-    if not path or payload.get("stop_hook_active"):
+    if not path:
         return None
+    ending = {"last_words": str(payload.get("last_assistant_message") or "")}
     try:
         with dial_runner(path, 10) as connection:
             connection.sendall(
-                json.dumps({"method": "reply_check", "params": {}}).encode() + b"\n"
+                json.dumps({"method": "reply_check", "params": ending}).encode() + b"\n"
             )
             answer = json.loads(connection.makefile("rb").readline())
     except (OSError, ValueError):
@@ -378,11 +383,25 @@ def prepare(
         central_workspace=str(workspace),
         central_config=str(config),
         central_tmp=str(temporary),
-        # The session's memory tree, in its own home on this host: the runner
-        # lays the platform's copy down and collects the agent's edits there
-        # (`runner.memory_root`, `memory.files.MEMORY_ROOT`), so its file tools
-        # reach it here and not on the executor (`proxy.js` `memoryPath`).
-        central_memory=str(home / ".cheese/memory"),
+        # The seat's memory tree, beside its execution config on this host:
+        # the runner lays the platform's copy down and collects the agent's
+        # edits there (`runner.memory_root`, from the same file), so its file
+        # tools reach it here and not on the executor (`proxy.js`
+        # `memoryPath`). Not in the room's home, which the room's seats share:
+        # two seats can be working for two people at once.
+        central_memory=str(directory / "memory"),
+        # What the session's namespace leaves it of the room's seats and of the
+        # session host's rooms (`namespace._keep_only`): its own seat, which
+        # holds its memory tree, and its own room's home. The launch names
+        # both roots (`device_launch`); a session it did not launch has none.
+        seat_only=[
+            [os.environ[root], str(own)]
+            for root, own in (
+                ("CHEESE_SEATS_ROOT", directory.parent),
+                ("CHEESE_HOMES_ROOT", home),
+            )
+            if os.environ.get(root) and not local
+        ],
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -751,7 +770,7 @@ def transport(config, target_path):
     # 着这件事第一次就问清楚了，后面每一次都是在重问。
     #
     # 平台工具从会话直接打后端，不经过这台机器；只有要机器的那一样
-    # （`cheese_accept_request` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
+    # （`cheese_card(action=request)` 推提交）走这个出口，于是也吃这个闸：当场说够不着，
     # 而不是等超时。
     #
     # 再试一次的那个口子留着，因为「够不着」是这一刻的事实，不是这一场会话的判决：
@@ -1087,13 +1106,23 @@ def probed(config, call):
 def own_memory(config, call):
     """A file tool on the session's memory tree, which lives on this host
     (`prepare`'s `central_memory`). The plugin has already spelled the path
-    out; anything that resolves outside the tree is not admitted."""
+    out; it is admitted only when it is the very file that path names inside
+    the tree. Nothing that resolves outside it, and nothing reached through a
+    link inside it: whose memory a call touches is read off the path it names
+    (`memory.files.private_owner`), so a `team/` path that leads into somebody's
+    `private/` would hand that person's memory to whoever reads the call."""
     if call.get("tool_name") not in NATIVE_TOOLS or not config.get("central_memory"):
         return False
     tool_input = call.get("tool_input") or {}
-    path = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
-    memory = os.path.realpath(config["central_memory"]) + os.sep
-    return os.path.realpath(str(path)).startswith(memory)
+    path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+    root = os.path.normpath(config["central_memory"])
+    named = os.path.normpath(path)
+    if not named.startswith(root + os.sep):
+        return False
+    real_root = os.path.realpath(root)
+    return os.path.realpath(named) == os.path.join(
+        real_root, os.path.relpath(named, root)
+    )
 
 
 def gateway(config):

@@ -24,8 +24,9 @@ class MemberOut(BaseModel):
 
 class InvitationCreate(BaseModel):
     user_handle: str = Field(min_length=1, max_length=64)
-    #: The role they take once they accept.
-    role: Literal["member", "mentor"] = "member"
+    #: The role they take once they accept: a role's key, or ``mentor`` for
+    #: the project's mentor role, made the first time it is asked for.
+    role: str = Field(default="member", min_length=1, max_length=64)
 
 
 class InvitationRespond(BaseModel):
@@ -39,20 +40,36 @@ class InvitationOut(BaseModel):
     project_id: uuid.UUID
     invitee_handle: str
     inviter_handle: str
+    #: The inviter's own 芝士 sent it for them.
+    invited_by_assistant: bool = False
     status: InvitationStatus
     created_at: datetime
     responded_at: datetime | None
     role: str = "member"
+    role_id: uuid.UUID | None = None
 
 
 class RoleSet(BaseModel):
-    role: Literal["admin", "member", "mentor"]
+    #: A role's key — ``admin``, ``member``, one of the project's own — or
+    #: ``mentor`` for its mentor role.
+    role: str = Field(min_length=1, max_length=64)
 
 
-class GrantsIn(BaseModel):
-    """What each role named may do; a role left out keeps what it has."""
+class RoleCreate(BaseModel):
+    """A new role: named, its permissions copied from another role or taken from
+    a template. A templated role may go unnamed and show the template's name."""
 
-    grants: dict[Literal["admin", "member", "mentor"], list[str]]
+    name: str | None = Field(default=None, max_length=64)
+    copy_from: str | None = Field(default=None, max_length=64)
+    template: Literal["mentor"] | None = None
+
+
+class RoleUpdate(BaseModel):
+    """What changes: the name of one of the project's own roles, what a role
+    may do, or both. Left out stays as it is."""
+
+    name: str | None = Field(default=None, max_length=64)
+    permissions: list[str] | None = None
 
 
 class TransferCreate(BaseModel):
@@ -76,17 +93,32 @@ class MoveIn(BaseModel):
 
 
 class RoleOut(BaseModel):
-    """Where the person sits now."""
+    """The key of the role the person holds now."""
 
     role: str | None
 
 
-class RoleGrantsOut(BaseModel):
-    """What each role may do in the project, and whether any differs from its
-    defaults."""
+class ProjectRoleOut(BaseModel):
+    """One role of the project."""
 
-    grants: dict[str, list[str]]
-    changed: bool
+    key: str
+    #: None for a built-in role and a templated one never renamed: the screen
+    #: names those.
+    name: str | None
+    builtin: str | None
+    template: str | None
+    permissions: list[str]
+    #: A built-in role's defaults, for putting them back; none for the others.
+    defaults: list[str] | None
+    holders: int
+
+
+class ProjectRolesOut(BaseModel):
+    roles: list[ProjectRoleOut]
+
+
+class RoleDeletedOut(BaseModel):
+    deleted: bool
 
 
 class MovedOut(BaseModel):

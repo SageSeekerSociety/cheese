@@ -43,7 +43,7 @@ async def set_title(
     resolver: ActorResolverDep,
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
-    own session naming it (`cheese_title`, only where the platform cannot).
+    own session naming it (`cheese_room(action=rename)`, only where the platform cannot).
 
     A channel is renamed by whoever manages it: its own admin, or someone whose
     role manages every channel (#3830). Being able to reach the room at all is
@@ -59,7 +59,7 @@ async def set_title(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
+        actor, project_id=place.project_id, topic_id=place.room_id, room=place.room
     )
     title = (body.get("title") or "").strip()
     if not title:
@@ -70,7 +70,7 @@ async def set_title(
         if not own_session and not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
         # A task's own session names it to the same width a teammate creating
-        # one is held to (`cheese_title`): told, not cut. A person renaming a
+        # one is held to (`cheese_room(action=rename)`): told, not cut. A person renaming a
         # task is left to `title[:80]` — the width rule is about what an AI
         # teammate writes, and a person can be trusted to know what they meant.
         if own_session and not title_fits(title):

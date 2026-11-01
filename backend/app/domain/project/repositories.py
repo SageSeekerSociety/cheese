@@ -3,10 +3,11 @@
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
-from sqlalchemy import BigInteger, and_, column, func, or_, select, table
+from sqlalchemy import BigInteger, and_, column, func, inspect, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
@@ -27,6 +28,10 @@ from app.domain.user.models import User, UserProfile
 _task = table("task", column("id", BigInteger), column("space_id", BigInteger))
 
 
+def _can_cache(session: object) -> bool:
+    return isinstance(session, AsyncSession)
+
+
 class ProjectRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -41,6 +46,7 @@ class ProjectRepository:
         external_task_id: int | None = None,
         intent: str = "",
         project_id: uuid.UUID | None = None,
+        settings: dict | None = None,
     ) -> Project:
         project = Project(
             name=name,
@@ -49,16 +55,37 @@ class ProjectRepository:
             team_id=team_id,
             external_task_id=external_task_id,
             intent=intent,
+            **({"settings": settings} if settings is not None else {}),
         )
         if project_id is not None:
             project.id = project_id
         self._session.add(project)
         await self._session.flush()
-        await self._session.refresh(project)
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project", project.id),
+                project,
+                tables=frozenset({"projects"}),
+            )
+            remember(
+                self._session,
+                ("newly_created_project", project.id),
+                True,
+                tables=frozenset({"agent_instances"}),
+            )
         return project
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
-        return await self._session.get(Project, project_id)
+        if self._session.autoflush:
+            await self._session.flush()
+        key = ("project", project_id)
+        found, cached = recall(self._session, key)
+        if found:
+            return cached
+        project = await self._session.get(Project, project_id)
+        remember(self._session, key, project, tables=frozenset({"projects"}))
+        return project
 
     async def get_by_ids(
         self, project_ids: Sequence[uuid.UUID]
@@ -70,6 +97,47 @@ class ProjectRepository:
         """
         if not project_ids:
             return {}
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            by_id: dict[uuid.UUID, Project] = {}
+            missing: list[uuid.UUID] = []
+            for pid in dict.fromkeys(project_ids):
+                found, cached = recall(self._session, ("project", pid))
+                if found and (cached is None or not inspect(cached).expired_attributes):
+                    if cached is not None:
+                        by_id[pid] = cached
+                    continue
+                in_map = self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Project, (pid,))
+                )
+                if in_map is not None and not inspect(in_map).expired_attributes:
+                    by_id[pid] = in_map
+                    remember(
+                        self._session,
+                        ("project", pid),
+                        in_map,
+                        tables=frozenset({"projects"}),
+                    )
+                else:
+                    missing.append(pid)
+            if not missing:
+                return by_id
+            stmt = select(Project).where(Project.id.in_(missing))
+            fetched = {
+                project.id: project for project in (await self._session.scalars(stmt))
+            }
+            for pid in missing:
+                p = fetched.get(pid)
+                if p is not None:
+                    by_id[pid] = p
+                remember(
+                    self._session,
+                    ("project", pid),
+                    p,
+                    tables=frozenset({"projects"}),
+                )
+            return by_id
         stmt = select(Project).where(Project.id.in_(list(project_ids)))
         return {project.id: project for project in (await self._session.scalars(stmt))}
 
@@ -119,9 +187,36 @@ class ProjectRepository:
             (await self._session.scalar(select(func.count()).select_from(Project))) or 0
         )
 
-    async def set_root_topic(self, project: Project, root_topic_id: uuid.UUID) -> None:
+    async def set_root_topic(
+        self,
+        project: Project,
+        root_topic_id: uuid.UUID,
+        *,
+        flush: bool = True,
+        is_new_project: bool = False,
+    ) -> None:
+        was_new = is_new_project or (
+            recall(self._session, ("newly_created_project", project.id)) == (True, True)
+            if _can_cache(self._session)
+            else False
+        )
         project.root_topic_id = root_topic_id
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
+            if _can_cache(self._session):
+                remember(
+                    self._session,
+                    ("project", project.id),
+                    project,
+                    tables=frozenset({"projects"}),
+                )
+                if was_new:
+                    remember(
+                        self._session,
+                        ("newly_created_project", project.id),
+                        True,
+                        tables=frozenset({"agent_instances"}),
+                    )
 
     async def lock_settings(self, project: Project) -> None:
         """Lock this project's row and re-read its settings, in place.
@@ -159,6 +254,7 @@ class ProjectRepository:
         patch: Mapping[str, object],
         *,
         remove: Iterable[str] = (),
+        locked: bool = False,
     ) -> dict[str, object]:
         """Change a few keys of the settings blob, atomically.
 
@@ -172,7 +268,8 @@ class ProjectRepository:
         and silently never persists. Mutations made after this call still need
         that.
         """
-        await self.lock_settings(project)
+        if not locked:
+            await self.lock_settings(project)
         merged = {**(project.settings or {}), **patch}
         for key in remove:
             merged.pop(key, None)
@@ -181,7 +278,9 @@ class ProjectRepository:
             await self._session.flush()
         return merged
 
-    async def people(self, project_id: uuid.UUID) -> list[dict]:
+    async def people(
+        self, project_id: uuid.UUID, *, include_team_info: bool = True
+    ) -> list[dict]:
         """名册上**人**的那一半：每个人的 handle、昵称、头像，和他是怎么在这里的。
 
         「这个项目里有谁」不在这里回答，在 ``membership/roster.py`` 的 ``roster()``
@@ -214,7 +313,8 @@ class ProjectRepository:
         # seed data and differs per environment.
         stmt = (
             select(
-                ProjectMember.user_handle,
+                ProjectMember,
+                User,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
                 Avatar.avatar_type,
@@ -226,44 +326,53 @@ class ProjectRepository:
             .order_by(ProjectMember.created_at)
         )
         rows = (await self._session.execute(stmt)).all()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_member_rows", project_id),
+                tuple(m for m, _, _, _, _ in rows),
+                tables=frozenset({"project_members"}),
+            )
+            for _m, u, _, _, _ in rows:
+                if u is not None and u.deleted_at is None:
+                    remember(
+                        self._session,
+                        ("user_by_username", u.username),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
         external = [
             {
-                "handle": h,
-                "name": name or h,
+                "handle": m.user_handle,
+                "name": name or m.user_handle,
                 "avatar_id": None if avatar_type == "default" else avatar_id,
                 "source": "external",
             }
-            for (h, name, avatar_id, avatar_type) in rows
+            for (m, _u, name, avatar_id, avatar_type) in rows
         ]
         project = await self.get(project_id)
         if project is None:
             return external
         members: list[dict] = []
         seen: set[str] = set()
-        if project.owner_handle:
-            name, avatar_id, avatar_type = await self._profile_of(project.owner_handle)
-            # Front of the list: the owner is the first person a reader of the
-            # roster is looking for.
-            members.append(
-                {
-                    "handle": project.owner_handle,
-                    "name": name or project.owner_handle,
-                    "avatar_id": None if avatar_type == "default" else avatar_id,
-                    "source": "owner",
-                }
-            )
-            seen.add(project.owner_handle)
         # Team access is read here, never stored, so it ends the moment someone
         # leaves the team. Someone who was an external member and later joined the
         # team is on it now, and is shown that way.
         team_rows = (
             await self._session.execute(
                 select(
-                    User.username,
+                    User,
                     UserProfile.nickname,
                     UserProfile.avatar_id,
                     Avatar.avatar_type,
                     TeamUserRelation.created_at,
+                    TeamUserRelation.role,
                 )
                 .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
                 .outerjoin(UserProfile, UserProfile.user_id == User.id)
@@ -275,10 +384,77 @@ class ProjectRepository:
                 )
             )
         ).all()
-        team = await self._session.get(Team, project.team_id)
-        team_handle = team.handle if team is not None else None
-        team_name = team.name if team is not None else None
-        for handle, name, avatar_id, avatar_type, created_at in team_rows:
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("team_roles_by_handle", project.team_id),
+                {u.username: role for u, _, _, _, _, role in team_rows},
+                tables=frozenset({"team_user_relation", "user"}),
+            )
+            for u, _, _, _, _, _ in team_rows:
+                if u.deleted_at is None:
+                    remember(
+                        self._session,
+                        ("user_by_username", u.username),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+                    remember(
+                        self._session,
+                        ("user_by_id", u.id),
+                        u,
+                        tables=frozenset({"user"}),
+                    )
+        by_handle: dict[str, tuple[str | None, int | None, str | None]] = {
+            m.user_handle: (name, avatar_id, avatar_type)
+            for (m, _u, name, avatar_id, avatar_type) in rows
+        }
+        for u, name, avatar_id, avatar_type, _created_at, _role in team_rows:
+            by_handle[u.username] = (name, avatar_id, avatar_type)
+        if project.owner_handle:
+            name, avatar_id, avatar_type = (
+                by_handle[project.owner_handle]
+                if project.owner_handle in by_handle
+                else await self._profile_of(project.owner_handle)
+            )
+            # Front of the list: the owner is the first person a reader of the
+            # roster is looking for.
+            members.append(
+                {
+                    "handle": project.owner_handle,
+                    "name": name or project.owner_handle,
+                    "avatar_id": None if avatar_type == "default" else avatar_id,
+                    "source": "owner",
+                }
+            )
+            seen.add(project.owner_handle)
+        team_handle: str | None = None
+        team_name: str | None = None
+        if include_team_info and any(u.username not in seen for u, *_ in team_rows):
+            team: Team | None = None
+            if _can_cache(self._session):
+                found_team, cached_team = recall(
+                    self._session, ("team_by_id", project.team_id)
+                )
+                if found_team:
+                    team = cached_team
+            if team is None:
+                team = await self._session.get(Team, project.team_id)
+                if (
+                    _can_cache(self._session)
+                    and team is not None
+                    and team.deleted_at is None
+                ):
+                    remember(
+                        self._session,
+                        ("team_by_id", project.team_id),
+                        team,
+                        tables=frozenset({"team"}),
+                    )
+            team_handle = team.handle if team is not None else None
+            team_name = team.name if team is not None else None
+        for u, name, avatar_id, avatar_type, created_at, _role in team_rows:
+            handle = u.username
             if handle in seen:
                 continue
             members.append(
@@ -305,6 +481,38 @@ class ProjectRepository:
             "name": name or handle,
             "avatar_id": None if avatar_type == "default" else avatar_id,
         }
+
+    async def persons(self, handles: Sequence[str]) -> dict[str, dict]:
+        """Batch ``person`` for a list of handles, in one query."""
+        unique = [h for h in dict.fromkeys(handles) if h]
+        if not unique:
+            return {}
+        rows = (
+            await self._session.execute(
+                select(
+                    User.username,
+                    UserProfile.nickname,
+                    UserProfile.avatar_id,
+                    Avatar.avatar_type,
+                )
+                .select_from(User)
+                .outerjoin(UserProfile, UserProfile.user_id == User.id)
+                .outerjoin(Avatar, Avatar.id == UserProfile.avatar_id)
+                .where(User.username.in_(unique))
+            )
+        ).all()
+        by_handle = {
+            username: (nickname, avatar_id, avatar_type)
+            for username, nickname, avatar_id, avatar_type in rows
+        }
+        out: dict[str, dict] = {}
+        for h in unique:
+            name, avatar_id, avatar_type = by_handle.get(h, (None, None, None))
+            out[h] = {
+                "name": name or h,
+                "avatar_id": None if avatar_type == "default" else avatar_id,
+            }
+        return out
 
     async def _profile_of(
         self, handle: str
@@ -371,16 +579,21 @@ class ProjectRepository:
         )
         return list(result.scalars())
 
-    async def lock_external_task(self, task_id: int) -> None:
-        """Serialize everything that opens a registration workspace for this 赛题.
+    async def try_lock_claim(self, task_id: int, team_id: int | None) -> bool:
+        """Take this team's claim on this 赛题 until commit, unless another
+        transaction holds it now; never waits.
 
-        Two teammates submitting together must not leave two projects for one
-        application, and the row they must both wait on is the 赛题's own — this
-        domain writes no column on it. The 赛题 row is read through the bare
-        ``task`` table for the cycle reason next door.
+        Only claims of the same team on the same 赛题 meet: a transaction-scoped
+        advisory lock, not a lock on the 赛题 row, which every other claim's own
+        rows reference and would queue behind. Not waiting is the point: the
+        holder may be making the repository on the forge, and a claim stuck
+        behind it would time out.
         """
-        await self._session.execute(
-            select(_task.c.id).where(_task.c.id == task_id).with_for_update()
+        return bool(
+            await self._session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"task-claim:{task_id}:{team_id}"},
+            )
         )
 
     async def list_visible_to(

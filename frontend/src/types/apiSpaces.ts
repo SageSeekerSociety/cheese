@@ -286,7 +286,8 @@ export type SpaceAnalyticsStalledClaim = {
   userId: number
   name: string
   isTeam: boolean
-  claimedAt: number
+  /** When the claim started: its project was created. */
+  startedAt: number
 }
 
 export type SpaceAnalyticsPeople = {

@@ -51,6 +51,46 @@ class UsageService:
         payer = await ledger.payer_for_project(self._session, project_id)
         return (await self._summaries({project_id: payer}))[project_id]
 
+    async def project_status_credits(self, project_id: uuid.UUID) -> dict:
+        """``GET /topics/{id}/status`` 的算力快照：一次读完方案账本与项目预算上限。"""
+        payer = await ledger.payer_for_project(self._session, project_id)
+        balance = await ledger.Ledger(self._session).balance(payer)
+        cap_row = (await CreditBudgets(self._session).project_caps([project_id])).get(
+            project_id
+        )
+        cap = cap_row[0] if cap_row is not None else None
+        cap_remaining = None if cap_row is None else max(0.0, cap_row[0] - cap_row[1])
+        plan_remaining = None if balance.unlimited else balance.credits_remaining
+        if cap_remaining is None:
+            unlimited = balance.unlimited
+            remaining = balance.credits_remaining
+        elif balance.unlimited:
+            unlimited = False
+            remaining = cap_remaining
+        else:
+            unlimited = False
+            remaining = min(cap_remaining, max(0.0, balance.credits_remaining))
+        by_budget = cap_remaining is not None and (
+            plan_remaining is None or cap_remaining <= plan_remaining
+        )
+        total = None
+        reset = None
+        if by_budget:
+            total = cap
+        elif plan_remaining is not None:
+            total = balance.credits_total
+            reset = balance.resets_at
+            if reset is None and balance.windows:
+                reset = min(balance.windows, key=lambda use: use.room).resets_at
+        return {
+            "unlimited": unlimited,
+            "credits_remaining": remaining,
+            "total": total,
+            "resets_at_dt": reset,
+            "project_remaining": cap_remaining,
+            "layer": "project_budget" if by_budget else "plan",
+        }
+
     async def task_gateway_budget(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
     ) -> float | None:

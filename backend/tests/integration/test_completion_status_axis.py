@@ -31,6 +31,7 @@ from tests.integration.conftest import (
     CreatedUser,
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -113,6 +114,9 @@ def _claim(user_client: UserCreator, api_client: TestClient, *, own: bool) -> _C
     assert approved.status_code == 200, approved.text
 
     student = teacher if own else _human(user_client, api_client)
+    join_task_space(
+        api_client, task_id, student.user_id, admin_headers=_auth(teacher.token)
+    )
     joined = api_client.post(
         f"/tasks/{task_id}/participants",
         params={"member": student.user_id},

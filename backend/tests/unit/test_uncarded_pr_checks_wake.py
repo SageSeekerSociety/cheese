@@ -65,6 +65,9 @@ class _Session:
     async def get(self, _model, _ident, **_kwargs):
         return self.task
 
+    async def run_sync(self, _fn, *_args):
+        return ()
+
     async def scalar(self, _query):
         return getattr(self.task, "pending_card", None)
 

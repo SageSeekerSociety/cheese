@@ -26,7 +26,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -94,6 +94,7 @@ from app.domain.topic.services import (
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
+from app.domain.usage.windows import _TZ
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -202,6 +203,8 @@ async def _unresolved_failures(
 
     `tasks_of_room` 只列**还没关**的活——关了的活自己的错误不再点亮任何一行；原地
     转成任务的支线已按任务算，不折回频道（否则旧错误点亮它、它的话清掉它的失败）。
+    拖过三天的失败也不再点亮（`waits.FAILURE_GIVES_UP_AFTER`），这条线自己那条线
+    也是 —— 否则没人接手的频道仍然永远红。
     """
     if not room_ids:
         return {}, {}
@@ -304,7 +307,7 @@ def _topic_out(
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
     # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
-    # （`_answering_in`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
+    # （`topics_signals.answering`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
     # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
     # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
@@ -414,7 +417,13 @@ async def list_topics(
     )
     # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
-    # 每个房间在等哪几位成员，一次查完。
+    # 这间房名下的活（开着、还没进收尾窗口）—— 先查未恢复失败以复用失败块缓存。
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in tasks_by_room.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [t.id for t in topics], tasks_of_room
+    )
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics],
         now=now,
@@ -435,14 +444,6 @@ async def list_topics(
     answered = (
         await service.replied_to_me([t.id for t in topics], viewer) if viewer else set()
     )
-    # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败（`_unresolved_failures`）；用的是上面已经取到的那一份。
-    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for task_id, room_id in tasks_by_room.items():
-        tasks_of_room.setdefault(room_id, []).append(task_id)
-    incomplete, incomplete_tasks = await _unresolved_failures(
-        db, [t.id for t in topics], tasks_of_room
-    )
-    # 每间房的 AI 队友坐在哪一席：名册一次读完一整页，不逐间问。
     seats = await TopicMemberService(db).addressable_agent_handles(project_id, room_ids)
     rails = await rail_tasks(
         db,
@@ -548,9 +549,9 @@ async def get_topic(
     service = TopicService(db)
     place = await place_or_404(db, topic_id)
     if place.task is not None:
-        # A task is read as `GET /topics/{task}/task`.
         raise NotFoundError(say("topicNotFound"))
     topic = place.room
+    await TopicMemberService(db)._repo.list_for_topics([topic.id])
     actor = await _actor_in_place(resolver, place)
     # 这几处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
     # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
@@ -564,6 +565,9 @@ async def get_topic(
         cards=AcceptService(db),
         decisions=ProjectNotificationService(db),
     )
+    seats = await TopicMemberService(db).addressable_agent_handles(
+        topic.project_id, [topic.id]
+    )
     live = await topics_signals.live_cards(db, [topic.id])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -572,15 +576,20 @@ async def get_topic(
         else set()
     )
     asked = await _awaiting_an_answer(db, [topic.id], threads=room_threads)
+    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给同一次读。
+    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in underway.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [topic.id], tasks_of_room
+    )
     waits = await MemberWaits(db).for_rooms(
         [topic.id],
         now=datetime.now(UTC),
         stuck_rooms=topics_signals.stuck_on_checks(live),
         threads=room_threads,
     )
-    # 同 `list_topics`：谁在这间房自己那条线上、和它的支线里干活；名下的活也交给
-    # 同一次读，免得为呼吸绿多查一条。
-    underway = await TaskService(db).tasks_of_rooms([topic.id])
     working = await topics_signals.at_work(
         db, [topic.id], threads=room_threads, tasks=underway
     )
@@ -591,20 +600,10 @@ async def get_topic(
     )
     # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
-    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话
-    # 在跑，或者有没有活走在交付链路上。
+    # 同 `list_topics`：侧栏的呼吸绿问的是这间房、它的支线、它名下的活里有没有会话在跑。
     moving_ids = set(working.rooms) | set(working.threads)
     moving_ids |= {underway[task_id] for task_id in working.tasks}
     moving_ids |= topics_signals.delivering_rooms(live)
-    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
-    for task_id, room_id in underway.items():
-        tasks_of_room.setdefault(room_id, []).append(task_id)
-    incomplete, incomplete_tasks = await _unresolved_failures(
-        db, [topic.id], tasks_of_room
-    )
-    seats = await TopicMemberService(db).addressable_agent_handles(
-        topic.project_id, [topic.id]
-    )
     rails = await rail_tasks(
         db,
         actor,
@@ -636,11 +635,6 @@ async def get_topic(
             "my_tasks": rails[topic.id],
         }
     )
-
-
-def _answering_in(thread_id: uuid.UUID) -> list[str]:
-    """The AI teammates with a turn running in a 支线 right now."""
-    return sorted(set(get_broker().activity.turn_agents(str(thread_id)).values()))
 
 
 @router.get("/{topic_id}/blocks")
@@ -726,8 +720,12 @@ async def list_topic_blocks(
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
     narrow = {"kinds": kind, "author": author, "shown": shown}
+    # How many blocks the narrowed timeline holds. A read that already has all
+    # of them in hand says so itself; only a page with more beyond it counts.
+    total: int | None = None
     if limit is None:
         blocks = await repo.list_for_topic(place.conversation_id, **narrow)
+        total = len(blocks)
         if older_than is not None:
             blocks = [
                 b
@@ -766,25 +764,29 @@ async def list_topic_blocks(
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.conversation_id, **narrow)
+        if not has_more and not has_newer:
+            # The newest page with nothing older: the whole timeline.
+            total = len(blocks)
+    if total is None:
+        total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
-    # Scoped to THIS page's ids, so paging saves the database work too, not just
-    # the bytes on the wire.
-    reactions = await repo.reactions_for_blocks([b.id for b in blocks])
-    # The line under each main-line message that has a 支线: same batch shape.
-    threads = (
-        await thread_reads.under_messages(
-            db, [b.id for b in blocks], replying=_answering_in
-        )
-        if place.inner_id is None
-        else {}
-    )
+    by_id = {b.id: b for b in blocks}
+    block_ids = list(by_id)
+    reactions = await repo.reactions_for_blocks(block_ids)
     # A routine's runs are messages of its teammate's: how each went.
     runs = (
-        await routine_reads.runs_under(db, [b.id for b in blocks])
-        if place.inner_id is None
-        else {}
+        await routine_reads.runs_under(db, block_ids) if place.inner_id is None else {}
     )
+    if place.inner_id is None:
+        # The AI teammates at work in each 支线 right now (`topics_signals`).
+        threads = await thread_reads.under_messages(
+            db,
+            block_ids,
+            replying=partial(topics_signals.answering, db),
+            roots=by_id,
+        )
+    else:
+        threads = {}
     # The tasks made from these messages, and the ones these rows say began:
     # the page draws their cards without reading the room's whole task list.
     carried = await tasks_under_blocks(
@@ -1013,6 +1015,12 @@ def _disk_snapshot(root: str) -> dict | None:
     }
 
 
+def _credit_reset_text(at: datetime) -> str:
+    """When credits come back, as the page would say it: 「11月1日 00:00」."""
+    local = at.astimezone(_TZ)
+    return f"{local.month}月{local.day}日 {local.strftime('%H:%M')}"
+
+
 @router.get("/{topic_id}/status")
 async def topic_status(
     topic_id: uuid.UUID,
@@ -1043,7 +1051,9 @@ async def topic_status(
     card_reviewers = await AcceptService(db).reviewer_handles_for_cards(
         [card.id for card in cards]
     )
-    credits = await UsageService(db).project_credits(place.project_id)
+    credits = await UsageService(db).project_status_credits(place.project_id)
+    reset = credits.pop("resets_at_dt", None)
+    credits["resets_at"] = None if reset is None else _credit_reset_text(reset)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
         place.room_id, alive_for_s=broker.alive_for_s(str(place.room_id))
@@ -1065,6 +1075,9 @@ async def topic_status(
                 "credits": {
                     "unlimited": credits["unlimited"],
                     "remaining": credits["credits_remaining"],
+                    "total": credits.get("total"),
+                    "resets_at": credits.get("resets_at"),
+                    "project_remaining": credits.get("project_remaining"),
                 },
             },
         }
@@ -1080,7 +1093,7 @@ async def list_topic_children(
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=topic.project_id, topic_id=topic_id, room=topic
     )
     children = await TopicService(db).list_children(topic_id)
     # 综合 is every channel's parent: a private one is listed to its people only.
@@ -1172,15 +1185,21 @@ async def write_topic_progress(
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
+    inner_id = place.task_id
+    if inner_id is None:
+        await TopicMemberService(db).list_for_topic(place.room_id)
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        actor,
+        project_id=place.project_id,
+        topic_id=place.room_id,
+        room=place.room,
+        enforce=True,
     )
     if not actor.authenticated:
         # The global development token is nobody, and a message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
     # A task's checklist is its own session's, shown as its progress; a room's or
     # a 支线's is a seated agent's, or a person's said like any message of theirs.
-    inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
         if inner_id is not None
@@ -1239,6 +1258,7 @@ async def write_topic_progress(
     message = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
+        room=place.room,
         inner_id=place.thread_id,
         text=await project_refs_text(db, place.project_id, place.room_id, text),
         turn_id=turn_id,
@@ -1260,12 +1280,11 @@ async def write_topic_progress(
     return ok({"items": items, "message_id": message["id"], "posted": True})
 
 
-@router.post("/{topic_id}/summon", dependencies=[ROUTE_DECIDES])
+@router.post("/{topic_id}/summon")
 async def summon_agent(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.ask_agent, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
@@ -1280,14 +1299,7 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    await require_role(db, actor, place.project_id, Permission.ask_agent)
+    place, actor = at.place, at.actor
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
@@ -1334,9 +1346,10 @@ async def summon_agent(
     return ok({"started": True})
 
 
-@router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/webhook-token")
 async def mint_webhook_token(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InChannel, Can(Permission.mint_webhook_token, at="topic_id")],
+    db: DbSession,
 ) -> dict:
     """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
@@ -1345,19 +1358,13 @@ async def mint_webhook_token(
 
     The token is a write credential for this room: whoever holds it can post
     into the room's timeline as any source, and rotating it locks out every
-    token minted before. So minting takes the same door as writing to the room
-    — project membership — rather than being handed to whoever knows the id."""
-    place = await place_or_404(db, topic_id)
-    actor = await resolver.resolve(
-        project_id=place.project_id, topic_id=place.conversation_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
+    token minted before. So only the room's own AI teammate mints it, which
+    no person's role grants."""
+    place = at.place
     # Scoped to the place, because the webhook wakes the place: a thread's
     # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(
-        db, topic_id=topic_id, project_id=place.project_id
+        db, topic_id=place.conversation_id, project_id=place.project_id
     )
     await db.commit()
     return ok({"token": token})
