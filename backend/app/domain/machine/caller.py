@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, for_a_machine, mint_scoped_token
 from app.domain.agent.place import ROOT_PLACEHOLDER, footprint_root
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.models import LEASE_DEVICE, AgentSession
 from app.domain.conversation.models import Conversation
 from app.domain.conversation.services import room_of
 from app.domain.machine.session_work import session_author
@@ -76,7 +76,7 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
     rows = await db.execute(
         select(AgentSession, Conversation.project_id)
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
-        .where(AgentSession.work_lease["device_id"].as_string() == device)
+        .where(LEASE_DEVICE == device)
     )
     held = next(
         (
