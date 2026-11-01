@@ -23,6 +23,24 @@ sed -i "s|__FORGE_EVENTS_UPSTREAM__|${FORGE_EVENTS_UPSTREAM:-backend:8081}|g" /e
 sed -i "s|__COLLAB_UPSTREAM__|${COLLAB_UPSTREAM:-collab:8902}|g" /etc/nginx/nginx.conf
 sed -i "s|__OFFICE_EDITOR_UPSTREAM__|${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}|g" /etc/nginx/nginx.conf
 
+# The proxies in front of this nginx, space-separated addresses or networks
+# (GATEWAY_TRUSTED_PROXIES). Given them, nginx takes the visitor's address from
+# X-Forwarded-For and caps the connections one address may hold
+# (GATEWAY_CONNECTIONS_PER_ADDRESS, generous: a campus is one address behind
+# NAT and every open tab holds a socket). Unset, nothing is limited per address.
+if [ -n "${GATEWAY_TRUSTED_PROXIES:-}" ]; then
+  {
+    for proxy in $GATEWAY_TRUSTED_PROXIES; do
+      echo "set_real_ip_from $proxy;"
+    done
+    echo "real_ip_header X-Forwarded-For;"
+    echo "real_ip_recursive on;"
+    echo "limit_conn_zone \$binary_remote_addr zone=per_address:10m;"
+    echo "limit_conn per_address ${GATEWAY_CONNECTIONS_PER_ADDRESS:-2000};"
+    echo "limit_conn_status 429;"
+  } > /etc/nginx/snippets/per-address.conf
+fi
+
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 
 exec "$@"

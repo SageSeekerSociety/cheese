@@ -977,7 +977,13 @@ way, one tunnel round trip.
 The client address travels in `X-Forwarded-For`. Caddy drops whatever the
 visitor sent there and writes the address the layer4 router's PROXY header
 gave it; the dev box's front door appends its own and the backend resolves the
-client through `FORWARDED_ALLOW_IPS`. The upstream is not TLS with PROXY
+client through `FORWARDED_ALLOW_IPS`. On dev every hop after Caddy is loopback
+or a docker network (`127.0.0.1,::1,172.16.0.0/12`, set in `deploy-dev.yml`);
+the frontend gateway is given the same hops (`GATEWAY_TRUSTED_PROXIES`) and caps
+the connections one visitor's address may hold at 2000, generous because a
+campus is one address behind NAT. Production sets neither until its own chain
+is checked: a hop left out of the list makes every visitor the same address.
+`GET /api/client-address` answers the address a caller is counted by. The upstream is not TLS with PROXY
 protocol to the dev box's `:18443`: with PROXY on, Caddy pools upstream
 connections per client address, so every new visitor would open its own and
 the round trips would come back.
