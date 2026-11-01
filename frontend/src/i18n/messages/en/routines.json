@@ -102,8 +102,7 @@
       "daily": "Every day at {time}",
       "weekly": "Every {days} at {time}",
       "monthly": "Day {day} of every month at {time}",
-      "hourly": "{minute} minutes past every hour",
-      "unset": "No schedule yet"
+      "hourly": "{minute} minutes past every hour"
     },
     "editTitle": "Edit the template “{title}”",
     "nameLabel": "Template name",

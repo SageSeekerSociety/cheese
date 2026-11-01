@@ -109,10 +109,10 @@ describe('RoutineCompose trigger', () => {
   })
 })
 
-// 「模板」那一页上只有模板自己那一行：表单底下那句解释不该跟过来，没有触发方式的模板
-// 也只说一句「还没定什么时候跑」。
+// 「模板」那一页上只有模板自己那一行：表单底下那句解释不该跟过来；没有触发方式的模板
+// 只写目标，不另造一句说明。
 describe('RoutineCompose templates', () => {
-  it('模板那页不摆表单底下那句说明', async () => {
+  it('模板那页不摆表单底下那句说明，没触发方式的模板只写目标', async () => {
     const { getByText, container } = render(Compose, {
       props: {
         modelValue: true,
@@ -127,7 +127,10 @@ describe('RoutineCompose templates', () => {
     })
     await fireEvent.click(getByText(t('routines.compose.tab.template')))
     await waitFor(() => expect(container.textContent).toContain('整理周报'))
-    expect(container.textContent).toContain(t('routines.template.when.unset'))
+    expect(container.textContent).toContain('汇总本周各频道进展')
+    // 表单里那句解释不该跟到模板页来。
+    expect(container.textContent).not.toContain('先存下来')
+    expect(container.textContent).not.toContain('什么时候跑')
   })
 })
 

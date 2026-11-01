@@ -200,6 +200,17 @@ function whenText(tpl: RoutineTemplate): string {
   return routineWhenText(tpl.trigger, tpl.spec)
 }
 
+/**
+ * 模板列表里那一行：什么时候跑，加一句目标是干什么的。
+ *
+ * 模板可以没有触发方式（从一张两个都没勾的表存下来的）。那一行就只有目标，不另写一句
+ * 「还没定什么时候跑」——模板这一页只摆模板自己的几格，不让表单里的说明跟过来。
+ */
+function whatFor(tpl: RoutineTemplate): string {
+  const when = whenText(tpl)
+  return when ? `${when} · ${tpl.goal}` : tpl.goal
+}
+
 /** 挑一条模板：把它那几格铺进表里，然后翻到那张表上让人看一眼、再改。 */
 function applyTemplate(tpl: RoutineTemplate) {
   // 挑一条来填表不是改它：从这一页存下去是建一条规则，不是把模板改掉。
@@ -347,7 +358,7 @@ function submit() {
           <li v-for="tpl in templates" :key="tpl.id" class="tpl">
             <button type="button" class="tpl__pick" @click="applyTemplate(tpl)">
               <span class="tpl__title">{{ tpl.title }}</span>
-              <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
+              <span class="tpl__meta">{{ whatFor(tpl) }}</span>
             </button>
             <button type="button" class="tpl__act" @click="editTemplate(tpl)">
               {{ t('routines.action.edit') }}
