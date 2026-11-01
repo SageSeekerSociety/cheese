@@ -5,11 +5,8 @@
 // 没有它，一页文档就是一张图：读的人不能选、不能搜、不能复制一句话给芝士看。
 // 有了它，读者指着一句话说「这里不对」这件事才成立——选中的原文就是交给芝士的坐标。
 //
-// 指不完的地方就指位置：图里的东西、排版的空当，那些没有文字可选的地方，「指位置」
-// 让读者在页面上点一下，交出去的是这一页的哪个比例位置。
-//
-// 页面按需渲染。一份几十页的文档一次性全画出来，等待的是空白，而且大多数页永远
-// 不会被看到。
+// 没有文字可选的地方（图、排版的空当）用「标一处」点一下，交出去的是这一页的比例位置。
+// 页面按需渲染：几十页一次全画，等的是空白，而且大多数页永远不会被看到。
 //
 // 手机上一页按页宽铺开，正文只有六七个像素：两根手指捏着放大，点两下放大到正文那一栏
 // 刚好占满宽度、再点两下回到整页。缩放先只把已经画好的页拉大（立刻跟手），手停下来再按
@@ -20,10 +17,12 @@ import type { PagePin, SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, inject, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { usePreviewMarking } from '@/composables/panelPreview/previewMode'
 import { usePinchZoom } from '@/composables/usePinchZoom'
 
 import { KEPT_SELECTION } from './keptSelection'
 import { contextAround } from './markdownQuote'
+import { headingsOf, type MeasureRow, rowsInLayer, sectionAt } from './pageSections'
 import { useSelectionHighlight } from './selectionHighlight'
 import { pageRatio } from './slidesContext'
 import { type LineNode, linesFrom, rangeOf, type TextLine } from './textLines'
@@ -99,8 +98,10 @@ const pages = ref<PageSlot[]>([])
 const loading = ref(false)
 const failure = ref('')
 const doc = shallowRef<PDFDocumentProxy | null>(null)
-/** 指位置模式。开着的时候点页面是「指这里」，不是选文字。 */
+/** 指位置模式。开着的时候点页面是「指这里」，不是选文字。键只在批注模式里摆。 */
 const pointing = ref(false)
+const marking = usePreviewMarking()
+watch(marking, (on) => on || (pointing.value = false))
 /** 刚指过的那一点，画在页上，读者看得见自己指的是哪儿。 */
 const marked = ref<{ page: number; x: number; y: number } | null>(null)
 
@@ -551,6 +552,14 @@ function onSelect() {
       context: { ...props.context },
       ...(inOneLayer && textLayer ? contextAround(textLayer, range) : {}),
       ...spot,
+      section: sectionOf(
+        page,
+        (() => {
+          const selBox = rect.height > 0 ? rect : startEl?.getBoundingClientRect()
+          const origin = canvasBox && canvasBox.width > 0 ? canvasBox : (host as HTMLElement).getBoundingClientRect()
+          return selBox && selBox.height > 0 ? selBox.top - origin.top : null
+        })()
+      ),
     })
     return
   }
@@ -595,6 +604,39 @@ function firstBoxed(
     if (box) return box
   }
   return null
+}
+
+/** 这一处属于哪一节：整份文档的标题先数一遍，再取它之前最近的那一个。
+ *
+ *  标题只认读得到的页（没翻到的页文字层还没画）；量过的页按层缓存，见 `rowsInLayer`。
+ *  量不出来（页还没画、或者这一处不在页上）就返回空串，卡上只写页码。 */
+function sectionOf(page: number, top: number | null): string {
+  const rows: MeasureRow[][] = []
+  const rendered = new Set<number>()
+  pages.value.forEach((slot, idx) => {
+    const root = slot.el ?? slot.host
+    const layers = root ? Array.from(root.querySelectorAll<HTMLElement>('.pv-text')) : []
+    if (!root || !layers.length) {
+      rows.push([])
+      return
+    }
+    rendered.add(idx + 1)
+    // 原点是画布左上角（和画序号用的是同一个坐标）。画布量不出来时退回这一页的框——
+    // 量的环境没有布局（单测）里画布是零尺寸，但那几行字自己带着摆好的位置。
+    const canvas = root.querySelector('canvas')?.getBoundingClientRect()
+    const box = canvas && canvas.width > 0 ? canvas : root.getBoundingClientRect()
+    rows.push(layers.flatMap((layer) => rowsInLayer(layer, box)))
+  })
+  if (!rendered.has(page)) return ''
+  const headings = headingsOf(rows)
+  if (!headings.length) return ''
+  let minPage = page
+  while (minPage > 1 && rendered.has(minPage - 1)) minPage -= 1
+  const reachable = headings.filter((h) => h.page >= minPage && h.page <= page)
+  if (!reachable.length) return ''
+  // 量不到这一处的竖直位置时用这一页的底：宁可指到这一页靠后的那一节，也不指到更早的。
+  const at = top ?? Number.POSITIVE_INFINITY
+  return sectionAt(reachable, page, at)
 }
 
 /** 这一页现在能读到的行。文字层还没画出来时是空的（这一页还没进视野）。 */
@@ -894,6 +936,7 @@ onBeforeUnmount(() => {
         @click.stop="zoomByStep(1)"
       />
       <BaseButton
+        v-if="marking"
         size="sm"
         :kind="pointing ? 'primary' : 'ghost'"
         :prepend-icon="pointing ? 'mdi-crosshairs-gps' : 'mdi-crosshairs'"

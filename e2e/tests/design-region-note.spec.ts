@@ -65,6 +65,10 @@ window.fetch=async url=>{
     if(window.blockBytes) return new Promise(()=>{});
     return new Response(Uint8Array.from(atob('${bytes.toString('base64')}'),c=>c.charCodeAt(0)),{headers:{'Content-Type':'image/png'}});
   }
+  // The version list is a paginated payload ({data:[…],total}), not file metadata.
+  // Answering it in the metadata shape makes versions.ts filter a non-array and
+  // the page throws; before #5041 this fixture never asked for it.
+  if(String(url).includes('/files/revisions')) return new Response(JSON.stringify({code:200,data:{data:[],total:0,path:'design.png',version:null}}),{headers:{'Content-Type':'application/json'}});
   return new Response(JSON.stringify({code:200,data:window.metadata}),{headers:{'Content-Type':'application/json'}});
 };
 createApp({setup(){return()=>h(VApp,{}, {default:()=>h('main',{style:'padding:24px;display:flex;gap:24px'},[
@@ -83,10 +87,12 @@ async function open(page: Page) {
   await page.setViewportSize({ width: 1280, height: 760 })
   await page.route('**/__design-region-note__', route => route.fulfill({ contentType: 'text/html', body: fixture }))
   await page.goto('/__design-region-note__', { waitUntil: 'commit' })
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
+  // 图上框一块在「批注」那一段里（默认是「看」）。
+  await page.getByTestId('preview-mode-note').click({ timeout: 60_000 })
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 60_000 })
 }
 async function select(page: Page, handFocusAway = false) {
-  await page.getByRole('button', { name: '选择图片区域', exact: true }).click()
+  await page.getByRole('button', { name: '标一处', exact: true }).click()
   if (handFocusAway) await page.evaluate(() => {
     document.addEventListener('pointerup', () => (document.querySelector('#outside') as HTMLInputElement).focus(), { once: true, capture: true })
   })
@@ -123,7 +129,7 @@ createApp({setup(){return()=>h('main',{style:'padding:24px;width:860px;height:66
 </script></body></html>`
 }
 async function dragImage(page: Page, small = false) {
-  await page.getByRole('button', { name: '选择图片区域', exact: true }).click()
+  await page.getByRole('button', { name: '标一处', exact: true }).click()
   const image = await page.locator('.design-image img').boundingBox()
   if (!image) throw new Error('No decoded image layout')
   await page.mouse.move(image.x + (small ? 20 : 80), image.y + (small ? 8 : 70))
@@ -161,7 +167,7 @@ for (const kind of ['file', 'version'] as const) {
     await page.setViewportSize({ width: 1280, height: 760 })
     await page.route('**/__standalone-region__', route => route.fulfill({ contentType: 'text/html', body: standaloneFixture(kind) }))
     await page.goto('/__standalone-region__', { waitUntil: 'commit' })
-    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
+    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 60_000 })
     await dragImage(page)
     await expect(page.locator('.design-image__selection')).toHaveCount(1)
     const region = regionLine(page)
@@ -174,7 +180,7 @@ for (const kind of ['file', 'version'] as const) {
     await page.evaluate(() => (window as unknown as { fixture: { replace: () => void } }).fixture.replace())
     await expect(page.locator('.design-image__selection')).toHaveCount(0)
     await expect(region).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled()
     await dragImage(page)
     await expect(page.locator('.design-image__selection')).toHaveCount(1)
   })
@@ -182,7 +188,7 @@ for (const kind of ['file', 'version'] as const) {
 test('explicit controlled null never displays an unaccepted region and clears accepted selection', async ({ page }) => {
   await page.route('**/__controlled-region__', route => route.fulfill({ contentType: 'text/html', body: standaloneFixture('controlled') }))
   await page.goto('/__controlled-region__', { waitUntil: 'commit' })
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 60_000 })
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 60_000 })
   await dragImage(page)
   expect(await page.evaluate(() => (window as unknown as { selections: unknown[] }).selections.length)).toBe(1)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
@@ -199,26 +205,32 @@ test('a short-panel note keeps the opener focused and returns focus after editin
   await page.evaluate(() => {
     const fixture = (window as unknown as { fixture: { resize: (width: number) => void; height: (height: number) => void } }).fixture
     fixture.resize(240)
-    fixture.height(150)
+    // 150 plus the annotate mode's drawing toolbar (a 37px row after #5041),
+    // and enough that the drag lands on the image: measured at 180, the image
+    // starts at y=201 while the panel's bottom is 204, so the drag at image.y+8
+    // (209) is clipped away and no note opens. 200 is the smallest round height
+    // that keeps the drag start inside the visible part; the panel still
+    // scrolls (its content floor is 240px), which is the short-strip case.
+    fixture.height(200)
   })
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
   await expect(input).toBeVisible()
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
   await reachable(input)
   await input.fill('取消这条草稿')
   await testInfo.attach('short-panel-editing', { body: await page.screenshot(), contentType: 'image/png' })
   await input.press('Escape')
   await expect(input).toHaveCount(0)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
   expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
 })
 test('a short wide real panel keeps its note placement stable and its editor reachable', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await open(page)
-  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(150))
+  await page.evaluate(() => (window as unknown as { fixture: { height: (height: number) => void } }).fixture.height(200))
   await dragImage(page, true)
   const input = page.getByRole('textbox', { name: '输入修改要求或批注内容…', exact: true })
   await expect(input).toBeVisible()
@@ -243,7 +255,7 @@ test('a short wide real panel keeps its note placement stable and its editor rea
     expect(Math.max(...values) - Math.min(...values)).toBeLessThan(0.5)
   }
   expect(samples.every(sample => sample.left >= sample.panelLeft && sample.right <= sample.panelRight)).toBe(true)
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
   await reachable(input)
   await input.fill('短面板也能发送')
   await page.getByRole('button', { name: '发送', exact: true }).click()
@@ -359,12 +371,12 @@ test('composition, explicit cancellation and external focus respect draft owners
   await open(page)
   await select(page)
   const input = page.getByPlaceholder('输入修改要求或批注内容…')
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
   await input.fill('正在输入中文')
   await input.evaluate(element => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, isComposing: true, bubbles: true })))
   expect(await page.evaluate(() => (window as unknown as { notes: { message: string }[] }).notes)).toHaveLength(0)
   await input.press('Escape')
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
   await select(page)
   await page.getByLabel('聊天输入', { exact: true }).focus()
@@ -386,7 +398,7 @@ test('replacement metadata retires the draft while new bytes are pending, withou
   })
   await expect(page.getByPlaceholder('输入修改要求或批注内容…')).toHaveCount(0)
   await expect(page.locator('.design-image__selection')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeDisabled()
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
   await page.evaluate(() => (window as unknown as { fixture: { unmount: () => void } }).fixture.unmount())
   await expect(page.getByLabel('聊天输入', { exact: true })).toBeFocused()
@@ -451,7 +463,9 @@ test.describe('real project page', () => {
     const url = new URL(page.url())
     url.searchParams.set('tab', 'file:design.png')
     await page.goto(url.toString())
-    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeEnabled({ timeout: 30_000 })
+    // 图上框一块在「批注」那一段里（默认是「看」），和上面 `open` 一样先切过去。
+    await page.getByTestId('preview-mode-note').click({ timeout: 30_000 })
+    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 30_000 })
     await page.setViewportSize({ width: 1440, height: 280 })
     await page.locator('.panel-preview').evaluate(element => element.scrollTop = element.scrollHeight)
     await dragImage(page, true)
@@ -462,7 +476,7 @@ test.describe('real project page', () => {
     await reachable(card.getByRole('button', { name: '取消', exact: true }))
     await input.press('Escape')
     await expect(card).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '选择图片区域', exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeFocused()
     await expect(page.getByRole('feed')).not.toContainText('短窗口取消检查')
 
     await dragImage(page, true)

@@ -307,7 +307,7 @@ def _topic_out(
     # A member working here right now is not one the room is waiting on: it is
     # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
     # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
-    # （`_answering_in`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
+    # （`topics_signals.answering`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
     # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
     # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
@@ -637,11 +637,6 @@ async def get_topic(
     )
 
 
-def _answering_in(thread_id: uuid.UUID) -> list[str]:
-    """The AI teammates with a turn running in a 支线 right now."""
-    return sorted(set(get_broker().activity.turn_agents(str(thread_id)).values()))
-
-
 @router.get("/{topic_id}/blocks")
 async def list_topic_blocks(
     topic_id: uuid.UUID,
@@ -725,8 +720,12 @@ async def list_topic_blocks(
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
     narrow = {"kinds": kind, "author": author, "shown": shown}
+    # How many blocks the narrowed timeline holds. A read that already has all
+    # of them in hand says so itself; only a page with more beyond it counts.
+    total: int | None = None
     if limit is None:
         blocks = await repo.list_for_topic(place.conversation_id, **narrow)
+        total = len(blocks)
         if older_than is not None:
             blocks = [
                 b
@@ -765,7 +764,11 @@ async def list_topic_blocks(
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.conversation_id, **narrow)
+        if not has_more and not has_newer:
+            # The newest page with nothing older: the whole timeline.
+            total = len(blocks)
+    if total is None:
+        total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     by_id = {b.id: b for b in blocks}
     block_ids = list(by_id)
@@ -774,13 +777,16 @@ async def list_topic_blocks(
     runs = (
         await routine_reads.runs_under(db, block_ids) if place.inner_id is None else {}
     )
-    threads = (
-        await thread_reads.under_messages(
-            db, block_ids, replying=_answering_in, roots=by_id
+    if place.inner_id is None:
+        # The AI teammates at work in each 支线 right now (`topics_signals`).
+        threads = await thread_reads.under_messages(
+            db,
+            block_ids,
+            replying=partial(topics_signals.answering, db),
+            roots=by_id,
         )
-        if place.inner_id is None
-        else {}
-    )
+    else:
+        threads = {}
     # The tasks made from these messages, and the ones these rows say began:
     # the page draws their cards without reading the room's whole task list.
     carried = await tasks_under_blocks(

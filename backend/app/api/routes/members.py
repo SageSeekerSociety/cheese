@@ -176,8 +176,9 @@ async def invite_member(
         actor=at.actor,
         role=body.role,
     )
+    out = InvitationOut.model_validate(invitation).model_dump(mode="json")
     await db.commit()
-    return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.get("/projects/{project_id}/invitations")
@@ -195,7 +196,7 @@ async def list_project_invitations(
     await resolver.authorize_project(actor, project_id=project_id)
     svc = _invitations(db)
     items = await svc.list_for_project(project_id)
-    rows = [await svc.describe(i) for i in items]
+    rows = await svc.describe_many(items)
     return ok(page(rows, len(rows)))
 
 
@@ -211,7 +212,7 @@ async def list_my_invitations(db: DbSession, resolver: ActorResolverDep) -> dict
     who = await resolver.require_verified_caller()
     svc = _invitations(db)
     items = await svc.list_for_person(who.handle or "")
-    rows = [await svc.describe(i) for i in items]
+    rows = await svc.describe_many(items)
     return ok(page(rows, len(rows)))
 
 
@@ -226,8 +227,9 @@ async def respond_to_invitation(
     invitation = await _invitations(db).respond(
         invitation_id=invitation_id, accept=body.accept, actor=who
     )
+    out = InvitationOut.model_validate(invitation).model_dump(mode="json")
     await db.commit()
-    return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.delete("/invitations/{invitation_id}", dependencies=[ROUTE_DECIDES])
@@ -239,8 +241,9 @@ async def revoke_invitation(
     """邀请方反悔。撤回不删行——谁在什么时候邀过谁，是这一行唯一的记录。"""
     who = await resolver.require_verified_caller()
     invitation = await _invitations(db).revoke(invitation_id=invitation_id, actor=who)
+    out = InvitationOut.model_validate(invitation).model_dump(mode="json")
     await db.commit()
-    return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))
+    return ok(out)
 
 
 # ---- 角色与权限（#3830、#4795）-------------------------------------------------
@@ -336,8 +339,9 @@ async def update_role(
         permissions=body.permissions,
         actor=at.actor,
     )
+    holders = await service.holders(at.project.id)
     await db.commit()
-    return ok(_role_out(role, await service.holders(at.project.id)))
+    return ok(_role_out(role, holders))
 
 
 @router.delete("/projects/{project_id}/roles/{key}", **typed_response(RoleDeletedOut))
@@ -380,8 +384,9 @@ async def offer_transfer(
     offer = await _ownership(db).offer(
         project_id=project_id, to_handle=body.to_handle, actor=who
     )
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.delete(
@@ -398,8 +403,9 @@ async def cancel_transfer(
     if pending is None:
         raise NotFoundError()
     offer = await service.cancel(transfer_id=pending.id, actor=who)
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post(
@@ -417,8 +423,9 @@ async def respond_to_transfer(
     offer = await _ownership(db).respond(
         transfer_id=transfer_id, accept=body.accept, actor=who
     )
+    out = TransferOut.model_validate(offer).model_dump(mode="json")
     await db.commit()
-    return ok(TransferOut.model_validate(offer).model_dump(mode="json"))
+    return ok(out)
 
 
 @router.post(

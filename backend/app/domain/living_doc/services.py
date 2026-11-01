@@ -192,8 +192,10 @@ class DocumentJournal:
         action: str,
         operation_id: uuid.UUID,
         payload: dict,
+        locked: bool = False,
     ) -> DocumentOperation:
-        await self.lock(document_id)
+        if not locked:
+            await self.lock(document_id)
         fingerprint = payload_fingerprint(payload)
         row = await self.session.scalar(
             select(DocumentOperation).where(
@@ -348,11 +350,15 @@ class DocumentJournal:
         ``reasons`` are the reasons given for suggestions this store proposes;
         a suggestion proposed earlier keeps the reason it was stored with.
         """
-        kept = {
-            item.get("id"): item.get("reason")
-            for item in await self.suggestions(document_id)
-            if item.get("reason")
-        }
+        kept = (
+            {
+                item.get("id"): item.get("reason")
+                for item in await self.suggestions(document_id)
+                if item.get("reason")
+            }
+            if suggestions
+            else {}
+        )
         pending = [
             {
                 "id": str(item["id"]),

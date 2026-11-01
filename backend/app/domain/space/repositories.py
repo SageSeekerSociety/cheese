@@ -5,6 +5,8 @@ from sqlalchemy import ColumnExpressionArgument, Select, and_, exists, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.core.request_facts import recall, remember
+
 # The 访问域组 pair and the membership pair moved to modules of their own so
 # this one keeps a single reason to change. Both are re-exported here because
 # this module is the space domain's repository facade: every caller, and the
@@ -47,11 +49,23 @@ class SpaceRepository:
         self._session = session
 
     async def get_by_id(self, space_id: int) -> Space | None:
+        """The space, None when there is none or it was deleted. A problem's
+        page asks it from its permission check and again from its payload, so
+        a request reads the row once."""
+        key = ("space_row", space_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         stmt: Select[tuple[Space]] = select(Space).where(
             and_(Space.id == space_id, Space.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        space = result.scalar_one_or_none()
+        if cacheable:
+            remember(self._session, key, space, tables=frozenset({"space"}))
+        return space
 
     async def is_member(self, *, space_id: int, user_id: int) -> bool:
         """The single-space form of ``build_membership_predicate``.
@@ -359,13 +373,30 @@ class SpaceAdminRelationRepository:
     async def get_relation(
         self, space_id: int, user_id: int
     ) -> SpaceAdminRelation | None:
+        """The person's owner or admin row in the space. The problem's
+        visibility and the space's seat both ask it in one request; it is read
+        once."""
+        key = ("space_admin_relation", space_id, user_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         stmt: Select[tuple[SpaceAdminRelation]] = select(SpaceAdminRelation).where(
             SpaceAdminRelation.space_id == space_id,
             SpaceAdminRelation.user_id == user_id,
             SpaceAdminRelation.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        relation = result.scalar_one_or_none()
+        if cacheable:
+            remember(
+                self._session,
+                key,
+                relation,
+                tables=frozenset({"space_admin_relation"}),
+            )
+        return relation
 
     async def administered(self, user_id: int, space_ids: Sequence[int]) -> set[int]:
         """Which of these spaces ``user_id`` is an owner or admin of."""

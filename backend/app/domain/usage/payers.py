@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.team.services import team_service
 from app.domain.usage.models import Plan
 from app.domain.usage.windows import Window
@@ -74,6 +75,30 @@ async def terms_of(session: AsyncSession, plan_keys: Iterable[str]) -> dict:
     keys = sorted(set(plan_keys))
     if not keys:
         return {}
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        out: dict[str, Terms] = {}
+        missing: list[str] = []
+        for k in keys:
+            found, cached = recall(session, ("plan_terms", k))
+            if found and cached is not None:
+                out[k] = cached
+            else:
+                missing.append(k)
+        if not missing:
+            return out
+        rows = await session.execute(select(Plan).where(Plan.key.in_(missing)))
+        fetched = {plan.key: Terms.of(plan) for plan in rows.scalars()}
+        for k, t in fetched.items():
+            out[k] = t
+            remember(
+                session,
+                ("plan_terms", k),
+                t,
+                tables=frozenset({"plans"}),
+            )
+        return out
     rows = await session.execute(select(Plan).where(Plan.key.in_(keys)))
     return {plan.key: Terms.of(plan) for plan in rows.scalars()}
 

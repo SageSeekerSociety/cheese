@@ -9,7 +9,9 @@
 // 宿主那一层）和只有名字的应用（`frameName`，授权表投进去的那一个）。哪一帧在台前由
 // `displayedFrame` 说，其余几帧 `inert` 收起来——它们还在跑，只是不接读者的输入。
 import type { AppWakeStep } from '@/composables/panelPreview/appWake'
+import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'
 import type { PreviewFrame, PreviewNavigation } from '@/composables/usePreviewFrames'
+import type { RoomFileHistoryBundle } from '@/composables/useRoomFileHistory'
 import type { FileContent } from '@/cx_types'
 import type { WebRect, WebViewport } from '@/lib/quotedContext'
 
@@ -19,13 +21,14 @@ import { useElementSize, useOnline } from '@vueuse/core'
 import PreviewAppSleep from './PreviewAppSleep.vue'
 import PreviewBrowserBar from './PreviewBrowserBar.vue'
 import PreviewCode from './PreviewCode.vue'
+import PreviewFileBar from './PreviewFileBar.vue'
 import { openPreviewInNewTab } from './previewNewTab'
 import PreviewPickToggle from './PreviewPickToggle.vue'
 import PreviewRegionPick from './PreviewRegionPick.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { readerText } from '@/lib/fileKind'
+import { fileIcon, fileLabel, readerText } from '@/lib/fileKind'
 import { MCP_APP_MIME, MCP_APP_SANDBOX } from '@/lib/mcpAppBridge'
 import { appAsleep, previewChain } from '@/lib/previewChain'
 import { elapsedLabel, loadingTone } from '@/lib/previewLoading'
@@ -71,6 +74,11 @@ const props = defineProps<{
   pickOn: boolean
   /** 这间房的队友叫什么：连不上时那句话请它去查。 */
   agentName: string
+  /** 房间里的网页文件顶上那一条（类型、看 / 批注 / 改、第几版）要的。应用没有版本，不摆。 */
+  versions?: PreviewVersionsBundle
+  showHistory?: boolean
+  fileHistory?: RoomFileHistoryBundle
+  projectId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -87,12 +95,29 @@ const emit = defineEmits<{
   wake: []
   /** 把页面抛的这几条错附进一处批注：宿主开定位条并预填这几行。 */
   'annotate-errors': [text: string]
+  'toggle-history': []
+  'mention-click': [handle: string]
 }>()
 
 // 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
 // `allow-same-origin`。第三方 MCP View 不能带 —— `allow-scripts` 加
 // `allow-same-origin` 会把手写这份 HTML 的人放进内容域的存储里。同一个面板、
 // 同一个预览源，沙箱按这一帧的 mime 分：房内那套不变，第三方那套收紧。
+
+/**
+ * 帧里的应用「外面是深还是浅」，由这一格自己声明，不由浏览器的继承决定。
+ *
+ * 平台的深色主题在 `<html>` 上声明 `color-scheme: dark`，帧会**继承**它（2026-10-31
+ * 在 Chromium 141 里量过：跨源的帧一样收到）。于是用 `@media (prefers-color-scheme:
+ * dark)` 配色的应用以为外面是深色，把自己调成深色——而这一格的底色一直是白的
+ * （`.preview-frame` 的 `background: #fff`，那是刻意的：应用自己的正文默认近黑）。
+ * 同一个页面在深色平台下渲染成 #eee 的字落在 #fff 上，读不出来。
+ *
+ * 底色是白的，就对应用说白：钉成 `light`。应用自己的配色照旧说了算——它要深色就自己
+ * 画深底，这一条只是不让「平台主题」这个信号去改一份白纸。
+ */
+const FRAME_SCHEME = { colorScheme: 'light' } as const
+
 const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
 function sandboxFor(mime?: string | null): string {
   return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
@@ -412,6 +437,18 @@ watch(
 
 <template>
   <div ref="wrapRef" class="preview-wrap">
+    <PreviewFileBar
+      v-if="previewFile && !previewAppNote"
+      :icon="fileIcon(previewFile.path)"
+      :label="fileLabel(previewFile.path)"
+      :versions="versions"
+      :show-history="!!showHistory"
+      :file-history="fileHistory"
+      :project-id="projectId"
+      :topic-id="topicId"
+      @toggle-history="emit('toggle-history')"
+      @mention-click="emit('mention-click', $event)"
+    />
     <div class="preview-bar text-caption px-2 pt-1">
       <PreviewBrowserBar
         :href="displayedFrame?.href ?? ''"
@@ -600,6 +637,7 @@ watch(
             :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
             :title="t('work.room.preview.frameTitle')"
             :sandbox="sandboxFor(frame.mime)"
+            :style="FRAME_SCHEME"
             @load="emit('frame-load', frame.id, $event)"
             @error="emit('frame-error', frame.id, $event)"
           />
@@ -610,6 +648,7 @@ watch(
           class="preview-frame"
           :title="t('work.room.preview.frameTitle')"
           :sandbox="DEFAULT_SANDBOX"
+          :style="FRAME_SCHEME"
         />
         <!-- 冷启动那一段的骨架：先在屏幕上占出页面大概的样子（标题、几行正文），等它
              到了再换成真的。原来这里是一片白，加上顶上那行秒数，读者还是在盯着空框。

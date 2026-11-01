@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import BadRequestError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.project.models import Project
 from app.domain.task.inputs import (
@@ -300,7 +301,14 @@ async def project_claim(
     """The claim a project was opened for: a team claim is the project's
     team's, an individual one is the claim of the person whose personal team
     holds the project (``ProjectService.for_participation``). Approved before
-    pending, never rejected — the same order as ``own_claim``."""
+    pending, never rejected — the same order as ``own_claim``.
+
+    项目详情一次要问三遍（截止、阶段、`题目/` 在不在），答案同一个，所以一个请求里
+    只问一次。"""
+    key = ("project_claim", task.id, team_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
     owner = (await session.get(Team, team_id)) if team_id is not None else None
     person = owner.personal_owner_user_id if owner is not None else None
     whose = [
@@ -320,7 +328,32 @@ async def project_claim(
             )
         )
     ).scalars()
-    return min(claims, key=lambda m: m.approved != 0, default=None)
+    claim = min(claims, key=lambda m: m.approved != 0, default=None)
+    remember(session, key, claim, tables=frozenset({"task_membership", "team"}))
+    return claim
+
+
+def _task_row_key(task_id: int) -> tuple[str, int]:
+    # Not ``("task_row", …)``: that key is a room task's row (`room_task.place`).
+    return ("challenge_task_row", task_id)
+
+
+def known_task(session: AsyncSession, task: Task) -> None:
+    """Someone already read this 题目 row in this request: `task_row` hands it
+    back instead of reading it again."""
+    remember(session, _task_row_key(task.id), task, tables=frozenset({"task"}))
+
+
+async def task_row(session: AsyncSession, task_id: int) -> Task | None:
+    """项目来自的那道题目的行。`session.get` 只在有人还拿着它时才不再问数据库，
+    项目详情里几步各自取一次、取完就丢，所以记在请求里。"""
+    key = _task_row_key(task_id)
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    task = await session.get(Task, task_id)
+    remember(session, key, task, tables=frozenset({"task"}))
+    return task
 
 
 async def deadline_for_project(
@@ -330,7 +363,7 @@ async def deadline_for_project(
     ``project_claim``), or the challenge's closing time while the claim has
     none. A staged task's stages carry their own due dates
     (``stages_for_project``); this stays the deadline of the whole."""
-    task = await session.get(Task, task_id)
+    task = await task_row(session, task_id)
     if task is None:
         return None
     claim = await project_claim(session, task=task, team_id=team_id)
@@ -359,7 +392,7 @@ async def stages_for_project(
     """The stages of the task a project was opened for, each with the
     project's claim's status on it; empty for a task without stages. Without
     an approved claim yet, every stage reads not handed in."""
-    task = await session.get(Task, task_id)
+    task = await task_row(session, task_id)
     if task is None:
         return []
     stages = await list_stages(session, task.id)

@@ -40,10 +40,15 @@ class MemberRepository:
         再看排除，靠的就是它）。
         """
         await self.lift_exclusion(project_id=project_id, user_handle=user_handle)
-        member = ProjectMember(project_id=project_id, user_handle=user_handle)
+        now = datetime.now(UTC)
+        member = ProjectMember(
+            project_id=project_id,
+            user_handle=user_handle,
+            created_at=now,
+            updated_at=now,
+        )
         self._session.add(member)
         await self._session.flush()
-        await self._session.refresh(member)
         return member
 
     async def is_excluded(self, *, project_id: uuid.UUID, user_handle: str) -> bool:
@@ -196,6 +201,7 @@ class InvitationRepository:
         invited_by_assistant: bool = False,
     ) -> ProjectInvitation:
         """``role_id`` is one of the project's own roles; none means member."""
+        now = datetime.now(UTC)
         invitation = ProjectInvitation(
             project_id=project_id,
             invitee_handle=invitee_handle,
@@ -204,10 +210,11 @@ class InvitationRepository:
             status=InvitationStatus.pending,
             role="custom" if role_id is not None else "member",
             role_id=role_id,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(invitation)
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
     async def get(self, invitation_id: uuid.UUID) -> ProjectInvitation | None:
@@ -263,10 +270,11 @@ class InvitationRepository:
     async def settle(
         self, invitation: ProjectInvitation, status: InvitationStatus
     ) -> ProjectInvitation:
+        now = datetime.now(UTC)
         invitation.status = status
-        invitation.responded_at = datetime.now(UTC)
+        invitation.responded_at = now
+        invitation.updated_at = now
         await self._session.flush()
-        await self._session.refresh(invitation)
         return invitation
 
 
@@ -293,6 +301,11 @@ class RoleRepository:
             )
             if found:
                 return cached
+            found_map, cached_map = recall(
+                self._session, ("project_roles_map", project_id)
+            )
+            if found_map and cached_map is not None:
+                return cached_map.get(user_handle)
         row = (
             await self._session.execute(
                 select(ProjectRole.role, ProjectRole.role_id).where(
@@ -312,12 +325,26 @@ class RoleRepository:
         return ans
 
     async def roles(self, project_id: uuid.UUID) -> dict[str, str]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_roles_map", project_id))
+            if found and cached is not None:
+                return dict(cached)
         rows = await self._session.execute(
             select(
                 ProjectRole.user_handle, ProjectRole.role, ProjectRole.role_id
             ).where(ProjectRole.project_id == project_id)
         )
-        return {handle: role_key(role, rid) for handle, role, rid in rows.all()}
+        out = {handle: role_key(role, rid) for handle, role, rid in rows.all()}
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_roles_map", project_id),
+                out,
+                tables=frozenset({"project_roles"}),
+            )
+        return out
 
     async def set_role(
         self, *, project_id: uuid.UUID, user_handle: str, role_id: uuid.UUID | None
@@ -354,6 +381,14 @@ class RoleRepository:
             )
 
     async def clear_role(self, *, project_id: uuid.UUID, user_handle: str) -> None:
+        if _can_cache(self._session) and not (
+            self._session.new or self._session.dirty or self._session.deleted
+        ):
+            found, cached = recall(
+                self._session, ("project_role_of", project_id, user_handle)
+            )
+            if found and cached is None:
+                return
         await self._session.execute(
             delete(ProjectRole).where(
                 ProjectRole.project_id == project_id,
@@ -481,12 +516,24 @@ class RoleRepository:
     async def get_def(
         self, *, project_id: uuid.UUID, role_id: uuid.UUID
     ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.id == role_id), None)
         row = await self._session.get(ProjectRoleDef, role_id)
         return row if row is not None and row.project_id == project_id else None
 
     async def templated(
         self, *, project_id: uuid.UUID, template: str
     ) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.template == template), None)
         return await self._session.scalar(
             select(ProjectRoleDef)
             .where(
@@ -498,6 +545,12 @@ class RoleRepository:
         )
 
     async def named(self, *, project_id: uuid.UUID, name: str) -> ProjectRoleDef | None:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_role_defs", project_id))
+            if found:
+                return next((r for r in cached if r.name == name), None)
         return await self._session.scalar(
             select(ProjectRoleDef).where(
                 ProjectRoleDef.project_id == project_id, ProjectRoleDef.name == name
@@ -512,12 +565,36 @@ class RoleRepository:
         permissions: list[str],
         template: str | None = None,
     ) -> ProjectRoleDef:
+        prior_found, prior_cached = (
+            recall(self._session, ("project_role_defs", project_id))
+            if _can_cache(self._session)
+            else (False, None)
+        )
         row = ProjectRoleDef(
             project_id=project_id, name=name, permissions=permissions, template=template
         )
         self._session.add(row)
         await self._session.flush()
+        if _can_cache(self._session) and prior_found and prior_cached is not None:
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                (*prior_cached, row),
+                tables=_ROLE_DEF_TABLES,
+            )
         return row
+
+    async def flush_def(
+        self, project_id: uuid.UUID, defs: list[ProjectRoleDef]
+    ) -> None:
+        await self._session.flush()
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_role_defs", project_id),
+                tuple(defs),
+                tables=_ROLE_DEF_TABLES,
+            )
 
     async def delete_def(self, row: ProjectRoleDef) -> None:
         await self._session.delete(row)
@@ -558,12 +635,17 @@ class TransferRepository:
     async def add(
         self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
     ) -> ProjectTransfer:
+        now = datetime.now(UTC)
         offer = ProjectTransfer(
-            project_id=project_id, from_handle=from_handle, to_handle=to_handle
+            project_id=project_id,
+            from_handle=from_handle,
+            to_handle=to_handle,
+            status=InvitationStatus.pending,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(offer)
         await self._session.flush()
-        await self._session.refresh(offer)
         return offer
 
     async def get(self, transfer_id: uuid.UUID) -> ProjectTransfer | None:

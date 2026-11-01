@@ -20,6 +20,7 @@ import type { SlidePageContext } from './slidesContext'
 
 import { computed, inject, ref, watch } from 'vue'
 
+import { pageLabel } from './pageLabel'
 import { usePreviewImageRegion } from './usePreviewImageRegion'
 import { usePreviewPagePin } from './usePreviewPagePin'
 import { usePreviewPick } from './usePreviewPick'
@@ -95,7 +96,11 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     onRuntime: deps.onPickMode,
     open: (label, quote, address) => openLocator(label, quote, address),
     quote: quoted,
-    allowed: () => pointing.value,
+    // 圈选只在「批注」那一段里有：「看」是在读，按下去不该指。跑着的应用顶上没有三段
+    // 可切（它不是一份文件），没有模式的地方（资料库）也一样，这两处照旧随时能圈。
+    allowed: () =>
+      pointing.value &&
+      (!previewMode || previewMode.mode.value === 'note' || !!props.previewAppNote || !!props.displayedFrame?.live),
   })
 
   function openLocator(label: string, quote: string, address: string, context?: QuoteContext) {
@@ -137,7 +142,10 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
 
   function onPageContext(payload: SlidePageContext) {
     if (!pageLocator.canUse(payload.context)) return
-    const page = t('work.room.preview.page', { page: payload.page })
+    // 位置写成「第 2 页 · 报名截止」：原型就是这么写的（`第 1 页 · 二、时间安排`）。
+    // 一页里的节比页码细一档，而同一句话在同一份文档里出现好几处是常事，那句话本身还
+    // 可能被改掉——节名才是能分辨「说的是哪一节」的那个东西。认不出节就只写页码。
+    const page = pageLabel(payload.page, payload.section)
     openLocator(page, payload.scope === 'page' ? t('slides.wholePage') : firstCodePoints(payload.text, 200), page)
     quoted.page.value = { ...payload, context: { ...payload.context } }
   }
@@ -211,6 +219,7 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function onCodeLines(payload: { start: number; end: number; text: string }) {
     const where = codeLinesLabel(payload.start, payload.end)
     openLocator(where, firstCodePoints(payload.text, 200), where)
+    quoted.range({ text: firstCodePoints(payload.text, 500), heading: where, prefix: '', suffix: '' })
   }
 
   function onVideoLocate(payload: { seconds: number; timestamp: string }) {
@@ -254,6 +263,9 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
    *  比例；表里存单元格地址。哪一样都拿不到时（网页圈选、图上框选、代码行）就不画
    *  pin——那些地方本来也没有能长期成立的坐标，宁可不画。 */
   function pendingAnchor(): PendingAnchor | undefined {
+    // 页上钉的一点：进篮时截图留不下，页码和比例位置留着，发出去的那句话照它写。
+    const pin = pageLocator.pin.value
+    if (pin) return { kind: 'page-pin', page: pin.page, x: pin.x, y: pin.y }
     const page = quoted.page.value
     if (page) {
       if (page.scope !== 'selection') return undefined
@@ -286,12 +298,12 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   function queueLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
-    if (!target || !note || pageLocator.pin.value) return
+    if (!target || !note) return
     const message = formatLocateMessage(target, note)
     if (sharedPending) {
       // 攒着的都是「交给芝士」那一路：只留评论的当场就挂上去了，不进待发篮
       //（卡上的「加入待发」也只在去处是芝士时出现）。
-      sharedPending.add(pendingNoteFor(target, note, message))
+      sharedPending.add(pendingNoteFor(target, note))
       clearLocator()
       return
     }
@@ -309,16 +321,22 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
   }
 
   function pendingNoteFor(
-    target: { label: string; quote: string },
-    note: string,
-    message: string
+    target: { label: string; quote: string; address?: string },
+    note: string
   ): Omit<PendingNote, 'id'> {
+    const compactQuote = firstCodePoints(target.quote.replace(/\s+/g, ' ').trim(), 60)
+    const compactMessage = t('work.room.preview.locateMessage', {
+      path: props.previewFile?.path ?? '',
+      address: target.address || target.label,
+      quote: compactQuote,
+      note,
+    })
     return {
       ...pendingNoteBase(),
       where: target.label,
       quote: target.quote,
       text: note,
-      message,
+      message: compactMessage,
       anchor: pendingAnchor(),
     }
   }
@@ -333,8 +351,8 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
       // 共享篮：还没收进篮里的这一处先并进去，再整批发。
       const target = locator.value
       const note = locatorNote.value.trim()
-      if (target && note && !pageLocator.pin.value) {
-        sharedPending.add(pendingNoteFor(target, note, formatLocateMessage(target, note)))
+      if (target && note) {
+        sharedPending.add(pendingNoteFor(target, note))
         clearLocator()
       }
       sharedPending.send('')
@@ -343,31 +361,30 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     const target = locator.value
     const note = locatorNote.value.trim()
     const pending = [...queued.value]
-    if (target && note && !pageLocator.pin.value) {
+    if (target && note) {
       pending.push(formatLocateMessage(target, note))
     }
     if (!pending.length) return
     deps.onLocate({ message: pending.join('\n\n') })
     queued.value = []
-    if (!pageLocator.pin.value) clearLocator()
+    clearLocator()
   }
 
   function sendLocator() {
     const target = locator.value
     const note = locatorNote.value.trim()
     if (!target || !note) return
-    if (pageLocator.pin.value) {
-      void pageLocator.send(note)
-      return
-    }
     // 卡片主按钮写着「全部发送（N+1）」时，这一下发的必须是整批：判据要和那颗键写字的
     // 判据同一条（`queuedCount`，共享篮优先），不是本格自己那一条——共享篮时
     // `queued.value` 永远是空的，用它会只发当前这一处、把篮里那几条留成没发出去。
-    //
-    // 图上框的那一块是例外：它这一下有自己的路（下面那一支），进的是「结构化引用」
-    // 那条，篮里有几条与它无关——不分这一下，读者按「发送」会被换成一整批。
-    if (!imageRegion.target.value && queuedCount.value > 0) {
+    // 页上钉的一点、图上框的一块也一样：卡上都有「加入待发」，篮里有东西时主按钮就是
+    // 整批；它们并进篮里时只带位置，截图只在单独发的时候带。
+    if (queuedCount.value > 0) {
       sendQueued()
+      return
+    }
+    if (pageLocator.pin.value) {
+      void pageLocator.send(note)
       return
     }
     if (imageRegion.target.value) {
@@ -426,6 +443,30 @@ export function usePreviewLocator(props: PreviewViewProps, deps: LocatorDeps) {
     }
     if (props.topicId !== topicId) return
     annotateError.value = ''
+    if (
+      identity.version &&
+      props.submitQuestion?.({
+        intent: 'ask-agent',
+        topicId,
+        content: payload.note,
+        attachments: [attachment],
+        quotedContext: {
+          kind: 'image-region',
+          path: identity.path,
+          source: identity.source,
+          version: identity.version,
+          task_id: identity.taskId ?? null,
+          x: 0,
+          y: 0,
+          width: payload.naturalWidth,
+          height: payload.naturalHeight,
+          natural_width: payload.naturalWidth,
+          natural_height: payload.naturalHeight,
+        },
+      })
+    ) {
+      return
+    }
     deps.onLocate({
       message: t('design.sketchMessage', {
         ...identity,

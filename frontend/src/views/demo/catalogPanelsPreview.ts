@@ -428,7 +428,7 @@ export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
           return t('catalog.previewPanelPages.s1.note')
         },
         props: { data: null },
-        expect: '指位置',
+        expect: '标一处',
       },
     ],
   },

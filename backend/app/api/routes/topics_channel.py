@@ -31,13 +31,15 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-async def _person(db, resolver, topic_id: uuid.UUID):
+async def _person(db, resolver, topic_id: uuid.UUID, *, preload_roster: bool = False):
     """The channel and the signed-in person acting on it. A task or a 支线 is
     not a channel."""
     place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
         raise NotFoundError(say("topicNotFound"))
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
+    if preload_roster:
+        await TopicMemberService(db)._repo.list_for_topic(topic_id)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic_id, room=place.room
     )
@@ -76,7 +78,7 @@ async def set_description(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """What the channel is for, set by whoever manages it. Empty clears it."""
-    _, actor = await _person(db, resolver, topic_id)
+    _, actor = await _person(db, resolver, topic_id, preload_roster=True)
     room = await TopicMemberService(db).require_manager(topic_id, actor.handle)
     room.description = str(body.get("description") or "").strip()[:500] or None
     await db.flush()
@@ -96,7 +98,7 @@ async def set_members_only(
 ) -> dict:
     """Make a channel private (its managers) or public again (whoever manages
     the project, from inside it). Whoever made it private stays in it."""
-    _, actor = await _person(db, resolver, topic_id)
+    _, actor = await _person(db, resolver, topic_id, preload_roster=True)
     room = await TopicMemberService(db).set_members_only(
         topic_id, body.members_only, actor=actor.handle
     )

@@ -785,7 +785,8 @@ async def edit_doc_passages(
             else None,
         )
     stored = result.get("stored") or {}
-    await db.refresh(doc)
+    if delegation is not None:
+        await db.refresh(doc)
     return await _with_ref_warnings(
         db,
         doc,

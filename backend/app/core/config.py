@@ -127,6 +127,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # above are the CONTAINER's budget and the workers share it; the image
     # passes this same variable to uvicorn's `--workers` (see the split below).
     backend_workers: int = 1
+    # Which part of the backend this process plays (`app.core.process_role`).
+    # `realtime` is the one process that holds the running work: turns,
+    # sessions, room sockets, the owner lock and the jobs behind it. `api` is a
+    # pool process beside it that answers the plain reads app-router sends it
+    # and nothing else: it never takes the owner lock, and what it publishes
+    # reaches the realtime process's broker through Valkey.
+    backend_role: Literal["realtime", "api"] = "realtime"
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
     # idle otherwise fails the first statement of whoever checks it out next.
@@ -198,19 +205,19 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     starter_max_bytes: int = 2 * 1024 * 1024 * 1024
     starter_max_ratio: int = 200
     redis_url: str = "redis://localhost:6379/0"
-    # Per-client request limits (`app/core/request_limits.py`). Measured on the
-    # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
-    # and 111/min — a page fans out one request per project — so these sit
-    # above that and below what one runaway page did to the whole process.
+    # Per-client request limits (`app/core/request_limits.py`; the numbers and
+    # why they are these: docs/api-conventions.md). `request_ip_*` are an
+    # address's, `request_limit_exempt_handles` the accounts not limited (dev's).
     request_rate_per_s: float = Field(default=20.0, gt=0)
     request_rate_burst: int = Field(default=100, ge=1)
     request_concurrency: int = Field(default=16, ge=1)
+    request_ip_rate_per_s: float = Field(default=200.0, gt=0)
+    request_ip_rate_burst: int = Field(default=2000, ge=1)
+    request_ip_concurrency: int = Field(default=128, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check, or the closed-account check
-    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
-    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
+    request_limit_exempt_handles: str = ""
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
     # tests; deployed business backends point at the stable compose service.

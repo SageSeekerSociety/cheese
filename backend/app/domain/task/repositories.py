@@ -5,6 +5,7 @@ from typing import cast
 from sqlalchemy import CTE, Select, and_, delete, exists, func, not_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.reads import get_by_ids
 from app.domain.search import bm25
 from app.domain.tag.models import Tag
@@ -40,16 +41,33 @@ __all__ = [
 ]
 
 
+#: What a person's claims of a task are read from: their own rows and the
+#: teams they sit in.
+_CLAIM_TABLES = frozenset({"task_membership", "team_user_relation"})
+
+
 class TaskRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def get_by_id(self, task_id: int) -> Task | None:
+        """The problem, None when there is none or it was deleted. A problem's
+        routes load it for their permission check and again for the page, so a
+        request reads the row once."""
+        key = ("live_task_row", task_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         stmt: Select[tuple[Task]] = select(Task).where(
             and_(Task.id == task_id, Task.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        task = result.scalar_one_or_none()
+        if cacheable:
+            remember(self._session, key, task, tables=frozenset({"task"}))
+        return task
 
     async def get_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
         return await get_by_ids(
@@ -602,15 +620,32 @@ class TaskMembershipRepository:
         user_id: int,
     ) -> TaskMembership | None:
         """The person's own (not team) claim of this task, as
-        ``get_by_task_and_member`` picks it."""
-        return await self.get_by_task_and_member(task_id, user_id, is_team=False)
+        ``get_by_task_and_member`` picks it. A problem's page asks it more than
+        once; a request reads it once."""
+        key = ("task_user_membership", task_id, user_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+        claim = await self.get_by_task_and_member(task_id, user_id, is_team=False)
+        if cacheable:
+            remember(self._session, key, claim, tables=_CLAIM_TABLES)
+        return claim
 
     async def list_team_memberships_for_user(
         self,
         task_id: int,
         user_id: int,
     ) -> Sequence[TaskMembership]:
-        """Return team-type memberships for this task where the user belongs to the team."""
+        """Return team-type memberships for this task where the user belongs to
+        the team, read once per request like ``get_user_membership``."""
+        key = ("task_team_memberships", task_id, user_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return list(cached)
         membership_stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
             and_(
                 TaskMembership.task_id == task_id,
@@ -624,7 +659,10 @@ class TaskMembershipRepository:
             )
         )
         result = await self._session.execute(membership_stmt)
-        return list(result.scalars().all())
+        claims = list(result.scalars().all())
+        if cacheable:
+            remember(self._session, key, claims, tables=_CLAIM_TABLES)
+        return list(claims)
 
     async def hold_places(self, task_id: int) -> None:
         """锁住这道题的行，直到本事务结束：数名额和写下这一份通过要是一步。
@@ -672,6 +710,16 @@ class TaskMembershipRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(
+        self, membership_ids: Sequence[int]
+    ) -> dict[int, TaskMembership]:
+        return await get_by_ids(
+            self._session,
+            TaskMembership,
+            membership_ids,
+            TaskMembership.deleted_at.is_(None),
+        )
 
     async def list_memberships_for_space(
         self, space_id: int

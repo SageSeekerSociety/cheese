@@ -70,6 +70,7 @@ def build(tmp: Path, port: int, entry: str, aliases: str) -> Instance:
     html.mkdir()
     (html / "index.html").write_text("<html>ok</html>")
     (nginx / "docs").mkdir(parents=True)
+    shutil.copytree(ROOT / "frontend/nginx/snippets", nginx / "snippets")
     for generated in ("host.conf", "platform.conf"):
         (nginx / "docs" / generated).write_text("")
     (nginx / "mainland").mkdir()

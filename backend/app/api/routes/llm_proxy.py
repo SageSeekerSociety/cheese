@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from typing import Annotated
@@ -131,6 +132,25 @@ _DROP_REQUEST_HEADERS = frozenset(
 _DROP_RESPONSE_HEADERS = frozenset(
     {"content-length", "connection", "keep-alive", "transfer-encoding", "upgrade"}
 )
+
+
+# What the proxy forwards: the model calls the harnesses make (Claude Code's
+# messages, Codex's responses, pi's OpenAI-compatible calls) and the model list
+# they read. Anything else the gateway answers — key, spend, team and model
+# administration — is the platform's to call with its master key, not a
+# session's with the project's key, so it is refused here.
+_MODEL_PATH = re.compile(
+    r"^v1/(?:messages(?:/count_tokens)?|chat/completions|completions|embeddings"
+    r"|responses(?:/[A-Za-z0-9_.-]+)*|models(?:/[A-Za-z0-9_.:-]+)?)$"
+)
+
+
+def _model_path(path: str) -> str:
+    """``path`` when it is a model call this proxy forwards; refused otherwise."""
+    clean = path.lstrip("/")
+    if ".." in clean.split("/") or not _MODEL_PATH.match(clean):
+        raise NotFoundError(say("modelPathNotProxied", path=path[:120]))
+    return clean
 
 
 def _upstream_url(path: str) -> str:
@@ -572,6 +592,7 @@ async def _forward(
     """``machine_conversation`` is the conversation a sandbox's call comes
     from: it goes out on that conversation's machine key, capped per day
     (`gateway_usage.MachineGatewayKey`), not on the session's own."""
+    path = _model_path(path)
     person = personal_claims(token) if token else None
     claims = scoped_token_claims(token) if token and person is None else None
     if person is None and (not claims or not claims.get("p")):

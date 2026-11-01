@@ -37,11 +37,7 @@ async def close_room_tasks(
     closed ones' too, since archiving goes on to settle the rooms' cards and
     say so in their tasks; then the open ones' rows.
     """
-    listed = [
-        task
-        for room_id in room_ids
-        for task in await TaskService(session).list_in_room(room_id)
-    ]
+    listed = await TaskService(session).list_in_rooms(room_ids)
     await session.run_sync(hold_numbering_now, [task.id for task in listed])
     closed: list[tuple[uuid.UUID, uuid.UUID]] = []
     for task in await lock_tasks_for_change(

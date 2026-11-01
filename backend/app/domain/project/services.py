@@ -174,6 +174,7 @@ class ProjectService:
         self._close_tasks = close_tasks
         self._events = events
         self._seat_mentors = seat_mentors
+        self._pinned_rows: tuple[object, ...] = ()
 
     async def _seed_default_teammate(
         self,
@@ -296,8 +297,10 @@ class ProjectService:
             external_task_id=external_task_id,
             intent=intent,
             project_id=project_id,
+            settings={"forge_kind": forge_kind},
         )
-        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
+        if (project.settings or {}).get("forge_kind") != forge_kind:
+            project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         number, environment = await self.channel_start(project)
         root = await self._topics.add(
             project_id=project.id,
@@ -307,7 +310,7 @@ class ProjectService:
             kind=TopicKind.root,
             created_by=owner_handle,
         )
-        await self._repo.set_root_topic(project, root.id)
+        await self._repo.set_root_topic(project, root.id, is_new_project=True)
         # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
@@ -361,6 +364,10 @@ class ProjectService:
         brief = _intent_brief(intent)
         if brief:
             await self._seed_overview(project, brief)
+        if self._pinned_rows:
+            self._session.sync_session.info.setdefault("_pinned_rows", []).extend(
+                self._pinned_rows
+            )
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -373,6 +380,7 @@ class ProjectService:
         if user is None:
             return None
         team = await team_service(self._session).ensure_personal_team(user.id)
+        self._pinned_rows = (user, team)
         return team.id
 
     async def for_participation(
@@ -474,14 +482,16 @@ class ProjectService:
         """
         return await self._repo.teams_for_projects(projects)
 
-    async def people(self, project_id: uuid.UUID) -> list[dict]:
+    async def people(
+        self, project_id: uuid.UUID, *, include_team_info: bool = True
+    ) -> list[dict]:
         """这个项目里的**人**：成员行、所属小队、所有者，合成的一张表。
 
         名册的两个来源之一，另一个是这个项目的队友；合起来那张表由
         ``membership/roster.py`` 的 ``roster()`` 给出，它是这里唯一的调用方。想问
         「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
         """
-        return await self._repo.people(project_id)
+        return await self._repo.people(project_id, include_team_info=include_team_info)
 
     async def person(self, handle: str) -> dict:
         """``{name, avatar_id}`` for someone not on the roster yet, by the same
@@ -568,7 +578,9 @@ class ProjectService:
         """
         await self._repo.lock_settings(project)
         before = dict(project.settings or {})
-        after = await self._repo.merge_settings(project, patch, remove=remove)
+        after = await self._repo.merge_settings(
+            project, patch, remove=remove, locked=True
+        )
         return [
             SettingChange(key, before.get(key), after.get(key))
             for key in sorted(MEMBER_SETTINGS & {*patch, *remove})

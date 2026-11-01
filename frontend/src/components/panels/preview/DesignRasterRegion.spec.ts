@@ -24,7 +24,7 @@ function imageFixture() {
 }
 it('maps a captured drag to natural pixels and cancels a drag when identity retires', async () => {
   const ui = render(DesignRasterRegion, { props: { image: imageFixture(), enabled: true, identity: 'v1' } })
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
@@ -56,7 +56,7 @@ it('rejects a drag when the image source changes before pointerup', async () => 
   const image = imageFixture()
   image.setAttribute('src', 'blob:first')
   const ui = render(DesignRasterRegion, { props: { image, enabled: true, identity: 'v1' } })
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   image.setAttribute('src', 'blob:replacement')
@@ -76,7 +76,7 @@ function mapped(region: { x: number; y: number; width: number; height: number })
 }
 /** 取样图 1000×500 铺在 500×250 上、左上角在 (10,20)：1 显示像素 = 2 原图像素。 */
 async function gesture(ui: ReturnType<typeof render>, from: [number, number], to: [number, number] = from) {
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: from[0], clientY: from[1] })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: to[0], clientY: to[1] })
@@ -128,7 +128,7 @@ function hoverBox(ui: ReturnType<typeof render>) {
   return ui.container.querySelector('.raster-region__hover') as HTMLElement | null
 }
 async function hover(ui: ReturnType<typeof render>, at: [number, number]) {
-  await fireEvent.pointerMove(ui.getByRole('group', { name: '选择图片区域' }), {
+  await fireEvent.pointerMove(ui.getByRole('group', { name: '图上的一块' }), {
     pointerId: 7,
     clientX: at[0],
     clientY: at[1],
@@ -165,7 +165,7 @@ it('drops the candidate box when the pointer leaves the image', async () => {
     props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
   })
   await hover(ui, [110, 120])
-  await fireEvent.pointerLeave(ui.getByRole('group', { name: '选择图片区域' }))
+  await fireEvent.pointerLeave(ui.getByRole('group', { name: '图上的一块' }))
   expect(hoverBox(ui)).toBeNull()
 })
 it('yields the candidate box to the real one as soon as the press lands', async () => {
@@ -173,7 +173,7 @@ it('yields the candidate box to the real one as soon as the press lands', async 
     props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
   })
   await hover(ui, [110, 120])
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 110, clientY: 120 })
   await fireEvent.pointerMove(overlay, { pointerId: 7, clientX: 160, clientY: 170 })
@@ -184,7 +184,7 @@ it('swaps the cursor only while a block is actually under the pointer', async ()
   const ui = render(DesignRasterRegion, {
     props: { image: imageFixture(), enabled: true, identity: 'v1', profile: lines },
   })
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   await hover(ui, [110, 120])
   expect(overlay.classList.contains('is-targeting')).toBe(true)
   // 退回整张图时没有「那一块」可言，光标也回普通的十字。
@@ -257,8 +257,8 @@ describe('Design image fit in owning previews (DOM geometry doubles)', () => {
 
   async function selectImage(ui: ReturnType<typeof render>, image: HTMLImageElement) {
     image.getBoundingClientRect = () => ({ left: 10, top: 20, width: 512, height: 288 }) as DOMRect
-    await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
-    const overlay = ui.getByRole('group', { name: '选择图片区域' })
+    await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
+    const overlay = ui.getByRole('group', { name: '图上的一块' })
     overlay.setPointerCapture = vi.fn()
     await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
     await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })

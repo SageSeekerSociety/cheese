@@ -438,6 +438,17 @@ class TaskRepository:
             )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_rooms(self, room_ids: Collection[uuid.UUID]) -> list[Task]:
+        """Every task across ``room_ids``, oldest first, in one query."""
+        if not room_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(Task.room_id.in_(list(room_ids)))
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_project(
         self,
         project_id: uuid.UUID,

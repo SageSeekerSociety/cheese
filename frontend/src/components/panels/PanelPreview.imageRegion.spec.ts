@@ -23,6 +23,8 @@ vi.mock('../../api', async (importOriginal) => {
     previewFileBytes: vi.fn(),
     attachmentImageUrl: vi.fn(),
     uploadAttachment: vi.fn(),
+    // 图片顶上那一条也读版本清单（第几版、谁改的）。
+    roomFileRevisions: vi.fn(async () => ({ data: [], total: 0, path: '', version: null })),
   }
 })
 vi.mock('./preview/RevisionList.vue', () => ({ default: { template: '<div />' } }))
@@ -84,6 +86,9 @@ function mount() {
 }
 async function paint(ui: ReturnType<typeof mount>) {
   await waitFor(() => expect(ui.container.querySelector('.design-image img')).toBeTruthy())
+  // 图上框一块、画标注都在「批注」那一段里：先切过去（默认是「看」）。
+  const note = ui.queryByTestId('preview-mode-note')
+  if (note) await fireEvent.click(note)
   const image = ui.container.querySelector('.design-image img') as HTMLImageElement
   const pane = ui.container.querySelector('.design-image__pane') as HTMLElement
   Object.defineProperty(pane, 'clientWidth', { value: 532, configurable: true })
@@ -99,11 +104,11 @@ async function paint(ui: ReturnType<typeof mount>) {
   return image
 }
 async function select(ui: ReturnType<typeof mount>) {
-  await fireEvent.click(ui.getByRole('button', { name: '选择图片区域' }))
+  await fireEvent.click(ui.getByRole('button', { name: '标一处' }))
   // The layer has only just mounted; a pointer in that same millisecond is dropped by Vue as an
   // event older than its listener (see nextMillisecond). No real hand is that fast.
   await nextMillisecond()
-  const overlay = ui.getByRole('group', { name: '选择图片区域' })
+  const overlay = ui.getByRole('group', { name: '图上的一块' })
   overlay.setPointerCapture = vi.fn()
   await fireEvent.pointerDown(overlay, { button: 0, pointerId: 7, clientX: 60, clientY: 70 })
   await fireEvent.pointerUp(overlay, { pointerId: 7, clientX: 160, clientY: 120 })
@@ -140,7 +145,7 @@ it.each([null, 'bbbbbbbbbbbbbbbb'])(
     const ui = mount()
     await paint(ui)
     expect(ui.getByRole('img')).toBeTruthy()
-    expect(ui.getByRole('button', { name: '选择图片区域' }).hasAttribute('disabled')).toBe(true)
+    expect(ui.getByRole('button', { name: '标一处' }).hasAttribute('disabled')).toBe(true)
     expect(ui.emitted().locate).toBeUndefined()
   }
 )
@@ -148,7 +153,7 @@ it('does not promote unverified bytes when source fingerprinting is unavailable'
   vi.stubGlobal('crypto', {})
   const ui = mount()
   await paint(ui)
-  expect(ui.getByRole('button', { name: '选择图片区域' }).hasAttribute('disabled')).toBe(true)
+  expect(ui.getByRole('button', { name: '标一处' }).hasAttribute('disabled')).toBe(true)
   expect(ui.emitted().locate).toBeUndefined()
 })
 it.each([
@@ -179,8 +184,8 @@ it('图片框选之后弹的是共用的那张卡，不是图自己那张', asyn
   const card = ui.container.querySelector('.locator')
   expect(card).toBeTruthy()
   expect(ui.container.querySelector('.design-region-note')).toBeNull()
-  // 卡上写着指的是哪儿（标签 = 「选择图片区域」，原文 = 这块区域的坐标）。
-  expect(card!.querySelector('.locator__label')?.textContent).toContain('选择图片区域')
+  // 卡上写着指的是哪儿（标签 = 「图上的一块」，原文 = 这块区域的坐标）。
+  expect(card!.querySelector('.locator__label')?.textContent).toContain('图上的一块')
   expect(card!.querySelector('.locator__quote')?.textContent).toContain('x=100')
 })
 
@@ -212,14 +217,17 @@ it('卡片按选区的实际矩形弹在它旁边', async () => {
 // 框出来的那一块要走结构化引用那条路（连同坐标发出去），发不出才退回拼一句话——
 // 两条都只发当前这一处，凑不进待发篮那批「合并发送」。所以这一档不给「加入待发」，
 // 主按钮也不被篮里那几条改成「全部发送（N+1）」（那是它做不到的事）。
-it('图片框选那一处不摆「加入待发」，主按钮也不带批注计数', async () => {
+it('图片框选那一处也能加入待发：进篮只带位置，不当场发出去', async () => {
   const ui = mount()
   await paint(ui)
   await select(ui)
   const labels = () => [...ui.container.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
-  expect(labels()).not.toContain('加入待发')
-  expect(labels().some((label) => label.startsWith('全部发送'))).toBe(false)
+  expect(labels()).toContain('加入待发')
   expect(labels()).toContain('发送')
+  await fireEvent.update(ui.getByPlaceholderText('输入修改要求或批注内容…'), '这块留白收一下')
+  await fireEvent.click(ui.getByRole('button', { name: '加入待发' }))
+  expect(ui.queryByPlaceholderText('输入修改要求或批注内容…')).toBeNull()
+  expect(ui.emitted().locate).toBeUndefined()
 })
 
 it('cancels the region note without posting a message', async () => {

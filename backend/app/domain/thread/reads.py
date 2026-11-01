@@ -9,7 +9,7 @@ reads.
 """
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import (
     BigInteger,
@@ -256,15 +256,17 @@ async def under_messages(
     session: AsyncSession,
     block_ids: list[uuid.UUID],
     *,
-    replying: Callable[[uuid.UUID], list[str]] = lambda _thread: [],
+    replying: Callable[[list[uuid.UUID]], Awaitable[dict[uuid.UUID, list[str]]]]
+    | None = None,
     roots: dict[uuid.UUID, Block] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """The line under each of these main-line messages whose 支线 has a reply
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
-    (``replying``: the seats with a turn running in a 支线). A 支线 that became
-    a task keeps its line: the task's card is drawn on top of it, the same
-    conversation with an owner."""
+    (``replying``: the seats with a turn running in each 支线 it is handed,
+    asked only for the 支线 found here and not at all when there are none). A
+    支线 that became a task keeps its line: the task's card is drawn on top of
+    it, the same conversation with an owner."""
     if not block_ids:
         return {}
     found = list(
@@ -272,13 +274,16 @@ async def under_messages(
             select(Thread).where(Thread.root_block_id == _among(block_ids))
         )
     )
+    seats = (
+        await replying([t.id for t in found]) if replying is not None and found else {}
+    )
     failed = await _failed(session, [t for t in found if t.reply_count == 0])
     threads = [
-        t for t in found if t.reply_count > 0 or replying(t.id) or t.id in failed
+        t for t in found if t.reply_count > 0 or seats.get(t.id) or t.id in failed
     ]
     rows = await _describe(session, threads, viewer=None, roots=roots)
     return {
-        thread.root_block_id: {**row, "replying": replying(thread.id)}
+        thread.root_block_id: {**row, "replying": seats.get(thread.id, [])}
         for thread, row in zip(threads, rows, strict=True)
     }
 

@@ -7,8 +7,11 @@ import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Iterable
 from functools import lru_cache
+from typing import cast
 
+from app.core.process_role import is_api_pool
 from app.domain.agent.realtime.activity import LIVE_ONLY, RoomActivity
+from app.domain.agent.realtime.relay import RelayBroker
 from app.domain.agent.realtime.subscriber_queue import (
     MAX_SUBSCRIBER_BYTES,
     Frame,
@@ -325,5 +328,11 @@ class InProcessBroker:
 def get_broker() -> InProcessBroker:
     """Process-wide singleton — defined here (not app.api.deps) so domain code
     that needs to publish outside a request/route (background watchers, retry
-    loops) can reach the SAME broker instance without importing the api layer."""
+    loops) can reach the SAME broker instance without importing the api layer.
+
+    An api pool process has no broker of its own: what it publishes is relayed
+    to the realtime process's (`relay.RelayBroker`), which is typed here as the
+    broker it stands in for — the calls a pool process may make are the same."""
+    if is_api_pool():
+        return cast(InProcessBroker, RelayBroker())
     return InProcessBroker()

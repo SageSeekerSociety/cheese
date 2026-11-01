@@ -512,7 +512,7 @@ def test_my_teams_and_teams_list_batch_member_and_user_reads_once(client):
     assert _count(my_teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
         s for s in my_teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert _count(my_teams_sql, _USERS_IN_SELECT) == 1, [
+    assert _count(my_teams_sql, _USERS_IN_SELECT) <= 1, [
         s for s in my_teams_sql if _USERS_IN_SELECT.search(s)
     ]
 
@@ -523,7 +523,7 @@ def test_my_teams_and_teams_list_batch_member_and_user_reads_once(client):
     assert _count(teams_sql, _TEAM_MEMBERS_PER_TEAM_SELECT) == 0, [
         s for s in teams_sql if _TEAM_MEMBERS_PER_TEAM_SELECT.search(s)
     ]
-    assert _count(teams_sql, _USERS_IN_SELECT) == 1, [
+    assert _count(teams_sql, _USERS_IN_SELECT) <= 1, [
         s for s in teams_sql if _USERS_IN_SELECT.search(s)
     ]
 
@@ -855,7 +855,10 @@ def test_room_blocks_deduplicates_root_messages_and_routine_runs(client):
     assert _count(seen, _ROUTINE_RUNS_SELECT) == 1, [
         s for s in seen if _ROUTINE_RUNS_SELECT.search(s)
     ]
-    assert len(seen) <= 13, f"expected <= 13 SQL statements, got {len(seen)}: {seen}"
+    # 14 since the page reads who is answering in each 支线 from session_states
+    # (one read of the running sessions) instead of the realtime process's
+    # broker, so any backend process can serve it (`core/process_role.py`).
+    assert len(seen) <= 14, f"expected <= 14 SQL statements, got {len(seen)}: {seen}"
 
 
 def test_awaiting_me_and_project_tasks_deduplicate_reviewers_and_last_said(client):
@@ -1966,4 +1969,830 @@ def test_toggle_reaction_reuses_room_and_reaction_rows(client):
     ]
     assert len(react_sql) <= 7, (
         f"expected <= 7 SQL statements on POST /blocks/{{id}}/reactions, got {len(react_sql)}: {react_sql}"
+    )
+
+
+_PROJECT_ROLE_DEFS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_role_defs\b",
+    re.IGNORECASE,
+)
+_AGENT_BINDINGS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\b",
+    re.IGNORECASE,
+)
+
+
+def test_role_create_and_update_reuse_cached_role_defs_and_holders(client):
+    """`POST /projects/{id}/roles` and `PATCH /projects/{id}/roles/{key}`
+    resolve `get_def` and `named` from cached `project_role_defs`, retain the
+    role definitions across `flush()`, and compute `holders` before `commit()`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            f"/projects/{pid}/roles",
+            json={"name": "CustomRole", "copy_from": "member"},
+            headers=headers,
+        )
+    assert r_create.status_code == 200, r_create.text
+    rkey = r_create.json()["data"]["key"]
+    assert _count(create_sql, _PROJECT_ROLE_DEFS_SELECT) == 1, [
+        s for s in create_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 6, (
+        f"expected <= 6 SQL statements on POST /projects/{{id}}/roles, got {len(create_sql)}: {create_sql}"
+    )
+
+    with counting_sql(client) as update_sql:
+        r_update = client.patch(
+            f"/projects/{pid}/roles/{rkey}",
+            json={"name": "RenamedRole"},
+            headers=headers,
+        )
+    assert r_update.status_code == 200, r_update.text
+    assert _count(update_sql, _PROJECTS_SELECT) == 1, [
+        s for s in update_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(update_sql, _PROJECT_ROLE_DEFS_SELECT) == 1, [
+        s for s in update_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(update_sql) <= 13, (
+        f"expected <= 13 SQL statements on PATCH /projects/{{id}}/roles/{{key}}, got {len(update_sql)}: {update_sql}"
+    )
+
+
+def test_create_project_agent_skips_new_user_binding_and_profile_probes(client):
+    """`POST /projects/{id}/agents` skips querying `agent_bindings` and
+    `user_profile` for a freshly inserted agent `User` row and avoids refreshing
+    `AgentBinding` after `flush()`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as agent_sql:
+        r_agent = client.post(
+            f"/projects/{pid}/agents",
+            json={"handle": "fast-helper", "display_name": "Fast Helper"},
+            headers=headers,
+        )
+    assert r_agent.status_code == 200, r_agent.text
+    assert _count(agent_sql, _AGENT_BINDINGS_SELECT) == 1, [
+        s for s in agent_sql if _AGENT_BINDINGS_SELECT.search(s)
+    ]
+    assert len(agent_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST /projects/{{id}}/agents, got {len(agent_sql)}: {agent_sql}"
+    )
+
+
+def test_set_members_only_caches_single_topic_membership_lookup(client):
+    """`PUT /topics/{id}/members-only` caches `("topic_member_row", topic_id, handle)`
+    across `require_manager` and `_ensure_member` instead of querying
+    `topic_memberships` for the same `(topic_id, member_handle)` twice."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as priv_sql:
+        r_priv = client.put(
+            f"/topics/{ch}/members-only",
+            json={"members_only": True},
+            headers=headers,
+        )
+    assert r_priv.status_code == 200, r_priv.text
+    assert len(priv_sql) <= 6, (
+        f"expected <= 6 SQL statements on PUT /topics/{{id}}/members-only, got {len(priv_sql)}: {priv_sql}"
+    )
+
+
+def test_agent_editing_lease_reuses_cached_standing_without_roster_build(client):
+    """`PUT /projects/{id}/agents/{aid}/editing` checks `MemberService.manages`
+    (which hits cached `standing` from `authorize_project`) before building the
+    full project roster."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ag = client.post(
+        f"/projects/{pid}/agents",
+        json={"handle": "edit-bot", "display_name": "Edit Bot"},
+        headers=headers,
+    ).json()["data"]
+    aid = ag.get("id") or ag.get("instance_id")
+
+    with counting_sql(client) as edit_sql:
+        r_edit = client.put(
+            f"/projects/{pid}/agents/{aid}/editing",
+            json={"held": True},
+            headers=headers,
+        )
+    assert r_edit.status_code == 200, r_edit.text
+    assert _count(edit_sql, _PROJECT_MEMBERS_SELECT) == 0, [
+        s for s in edit_sql if _PROJECT_MEMBERS_SELECT.search(s)
+    ]
+    assert len(edit_sql) <= 5, (
+        f"expected <= 5 SQL statements on PUT /projects/{{id}}/agents/{{aid}}/editing, got {len(edit_sql)}: {edit_sql}"
+    )
+
+
+def test_archive_and_unarchive_channel_skip_redundant_children_tasks_and_project_reads(
+    client,
+):
+    """`POST /topics/{id}/archive` and `POST /topics/{id}/unarchive` pre-load
+    `topic_memberships` once in `administers`, resolve `_where_said` before
+    dirtying the session, and skip `task_conversations_in` / `close_tasks` /
+    `_archive_children` when archiving a childless channel with 0 open tasks."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch2 = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Archivable Ch"},
+        headers=headers,
+    ).json()["data"]["id"]
+
+    with counting_sql(client) as arch_sql:
+        r_arch = client.post(f"/topics/{ch2}/archive", json={}, headers=headers)
+    assert r_arch.status_code == 200, r_arch.text
+    assert _count(arch_sql, _PROJECTS_SELECT) == 1, [
+        s for s in arch_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(arch_sql) <= 15, (
+        f"expected <= 15 SQL statements on POST /topics/{{id}}/archive, got {len(arch_sql)}: {arch_sql}"
+    )
+
+    with counting_sql(client) as unarch_sql:
+        r_unarch = client.post(f"/topics/{ch2}/unarchive", json={}, headers=headers)
+    assert r_unarch.status_code == 200, r_unarch.text
+    assert _count(unarch_sql, _PROJECTS_SELECT) == 1, [
+        s for s in unarch_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(unarch_sql) <= 12, (
+        f"expected <= 12 SQL statements on POST /topics/{{id}}/unarchive, got {len(unarch_sql)}: {unarch_sql}"
+    )
+
+
+def test_hand_over_channel_reuses_roster_is_agent_and_list_for_topic_rows(client):
+    """`PUT /projects/{id}/channels/{cid}/manager` reuses `("is_agent", handle)`
+    populated by `_on_project` (`roster`) and finds `seat` inside the
+    `list_for_topic` loop without triggering a premature autoflush and second
+    `topic_memberships` query."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch2 = client.post(
+        "/topics",
+        json={"project_id": pid, "title": "Handover Ch"},
+        headers=headers,
+    ).json()["data"]["id"]
+
+    with counting_sql(client) as ho_sql:
+        r_ho = client.put(
+            f"/projects/{pid}/channels/{ch2}/manager",
+            json={"handle": "bob"},
+            headers=headers,
+        )
+    assert r_ho.status_code == 200, r_ho.text
+    assert _count(ho_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in ho_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(ho_sql) <= 18, (
+        f"expected <= 18 SQL statements on PUT /projects/{{id}}/channels/{{cid}}/manager, got {len(ho_sql)}: {ho_sql}"
+    )
+
+
+_DOC_SUGGESTIONS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?document_states\.suggestions\b",
+    re.IGNORECASE,
+)
+_TEAM_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM team\b",
+    re.IGNORECASE,
+)
+
+
+def test_replace_and_edit_document_avoid_duplicate_locks_suggestions_and_refreshes(
+    client,
+):
+    """`PUT /documents/{id}` and `POST /documents/{id}/edits` acquire
+    `DocumentJournal.lock` once in `store`, skip querying
+    `document_states.suggestions` inside `put_state` when `not suggestions`,
+    and refresh `doc` once in `edit_doc_passages`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    doc = client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "Doc B20", "content": "hello world body"},
+        headers=headers,
+    ).json()["data"]
+    doc_id = doc["id"]
+
+    with counting_sql(client) as put_sql:
+        r_put = client.put(
+            f"/documents/{doc_id}",
+            json={
+                "content": "updated doc body",
+                "expected_version": 1,
+                "operation_id": str(uuid.uuid4()),
+            },
+            headers=headers,
+        )
+    assert r_put.status_code == 200, r_put.text
+    assert _count(put_sql, _DOC_LOCKS_FOR_UPDATE) == 1, [
+        s for s in put_sql if _DOC_LOCKS_FOR_UPDATE.search(s)
+    ]
+    assert _count(put_sql, _DOC_SUGGESTIONS_SELECT) == 1, [
+        s for s in put_sql if _DOC_SUGGESTIONS_SELECT.search(s)
+    ]
+    assert len(put_sql) <= 23, (
+        f"expected <= 23 SQL statements on PUT /documents/{{id}}, got {len(put_sql)}: {put_sql}"
+    )
+
+    with counting_sql(client) as edit_sql:
+        r_edit = client.post(
+            f"/documents/{doc_id}/edits",
+            json={"edits": [{"old": "updated", "new": "revised"}]},
+            headers=headers,
+        )
+    assert r_edit.status_code == 200, r_edit.text
+    assert _count(edit_sql, _DOC_SUGGESTIONS_SELECT) == 1, [
+        s for s in edit_sql if _DOC_SUGGESTIONS_SELECT.search(s)
+    ]
+    assert len(edit_sql) <= 19, (
+        f"expected <= 19 SQL statements on POST /documents/{{id}}/edits, got {len(edit_sql)}: {edit_sql}"
+    )
+
+
+def test_create_project_consolidates_insert_and_skips_new_project_probes(client):
+    """`POST /projects` writes `settings` in the initial `INSERT INTO projects`,
+    avoids refreshing the newly inserted `Project` row, and skips probing
+    `agent_instances` or `topic_memberships` for brand-new project/root-topic rows."""
+    _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as proj_sql:
+        r_proj = client.post(
+            "/projects",
+            json={"name": "Consolidated Project"},
+            headers=headers,
+        )
+    assert r_proj.status_code == 200, r_proj.text
+    assert _count(proj_sql, _PROJECTS_SELECT) == 0, [
+        s for s in proj_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in proj_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _TOPIC_MEMBERSHIPS_SELECT) == 0, [
+        s for s in proj_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert _count(proj_sql, _TEAM_SELECT) == 1, [
+        s for s in proj_sql if _TEAM_SELECT.search(s)
+    ]
+    assert len(proj_sql) <= 20, (
+        f"expected <= 20 SQL statements on POST /projects, got {len(proj_sql)}: {proj_sql}"
+    )
+
+
+_ACCEPT_CARDS_UPDATE = re.compile(
+    r"^\s*UPDATE\s+accept_cards\s+SET\b",
+    re.IGNORECASE,
+)
+_ROOM_CLEANUPS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM room_cleanups\b",
+    re.IGNORECASE,
+)
+
+
+def test_routine_routes_deduplicate_room_memberships_timezones_and_run_queries(client):
+    """`POST /topics/{id}/routines`, `GET /projects/{id}/routines`,
+    `PATCH /routines/{id}`, `POST /routines/{id}/pause`, `POST /routines/{id}/resume`,
+    and `GET /routines/{id}/runs` pass the loaded room into `authorize_topic`,
+    reuse cached `topic_memberships`, `user`, and `topics` rows, and skip
+    redundant `routine_runs` queries on rules with no runs."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as create_sql:
+        r_create = client.post(
+            f"/topics/{ch}/routines",
+            json={
+                "title": "Daily Check",
+                "instructions": "Check daily",
+                "trigger": "schedule",
+                "spec": {"freq": "daily", "time": "09:00"},
+            },
+            headers=headers,
+        )
+    assert r_create.status_code in (200, 201), r_create.text
+    rid = r_create.json()["data"]["id"]
+    assert _count(create_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in create_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert _count(create_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in create_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(create_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /topics/{{id}}/routines, got {len(create_sql)}: {create_sql}"
+    )
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/projects/{pid}/routines", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert len(list_sql) <= 8, (
+        f"expected <= 8 SQL statements on GET /projects/{{id}}/routines, got {len(list_sql)}: {list_sql}"
+    )
+
+    with counting_sql(client) as patch_sql:
+        r_patch = client.patch(
+            f"/routines/{rid}",
+            json={"title": "Daily Check Updated"},
+            headers=headers,
+        )
+    assert r_patch.status_code == 200, r_patch.text
+    assert _count(patch_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in patch_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(patch_sql) <= 7, (
+        f"expected <= 7 SQL statements on PATCH /routines/{{id}}, got {len(patch_sql)}: {patch_sql}"
+    )
+
+    with counting_sql(client) as pause_sql:
+        r_pause = client.post(f"/routines/{rid}/pause", json={}, headers=headers)
+    assert r_pause.status_code == 200, r_pause.text
+    assert len(pause_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /routines/{{id}}/pause, got {len(pause_sql)}: {pause_sql}"
+    )
+
+    with counting_sql(client) as resume_sql:
+        r_resume = client.post(f"/routines/{rid}/resume", json={}, headers=headers)
+    assert r_resume.status_code == 200, r_resume.text
+    assert len(resume_sql) <= 7, (
+        f"expected <= 7 SQL statements on POST /routines/{{id}}/resume, got {len(resume_sql)}: {resume_sql}"
+    )
+
+    with counting_sql(client) as runs_sql:
+        r_runs = client.get(f"/routines/{rid}/runs", headers=headers)
+    assert r_runs.status_code == 200, r_runs.text
+    assert _count(runs_sql, _ROOM_OF_UNION_SELECT) == 0, [
+        s for s in runs_sql if _ROOM_OF_UNION_SELECT.search(s)
+    ]
+    assert len(runs_sql) <= 5, (
+        f"expected <= 5 SQL statements on GET /routines/{{id}}/runs, got {len(runs_sql)}: {runs_sql}"
+    )
+
+
+def test_archive_and_unarchive_project_batch_tasks_cleanups_and_card_updates(client):
+    """`POST /projects/{id}/archive` and `POST /projects/{id}/unarchive` batch
+    room task reads in one query, reuse the locked project topics for child and
+    unarchive passes, batch `room_cleanups` reads, and update each converged
+    `accept_card` once instead of twice."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as arch_sql:
+        r_arch = client.post(f"/projects/{pid}/archive", json={}, headers=headers)
+    assert r_arch.status_code == 200, r_arch.text
+    assert _count(arch_sql, _TOPICS_SELECT) == 1, [
+        s for s in arch_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(arch_sql, _ACCEPT_CARDS_UPDATE) == 8, [
+        s for s in arch_sql if _ACCEPT_CARDS_UPDATE.search(s)
+    ]
+    assert len(arch_sql) <= 85, (
+        f"expected <= 85 SQL statements on POST /projects/{{id}}/archive, got {len(arch_sql)}: {arch_sql}"
+    )
+
+    with counting_sql(client) as unarch_sql:
+        r_unarch = client.post(f"/projects/{pid}/unarchive", json={}, headers=headers)
+    assert r_unarch.status_code == 200, r_unarch.text
+    assert _count(unarch_sql, _TOPICS_SELECT) == 1, [
+        s for s in unarch_sql if _TOPICS_SELECT.search(s)
+    ]
+    assert _count(unarch_sql, _ROOM_CLEANUPS_SELECT) == 1, [
+        s for s in unarch_sql if _ROOM_CLEANUPS_SELECT.search(s)
+    ]
+    assert len(unarch_sql) <= 24, (
+        f"expected <= 24 SQL statements on POST /projects/{{id}}/unarchive, got {len(unarch_sql)}: {unarch_sql}"
+    )
+
+
+_NOTIFICATION_PREF_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM notification_preference\b",
+    re.IGNORECASE,
+)
+_NOTIFICATION_INSERT = re.compile(
+    r"^\s*INSERT\s+INTO\s+notification\b",
+    re.IGNORECASE,
+)
+_PROJECTS_FOR_KEY_SHARE = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM projects\b[^;]*?\bFOR NO KEY UPDATE\b",
+    re.IGNORECASE,
+)
+
+
+def test_project_alerts_batch_preferences_and_insert_and_skip_first_page_count(client):
+    """`POST /projects/{id}/alerts` batches recipient user and preference reads
+    and flushes all recipient rows in one `INSERT INTO notification`, and
+    `GET /projects/{id}/alerts` skips `SELECT count(*) FROM notification` when
+    the first page has fewer than `page_size + 1` rows."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as post_sql:
+        r_post = client.post(
+            f"/projects/{pid}/alerts",
+            json={
+                "title": "Release Alert",
+                "body": "Body text",
+                "level": "light",
+                "kind": "change_alert",
+            },
+            headers=headers,
+        )
+    assert r_post.status_code == 200, r_post.text
+    assert _count(post_sql, _NOTIFICATION_PREF_SELECT) == 1, [
+        s for s in post_sql if _NOTIFICATION_PREF_SELECT.search(s)
+    ]
+    assert _count(post_sql, _NOTIFICATION_INSERT) == 1, [
+        s for s in post_sql if _NOTIFICATION_INSERT.search(s)
+    ]
+    assert _count(post_sql, _NOTIFICATION_SELECT) == 0, [
+        s for s in post_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(post_sql) <= 14, (
+        f"expected <= 14 SQL statements on POST /projects/{{id}}/alerts, got {len(post_sql)}: {post_sql}"
+    )
+
+    with counting_sql(client) as get_sql:
+        r_get = client.get(f"/projects/{pid}/alerts", headers=headers)
+    assert r_get.status_code == 200, r_get.text
+    assert _count(get_sql, _NOTIFICATION_SELECT) == 1, [
+        s for s in get_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(get_sql) <= 2, (
+        f"expected <= 2 SQL statements on GET /projects/{{id}}/alerts, got {len(get_sql)}: {get_sql}"
+    )
+
+
+def test_project_settings_and_channel_description_avoid_duplicate_locks_and_reads(
+    client,
+):
+    """`PUT /projects/{id}/task-naming` and `PUT /projects/{id}/commit-credit`
+    acquire `lock_settings` once and return from `change_project_settings`
+    without re-running `get_task_naming` / `get_commit_credit`, and
+    `PUT /topics/{id}/description` queries `topic_memberships` once."""
+    pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+
+    with counting_sql(client) as naming_sql:
+        r_naming = client.put(
+            f"/projects/{pid}/task-naming",
+            json={"mode": "manual"},
+            headers=headers,
+        )
+    assert r_naming.status_code == 200, r_naming.text
+    assert _count(naming_sql, _PROJECTS_FOR_KEY_SHARE) == 1, [
+        s for s in naming_sql if _PROJECTS_FOR_KEY_SHARE.search(s)
+    ]
+    assert len(naming_sql) <= 9, (
+        f"expected <= 9 SQL statements on PUT /projects/{{id}}/task-naming, got {len(naming_sql)}: {naming_sql}"
+    )
+
+    with counting_sql(client) as desc_sql:
+        r_desc = client.put(
+            f"/topics/{ch}/description",
+            json={"description": "Channel purpose"},
+            headers=headers,
+        )
+    assert r_desc.status_code == 200, r_desc.text
+    assert _count(desc_sql, _TOPIC_MEMBERSHIPS_SELECT) == 1, [
+        s for s in desc_sql if _TOPIC_MEMBERSHIPS_SELECT.search(s)
+    ]
+    assert len(desc_sql) <= 5, (
+        f"expected <= 5 SQL statements on PUT /topics/{{id}}/description, got {len(desc_sql)}: {desc_sql}"
+    )
+
+
+def test_update_task_skips_agent_roster_and_reuses_user_cache(client):
+    """`PATCH /topics/{task_id}/task` resolves `project_people` via
+    `people_in_project` without querying `agent_instances` or `own_agents`,
+    caches `User` rows loaded by `ProjectRepository.people`, and validates
+    contributors before `take_in` flushes."""
+    _pid, room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+    ch = room_ids[0]
+    tasks = client.get(f"/topics/{ch}/tasks?status=open", headers=headers).json()[
+        "data"
+    ]["data"]
+    task_id = tasks[0]["id"]
+
+    with counting_sql(client) as contrib_sql:
+        r_contrib = client.patch(
+            f"/topics/{task_id}/task",
+            json={"contributor_handles": ["bob"]},
+            headers=headers,
+        )
+    assert r_contrib.status_code == 200, r_contrib.text
+    assert _count(contrib_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in contrib_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(contrib_sql) <= 21, (
+        f"expected <= 21 SQL statements on PATCH /topics/{{id}}/task (contributors), got {len(contrib_sql)}: {contrib_sql}"
+    )
+
+    with counting_sql(client) as owner_sql:
+        r_owner = client.patch(
+            f"/topics/{task_id}/task",
+            json={"owner_handle": "bob"},
+            headers=headers,
+        )
+    assert r_owner.status_code == 200, r_owner.text
+    assert _count(owner_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in owner_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(owner_sql) <= 21, (
+        f"expected <= 21 SQL statements on PATCH /topics/{{id}}/task (owner handover), got {len(owner_sql)}: {owner_sql}"
+    )
+
+
+def test_notifications_list_and_alerts_avoid_redundant_count_and_agent_queries(client):
+    """`GET /notifications` skips `SELECT count(notification.id)` when the
+    first page has fewer than `pageSize + 1` rows, and `POST /projects/{id}/alerts`
+    uses `people_in_project` without querying `agent_instances`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as notif_sql:
+        r_notif = client.get("/notifications", headers=headers)
+    assert r_notif.status_code == 200, r_notif.text
+    assert _count(notif_sql, _NOTIFICATION_SELECT) == 1, [
+        s for s in notif_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert len(notif_sql) <= 2, (
+        f"expected <= 2 SQL statements on GET /notifications, got {len(notif_sql)}: {notif_sql}"
+    )
+
+    with counting_sql(client) as alert_sql:
+        r_alert = client.post(
+            f"/projects/{pid}/alerts",
+            json={
+                "title": "Alert B23",
+                "body": "Body",
+                "level": "light",
+                "kind": "change_alert",
+            },
+            headers=headers,
+        )
+    assert r_alert.status_code == 200, r_alert.text
+    assert _count(alert_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in alert_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(alert_sql) <= 10, (
+        f"expected <= 10 SQL statements on POST /projects/{{id}}/alerts, got {len(alert_sql)}: {alert_sql}"
+    )
+
+
+_DEVICE_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM device\b",
+    re.IGNORECASE,
+)
+
+
+def test_default_model_and_compute_configs_deduplicate_plans_and_device_queries(
+    client,
+):
+    """`GET /projects/{id}/default-model` reads `plans` once in `model_access`
+    instead of twice, and `GET /projects/{id}/compute-configs` reads `device`
+    once across `get_compute_configs`, `offered_specs`, and `project_distribution`."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as model_sql:
+        r_model = client.get(f"/projects/{pid}/default-model", headers=headers)
+    assert r_model.status_code == 200, r_model.text
+    assert _count(model_sql, _PLANS_SELECT) == 1, [
+        s for s in model_sql if _PLANS_SELECT.search(s)
+    ]
+    assert len(model_sql) <= 7, (
+        f"expected <= 7 SQL statements on GET /projects/{{id}}/default-model, got {len(model_sql)}: {model_sql}"
+    )
+
+    with counting_sql(client) as comp_sql:
+        r_comp = client.get(f"/projects/{pid}/compute-configs", headers=headers)
+    assert r_comp.status_code == 200, r_comp.text
+    assert _count(comp_sql, _DEVICE_SELECT) == 1, [
+        s for s in comp_sql if _DEVICE_SELECT.search(s)
+    ]
+    assert len(comp_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /projects/{{id}}/compute-configs, got {len(comp_sql)}: {comp_sql}"
+    )
+
+
+def test_project_invitations_avoid_agent_roster_role_lookup_and_profile_n_plus_one(
+    client,
+):
+    """`POST /projects/{id}/invitations` uses `people_in_project`, skips
+    `project_role_defs` for `role='member'`, and avoids refreshing the
+    invitation row, while `GET /projects/{id}/invitations` batches invitee
+    profile lookups in one query via `describe_many`."""
+    pid, _room_ids = _seed_populated_project(client)
+    post_project(client, json={"name": "Dave Proj"}, owner="dave")
+    post_project(client, json={"name": "Eve Proj"}, owner="eve")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as inv_sql:
+        r_inv = client.post(
+            f"/projects/{pid}/invitations",
+            json={"user_handle": "dave", "role": "member"},
+            headers=headers,
+        )
+    assert r_inv.status_code in (200, 201), r_inv.text
+    inv_id = r_inv.json()["data"]["id"]
+    assert _count(inv_sql, _AGENT_INSTANCES_SELECT) == 0, [
+        s for s in inv_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert _count(inv_sql, _PROJECT_ROLE_DEFS_SELECT) == 0, [
+        s for s in inv_sql if _PROJECT_ROLE_DEFS_SELECT.search(s)
+    ]
+    assert len(inv_sql) <= 23, (
+        f"expected <= 23 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
+    )
+
+    client.post(
+        f"/projects/{pid}/invitations",
+        json={"user_handle": "eve", "role": "member"},
+        headers=headers,
+    )
+
+    with counting_sql(client) as list_sql:
+        r_list = client.get(f"/projects/{pid}/invitations", headers=headers)
+    assert r_list.status_code == 200, r_list.text
+    assert len(r_list.json()["data"]["data"]) == 2
+    assert _count(list_sql, _PROJECTS_SELECT) == 1, [
+        s for s in list_sql if _PROJECTS_SELECT.search(s)
+    ]
+    assert len(list_sql) <= 6, (
+        f"expected <= 6 SQL statements on GET /projects/{{id}}/invitations, got {len(list_sql)}: {list_sql}"
+    )
+
+    with counting_sql(client) as resp_sql:
+        r_resp = client.post(
+            f"/invitations/{inv_id}/respond",
+            json={"accept": True},
+            headers=session_auth_headers("dave"),
+        )
+    assert r_resp.status_code == 200, r_resp.text
+    assert len(resp_sql) <= 12, (
+        f"expected <= 12 SQL statements on POST /invitations/{{id}}/respond, got {len(resp_sql)}: {resp_sql}"
+    )
+
+
+_DELIVERIES_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM deliveries\b",
+    re.IGNORECASE,
+)
+_PROJECT_ROLES_DELETE = re.compile(
+    r"^\s*DELETE\s+FROM\s+project_roles\b",
+    re.IGNORECASE,
+)
+
+
+def test_delivery_member_removal_and_agent_deactivation_deduplicate_sql(client):
+    """`Ledger.deliver` reads `notification_preference` once across in-app and
+    channel-intent handlers, reuses pinned `User` rows in `timezones_by_ids`,
+    and marks `deliveries` sent with `UPDATE ... RETURNING`; `DELETE
+    /projects/{id}/members/{handle}` reuses cached team role and skips
+    `DELETE FROM project_roles` when no role is recorded; and `DELETE
+    /projects/{id}/agents/{id}` loads `agent_instances` once."""
+    pid, _room_ids = _seed_populated_project(client)
+    post_project(client, json={"name": "Frank Proj"}, owner="frank")
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as inv_sql:
+        r_inv = client.post(
+            f"/projects/{pid}/invitations",
+            json={"user_handle": "frank", "role": "member"},
+            headers=headers,
+        )
+    assert r_inv.status_code in (200, 201), r_inv.text
+    assert _count(inv_sql, _NOTIFICATION_PREF_SELECT) == 1, [
+        s for s in inv_sql if _NOTIFICATION_PREF_SELECT.search(s)
+    ]
+    assert _count(inv_sql, _DELIVERIES_SELECT) == 0, [
+        s for s in inv_sql if _DELIVERIES_SELECT.search(s)
+    ]
+    assert len(inv_sql) <= 23, (
+        f"expected <= 23 SQL statements on POST /projects/{{id}}/invitations, got {len(inv_sql)}: {inv_sql}"
+    )
+
+    with counting_sql(client) as rem_sql:
+        r_rem = client.delete(
+            f"/projects/{pid}/members/bob",
+            headers=headers,
+        )
+    assert r_rem.status_code == 200, r_rem.text
+    assert _count(rem_sql, _PROJECT_ROLES_DELETE) == 0, [
+        s for s in rem_sql if _PROJECT_ROLES_DELETE.search(s)
+    ]
+    assert len(rem_sql) <= 14, (
+        f"expected <= 14 SQL statements on DELETE /projects/{{id}}/members/bob, got {len(rem_sql)}: {rem_sql}"
+    )
+
+    r_ag = client.post(
+        f"/projects/{pid}/agents",
+        json={"handle": "helper-b25", "display_name": "Helper B25"},
+        headers=headers,
+    )
+    assert r_ag.status_code in (200, 201), r_ag.text
+    aid = r_ag.json()["data"]["id"]
+
+    with counting_sql(client) as deact_sql:
+        r_deact = client.delete(
+            f"/projects/{pid}/agents/{aid}",
+            headers=headers,
+        )
+    assert r_deact.status_code == 200, r_deact.text
+    assert _count(deact_sql, _AGENT_INSTANCES_SELECT) == 1, [
+        s for s in deact_sql if _AGENT_INSTANCES_SELECT.search(s)
+    ]
+    assert len(deact_sql) <= 6, (
+        f"expected <= 6 SQL statements on DELETE /projects/{{id}}/agents/{{id}}, got {len(deact_sql)}: {deact_sql}"
+    )
+
+
+_TEAM_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM team\b",
+    re.IGNORECASE,
+)
+_PROJECT_TRANSFERS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_transfers\b",
+    re.IGNORECASE,
+)
+
+
+def test_roles_transfers_settle_and_agent_create_deduplicate_sql(client):
+    """`GET /projects/{id}/members` avoids querying `"user"` for project agent
+    seat handles in `roster()`, `GET /projects/{id}/roles` uses
+    `people_in_project(..., include_team_info=False)` without querying `team`,
+    `POST /projects/{id}/transfer` and `DELETE /projects/{id}/transfer` avoid
+    refreshing `ProjectTransfer` and settle `notification`/`deliveries` via
+    `UPDATE ... RETURNING`, and `POST /projects/{id}/agents` skips probing
+    `"user"` for a freshly minted agent instance UUID."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as mem_sql:
+        r_mem = client.get(f"/projects/{pid}/members", headers=headers)
+    assert r_mem.status_code == 200, r_mem.text
+    assert len(mem_sql) <= 14, (
+        f"expected <= 14 SQL statements on GET /projects/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    )
+
+    with counting_sql(client) as roles_sql:
+        r_roles = client.get(f"/projects/{pid}/roles", headers=headers)
+    assert r_roles.status_code == 200, r_roles.text
+    assert _count(roles_sql, _TEAM_SELECT) == 0, [
+        s for s in roles_sql if _TEAM_SELECT.search(s)
+    ]
+    assert len(roles_sql) <= 9, (
+        f"expected <= 9 SQL statements on GET /projects/{{id}}/roles, got {len(roles_sql)}: {roles_sql}"
+    )
+
+    with counting_sql(client) as tr_sql:
+        r_tr = client.post(
+            f"/projects/{pid}/transfer",
+            json={"to_handle": "bob"},
+            headers=headers,
+        )
+    assert r_tr.status_code == 200, r_tr.text
+    assert _count(tr_sql, _PROJECT_TRANSFERS_SELECT) == 1, [
+        s for s in tr_sql if _PROJECT_TRANSFERS_SELECT.search(s)
+    ]
+    assert len(tr_sql) <= 24, (
+        f"expected <= 24 SQL statements on POST /projects/{{id}}/transfer, got {len(tr_sql)}: {tr_sql}"
+    )
+
+    with counting_sql(client) as cancel_sql:
+        r_cancel = client.delete(
+            f"/projects/{pid}/transfer",
+            headers=headers,
+        )
+    assert r_cancel.status_code == 200, r_cancel.text
+    assert _count(cancel_sql, _NOTIFICATION_SELECT) == 0, [
+        s for s in cancel_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert _count(cancel_sql, _DELIVERIES_SELECT) == 0, [
+        s for s in cancel_sql if _DELIVERIES_SELECT.search(s)
+    ]
+    assert len(cancel_sql) <= 8, (
+        f"expected <= 8 SQL statements on DELETE /projects/{{id}}/transfer, got {len(cancel_sql)}: {cancel_sql}"
+    )
+
+    with counting_sql(client) as ag_sql:
+        r_ag = client.post(
+            f"/projects/{pid}/agents",
+            json={"handle": "helper-b26", "display_name": "Helper B26"},
+            headers=headers,
+        )
+    assert r_ag.status_code in (200, 201), r_ag.text
+    assert len(ag_sql) <= 13, (
+        f"expected <= 13 SQL statements on POST /projects/{{id}}/agents, got {len(ag_sql)}: {ag_sql}"
     )

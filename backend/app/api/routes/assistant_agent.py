@@ -1348,8 +1348,7 @@ async def agent_file_link(
     把文件取下来。"""
     _, shelf = await _my_library(resolver, db)
     name = body.path.strip().removeprefix("library/")
-    stored = await library_records.stored_file(db, shelf, name)
-    url = await library_records.download_url(db, shelf, name)
+    stored, url = await library_records.download_link(db, shelf, name)
     return ok({"url": _reachable(url), "path": name, "bytes": stored.size})
 
 

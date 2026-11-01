@@ -177,15 +177,15 @@ async def _may_configure(
 
     Or they **manage the project**.
     """
+    if await MemberService(db).manages(
+        project_id, actor.handle, Permission.configure_agents
+    ):
+        return True
     own = await owned_instance(db, instance.id)
     if own is not None and own.owner_user_id == actor.user_id:
         return True
-    if await TopicMemberService(db).on_project(
+    return await TopicMemberService(db).on_project(
         project_id, actor.handle, team=project_team
-    ):
-        return True
-    return await MemberService(db).manages(
-        project_id, actor.handle, Permission.configure_agents
     )
 
 
@@ -365,6 +365,7 @@ async def deactivate_project_agent(
     project_id = at.project.id
     project = at.project
     service = AgentInstanceService(db)
+    await service.list_team(project_id)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     await service.deactivate(project, instance)
     return ok({"deleted": True})

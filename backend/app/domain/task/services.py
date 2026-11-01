@@ -1075,23 +1075,23 @@ class TaskSubmissionService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        total = await self._submission_repo.count_submissions(
-            task_id=task_id,
-            participant_id=participant_id,
-            stage=stage,
-            all_versions=all_versions,
-            reviewed=reviewed,
+        # A first page that is not full holds every submission there is.
+        total = (
+            len(submissions)
+            if offset == 0 and len(submissions) < limit
+            else await self._submission_repo.count_submissions(
+                task_id=task_id,
+                participant_id=participant_id,
+                stage=stage,
+                all_versions=all_versions,
+                reviewed=reviewed,
+            )
         )
 
-        # Fetch memberships in batch
-        membership_ids = {s.membership_id for s in submissions}
-        memberships_for_task = await self._membership_repo.list_memberships_for_task(
-            task_id=task_id,
-            approved=None,
+        # The claims these submissions belong to, not the task's whole roster.
+        membership_map = await self._membership_repo.get_by_ids(
+            sorted({s.membership_id for s in submissions})
         )
-        membership_map = {
-            m.id: m for m in memberships_for_task if m.id in membership_ids
-        }
 
         submission_ids = [s.id for s in submissions]
         entries_by_submission = await self._entry_repo.list_by_submission_ids(

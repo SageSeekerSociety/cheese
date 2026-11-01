@@ -268,7 +268,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/llm_proxy.py": 7,
     "app/api/routes/materialbundles.py": 2,
     "app/api/routes/materials.py": 3,
-    "app/api/routes/notifications_flat.py": 5,
+    "app/api/routes/notifications_flat.py": 4,
     "app/api/routes/notifications_live.py": 1,
     "app/api/routes/preview_sessions.py": 3,
     "app/api/routes/project_channels.py": 1,

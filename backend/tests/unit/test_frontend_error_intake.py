@@ -3,6 +3,7 @@ the per-project rate cap (a render-loop error must not flood blocks)."""
 
 from app.domain.frontend_log import (
     DEDUP_WINDOW_S,
+    MAX_ALERTS_PER_WINDOW,
     MAX_BLOCKS_PER_WINDOW,
     FrontendErrorIn,
     FrontendErrorIntake,
@@ -43,3 +44,16 @@ def test_event_rendering() -> None:
     assert meta["event_type"] == "frontend_error"
     assert meta["stack"] == "s"
     assert meta["source"] == "a.js:1"
+
+
+def test_alerts_stop_across_projects_while_reports_are_still_admitted() -> None:
+    """Anyone can report; past the window's alerts the admins hear nothing more,
+    whichever projects the reports name, until the window has moved on."""
+    intake = FrontendErrorIntake()
+    now = 1000.0
+    for i in range(MAX_ALERTS_PER_WINDOW):
+        assert intake.admit(f"project-{i}", "fp", now=now)
+        assert intake.may_alert(now=now)
+    assert intake.admit("project-new", "fp", now=now)
+    assert not intake.may_alert(now=now)
+    assert intake.may_alert(now=now + DEDUP_WINDOW_S + 1)

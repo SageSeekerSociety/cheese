@@ -194,6 +194,12 @@ async def _resolve_owner_of(
     session: AsyncSession, project: Project, owner: str | None
 ) -> str | None:
     if owner:
+        if isinstance(session, AsyncSession):
+            found_team, team_roles = recall(
+                session, ("team_roles_by_handle", project.team_id)
+            )
+            if found_team and owner in team_roles:
+                return owner
         user = await UserRepository(session).get_by_username(owner)
         if (
             user is not None

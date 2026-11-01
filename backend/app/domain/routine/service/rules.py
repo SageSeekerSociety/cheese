@@ -133,17 +133,21 @@ async def runs(
     where = [RoutineRun.routine_id == routine_id]
     if failed_only:
         where.append(RoutineRun.status.in_(("failed", "skipped")))
+    rows = list(
+        await svc._session.scalars(
+            select(RoutineRun)
+            .where(*where)
+            .order_by(RoutineRun.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    )
+    if offset == 0 and len(rows) < limit:
+        return rows, len(rows)
     total = await svc._session.scalar(
         select(func.count()).select_from(RoutineRun).where(*where)
     )
-    rows = await svc._session.scalars(
-        select(RoutineRun)
-        .where(*where)
-        .order_by(RoutineRun.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    return list(rows), int(total or 0)
+    return rows, int(total or 0)
 
 
 async def latest_run_statuses(

@@ -41,6 +41,7 @@ FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
 # The docs' two ways of being served; docker-entrypoint.sh picks one at start.
 COPY nginx/docs /etc/nginx/docs-modes
+COPY nginx/snippets /etc/nginx/snippets
 # The mainland redirect (MAINLAND_ENTRY): what it decides on, and the address
 # space it decides about. docker-entrypoint.sh writes the rest at start.
 COPY nginx/mainland /etc/nginx/mainland

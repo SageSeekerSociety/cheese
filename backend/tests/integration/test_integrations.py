@@ -508,8 +508,23 @@ def _authorize(client, person, row_id):
         follow_redirects=False,
     )
     assert back.status_code == 302, back.text
-    assert "feishu=ok" in back.headers["location"], back.headers["location"]
+    query = _claim(client, person, back.headers["location"])
+    assert query == {"feishu": "ok"}, query
     return url
+
+
+def _claim(client, person, location: str) -> dict:
+    """The connections page, signed in, claiming what the callback held."""
+    query = parse_qs(urlparse(location).query)
+    (integration,) = query["feishu_integration"]
+    (handoff,) = query["feishu_handoff"]
+    r = client.patch(
+        f"/me/integrations/{integration}",
+        json={"feishu_handoff": handoff},
+        headers=person,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["authorization"]
 
 
 def _shared_app_connection(client, person, project, *, admin=ADMIN, monkeypatch=None):
@@ -678,10 +693,56 @@ def test_the_callback_lands_with_an_outcome_code(client, feishu_stub, monkeypatc
         "feishu_detail": ["access_denied"],
     }
     feishu_stub.refuse_code = True
-    assert _feishu_landing(client, code="c", state=state) == {
-        "feishu": ["exchange_failed"],
-        "feishu_detail": ["20003 invalid code"],
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": "c", "state": state},
+        follow_redirects=False,
+    )
+    assert _claim(client, person, back.headers["location"]) == {
+        "feishu": "exchange_failed",
+        "feishu_detail": "20003 invalid code",
     }
+
+
+def test_an_authorization_finished_by_someone_else_saves_nothing(
+    client, feishu_stub, monkeypatch
+):
+    """The state names a flow, not whose browser finishes it. Somebody who
+    starts a connection and sends its link to another person must not end up
+    holding that person's Feishu tokens: the callback keeps the result for the
+    starter, and another person's claim spends it without saving anything."""
+    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
+    starter, _project, _room = _setup(client)
+    _configure_platform_app(client)
+    row = client.post("/me/integrations/feishu", headers=starter).json()["data"]
+    url = client.get(
+        f"/me/integrations/{row['id']}/feishu/authorize", headers=starter
+    ).json()["data"]["url"]
+    code = feishu_stub.consent(url)
+    state = parse_qs(urlparse(url).query)["state"][0]
+    back = client.get(
+        "/integrations/feishu/callback",
+        params={"code": code, "state": state},
+        follow_redirects=False,
+    )
+    # Nothing is saved by the callback itself.
+    listed = client.get("/me/integrations", headers=starter).json()["data"]["data"]
+    assert listed[0]["user_authorized"] is False
+
+    stranger = {"Authorization": f"Bearer {seed_user(client, 'stranger')}"}
+    query = parse_qs(urlparse(back.headers["location"]).query)
+    claimed = client.patch(
+        f"/me/integrations/{query['feishu_integration'][0]}",
+        json={"feishu_handoff": query["feishu_handoff"][0]},
+        headers=stranger,
+    )
+    # Not the stranger's connection: nothing of it exists for them.
+    assert claimed.status_code == 404, claimed.text
+    listed = client.get("/me/integrations", headers=starter).json()["data"]["data"]
+    assert listed[0]["user_authorized"] is False
+    assert not any(
+        t.get("grant_type") == "authorization_code" for t in feishu_stub.tokens
+    )
 
 
 def test_the_callback_keeps_the_members_own_tokens(client, feishu_stub, monkeypatch):

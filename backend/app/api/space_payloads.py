@@ -386,12 +386,11 @@ async def _hydrate_people(
     """
     ids = list(user_ids)
     users = await user_repo.get_by_ids(ids)
-    profiles = await profile_repo.get_profiles_by_user_ids(ids)
-    # 「挑过的头像」和档案分开问，别回档案上的 avatar_id：每个注册路径都往那一列写死
+    # 「挑过的头像」按头像类型认，别回档案上的 avatar_id：每个注册路径都往那一列写死
     # 了全局默认（默认头像 id 因环境而异，见 UserProfileRepository.chosen_avatar_ids），
     # 直接回它会让所有没挑过头像的人共用同一张脸 —— 而区分人正是头像唯一的活。没挑过
-    # 的人不在映射里，这里回 None，前端据此画彩色首字母。
-    chosen_avatars = await profile_repo.chosen_avatar_ids(ids)
+    # 的人不在映射里，这里回 None，前端据此画彩色首字母。档案和头像出自同一次读取。
+    profiles, chosen_avatars = await profile_repo.profiles_and_chosen_avatars(ids)
     people: dict[int, dict] = {}
     for user_id in ids:
         user = users.get(user_id)

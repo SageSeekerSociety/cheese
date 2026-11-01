@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import records as library_records
@@ -31,8 +32,7 @@ from app.domain.project_material_rows import (
     _tasks,
 )
 from app.domain.thread.models import Thread
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
-from app.domain.topic.reads import open_rooms
+from app.domain.topic.models import Topic, TopicKind, TopicStatus, not_a_private_chat
 from app.domain.user.models import User, UserProfile
 
 WINDOW = timedelta(days=14)
@@ -104,18 +104,31 @@ class Rooms:
 
 
 async def public_rooms(session: AsyncSession, project_id: uuid.UUID) -> Rooms:
+    if isinstance(session, AsyncSession):
+        if session.autoflush:
+            await session.flush()
+        found, cached = recall(session, ("public_rooms", project_id))
+        if found:
+            return cached
     rows = await session.execute(
         select(Topic.id, Topic.title).where(
             Topic.project_id == project_id,
             Topic.kind.in_((TopicKind.root, TopicKind.topic)),
             Topic.status == TopicStatus.active,
             Topic.deleted_at.is_(None),
+            not_a_private_chat(),
+            Topic.members_only.is_(False),
         )
     )
-    titles = dict(rows.tuples().all())
-    # 私聊和私密频道不算：项目里不是人人看得到（`open_rooms` 说哪些是）。
-    shown = await open_rooms(session, set(titles))
-    return Rooms({room: title for room, title in titles.items() if room in shown})
+    out = Rooms(dict(rows.tuples().all()))
+    if isinstance(session, AsyncSession):
+        remember(
+            session,
+            ("public_rooms", project_id),
+            out,
+            tables=frozenset({"topics"}),
+        )
+    return out
 
 
 @dataclass(frozen=True)
@@ -135,30 +148,46 @@ async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
     rooms = await public_rooms(session, project_id)
     room_ids = list(rooms.names)
     overview = await pointed_overview(session, project_id)
+    task_rows = (
+        list(
+            (
+                await session.execute(
+                    select(
+                        _tasks.c.id,
+                        _tasks.c.created_at,
+                        _tasks.c.closed_at,
+                    ).where(
+                        _tasks.c.project_id == project_id,
+                        _tasks.c.room_id.in_(room_ids),
+                    )
+                )
+            ).all()
+        )
+        if room_ids
+        else []
+    )
+    task_ids = [r[0] for r in task_rows]
     tasks = (
-        await session.execute(
-            select(
-                func.count(_tasks.c.id),
-                func.max(_tasks.c.created_at),
-                func.max(_tasks.c.closed_at),
-            ).where(_tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids))
+        len(task_rows),
+        max((r[1] for r in task_rows if r[1] is not None), default=None),
+        max((r[2] for r in task_rows if r[2] is not None), default=None),
+    )
+    accepted = (
+        await session.scalar(
+            select(func.max(_cards.c.decided_at)).where(
+                _cards.c.task_id.in_(task_ids),
+                _cards.c.status == STATUS_ACCEPTED,
+            )
         )
-    ).one()
-    accepted = await session.scalar(
-        select(func.max(_cards.c.decided_at))
-        .join(_tasks, _tasks.c.id == _cards.c.task_id)
-        .where(
-            _tasks.c.project_id == project_id,
-            _tasks.c.room_id.in_(room_ids),
-            _cards.c.status == STATUS_ACCEPTED,
-        )
+        if task_ids
+        else None
     )
     said = await session.scalar(
         select(func.max(Block.created_at)).where(
             Block.project_id == project_id,
             Block.kind == BlockKind.message,
             Block.conversation_id.in_(
-                await _conversations(session, project_id, room_ids)
+                await _conversations(session, project_id, room_ids, task_ids=task_ids)
             ),
         )
     )
@@ -174,14 +203,25 @@ async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
 
 
 async def _conversations(
-    session: AsyncSession, project_id: uuid.UUID, room_ids: list[uuid.UUID]
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_ids: list[uuid.UUID],
+    *,
+    task_ids: list[uuid.UUID] | None = None,
 ) -> list[uuid.UUID]:
     """这些频道里所有对话的 id：频道主线、频道里的任务、频道里的支线。"""
     if not room_ids:
         return []
-    tasks = await session.scalars(
-        select(_tasks.c.id).where(
-            _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
+    tasks = (
+        task_ids
+        if task_ids is not None
+        else list(
+            await session.scalars(
+                select(_tasks.c.id).where(
+                    _tasks.c.project_id == project_id,
+                    _tasks.c.room_id.in_(room_ids),
+                )
+            )
         )
     )
     threads = await session.scalars(
@@ -237,27 +277,46 @@ async def gather(
             select(Document.id, Document.content).where(Document.id.in_(doc_ids))
         )
         docs = {doc_id: content for doc_id, content in rows}
-    accepted = list(
-        await session.execute(
-            select(
-                _cards.c.task_id,
-                _cards.c.change_subject,
-                _cards.c.deliverable_name,
+    accepted = (
+        list(
+            await session.execute(
+                select(
+                    _cards.c.task_id,
+                    _cards.c.change_subject,
+                    _cards.c.deliverable_name,
+                )
+                .where(
+                    _cards.c.task_id.in_(list(by_id)),
+                    _cards.c.status == STATUS_ACCEPTED,
+                    _cards.c.decided_at > since,
+                )
+                .order_by(_cards.c.decided_at.desc())
             )
-            .where(
-                _cards.c.task_id.in_(list(by_id)),
-                _cards.c.status == STATUS_ACCEPTED,
-                _cards.c.decided_at > since,
-            )
-            .order_by(_cards.c.decided_at.desc())
         )
+        if by_id
+        else []
     )
 
-    talk_rooms = await _talk(session, project_id, room_ids, since)
+    talk_rooms = await _talk(
+        session,
+        project_id,
+        room_ids,
+        since,
+        task_rooms={t.id: t.room_id for t in tasks},
+    )
     handles = {author for said in talk_rooms.values() for author, _, _ in said}
     names = await _names(session, handles)
 
-    name = await session.scalar(select(Project.name).where(Project.id == project_id))
+    found_proj, cached_proj = (
+        recall(session, ("project", project_id))
+        if isinstance(session, AsyncSession)
+        else (False, None)
+    )
+    name = (
+        cached_proj.name
+        if found_proj and cached_proj is not None
+        else await session.scalar(select(Project.name).where(Project.id == project_id))
+    )
     lines = [f"# 项目：{name or ''}", f"今天：{now:%Y-%m-%d}", ""]
     lines += ["## 项目目标（人写的项目总览文档）", _clip(goal) or "（空）", ""]
 
@@ -323,17 +382,22 @@ async def _talk(
     project_id: uuid.UUID,
     room_ids: list[uuid.UUID],
     since: datetime,
+    *,
+    task_rooms: dict[uuid.UUID, uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, list[tuple[str, str, datetime]]]:
     """每个频道近两周人说的最后几条，旧的在前；没人说话的频道不在里面。"""
     if not room_ids:
         return {}
     room_of: dict[uuid.UUID, uuid.UUID] = {room: room for room in room_ids}
-    for task_id, room_id in await session.execute(
-        select(_tasks.c.id, _tasks.c.room_id).where(
-            _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
-        )
-    ):
-        room_of[task_id] = room_id
+    if task_rooms is not None:
+        room_of.update(task_rooms)
+    else:
+        for task_id, room_id in await session.execute(
+            select(_tasks.c.id, _tasks.c.room_id).where(
+                _tasks.c.project_id == project_id, _tasks.c.room_id.in_(room_ids)
+            )
+        ):
+            room_of[task_id] = room_id
     for thread_id, room_id in await session.execute(
         select(Thread.id, Thread.room_id).where(
             Thread.project_id == project_id, Thread.room_id.in_(room_ids)

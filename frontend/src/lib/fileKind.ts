@@ -241,9 +241,9 @@ export function suffixOf(path: string): string {
 /** 附件块左边那个方格里的图标，给没有缩略图可画的类型用。认不出的拿一张白纸:
  *  不是出错，只是这个类型没有更具体的说法。 */
 export function fileIcon(path: string): string {
-  return videoMimeOf(path)
-    ? 'mdi-video-outline'
-    : DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+  if (videoMimeOf(path)) return 'mdi-video-outline'
+  if (IMAGE_SUFFIXES.has(suffixOf(path))) return 'mdi-file-image-outline'
+  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
 }
 
 /** 浏览器直接画得出、因此 DOCUMENT_TYPES 里没有的那几种。
@@ -268,6 +268,7 @@ const WEB_MIME: Record<string, string> = {
  *  一个说不出的类型不该在界面上变成一段后缀。 */
 export function fileLabel(path: string): string {
   const suffix = suffixOf(path)
+  if (IMAGE_SUFFIXES.has(suffix)) return t('work.room.fileKind.image')
   return DOCUMENT_TYPES[suffix]?.label ?? WEB_TYPES[suffix]?.label ?? t('work.room.fileKind.file')
 }
 

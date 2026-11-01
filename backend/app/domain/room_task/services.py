@@ -369,6 +369,10 @@ class TaskService:
         """
         return await self._repo.list_for_room(room_id)
 
+    async def list_in_rooms(self, room_ids: Collection[uuid.UUID]) -> list[Task]:
+        """Every piece of work across ``room_ids``, oldest first."""
+        return await self._repo.list_for_rooms(room_ids)
+
     async def open_branches_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's open work that has a branch, oldest first.
 
@@ -497,11 +501,16 @@ class TaskService:
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
 
-    async def set_contributors(self, task: Task, handles: list[str]) -> Task:
+    async def set_contributors(
+        self, task: Task, handles: list[str], *, flush: bool = True
+    ) -> Task:
         """Who works the task beside its owner. They are credited on its
         commits too (``repository.identity``)."""
         await self.set_credits(
-            task, reporter_handle=task.reporter_handle, contributor_handles=handles
+            task,
+            reporter_handle=task.reporter_handle,
+            contributor_handles=handles,
+            flush=flush,
         )
         return task
 

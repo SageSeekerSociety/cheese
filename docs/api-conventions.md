@@ -143,10 +143,22 @@ counted like any route.
   the client address uvicorn resolved through `FORWARDED_ALLOW_IPS`; when that
   address cannot be told apart from a proxy's, the request is not limited.
 - **Rate**: 20 requests a second sustained with a burst of 100 (GCRA, kept in
-  Redis). If Redis cannot answer within 250 ms the request goes through.
+  Redis). If Redis cannot answer within 250 ms the request goes through, and
+  the closed-account check waits no longer. Measured on the shared
+  deployment, a normal browser peaks at 14 requests in flight, 14/s and
+  111/min (a page fans out one request per project), so the account numbers
+  sit above that and below what one runaway page did to the whole process.
 - **Concurrency**: 16 requests in flight per principal in this process. The
   next 64 wait in arrival order for up to 15 s; past that, or past the wait,
   the request is refused.
+- **A client address** gets wider numbers: 200 a second with a burst of 2000,
+  and 128 in flight. One address is often a whole campus or office behind
+  NAT, and a lecture hall opening the sign-in page or a shared link at once is
+  all of them without an account; the address limits only stop one source
+  flooding the backend.
+- **Exempt accounts**: the handles in `request_limit_exempt_handles` are not
+  limited at all. Only dev names one, its shared development account, so a
+  load test from it measures the backend rather than its own quota.
 - **The refusal** is a 429 with `Retry-After` in seconds and the fields of
   draft-ietf-httpapi-ratelimit-headers-11, for example
   `RateLimit-Policy: "rate";q=100;w=5, "concurrency";q=16;qu="concurrent-requests"`
@@ -159,4 +171,7 @@ counted like any route.
   request. The web client retries a GET once when the wait is 10 s or less.
 
 The numbers are settings (`request_rate_per_s`, `request_rate_burst`,
-`request_concurrency`, `request_queue_depth`, `request_queue_timeout_s`).
+`request_concurrency`, `request_queue_depth`, `request_queue_timeout_s`, and
+for addresses `request_ip_rate_per_s`, `request_ip_rate_burst`,
+`request_ip_concurrency`). The `RateLimit-Policy` a response carries is the
+one of its principal: an address sees `"rate";q=2000;w=10, "concurrency";q=128`.

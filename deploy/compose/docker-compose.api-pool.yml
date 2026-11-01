@@ -1,0 +1,28 @@
+# The api pool overlay: a box that runs one (dev) has each backend slot run the
+# pool of plain-read workers beside its realtime process (backend/app/serve.py,
+# backend/app/core/process_role.py), and publishes it for app-router, which
+# sends it every plain read (deploy/llm-tunnel/app-router.conf).
+#
+# deploy-docker.sh layers this on when API_POOL_WORKERS is above 0 and gives
+# the second slot its own pool port (BACKEND_POOL_PORT_NEXT). A box that does
+# not set it — prod — runs no pool and never reads this file.
+#
+# The pool's connection budget is its own (API_POOL_DB_POOL_SIZE and
+# API_POOL_DB_MAX_OVERFLOW, by default 4 and 2 per worker), on top of the
+# backend's: dev's server takes 200 connections, and a rollout runs two slots.
+services:
+  backend:
+    environment:
+      - API_POOL_WORKERS=${API_POOL_WORKERS:-0}
+      # Handles the per-client request limits leave alone (comma-separated):
+      # dev names its shared development account so a load test measures the
+      # backend, not that account's own quota. Empty limits everyone.
+      - REQUEST_LIMIT_EXEMPT_HANDLES=${REQUEST_LIMIT_EXEMPT_HANDLES:-}
+      # The proxies in front of the backend, whose X-Forwarded-For uvicorn
+      # believes. Unset, every request carries a proxy's address, the
+      # backend cannot tell clients apart (core/client_address.py), and a
+      # request without a signed-in account is not limited at all: measured
+      # on dev 2026-11-01, 160 anonymous requests in 2 s all answered 200.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
+    ports:
+      - "127.0.0.1:${BACKEND_POOL_PORT:-18091}:8085"
