@@ -1,6 +1,8 @@
 """Running AI work on a machine, from turn intervals and session placement."""
 
-from sqlalchemy import and_, func, or_, select
+from functools import cache
+
+from sqlalchemy import String, and_, bindparam, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
@@ -13,11 +15,16 @@ from app.domain.team.models import Team
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
 
+_DEVICE = bindparam("device_id", type_=String)
 
-async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict]]:
+
+@cache
+def _running_on_statement():
+    """Built once: putting this select together took 0.8 ms of Python on every
+    poll, which a connector repeats every few seconds per machine."""
     center = AgentSession.runtime_location["device_id"].as_string()
     executor = AgentSession.work_lease["device_id"].as_string()
-    rows = await db.execute(
+    return (
         select(
             AgentSession.id,
             AgentSession.agent_handle,
@@ -66,7 +73,7 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
             Topic.id
             == func.coalesce(RoomTask.room_id, Thread.room_id, Conversation.id),
         )
-        .where(or_(center == device_id, executor == device_id))
+        .where(or_(center == _DEVICE, executor == _DEVICE))
         .group_by(
             AgentSession.id,
             AgentInstance.display_name,
@@ -80,6 +87,10 @@ async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict
         )
         .order_by(func.min(AgentTurn.started_at))
     )
+
+
+async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict]]:
+    rows = await db.execute(_running_on_statement(), {"device_id": device_id})
     return [
         (
             topic,

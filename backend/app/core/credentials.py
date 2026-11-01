@@ -23,7 +23,9 @@ import hashlib
 import hmac
 import secrets
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
+from copy import deepcopy
 
 import jwt
 
@@ -103,22 +105,47 @@ def kind_of(token: str) -> Kind | None:
         return None
 
 
+#: Credentials already verified in this process, by (token, kind, key): an
+#: agent's request reads the same credential a dozen times across its auth
+#: dependencies and route (measured: 12 reads per model admission), and
+#: checking its signature costs about 160 µs each. Only expiry is checked
+#: again on a hit; a key that changed misses. Bounded, oldest out first.
+_VERIFIED: OrderedDict[tuple[str, Kind, bytes], dict] = OrderedDict()
+_VERIFIED_MAX = 4096
+
+
 def read(token: str, kind: Kind) -> dict | None:
     """The claims of ``token`` if it is a valid, unexpired credential of
     ``kind``, else None — never an exception: this runs on whatever a caller
-    sent."""
-    if kind_of(token) is not kind:
-        return None
-    try:
-        claims = jwt.decode(
-            token,
-            _key(kind),
-            algorithms=[_ALGORITHM],
-            options={"require": [] if kind in _UNEXPIRING else ["exp"]},
-        )
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
-        return None
-    return claims if isinstance(claims, dict) else None
+    sent. Each call gets its own copy of the claims."""
+    key = _key(kind)
+    seen = (token, kind, key)
+    claims = _VERIFIED.get(seen)
+    if claims is None:
+        if kind_of(token) is not kind:
+            return None
+        try:
+            decoded = jwt.decode(
+                token,
+                key,
+                algorithms=[_ALGORITHM],
+                options={"require": [] if kind in _UNEXPIRING else ["exp"]},
+            )
+        except jwt.PyJWTError:  # type: ignore[attr-defined]
+            return None
+        if not isinstance(decoded, dict):
+            return None
+        claims = decoded
+        _VERIFIED[seen] = claims
+        if len(_VERIFIED) > _VERIFIED_MAX:
+            _VERIFIED.popitem(last=False)
+    else:
+        _VERIFIED.move_to_end(seen)
+        expires = claims.get("exp")
+        if expires is not None and time.time() >= expires:
+            _VERIFIED.pop(seen, None)
+            return None
+    return deepcopy(claims)
 
 
 def is_platform_secret(token: str) -> bool:
