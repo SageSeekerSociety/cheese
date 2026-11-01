@@ -3,6 +3,8 @@
 //    不是被带回第一栏。
 // 2. 管理那一段（`/spaces/:spaceId/manage/*`）有门：所有者与管理员放行，别人被领到
 //    无权限页，而不是让页面自己拉到 403 再画一个原始报错框。
+// 3. 整个空间有登录门：没登录的人被送去登录页，登录完回到他点开的那条地址，而不是让
+//    每个面板各自拉到 401 再画一个原始报错框。
 //
 // 打的是产品用的那份路由表（`./spaces`）和它挂的那个守卫，不是重写一份判据 ——
 // 抄一份到测试里，测的就是抄本。
@@ -28,6 +30,10 @@ vi.mock('@/services/account', () => ({
   default: {
     _user: { value: null as { id: number } | null },
     sessionRestored: Promise.resolve(),
+    restorePhase: 'idle' as 'idle' | 'restoring' | 'unreachable',
+    get loggedIn() {
+      return this._user.value !== null
+    },
   },
 }))
 
@@ -54,7 +60,8 @@ function withoutViews(record: RouteRecordRaw): RouteRecordRaw {
 }
 
 function router() {
-  return createRouter({ history: createMemoryHistory(), routes: [withoutViews(spaces)] })
+  const signIn: RouteRecordRaw = { path: '/sign-in', name: 'SignIn', component: { template: '<div />' } }
+  return createRouter({ history: createMemoryHistory(), routes: [withoutViews(spaces), signIn] })
 }
 
 /** 这次导航里「我是谁」和「这块板的管理员是谁」。 */
@@ -68,6 +75,32 @@ function signedInAs(userId: number, admins: Admin[]) {
 beforeEach(() => {
   detail.mockReset()
   AccountService._user.value = null
+  ;(AccountService as { restorePhase: string }).restorePhase = 'idle'
+})
+
+describe('空间的登录门', () => {
+  it('没登录的人点开空间里的一道题：送去登录页，登录完回到这道题', async () => {
+    setActivePinia(createPinia())
+    const r = router()
+    await r.push(`/spaces/${SPACE_ID}/tasks/1753`)
+    expect(r.currentRoute.value.name).toBe('SignIn')
+    expect(r.currentRoute.value.query.redirect).toBe(`/spaces/${SPACE_ID}/tasks/1753`)
+  })
+
+  it('连不上、会话还没确认：不当成没登录，留在这一页', async () => {
+    setActivePinia(createPinia())
+    ;(AccountService as { restorePhase: string }).restorePhase = 'unreachable'
+    const r = router()
+    await r.push(`/spaces/${SPACE_ID}/tasks/1753`)
+    expect(r.currentRoute.value.name).toBe('TasksDetail')
+  })
+
+  it('登录着的人：放行', async () => {
+    signedInAs(MEMBER_ID, [owner()])
+    const r = router()
+    await r.push(`/spaces/${SPACE_ID}/tasks/1753`)
+    expect(r.currentRoute.value.name).toBe('TasksDetail')
+  })
 })
 
 describe('空间设置的地址', () => {
