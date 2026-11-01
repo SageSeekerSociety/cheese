@@ -127,7 +127,7 @@ steps:
 
 一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
 
-换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
+换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
 
 ### 会话按座位分开 {#seats-session}
 

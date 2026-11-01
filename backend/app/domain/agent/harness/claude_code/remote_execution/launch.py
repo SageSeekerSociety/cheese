@@ -37,7 +37,7 @@ from app.domain.skill_library import (
 )
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
-# every task checkout with something unpushed backed up and pushed.
+# every task checkout with unpushed commits pushed.
 CHEESE_SYNC_SCRIPT = """#!/bin/sh
 exec cheese sync --all
 """

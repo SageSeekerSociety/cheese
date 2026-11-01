@@ -1,7 +1,6 @@
 """Ordinary project executor behind the production HTTP and connector transport."""
 
 import asyncio
-import hashlib
 import json
 import os
 import shutil
@@ -29,7 +28,6 @@ class RoomExecutor:
         self.project = str(project)
         self.task = str(uuid.uuid4())
         self.owner = folder / "execution-host"
-        self.snapshots = {}
         self.home = self.owner / ".cheese/home" / str(project) / str(resource)
         self.work = self.home / place.CHECKOUT_DIR
         self.state = self.home / ".cheese/executor"
@@ -199,52 +197,6 @@ class RoomExecutor:
                     self.path = self.path.removeprefix("/machine")
                 return True
 
-            def do_PUT(self):
-                on_socket = self.relayed
-                prefix = (
-                    f"{'/api' if on_socket else ''}"
-                    f"/projects/{executor.project}/git/tasks/{executor.task}/snapshots/"
-                )
-                if not self.path.startswith(prefix):
-                    return super().do_PUT()
-                if on_socket:
-                    assert "Authorization" not in self.headers
-                else:
-                    assert self.headers.get("Authorization") == "Bearer room-handed-token"
-                assert self.headers.get("Content-Type") == "application/x-git-bundle"
-                content = self.rfile.read(int(self.headers["Content-Length"]))
-                digest = hashlib.sha256(content).hexdigest()
-                assert digest == self.headers["X-Content-SHA256"]
-                assert content.startswith((b"# v2 git bundle\n", b"# v3 git bundle\n"))
-                snapshot_sha = self.path.removeprefix(prefix)
-                assert len(snapshot_sha) == 40 and all(
-                    c in "0123456789abcdef" for c in snapshot_sha
-                )
-                head_sha = self.headers["X-Cheese-Head"]
-                assert len(head_sha) == 40 and all(
-                    c in "0123456789abcdef" for c in head_sha
-                )
-                if digest not in executor.snapshots:
-                    directory = executor.owner / "snapshots"
-                    directory.mkdir(exist_ok=True)
-                    bundle = directory / f"{digest}.bundle"
-                    bundle.write_bytes(content)
-                    executor.snapshots[digest] = {
-                        "id": str(uuid.uuid4()),
-                        "snapshot_sha": snapshot_sha,
-                        "head_sha": head_sha,
-                        "digest": digest,
-                        "bundle": str(bundle),
-                    }
-                row = executor.snapshots[digest]
-                return self.reply(
-                    {
-                        "data": {
-                            key: row[key] for key in ("id", "snapshot_sha", "digest")
-                        }
-                    }
-                )
-
             def do_GET(self):
                 if self.relayed:
                     assert "Authorization" not in self.headers
@@ -262,34 +214,6 @@ class RoomExecutor:
                                     "closed": False,
                                     "remote": executor.remote,
                                     "coauthors": [],
-                                }
-                            }
-                        )
-                    latest = (
-                        f"/api/projects/{executor.project}/git/tasks/{executor.task}"
-                        "/snapshots/latest"
-                    )
-                    if self.path == latest:
-                        if not executor.snapshots:
-                            # The platform's answer for a task never backed up.
-                            body = b'{"error": {"message": "no backup"}}'
-                            self.send_response(404)
-                            self.send_header("Content-Type", "application/json")
-                            self.send_header("Content-Length", str(len(body)))
-                            self.end_headers()
-                            self.wfile.write(body)
-                            return None
-                        row = list(executor.snapshots.values())[-1]
-                        return self.reply(
-                            {
-                                "data": {
-                                    key: row[key]
-                                    for key in (
-                                        "id",
-                                        "snapshot_sha",
-                                        "head_sha",
-                                        "digest",
-                                    )
                                 }
                             }
                         )
