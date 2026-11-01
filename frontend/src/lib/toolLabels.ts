@@ -101,7 +101,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_checkout: 'toolLabels.cheeseCheckout',
   cheese_sync: 'toolLabels.cheeseSync',
   cheese_transcript: 'toolLabels.cheeseTranscript',
-  cheese_recover: 'toolLabels.cheeseRecover',
   'cheese_task.close': 'toolLabels.cheeseCloseTask',
   'cheese_task.reopen': 'toolLabels.cheeseReopenTask',
   'cheese_task.state': 'toolLabels.cheeseTaskState',

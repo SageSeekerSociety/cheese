@@ -79,12 +79,12 @@ covers:
 
 ## 一次性清理：任务快照 {#task-snapshot-purge}
 
-每轮把未提交改动打成 bundle 传进私有桶的旧做法已经没了（#5071 起沙箱只推提交，读这些对象的接口和 `task_snapshots` 表随后一起删）。桶里 `task-snapshots/` 下的存量按负责人的决定不导出，由发布包含了这次删除的那一版之后、在部署机上手动跑一次清掉：
+沙箱只推提交，平台不再存任务快照，读写快照的接口也已删掉。私有桶里 `task-snapshots/` 下的存量不导出，在部署机上手动跑一次清掉：
 
     docker compose exec backend python -m scripts.purge_task_snapshots          # 只数
     docker compose exec backend python -m scripts.purge_task_snapshots --apply  # 删
 
-它按前缀翻页列、逐个删，重复跑第二遍是零；不需要停机，也不在 alembic 迁移里碰对象存储（迁移只删表，回滚时重建空表）。
+它按前缀翻页列、逐个删，重复跑第二遍是零，不需要停机。`task_snapshots` 表已经没有代码读写，按两次发布的规矩在下一个 PR 里删。
 
 ## 独立时钟 {#timer}
 
