@@ -131,3 +131,32 @@ async def test_a_pack_granted_between_admissions_reprices_the_key(client, monkey
     assert again.json()["data"]["supply"]["key"] == "sk-virt-1", again.text
     assert len(gateway.budgets) == 2
     assert gateway.budgets[1][1] > before[1]
+
+
+async def test_a_budget_admission_cannot_work_out_is_left_to_the_key(
+    client, monkeypatch
+):
+    """Admission working out the key's budget is only a shortcut: when it
+    fails, the key's own path answers as before. Raised from the route it
+    would be a 500, which the metering proxy reads as the backend being
+    unreachable and lets the call through unchecked."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    worked_out = type(chat)._gateway_budget_target
+    calls = []
+
+    async def first_fails(session, project_id):
+        calls.append(project_id)
+        if len(calls) == 1:
+            raise RuntimeError("plan row missing")
+        return await worked_out(chat, session, project_id)
+
+    monkeypatch.setattr(chat, "_gateway_budget_target", first_fails)
+    answer = _admit(client, room)
+
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["data"]["allow"] is True
+    assert answer.json()["data"]["supply"]["key"] == "sk-virt-1"
+    assert len(calls) >= 2

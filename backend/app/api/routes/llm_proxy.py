@@ -458,12 +458,14 @@ async def admission(
     # own session (`project_gateway_key`).
     project_key = pool == GATEWAY and refused is None and from_proxy
     budget_target = UNKNOWN_TARGET
-    if project_key and (
-        credit_context is None
-        or credit_context.task_id is None
-        or credit_context.owner_handle is None
-    ):
-        budget_target = await chat._gateway_budget_target(db, project_uuid)
+    if project_key and project is not None and credit_context is None:
+        try:
+            budget_target = await chat._gateway_budget_target(db, project_uuid)
+        except Exception:
+            # The key's own read path answers a failure here as no key, which
+            # the proxy refuses; raised from the route it would read as the
+            # backend unreachable and let the call through unchecked.
+            logger.exception("admission budget target failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -494,7 +496,6 @@ async def admission(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,
-                budget_target=budget_target,
             )
         else:
             supply["key"] = await chat.project_gateway_key(
