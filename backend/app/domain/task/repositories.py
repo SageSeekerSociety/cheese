@@ -51,11 +51,23 @@ class TaskRepository:
         self._session = session
 
     async def get_by_id(self, task_id: int) -> Task | None:
+        """The problem, None when there is none or it was deleted. A problem's
+        routes load it for their permission check and again for the page, so a
+        request reads the row once."""
+        key = ("live_task_row", task_id)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         stmt: Select[tuple[Task]] = select(Task).where(
             and_(Task.id == task_id, Task.deleted_at.is_(None))
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        task = result.scalar_one_or_none()
+        if cacheable:
+            remember(self._session, key, task, tables=frozenset({"task"}))
+        return task
 
     async def get_by_ids(self, task_ids: Sequence[int]) -> dict[int, Task]:
         return await get_by_ids(
@@ -698,6 +710,16 @@ class TaskMembershipRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def get_by_ids(
+        self, membership_ids: Sequence[int]
+    ) -> dict[int, TaskMembership]:
+        return await get_by_ids(
+            self._session,
+            TaskMembership,
+            membership_ids,
+            TaskMembership.deleted_at.is_(None),
+        )
 
     async def list_memberships_for_space(
         self, space_id: int
