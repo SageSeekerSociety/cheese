@@ -396,6 +396,10 @@ beside its realtime process (`backend/app/serve.py`,
 - At three workers dev saturated at about 30 requests a second
   (2026-11-01, the exempt account, 20 to 100 clients: median 0.65 s at 20,
   3.4 s at 100) with 4 of its 16 cores busy, which is why it runs eight.
+  With eight (same test, 2026-11-01): 56 requests a second and a median of
+  0.26 s at 20 clients, 72 and 0.6 s at 50, 67 and 1.1 s at 100, no errors.
+  Past about 70 a second the time each request computes is the limit again;
+  the topic list is the heaviest read.
 - What it bought on dev (2026-10-31/11-01, one account, 30 s per level, the
   reads a person opening a channel makes): at 20 concurrent clients the median
   request went from 2.4 s to 0.36 s and a light read beside them from 1.2 s to
