@@ -192,8 +192,15 @@ async def require_seated_agent(
     room = topic_id
     if room is None and claims.get("t"):
         room = uuid.UUID(claims["t"])
+    # The seat is asked by handle. The user id an int-keyed row would need is
+    # not asked for, so the user row that holds it is not read: every model
+    # admission comes through here.
     resolver = ActorResolver(
-        session=session, bearer=None, cheese_token=token, allow_machine=allow_machine
+        session=session,
+        bearer=None,
+        cheese_token=token,
+        allow_machine=allow_machine,
+        bind_user_id=False,
     )
     actor = await resolver.resolve(topic_id=room, project_id=project_id, read_only=True)
     if room is not None:
