@@ -164,7 +164,7 @@ async def test_a_budget_admission_cannot_work_out_is_left_to_the_key(
     assert len(calls) >= 2
 
 
-async def test_admission_checks_the_agents_credential_once(client, monkeypatch):
+async def test_admission_checks_the_agents_signature_once(client, monkeypatch):
     from app.core import credentials
 
     gateway = FakeGateway()
@@ -172,10 +172,11 @@ async def test_admission_checks_the_agents_credential_once(client, monkeypatch):
     monkeypatch.setattr(chat, "_gateway", gateway)
     room = await _room(client)
     decode = credentials.jwt.decode
-    checked: list[str] = []
+    signed: list[str] = []
 
     def counted(token, *args, **kwargs):
-        checked.append(token)
+        if (kwargs.get("options") or {}).get("verify_signature", True):
+            signed.append(token)
         return decode(token, *args, **kwargs)
 
     monkeypatch.setattr(credentials.jwt, "decode", counted)
@@ -183,4 +184,4 @@ async def test_admission_checks_the_agents_credential_once(client, monkeypatch):
 
     assert answer.json()["data"]["allow"] is True, answer.text
     token = room.agent["Authorization"].split()[1]
-    assert checked.count(token) == 1
+    assert signed.count(token) == 1
