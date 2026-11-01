@@ -14,10 +14,14 @@
 资料库里写它的材料，资料库就不能反过来认得它（`.importlinter` C3）。
 """
 
+import uuid
+
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.library.models import LibraryFileRecord as Row
 from app.domain.library.shelf import Shelf
@@ -35,16 +39,48 @@ def under(name: str) -> bool:
     return name == FOLDER or name.startswith(PREFIX)
 
 
+_TABLES = frozenset({"projects", "task"})
+
+
+def _key(project_id: uuid.UUID) -> tuple[str, uuid.UUID]:
+    return ("library_mounted", project_id)
+
+
+def known(session: AsyncSession, project_id: uuid.UUID, task_id: int | None) -> None:
+    """读的那一侧已经把项目行和它那道题目的行取出来了（`task_folder_shown`）：
+    挂着哪道题目照它记下，这一个请求里 `mounted` 不必再问一遍。`task_id` 是还在的
+    那道题目，题目删掉了或者项目不来自题目时是 None。"""
+    remember(session, _key(project_id), task_id, tables=_TABLES)
+
+
 async def mounted(session: AsyncSession, shelf: Shelf) -> int | None:
     """这个资料库底下挂着哪道题目的资料库：从一道还在的题目派生的项目才有。不问读的人
-    是谁——写的路、项目自己被盖住的那几行都按它算。"""
-    if shelf.project_id is None:
+    是谁——写的路、项目自己被盖住的那几行都按它算。
+
+    一个请求里读资料库的那几步各问一次，答案同一个，所以只问一次。项目行已经在这个
+    会话里、而它不来自题目时，不用问数据库。"""
+    project_id = shelf.project_id
+    if project_id is None:
         return None
-    return await session.scalar(
+    found, cached = recall(session, _key(project_id))
+    if found:
+        return cached
+    sync = session.sync_session
+    loaded = sync.identity_map.get(sync.identity_key(Project, (project_id,)))
+    if (
+        loaded is not None
+        and "external_task_id" not in inspect(loaded).expired_attributes
+        and loaded.external_task_id is None
+    ):
+        known(session, project_id, None)
+        return None
+    task_id = await session.scalar(
         sa.select(Project.external_task_id)
         .join(_task, _task.c.id == Project.external_task_id)
-        .where(Project.id == shelf.project_id, _task.c.deleted_at.is_(None))
+        .where(Project.id == project_id, _task.c.deleted_at.is_(None))
     )
+    known(session, project_id, task_id)
+    return task_id
 
 
 async def task_of(session: AsyncSession, shelf: Shelf) -> int | None:

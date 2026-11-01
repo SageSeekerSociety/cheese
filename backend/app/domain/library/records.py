@@ -430,12 +430,16 @@ async def stored_file(session: AsyncSession, shelf: Shelf, name: str) -> Stored:
     return Stored(row.location, row.blob_key, row.bytes)
 
 
-async def download_url(session: AsyncSession, shelf: Shelf, name: str) -> str:
-    """一个几分钟内有效、只读得到这一份的地址（`BlobStore.download_url`）：给手上
-    没有凭据的机器去取。以 ``/`` 开头的是本后端自己的地址。"""
+async def download_link(
+    session: AsyncSession, shelf: Shelf, name: str
+) -> tuple[Stored, str]:
+    """这个名字现在那一份在哪、多大，和一个几分钟内有效、只读得到这一份的地址
+    （`BlobStore.download_url`）：给手上没有凭据的机器去取。以 ``/`` 开头的是本后端
+    自己的地址。两样出自同一行，只取一次。"""
     shelf, name = await mount.resolve(session, shelf, name)
     row = await _current_or_404(session, shelf, name)
-    return await blob_store.store(row.location).download_url(row.blob_key, row.bytes)
+    url = await blob_store.store(row.location).download_url(row.blob_key, row.bytes)
+    return Stored(row.location, row.blob_key, row.bytes), url
 
 
 async def stored_version(
