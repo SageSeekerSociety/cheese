@@ -62,10 +62,14 @@ covers:
 | 登录过期、正在续 | 503 `api_error` | `…has expired and is being renewed; retry shortly` |
 | 问不到准入（fail-open）且没有凭证 | 503 `api_error` | `…could not say where this request goes…` |
 | 凭据的出口机不接受连接 | 503 `api_error`，带 `retry-after` | `…the subscription egress is offline, so no model call was made…` |
+| ChatGPT 账号的出口机不接受连接（`:8445`，答给网关） | 503 `api_error`，不带 `retry-after` | 同上 |
+| 网关路上 LiteLLM 回 5xx，`message` 里带上面那句 | 503 `api_error`，带 `x-should-retry: false`，改写后再交给调用方 | 同上 |
 
 额度用完照 Claude Code 网关约定里「用户的额度到顶」那一种回（`_refuse_reached_cap`）：`x-should-retry: false`，`anthropic-ratelimit-unified-status: rejected`，`-overage-disabled-reason: org_spend_cap_reached`，利用率与阈值都写 1；准入给了 `reopens_at` 时再加 `retry-after` 和两个 `-reset`。带上 disabled-reason，Claude Code 把 `message` 原样打出来、不重试；只回一个 429，它会当成限流，重试十次，还打出「Server is temporarily limiting requests (not your usage limit)」，意思正好反了。`representative-claim` 和 `overage-status` 故意不带：带了它会换成自己的一句话，把我们的原因丢掉。网关那两条要改写：LiteLLM 的 `/v1/messages` 不管什么原因，429 一律给 Anthropic 信封、`error.type` 写 `rate_limit_error`，原因只在 `message` 里（`_answer_a_reached_gateway_cap` 按 `message` 认）。`max_budget` 那条是因为账本要等回合结束才记上花费，额度见底时拦下回合的往往是它；订阅账号用完那条是因为回合内怎么重试都过不去，换模型才行。别的 429 是真限流，原样交给调用方。
 
 为什么过期给 503、没有给 400：Claude Code 对 5xx 会静默重试约三分钟，对 400 不重试。续期是等得好的，用 503；要人去登录的，用 400 立刻停下来把话说清楚。出口机离线同理：机器多半几十秒就回来，用 503 让客户端等它，并带 `retry-after`（`EGRESS_OFFLINE_RETRY_AFTER_S`，30 秒）给这份等待一个节奏——早先这里带的是 `x-should-retry: false`，整轮直接失败、房间要等人叫醒（#1451）。
+
+ChatGPT 账号的出口机离线是另一回事，要快失败：`:8445` 的客户端是网关，带 `retry-after` 它会每次重试前先睡满；而网关之外 Claude Code 还要再重试十次，每次都等一个连接超时，一轮要十几分钟，房间里看到的还是「服务过载」。所以 `:8445` 用同一个探活（`EGRESS_HEALTH`）判离线后立刻回 503，会话那一跳（`_answer_an_offline_chatgpt_egress`）在网关的 5xx 里认出这句，改写成 `x-should-retry: false` 的 503：回合几秒内结束，后端按「出口离线」分类、排平台自己的续跑（`resumable_failures`），同时按 `SubscriptionEgressOffline`/`egress_offline` 报给错误收集，后端对这一类发告警（`backend_log` 的 `_ACTIONABLE_MODEL_FAILURES`）。网关回的普通 5xx 不在告警类里，只有十分钟内 30 次才告警；一轮隔四十秒重试一次永远到不了，这就是这条路上的出口机离线 26 小时没有任何告警的原因。
 
 **坑**：拒之前必须把 `request.body` 的流关掉（`_refuse` 里统一做）。mitmproxy 里「设响应」和「流式转发正文」互斥，一旦同时成立就抛 `Can't set a response and enable streaming at the same time`，而且这是致命错误——整个连接死掉，调用方等超时，看到的不是拒绝原因而是平台卡住。只有带正文的请求会走到那条分支，所以 GET 的拒绝一直好好的，被拒的 `POST /v1/messages` 全崩。源码注释里记着实测：48 小时内 68 个被拒的回合、0 个 503 送达、350 次崩溃。代价是被拒的正文要缓冲而不是流式——但那条路既不转发也不长期持有。
 

@@ -673,7 +673,7 @@ class EgressHealth:
             self._verdicts[address] = (True, self._clock() + EGRESS_UP_FOR_S)
             return
         logger.warning(
-            "the Claude credential's egress %s:%s did not answer %d attempts",
+            "egress %s:%s did not answer %d attempts",
             *address,
             EGRESS_ATTEMPTS,
         )
@@ -870,8 +870,9 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
 
     `/chatgpt/<account>/responses…` and `/chatgpt/<account>/models` go to
     `https://chatgpt.com/backend-api/codex/…` on that account's token and
-    egress; every other path, an unknown account, and an account with no
-    usable login are answered here and never forwarded. The request is
+    egress; every other path, an unknown account, an account with no
+    usable login and one whose egress does not answer are answered here and
+    never forwarded. The request is
     otherwise passed as it came, body streamed.
 
     Plain HTTP and TLS are both accepted: the hop is the box's own docker
@@ -954,6 +955,21 @@ async def _forward_to_chatgpt(flow: http.HTTPFlow) -> None:
             )
             return
         _CHATGPT_EGRESS_AUTH[(egress.host, egress.port)] = egress.authorization
+        await EGRESS_HEALTH.check(egress)
+        if EGRESS_HEALTH.unreachable(egress):
+            # Without this the request waits out the connect timeout and comes
+            # back from mitmproxy as a bare 502, which the gateway retries on
+            # every deployment behind the same egress and Claude Code retries
+            # ten times: about 13 minutes per turn, read in the room as an
+            # overloaded provider (a 26-hour egress outage, 2026-10).
+            # No `retry-after`, unlike the Claude path: the gateway, not a
+            # session, is the client here, and it would sleep it out before
+            # each retry. The session side turns this into its final answer
+            # (`_answer_an_offline_chatgpt_egress`).
+            flow.metadata["cheese_egress_offline"] = True
+            _refuse(flow, 503, "api_error", EGRESS_OFFLINE_MESSAGE)
+            return
+        flow.metadata["cheese_chatgpt_egress"] = egress
     for header in _CHATGPT_STRIPPED:
         flow.request.headers.pop(header, None)
     # Read once per request so the header and the model list's query name the
@@ -1775,6 +1791,12 @@ def responseheaders(flow: http.HTTPFlow) -> None:
             # allowance with one Claude Code reads as a reached cap. A short
             # error body, so nothing is held for the length of a turn.
             return
+        if resp.status_code >= 500 and "event-stream" not in resp.headers.get(
+            "content-type", ""
+        ):
+            # Left buffered for the same reason: response() reads whether it
+            # is a ChatGPT account's offline egress.
+            return
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
             "content-type", ""
         ):
@@ -2053,6 +2075,25 @@ def _report_gateway_failure(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None or not _is_message_call(flow.request.path):
         return
+    if flow.metadata.get("cheese_egress_offline"):
+        # The kind the backend alerts an operator on (`backend_log`). A bare
+        # gateway 5xx is not one, and is alerted only in a burst of 30 in ten
+        # minutes, which a turn retrying every 40 seconds never reaches: this
+        # is why a 26-hour outage of a ChatGPT account's egress alerted nobody.
+        record = {
+            "message": "A ChatGPT account's egress was offline, so no model call "
+            "was made",
+            "exc_type": "SubscriptionEgressOffline",
+            "where": "model gateway: ChatGPT account egress",
+            "request_id": _answer_request_id(flow),
+            "upstream_failure": "egress_offline",
+            "ended_by": "gateway",
+        }
+        flow.metadata["cheese_turn_reported"] = True
+        logger.error("%s: %s", record["exc_type"], record["message"])
+        project, topic = flow.metadata.get("cheese_attr") or ("", "")
+        _post_backend_errors(project, topic, [record])
+        return
     if resp.status_code >= 500 or resp.status_code in (401, 403):
         auth = resp.status_code in (401, 403)
         record = {
@@ -2209,6 +2250,35 @@ def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
     return True
 
 
+def _answer_an_offline_chatgpt_egress(flow: http.HTTPFlow) -> None:
+    """Pass a ChatGPT account's offline egress on to the session as the same
+    refusal a Claude turn gets, told not to retry.
+
+    The gateway carries this proxy's own refusal (`_forward_to_chatgpt`) inside
+    its message, under whatever status it chose. Passed on as it came, Claude
+    Code retries it ten times before the turn says anything, and the room reads
+    it as an overloaded provider. Rewritten, the turn fails within seconds with
+    the words the backend reads as an offline egress (`resumable_failures`),
+    and the platform's own resume waits the egress out.
+    """
+    resp = flow.response
+    if resp is None or resp.status_code < 500:
+        return
+    if b"subscription egress is offline" not in (resp.content or b""):
+        return
+    flow.metadata["cheese_egress_offline"] = True
+    flow.response = http.Response.make(
+        503,
+        json.dumps(
+            {
+                "type": "error",
+                "error": {"type": "api_error", "message": EGRESS_OFFLINE_MESSAGE},
+            }
+        ).encode(),
+        {"Content-Type": "application/json", "x-should-retry": "false"},
+    )
+
+
 _UPSTREAM_RESETS_AT = re.compile(r'"resets_at"\s*:\s*(\d+)')
 _GATEWAY_MODEL_GROUP = re.compile(r"Received Model Group=(\S+)")
 _BEIJING = timezone(timedelta(hours=8))
@@ -2293,6 +2363,8 @@ def error(flow: http.HTTPFlow) -> None:
     chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
     via = getattr(flow.server_conn, "via", None)
     if chatgpt_account and via:
+        if (chatgpt_egress := flow.metadata.get("cheese_chatgpt_egress")) is not None:
+            EGRESS_HEALTH.forget(chatgpt_egress)
         logger.warning(
             "request for ChatGPT account %s through its egress %s:%s failed: %s",
             chatgpt_account,
@@ -2334,6 +2406,7 @@ def response(flow: http.HTTPFlow) -> None:
         _report_out_of_credit_rows(flow)
         if _answer_a_reached_gateway_cap(flow):
             return
+        _answer_an_offline_chatgpt_egress(flow)
         _report_gateway_failure(flow)
         return
     # A subscription turn that never reached the model, or that the upstream

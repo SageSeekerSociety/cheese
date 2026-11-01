@@ -3141,10 +3141,12 @@ def test_without_a_configured_key_the_listener_refuses_everyone(monkeypatch, tmp
         _refused(flow, 401, b"CHEESE_CHATGPT_KEY is not configured")
 
 
-def test_an_accounts_requests_leave_through_its_egress(monkeypatch, tmp_path):
+def test_an_accounts_requests_leave_through_its_egress(
+    monkeypatch, tmp_path, egress_listener
+):
     mod = _chatgpt_proxy(monkeypatch, tmp_path)
     directory = _chatgpt_account_on_disk(tmp_path)
-    (directory / "egress").write_text("http://me:pw@egress.example:3128\n")
+    (directory / "egress").write_text(f"http://me:pw@127.0.0.1:{egress_listener}\n")
     flow = _gateway_request()
 
     asyncio.run(mod.requestheaders(flow))
@@ -3157,24 +3159,25 @@ def test_an_accounts_requests_leave_through_its_egress(monkeypatch, tmp_path):
     mod.http_connect_upstream(connect)
 
     assert flow.response is None
-    assert flow.server_conn.via == ("http", ("egress.example", 3128))
+    assert flow.server_conn.via == ("http", ("127.0.0.1", egress_listener))
     assert connect.request.headers["Proxy-Authorization"] == (
         "Basic " + base64.b64encode(b"me:pw").decode()
     )
 
 
 def test_the_next_account_on_the_same_connection_does_not_take_the_last_ones_route(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, egress_listener
 ):
     """The gateway keeps one connection open and sends every account down it,
     and each request's flow starts from the server connection state the
     previous one left."""
     mod = _chatgpt_proxy(monkeypatch, tmp_path)
     work = _chatgpt_account_on_disk(tmp_path, "work")
-    (work / "egress").write_text("http://egress.example:3128\n")
+    (work / "egress").write_text(f"http://127.0.0.1:{egress_listener}\n")
     _chatgpt_account_on_disk(tmp_path, "spare")
     first = _gateway_request()
     asyncio.run(mod.requestheaders(first))
+    assert first.server_conn.via == ("http", ("127.0.0.1", egress_listener))
     previous = first.server_conn
 
     second = _gateway_request("/chatgpt/spare/responses", server_conn=previous)
@@ -3198,6 +3201,136 @@ def test_two_accounts_on_one_proxy_address_with_different_logins_are_refused(
     asyncio.run(mod.requestheaders(flow))
 
     _refused(flow, 503, b"'work' and 'spare'")
+
+
+def test_an_accounts_offline_egress_is_answered_at_once_and_named_as_offline(
+    monkeypatch, tmp_path
+):
+    """A ChatGPT account whose egress does not answer is refused here, saying
+    the egress is offline, instead of being sent to wait out a connect timeout
+    and come back as a bare 502 that reads as an overloaded provider. No
+    ``retry-after``: the gateway would sleep it out before trying again."""
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _quick_egress_checks(mod, monkeypatch)
+    directory = _chatgpt_account_on_disk(tmp_path)
+    (directory / "egress").write_text(f"http://127.0.0.1:{_closed_port()}\n")
+
+    first = _gateway_request()
+    asyncio.run(mod.requestheaders(first))
+    second = _gateway_request()
+    started = time.monotonic()
+    asyncio.run(mod.requestheaders(second))
+
+    for flow in (first, second):
+        _refused(flow, 503, b"subscription egress is offline")
+        assert "retry-after" not in flow.response.headers
+    # The verdict stands for the requests behind the first: they do not wait.
+    assert time.monotonic() - started < 0.3
+
+
+def test_an_account_whose_egress_stopped_answering_is_checked_again(
+    monkeypatch, tmp_path
+):
+    """It answered a moment ago and a request through it then failed: the next
+    request is not sent into the same dead egress on the earlier verdict."""
+    mod = _chatgpt_proxy(monkeypatch, tmp_path)
+    _quick_egress_checks(mod, monkeypatch)
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(16)
+    port = server.getsockname()[1]
+    directory = _chatgpt_account_on_disk(tmp_path)
+    (directory / "egress").write_text(f"http://127.0.0.1:{port}\n")
+    first = _gateway_request()
+    asyncio.run(mod.requestheaders(first))
+    assert first.response is None
+
+    server.close()
+    first.error = "Error connecting to '127.0.0.1': timed out"
+    mod.error(first)
+
+    second = _gateway_request()
+    asyncio.run(mod.requestheaders(second))
+    _refused(second, 503, b"subscription egress is offline")
+
+
+def _litellm_error(message: str) -> dict:
+    """LiteLLM's ``/v1/messages`` error envelope, the upstream's words carried
+    inside ``message`` (as in `CHATGPT_USAGE_LIMIT`)."""
+    return {"type": "error", "error": {"type": "api_error", "message": message}}
+
+
+# What the gateway passes on once every ChatGPT deployment of a model has been
+# refused by this proxy's ChatGPT listener for an offline egress.
+CHATGPT_EGRESS_OFFLINE = (
+    "litellm.ServiceUnavailableError: ServiceUnavailableError: OpenAIException - "
+    '{"type": "error", "error": {"type": "api_error", "message": "cheese: the '
+    "subscription egress is offline, so no model call was made. It works again "
+    'once that machine is back online."}}. Received Model Group=gpt-6-astra\n'
+    "Available Model Group Fallbacks=None"
+)
+
+
+async def _gateway_error_reaches_the_session(mod, status: int, body: dict):
+    """A gateway error answer to a session's turn, as mitmproxy delivers it: a
+    body the response hook was told to stream has passed by before
+    ``response`` runs, so ``response`` sees none of it."""
+    mod.GATEWAY_BASE = "http://gateway:4000"
+    mod.ALLOW_HEADER_ATTR = True
+    mod.ADMISSION.check = lambda *args: _verdict(pool="gateway", key="project-key")
+    flow = _make_flow()
+    flow.request.headers["x-cheese-attr"] = "project/topic"
+    await mod.requestheaders(flow)
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    flow.response.content = json.dumps(body).encode()
+    mod.responseheaders(flow)
+    if getattr(flow.response, "stream", False):
+        flow.response.content = b""
+    mod.response(flow)
+    return flow.response
+
+
+async def test_a_chatgpt_models_offline_egress_ends_the_turn_at_once_and_alerts(
+    monkeypatch, tmp_path
+):
+    """The session hears the same egress-offline refusal a Claude turn gets,
+    told not to retry, so the turn fails within seconds instead of ten
+    retries later, and as an offline egress rather than an overloaded
+    provider. The failure goes to the error intake as an offline egress, the
+    kind the backend alerts an operator on; a bare gateway 5xx is not."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+
+    response = await _gateway_error_reaches_the_session(
+        mod, 503, _litellm_error(CHATGPT_EGRESS_OFFLINE)
+    )
+    await asyncio.gather(*mod._failure_reports)
+
+    assert response.status_code == 503
+    assert response.headers["x-should-retry"] == "false"
+    said = json.loads(response.content)["error"]["message"]
+    assert said == mod.EGRESS_OFFLINE_MESSAGE
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "SubscriptionEgressOffline"
+    assert error["upstream_failure"] == "egress_offline"
+
+
+async def test_any_other_gateway_5xx_is_passed_on_as_it_came(monkeypatch, tmp_path):
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    body = _litellm_error(
+        "litellm.InternalServerError: OpenAIException - Our servers are "
+        "currently overloaded. Please try again later."
+    )
+
+    response = await _gateway_error_reaches_the_session(mod, 503, body)
+    await asyncio.gather(*mod._failure_reports)
+
+    assert response.status_code == 503
+    assert json.loads(response.content) == body
+    assert "x-should-retry" not in response.headers
+    assert _recorded(posted)[0]["upstream_failure"] == "http_error"
 
 
 def test_the_anthropic_listeners_never_route_to_a_chatgpt_account(
