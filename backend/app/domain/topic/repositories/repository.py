@@ -92,8 +92,12 @@ class TopicRepository:
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         return await reads.get(self, topic_id=topic_id)
 
-    async def room_of_conversation(self, conversation_id: uuid.UUID) -> Topic | None:
-        return await reads.room_of_conversation(self, conversation_id=conversation_id)
+    async def room_of_conversation(
+        self, conversation_id: uuid.UUID, *, member: str | None = None
+    ) -> Topic | None:
+        return await reads.room_of_conversation(
+            self, conversation_id=conversation_id, member=member
+        )
 
     async def get_many(self, topic_ids: set[uuid.UUID]) -> list[Topic]:
         return await reads.get_many(self, topic_ids=topic_ids)

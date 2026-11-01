@@ -72,6 +72,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.usage.payers import project_with_payer
 from app.domain.usage.services import UsageService
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -304,7 +305,8 @@ async def admission(
         project_uuid = uuid.UUID(claims["p"])
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
-    project = await ProjectRepository(db).get(project_uuid)
+    # Read with who pays for it: admission asks that next, every model call.
+    project = await project_with_payer(db, project_uuid)
     if project is not None:
         try:
             await _require_model_caller(db, token, project_uuid)

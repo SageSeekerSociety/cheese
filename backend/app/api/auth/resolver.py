@@ -706,7 +706,9 @@ class ActorResolver:
                 raise ValueError(  # i18n-exempt: programmer invariant, never shown
                     "can_access_topic needs topic_id or room"
                 )
-            room = await TopicRepository(self._session).room_of_conversation(topic_id)
+            room = await TopicRepository(self._session).room_of_conversation(
+                topic_id, member=actor.handle if actor.authenticated else None
+            )
             topic_id = (
                 room.id
                 if room is not None
