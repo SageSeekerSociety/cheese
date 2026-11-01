@@ -18,6 +18,7 @@ import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
 import { isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
+import { installPageTiming } from '@/lib/pageTiming'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
@@ -168,6 +169,10 @@ const router = createRouter({
     return false
   },
 })
+
+// 每个项目页在读者浏览器里的真实耗时（lib/pageTiming.ts）。装在这里、排在下面
+// 所有守卫前面：它的 beforeEach 要赶在 prefetch 守卫发出首屏请求之前记下这一跳的起点。
+installPageTiming(router)
 
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
