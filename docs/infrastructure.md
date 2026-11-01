@@ -924,7 +924,8 @@ initdb -D "$PGDATA" --encoding=UTF8 --locale=C          # cluster level
 ```
 
 Status: **dev was rebuilt as UTF8 on 2026-08-16; production
-(`192.168.16.10`) is still `SQL_ASCII`** and is scheduled for the same rebuild.
+(`192.168.16.10`) is still `SQL_ASCII`**; the one-time cutover step in
+`.github/workflows/deploy-prod.yml` rebuilds it on its move to main.
 The procedure, its failure modes, and what must not be edited in the script:
 [`deploy/README-utf8-cutover.md`](../deploy/README-utf8-cutover.md). Application
 code carries a stopgap for the meantime — `_json_dumps_utf8` in
