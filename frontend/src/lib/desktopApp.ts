@@ -201,6 +201,19 @@ export function openInBrowser(url: string): boolean {
   return true
 }
 
+/** A page that hands the reader to the content domain at the top level (a
+ *  preview, a published Site) is the browser's to show: in the app, the
+ *  window would end up on a page someone else wrote, with no way back. Opens
+ *  `path` in the browser and takes the window back where it came from (the
+ *  start page when it came from nowhere); false outside the app, where the
+ *  caller goes on as in a browser. */
+export function leaveForBrowser(path: string): boolean {
+  if (!openInBrowser(path)) return false
+  if (window.history.length > 1) window.history.back()
+  else window.location.replace('/')
+  return true
+}
+
 /** Whether the app opens by itself, out of sight, when the person logs in to this computer. */
 export async function desktopOpensAtLogin(): Promise<boolean> {
   if (!desktopCan('autostart')) return false

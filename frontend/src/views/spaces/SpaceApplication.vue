@@ -8,7 +8,6 @@ import type { SpaceApplication as Application } from '@/types'
 
 import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import SpaceApplicationView from './SpaceApplicationView.vue'
 
@@ -16,6 +15,7 @@ import { createAvatar } from '@/api/avatars'
 import { SpacesApi } from '@/api/spaces'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 
 const route = useRoute()

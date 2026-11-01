@@ -17,7 +17,6 @@ import type { BasicInfoChange } from './BasicInfoView.vue'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -26,6 +25,7 @@ import BasicInfoView from './BasicInfoView.vue'
 
 import { createAvatar } from '@/api/avatars'
 import { SpacesApi } from '@/api/spaces'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

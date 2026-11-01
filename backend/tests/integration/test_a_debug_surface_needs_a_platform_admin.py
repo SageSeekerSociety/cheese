@@ -72,6 +72,14 @@ def test_the_health_report_is_still_there_for_an_admin(client, as_admin):
 
     assert "status" in body
     assert "database" in body["checks"]
+    # What answered and how it saw the caller: enough to size the workers and
+    # to tell whether the per-address limits can key on a real address.
+    serving = body["serving"]
+    assert serving["cpus"] >= 1
+    assert len(serving["load"]) == 3
+    assert {"client_address", "peer", "forwarded_for", "forwarded_allow_ips"} <= set(
+        serving
+    )
 
 
 @pytest.mark.parametrize("path", PUBLIC_ALWAYS_200)
@@ -104,3 +112,12 @@ def test_readiness_does_not_publish_a_dependency_error(client, monkeypatch):
     body = response.json()
     assert "database" in body["unready"]
     assert body["checks"]["database"] == {"status": "down"}
+
+
+def test_anyone_can_ask_which_address_they_are_counted_by(client, monkeypatch):
+    """The caller's own address and nothing else, with no credential: the one
+    way to check from outside that the proxies hand a visitor's address on."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    r = client.get("/client-address", headers={"X-Forwarded-For": "203.0.113.9"})
+    assert r.status_code == 200, r.text
+    assert set(r.json()["data"]) == {"address"}

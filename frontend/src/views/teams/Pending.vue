@@ -28,13 +28,13 @@ import type { ProjectInvitation } from '@/cx_types'
 import type { TeamMembershipApplication } from '@/types'
 
 import { onMounted, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import PendingView from './PendingView.vue'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 // 申请和邀请的状态
 const myRequests = ref<TeamMembershipApplication[]>([])

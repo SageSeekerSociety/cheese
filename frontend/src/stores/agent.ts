@@ -16,7 +16,6 @@ import type { AssistantCited, AssistantMessage, AssistantPage, AssistantProposal
 import type { Citable } from '@/types/citable'
 
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, shallowRef, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { AgentProposalsApi, ApiError, createRoomTask } from '@/api'
 import { AttachmentsApi } from '@/api/attachments'
@@ -27,6 +26,7 @@ import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
 import { uploadLibraryFile } from '@/lib/libraryApi'
+import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
 import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
 

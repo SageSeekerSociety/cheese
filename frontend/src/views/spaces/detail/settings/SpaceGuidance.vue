@@ -23,7 +23,6 @@ import type { SpaceTeaching } from '@/types'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useSpaceData } from '@/composables/useSpaceData'
@@ -32,6 +31,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import SpaceGuidanceView from './SpaceGuidanceView.vue'
 
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
+import { toast } from '@/lib/toast'
 import { useSpaceStore } from '@/stores/space'
 
 const { t } = useI18n()

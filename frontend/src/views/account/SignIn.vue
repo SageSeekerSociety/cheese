@@ -29,7 +29,6 @@ import type { SignInWay } from './SignInView.vue'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import {
   browserSupportsWebAuthn,
   browserSupportsWebAuthnAutofill,
@@ -50,6 +49,7 @@ import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { storageGetJson, storageSet, storageSetJson } from '@/lib/browserStorage'
 import { signInAtOrigin } from '@/lib/desktopApp'
+import { toast } from '@/lib/toast'
 import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
