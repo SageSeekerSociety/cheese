@@ -26,6 +26,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import URL, Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 import app.api.routes as routes_pkg
 from app.api import machine_relay
@@ -60,6 +62,7 @@ from app.core.ownership import keep_holding
 from app.core.process_role import is_api_pool
 from app.core.query_watch import install as install_query_watch
 from app.core.request_limits import RequestLimits
+from app.core.route_index import index_routes
 from app.core.route_mounting import FAILED_ROUTE_MODULES
 from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
@@ -906,18 +909,34 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     return response
 
 
-@app.middleware("http")
-async def cheese_turn_context(request: Request, call_next: Callable):  # type: ignore[type-arg]
-    # Stash the cheese turn id so blocks written by this request inherit it (R4).
-    ctx = current_work_id.set(parse_work_id(request.headers.get("x-cheese-turn")))
-    try:
-        return await call_next(request)
-    finally:
-        current_work_id.reset(ctx)
+# The two layers below are plain ASGI, not ``@app.middleware("http")``: a
+# Starlette ``BaseHTTPMiddleware`` runs the route in a task of its own and relays
+# its response through a memory stream, about half a millisecond on every
+# request, and neither of these needs a ``Request`` or a ``Response`` to do its
+# job. They sit exactly where the decorators put them (each one outside the
+# layers added before it) and, like the decorators, touch only HTTP.
+class CheeseTurnContext:
+    """Stash the cheese turn id so blocks written by this request inherit it (R4)."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        turn = Headers(scope=scope).get("x-cheese-turn")
+        ctx = current_work_id.set(parse_work_id(turn))
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            current_work_id.reset(ctx)
 
 
-@app.middleware("http")
-async def report_unhandled_to_room(request: Request, call_next: Callable):  # type: ignore[type-arg]
+app.add_middleware(CheeseTurnContext)
+
+
+class ReportUnhandledToRoom:
     """The push half of the backend-error channel (app.domain.backend_log).
 
     Registered last among the user middleware, so it sees anything that escapes:
@@ -930,32 +949,58 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
     that changes nothing here: the audit only counts bytes and re-raises what it
     catches untouched, so every unhandled exception still arrives.
 
+    Only an exception raised before the response started is reported: that is
+    all the ``@app.middleware("http")`` this replaces could see, since its
+    ``call_next`` returned at the response's first frame and a body that failed
+    later failed outside it.
+
     The exception is re-raised untouched: this reports, it does not swallow.
     """
-    try:
-        return await call_next(request)
-    except Exception as exc:
-        # A failure inside the intake endpoint itself must not report into the
-        # same channel (a broken intake would amplify every other error).
-        #
-        # The path compared here is the one THIS app was handed, not the one a
-        # caller typed: the gateway forwards the public origin's `/api/` with a
-        # trailing slash in nginx's `proxy_pass`, so `/api/backend-errors`
-        # arrives as `/backend-errors` — the stripping API_GATEWAY_MOUNT
-        # describes. Compared against the public spelling, this guard never
-        # matched a request at all, so an exception raised by the intake itself
-        # was reported straight back into the intake.
-        if request.url.path != "/backend-errors":
-            await backend_log.report_request_failure(
-                exc,
-                method=request.method,
-                path=request.url.path,
-                # 这个请求自己在 `request_context` 里认下的 id（那层把它放在 scope
-                # 上）。读入站头读到的是没人发过的值：浏览器不带 X-Request-ID，于是
-                # 每一条 5xx 都存成空 id —— 而这张表正是拿来对人的。
-                request_id=request.scope.get("state", {}).get("request_id"),
-            )
-        raise
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def watched(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, watched)
+        except Exception as exc:
+            path = URL(scope=scope).path
+            # A failure inside the intake endpoint itself must not report into
+            # the same channel (a broken intake would amplify every other error).
+            #
+            # The path compared here is the one THIS app was handed, not the one
+            # a caller typed: the gateway forwards the public origin's `/api/`
+            # with a trailing slash in nginx's `proxy_pass`, so
+            # `/api/backend-errors` arrives as `/backend-errors` — the stripping
+            # API_GATEWAY_MOUNT describes. Compared against the public spelling,
+            # this guard never matched a request at all, so an exception raised
+            # by the intake itself was reported straight back into the intake.
+            if not started and path != "/backend-errors":
+                await backend_log.report_request_failure(
+                    exc,
+                    method=scope["method"],
+                    path=path,
+                    # 这个请求自己在 `request_context` 里认下的 id（那层把它放在
+                    # scope 上）。读入站头读到的是没人发过的值：浏览器不带
+                    # X-Request-ID，于是每一条 5xx 都存成空 id —— 而这张表正是拿
+                    # 来对人的。
+                    request_id=scope.get("state", {}).get("request_id"),
+                )
+            raise
+
+
+app.add_middleware(ReportUnhandledToRoom)
 
 
 # Added LAST on purpose: Starlette builds the stack so the most recently added
@@ -1045,6 +1090,11 @@ if not settings.device_connection_url:
 # Last, once every route is mounted: refuse to start with a write route that
 # does not say who may call it (app/api/write_access.py).
 seal(app)
+
+# Once every route is mounted: a request is matched against the routers that
+# hold a route under its first path segment, not all of them in turn
+# (app/core/route_index.py).
+index_routes(app.router)
 
 # Move the startup heap (modules, routers, settings, the pool) out of the
 # collector's scan set, so every later gen-0/1 pass stops re-walking it.
