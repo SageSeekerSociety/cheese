@@ -613,17 +613,17 @@ def test_swap_and_freezing_are_refused_for_another_users_sandbox(
     and no other's: both are asked for by name, and a name that is not the
     caller's cgroup is refused."""
     rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    # A sandbox `up` never made for this caller: the installed helper, run the
+    # way a session runs it, refuses the name before touching any cgroup.
     other = str(uuid.uuid4())
-    (sandbox_host.CGROUP / other).mkdir(exist_ok=True)
-    try:
-        for argv in (["swap", other, "0"], ["freeze", other], ["thaw", other]):
-            answer = subprocess.run(
-                [sys.executable, str(HELPER), *argv], capture_output=True, text=True
-            )
-            assert answer.returncode == 2, answer.stdout + answer.stderr
-            assert "not the caller's sandbox" in answer.stderr
-    finally:
-        (sandbox_host.CGROUP / other).rmdir()
+    for argv in (["swap", other, "0"], ["freeze", other], ["thaw", other]):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, *argv],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 2, answer.stdout + answer.stderr
+        assert "not the caller's sandbox" in answer.stderr
 
 
 @with_sandbox_host
