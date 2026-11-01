@@ -33,6 +33,14 @@ const ORIGIN: &str = match option_env!("CHEESE_ORIGIN") {
     None => "https://okcheese.com",
 };
 
+// Where the server puts pages other people wrote — mini-apps, previews, Sites —
+// one subdomain each, never on the server's own origin (backend `sites_domain`).
+// Built for okcheese.com's; CHEESE_CONTENT_DOMAIN at build time names another.
+const CONTENT_DOMAIN: &str = match option_env!("CHEESE_CONTENT_DOMAIN") {
+    Some(d) => d,
+    None => "cheeseusercontent.com",
+};
+
 // macOS draws the window buttons over the page; elsewhere the system title bar stays.
 const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "native" };
 
@@ -95,11 +103,33 @@ fn from_app(url: &Url) -> bool {
     url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost")
 }
 
+/// A page on the content domain: what the server's pages show in their frames.
+fn from_content(url: &Url) -> bool {
+    let scheme = Url::parse(ORIGIN).map(|o| o.scheme().to_owned()).unwrap_or_default();
+    url.scheme() == scheme
+        && url.host_str().is_some_and(|host| {
+            host.strip_suffix(CONTENT_DOMAIN)
+                .is_some_and(|label| label.len() > 1 && label.ends_with('.'))
+        })
+}
+
 /// Whether a navigation stays in the window; anything else goes to the browser.
 /// The server's documentation is a site of its own, with no way back to the
 /// app from inside it, so it goes to the browser too.
+///
+/// On macOS this is asked of every frame's navigation, not only the window's,
+/// and the handler is not told which frame it is: a mini-app or a preview the
+/// page loads into a frame from the content domain has to stay, or it opens in
+/// the browser and the frame stays empty. Nothing sends the window itself
+/// there: the page frames that content sandboxed without
+/// `allow-top-navigation`, links out of it open in the browser
+/// (`on_new_window`), and the server's pages that hand over to the content
+/// domain at the top level open themselves in the browser when they find
+/// themselves in the app (frontend/src/lib/desktopApp.ts `leaveForBrowser`),
+/// as does a `cheese://` link to one (links.rs). Nor can a content page call
+/// the app: the IPC capability names the server's origin only.
 fn stays_in_app(url: &Url) -> bool {
-    (from_server(url) && !is_docs(url)) || from_app(url)
+    (from_server(url) && !is_docs(url)) || from_app(url) || from_content(url)
 }
 
 fn is_docs(url: &Url) -> bool {
@@ -385,13 +415,13 @@ fn main() {
                     links::open(&linked, &link);
                 }
             });
-            // Started by a link (Windows, Linux): the first page goes on to that page.
-            let start = app
-                .deep_link()
-                .get_current()
-                .ok()
-                .flatten()
-                .and_then(|urls| urls.iter().find_map(links::page));
+            // Started by a link (Windows, Linux): the first page goes on to that
+            // page, or the link opens in the browser (links.rs).
+            let started_by = app.deep_link().get_current().ok().flatten().unwrap_or_default();
+            for link in &started_by {
+                links::hand_off(app.handle(), link);
+            }
+            let start = started_by.iter().find_map(links::page);
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
@@ -566,6 +596,24 @@ mod tests {
         // The default set also reveals a file in its folder; the page has no
         // such command, so the narrower pair is the whole grant.
         assert!(!SERVER_PERMISSIONS.contains(&"opener:default"));
+    }
+
+    #[test]
+    fn the_content_the_page_frames_stays_in_the_window() {
+        // A mini-app's shell, and a preview's session handshake and pages.
+        assert!(stays(&format!("https://apps.{}/v1/", super::CONTENT_DOMAIN)));
+        let project = "0123456789abcdef0123456789abcdef";
+        assert!(stays(&format!("https://{project}.{}/_cheese/session", super::CONTENT_DOMAIN)));
+        assert!(stays(&format!("https://preview-{project}.{}/index.html", super::CONTENT_DOMAIN)));
+    }
+
+    #[test]
+    fn only_the_content_domain_itself_counts_as_content() {
+        let domain = super::CONTENT_DOMAIN;
+        assert!(!stays(&format!("https://apps.{domain}.evil.example/")));
+        assert!(!stays(&format!("https://evil{domain}/")));
+        assert!(!stays(&format!("https://{domain}/")));
+        assert!(!stays(&format!("http://apps.{domain}/v1/")));
     }
 
     #[test]

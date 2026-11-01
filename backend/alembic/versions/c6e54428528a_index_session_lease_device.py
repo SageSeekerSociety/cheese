@@ -1,7 +1,7 @@
 """agent_sessions: index the device a session's lease is on
 
 Revision ID: c6e54428528a
-Revises: c20dfc7a2e2f
+Revises: c1ddf6d2257f
 
 A sandbox asks the platform through its device link, and every such request
 (`/machine/api/...`, `/machine/llm/...`) first finds the session holding
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c6e54428528a"
-down_revision: str | Sequence[str] | None = "c20dfc7a2e2f"
+down_revision: str | Sequence[str] | None = "c1ddf6d2257f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

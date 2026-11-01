@@ -31,9 +31,7 @@ def test_only_the_request_context_layer_relays_through_a_task():
     assert relays == ["request_context"]
 
 
-def test_a_request_asks_only_the_routers_holding_its_first_segment(
-    client, monkeypatch
-):
+def test_a_request_asks_only_the_routers_holding_its_first_segment(client, monkeypatch):
     asked: list[object] = []
     matches = _IncludedRouter.matches
 

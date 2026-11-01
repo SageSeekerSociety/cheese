@@ -84,7 +84,7 @@ covers:
     docker compose exec backend python -m scripts.purge_task_snapshots          # 只数
     docker compose exec backend python -m scripts.purge_task_snapshots --apply  # 删
 
-它按前缀翻页列、逐个删，重复跑第二遍是零，不需要停机。`task_snapshots` 表已经没有代码读写，按两次发布的规矩在下一个 PR 里删。
+它按前缀翻页列、逐个删，重复跑第二遍是零，不需要停机。`task_snapshots` 表在后一个发布里删掉（`c1ddf6d2257f`）。
 
 ## 独立时钟 {#timer}
 
