@@ -135,10 +135,12 @@ async def get_task_participants(
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids(user_ids)
-        profile_map = await profile_repo.get_profiles_by_user_ids(user_ids)
-        # 「挑过的头像」单独问：档案上的 avatar_id 每个注册路径都写死了全局默认，
-        # 直接回它会让所有没挑过头像的人共用同一张脸。
-        avatar_map = await profile_repo.chosen_avatar_ids(user_ids)
+        # 「挑过的头像」按头像类型认，别回档案上的 avatar_id：每个注册路径都写死了
+        # 全局默认，直接回它会让所有没挑过头像的人共用同一张脸。档案和头像出自同一次
+        # 读取（profiles_and_chosen_avatars），不分两次读同一批档案行。
+        profile_map, avatar_map = await profile_repo.profiles_and_chosen_avatars(
+            user_ids
+        )
 
     # 开始做的时刻（项目建好的那一下）：「数据」页签数谁开始做了却没动，从这里起算，
     # 不从申请那一下。还没开始做的是 null。
@@ -205,10 +207,9 @@ async def get_task_participant(
         user_repo = UserRepository(session=db)
         profile_repo = UserProfileRepository(session=db)
         user_map = await user_repo.get_by_ids([membership.member_id])
-        profile_map = await profile_repo.get_profiles_by_user_ids(
+        profile_map, avatar_map = await profile_repo.profiles_and_chosen_avatars(
             [membership.member_id]
         )
-        avatar_map = await profile_repo.chosen_avatar_ids([membership.member_id])
     participant_info = _build_participant_user_info(
         membership,
         user_map=user_map,

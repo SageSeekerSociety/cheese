@@ -180,3 +180,41 @@ def test_the_submissions_page_reads_its_own_claims_and_counts_only_past_a_page(
     statements, r = _fresh_get(api_client, db_session, url + "?pageSize=1", token)
     assert r.status_code == 200, r.text
     assert _count(statements, _COUNT_SUBMISSIONS) == 1, statements
+
+
+_PROFILES = re.compile(r"FROM user_profile ")
+
+
+def test_board_rosters_read_profiles_and_faces_together(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,  # noqa: F811
+    db_session,
+):
+    """A roster draws each person's name and chosen face from their profile;
+    both come from one read of the profile rows. The analytics page reuses the
+    space row its own guard already read."""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="名单", startMode="APPLY")
+    for _ in range(3):
+        _, token = _member_of(user_client, api_client, board)
+        participant, _ = _claim_as_user(api_client, task_id, token)
+        _decide(api_client, board, task_id, participant, "APPROVED")
+    teacher = board["creator_token"]
+    space = board["space_id"]
+
+    for url in (
+        f"/spaces/{space}/members",
+        f"/tasks/{task_id}/participants",
+        f"/tasks/{task_id}",
+        "/spaces",
+    ):
+        statements, r = _fresh_get(api_client, db_session, url, teacher)
+        assert r.status_code == 200, (url, r.text)
+        assert _count(statements, _PROFILES) == 1, (url, statements)
+
+    statements, r = _fresh_get(
+        api_client, db_session, f"/spaces/{space}/analytics/tasks", teacher
+    )
+    assert r.status_code == 200, r.text
+    assert _count(statements, _SPACE_ROW) == 1, statements
