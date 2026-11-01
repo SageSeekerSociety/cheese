@@ -11,15 +11,17 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.ask import ask, ask_to_decide
 from app.domain.block.adapters import dump_blocks_json
+from app.domain.block.schemas import BlockOut
 from app.domain.project_permissions import Permission
 from app.domain.review.services import AcceptService
 from app.domain.room_task.place import place_or_404
@@ -62,7 +64,13 @@ async def create_questions(
     return ok({"blocks": blocks, "request_id": body.get("request_id")})
 
 
-@router.post("/{topic_id}/accept-card/ask")
+class DecisionAsked(BaseModel):
+    """The question `ask_for_the_decision` posted, as the room shows it."""
+
+    blocks: list[BlockOut]
+
+
+@router.post("/{topic_id}/accept-card/ask", **typed_response(DecisionAsked))
 async def ask_for_the_decision(
     at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
     body: dict,

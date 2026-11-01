@@ -23,10 +23,11 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import PresentedCredential, require_seated_agent
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core import credentials
@@ -388,7 +389,14 @@ async def sandbox_forge_token(
     )
 
 
-@router.get("/forge-held")
+class HeldDeliveries(BaseModel):
+    """Pull requests that are deliveries waiting on a person, and their branches."""
+
+    numbers: list[int]
+    branches: list[str]
+
+
+@router.get("/forge-held", **typed_response(HeldDeliveries))
 async def sandbox_forge_held(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> dict:
