@@ -102,7 +102,8 @@
       "daily": "每天 {time}",
       "weekly": "每{days} {time}",
       "monthly": "每月 {day} 日 {time}",
-      "hourly": "每小时的 {minute} 分"
+      "hourly": "每小时的 {minute} 分",
+      "unset": "还没定什么时候跑"
     },
     "editTitle": "改模板「{title}」",
     "nameLabel": "模板名字",
@@ -152,8 +153,7 @@
     "time": "几点",
     "minute": "分钟",
     "day": "日期",
-    "timezone": "时区",
-    "triggerUnset": "两个都不选也行：先存下来不跑，之后在「修改」里定"
+    "timezone": "时区"
   },
   "deleteTitle": "删除「{title}」",
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",

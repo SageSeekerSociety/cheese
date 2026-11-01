@@ -36,33 +36,57 @@ function open() {
   })
 }
 
-/** 「时间」那颗勾选框：Vuetify 给它挂了 aria-label。 */
-function timeBox(): HTMLInputElement {
-  const box = document.querySelector<HTMLInputElement>(
-    `input[type=checkbox][aria-label="${t('routines.form.timeOn')}"]`
-  )
-  if (!box) throw new Error('time checkbox not found')
+/** 那颗勾选框：Vuetify 给它挂了 aria-label。 */
+function boxOf(label: string): HTMLInputElement {
+  const box = document.querySelector<HTMLInputElement>(`input[type=checkbox][aria-label="${label}"]`)
+  if (!box) throw new Error(`${label} checkbox not found`)
   return box
 }
+const timeBox = () => boxOf(t('routines.form.timeOn'))
+const conditionBox = () => boxOf(t('routines.form.conditionOn'))
 
-async function toggleTimeBox(on: boolean) {
-  const box = timeBox()
-  if (box.checked === on) return
+async function toggle(box: () => HTMLInputElement, on: boolean) {
+  const el = box()
+  if (el.checked === on) return
   // Vuetify listens to the input's `input` event; happy-dom's click on a
   // checkbox does not fire one.
-  box.checked = on
-  await fireEvent.input(box)
+  el.checked = on
+  await fireEvent.input(el)
 }
 
 describe('RoutineCompose trigger', () => {
-  it('点两下「时间」就回到两个都不选，并且明说可以不选', async () => {
-    const { getByText } = open()
-    await toggleTimeBox(true)
+  it('点两下「时间」就回到两个都不选：两颗都不勾', async () => {
+    open()
+    await toggle(timeBox, true)
     expect(timeBox().checked).toBe(true)
 
-    await toggleTimeBox(false)
+    await toggle(timeBox, false)
     expect(timeBox().checked).toBe(false)
-    await waitFor(() => expect(getByText(t('routines.form.triggerUnset'))).toBeTruthy())
+    expect(conditionBox().checked).toBe(false)
+  })
+
+  // 回归：以前「条件」勾的是「不是时间」，两个都不选时它也亮着，点它只是把空串再写一遍，
+  // 界面上取消不掉。
+  it('点两下「条件」也回到两个都不选：两颗都不勾', async () => {
+    open()
+    await toggle(conditionBox, true)
+    expect(conditionBox().checked).toBe(true)
+
+    await toggle(conditionBox, false)
+    expect(conditionBox().checked).toBe(false)
+    expect(timeBox().checked).toBe(false)
+  })
+
+  it('时间与条件只能留一个：勾一边，另一边自己灭', async () => {
+    open()
+    await toggle(timeBox, true)
+    await toggle(conditionBox, true)
+    expect(conditionBox().checked).toBe(true)
+    expect(timeBox().checked).toBe(false)
+
+    await toggle(timeBox, true)
+    expect(timeBox().checked).toBe(true)
+    expect(conditionBox().checked).toBe(false)
   })
 
   it('两个都不选也存得下去：交出去的 trigger 是空串', async () => {
@@ -71,8 +95,8 @@ describe('RoutineCompose trigger', () => {
     const goal = getByLabelText(t('routines.form.goal'))
     await fireEvent.update(goal, '每周整理一次进展')
 
-    await toggleTimeBox(true)
-    await toggleTimeBox(false)
+    await toggle(timeBox, true)
+    await toggle(timeBox, false)
 
     await fireEvent.click(getByText(t('routines.save')))
 
@@ -82,6 +106,39 @@ describe('RoutineCompose trigger', () => {
     }
     expect(payload.body.trigger).toBe('')
     expect(payload.body.spec).toEqual({})
+  })
+})
+
+// 「模板」那一页上只有模板自己那一行：表单底下那句解释不该跟过来，没有触发方式的模板
+// 也只说一句「还没定什么时候跑」。
+describe('RoutineCompose templates', () => {
+  it('模板那页不摆表单底下那句说明', async () => {
+    const { getByText, container } = render(Compose, {
+      props: {
+        modelValue: true,
+        routine: null,
+        rooms: [],
+        defaultRoom: 'room-1',
+        error: '',
+        agentName: '小 C',
+        templates: [{ id: 't1', title: '整理周报', goal: '汇总本周各频道进展', trigger: '', spec: {} }],
+      },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await fireEvent.click(getByText(t('routines.compose.tab.template')))
+    await waitFor(() => expect(container.textContent).toContain('整理周报'))
+    expect(container.textContent).toContain(t('routines.template.when.unset'))
+  })
+})
+
+// 目标是唯一必填的一格：标签右上有个星号，标签文字本身还是「目标」。
+describe('RoutineCompose goal is required', () => {
+  it('标签带星号，控件仍然按「目标」找得到', () => {
+    const { getByLabelText, container } = open()
+    const goal = getByLabelText(t('routines.form.goal'))
+    expect(goal.getAttribute('aria-required')).toBe('true')
+    const star = container.querySelector('.compose__req')
+    expect(star?.getAttribute('aria-hidden')).toBe('true')
   })
 })
 

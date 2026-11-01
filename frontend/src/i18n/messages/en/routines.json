@@ -102,7 +102,8 @@
       "daily": "Every day at {time}",
       "weekly": "Every {days} at {time}",
       "monthly": "Day {day} of every month at {time}",
-      "hourly": "{minute} minutes past every hour"
+      "hourly": "{minute} minutes past every hour",
+      "unset": "No schedule yet"
     },
     "editTitle": "Edit the template “{title}”",
     "nameLabel": "Template name",
@@ -152,8 +153,7 @@
     "time": "Time",
     "minute": "Minute",
     "day": "Day of month",
-    "timezone": "Time zone",
-    "triggerUnset": "Fine to pick neither: it is saved and stays idle until you set one when editing"
+    "timezone": "Time zone"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

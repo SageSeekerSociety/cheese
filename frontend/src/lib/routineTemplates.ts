@@ -36,7 +36,8 @@ const WEEKDAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const
 
 /** 「每周一 09:00」那样的一句话：这一条什么时候跑。 */
 export function routineWhenText(trigger: RoutineTrigger | '', spec: Record<string, unknown>): string {
-  if (!trigger) return t('routines.form.triggerUnset')
+  // 存下来的模板可以没有触发方式：那一行只说它还没定，不借表单里那句解释。
+  if (!trigger) return t('routines.template.when.unset')
   if (trigger !== 'schedule') return t(`routines.trigger.${trigger}`)
   const freq = String(spec.freq ?? 'daily')
   const time = String(spec.time ?? '09:00')
