@@ -229,9 +229,10 @@ def skip_question(question: Block, *, by: str) -> bool:
 
 
 def answered_by(question: Block, handle: str) -> bool:
-    """``handle`` 在这道题上答过话没有。"""
+    """``handle`` 在这道题上答过话没有。交付有了结果的那一条（``decided``）不算：
+    那是卡上的决定，不是他在题上说的话，撤不掉。"""
     return any(
-        (entry or {}).get("by") == handle
+        (entry or {}).get("by") == handle and (entry or {}).get("kind") != DECIDED
         for entry in ((question.meta or {}).get("answer_log") or [])
     )
 
@@ -258,7 +259,7 @@ async def withdraw_answer(session, *, question: Block, by: str) -> Block:
         "answer_log": [
             entry
             for entry in (meta.get("answer_log") or [])
-            if (entry or {}).get("by") != by
+            if (entry or {}).get("by") != by or (entry or {}).get("kind") == DECIDED
         ],
     }
     await session.flush()

@@ -145,6 +145,13 @@ def test_the_close_button_closes_the_task_for_someone_who_works_it(client):
         "关闭任务",
         "alice",
     )
+    # The outcome is the task's, not something alice said on the question: she
+    # cannot take it back there and bring the buttons back.
+    taken_back = client.delete(
+        f"/blocks/{question['id']}/answer", headers=session_auth_headers("alice")
+    )
+    assert taken_back.status_code == 403, taken_back.text
+    assert _meta(client, question["id"])["answer_log"][-1]["kind"] == "decided"
 
 
 def test_the_accept_button_accepts_for_the_reviewer(client):
