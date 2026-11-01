@@ -628,6 +628,10 @@ class Runner(runner.Runner[Journal]):
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # How long each API call waited for its first token, by the message id
+        # it answered with, until the record that call's blocks land in takes
+        # it (``stream`` / ``observe``).
+        self.waits: dict[str, int] = {}
         # The arguments of the tool call being shown, as written so far; what
         # the room is shown of them is `live_arguments`'s.
         self.streaming_arguments = ""
@@ -1126,6 +1130,17 @@ class Runner(runner.Runner[Journal]):
             return
         event = record.get("event") or {}
         kind = event.get("type")
+        if kind == "message_start":
+            # How long this call waited before its first token. The build says
+            # it here and nowhere else, and a streamed event is never
+            # journaled, so the number waits for the record this call's blocks
+            # land as (``observe``): that record is where a wait belongs, one
+            # per call, with what the wait was for.
+            wait = record.get("ttft_ms")
+            identifier = (event.get("message") or {}).get("id")
+            if isinstance(wait, int) and not isinstance(wait, bool) and identifier:
+                self.waits[str(identifier)] = wait
+            return
         if kind == "content_block_start":
             block = event.get("content_block") or {}
             self.streaming = event.get("index")
@@ -1165,6 +1180,19 @@ class Runner(runner.Runner[Journal]):
                     str(block.get("name") or ""), self.streaming_arguments
                 )
                 self.shown()
+
+    def command_ran(self, call: str) -> int | None:
+        """How long the command behind one Bash call ran, as the executor
+        timed it and the shell prefix left it here (``shell_prefix``): the
+        part of the call's wall clock the command itself spent."""
+        if not self.execution:
+            return None
+        path = Path(self.execution).parent / "command-timings" / f"{call}.json"
+        try:
+            ran = json.loads(path.read_text()).get("ran_ms")
+        except (OSError, ValueError):
+            return None
+        return ran if isinstance(ran, int) and not isinstance(ran, bool) else None
 
     def _private_calls(self, message: dict) -> dict[str, str]:
         """The calls in this record on one person's private memory file, and
@@ -1294,6 +1322,13 @@ class Runner(runner.Runner[Journal]):
         stamp: dict = {}
         if isinstance(message, dict):
             if main and message.get("type") == "assistant":
+                # This call's wait, on the first block it landed as: the same
+                # message id is written once per finished block, and the wait
+                # belongs to the call, not to each of them.
+                answer = (message.get("message") or {}).get("id")
+                wait = self.waits.pop(str(answer), None) if answer else None
+                if wait is not None:
+                    stamp["first_token_ms"] = wait
                 if message.get("error"):
                     # The API refused the work; the result that follows says
                     # only that it failed, and this is the one record that says
@@ -1307,6 +1342,13 @@ class Runner(runner.Runner[Journal]):
                             name.removeprefix("mcp__native__"), block.get("input")
                         )
             if returned := self._watch_marks(message):
+                for call, told in returned.items():
+                    # What the command itself took, where the shell prefix on
+                    # this host left it: the rest of the call's wall clock is
+                    # what the platform spent carrying it to the executor.
+                    ran = self.command_ran(call)
+                    if ran is not None:
+                        told["ran_ms"] = ran
                 stamp["calls"] = returned
             if private := self._private_calls(message):
                 stamp["private"] = private
