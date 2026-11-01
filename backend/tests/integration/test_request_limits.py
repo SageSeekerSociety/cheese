@@ -131,6 +131,25 @@ async def test_a_burst_past_the_quota_is_refused_with_retry_after(limits) -> Non
     assert refused.headers["x-request-id"]
 
 
+async def test_an_exempt_account_is_not_limited_and_others_still_are(
+    limits, monkeypatch
+) -> None:
+    """dev names its shared development account so a load test from it measures
+    the backend; nobody else's quota changes."""
+    limits(rate_per_s=0.2, rate_burst=2)
+    handle = f"u-{uuid.uuid4().hex[:10]}"
+    monkeypatch.setattr(settings, "request_limit_exempt_handles", f"x, {handle}")
+    exempt = session_auth_headers(handle)
+    other = _user()
+    async with _client() as client:
+        free = [await client.get("/version", headers=exempt) for _ in range(6)]
+        counted = [await client.get("/version", headers=other) for _ in range(3)]
+
+    assert [r.status_code for r in free] == [200] * 6
+    assert "ratelimit" not in free[0].headers
+    assert [r.status_code for r in counted] == [200, 200, 429]
+
+
 async def test_the_quota_comes_back_at_the_sustained_rate(limits) -> None:
     limits(rate_per_s=1.0, rate_burst=1)
     headers = _user()

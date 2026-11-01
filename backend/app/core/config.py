@@ -218,6 +218,10 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # (``app.core.deleted_accounts``), may wait on Redis before the request goes
     # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
+    # Accounts the limits above do not apply to, comma-separated handles. Empty
+    # everywhere but dev, which names the shared development account so a load
+    # test from it measures the backend rather than its own quota.
+    request_limit_exempt_handles: str = ""
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
     # tests; deployed business backends point at the stable compose service.

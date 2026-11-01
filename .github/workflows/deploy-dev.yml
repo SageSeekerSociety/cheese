@@ -520,6 +520,9 @@ jobs:
           # three workers for plain reads, the realtime process for the rest.
           # 0 turns it off on the next release.
           API_POOL_WORKERS: "3"
+          # The shared development account load tests run from; the request
+          # limits would otherwise cap them at one account's quota (~20/s).
+          REQUEST_LIMIT_EXEMPT_HANDLES: "wangchangxin"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Install the dev database backup writer from this release

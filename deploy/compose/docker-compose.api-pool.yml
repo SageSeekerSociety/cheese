@@ -14,5 +14,9 @@ services:
   backend:
     environment:
       - API_POOL_WORKERS=${API_POOL_WORKERS:-0}
+      # Handles the per-client request limits leave alone (comma-separated):
+      # dev names its shared development account so a load test measures the
+      # backend, not that account's own quota. Empty limits everyone.
+      - REQUEST_LIMIT_EXEMPT_HANDLES=${REQUEST_LIMIT_EXEMPT_HANDLES:-}
     ports:
       - "127.0.0.1:${BACKEND_POOL_PORT:-18091}:8085"

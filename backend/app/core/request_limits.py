@@ -285,6 +285,17 @@ def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONRespons
     return JSONResponse(body, status_code=429, headers=headers)
 
 
+def _exempt_handles() -> frozenset[str]:
+    """``settings.request_limit_exempt_handles`` as a set; read per request so a
+    test can change it."""
+    raw = settings.request_limit_exempt_handles
+    return (
+        frozenset(h.strip() for h in raw.split(",") if h.strip())
+        if raw
+        else frozenset()
+    )
+
+
 class RequestLimits:
     """Pure ASGI, so a slot is held for exactly as long as the response is
     being produced — streamed bodies included — and released however the
@@ -313,6 +324,9 @@ class RequestLimits:
             await self.app(scope, receive, send)
             return
         kind, key = principal
+        if kind == "user" and key.removeprefix("user:") in _exempt_handles():
+            await self.app(scope, receive, send)
+            return
         rate = await _check_rate(key)
         if rate is not None and not rate.allowed:
             retry_after = max(1, _seconds(rate.retry_after_ms))
