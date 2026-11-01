@@ -5,6 +5,7 @@ import html
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,7 +88,14 @@ def persisted_notice(block: Block) -> str | None:
     return agent_notice(block)
 
 
-async def _owning_task(session: AsyncSession, doc: Document):
+class _OwningTask(NamedTuple):
+    id: uuid.UUID
+    room_id: uuid.UUID
+    title: str | None
+    title_source: str | None
+
+
+async def _owning_task(session: AsyncSession, doc: Document) -> _OwningTask | None:
     """The task whose living document ``doc`` is — its id, room, title and
     where the title came from — or None. Saving a document asks who owns it
     before the write and what it is called after; both answers are this one
@@ -106,7 +114,7 @@ async def _owning_task(session: AsyncSession, doc: Document):
             ).where(_tasks.c.document_id == doc.id)
         )
     ).first()
-    owner = None if row is None else tuple(row)
+    owner = None if row is None else _OwningTask(*row)
     if can_cache:
         remember(session, ("document_task", doc.id), owner, tables=frozenset({"tasks"}))
     return owner
@@ -121,7 +129,7 @@ async def whose_document(
     if doc.number is not None or doc.room_id is not None or doc.project_id is None:
         return None, None
     owner = await _owning_task(session, doc)
-    return (None, None) if owner is None else (owner[1], owner[0])
+    return (None, None) if owner is None else (owner.room_id, owner.id)
 
 
 async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
@@ -131,12 +139,9 @@ async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
     if doc.title:
         return doc.title
     owner = await _owning_task(session, doc)
-    if owner is None:
+    if owner is None or owner.title_source == "placeholder" or not owner.title:
         return None
-    _, _, title, title_source = owner
-    if title_source == "placeholder" or not title:
-        return None
-    return title
+    return owner.title
 
 
 def _project_of(doc: Document) -> uuid.UUID:
@@ -196,12 +201,15 @@ class DocumentWriter:
         author = actors[0]
         journal = DocumentJournal(self._session)
         await self._session.refresh(doc)
-        # The name the line shows it under, read now: the writes below end the
-        # request's remembered answers, and the owning task's row is in hand.
-        shown_title = await _shown_title(self._session, doc)
         previous_content = doc.content
         if previous_content == content:
             return None, None
+        # The name the line shows it under, read now: the writes below end the
+        # request's remembered answers, and the owning task's row is in hand.
+        # Only a store that goes on to write a line needs it.
+        shown_title = (
+            None if quiet or room_id is None else await _shown_title(self._session, doc)
+        )
         base_version = doc.version
         # A quiet version only respells the text and is nobody's edit: the
         # document stays its last editor's, respelled nodes included. Unchanged
