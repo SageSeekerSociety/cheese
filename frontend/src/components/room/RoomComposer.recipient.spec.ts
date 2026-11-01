@@ -1,10 +1,10 @@
-/** 输入框顶上「这条交给谁」那一行，和任务在打字时关掉之后的那一问。
+/** 发之前看得见这条交给谁，和任务在打字时关掉之后的那一问。
  *
  * 规矩（没读过代码的人也能判断）：
- * - 发之前看得见这条交给谁：@ 了队友就写那位，拿掉 @ 就回到「频道讨论」；回复队友的消息
- *   写那位；任务负责人在开着的任务里说话写那位，只 @ 了人时写那几个人。
- * - 打字时任务关了：草稿留着，那一行跟着变；第一次发不悄悄降成讨论，就地问「@ 它」还是
- *   「仅发布讨论」。
+ * - 频道主线上这条不交给 AI 时，头像旁写着「不交给 AI」；@ 了队友、回复队友的消息就不写。
+ *   支线、任务、私聊里不写。
+ * - 任务负责人在开着的任务里说话交给队友，只 @ 了人时只给那几个人。
+ * - 打字时任务关了：草稿留着；第一次发不悄悄降成讨论，就地问「@ 它」还是「仅发布讨论」。
  *
  * 交给谁由后端答（`/messages/addressing`，规矩本身由后端的测试钉着）。这里的替身按那几条
  * 规矩答，钉的是输入框问的是发出去的那一份、画的是它的回答、发的时候照它说的做。
@@ -24,6 +24,8 @@ const AGENT_MESSAGE = 'block-from-cheese'
 const backend = vi.hoisted(() => ({
   task: null as 'open' | 'closed' | null,
   privateChat: false,
+  /** 和一个人私聊：只有 @ 了队友才交给它。 */
+  personChat: false,
   asked: [] as unknown[],
 }))
 vi.mock('../../api/messages', async () => {
@@ -36,18 +38,20 @@ vi.mock('../../api/messages', async () => {
       const people = named.filter((h) => h !== CHEESE.handle)
       const reason = named.includes(CHEESE.handle)
         ? 'mention'
-        : draft.reply_to === AGENT_MESSAGE
-          ? 'reply'
-          : backend.privateChat
-            ? 'private'
-            : backend.task === 'open' && !people.length
-              ? 'task'
-              : null
+        : backend.personChat
+          ? null
+          : draft.reply_to === AGENT_MESSAGE
+            ? 'reply'
+            : backend.privateChat
+              ? 'private'
+              : backend.task === 'open' && !people.length
+                ? 'task'
+                : null
       return {
         agent: reason ? { handle: CHEESE.handle, name: CHEESE.label } : null,
         reason,
         people,
-        place: backend.task ? 'task' : backend.privateChat ? 'private' : 'channel',
+        place: backend.task ? 'task' : backend.privateChat || backend.personChat ? 'private' : 'channel',
         task_status: backend.task,
       }
     }),
@@ -64,12 +68,20 @@ const POOL = [
   { handle: CHEESE.handle, label: CHEESE.label, avatar: null, agent: true },
 ]
 
-function topic(): Topic {
-  return { id: 'room-1', project_id: 'p1', title: '开发', kind: 'channel', status: 'active' } as Topic
+function topic(id: string): Topic {
+  return { id, project_id: 'p1', title: '开发', kind: 'channel', status: 'active' } as Topic
 }
 
 function mount(
-  opts: { place?: string; replyTo?: string | null; alwaysSummon?: boolean; handOff?: boolean; draft?: string } = {}
+  opts: {
+    /** 输入框所在的那间房（主线上发的 `place` 就是它）。 */
+    room?: string
+    place?: string
+    replyTo?: string | null
+    alwaysSummon?: boolean
+    handOff?: boolean
+    draft?: string
+  } = {}
 ) {
   const draft = ref(opts.draft ?? '')
   const placeState = ref<string | null>(backend.task)
@@ -77,7 +89,7 @@ function mount(
   const Wrapper = defineComponent({
     setup: () => () =>
       h(RoomComposer, {
-        topic: topic(),
+        topic: topic(opts.room ?? 'room-1'),
         mentionPool: POOL,
         topicList: [],
         refs: { mentionNames: {}, topicTitles: {} },
@@ -98,9 +110,10 @@ function mount(
   })
   const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
   const box = () => utils.container.querySelector<HTMLElement>('.ProseMirror')!
-  const line = () => utils.container.querySelector('.recipient')?.textContent?.replace(/\s+/g, '') ?? ''
   const avatar = () => utils.container.querySelector<HTMLButtonElement>('.summon__btn')!
-  return { ...utils, draft, placeState, onSend, box, line, avatar }
+  /** 头像旁那句「不交给 AI」此刻在不在。 */
+  const notToAi = () => !!screen.queryByText('不交给 AI')
+  return { ...utils, draft, placeState, onSend, box, avatar, notToAi }
 }
 
 // 打字停下之后输入框才问后端「交给谁」（useAddressing 等 150ms），再等它答完。
@@ -120,42 +133,72 @@ beforeEach(() => {
   setLocale('zh-CN')
   backend.task = null
   backend.privateChat = false
+  backend.personChat = false
   backend.asked = []
 })
 
-describe('发之前看得见这条交给谁', () => {
-  it('@ 了队友写那位，拿掉 @ 回到频道讨论', async () => {
-    const { box, line, avatar } = mount()
+describe('频道主线上不交给 AI 时，头像旁写出来', () => {
+  it('没 @ 队友时写「不交给 AI」，@ 了就不写，拿掉 @ 又写回来', async () => {
+    const { box, avatar, notToAi } = mount()
     await fillComposer(box(), '整理一下需求')
     await settle()
-    expect(line()).toBe('本条：频道讨论')
+    expect(notToAi()).toBe(true)
 
     await fireEvent.click(avatar())
     await settle()
-    expect(line()).toBe('交给：芝士')
+    expect(avatar().getAttribute('aria-pressed')).toBe('true')
+    expect(notToAi()).toBe(false)
 
     await fireEvent.click(avatar())
     await settle()
-    expect(line()).toBe('本条：频道讨论')
+    expect(notToAi()).toBe(true)
   })
 
-  it('回复队友的消息：写的是那位', async () => {
-    const { box, line } = mount({ replyTo: AGENT_MESSAGE })
+  it('回复队友的消息：交给它，不写', async () => {
+    const { box, avatar, notToAi } = mount({ replyTo: AGENT_MESSAGE })
     await fillComposer(box(), '好的')
     await settle()
-    expect(line()).toBe('交给：芝士')
+    expect(avatar().getAttribute('aria-pressed')).toBe('true')
+    expect(notToAi()).toBe(false)
   })
 
-  it('任务负责人在开着的任务里：交给队友；只 @ 了人时写那个人', async () => {
+  it('支线里没 @ 队友：不写', async () => {
+    const { box, avatar, notToAi } = mount({ place: 'thread-1' })
+    await fillComposer(box(), '清单我来补')
+    await settle()
+    expect(avatar().getAttribute('aria-pressed')).toBe('false')
+    expect(notToAi()).toBe(false)
+  })
+
+  it('任务里只 @ 了人：不写', async () => {
     backend.task = 'open'
-    const { box, line } = mount({ place: 'task-1', alwaysSummon: true })
+    const { box, notToAi } = mount({ place: 'task-1', alwaysSummon: true })
+    await fillComposer(box(), '@Alice 你看下这个接口')
+    await settle()
+    expect(notToAi()).toBe(false)
+  })
+
+  it('和一个人私聊、没 @ 队友：不写', async () => {
+    backend.personChat = true
+    const { box, avatar, notToAi } = mount({ room: 'dm-1', place: 'dm-1' })
+    await fillComposer(box(), '周五一起过一下清单？')
+    await settle()
+    expect(avatar().getAttribute('aria-pressed')).toBe('false')
+    expect(notToAi()).toBe(false)
+  })
+})
+
+describe('发之前看得见这条交给谁', () => {
+  it('任务负责人在开着的任务里：交给队友；只 @ 了人时只给那个人', async () => {
+    backend.task = 'open'
+    const { box, avatar } = mount({ place: 'task-1', alwaysSummon: true })
     await fillComposer(box(), '先做后端两个接口')
     await settle()
-    expect(line()).toBe('任务进行中｜交给：芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
 
     await fillComposer(box(), '@Alice 你看下这个接口')
     await settle()
-    expect(line()).toBe('任务进行中｜交给：Alice')
+    expect(avatar().getAttribute('aria-label')).toBe('这句只说给 @ 到的人')
   })
 
   it('问的是发出去的那一份：@名字 已经展开成 <@handle>', async () => {
@@ -207,16 +250,15 @@ describe('打字时任务关了', () => {
     const view = mount({ place: 'task-1', alwaysSummon: true })
     await fillComposer(view.box(), '再加一个导出接口')
     await settle()
-    expect(view.line()).toBe('任务进行中｜交给：芝士')
+    expect(view.avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
     backend.task = 'closed'
     view.placeState.value = 'closed'
     await settle()
     return view
   }
 
-  it('那一行跟着变，草稿留着；第一次发不发出去，就地问交给谁', async () => {
-    const { box, line, draft, onSend } = await typedThenClosed()
-    expect(line()).toBe('任务已关闭｜本条：讨论')
+  it('草稿留着；第一次发不发出去，就地问交给谁', async () => {
+    const { box, draft, onSend } = await typedThenClosed()
 
     await enter(box())
 
@@ -245,9 +287,9 @@ describe('打字时任务关了', () => {
     expect(onSend.mock.calls[0][0].summon).toBe(true)
   })
 
-  it('那一行还写着交给队友时，紧跟着一个字就按发送：发出去的仍是「我要交给队友」', async () => {
+  it('头像还说交给队友时，紧跟着一个字就按发送：发出去的仍是「我要交给队友」', async () => {
     backend.task = 'open'
-    const { box, line, onSend } = mount({ place: 'task-1', alwaysSummon: true })
+    const { box, avatar, onSend } = mount({ place: 'task-1', alwaysSummon: true })
     await fillComposer(box(), '再加一个导出接口')
     await settle()
     backend.task = 'closed'
@@ -255,15 +297,15 @@ describe('打字时任务关了', () => {
     await fillComposer(box(), '再加一个导出接口，带筛选')
     await enter(box())
 
-    expect(line()).toBe('任务进行中｜交给：芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
     expect(onSend).toHaveBeenCalledWith({ content: '再加一个导出接口，带筛选', summon: true, expectsAgent: true })
   })
 
   it('一直在打字、草稿第一次问到之前任务就关了：第一次发同样先问交给谁', async () => {
     backend.task = 'open'
-    const { box, line, onSend } = mount({ place: 'task-1', alwaysSummon: true })
+    const { box, avatar, onSend } = mount({ place: 'task-1', alwaysSummon: true })
     await settle()
-    expect(line()).toBe('任务进行中｜交给：芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
 
     await fillComposer(box(), '再加一个导出接口')
     backend.task = 'closed'

@@ -16,6 +16,7 @@
   "summonBusy": "{name}正在忙，这条它会接着看",
   "summonJoin": "、",
   "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）",
+  "summonOffLabel": "不交给 AI",
   "summonOffMany": "交给{name}（⌘/Ctrl+Enter），右键换一位队友",
   "summonOffManyTouch": "交给{name}，长按换一位队友",
   "summonOn": "这条会交给{name}，点一下取消",

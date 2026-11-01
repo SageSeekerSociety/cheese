@@ -1,11 +1,4 @@
 {
-  "label": "这条消息交给谁",
-  "to": "交给：",
-  "channel": "本条：频道讨论",
-  "discussion": "本条：讨论",
-  "taskOpen": "任务进行中",
-  "taskClosed": "任务已关闭",
-  "sep": "｜",
   "closedAsk": "任务已关闭，这条不会再自动交给{name}",
   "closedAskAgent": "{'@'}{name}",
   "closedAskPost": "仅发布讨论",

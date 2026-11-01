@@ -108,7 +108,7 @@ const props = withDefaults(
     chapterable?: boolean
     /** 已经钉成章节的那几条（block id）。 */
     chapterIds?: ReadonlySet<string>
-    /** 这段对话自己的状态（任务开着还是关了）：变了，输入框上「交给谁」那一行重问一次。 */
+    /** 这段对话自己的状态（任务开着还是关了）：变了，输入框重问一次「交给谁」。 */
     placeState?: string | null
   }>(),
   {

@@ -191,7 +191,7 @@
   "guide": {
     "send": {
       "title": "Hand off to {agent}",
-      "text": "Your first request is already in the box, starting with {'@'}{agent}, and the line above it reads To: {agent}. Fill in the rest and send it from here."
+      "text": "Your first request is already in the box, starting with {'@'}{agent}. Fill in the rest and send it from here."
     },
     "reply": {
       "title": "{agent}'s reply",
