@@ -249,6 +249,87 @@ def apply_migration_timeouts(connection: Connection) -> None:
     )
 
 
+#: SQLSTATEs a migration's transaction ends with when it lost a race for a lock
+#: against live traffic: ``lock_not_available`` (its ``lock_timeout`` ran out)
+#: and ``deadlock_detected`` (Postgres chose it as the deadlock's victim).
+_LOCK_CONTENTION = frozenset({"55P03", "40P01"})
+
+
+class MigrationProgress:
+    """Whether the migration now running has committed any of its own work.
+
+    Alembic commits each migration on its own (``transaction_per_migration``),
+    right after ``on_version_apply`` stamps its revision. Any other commit is an
+    ``autocommit_block`` committing part of the migration that is still
+    running; that migration can no longer be undone by a rollback, so it is not
+    run again.
+    """
+
+    def __init__(self, connection: Connection) -> None:
+        self.committed_partway = False
+        self._stamped = False
+        event.listen(connection, "commit", self._committed)
+
+    def version_applied(self, **_: Any) -> None:
+        """Alembic's ``on_version_apply`` callback."""
+        self._stamped = True
+
+    def _committed(self, _connection: Connection) -> None:
+        if self._stamped:
+            self._stamped = False
+            self.committed_partway = False
+        else:
+            self.committed_partway = True
+
+
+def run_migrations_retrying_lock_contention(
+    connection: Connection,
+    progress: MigrationProgress,
+    run: Callable[[], None],
+    *,
+    attempts: int = 10,
+    sleep: Callable[[float], None] = time.sleep,
+) -> None:
+    """Run ``run`` (the upgrade), and when a migration loses a lock race with
+    the backend still serving, roll that migration back and run it again.
+
+    A deploy migrates while the previous release serves (``.claude/rules/
+    migrations.md``), so a migration's DDL competes for locks with live
+    requests. ``lock_timeout`` keeps it from stalling them; this makes losing
+    that race cost a retry instead of the deploy. Every lock a migration takes
+    is covered, the ones it takes implicitly included (dropping a column drops
+    its foreign key, which locks the referenced table): the transaction that
+    timed out or was chosen as a deadlock's victim is rolled back whole, so it
+    releases everything and the migration starts over from its first statement.
+    This is strong_migrations' ``lock_timeout_retries`` and GitLab's
+    ``with_lock_retries`` for transactional migrations.
+
+    Migrations already committed stay committed: alembic resumes from the
+    stamped revision. A migration that committed part of itself (an
+    ``autocommit_block``) is not retried, since running it again would repeat
+    work a rollback cannot take back.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            run()
+            return
+        except DBAPIError as exc:
+            contention = getattr(exc.orig, "sqlstate", None) in _LOCK_CONTENTION
+            if not contention or progress.committed_partway or attempt == attempts:
+                raise
+            connection.rollback()
+            wait = min(2.0 ** (attempt - 1), 30.0)
+            logger.warning(
+                "migration lost a lock to live traffic (%s); rolled back, "
+                "retrying in %.0fs (attempt %d of %d)",
+                exc.orig,
+                wait,
+                attempt + 1,
+                attempts,
+            )
+            sleep(wait)
+
+
 def _set_request_lock_timeout(
     session: Session, transaction: SessionTransaction, connection: Connection
 ) -> None:

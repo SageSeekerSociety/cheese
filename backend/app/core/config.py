@@ -165,8 +165,8 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
     # env.py to the single connection every `upgrade head` uses. A migration
-    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window fails
-    # fast — the deploy goes red and retries — instead of blocking behind a live
+    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window rolls
+    # back and runs again after a pause (alembic/env.py) instead of blocking behind a live
     # backend's open transaction until the deploy's 30-minute budget is spent,
     # which starved cheese-dev's only runner slot and browned out the whole box
     # in #356. lock_timeout is the actual fix; keep it short (a few seconds).
