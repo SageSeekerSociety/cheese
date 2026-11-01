@@ -26,7 +26,9 @@ Why it cannot storm:
   meantime) moves that one row onto itself rather than adding another.
 - **A streak has a cap.** Each resume in a row waits longer and the streak stops
   after `Policy.attempts`; the row that would have exceeded it is written as
-  dropped, so the record says why the seat was left alone. A resumed turn that
+  dropped, so the record says why the seat was left alone. The conversation
+  is told so once per streak: a seat something else keeps waking fails again
+  and again, and each of those failures is written but not announced again. A resumed turn that
   failed more than `STREAK_WINDOW` after it was handed over made progress, and
   starts a new streak; so does a person speaking. A platform interruption
   (`Policy.platform`, the upgrade replacing the runner a turn was in) is
@@ -239,9 +241,8 @@ async def after_failure(
         else:
             # A platform interruption carries the streak as it stands: it is
             # not one more failure of the agent's (`Policy.platform`).
-            attempt = await _streak(session, conversation_id, seat, now) + (
-                0 if found.policy.platform else 1
-            )
+            streak, told_spent = await _streak(session, conversation_id, seat, now)
+            attempt = streak + (0 if found.policy.platform else 1)
             wait, dropped = _wait(found, attempt, now)
             row = {
                 "id": uuid.uuid4(),
@@ -272,6 +273,20 @@ async def after_failure(
                 return None
             stored = await session.get(TurnResume, written)
             assert stored is not None
+            if told_spent and dropped == ATTEMPTS_USED_UP:
+                # The streak's end was already told, and nothing about it has
+                # changed: the row records this failure, the line is not
+                # repeated. The failed turn still has its own line.
+                await session.commit()
+                logger.info(
+                    "turn resume: %s in %s failed again (%s, attempt %s); "
+                    "attempts already used up",
+                    seat,
+                    conversation_id,
+                    found.kind,
+                    attempt,
+                )
+                return stored
             recorded = await _record_schedule(session, stored, now)
             if recorded is None:
                 return None
@@ -602,9 +617,10 @@ def _wait(
 
 async def _streak(
     session: AsyncSession, conversation_id: uuid.UUID, seat: str, now: datetime
-) -> int:
+) -> tuple[int, bool]:
     """How many resumes in a row this seat already had: the previous row's
-    attempt when this failure continues its streak, else 0."""
+    attempt when this failure continues its streak, else 0; and whether that
+    streak has already been told its attempts are used up."""
     previous = await session.scalar(
         select(TurnResume)
         .where(
@@ -615,7 +631,7 @@ async def _streak(
         .limit(1)
     )
     if previous is None:
-        return 0
+        return 0, False
     if previous.dropped_reason in (
         PERSON_SPOKE,
         SEAT_RAN_AGAIN,
@@ -624,13 +640,13 @@ async def _streak(
         DELIVERY_FAILED,  # no resumed turn started; a later manual retry is a new streak
         RECOVERS_LATE,  # the turn failed outright; whoever tries again starts afresh
     ):
-        return 0
+        return 0, False
     since = previous.handed_at or previous.failed_at
     if now - since > STREAK_WINDOW:
-        return 0
+        return 0, False
     if await _person_spoke(session, conversation_id, previous.failed_at):
-        return 0
-    return previous.attempt
+        return 0, False
+    return previous.attempt, previous.dropped_reason == ATTEMPTS_USED_UP
 
 
 async def hand_due(

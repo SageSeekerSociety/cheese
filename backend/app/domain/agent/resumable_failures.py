@@ -136,8 +136,13 @@ _CLIENT_ERROR = re.compile(r"API Error:\s*4(?!08|29)\d\d\b")
 
 _COOLING = re.compile(r"\ball Claude accounts are cooling down\b", re.I)
 _EGRESS = re.compile(r"\bsubscription egress is offline\b", re.I)
+#: Claude Code's line for a 429 that is not the account's own limit. The room's
+#: card reads it as the provider being overloaded
+#: (`platform_failure_cli_notices`), so the resume does too: one failure, one
+#: kind, whichever line the conversation ends up showing for it.
+_SERVER_LIMITING = re.compile(r"temporarily limiting requests", re.I)
 _RATE = re.compile(
-    r"temporarily limiting requests|\brate[ _-]?limit|Too Many Requests"
+    r"\brate[ _-]?limit|Too Many Requests"
     r"|API Error:\s*429\b|\b429\b.*\brate",
     re.I,
 )
@@ -251,6 +256,8 @@ def classify(
         return Resumable(EGRESS_OFFLINE, stated)
     if _STREAM.search(said):
         return Resumable(STREAM_ENDED, stated)
+    if _SERVER_LIMITING.search(said):
+        return Resumable(OVERLOADED, stated)
     if api_error_status == 429 or _RATE.search(said):
         return Resumable(RATE_LIMITED, stated)
     if (api_error_status is not None and api_error_status >= 500) or _OVERLOADED.search(

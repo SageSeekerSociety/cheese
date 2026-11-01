@@ -45,11 +45,13 @@ from app.domain.agent.harness.prompt import (
     stale_progress_reminder,
     still_working_reminder,
 )
+from app.domain.agent.models import AgentTurn, TurnResume
 from app.domain.agent.session_state import reports_lifecycle
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import names_a_person
+from app.domain.notice_meta import EVENT_TURN_FAILED, EVENT_TURN_RESUME_WAIT
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.reads import conversation_progress
 from app.domain.user.services import language_of
@@ -369,13 +371,44 @@ class ProgressNotices(Protocol):
     ) -> object: ...
 
 
+def _failing(conversation):
+    """The conversation's seat is not one to ask anything: its last turn failed
+    (the turn carries the line saying so, a scheduled resume's included), or
+    the platform owes it a resume. Asking starts a turn on the same broken
+    model, which fails again: every threshold, one more failed turn and one
+    more line in the room, for as long as the session stays up (2026-10, a
+    ChatGPT account's egress offline for 26 hours, ~210 lines in one task).
+    The resume, or a person, is what wakes such a seat."""
+    last_turn = (
+        select(AgentTurn.id)
+        .where(AgentTurn.conversation_id == conversation)
+        .order_by(AgentTurn.started_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    return or_(
+        exists().where(
+            Block.turn_id == last_turn,
+            Block.meta["event_type"]
+            .as_string()
+            .in_((EVENT_TURN_FAILED, EVENT_TURN_RESUME_WAIT)),
+        ),
+        exists().where(
+            TurnResume.conversation_id == conversation,
+            TurnResume.handed_at.is_(None),
+            TurnResume.dropped_at.is_(None),
+        ),
+    )
+
+
 class StaleProgressReminder:
     """做任务的会话还在跑，而它报的任务状态（`cheese_task(action=state)`）停在原地超过
     `chat_progress_reminder_after_s`，就问它一句。
 
-    判据都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议声明的状态：
+    判据除了上一轮失败没有（见下）都不看轮次：这个会话此刻在不在跑（``running`` 给出，会话协议声明的状态：
     哪些对话上有座位在跑），离它上一次报状态过了多久，以及此刻是不是它报的状态在说
-    话 —— 任务开着、没有一张还开着的卡（卡在的时候由卡说，它报也会被拒绝）。一轮结束不是任何一件事的边界 ——
+    话 —— 任务开着、没有一张还开着的卡（卡在的时候由卡说，它报也会被拒绝）。上一轮
+    失败了、或者平台还欠它一次续跑的，也不问（`_failing`）。一轮结束不是任何一件事的边界 ——
     在等构建的会话一轮结束了还在等。从没报过的，从这里第一次看见它在跑时算起。
     提醒过一次，下一次再从提醒那一刻算起，所以一直不报的会话每过一个阈值听到一次。
 
@@ -419,6 +452,7 @@ class StaleProgressReminder:
                             _cards.c.task_id == Task.id,
                             _cards.c.status.in_(OPEN_CARD_STATUSES),
                         ),
+                        ~_failing(Task.id),
                     )
                 )
             ).all()
