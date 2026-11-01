@@ -251,6 +251,8 @@ async def send_chat_message(
     if told is not None:
         sent = dict(told)
     else:
+        # A runner that does not report what it stored (a stand-in, or a path
+        # that returned before storing): read the anchor back as before.
         stored = await BlockRepository(db).get(anchor_id)
         sent = BlockOut.model_validate(stored).model_dump(mode="json")
         # The sender's own copy may be the first one the client sees. It

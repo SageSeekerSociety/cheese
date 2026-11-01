@@ -3,7 +3,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
@@ -106,6 +106,10 @@ class PlaceResolver:
             return Place(room=room) if room is not None else None
         sync = self._session.sync_session
         room = sync.identity_map.get(sync.identity_key(Topic, (place_id,)))
+        if room is not None and inspect(room).expired_attributes:
+            # Expired by a commit: its columns would load lazily, which an
+            # async session cannot do. Read it afresh like a miss.
+            room = None
         if room is None:
             # Read with its project: nearly every route asks it next (whether
             # it is archived, before any write; who may do what in it).
