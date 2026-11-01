@@ -205,8 +205,12 @@ def test_a_sign_in_leaves_a_marker_a_page_request_can_see(
     assert marker == "1"
     # Both ride the same response, and the refresh cookie keeps its own path.
     cookies = signed_in.headers.get_list("set-cookie")
-    assert any(c.startswith("cheese_signed_in=1") and "Path=/" in c for c in cookies), cookies
-    assert any("cheese_refresh=" in c and "Path=/api/users/auth" in c for c in cookies), cookies
+    assert any(c.startswith("cheese_signed_in=1") and "Path=/" in c for c in cookies), (
+        cookies
+    )
+    assert any(
+        "cheese_refresh=" in c and "Path=/api/users/auth" in c for c in cookies
+    ), cookies
 
     signed_out = api_client.post(
         "/users/auth/logout",
@@ -214,7 +218,9 @@ def test_a_sign_in_leaves_a_marker_a_page_request_can_see(
     )
     assert signed_out.status_code == 200, signed_out.text
     cleared = signed_out.headers.get_list("set-cookie")
-    assert any(c.startswith("cheese_signed_in=") and "Path=/" in c for c in cleared), cleared
+    assert any(c.startswith("cheese_signed_in=") and "Path=/" in c for c in cleared), (
+        cleared
+    )
 
 
 def test_a_machine_enrolled_from_an_alias_installs_and_approves_on_it(
