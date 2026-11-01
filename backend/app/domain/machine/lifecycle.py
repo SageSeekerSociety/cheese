@@ -32,8 +32,7 @@ or not.
 are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
 then its row goes, and on a host with it the host's slot. A machine that is
 offline is skipped until it is back. Nothing of the sandbox is kept:
-what lasts is the conversation, what the session pushed, and the snapshot
-each turn's checkpoint uploads. The session's next tool call places it in a
+what lasts is the conversation and the commits the session pushed. The session's next tool call places it in a
 new sandbox, which starts like any new one, and that call's result
 tells the agent it is in a new sandbox (``LOST_KEY``).
 

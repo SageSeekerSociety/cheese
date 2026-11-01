@@ -3,9 +3,10 @@
 The checkpoint (`cheese sync --all`) runs on the machine being left, and the
 switch happens whether or not it went through: a machine that is away, a push
 that fails or outlasts its wait, an executor that cannot start — none of them
-holds the room, for a person or for its agent. What such a lost checkpoint
-loses is held by the snapshot of the session's last turn. A cloud sandbox left
-behind is left to the idle sweep either way.
+holds the room, for a person or for its agent. The platform keeps only what
+was pushed, so work a lost checkpoint did not push stays on the machine being
+left and is not carried anywhere. A cloud sandbox left behind is left to the
+idle sweep either way.
 """
 
 import ast
@@ -236,11 +237,6 @@ FAILED_PUSHES = {
         "value": {
             "stdout": "Exit code 1\n"
             "[cheese] 任务 t1 同步失败：rejected non-fast-forward"
-        }
-    },
-    "a closed task was not backed up": {
-        "value": {
-            "stdout": "Exit code 1\n[cheese] 已结束的任务 t2 同步失败：Connection reset"
         }
     },
     "the command failed": {"error": "Stop hook failed"},

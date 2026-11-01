@@ -32,11 +32,10 @@ VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工�
 # with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
 # the session's ``execution_request``.
 SANDBOX_LOST = (
-    "沙箱环境已换成新的。每次停下时的检查点存下的东西都还在：已推送的提交在任务"
-    "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
-    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
-    "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
-    "了，需要的重新做、重新安装、重新启动。"
+    "沙箱环境已换成新的。只有推上去的提交还在，在任务分支上，用 "
+    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录。没提交的改动、没推的'
+    "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
+    "重新启动。"
 )
 # The same, for a sandbox in no project (``holder.Personal``): nothing of it
 # was checkpointed, so nothing comes back.

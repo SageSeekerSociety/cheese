@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import delete, event, select
 
 from app.core.config import Settings, settings
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
@@ -257,9 +258,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
     return alice[0], hers, his, her_device, his_device
 
 
-LOST_LINE = (
-    "环境不再响应，已换成新的：每次做完时推送和备份的工作会带过来，之后才做的改动不在了"
-)
+LOST_LINE = str(say("sandboxLost"))
 
 
 def _warm_machine_ready(case: Case) -> str:

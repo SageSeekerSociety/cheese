@@ -1,16 +1,12 @@
 """Task checkouts preserve independent commits and unfinished work on devices."""
 
-import hashlib
 import importlib.util
 import json
 import os
 import shutil
-import socket
-import struct
 import subprocess
 import sys
 import threading
-import urllib.error
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
@@ -93,63 +89,10 @@ def device(tmp_path, monkeypatch):
                 return
             self.do_GET()
 
-        def do_PUT(self):
-            resets = home / "resets"
-            if resets.exists() and int(resets.read_text()) > 0:
-                # What a flaky link or an edge proxy does to an upload it drops.
-                resets.write_text(str(int(resets.read_text()) - 1))
-                self.connection.setsockopt(
-                    socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
-                )
-                self.close_connection = True
-                self.connection.close()
-                return
-            task, _, snapshot = self.path.rsplit("/", 3)[1:]
-            payload = self.rfile.read(int(self.headers["Content-Length"]))
-            limit = home / "upload-limit"
-            if limit.exists() and len(payload) > int(limit.read_text()):
-                # The body limit of whatever sits between machine and platform.
-                self.send_response(413)
-                self.end_headers()
-                return
-            digest = hashlib.sha256(payload).hexdigest()
-            assert digest == self.headers["X-Content-SHA256"]
-            backups = home / "backups" / task
-            backups.mkdir(parents=True, exist_ok=True)
-            (backups / f"{snapshot}.bundle").write_bytes(payload)
-            # The platform's latest backup of the task is the last one it took.
-            (backups / "latest.json").write_text(
-                json.dumps(
-                    {
-                        "id": snapshot,
-                        "snapshot_sha": snapshot,
-                        "head_sha": self.headers["X-Cheese-Head"],
-                        "digest": digest,
-                    }
-                )
-            )
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(json.dumps({"data": {"digest": digest}}).encode())
-
         def do_GET(self):
-            if "/snapshots/" in self.path:
-                # What `cheese recover` reads: a task's backup, described or whole.
-                task, _, which = self.path.rsplit("/", 3)[1:]
-                backups = home / "backups" / task
-                if which == "latest":
-                    if not (backups / "latest.json").exists():
-                        self.send_response(404)
-                        self.end_headers()
-                        return
-                    latest = json.loads((backups / "latest.json").read_text())
-                    body = json.dumps({"data": latest}).encode()
-                else:
-                    body = (backups / f"{which}.bundle").read_bytes()
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(body)
-                return
+            # The task the CLI is working. There is no other route: a sync
+            # delivers commits to the forge and uploads nothing, and there is
+            # nothing for a fresh sandbox to download.
             task = self.path.rsplit("/", 1)[-1]
             self.send_response(200)
             self.end_headers()
@@ -250,7 +193,7 @@ def test_another_worktree_beside_a_task_commits_and_leaves_the_task_alone(
     assert not git(remote, "branch", "--list", "experiment")
 
 
-def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device):
+def test_sync_leaves_uncommitted_work_alone_without_changing_index_or_branch(device):
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -262,24 +205,34 @@ def test_sync_backs_up_uncommitted_work_without_changing_index_or_pr_head(device
     cli._sync_task(task)
     assert git(work, "diff", "--cached") == before
     assert git(work, "rev-parse", "HEAD") == head
+    assert (work / "same.txt").read_text() == "unstaged\n"
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
-    refs = git(
-        remote,
-        "for-each-ref",
-        "--format=%(refname)",
-        f"refs/cheese/snapshots/task/{task}",
-    ).splitlines()
-    assert refs == []
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    recovered = home / "recovered"
-    git(home, "clone", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(recovered, "show", "FETCH_HEAD:same.txt") == "unstaged"
+    # Only pushed commits travel now: what the agent has not committed is
+    # uploaded nowhere.
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
 
 
-def test_sync_all_touches_only_the_tasks_with_something_to_sync(device):
+def test_sync_never_uploads_a_task_snapshot(device):
+    """A checkpoint delivers commits to the forge and nothing else: the
+    platform keeps no copy of the checkout's files."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    committed = _commit(work, "a.txt", "committed\n")
+
+    cli._sync_task(task)
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == committed
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
+
+
+def test_sync_all_touches_only_the_tasks_with_something_to_push(device):
     """A room keeps every task it ever opened, so the push before a switch (and
-    at every Stop) has to cost what is unpushed, not how old the room is."""
+    at every Stop) has to cost what is unpushed, not how old the room is. A
+    file nobody committed is not delivered, so it is not work either."""
     cli, tasks, remote, home = device
     template = next(iter(tasks.values()))
     for _ in range(6):
@@ -301,20 +254,17 @@ def test_sync_all_touches_only_the_tasks_with_something_to_sync(device):
     git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "more work")
     (worktrees[edited] / "draft.txt").write_text("not committed\n")
     (home / "requests.log").unlink()
-    shutil.rmtree(home / "backups")
 
     cli._sync_all_tasks()
 
     assert git(remote, "rev-parse", tasks[committed]["branch"]) == git(
         work, "rev-parse", "HEAD"
     )
-    assert {path.name for path in (home / "backups").iterdir()} == {
-        committed,
-        edited,
-    }
     seen = (home / "requests.log").read_text()
-    assert committed in seen and edited in seen
+    assert committed in seen
+    assert edited not in seen
     assert not [task for task in finished if task in seen]
+    assert "PUT " not in seen
 
 
 def _sync_by_hand(work, *args):
@@ -330,8 +280,8 @@ def _sync_by_hand(work, *args):
 def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(device):
     """Agents often run `cheese sync` right after `git commit`, whose hook has
     just delivered the commit. With nothing new it is done once the platform
-    says the task is still on that branch: no backup asked after, and nothing
-    to say."""
+    says the task is still on that branch: nothing is uploaded after it, and
+    there is nothing to say."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
@@ -349,22 +299,6 @@ def test_a_sync_by_hand_after_the_commits_own_is_done_without_asking_anyone(devi
     assert (home / "requests.log").read_text().splitlines() == [
         f"GET /projects/{os.environ['CHEESE_PROJECT']}/git/tasks/{task}"
     ]
-
-
-def test_a_sync_by_hand_still_restores_a_snapshot_waiting_for_its_checkout(device):
-    """A replaced sandbox's checkout, clean and at its branch's tip, may still
-    be owed the work the platform's snapshot holds: a sync asks for it."""
-    cli, tasks, _, home = device
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
-    (admin / cli._RESTORE_PENDING).write_text("")
-    (home / "requests.log").unlink(missing_ok=True)
-
-    done = _sync_by_hand(work, "--task", task)
-
-    assert done.returncode == 0, done.stderr
-    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
 
 
 def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
@@ -395,22 +329,29 @@ def test_a_sync_by_hand_after_a_step_landed_delivers_on_the_next_branch(
 
 
 @pytest.mark.parametrize("left", ["a commit not pushed", "a file not committed"])
-def test_a_sync_by_hand_with_something_new_still_delivers_and_backs_it_up(device, left):
+def test_a_sync_by_hand_delivers_commits_and_uploads_nothing(device, left):
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
+    delivered = git(remote, "rev-parse", tasks[task]["branch"])
     if left == "a commit not pushed":
         _commit(work, "a.txt", "not pushed\n")
     else:
         (work / "draft.txt").write_text("not committed\n")
+    (home / "requests.log").unlink()
 
     done = _sync_by_hand(work, "--task", task)
 
     assert done.returncode == 0, done.stderr
-    head = git(work, "rev-parse", "HEAD")
-    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
-    if left == "a file not committed":
-        assert (home / "backups" / task / "latest.json").exists()
+    if left == "a commit not pushed":
+        assert git(remote, "rev-parse", tasks[task]["branch"]) == git(
+            work, "rev-parse", "HEAD"
+        )
+    else:
+        assert git(remote, "rev-parse", tasks[task]["branch"]) == delivered
+        assert (work / "draft.txt").read_text() == "not committed\n"
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
 
 
 def test_reopening_a_task_preserves_unpushed_commits_and_dirty_files(device):
@@ -792,16 +733,16 @@ def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
     assert git(remote, "rev-parse", tasks[task]["branch"]) == remote_head
+    # The refused commit stays in the checkout that made it; nothing else
+    # carries it now.
     assert git(work, "rev-parse", "HEAD") == local_head
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    git(other, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(other, "rev-parse", "FETCH_HEAD") == local_head
-    assert git(other, "show", "FETCH_HEAD:local.txt") == "local writer"
-    assert not git(remote, "for-each-ref", "refs/cheese/snapshots")
+    assert git(work, "show", "HEAD:local.txt") == "local writer"
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
 
 
-def test_closed_task_sync_preserves_files_without_moving_its_delivered_branch(device):
-    cli, tasks, remote, _ = device
+def test_closed_task_sync_leaves_its_files_and_delivered_branch_alone(device):
+    cli, tasks, remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
     head = git(remote, "rev-parse", tasks[task]["branch"])
@@ -809,6 +750,9 @@ def test_closed_task_sync_preserves_files_without_moving_its_delivered_branch(de
     (work / "draft.txt").write_text("late work")
     cli._sync_task(task)
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    assert (work / "draft.txt").read_text() == "late work"
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
     with pytest.raises(SystemExit):
         cli._task_worktree(task)
 
@@ -1167,28 +1111,14 @@ def test_a_reopen_follows_the_task_to_its_new_forge(device, tmp_path):
     assert git(work, "rev-parse", "origin/main") == git(moved, "rev-parse", "main")
 
 
-def test_a_reopen_brings_back_a_snapshot_still_waiting_for_its_checkout(device):
-    cli, tasks, _, home = device
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
-    (admin / cli._RESTORE_PENDING).write_text("")
-    (home / "requests.log").unlink(missing_ok=True)
-
-    cli._task_worktree(task)
-
-    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
-    assert not (admin / cli._RESTORE_PENDING).exists()
-
-
-def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
+def test_a_closed_task_checkout_moved_off_its_branch_is_left_alone_not_reported(
     device,
 ):
-    """After a task closes, its checkout is only backed up, never pushed, so the
+    """After a task closes, its checkout is neither pushed nor uploaded, so the
     branch it has checked out is no longer the task's business: an agent that
-    reused the checkout on another branch left work to keep, not a failed push
-    to warn the room about at every turn."""
-    cli, tasks, remote, home = device
+    reused the checkout on another branch left work on the machine, not a
+    failed push to warn the room about at every turn."""
+    cli, tasks, _remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
     tasks[task]["closed"] = True
@@ -1198,79 +1128,9 @@ def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
     cli._sync_all_tasks()
 
     assert not (home / "posted.jsonl").exists()
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    recovered = home / "recovered"
-    git(home, "clone", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert (
-        git(recovered, "show", "FETCH_HEAD:leftover.txt")
-        == "written after the task closed"
-    )
-
-
-def test_files_already_backed_up_are_not_sent_again(device, monkeypatch, tmp_path):
-    """A closed task's leftover files are backed up once. Every sync after that
-    finds them again, and a room switch waits on every sync: one that finds
-    them unchanged sends nothing, and one that finds them changed sends the
-    new files, which are what a recovery then gets."""
-    cli, tasks, _remote, home = device
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    tasks[task]["closed"] = True
-    git(work, "checkout", "-q", "--detach")
-    (work / "leftover.txt").write_text("first\n")
-
-    def uploads():
-        return (home / "requests.log").read_text().count("PUT ")
-
-    cli._sync_all_tasks()
-    cli._sync_all_tasks()
-    assert uploads() == 1
-
-    (work / "leftover.txt").write_text("second\n")
-    cli._sync_all_tasks()
-    assert uploads() == 2
-
-    elsewhere = tmp_path / "another-machine"
-    elsewhere.mkdir()
-    monkeypatch.setenv("HOME", str(elsewhere))
-    cli._recover_task(task)
-    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
-    assert (recovered / "leftover.txt").read_text() == "second\n"
-
-
-def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):
-    """A backup holds only what the task's base lacks. When one is refused for
-    its size and the large commit then lands on the base, the next try must
-    send what is missing now, not the refused backup again at every turn."""
-    cli, tasks, remote, home = device
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    (home / "upload-limit").write_text(str(256 * 1024))
-    (work / "large.bin").write_bytes(os.urandom(512 * 1024))
-    git(work, "add", "large.bin")
-    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "large file")
-    large = git(work, "rev-parse", "HEAD")
-    (work / "small.txt").write_text("small\n")
-    git(work, "add", "small.txt")
-    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "small file")
-
-    with pytest.raises(urllib.error.HTTPError):
-        cli._sync_task(task)
-
-    # The large commit reaches the base another way, and the checkout sees it.
-    git(work, "push", "-q", "origin", f"{large}:refs/heads/main")
-    git(work, "fetch", "-q", "origin", "main:refs/remotes/origin/main")
-
-    cli._sync_task(task)
-
-    head = git(work, "rev-parse", "HEAD")
-    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    recovered = home / "recovered"
-    git(home, "clone", "-q", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(recovered, "rev-parse", "FETCH_HEAD") == head
+    assert (work / "leftover.txt").read_text() == "written after the task closed\n"
+    assert "PUT " not in (home / "requests.log").read_text()
+    assert not (home / "backups").exists()
 
 
 def _commit(work, name, text, *extra):
@@ -1359,8 +1219,9 @@ def test_a_checkout_behind_its_branch_has_nothing_to_push(device):
 
 def test_a_forge_out_of_reach_does_not_unsay_work_it_already_has(device):
     """The branch already carries this checkout's commit; the forge then stops
-    answering for a while. Syncing the files still being edited backs them up
-    and tells the room nothing: none of the work is missing from the branch."""
+    answering for a while. Syncing the files still being edited uploads
+    nothing and tells the room nothing: none of the work is missing from the
+    branch."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     branch = tasks[task]["branch"]
@@ -1374,7 +1235,7 @@ def test_a_forge_out_of_reach_does_not_unsay_work_it_already_has(device):
     cli._sync_task(task)
 
     assert not (home / "posted.jsonl").exists()
-    assert (home / "backups" / task / "latest.json").exists()
+    assert "PUT " not in (home / "requests.log").read_text()
     remote.with_name("unreachable.git").rename(remote)
     assert git(remote, "rev-parse", branch) == pushed
 
@@ -1396,8 +1257,8 @@ def test_a_new_commit_the_forge_cannot_take_is_still_reported(device):
 
 def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device):
     """The forge locks a branch whose PR is in the merge queue. Commits made
-    after that are backed up, and the room is told why they are not in the
-    PR, rather than asked to retry a push that cannot land."""
+    after that stay in the checkout, and the room is told why they are not in
+    the PR, rather than asked to retry a push that cannot land."""
     cli, tasks, remote, home = device
     task = next(iter(tasks))
     branch = tasks[task]["branch"]
@@ -1414,240 +1275,9 @@ def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device)
         cli._sync_task(task)
 
     assert git(remote, "rev-parse", branch) == accepted
+    # The commit the forge would not take is still here; nothing else holds it.
+    assert git(work, "rev-parse", "HEAD") == later
+    assert git(work, "show", "HEAD:b.txt") == "after the accept"
     (told,) = (home / "posted.jsonl").read_text().splitlines()
     assert "#17" in json.loads(told)["body"]["content"]
-    bundle = home / "backups" / task / f"{later}.bundle"
-    recovered = home / "recovered"
-    git(home, "clone", "-q", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(recovered, "rev-parse", "FETCH_HEAD") == later
-
-
-def test_a_connection_reset_once_is_tried_again_within_the_same_sync(device):
-    """A reset connection is the network, not the work: the sync tries once
-    more before calling the task failed and warning the room. Twice in a row
-    is reported, so a request that can never go through is not retried
-    forever."""
-    cli, tasks, remote, home = device
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    (work / "draft.txt").write_text("unfinished\n")
-    (home / "resets").write_text("1")
-
-    cli._sync_task(task)
-
-    assert not (home / "posted.jsonl").exists()
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    recovered = home / "recovered"
-    git(home, "clone", "-q", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(recovered, "show", "FETCH_HEAD:draft.txt") == "unfinished"
-
-    (work / "draft.txt").write_text("changed again\n")
-    (home / "resets").write_text("2")
-    with pytest.raises(OSError):  # the reset itself, or urllib's URLError around it
-        cli._sync_task(task)
-    assert (home / "posted.jsonl").exists()
-
-
-@pytest.mark.parametrize("left_on", ["a detached HEAD", "another branch"])
-def test_a_closed_task_whose_base_branch_is_gone_is_still_backed_up(device, left_on):
-    """A task stacked on another task's branch outlives that branch, which is
-    deleted when it merges. The closed task's checkout, reused off its own
-    branch, still holds work to keep: whatever no branch of the forge has."""
-    cli, tasks, remote, home = device
-    task = next(iter(tasks))
-    parent = "task/parent"
-    git(remote, "branch", parent, "main")
-    tasks[task]["base"] = parent
-    work = cli._task_worktree(task)
-    tasks[task]["closed"] = True
-    if left_on == "a detached HEAD":
-        git(work, "checkout", "-q", "--detach")
-    else:
-        git(work, "checkout", "-q", "-b", "elsewhere")
-    _commit(work, "late.txt", "committed after the task closed\n")
-    (work / "draft.txt").write_text("never committed\n")
-    git(remote, "branch", "-D", parent)
-    git(work, "fetch", "-q", "--prune", "origin")
-
-    cli._sync_all_tasks()
-
-    assert not (home / "posted.jsonl").exists()
-    (bundle,) = (home / "backups" / task).glob("*.bundle")
-    recovered = home / "recovered"
-    git(home, "clone", "-q", str(remote), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task}")
-    assert git(recovered, "show", "FETCH_HEAD:late.txt") == (
-        "committed after the task closed"
-    )
-    assert git(recovered, "show", "FETCH_HEAD:draft.txt") == "never committed"
-
-
-@pytest.mark.parametrize("deleted", ["before the backup", "after the backup"])
-def test_a_closed_tasks_backup_recovers_on_another_machine_once_its_base_is_gone(
-    device, monkeypatch, tmp_path, deleted
-):
-    """A task stacked on another task's branch outlives that branch. Its backup
-    holds only what the forge lacks, and recovering it on a machine that never
-    had the task must not need the deleted branch: the forge still has its
-    commits (a merged PR keeps its head), just under no branch name."""
-    cli, tasks, remote, home = device
-    task = next(iter(tasks))
-    parent = "task/parent"
-    git(remote, "branch", parent, "main")
-    below = _push_from_elsewhere(home, remote, parent, "parent.txt")
-    git(remote, "update-ref", "refs/pull/1/head", below)
-    git(remote, "branch", "-f", tasks[task]["branch"], parent)
-    tasks[task]["base"] = parent
-    work = cli._task_worktree(task)
-    tasks[task]["closed"] = True
-    _commit(work, "late.txt", "committed after the task closed\n")
-    (work / "draft.txt").write_text("never committed\n")
-    if deleted == "before the backup":
-        git(remote, "branch", "-D", parent)
-        git(work, "fetch", "-q", "--prune", "origin")
-        cli._sync_all_tasks()
-    else:
-        cli._sync_all_tasks()
-        git(remote, "branch", "-D", parent)
-        git(remote, "branch", "-D", tasks[task]["branch"])
-    assert not (home / "posted.jsonl").exists()
-
-    elsewhere = tmp_path / "another-machine"
-    elsewhere.mkdir()
-    monkeypatch.setenv("HOME", str(elsewhere))
-    cli._recover_task(task)
-
-    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
-    assert (recovered / "late.txt").read_text() == "committed after the task closed\n"
-    assert (recovered / "draft.txt").read_text() == "never committed\n"
-    assert (recovered / "parent.txt").read_text() == "theirs\n"
-
-
-def test_sync_all_names_a_closed_task_it_could_not_back_up_as_closed(device, capsys):
-    """The platform weighs a closed task's failed backup differently from an
-    open task's failed push when a room leaves this machine, so the line that
-    names the task says which of the two it is."""
-    cli, tasks, _remote, home = device
-    closed, open_task = tasks
-    for task in tasks:
-        (cli._task_worktree(task) / "draft.txt").write_text(f"{task}\n")
-    tasks[closed]["closed"] = True
-    (home / "upload-limit").write_text("1")
-
-    with pytest.raises(SystemExit):
-        cli._sync_all_tasks()
-
-    printed = capsys.readouterr().err
-    assert f"[cheese] 已结束的任务 {closed} 同步失败：" in printed
-    assert f"[cheese] 任务 {open_task} 同步失败：" in printed
-
-
-def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
-    device,
-):
-    """A closed task has no turn whose work went missing. When its backup
-    fails as a room leaves this machine, the platform tells the room which
-    task stayed behind and why; a second message from the machine saying the
-    turn's work was not pushed would only repeat it, and wrongly."""
-    cli, tasks, _remote, home = device
-    closed, open_task = tasks
-    for task in tasks:
-        (cli._task_worktree(task) / "draft.txt").write_text(f"{task}\n")
-    tasks[closed]["closed"] = True
-    (home / "upload-limit").write_text("1")
-
-    with pytest.raises(SystemExit):
-        cli._sync_all_tasks()
-
-    told = [
-        json.loads(line)["body"]["text"]
-        for line in (home / "posted.jsonl").read_text().splitlines()
-    ]
-    assert len(told) == 1
-    assert open_task in told[0]
-    assert closed not in told[0]
-
-
-def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so(
-    device, monkeypatch, tmp_path, capsys
-):
-    """Build output a repository does not ignore would otherwise ride along in
-    every backup of the task. An edit to a tracked file is work however large,
-    and so is a file the agent staged; what is left out is said to the agent
-    that synced and to whoever recovers the backup."""
-    cli, tasks, _remote, _home = device
-    monkeypatch.setattr(cli, "_UNTRACKED_BACKUP_BUDGET", 1000)
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-    (work / "same.txt").write_text("tracked edit\n" * 200)
-    (work / "staged.bin").write_bytes(b"s" * 2000)
-    git(work, "add", "staged.bin")
-    (work / "notes.txt").write_text("new, small\n")
-    (work / "dist").mkdir()
-    (work / "dist" / "bundle.js").write_bytes(b"x" * 3000)
-    (work / "node_modules" / "pkg").mkdir(parents=True)
-    (work / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
-
-    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
-    cli.main()
-    told_agent = capsys.readouterr().err
-    assert "dist/bundle.js" in told_agent
-    assert "node_modules/" in told_agent
-
-    elsewhere = tmp_path / "another-machine"
-    elsewhere.mkdir()
-    monkeypatch.setenv("HOME", str(elsewhere))
-    cli._recover_task(task)
-    (recovered,) = (elsewhere / ".cheese" / "recovered").iterdir()
-    assert (recovered / "same.txt").read_text() == "tracked edit\n" * 200
-    assert (recovered / "staged.bin").read_bytes() == b"s" * 2000
-    assert (recovered / "notes.txt").read_text() == "new, small\n"
-    assert not (recovered / "dist").exists()
-    assert not (recovered / "node_modules").exists()
-    told_recoverer = capsys.readouterr().out
-    assert "dist/bundle.js" in told_recoverer
-    assert "node_modules/" in told_recoverer
-
-
-def test_the_room_hears_once_of_each_large_file_a_backup_leaves_behind(
-    device, monkeypatch, capsys
-):
-    """A large file nobody committed may be hours of work, and it goes with the
-    machine, so the room is told. A generated directory comes back with an
-    install, and a file the room has already heard of is not news at every
-    sync. The push before a switch stays silent about either: the platform
-    reads everything it prints as a failure."""
-    cli, tasks, _remote, home = device
-    monkeypatch.setattr(cli, "_UNTRACKED_BACKUP_BUDGET", 1000)
-    task = next(iter(tasks))
-    work = cli._task_worktree(task)
-
-    def told():
-        posted = home / "posted.jsonl"
-        if not posted.exists():
-            return []
-        return [
-            json.loads(line)["body"]["content"]
-            for line in posted.read_text().splitlines()
-        ]
-
-    (work / "node_modules").mkdir()
-    (work / "node_modules" / "big.js").write_bytes(b"x" * 5000)
-    cli._sync_all_tasks()
-    assert told() == []
     assert "PUT " not in (home / "requests.log").read_text()
-
-    (work / "model.bin").write_bytes(b"m" * 3000)
-    cli._sync_all_tasks()
-    cli._sync_all_tasks()
-    (work / "export.bin").write_bytes(b"e" * 4000)
-    cli._sync_all_tasks()
-
-    first, second = told()
-    assert "model.bin" in first
-    assert tasks[task]["branch"] in first
-    assert "export.bin" in second
-    assert "model.bin" not in second
-    assert capsys.readouterr().err == ""
