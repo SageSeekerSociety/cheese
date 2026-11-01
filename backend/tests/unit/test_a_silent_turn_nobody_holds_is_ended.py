@@ -119,6 +119,45 @@ async def test_a_turn_nobody_holds_that_said_nothing_past_the_horizon_is_ended(
 
 
 @pytest.mark.anyio
+async def test_silent_turns_in_two_rooms_are_both_ended_in_one_sweep(db_factory):
+    """两间房各有一轮卡死：一次扫描把两轮都关掉，两间房各说一声。"""
+    rooms = [await a_topic(db_factory, title=title) for title in ("甲", "乙")]
+    turns = []
+    for room in rooms:
+        turn = await open_turn(
+            db_factory,
+            room,
+            delivered=True,
+            age_s=NINETEEN_DAYS_S,
+            resendable=False,
+            session_id=f"sess-gone-{room}",
+        )
+        await _agent_said(
+            db_factory,
+            room,
+            turn,
+            datetime.now(UTC) - timedelta(seconds=NINETEEN_DAYS_S),
+        )
+        turns.append(turn)
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=False, seat_state="unknown")
+
+    async def rooms_just_spoke(topic_ids):
+        return {tid: datetime.now(UTC) - timedelta(minutes=1) for tid in topic_ids}
+
+    await runner.sweep_orphans(
+        chat, last_activity=rooms_just_spoke, silence_s=SILENCE_S
+    )
+
+    for turn in turns:
+        row = await turn_row(db_factory, turn)
+        assert row is not None and row.stopped_at is not None, (
+            "两间房各有一轮卡死，一次扫描没把它们都关掉"
+        )
+        assert len(await _lines_about(db_factory, turn)) == 1
+
+
+@pytest.mark.anyio
 async def test_a_session_that_comes_back_while_the_sweep_reads_keeps_its_turn(
     db_factory, monkeypatch
 ):
