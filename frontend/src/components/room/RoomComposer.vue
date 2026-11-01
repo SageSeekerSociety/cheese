@@ -25,7 +25,6 @@ import type { RefNames } from '../../lib/refChip'
 
 import { computed, inject, nextTick, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import { useAddressing } from '@/composables/useAddressing'
 import { useComposerText } from '@/composables/useComposerText'
@@ -54,6 +53,7 @@ import ReminderDialog from './ReminderDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import i18n, { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const props = defineProps<{
   topic: Topic | null

@@ -1,10 +1,9 @@
 // 复制到剪贴板，并说一声成没成。浏览器不让写（没有权限、不是安全上下文）时说「无法复制」。
 import type { RouteLocationRaw, Router } from 'vue-router'
 
-import { toast } from 'vuetify-sonner'
-
 import { t } from '@/i18n'
 import { shortRoute } from '@/lib/addresses'
+import { toast } from '@/lib/toast'
 
 export async function copyText(text: string, done: string): Promise<boolean> {
   try {

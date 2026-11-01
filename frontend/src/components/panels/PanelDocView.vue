@@ -23,7 +23,6 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -53,6 +52,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const props = withDefaults(
   defineProps<{

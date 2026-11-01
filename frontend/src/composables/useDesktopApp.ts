@@ -4,7 +4,6 @@
 // because the menus that open them close as they do. One update status for the
 // whole page, read from the app once and then kept current by what it reports.
 import { ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 import {
@@ -16,6 +15,7 @@ import {
   onDesktopUpdateStatus,
   restartDesktopToUpdate,
 } from '@/lib/desktopApp'
+import { toast } from '@/lib/toast'
 
 const status = ref<DesktopUpdateStatus | null>(null)
 const aboutOpen = ref(false)

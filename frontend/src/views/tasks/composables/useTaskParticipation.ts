@@ -2,12 +2,12 @@ import type { useTaskData } from './useTaskData'
 
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'

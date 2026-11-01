@@ -229,13 +229,13 @@ async def get_user_answers(
         user_id=user_id, limit=page_size, cursor=cursor
     )
 
-    profile = await profile_repo.get_profile_by_user_id(user_id)
+    # 只有真挑过头像才带 avatarId，判据是头像类型不是 ``default``（挂到非默认那张脸
+    # 才算数）。直接抛 ``profile.avatar_id`` 会把「没挑过 = 存了默认脸」当成挑过，
+    # 前端就退回全站默认头像了。档案和挑过的头像出自同一次读取。
+    profiles, chosen = await profile_repo.profiles_and_chosen_avatars([user_id])
+    profile = profiles.get(user_id)
     sender = None
     if profile:
-        # 只有真挑过头像才带 avatarId，判据在 ``chosen_avatar_ids`` 一处（挂到非
-        # ``default`` 那张脸才算数）。直接抛 ``profile.avatar_id`` 会把「没挑过 =
-        # 存了默认脸」当成挑过，前端就退回全站默认头像了。
-        chosen = await profile_repo.chosen_avatar_ids([user_id])
         sender = {
             "id": profile.user_id,
             "nickname": profile.nickname,

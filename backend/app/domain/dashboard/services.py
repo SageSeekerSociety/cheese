@@ -308,22 +308,19 @@ class DashboardService:
         from app.domain.user.repositories import UserProfileRepository, UserRepository
 
         user, visible = await self._projects_shown(handle, viewer=viewer)
-        profile = (
-            await UserProfileRepository(self._s).get_profile_by_user_id(user.id)
+        # 档案和「挑过的头像」出自同一次读取（profiles_and_chosen_avatars），不分两次
+        # 读同一行档案。
+        profiles, chosen = (
+            await UserProfileRepository(self._s).profiles_and_chosen_avatars([user.id])
             if user
-            else None
+            else ({}, {})
         )
+        profile = profiles.get(user.id) if user else None
         # 头像只回这个人**自己挑过**的那张：``profile.avatar_id`` 是原始 profile 值，
         # 注册时人人被写上全局默认那一行，直接回它会让没挑过的人显示一张共用的默认脸。
         # 前端的 ProfileView 靠 isChosenAvatar 兜住了这一层，后端不能只靠它。
         # 判据只有一处（``UserProfileRepository.chosen_avatar_ids``）；没挑过回 null。
-        chosen_avatar_id = (
-            (await UserProfileRepository(self._s).chosen_avatar_ids([user.id])).get(
-                user.id
-            )
-            if user is not None
-            else None
-        )
+        chosen_avatar_id = chosen.get(user.id) if user is not None else None
         is_self = viewer == handle
         ids = [project.id for project in visible]
         seated = await self._agent_of(handle)

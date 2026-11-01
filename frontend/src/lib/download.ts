@@ -14,9 +14,8 @@
 // 提示用 sonner（和导出一份文档的提示同一套），因为下载完了人可能已经离开那个面板，
 // 说一句话在哪儿都看得见，而且它自己会淡出，不用留一行红字占着位置。
 
-import { toast } from 'vuetify-sonner'
-
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 /** 把一坨字节存成一份文件：临时链接点一下，剩下的交给浏览器。
  *

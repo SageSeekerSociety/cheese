@@ -12,12 +12,13 @@ import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 import type { LibraryRow } from './useLibraryPages'
 
 import { type Ref, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { deleteLibraryFile, downloadFile, libraryFileRawUrl } from '../api'
 import { uploadPercent } from '../api/partUpload'
 import { t } from '../i18n'
 import { replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
+
+import { toast } from '@/lib/toast'
 
 export function useLibraryTransfers(page: {
   /** 哪一个资料库（`LibraryShelf`）。 */

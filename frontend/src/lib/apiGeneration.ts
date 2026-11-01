@@ -19,12 +19,18 @@
  * and a reload would drop them without a word. The button reloads the way
  * staleBuild.ts does: the waiting service worker takes over first, or the
  * reload could come back with the old index.html.
+ *
+ * That notice is then the only failure the page reports: every request it sends
+ * after the refusal is refused the same way, and each caller's own failure
+ * notice would stack another account of it (lib/toast.ts holds them). So it is
+ * shown with vuetify-sonner's own `toast`, the one notice the hold lets through.
  */
 import { watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
+import { holdFailureNotices } from '@/lib/toast'
 import { takeWaitingWorker } from '@/pwa'
 
 /** The generation this build speaks; absent in builds of the other vite configs, which then say nothing. */
@@ -49,11 +55,18 @@ function reload(): void {
 }
 
 function show(): void {
-  toast.warning(t('global.outdatedClient.message'), {
-    // The page cannot be used until it is refreshed; the button stays until it is.
+  // vuetify-sonner hands every option on to vue-sonner's toast (`...rest` in its
+  // `toast()`), whose `dismissible: false` refuses the swipe; its own option type
+  // leaves that key out, hence the variable rather than an inline literal.
+  const options: Parameters<typeof toast.warning>[1] & { dismissible: boolean } = {
+    // The page cannot be used until it is refreshed, and once failure notices are
+    // held this is the only thing it says: nothing may take it off screen, a timer
+    // or a swipe, and the button stays until it is used.
     duration: Number.POSITIVE_INFINITY,
+    dismissible: false,
     action: { label: t('global.outdatedClient.refresh'), onClick: reload },
-  })
+  }
+  toast.warning(t('global.outdatedClient.message'), options)
 }
 
 let asked = false
@@ -67,6 +80,9 @@ let asked = false
 export function askToReload(): void {
   if (asked) return
   asked = true
+  // Held now, not when the notice shows: the callers whose requests were just
+  // refused raise their own failure notices as soon as this returns.
+  holdFailureNotices()
   if (firstPaintDone.value) {
     show()
     return

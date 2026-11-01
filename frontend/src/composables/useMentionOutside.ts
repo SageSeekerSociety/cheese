@@ -8,11 +8,11 @@
 import type { MentionedOutside, PostedMessage } from '../api/messages'
 
 import { ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { addTopicMember } from '../api'
 
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 export function useMentionOutside(options: {
   /** 此刻这一栏读的那段对话；变了就不再问。 */
