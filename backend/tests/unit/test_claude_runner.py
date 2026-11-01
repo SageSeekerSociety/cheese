@@ -1444,3 +1444,27 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
         lambda r: r.get("compact_result") is not None, after=started["sequence"]
     )
     assert ended["record"]["compact_result"] == "success"
+
+
+@pytest.mark.anyio
+async def test_a_bash_call_says_how_much_of_its_wait_was_the_command(
+    monkeypatch, tmp_path
+):
+    """A tool call's wall clock is the command's own run plus whatever the
+    platform spent carrying it there. The executor times the command; the
+    shell prefix on this host leaves that where the runner looks, keyed by the
+    call the build named, so the record that brings the result back says what
+    the command itself took."""
+    monkeypatch.chdir(tmp_path)
+    runner = Runner(tmp_path / "state")
+    target = tmp_path / "session/execution.json"
+    target.parent.mkdir()
+    target.write_text("{}")
+    runner.execution = str(target)
+    timings = target.parent / "command-timings"
+    timings.mkdir()
+
+    (timings / "toolu_9.json").write_text('{"ran_ms": 250}')
+    assert runner.command_ran("toolu_9") == 250
+    # A call the executor never timed says nothing, rather than zero.
+    assert runner.command_ran("toolu_none") is None

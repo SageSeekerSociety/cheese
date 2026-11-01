@@ -554,8 +554,10 @@ def run_on_the_machine(target, command):
         signal.signal(number, signal.SIG_IGN)
     with contextlib.suppress(OSError):
         os.write(watcher, b"done\n")
-    if bash and "cwd" in answer:
-        _report_directory(target, client, answer["cwd"], tail.group(1))
+    if bash and tail is not None:
+        leave_timing(target, _cwd_call(tail.group(1)), answer)
+        if "cwd" in answer:
+            _report_directory(target, client, answer["cwd"], tail.group(1))
     if not kept:
         with contextlib.suppress(Exception):
             call("forget")
@@ -575,6 +577,35 @@ def run_on_the_machine(target, command):
             signal.signal(-code, signal.SIG_DFL)
         os.kill(os.getpid(), -code)
     return code
+
+
+def _cwd_call(spelled):
+    """The tool call a `pwd -P` file belongs to: the build names the file
+    `claude-<call id>-cwd` in its temporary directory."""
+    name = Path(shlex.split(spelled)[0]).name
+    match = re.fullmatch(r"claude-(.+)-cwd", name)
+    return match.group(1) if match else ""
+
+
+def leave_timing(target, call, answer):
+    """Leave how long the command itself ran, keyed by the tool call the build
+    named for it, where the runner reads it (`Runner.command_ran`).
+
+    A call's wall clock is the command's own run plus whatever the platform
+    spent carrying it to the executor, and only the executor sees both ends of
+    the former. Named for the call and not the executor's command id: the id
+    the build knows is the one its record will carry.
+    """
+    ran = (answer or {}).get("ran_ms")
+    where = target.get("target_file")
+    if not isinstance(ran, int) or not where or not _PLAIN.fullmatch(str(call)):
+        return
+    directory = Path(where).parent / "command-timings"
+    with contextlib.suppress(OSError):
+        directory.mkdir(exist_ok=True)
+        temporary = directory / (str(call) + "." + uuid.uuid4().hex)
+        temporary.write_text(json.dumps({"ran_ms": ran}))
+        temporary.replace(directory / f"{call}.json")
 
 
 def _report_directory(target, client, final, spelled):

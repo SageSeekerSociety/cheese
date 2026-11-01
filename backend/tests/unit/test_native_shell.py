@@ -1307,3 +1307,28 @@ def test_a_new_command_id_is_new(machine):
     for command_id in ids:
         machine.start(command_id, "true")
     assert all(machine.collect(command_id)[2]["exit"] == 0 for command_id in ids)
+
+
+def test_how_long_the_command_itself_ran_is_reported_apart(machine):
+    """A tool call's wall clock is the command's own run plus everything the
+    platform spent around it. The executor runs the command and is the only
+    one that sees both ends of it, so it says how long that was; the caller
+    subtracts it from what it waited to get the platform's own share."""
+    machine.start("timed", "sleep 0.6")
+    _, _, answer = machine.collect("timed")
+    assert answer["exit"] == 0
+    ran = answer["ran_ms"]
+    # The command slept 0.6s; starting a process and reporting it adds a
+    # little, and nothing subtracts it.
+    assert 600 <= ran < 5000, ran
+
+
+def test_the_prefix_leaves_the_commands_own_run_where_the_runner_reads_it(session):
+    """The runner cannot see the far end of a command, and the prefix on this
+    host is where the two halves of a call's wall clock meet: it leaves what
+    the command itself took, named for the call, beside the target file."""
+    code, _ = session.run(session.wrapped("sleep 0.3"))
+    assert code == 0
+    (timing,) = (session.target.parent / "command-timings").iterdir()
+    assert timing.name == "ab12.json"
+    assert 300 <= json.loads(timing.read_text())["ran_ms"] < 5000

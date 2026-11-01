@@ -1067,6 +1067,19 @@ class Runner(runner.Runner[Journal]):
                 block["arguments"] += str(delta.get("partial_json") or "")
                 self.shown()
 
+    def command_ran(self, call: str) -> int | None:
+        """How long the command behind one Bash call ran, as the executor
+        timed it and the shell prefix left it here (``shell_prefix``): the
+        part of the call's wall clock the command itself spent."""
+        if not self.execution:
+            return None
+        path = Path(self.execution).parent / "command-timings" / f"{call}.json"
+        try:
+            ran = json.loads(path.read_text()).get("ran_ms")
+        except (OSError, ValueError):
+            return None
+        return ran if isinstance(ran, int) and not isinstance(ran, bool) else None
+
     def _watch_marks(self, message: dict) -> dict:
         """What one transcript-shaped record says to the stuck-work clocks,
         and the calls whose results it brings back (``cheese.calls``)."""
@@ -1177,6 +1190,13 @@ class Runner(runner.Runner[Journal]):
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
             if returned := self._watch_marks(message):
+                for call, told in returned.items():
+                    # What the command itself took, where the shell prefix on
+                    # this host left it: the rest of the call's wall clock is
+                    # what the platform spent carrying it to the executor.
+                    ran = self.command_ran(call)
+                    if ran is not None:
+                        told["ran_ms"] = ran
                 stamp["calls"] = returned
         if kind == "system":
             self._track(record)
