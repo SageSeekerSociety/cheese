@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/pageTimings', () => ({ reportPageTiming: vi.fn(() => Promise.resolve()) }))
 
-import { reportPageTiming } from '@/api/pageTimings'
-
 import { installPageTiming } from './pageTiming'
+
+import { reportPageTiming } from '@/api/pageTimings'
 
 const PROJECT = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0'
 
