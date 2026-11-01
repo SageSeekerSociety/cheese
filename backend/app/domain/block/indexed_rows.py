@@ -105,6 +105,18 @@ QUEUED_MESSAGE_ROWS = text(
 #: 2026-10-07, 442,504 blocks).
 EID = text("(meta ->> 'eid')")
 
+#: The turn a message was handed to (`prompted_turn`) and the turn that read
+#: it (`consumed_turn`), as the room-waits scan looks them up to say whose a
+#: failed turn was (`waits._turn_owners`). It used to filter every message of
+#: the project's rooms since the oldest open failure for these two keys, which
+#: was the slowest read of `GET /topics` on dev (115-213 ms, 2026-10-31); an
+#: index on each key finds the few messages of the few turns asked about.
+#: Partial on the key being present: most blocks carry neither.
+PROMPTED_TURN = text("(meta ->> 'prompted_turn')")
+CONSUMED_TURN = text("(meta ->> 'consumed_turn')")
+PROMPTED_TURN_ROWS = text("(meta ->> 'prompted_turn') IS NOT NULL")
+CONSUMED_TURN_ROWS = text("(meta ->> 'consumed_turn') IS NOT NULL")
+
 #: A coalesced message: one block that landed several hook events, listed in
 #: `meta.eids`. About 2,300 of the 442,000 blocks on dev.
 COALESCED_ROWS = text("(meta -> 'eids') IS NOT NULL")

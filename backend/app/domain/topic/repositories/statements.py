@@ -151,9 +151,18 @@ def _last_activity() -> ColumnElement[datetime]:
         .correlate(Topic)
         .scalar_subquery()
     )
-    in_tasks = (
+    # The tasks' maximum is the maximum of each task's own last block, read the
+    # same way. Joining blocks to tasks and aggregating instead let the planner
+    # hash-join the whole blocks table once per listed topic: 50-125 ms of
+    # every `GET /topics` on dev (2026-10-31).
+    task_last = (
         select(func.max(_blocks.c.created_at))
-        .join(_tasks, _tasks.c.id == _blocks.c.conversation_id)
+        .where(_blocks.c.conversation_id == _tasks.c.id)
+        .correlate(_tasks)
+        .scalar_subquery()
+    )
+    in_tasks = (
+        select(func.max(task_last))
         .where(_tasks.c.room_id == Topic.id)
         .correlate(Topic)
         .scalar_subquery()
