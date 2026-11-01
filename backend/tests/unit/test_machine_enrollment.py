@@ -618,6 +618,180 @@ LTS = [
 ]
 
 
+def _swap_block(*, swap_mb=8192, swappiness=10) -> str:
+    """The data disk step's mounts and swap file, as the host runs it, from
+    the fstab helper through the swap file (the disk discovery and mkfs are
+    `_format_block`'s to test)."""
+    script = enrollment.DATA_DISK.format(swap_mb=swap_mb, swappiness=swappiness)
+    start = script.index("mount_line() {")
+    return script[start : script.index("set -- $(stat -f", start)]
+
+
+def _run_swap(home, block, *, fail_fallocate=False):
+    """Run the mounts-and-swap step with a fake sudo that keeps its results in
+    ``home``: what it was asked to run, the fstab it wrote, the sysctl file,
+    the size of the swap file and whether it is swapped on. Run twice, the
+    second run sees the first's state."""
+    import subprocess
+
+    calls = home / "calls"
+    fstab = home / "fstab"
+    size = home / "swap-size"
+    swapped = home / "swapped"
+    sysctl = home / "90-cheese-swap.conf"
+    harness = f"""set -eu
+HOME={home}
+root="$HOME/.cheese"
+uuid=fake-uuid
+FSTAB={fstab}
+SIZE={size}
+SWAPPED={swapped}
+SYSCTL={sysctl}
+CALLS={calls}
+FAIL_FALLOCATE={1 if fail_fallocate else 0}
+[ -f "$FSTAB" ] || : > "$FSTAB"
+stat() {{
+  if [ "$1 $2 $3" = "-c %s /data/swapfile" ]; then
+    [ -f "$SIZE" ] || return 1
+    cat "$SIZE"
+    return 0
+  fi
+  command stat "$@"
+}}
+grep() {{
+  args=()
+  for arg in "$@"; do
+    [ "$arg" = /etc/fstab ] && arg="$FSTAB"
+    args+=("$arg")
+  done
+  command grep "${{args[@]}}"
+}}
+mountpoint() {{ return 1; }}
+sudo() {{
+  [ "$1" = "-n" ] && shift
+  printf '%s\\n' "$*" >> "$CALLS"
+  case "$*" in
+    "swapon --show=NAME --noheadings")
+      [ -f "$SWAPPED" ] && cat "$SWAPPED"
+      return 0 ;;
+    "swapon /data/swapfile") echo /data/swapfile > "$SWAPPED"; return 0 ;;
+    "fallocate -l "*)
+      [ "$FAIL_FALLOCATE" = 1 ] && return 1
+      printf '%s\\n' "$3" > "$SIZE"
+      : > {home}/swapfile
+      return 0 ;;
+    "rm -f /data/swapfile") rm -f "$SIZE" {home}/swapfile; return 0 ;;
+    "tee -a /etc/fstab") cat >> "$FSTAB"; return 0 ;;
+    "tee /etc/sysctl.d/90-cheese-swap.conf") cat > "$SYSCTL"; return 0 ;;
+    *) return 0 ;;
+  esac
+}}
+{block}
+"""
+    done = subprocess.run(
+        ["/bin/bash", "-c", harness], capture_output=True, text=True, timeout=10
+    )
+    return (
+        done,
+        calls.read_text() if calls.exists() else "",
+        fstab.read_text() if fstab.exists() else "",
+        sysctl.read_text() if sysctl.exists() else "",
+    )
+
+
+def _swap_lines(fstab: str) -> list[str]:
+    return [line for line in fstab.splitlines() if "swapfile" in line]
+
+
+def test_a_pool_host_makes_a_swap_file_on_its_data_disk(tmp_path):
+    """A host driven past its memory pages out instead of the kernel killing
+    the connector and every sandbox with it; the file is fallocated, never
+    dd'd onto the thin pool."""
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert "fallocate -l 8589934592 /data/swapfile" in calls
+    assert "chmod 600 /data/swapfile" in calls
+    assert "mkswap /data/swapfile" in calls
+    assert "swapon /data/swapfile" in calls
+    assert "dd " not in calls
+    assert _swap_lines(fstab) == ["/data/swapfile none swap sw,nofail 0 0"]
+    assert sysctl.strip() == "vm.swappiness=10"
+
+
+def test_running_the_swap_step_again_keeps_the_file_and_one_fstab_line(tmp_path):
+    """Enrollment is retried as a whole, so this step runs again: a file
+    already swapped on is not made or formatted again, and fstab keeps one
+    line for it."""
+    _run_swap(tmp_path, _swap_block())
+    done, calls, fstab, _ = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert calls.count("fallocate -l 8589934592 /data/swapfile") == 1
+    assert calls.count("mkswap /data/swapfile") == 1
+    assert calls.count("swapon /data/swapfile") == 1
+    assert _swap_lines(fstab) == ["/data/swapfile none swap sw,nofail 0 0"]
+
+
+def test_a_swap_file_of_another_size_is_made_again(tmp_path):
+    """The deployment asking for another size is the one reason to rebuild:
+    the file that is there is the wrong size and is not swapped on."""
+    (tmp_path / "swap-size").write_text("1048576\n")
+    done, calls, _, _ = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert "rm -f /data/swapfile" in calls
+    assert "fallocate -l 8589934592 /data/swapfile" in calls
+
+
+def test_a_swap_file_that_cannot_be_made_fails_the_enrollment(tmp_path):
+    """There is no dd fallback: a host whose disk cannot hold the file is not
+    enrolled rather than enrolled without the swap it was promised."""
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block(), fail_fallocate=True)
+
+    assert done.returncode == 1
+    assert "could not make the swap file /data/swapfile" in done.stderr
+    assert "mkswap /data/swapfile" not in calls
+    assert _swap_lines(fstab) == []
+    assert sysctl == ""
+
+
+def test_swap_off_creates_no_file_and_writes_no_sysctl(tmp_path):
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block(swap_mb=0))
+
+    assert done.returncode == 0, done.stderr
+    assert "fallocate" not in calls
+    assert "mkswap" not in calls
+    assert "swapon /data/swapfile" not in calls
+    assert _swap_lines(fstab) == []
+    assert sysctl == ""
+
+
+def test_the_image_version_changes_when_the_swap_file_does(monkeypatch):
+    """A host's version is its enrollment script's digest, so turning swap on
+    (or changing its size) leaves every existing host out of date: the pool
+    rolls them onto the script that makes the file."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+
+    def version():
+        return enrollment.host_image_version(
+            offering, cores=4, memory_mb=8192, disk_gb=64
+        )
+
+    before = version()
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swap_mb", 4096)
+    assert version() != before
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swap_mb", 8192)
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swappiness", 20)
+    assert version() != before
+
+
 @pytest.mark.parametrize(
     ("kernel", "chosen"),
     [

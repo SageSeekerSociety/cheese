@@ -21,6 +21,13 @@ export interface SandboxUsage {
   memory_bytes: number | null
   /** 沙箱起来以来内存用到的最多。 */
   memory_peak_bytes: number | null
+  /** 其中进程自己的（匿名）和页缓存各多少。 */
+  anon_bytes: number | null
+  file_bytes: number | null
+  /** 用了宿主机多少交换文件：`memory.swap.max` 为 0 时一直是 0。 */
+  swap_bytes: number | null
+  /** 起来以来被内核因内存不足杀掉几次。 */
+  oom_kills: number | null
   memory_read_at: string | null
   disk_bytes: number | null
   disk_inodes: number | null
@@ -36,6 +43,16 @@ export interface HostUsage {
   inodes_used: number | null
   memory_bytes: number | null
   memory_used_bytes: number | null
+  /** 宿主机数据盘上的交换文件；没建时为 null。 */
+  swap_bytes: number | null
+  swap_used_bytes: number | null
+  /** 内存压力（PSI）：最近 1 分钟、5 分钟里因内存卡住的时间占比（百分数）。 */
+  memory_pressure_some_avg10: number | null
+  memory_pressure_some_avg60: number | null
+  memory_pressure_full_avg10: number | null
+  memory_pressure_full_avg60: number | null
+  /** 是否加载了 zswap。 */
+  zswap: boolean | null
   /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
   cpu_busy: number | null
   load1: number | null

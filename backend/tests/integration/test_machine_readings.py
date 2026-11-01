@@ -79,10 +79,29 @@ def kernel_says(
     case.hosts.exec = exec_
 
 
-def memory(used_gib: float, *, total_gib: int = 16, cpu_usec: int = 0) -> dict:
+def memory(
+    used_gib: float,
+    *,
+    total_gib: int = 16,
+    cpu_usec: int = 0,
+    swap_gib: int = 8,
+    swap_used_gib: float = 1,
+    pressure: bool = True,
+) -> dict:
     return {
         "memory": total_gib * GIB,
         "memory_available": int((total_gib - used_gib) * GIB),
+        "swap_bytes": swap_gib * GIB,
+        "swap_free_bytes": int((swap_gib - swap_used_gib) * GIB),
+        "memory_pressure": (
+            {
+                "some": {"avg10": 12.5, "avg60": 3.0},
+                "full": {"avg10": 4.5, "avg60": 1.0},
+            }
+            if pressure
+            else None
+        ),
+        "zswap": False,
         "cpu_usage_usec": cpu_usec,
         "load1": 0.5,
     }
@@ -147,7 +166,17 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     seat = cloud.seats[0]
     working_on(cloud, seat, "host-1")
     resource = home_of(cloud, seat).resource_id
-    sandbox = [{"resource": resource, "memory": GIB, "memory_peak": 2 * GIB}]
+    sandbox = [
+        {
+            "resource": resource,
+            "memory": GIB,
+            "memory_peak": 2 * GIB,
+            "anon": 700 * 2**20,
+            "file": 300 * 2**20,
+            "swap": 0,
+            "oom_kill": 0,
+        }
+    ]
     quota = [
         {
             "project": str(cloud.project_id),
@@ -173,6 +202,14 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     usage = host["usage"]
     assert usage["memory_bytes"] == 16 * GIB
     assert usage["memory_used_bytes"] == 6 * GIB
+    # Its swap file and how pressed its memory was, as the host reported them.
+    assert usage["swap_bytes"] == 8 * GIB
+    assert usage["swap_used_bytes"] == 1 * GIB
+    assert usage["memory_pressure_some_avg10"] == 12.5
+    assert usage["memory_pressure_some_avg60"] == 3.0
+    assert usage["memory_pressure_full_avg10"] == 4.5
+    assert usage["memory_pressure_full_avg60"] == 1.0
+    assert usage["zswap"] is False
     assert usage["disk_used_bytes"] == ROOM["bytes"] - ROOM["bytes_free"]
     assert usage["inodes_used"] == ROOM["inodes"] - ROOM["inodes_free"]
     assert usage["cpu_busy"] == pytest.approx(1 / host["cores"], rel=0.01)
@@ -187,12 +224,41 @@ def test_the_page_shows_what_each_host_and_its_sandboxes_use(cloud):  # noqa: F8
     (on_it,) = host["sandboxes"]
     assert on_it["usage"]["memory_bytes"] == GIB
     assert on_it["usage"]["memory_peak_bytes"] == 2 * GIB
+    # What of it is the sandbox's own and what is cache, and that it is in no
+    # swap and has not been OOM-killed.
+    assert on_it["usage"]["anon_bytes"] == 700 * 2**20
+    assert on_it["usage"]["file_bytes"] == 300 * 2**20
+    assert on_it["usage"]["swap_bytes"] == 0
+    assert on_it["usage"]["oom_kills"] == 0
     # What its home holds, as its quota counts it.
     assert on_it["usage"]["disk_bytes"] == 3 * GIB
     assert on_it["usage"]["disk_inodes"] == 40
     assert data["config"]["sandbox_disk_budget_gb"] == (
         settings.cloud_sandbox_disk_budget_gb
     )
+
+
+def test_a_machine_without_psi_or_swap_leaves_those_blank(cloud):  # noqa: F811
+    """A person's computer is read too, and macOS has neither a PSI file nor
+    a swap file of ours: the page shows nothing for them rather than a zero
+    that reads like an idle swap."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-1")
+    bare = memory(2, swap_gib=0, swap_used_gib=0, pressure=False)
+    bare.pop("swap_bytes")
+    bare.pop("swap_free_bytes")
+    kernel_says(cloud, {"host-1": bare}, {})
+
+    guard(cloud)
+
+    host = next(
+        h for h in page(cloud)["hosts"] if h["id"] == str(host_of(cloud, seat).id)
+    )
+    usage = host["usage"]
+    assert usage["swap_bytes"] is None
+    assert usage["swap_used_bytes"] is None
+    assert usage["memory_pressure_some_avg10"] is None
+    assert usage["memory_pressure_full_avg60"] is None
 
 
 def test_a_sandbox_destroyed_while_its_host_is_read_does_not_stop_the_guard(

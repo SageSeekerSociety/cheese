@@ -13,6 +13,9 @@ needs a project quota only root can set.
              --disk-mib N --inodes N [--forward PORT]... [--site PORT]
     down NAME
     reclaim NAME...
+    swap NAME MIB
+    freeze NAME...
+    thaw NAME...
 
 `PID` is the sandbox's first process, created by bubblewrap with a network
 namespace of its own and still waiting to start the session's program. `up`
@@ -33,7 +36,14 @@ allows that only from the machine's own user namespace. `down` lifts the
 home's and the state's limits; the store keeps its own. `reclaim` asks the
 kernel to give back the page cache of sandboxes the platform found idle
 (`disk_guard`), which on a VM host is memory the hypervisor can then take
-back from the machine. The sandbox may reach the machine's DNS
+back from the machine. `swap` sets how much of the host's swap file one
+sandbox may use (`memory.swap.max`, 0 by default: a sandbox at its memory
+limit is killed, not pushed into swap). `freeze` and `thaw` stop and resume
+every process in a sandbox with `cgroup.freeze`, waiting until the kernel
+reports the change in `cgroup.events`: a frozen sandbox keeps its memory
+reserved but spends no CPU, and its pages can then be swapped out. None of
+these three is called by the lifecycle yet; they are the host side the
+freezing step needs. The sandbox may reach the machine's DNS
 resolvers on port 53 and the public internet; nothing in a private range, not
 the machine itself, and not another sandbox. `--forward` lets it reach one TCP
 port of the machine's own loopback as the same port on its own: a machine
@@ -787,6 +797,85 @@ def reclaim(names):
     return {"reclaimed": given}
 
 
+#: How long `freeze` and `thaw` wait for the kernel to report the change in
+#: `cgroup.events`. It applies the change before its processes have stopped.
+FREEZE_TIMEOUT_S = 5.0
+
+
+def _own_groups(names):
+    """The cgroups of the named sandboxes, which must be the caller's own and
+    have been made by ``up``: one check for every name before any is touched,
+    so a group of names either all moves or none does."""
+    uid = caller()
+    records = load() if STATE.is_dir() else {}
+    groups = []
+    for name in names:
+        record = records.get(name)
+        group = CGROUP / name
+        if record is None or record["uid"] != uid or not group.is_dir():
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"{name} is not the caller's sandbox")
+        groups.append(group)
+    return groups
+
+
+def swap(name, mib):
+    """How much of the host's swap file one sandbox may use, in MiB, written
+    to its `memory.swap.max`. 0 keeps it out of swap; `up` writes this at
+    start, and this is how a later step changes it."""
+    (group,) = _own_groups([name])
+    try:
+        (group / "memory.swap.max").write_text(str(mib * 1024 * 1024))
+    except OSError as error:
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"could not set {name}'s swap: {error.strerror}") from error
+    return {"swap_max": mib * 1024 * 1024}
+
+
+def _frozen(group):
+    """Whether the kernel says every process in `group` is frozen."""
+    for line in (group / "cgroup.events").read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "frozen":
+            return parts[1] == "1"
+    return None
+
+
+def _set_frozen(names, frozen):
+    """Freeze or thaw every process in the named sandboxes and wait until the
+    kernel reports it in each one's `cgroup.events`; a change it does not
+    report within ``FREEZE_TIMEOUT_S`` is refused."""
+    groups = _own_groups(names)
+    for group in groups:
+        try:
+            (group / "cgroup.freeze").write_text("1" if frozen else "0")
+        except OSError as error:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"could not freeze {group.name}: {error.strerror}") from error
+    deadline = time.monotonic() + FREEZE_TIMEOUT_S
+    for group in groups:
+        try:
+            while _frozen(group) != frozen:
+                if time.monotonic() >= deadline:
+                    # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+                    raise Refused(f"{group.name} did not change state in time")
+                time.sleep(0.01)
+        except OSError as error:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(
+                f"could not read {group.name}'s state: {error.strerror}"
+            ) from error
+    return {"frozen" if frozen else "thawed": [group.name for group in groups]}
+
+
+def freeze(names):
+    return _set_frozen(names, True)
+
+
+def thaw(names):
+    return _set_frozen(names, False)
+
+
 def number(text, low, high):
     if not re.fullmatch(r"[0-9]{1,9}", text) or not low <= int(text) <= high:
         raise Refused(f"{text!r} is not a number from {low} to {high}")
@@ -827,14 +916,17 @@ def parse(argv):
         return "down", {"name": argv[1]}
     if (
         2 <= len(argv) <= 65
-        and argv[0] == "reclaim"
+        and argv[0] in ("reclaim", "freeze", "thaw")
         and all(NAME.fullmatch(name) for name in argv[1:])
     ):
-        return "reclaim", {"names": argv[1:]}
+        return argv[0], {"names": argv[1:]}
+    if len(argv) == 3 and argv[0] == "swap" and NAME.fullmatch(argv[1]):
+        return "swap", {"name": argv[1], "mib": number(argv[2], 0, 1 << 20)}
     if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
         # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(
             "usage: up NAME PID --home PATH ... | down NAME | reclaim NAME..."
+            " | swap NAME MIB | freeze NAME... | thaw NAME..."
         )
     pid = number(argv[2], 2, 1 << 22)
     limits, forward, site, home = {}, [], None, None
@@ -872,9 +964,14 @@ def main(argv):
     started = time.monotonic()
     try:
         command, arguments = parse(argv)
-        answer: dict = {"up": up, "down": down, "reclaim": reclaim}[command](
-            **arguments
-        )
+        answer: dict = {
+            "up": up,
+            "down": down,
+            "reclaim": reclaim,
+            "swap": swap,
+            "freeze": freeze,
+            "thaw": thaw,
+        }[command](**arguments)
     except Refused as refusal:
         print(f"cheese-sandbox: {refusal}", file=sys.stderr)
         return 2

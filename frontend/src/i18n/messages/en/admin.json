@@ -205,6 +205,7 @@
       "disk": "Disk",
       "inodes": "Inodes",
       "memory": "Memory",
+      "swap": "Swap",
       "cpu": "CPU",
       "gb": "{used} / {total} GB",
       "gib": "{used} / {total} GiB",
@@ -219,6 +220,9 @@
       "sandboxDisk": "Disk {used} / {cap} GB",
       "sandboxFiles": "Files {used} / {cap}",
       "sandboxRead": "Memory read {memory} · disk read {disk}",
+      "sandboxSwap": "swap {used} GiB",
+      "oomKilled": "OOM-killed {n} times",
+      "pressure": "Memory pressure (1 min / 5 min): some {some}, full {full}",
       "foot": "Usage, each sandbox's disk among it, is read every {check}. A host past {disk} disk, {inodes} inodes or {memory} memory on two readings running is sent to the alert group; a sandbox at {near} of a limit is highlighted."
     },
     "draining": "Rebuilding",

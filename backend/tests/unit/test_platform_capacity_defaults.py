@@ -72,6 +72,19 @@ def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:
     assert settings.cloud_pool_min_free_slots == capacity(host)
 
 
+def test_a_hosts_swap_file_is_not_room_for_sandboxes(monkeypatch) -> None:
+    """The swap file lives on the data disk the sandboxes share, so it comes
+    off the disk before they are placed: turning it off gives the disk back,
+    and a deployment that keeps it does not fill the disk it sits on."""
+    host = CloudHost(cores=64, memory_mb=65536, disk_gb=100, sandbox_disk_gb=64)
+    monkeypatch.setattr(settings, "cloud_host_swap_mb", 0)
+    without = capacity(host)
+    monkeypatch.setattr(settings, "cloud_host_swap_mb", 8192)
+
+    # 8 GiB of the disk, at the 4 GB one sandbox is expected to take.
+    assert capacity(host) == without - 2
+
+
 def test_a_pressed_pool_keeps_an_idle_sandbox_three_minutes() -> None:
     """While the pool has no free slot (or a session waits for one), an idle
     sandbox on a platform host is destroyed after three minutes instead of ten,

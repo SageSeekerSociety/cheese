@@ -605,6 +605,68 @@ def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 
+@with_sandbox_host
+def test_swap_and_freezing_are_refused_for_another_users_sandbox(
+    rooms, machine_service
+):
+    """One session may change the swap and the frozen state of its own sandbox
+    and no other's: both are asked for by name, and a name that is not the
+    caller's cgroup is refused."""
+    rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    other = str(uuid.uuid4())
+    (sandbox_host.CGROUP / other).mkdir(exist_ok=True)
+    try:
+        for argv in (["swap", other, "0"], ["freeze", other], ["thaw", other]):
+            answer = subprocess.run(
+                [sys.executable, str(HELPER), *argv], capture_output=True, text=True
+            )
+            assert answer.returncode == 2, answer.stdout + answer.stderr
+            assert "not the caller's sandbox" in answer.stderr
+    finally:
+        (sandbox_host.CGROUP / other).rmdir()
+
+
+@with_sandbox_host
+def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    before = int((sandbox_host.CGROUP / name / "memory.current").read_text())
+
+    for command, state in (("freeze", "1"), ("thaw", "0")):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, command, name],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 0, answer.stderr
+        events = (sandbox_host.CGROUP / name / "cgroup.events").read_text()
+        assert f"frozen {state}" in events
+
+    assert int((sandbox_host.CGROUP / name / "memory.current").read_text()) >= before
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_a_sandbox_may_use_the_hosts_swap_only_when_it_is_told_to(
+    rooms, machine_service
+):
+    """A sandbox has no swap of its own by default; `swap` is how a later step
+    gives it some, and the kernel then reports it against that sandbox."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+    assert (group / "memory.swap.max").read_text().strip() == "0"
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "swap", str(room.resource), "64"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert json.loads(answer.stdout)["swap_max"] == 64 << 20
+    assert int((group / "memory.swap.max").read_text()) == 64 << 20
+
+
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
 def test_a_machine_keeps_a_quarter_of_its_memory_and_at_least_a_gib(
     total_gib, kept_gib
@@ -911,6 +973,12 @@ def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatc
         ["down", "*"],
         ["exec", str(uuid.uuid4())],
         ["up", str(uuid.uuid4()), "100", "--site", "70000"],
+        ["swap", str(uuid.uuid4()), str((1 << 20) + 1)],
+        ["swap", str(uuid.uuid4()), "-1"],
+        ["swap", str(uuid.uuid4()), "1G"],
+        ["swap", "../etc", "0"],
+        ["freeze", "*"],
+        ["thaw", str(uuid.uuid4()) + ";id"],
     ],
 )
 def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
@@ -918,6 +986,33 @@ def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
         [sys.executable, str(HELPER), *argv], capture_output=True, text=True
     )
     assert result.returncode == 2, result.stderr
+
+
+def test_the_sandbox_helper_parses_swap_and_freezing_before_it_runs_anything():
+    """The three commands the freezing step will use are read the same way as
+    the ones the lifecycle runs today: by name and number, refusing anything
+    else, before root touches a cgroup."""
+    name, other = str(uuid.uuid4()), str(uuid.uuid4())
+
+    assert sandbox_host.parse(["swap", name, "0"]) == ("swap", {"name": name, "mib": 0})
+    assert sandbox_host.parse(["swap", name, str(1 << 20)]) == (
+        "swap",
+        {"name": name, "mib": 1 << 20},
+    )
+    assert sandbox_host.parse(["freeze", name, other]) == (
+        "freeze",
+        {"names": [name, other]},
+    )
+    assert sandbox_host.parse(["thaw", name]) == ("thaw", {"names": [name]})
+    for argv in (
+        ["swap", name],
+        ["swap", name, "-1"],
+        ["swap", name, str((1 << 20) + 1)],
+        ["freeze"],
+        ["thaw", ""],
+    ):
+        with pytest.raises(sandbox_host.Refused):
+            sandbox_host.parse(argv)
 
 
 def test_the_sandbox_helper_takes_only_the_home_of_the_sandbox_it_starts():

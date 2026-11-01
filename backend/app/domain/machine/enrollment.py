@@ -126,7 +126,10 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # directories the platform keeps homes and stores in, so no path changes.
 # mkfs.xfs without -f: a disk that carries any signature is refused, not
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
-# to a disk limit, and no sandbox runs without one.
+# to a disk limit, and no sandbox runs without one. The same step keeps the
+# host's swap file (`cloud_host_swap_mb`, made with fallocate beside the
+# homes); the capacity a host reports its data disk as is what the sandboxes
+# may use, and `models.capacity` takes the swap file off it.
 #
 # The mkfs.xfs is the platform's, placed with the host tools before this runs
 # (`run_bootstrap`, where `cli/internal/devenv` keeps them), not a package of
@@ -186,6 +189,35 @@ mountpoint -q /data || {{ sudo -n mkdir -p /data && sudo -n mount /data; }}
 sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 0700 /data/home /data/store
 mountpoint -q "$root/home" || sudo -n mount "$root/home"
 mountpoint -q "$root/store" || sudo -n mount "$root/store"
+# A swap file on the data disk, so a burst in the machine's own processes is
+# paged out instead of the kernel killing the connector and every sandbox with
+# it (`cloud_host_swap_mb`). fallocate only: the disk is on a thin pool, where
+# every block a dd'd file writes would be claimed before anything trims it
+# back. Enrollment is retried, so this whole step runs again: a file already
+# swapped on is left alone (swapping it off to resize it would push a host
+# that is short on memory into the case the file exists for), and one that is
+# not swapped on but of a size this deployment no longer asks for is made
+# again. No sandbox swaps (`memory.swap.max` stays 0).
+swapfile=/data/swapfile
+swap_mb={swap_mb}
+if [ "$swap_mb" -gt 0 ]; then
+  if ! sudo -n swapon --show=NAME --noheadings 2>/dev/null | grep -qxF "$swapfile"; then
+    wanted=$(( swap_mb * 1024 * 1024 ))
+    have=$(stat -c %s "$swapfile" 2>/dev/null || true)
+    if [ "$have" != "$wanted" ]; then
+      sudo -n rm -f "$swapfile"
+      sudo -n fallocate -l "$wanted" "$swapfile" \\
+        || {{ echo "could not make the swap file $swapfile" >&2; exit 1; }}
+    fi
+    sudo -n chmod 600 "$swapfile"
+    sudo -n mkswap "$swapfile" >/dev/null
+    sudo -n swapon "$swapfile"
+  fi
+  mount_line "$swapfile none swap sw,nofail 0 0"
+  swap_sysctl=/etc/sysctl.d/90-cheese-swap.conf
+  echo "vm.swappiness={swappiness}" | sudo -n tee "$swap_sysctl" >/dev/null
+  sudo -n sysctl -p "$swap_sysctl" >/dev/null
+fi
 set -- $(stat -f -c '%b %S' /data)
 echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
 """
@@ -239,7 +271,14 @@ def bootstrap_script(
     # enforces is a machine that enrolls cleanly and then runs nothing.
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
-    data_disk = DATA_DISK.format() if sandbox_disk else ""
+    data_disk = (
+        DATA_DISK.format(
+            swap_mb=settings.cloud_host_swap_mb,
+            swappiness=settings.cloud_host_swappiness,
+        )
+        if sandbox_disk
+        else ""
+    )
     return f"""set -eu
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 export PATH="$HOME/.local/bin:$PATH"

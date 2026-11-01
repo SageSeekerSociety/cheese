@@ -205,6 +205,7 @@
       "disk": "磁盘",
       "inodes": "inode",
       "memory": "内存",
+      "swap": "交换",
       "cpu": "CPU",
       "gb": "{used} / {total} GB",
       "gib": "{used} / {total} GiB",
@@ -219,6 +220,9 @@
       "sandboxDisk": "磁盘 {used} / {cap} GB",
       "sandboxFiles": "文件 {used} / {cap}",
       "sandboxRead": "内存读数 {memory} · 磁盘读数 {disk}",
+      "sandboxSwap": "交换 {used} GiB",
+      "oomKilled": "被 OOM 杀过 {n} 次",
+      "pressure": "内存压力（1 分钟 / 5 分钟）：some {some}，full {full}",
       "foot": "用量（含每个沙箱的磁盘）每 {check}读一次；宿主机的磁盘过 {disk}、inode 过 {inodes}、内存过 {memory}，连续两次读数都是，就发到告警群；沙箱用到上限的 {near} 标黄。"
     },
     "draining": "重建中",

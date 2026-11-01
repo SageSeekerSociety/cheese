@@ -74,7 +74,20 @@ A host enrolls only with its data disk (`enrollment.DATA_DISK`): the VM's `scsi1
 XFS the first time, mounted at `/data` with project quotas and `discard` (what a sandbox
 deletes goes back to the thin pool under the VM), and bound over `~/.cheese/home` and
 `~/.cheese/store`, where the homes and the package stores are. The size it found is the host's
-`sandbox_disk_gb`. When a sandbox starts, `sandbox_host.py` gives its home a project quota of
+`sandbox_disk_gb`. The same step makes the host's swap file on that disk, `/data/swapfile`
+(`CLOUD_HOST_SWAP_MB`, 8 GiB; 0 makes none), with `fallocate` only — the disk is on a thin
+pool, and a `dd`'d file would claim every block it wrote before anything trimmed it back —
+`chmod 600`, `mkswap`, `swapon`, its fstab line (`swap,nofail`) and `vm.swappiness` in
+`/etc/sysctl.d/90-cheese-swap.conf` (`CLOUD_HOST_SWAPPINESS`, 10). A host whose disk cannot
+hold it does not enroll. The step is idempotent because enrollment is retried as a whole: a
+file already swapped on is left alone (swapping it off to resize would push a host that is
+short of memory into the case the file exists for), and one that is not swapped on but of
+another size is made again. It buys the
+machine room for a burst in its own processes (the connector, sshd, a language server) — a
+slow page instead of the kernel killing them — and counts against the data disk in
+`models.capacity`, so the sandbox count the host is given already leaves it out. A sandbox
+itself still has no swap (`memory.swap.max` stays 0), which is what keeps the idle page-cache
+reclaim safe. When a sandbox starts, `sandbox_host.py` gives its home a project quota of
 `CLOUD_SANDBOX_DISK_BUDGET_GB` (12) and `CLOUD_SANDBOX_INODE_BUDGET` (600,000 inodes), its
 executor's state (`~/.cheese/executor` in the home) a small one of its own, so a sandbox that
 filled its home still answers and says so, and its project's store the same limits as a home.
@@ -116,9 +129,15 @@ inodes of the filesystem its homes are on, and on a host what each home holds by
 
 ### What hosts and sandboxes use is shown and alerted
 
-`backend/app/domain/machine/readings.py`. The same reading also carries a host's memory
-(`/proc/meminfo`), the CPU time of its cgroup root, its load,
-and each sandbox cgroup's `memory.current` and `memory.peak`. A platform host's reading is kept
+`backend/app/domain/machine/readings.py`. The same reading also carries a host's memory and
+swap (`/proc/meminfo`), its memory pressure (`/proc/pressure/memory`: for `some` and `full`,
+the share of the last minute and five the kernel waited on memory), whether zswap is loaded,
+the CPU time of its cgroup root, its load, and each sandbox cgroup's `memory.current`,
+`memory.peak`, `memory.stat`'s `anon` and `file`, `memory.swap.current` and
+`memory.events`' `oom_kill`. The admin page draws the swap as a meter beside memory and says
+the pressure; a sandbox that has used swap or been OOM-killed is flagged. A machine that
+reports none of these — macOS has no PSI, and a host with no swap file — leaves them NULL
+rather than a zero that reads like an idle swap. A platform host's reading is kept
 (`host_readings`, six hours) with each sandbox's latest memory and disk (`sandbox_usages`), and
 the admin page `/admin/machines` shows them beside the sandbox limits, with each reading's age.
 A host past 85% of its disk, 90% of its inodes or 90% of its memory on two readings running is

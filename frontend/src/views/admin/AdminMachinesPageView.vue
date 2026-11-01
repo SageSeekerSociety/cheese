@@ -148,13 +148,19 @@ function stale(at: string | null): boolean {
   return (nowMs.value - new Date(at).getTime()) / 1000 > 3 * props.overview.config.check_s
 }
 
-type MeterKey = 'disk' | 'inodes' | 'memory' | 'cpu'
+type MeterKey = 'disk' | 'inodes' | 'memory' | 'swap' | 'cpu'
 type Meter = { key: MeterKey; label: string; value: string; ratio: number; hint: string; tone: 'ink' | 'warn' }
 const METER_LABEL: Record<MeterKey, string> = {
   disk: 'admin.machines.usage.disk',
   inodes: 'admin.machines.usage.inodes',
   memory: 'admin.machines.usage.memory',
+  swap: 'admin.machines.usage.swap',
   cpu: 'admin.machines.usage.cpu',
+}
+
+/** 内存压力是内核给的百分数（PSI 的 avg10/avg60），不是 0–1 的占比。 */
+function psi(value: number | null): string {
+  return value === null ? '—' : `${value.toFixed(1)}%`
 }
 
 /** 一台宿主机的四根条：过了告警线（`alert_used`，和告警同一条线）的那根标黄。 */
@@ -192,6 +198,14 @@ function meters(u: HostUsage): Meter[] {
     undefined,
     line?.memory
   )
+  // 没建交换文件（旧主机，或把 `cloud_host_swap_mb` 设成 0）就没有这一根条。
+  if (u.swap_bytes) {
+    add(
+      'swap',
+      ratio(u.swap_used_bytes, u.swap_bytes),
+      t('admin.machines.usage.gib', { used: gib(u.swap_used_bytes ?? 0), total: gib(u.swap_bytes) })
+    )
+  }
   add(
     'cpu',
     u.cpu_busy,
@@ -199,6 +213,23 @@ function meters(u: HostUsage): Meter[] {
     u.load1 === null ? '' : t('admin.machines.usage.load', { n: u.load1 })
   )
   return out
+}
+
+/** 内存压力：内核说最近 1 分钟、5 分钟里有多少时间在等内存。读不到的机器不显示。
+ * some 是有进程在等，full 是整个机器都卡住；两组都报出来。 */
+function pressure(u: HostUsage): string | null {
+  if (
+    u.memory_pressure_some_avg10 === null &&
+    u.memory_pressure_some_avg60 === null &&
+    u.memory_pressure_full_avg10 === null &&
+    u.memory_pressure_full_avg60 === null
+  )
+    return null
+  const pair = (minute: number | null, five: number | null) => `${psi(minute)} / ${psi(five)}`
+  return t('admin.machines.usage.pressure', {
+    some: pair(u.memory_pressure_some_avg10, u.memory_pressure_some_avg60),
+    full: pair(u.memory_pressure_full_avg10, u.memory_pressure_full_avg60),
+  })
 }
 
 /** 一个沙箱离它的上限多远：内存对 `sandbox_memory_mb`，磁盘对 `sandbox_disk_budget_gb`
@@ -233,6 +264,14 @@ function sandboxUse(s: MachineSandbox): { text: string; near: boolean }[] {
       }),
       near: u.disk_inodes >= c.near_cap * c.sandbox_inode_budget,
     })
+  }
+  // 沙箱自己不许换出（`memory.swap.max` 为 0），用到交换文件就是要说的事。
+  if (u.swap_bytes) {
+    parts.push({ text: t('admin.machines.usage.sandboxSwap', { used: gib(u.swap_bytes) }), near: false })
+  }
+  // 被 OOM 杀掉过：这个沙箱以后还会再撞上同一个上限。
+  if (u.oom_kills) {
+    parts.push({ text: t('admin.machines.usage.oomKilled', { n: u.oom_kills }, u.oom_kills), near: true })
   }
   return parts.length ? parts : [{ text: t('admin.machines.usage.none'), near: false }]
 }
@@ -439,6 +478,9 @@ const failureNote = computed(() =>
                 <template v-if="historySpan">
                   · {{ t('admin.machines.usage.history', { span: historySpan }) }}</template
                 >
+              </p>
+              <p v-if="pressure(h.usage)" class="mc-usage__read mc-usage__pressure mc-dim">
+                {{ pressure(h.usage) }}
               </p>
             </div>
             <div v-if="open.has(h.id)" class="mc-sandboxes" role="rowgroup">
