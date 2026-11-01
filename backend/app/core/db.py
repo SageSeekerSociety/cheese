@@ -287,7 +287,7 @@ def _given_up_by_a_retry_loop(exc: DBAPIError) -> bool:
     loop (``migration_helpers``) catches every lock error inside it and lets one
     out only once it has spent its own attempts, re-raised from inside the
     ``DO`` block, which Postgres records in the error's CONTEXT."""
-    context = getattr(exc.orig.__cause__, "context", None) or ""
+    context = getattr(getattr(exc.orig, "__cause__", None), "context", None) or ""
     return "PL/pgSQL function" in context
 
 
