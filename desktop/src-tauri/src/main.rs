@@ -107,10 +107,11 @@ fn from_content(url: &Url) -> bool {
 /// the browser and the frame stays empty. Nothing sends the window itself
 /// there: the page frames that content sandboxed without
 /// `allow-top-navigation`, links out of it open in the browser
-/// (`on_new_window`), and a `cheese://` link to the server's pages that hand
-/// over to the content domain at the top level opens in the browser too
-/// (links.rs). Nor can a content page call the app: the IPC capability names
-/// the server's origin only.
+/// (`on_new_window`), and the server's pages that hand over to the content
+/// domain at the top level open themselves in the browser when they find
+/// themselves in the app (frontend/src/lib/desktopApp.ts `leaveForBrowser`),
+/// as does a `cheese://` link to one (links.rs). Nor can a content page call
+/// the app: the IPC capability names the server's origin only.
 fn stays_in_app(url: &Url) -> bool {
     (from_server(url) && !is_docs(url)) || from_app(url) || from_content(url)
 }
