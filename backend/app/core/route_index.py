@@ -24,6 +24,8 @@ the index was built).
 
 from __future__ import annotations
 
+import re
+
 from fastapi.routing import _IncludedRouter
 from starlette._utils import get_route_path
 from starlette.routing import BaseRoute, Host, Match, Mount, Router
@@ -36,13 +38,21 @@ _PARAM = object()
 _REST = object()
 
 
+#: Starlette's convertors that never match a "/": a parameter using one of
+#: them stays inside its segment. Any other convertor (`path`, or one an app
+#: registers) may span segments, so it is taken to match all the rest.
+_ONE_SEGMENT = frozenset({"str", "int", "float", "uuid"})
+_CONVERTOR = re.compile(r"{[^}:]*(?::([^}]*))?}")
+
+
 def _pattern(path: str, *, mount: bool = False) -> tuple:
     parts: list[object] = []
     for segment in path.lstrip("/").split("/"):
-        if ":path}" in segment:
+        convertors = [c or "str" for c in _CONVERTOR.findall(segment)]
+        if any(c not in _ONE_SEGMENT for c in convertors):
             parts.append(_REST)
             return tuple(parts)
-        parts.append(_PARAM if "{" in segment else segment)
+        parts.append(_PARAM if convertors else segment)
     if mount:
         if parts == [""]:
             return (_REST,)
