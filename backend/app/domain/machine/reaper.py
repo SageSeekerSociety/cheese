@@ -310,7 +310,9 @@ class PoolSweep:
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
             await self._delete_at_provider(host)
-        if fixed and live and not any(host.draining_since is not None for host in live):
+        if fixed and live and not any(host.draining_since for host in idle):
+            # One rebuilt host released this sweep is enough for the sweep;
+            # otherwise it decides itself whether one rebuilding holds it up.
             await self._drain_one(now)
         if grow:
             await self._grow()
@@ -359,10 +361,14 @@ class PoolSweep:
                 return
 
     async def _drain_one(self, now: datetime) -> None:
-        """Take the oldest out-of-date host out of rotation, if one is out of
-        date and the others have room for a whole host's worth of sandboxes: a
-        rebuild then costs the pool no capacity. One at a time, and never while
-        the provider is failing.
+        """Take an out-of-date host out of rotation, if one is out of date and
+        the others have room for a whole host's worth of sandboxes: a rebuild
+        then costs the pool no capacity. The emptiest goes first, oldest among
+        equals. One at a time, and never while the provider is failing — except
+        that a host still waiting on a sandbox does not hold up an empty one:
+        on dev (2026-11-01) every host went out of date at once and the oldest,
+        picked first, had a session working on it, so the eight idle ones
+        waited behind it.
 
         A host being rebuilt still counts as a host of the fixed pool, so its
         replacement is added only once it is gone (``maintain``), never beside
@@ -380,7 +386,9 @@ class PoolSweep:
         await self._repo.lock_pool()
         hosts = await self._repo.live()
         load = await self._repo.occupancy()
-        if any(host.draining_since is not None for host in hosts):
+        draining = [host for host in hosts if host.draining_since is not None]
+        if any(not load.get(host.id) for host in draining):
+            # An empty one is released this sweep; the next waits for that.
             await self._session.commit()
             return
         if await self._provider_failing(now):
@@ -395,10 +403,14 @@ class PoolSweep:
             and capacity(host) > 0
             and self._outdated(host, version, now)
         ]
+        if draining:
+            # One is waiting on its sandboxes: only an empty host may go
+            # beside it, so the wait costs no rebuilds.
+            stale = [host for host in stale if not load.get(host.id)]
         if not stale:
             await self._session.commit()
             return
-        host = min(stale, key=lambda h: (h.created_at, h.id))
+        host = min(stale, key=lambda h: (load.get(h.id, 0), h.created_at, h.id))
         others = sum(
             free_slots(other, load)
             for other in hosts
