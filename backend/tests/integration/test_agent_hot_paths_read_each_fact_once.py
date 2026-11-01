@@ -305,3 +305,42 @@ async def test_admission_reads_the_project_with_who_pays_for_it(client, monkeypa
     projects = [s for s in seen if "FROM projects" in s]
     assert len(projects) == 1 and "JOIN team" in projects[0], projects
     assert [s for s in seen if s.startswith("SELECT team.")] == []
+
+
+async def test_admission_asks_the_seat_by_handle_without_reading_the_user(
+    client, monkeypatch
+):
+    """Admission checks the credential's agent still sits in its room. The
+    seat is asked by handle; the user row, read only for a user id nothing in
+    that check uses, is not read."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    assert [s for s in seen if 'FROM "user"' in s] == []
+
+
+async def test_admission_reads_the_gateway_spend_with_the_credit_cap(
+    client, monkeypatch
+):
+    """The gateway key's budget is what the project spent through it plus what
+    it may still spend; the spend comes in the statement that reads the
+    project's credit cap, not one of its own."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    spend = [s for s in seen if "sum(resource_usage.cost_usd)" in s]
+    assert len(spend) == 1 and "FROM project_credit_budgets" in spend[0], spend

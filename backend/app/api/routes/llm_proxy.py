@@ -72,6 +72,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import project_with_payer
 from app.domain.usage.services import UsageService
 
@@ -328,6 +329,9 @@ async def admission(
     credit_context = None
     if project is not None:
         credit_context = await task_credit_context_of(db, project, claims)
+        # The project's credit cap, read with its gateway spend: the refusal
+        # below asks the cap, and the key's budget further down asks both.
+        await CreditBudgets(db).project_caps([project.id], with_gateway_spend=True)
         refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may
