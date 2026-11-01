@@ -6,12 +6,14 @@ so it reads ``health_report()`` in process, and a route module is not something
 a domain service may import (`app/.importlinter`, C1).
 """
 
+import os
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.api.admin_deps import PlatformAdminDep
+from app.core.client_address import resolved_client_address
 from app.core.health import _REQUIRED_CHECKS, health_report
 from app.core.metrics import registry
 
@@ -32,7 +34,9 @@ async def health_check() -> dict[str, Any]:
 
 
 @router.get("/health/detailed", summary="Detailed health check")
-async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
+async def detailed_health_check(
+    request: Request, _admin: PlatformAdminDep
+) -> dict[str, Any]:
     """Per-check detail, for a platform admin.
 
     Gated because it names the platform's dependencies and how each one is
@@ -40,8 +44,23 @@ async def detailed_health_check(_admin: PlatformAdminDep) -> dict[str, Any]:
     `/health`); while something required is down, `/readyz`'s 503 names which
     checks failed and each one's status, so an outage stays diagnosable with no
     session — the error text itself is only here.
+
+    ``serving`` says what answered and how it saw the caller: the cores and
+    load of the host (how many workers it can usefully run), and the client
+    address the per-address limits key on, beside the forwarded chain it was
+    resolved from. ``client_address`` null with a chain present means a proxy
+    in front is not in ``FORWARDED_ALLOW_IPS`` or did not write the visitor.
     """
-    return await health_report()
+    report = await health_report()
+    report["serving"] = {
+        "cpus": os.cpu_count(),
+        "load": [round(value, 2) for value in os.getloadavg()],
+        "client_address": resolved_client_address(request),
+        "peer": request.client.host if request.client else None,
+        "forwarded_for": request.headers.get("x-forwarded-for"),
+        "forwarded_allow_ips": os.environ.get("FORWARDED_ALLOW_IPS", ""),
+    }
+    return report
 
 
 @router.get("/metrics", summary="Application metrics")

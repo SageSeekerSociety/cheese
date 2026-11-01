@@ -72,6 +72,14 @@ def test_the_health_report_is_still_there_for_an_admin(client, as_admin):
 
     assert "status" in body
     assert "database" in body["checks"]
+    # What answered and how it saw the caller: enough to size the workers and
+    # to tell whether the per-address limits can key on a real address.
+    serving = body["serving"]
+    assert serving["cpus"] >= 1
+    assert len(serving["load"]) == 3
+    assert {"client_address", "peer", "forwarded_for", "forwarded_allow_ips"} <= set(
+        serving
+    )
 
 
 @pytest.mark.parametrize("path", PUBLIC_ALWAYS_200)
