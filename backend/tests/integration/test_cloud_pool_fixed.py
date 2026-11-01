@@ -275,6 +275,56 @@ def test_only_one_host_is_rebuilt_at_a_time(pool, monkeypatch):
     assert len(_draining(pool)) == 1
 
 
+def test_a_busy_host_being_rebuilt_does_not_hold_up_an_empty_one(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    busy = _seed_host(
+        pool,
+        "host-busy",
+        image_version="stale",
+        created_at=datetime.now(UTC) - timedelta(hours=3),
+    )
+    (alice,) = pool.room("alice", 1)
+    assert pool.place("alice", alice) == busy
+    _edit(pool, busy, draining_since=datetime.now(UTC))
+    empty = _seed_host(
+        pool,
+        "host-empty",
+        image_version="stale",
+        created_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    _seed_host(pool, "host-new", image_version=_current_version(pool))
+
+    pool.pool("maintain")
+
+    # The busy one keeps waiting for its sandbox; the empty one goes now.
+    assert pool.host(busy).released_at is None
+    assert pool.host(empty).draining_since is not None
+
+
+def test_the_emptiest_out_of_date_host_is_rebuilt_first(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 3)
+    old = _seed_host(
+        pool,
+        "host-old",
+        image_version="stale",
+        created_at=datetime.now(UTC) - timedelta(hours=3),
+    )
+    (alice,) = pool.room("alice", 1)
+    assert pool.place("alice", alice) == old
+    younger = _seed_host(
+        pool,
+        "host-younger",
+        image_version="stale",
+        created_at=datetime.now(UTC) - timedelta(hours=2),
+    )
+    _seed_host(pool, "host-new", image_version=_current_version(pool))
+
+    pool.pool("maintain")
+
+    assert pool.host(old).draining_since is None
+    assert pool.host(younger).draining_since is not None
+
+
 def test_no_host_is_rebuilt_while_the_others_have_no_room(pool, monkeypatch):
     monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 2)
     old = _seed_host(
