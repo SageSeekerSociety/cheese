@@ -189,6 +189,34 @@ def test_a_refresh_sent_from_an_alias_passes_the_origin_gate(
     assert resp.json()["data"]["accessToken"]
 
 
+def test_a_sign_in_leaves_a_marker_a_page_request_can_see(
+    api_client: TestClient, user_client: UserCreator, aliased: str
+):
+    """The mainland redirect spares a visitor who is signed in here, and it
+    decides on a page request. The refresh cookie is scoped to the auth routes
+    and never rides one, so the sign-in also leaves a path-`/` marker; signing
+    out removes both."""
+    user = user_client.create_user()
+    signed_in = api_client.post(
+        "/users/auth/login",
+        json={"username": user.username, "password": user.password},
+    )
+    marker = signed_in.cookies["cheese_signed_in"]
+    assert marker == "1"
+    # Both ride the same response, and the refresh cookie keeps its own path.
+    cookies = signed_in.headers.get_list("set-cookie")
+    assert any(c.startswith("cheese_signed_in=1") and "Path=/" in c for c in cookies), cookies
+    assert any("cheese_refresh=" in c and "Path=/api/users/auth" in c for c in cookies), cookies
+
+    signed_out = api_client.post(
+        "/users/auth/logout",
+        headers={"Cookie": f"cheese_refresh={signed_in.cookies['cheese_refresh']}"},
+    )
+    assert signed_out.status_code == 200, signed_out.text
+    cleared = signed_out.headers.get_list("set-cookie")
+    assert any(c.startswith("cheese_signed_in=") and "Path=/" in c for c in cleared), cleared
+
+
 def test_a_machine_enrolled_from_an_alias_installs_and_approves_on_it(
     api_client: TestClient, aliased: str, monkeypatch: pytest.MonkeyPatch
 ):

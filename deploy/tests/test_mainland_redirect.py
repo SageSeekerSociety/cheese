@@ -207,7 +207,9 @@ def main() -> None:
 
         # Nobody else moves.
         assert status(on, page, X_Forwarded_For=FOREIGN, Sec_Fetch_Mode="navigate") == 200
-        assert status(on, page, X_Forwarded_For=CHINA, Sec_Fetch_Mode="navigate", Cookie="cheese_refresh=x") == 200
+        # The marker the sign-in leaves at path `/` — the refresh cookie itself
+        # is scoped to the auth routes and never arrives with a page.
+        assert status(on, page, X_Forwarded_For=CHINA, Sec_Fetch_Mode="navigate", Cookie="cheese_signed_in=1") == 200
         assert status(on, page, X_Forwarded_For=CHINA, Sec_Fetch_Mode="navigate", User_Agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) CheeseDesktop") == 200
         assert status(on, "/api/version", X_Forwarded_For=CHINA, Sec_Fetch_Mode="navigate") != 302
         assert status(on, "/connector/install.sh", X_Forwarded_For=CHINA, Sec_Fetch_Mode="navigate") != 302

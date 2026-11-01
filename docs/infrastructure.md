@@ -1267,7 +1267,9 @@ Cookies are per host, so the two addresses keep separate sign-ins.
 any other origin of the deployment — a navigation, asking for HTML — from a
 visitor whose address is in China with a 302 to it. Nobody else is moved: not a
 visitor outside China, not one signed in on the origin they are on (their session
-is that origin's cookie), not an API call or a WebSocket, not the desktop app
+is that origin's cookie; a sign-in leaves `cheese_signed_in` at path `/` for
+this rule to see, because the refresh cookie is scoped to the auth routes and
+never rides a page request), not an API call or a WebSocket, not the desktop app
 (whose window runs only its own origin's pages, and names itself in its
 `User-Agent`), and not another host of the deployment. Unset, the rule is still
 in the image and fires for nobody, which is the default.
