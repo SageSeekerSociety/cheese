@@ -534,6 +534,9 @@ jobs:
           # and the front door, frontend and app-router reach the backend over
           # the docker networks. Caddy writes the visitor's own address first.
           FORWARDED_ALLOW_IPS: "127.0.0.1,::1,172.16.0.0/12"
+          # Connections one visitor's address may hold at the gateway nginx;
+          # generous, as a campus is one address behind NAT.
+          GATEWAY_CONNECTIONS_PER_ADDRESS: "2000"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Install the dev database backup writer from this release
