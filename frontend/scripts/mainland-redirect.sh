@@ -16,11 +16,14 @@ NGINX_DIR="${1:?usage: mainland-redirect.sh NGINX_DIR}"
 MAINLAND_DIR="$NGINX_DIR/mainland"
 
 origin_of() {
+  # Lower case and no trailing slash, and the scheme's default port dropped —
+  # the last rule only matches a pathless origin, and a value with a path can
+  # only get this far when `is_origin` accepted it.
   printf '%s' "$1" | tr -d '[:space:]' | tr 'A-Z' 'a-z' |
     sed -E 's|/+$||; s|^(https://[^/:]+):443$|\1|; s|^(http://[^/:]+):80$|\1|'
 }
-host_of() { printf '%s' "$1" | sed -E 's|^https?://||; s|:[0-9]+$||'; }
-is_origin() { printf '%s' "$1" | grep -Eq '^https?://[a-z0-9.-]+(:[0-9]+)?$'; }
+host_of() { printf '%s' "$1" | sed -E 's|^https?://||; s|/.*$||; s|:[0-9]+$||'; }
+is_origin() { printf '%s' "$1" | grep -Eq '^https?://[a-z0-9.-]+(:[0-9]+)?(/.*)?$'; }
 refuse() { echo "MAINLAND REDIRECT: $*" >&2; exit 1; }
 
 entry=$(origin_of "${MAINLAND_ENTRY:-}")
@@ -39,6 +42,9 @@ for name in $(printf '%s %s' "${FRONTEND_URL:-}" "${FRONTEND_ALIASES:-}" | sed -
     http://*|https://*) ;;
     *) continue ;;
   esac
+  # Only what is shaped like an origin may reach the map key: a value carrying
+  # `;` or a brace would be read as config and stop the container from starting.
+  is_origin "$(origin_of "$name")" || continue
   host=$(host_of "$(origin_of "$name")")
   [ -n "$host" ] || continue
   [ "$host" = "$(host_of "$entry")" ] && continue

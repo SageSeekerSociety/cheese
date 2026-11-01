@@ -44,8 +44,12 @@ const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "nativ
 // an account signs in from (frontend/src/views/user/settings/deviceName.ts).
 const USER_AGENT: &str = if cfg!(target_os = "windows") {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CheeseDesktop"
-} else {
+} else if cfg!(target_os = "macos") {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) CheeseDesktop"
+} else {
+    // Linux has no release job yet, but the crate builds there (`links.rs`), and
+    // a build that claimed to be a Mac would name the account's sign-in wrong.
+    "Mozilla/5.0 (X11; Linux x86_64) CheeseDesktop"
 };
 
 // What a page the server sends may call. The opener plugin's init script turns a

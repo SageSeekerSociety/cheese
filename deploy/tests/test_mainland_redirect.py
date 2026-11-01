@@ -143,7 +143,49 @@ def status(instance: Instance, *args, **kwargs) -> int:
         return response.status
 
 
+def generated(tmp: Path, entry: str, aliases: str, url: str = CANONICAL) -> dict[str, str]:
+    """The files the script writes, without starting nginx: what reaches a map
+    key is decided there, and a Host that cannot be a key must not."""
+    nginx = tmp / "nginx"
+    (nginx / "mainland").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["sh", str(ROOT / "frontend/scripts/mainland-redirect.sh"), str(nginx)],
+        check=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "FRONTEND_URL": url,
+            "FRONTEND_ALIASES": aliases,
+            "MAINLAND_ENTRY": entry,
+        },
+    )
+    return {name: (nginx / "mainland" / name).read_text() for name in
+            ("hosts.map", "decide.map", "send.conf")}
+
+
+def check_generated_files() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        files = generated(Path(tmp), ENTRY, '["https://alias.example/path","https://okcheese.com","oops;rm -rf /","https://alias.example/other"]')
+        hosts = files["hosts.map"]
+        # A path in an alias names the host, which is what `$host` is compared
+        # with; a name repeated (with a path, without one) is one key; the entry
+        # is never a key, and a value that is not an origin would be read as
+        # config and stop the container.
+        assert "    alias.example 1;" in hosts, hosts
+        assert "okcheese.com 1;" in hosts, hosts
+        assert "okcheese.cn 1;" not in hosts, hosts
+        assert "oops" not in hosts, hosts
+        assert hosts.count("alias.example 1;") == 1, hosts
+        # MAINLAND_ENTRY is still refused outright rather than written.
+        try:
+            generated(Path(tmp) / "bad", "not an entry", "")
+        except subprocess.CalledProcessError:
+            pass
+        else:
+            raise AssertionError("a MAINLAND_ENTRY that is not an origin must be refused")
+
+
 def main() -> None:
+    check_generated_files()
     with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
         on = build(Path(first), reserve_port(), ENTRY, f'["{ENTRY}","{ALIAS}"]')
 

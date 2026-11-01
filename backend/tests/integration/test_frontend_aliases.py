@@ -220,3 +220,21 @@ def test_a_machine_enrolled_from_an_alias_installs_and_approves_on_it(
     assert started.status_code == 200, started.text
     approve_url = started.json()["approve_url"]
     assert approve_url.startswith(f"{ALIAS}/connect?code="), approve_url
+
+
+def test_the_alias_carries_the_path_the_configured_base_was_given(
+    api_client: TestClient, aliased: str, monkeypatch: pytest.MonkeyPatch
+):
+    """A deployment whose connector base is the bare site origin (no `/api`)
+    installs from the alias with no `/api` either. Adding the mount to one shape
+    only would route its connector calls through the API proxy instead."""
+    host = {"host": urlsplit(ALIAS).netloc}
+
+    monkeypatch.setattr(settings, "connector_public_base", CANONICAL)
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert f'ORIGIN="{ALIAS}"' in on_alias.text, on_alias.text
+    assert f'ORIGIN="{ALIAS}/api"' not in on_alias.text
+
+    monkeypatch.setattr(settings, "connector_public_base", f"{CANONICAL}/api")
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert f'ORIGIN="{ALIAS}/api"' in on_alias.text, on_alias.text

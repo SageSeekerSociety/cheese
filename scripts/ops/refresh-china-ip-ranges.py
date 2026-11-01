@@ -65,7 +65,14 @@ def main() -> int:
     args = parser.parse_args()
 
     with urllib.request.urlopen(args.source, timeout=60) as response:
-        fresh = rendered(response.read().decode("utf-8"))
+        body = response.read().decode("utf-8")
+    # An error page or a changed format still arrives as HTTP 200, and a header
+    # with no networks under it reads as "nothing is in China": the redirect
+    # would stop firing for the whole deployment, silently. Refuse to write it.
+    if not networks(body):
+        print(f"no CN networks in {args.source}; refusing to touch {TARGET}", file=sys.stderr)
+        return 1
+    fresh = rendered(body)
 
     current = TARGET.read_text(encoding="utf-8") if TARGET.exists() else ""
     if args.check:
