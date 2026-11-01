@@ -20,9 +20,8 @@ never the other way round, and ``ledger.py`` importing this one is that edge.
 import uuid
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from functools import cache
 
-from sqlalchemy import ARRAY, Integer, Uuid, and_, any_, bindparam, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
@@ -31,23 +30,6 @@ from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.models import ComputeGrant, PlanWindowUse
 from app.domain.usage.payers import Payer
 from app.domain.usage.windows import WindowUse, _window_use
-
-
-@cache
-def _candidates_statement(with_projects: bool):
-    """The packs a set of payers might draw on: their teams' own, and those
-    earmarked for their projects. Put together once per shape: admission asks
-    it on every model call."""
-    teams = and_(
-        ComputeGrant.team_id == any_(bindparam("teams", type_=ARRAY(Integer))),
-        ComputeGrant.project_id.is_(None),
-    )
-    if not with_projects:
-        return select(ComputeGrant).where(teams)
-    earmarked = ComputeGrant.project_id == any_(
-        bindparam("projects", type_=ARRAY(Uuid))
-    )
-    return select(ComputeGrant).where(or_(teams, earmarked))
 
 
 class LedgerQueries:
@@ -67,21 +49,17 @@ class LedgerQueries:
         payers = list(payers)
         projects = {p.project_id for p in payers if p.project_id is not None}
         teams = {p.team_id for p in payers}
-        if lock:
-            conditions = [
-                and_(
-                    ComputeGrant.team_id.in_(teams),
-                    ComputeGrant.project_id.is_(None),
-                )
-            ]
-            if projects:
-                conditions.append(ComputeGrant.project_id.in_(projects))
-            stmt = (
-                select(ComputeGrant)
-                .where(or_(*conditions))
-                .with_for_update()
-                .execution_options(populate_existing=True)
+        conditions = [
+            and_(
+                ComputeGrant.team_id.in_(teams),
+                ComputeGrant.project_id.is_(None),
             )
+        ]
+        if projects:
+            conditions.append(ComputeGrant.project_id.in_(projects))
+        stmt = select(ComputeGrant).where(or_(*conditions))
+        if lock:
+            stmt = stmt.with_for_update().execution_options(populate_existing=True)
             return list((await self._session.execute(stmt)).scalars())
         # Admitting a model call reads these packs, then reads them again for
         # the budget its gateway key carries (`routes/llm_proxy.py`).
@@ -93,11 +71,7 @@ class LedgerQueries:
             found, cached = recall(self._session, key)
             if found:
                 return list(cached)
-        params: dict = {"teams": sorted(teams)}
-        if projects:
-            params["projects"] = sorted(projects)
-        stmt = _candidates_statement(bool(projects))
-        grants = list((await self._session.execute(stmt, params)).scalars())
+        grants = list((await self._session.execute(stmt)).scalars())
         if can_cache:
             remember(
                 self._session, key, list(grants), tables=frozenset({"compute_grants"})

@@ -55,7 +55,7 @@ class _Session:
     def __init__(self) -> None:
         self.statements: list[str] = []
 
-    async def execute(self, stmt, params=None):
+    async def execute(self, stmt):
         text = str(stmt)
         self.statements.append(text)
         if "credits_limit" in text:
