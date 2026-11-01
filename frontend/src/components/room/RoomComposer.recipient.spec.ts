@@ -1,8 +1,8 @@
 /** 发之前看得见这条交给谁，和任务在打字时关掉之后的那一问。
  *
  * 规矩（没读过代码的人也能判断）：
- * - 频道主线上这条不交给 AI 时，头像旁写着「不交给 AI」；@ 了队友、回复队友的消息就不写。
- *   支线、任务、私聊里不写。
+ * - 头像闭着眼（这条不交给 AI）时，旁边写着「不交给 AI」；睁着眼（交给它）不写。主线、支线、
+ *   任务、私聊都一样。队友正在跑一轮、这条它会接着看时也不写：那时提示说它会看。
  * - 任务负责人在开着的任务里说话交给队友，只 @ 了人时只给那几个人。
  * - 打字时任务关了：草稿留着；第一次发不悄悄降成讨论，就地问「@ 它」还是「仅发布讨论」。
  *
@@ -81,6 +81,7 @@ function mount(
     alwaysSummon?: boolean
     handOff?: boolean
     draft?: string
+    busyAgents?: string[]
   } = {}
 ) {
   const draft = ref(opts.draft ?? '')
@@ -102,6 +103,7 @@ function mount(
         attsUploading: false,
         place: opts.place ?? 'room-1',
         replyTo: opts.replyTo ?? null,
+        busyAgents: opts.busyAgents ?? [],
         placeState: placeState.value,
         modelValue: draft.value,
         'onUpdate:modelValue': (v: string) => (draft.value = v),
@@ -137,11 +139,12 @@ beforeEach(() => {
   backend.asked = []
 })
 
-describe('频道主线上不交给 AI 时，头像旁写出来', () => {
-  it('没 @ 队友时写「不交给 AI」，@ 了就不写，拿掉 @ 又写回来', async () => {
+describe('头像闭着眼时旁边写「不交给 AI」', () => {
+  it('频道主线：没 @ 队友时写，@ 了不写，拿掉 @ 又写回来', async () => {
     const { box, avatar, notToAi } = mount()
     await fillComposer(box(), '整理一下需求')
     await settle()
+    expect(avatar().getAttribute('aria-pressed')).toBe('false')
     expect(notToAi()).toBe(true)
 
     await fireEvent.click(avatar())
@@ -162,28 +165,49 @@ describe('频道主线上不交给 AI 时，头像旁写出来', () => {
     expect(notToAi()).toBe(false)
   })
 
-  it('支线里没 @ 队友：不写', async () => {
+  it('支线里没 @ 队友：头像闭眼，写', async () => {
     const { box, avatar, notToAi } = mount({ place: 'thread-1' })
     await fillComposer(box(), '清单我来补')
     await settle()
     expect(avatar().getAttribute('aria-pressed')).toBe('false')
-    expect(notToAi()).toBe(false)
+    expect(notToAi()).toBe(true)
   })
 
-  it('任务里只 @ 了人：不写', async () => {
+  it('任务负责人：交给队友时不写，只 @ 了人时写', async () => {
     backend.task = 'open'
     const { box, notToAi } = mount({ place: 'task-1', alwaysSummon: true })
-    await fillComposer(box(), '@Alice 你看下这个接口')
+    await fillComposer(box(), '先做后端两个接口')
     await settle()
     expect(notToAi()).toBe(false)
+
+    await fillComposer(box(), '@Alice 你看下这个接口')
+    await settle()
+    expect(notToAi()).toBe(true)
   })
 
-  it('和一个人私聊、没 @ 队友：不写', async () => {
+  it('和一个人私聊、没 @ 队友：写', async () => {
     backend.personChat = true
     const { box, avatar, notToAi } = mount({ room: 'dm-1', place: 'dm-1' })
     await fillComposer(box(), '周五一起过一下清单？')
     await settle()
     expect(avatar().getAttribute('aria-pressed')).toBe('false')
+    expect(notToAi()).toBe(true)
+  })
+
+  it('和 AI 队友私聊：每条都交给它，没有头像，也不写', async () => {
+    backend.privateChat = true
+    const { box, avatar, notToAi } = mount({ place: 'dm-1', alwaysSummon: true, handOff: false })
+    await fillComposer(box(), '帮我看下这周的进度')
+    await settle()
+    expect(avatar()).toBeNull()
+    expect(notToAi()).toBe(false)
+  })
+
+  it('队友正在跑一轮、这条没 @ 它：提示说它会接着看，不写「不交给 AI」', async () => {
+    const { box, avatar, notToAi } = mount({ busyAgents: [CHEESE.handle] })
+    await fillComposer(box(), '顺便把发布时间改到周六')
+    await settle()
+    expect(avatar().getAttribute('aria-label')).toBe('芝士正在忙，这条它会接着看')
     expect(notToAi()).toBe(false)
   })
 })

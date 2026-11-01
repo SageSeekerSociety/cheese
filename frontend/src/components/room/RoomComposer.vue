@@ -400,18 +400,6 @@ const shownMates = computed<Mate[]>(() => {
 const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
-// 频道主线上这条不交给 AI 时，头像旁边写一句「不交给 AI」：闭着眼的头像容易被当成
-// 装饰，主线又是唯一一处发出去默认谁也不交的地方。支线、任务、私聊不写——那几处要么
-// 默认交给队友，要么归支线里最近那位，这句话在那里不成立。主线就是 `place` 等于房间
-// 本身（支线、任务的 `place` 是它们自己的 id）；「频道」还是「私聊」由后端答。
-const notToAgent = computed(
-  () =>
-    summonShown.value &&
-    !summonOn.value &&
-    !!props.topic &&
-    props.place === props.topic.id &&
-    addressing.value?.place === 'channel'
-)
 
 // ---- 打字的时候任务关了 ----
 //
@@ -827,9 +815,6 @@ defineExpose({
       >
         <template #chips><ComposerViewing :suppressed="!!quote" /><slot name="composer-chips" /></template>
         <template v-if="summonShown" #summon>
-          <span v-if="notToAgent && !voiceOpen" class="composer-not-to-agent">
-            {{ t('work.room.composer.summonOffLabel') }}
-          </span>
           <ComposerSummon
             :guided="!!guided"
             :mates="mates"
@@ -883,13 +868,6 @@ defineExpose({
    上面那条提示条是贴着输入框圆角顶的，拉开缝那对圆角就不成立了。 */
 .composer-pending {
   margin-bottom: 8px;
-}
-/* 头像旁那句「不交给 AI」：和动作行里别的状态字一样安静（13px、--muted），不抢发送键。 */
-.composer-not-to-agent {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  white-space: nowrap;
 }
 /* 输入框上方的提示条：贴在盒子顶上的一片，安静的底。同一时刻只有一条（模板里是
    v-if 链），所以它们用同一种样子——语音没成、长文转附件、@ 了频道外的人。 */
