@@ -338,6 +338,11 @@ services:
       # value as the backend's FRONTEND_URL. It refuses to start without it.
       - DOCS_ORIGIN=${DOCS_ORIGIN:-}
       - FRONTEND_URL=${FRONTEND_URL:-}
+      # The deployment's other origins, as the backend reads them. This container
+      # has no env_file, so nothing else could carry them: without this the
+      # mainland redirect knows only FRONTEND_URL and never sends a visitor
+      # arriving on an alias of the entry to it.
+      - FRONTEND_ALIASES=${FRONTEND_ALIASES:-}
       # The mainland entry: visitors in China opening a page on this deployment's
       # Hong Kong origin are sent here (frontend/nginx/mainland). Empty — the
       # default — redirects nobody; turning it on needs no rebuild.
