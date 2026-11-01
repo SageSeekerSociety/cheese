@@ -66,13 +66,17 @@ class IdentityService:
         )
 
     async def ensure_agent_user(
-        self, *, handle: str = CHEESE_HANDLE, name: str = CHEESE_NAME
+        self,
+        *,
+        handle: str = CHEESE_HANDLE,
+        name: str = CHEESE_NAME,
+        newly_created: bool = False,
     ) -> User:
         """Idempotently ensure an agent user row + its platform binding + its
         display profile exist. Safe to call at every startup, from the migration
         and on every turn — never duplicates."""
         created = False
-        user = await self._users.get_by_handle(handle)
+        user = None if newly_created else await self._users.get_by_handle(handle)
         if user is None:
             try:
                 user = await self._create_agent_user(handle=handle)
@@ -113,7 +117,11 @@ class IdentityService:
         return await self.ensure_agent_user(handle=handle, name=CHEESE_NAME)
 
     async def ensure_instance_agent_user(
-        self, instance_id: uuid.UUID, display_name: str
+        self,
+        instance_id: uuid.UUID,
+        display_name: str,
+        *,
+        newly_created: bool = False,
     ) -> User:
         """Ensure the agent-user row for a project's agent (identity, display).
 
@@ -125,6 +133,7 @@ class IdentityService:
         return await self.ensure_agent_user(
             handle=agent_instance_handle(instance_id),
             name=display_name.strip() or CHEESE_NAME,
+            newly_created=newly_created,
         )
 
     async def is_agent(self, handle: str) -> bool:

@@ -439,10 +439,12 @@ class AgentInstanceService:
             name_source=NameSource.human if name else NameSource.default,
             configuration=config.model_dump(),
         )
-        await self.ensure_identity(instance)
+        await self.ensure_identity(instance, newly_created=True)
         return instance
 
-    async def ensure_identity(self, instance: AgentInstance) -> str:
+    async def ensure_identity(
+        self, instance: AgentInstance, *, newly_created: bool = False
+    ) -> str:
         """Give this agent the identity it acts under, and return its handle.
 
         An agent is a collaborator: it can be seated in a room, attributed to,
@@ -455,7 +457,7 @@ class AgentInstanceService:
         """
 
         user = await IdentityService(self._session).ensure_instance_agent_user(
-            instance.id, instance.display_name
+            instance.id, instance.display_name, newly_created=newly_created
         )
         return user.username
 
@@ -683,7 +685,7 @@ class AgentInstanceService:
         # An agent gets its identity when it comes into being, and the project's
         # 芝士 comes into being here rather than in create(). Without it the
         # project's own room could not seat it under its own seat.
-        await self.ensure_identity(instance)
+        await self.ensure_identity(instance, newly_created=existing is None)
         # Configuring the project's 芝士 is choosing it, so a retired row under
         # that handle comes back rather than becoming a default nobody may pick.
         # Same pool either way — the handle never moved.

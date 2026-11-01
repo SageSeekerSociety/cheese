@@ -301,6 +301,11 @@ class RoleRepository:
             )
             if found:
                 return cached
+            found_map, cached_map = recall(
+                self._session, ("project_roles_map", project_id)
+            )
+            if found_map and cached_map is not None:
+                return cached_map.get(user_handle)
         row = (
             await self._session.execute(
                 select(ProjectRole.role, ProjectRole.role_id).where(
@@ -320,12 +325,26 @@ class RoleRepository:
         return ans
 
     async def roles(self, project_id: uuid.UUID) -> dict[str, str]:
+        if _can_cache(self._session):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("project_roles_map", project_id))
+            if found and cached is not None:
+                return dict(cached)
         rows = await self._session.execute(
             select(
                 ProjectRole.user_handle, ProjectRole.role, ProjectRole.role_id
             ).where(ProjectRole.project_id == project_id)
         )
-        return {handle: role_key(role, rid) for handle, role, rid in rows.all()}
+        out = {handle: role_key(role, rid) for handle, role, rid in rows.all()}
+        if _can_cache(self._session):
+            remember(
+                self._session,
+                ("project_roles_map", project_id),
+                out,
+                tables=frozenset({"project_roles"}),
+            )
+        return out
 
     async def set_role(
         self, *, project_id: uuid.UUID, user_handle: str, role_id: uuid.UUID | None
@@ -616,12 +635,17 @@ class TransferRepository:
     async def add(
         self, *, project_id: uuid.UUID, from_handle: str, to_handle: str
     ) -> ProjectTransfer:
+        now = datetime.now(UTC)
         offer = ProjectTransfer(
-            project_id=project_id, from_handle=from_handle, to_handle=to_handle
+            project_id=project_id,
+            from_handle=from_handle,
+            to_handle=to_handle,
+            status=InvitationStatus.pending,
+            created_at=now,
+            updated_at=now,
         )
         self._session.add(offer)
         await self._session.flush()
-        await self._session.refresh(offer)
         return offer
 
     async def get(self, transfer_id: uuid.UUID) -> ProjectTransfer | None:
