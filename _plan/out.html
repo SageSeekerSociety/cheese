@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 计划模板 — 完整文档，直接在里面写。槽位见 references/plan.md。
+     一份分阶段的实施计划：背景、方案、阶段、验证，另有可选的图和风险、执行与拍板。
+     token 与组件取自 references/design-system.md，两套主题走三态写法。 -->
+<title>说明文件收口</title>
+<style>
+:root {
+  color-scheme: light;
+
+  /* 中性色阶（暖冷灰）：每档按「信息离读者多远」选，不跳档 */
+  --cx-ink: #191a1c;      /* 标题 */
+  --cx-text: #36383c;     /* 正文 */
+  --cx-muted: #5a5e66;    /* 次要：副标题、说明、轴标签、表头 */
+  --cx-faint: #747a82;    /* 元信息：时间戳、ID、计数 */
+
+  --cx-line: #ecedef;     /* 发丝分隔线 */
+  --cx-line-2: #e2e3e6;   /* 更明显的分隔线，也是选中行底色 */
+  --cx-fill: #f4f5f7;     /* 悬停、内嵌区块 */
+  --cx-fill-2: #eeeff1;   /* 比 fill 重一档 */
+
+  --cx-canvas: #f7f8fa;   /* 页面底色 */
+  --cx-surface: #ffffff;  /* 内容区、卡片 */
+  --cx-raised: #ffffff;   /* 浮层：菜单、弹窗、抽屉 */
+
+  /* 琥珀：全页只给一处 */
+  --cx-accent: #f57f17;
+  --cx-accent-press: #d96e0a;
+  --cx-accent-ink: #9a5413;   /* 琥珀色文字（--cx-accent 写字对比度不够） */
+  --cx-accent-wash: #fdf1e2;  /* 极浅琥珀底，罕用 */
+  --cx-on-accent: #ffffff;    /* 琥珀实心上的字 */
+
+  /* 状态三件套：记号 / 文字 / 底，不可换用 */
+  --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+  --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+  --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+
+  /* 图表系列：分类用，最多六条。两条以内优先用 --cx-text / --cx-muted 加线型 */
+  --cx-chart-1: #3d6bb3;
+  --cx-chart-2: #2a9d8f;
+  --cx-chart-3: #d9822b;
+  --cx-chart-4: #8a63c2;
+  --cx-chart-5: #c9506f;
+  --cx-chart-6: #6b7b8c;
+
+  /* 代码块：两套主题下都反色 */
+  --cx-code-bg: #212121;
+  --cx-code-ink: #e0e0e0;
+
+  /* 圆角：三档加胶囊 */
+  --cx-radius-sm: 6px;     /* 标签、chip、小徽章 */
+  --cx-radius-md: 8px;     /* 按钮、输入框、卡片内的小块 */
+  --cx-radius-lg: 12px;    /* 卡片、面板、callout、图 */
+  --cx-radius-pill: 999px; /* 胶囊、状态标签、圆点 */
+
+  /* 投影：只给浮层，卡片只描边 */
+  --cx-shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+  --cx-shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+  --cx-focus-ring: #c2570a; /* 键盘焦点环，别移除 */
+
+  /* 字体：只用系统中文字体栈，不引外部字体（CJK 网络字体每字重好几兆，也连不上） */
+  --cx-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --cx-font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 前四个 Windows 上没有，落到裸 monospace 会被映射成宋体；垫上自带的 Cascadia Mono / Consolas */
+  --cx-font-mono: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --cx-ink: #f3f4f6;
+    --cx-text: #d3d6db;
+    --cx-muted: #aeb4bd;
+    --cx-faint: #888ea0;
+
+    --cx-line: #2b2e33;
+    --cx-line-2: #3a3e45;
+    --cx-fill: #212429;
+    --cx-fill-2: #282c31;
+
+    --cx-canvas: #141517;   /* 不用纯黑：纯黑之下没有更暗的一档，卡片浮不起来 */
+    --cx-surface: #1b1d20;
+    --cx-raised: #212429;   /* 比 surface 亮一档，浮层靠亮度而非投影分开 */
+
+    --cx-accent: #ffa733;   /* 深色下必须提亮，否则按钮上的字读不出 */
+    --cx-accent-press: #ffbc5e; /* 深色下按下变亮，不像亮色那样变深 */
+    --cx-accent-ink: #ffc670;
+    --cx-accent-wash: #2e2216;
+    --cx-on-accent: #191a1c; /* 浅琥珀上的字要用深色 */
+
+    --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+    --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+    --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+    --cx-chart-1: #7aa2e3;
+    --cx-chart-2: #4fb8aa;
+    --cx-chart-3: #eba25a;
+    --cx-chart-4: #ad8fe2;
+    --cx-chart-5: #e57f99;
+    --cx-chart-6: #9eacba;
+
+    --cx-code-bg: #282c31;  /* 反色块在深色下改用 fill-2，否则和卡片糊在一起 */
+    --cx-code-ink: #d3d6db;
+
+    --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+    --cx-focus-ring: rgba(255, 167, 51, 0.65);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --cx-ink: #f3f4f6;
+  --cx-text: #d3d6db;
+  --cx-muted: #aeb4bd;
+  --cx-faint: #888ea0;
+
+  --cx-line: #2b2e33;
+  --cx-line-2: #3a3e45;
+  --cx-fill: #212429;
+  --cx-fill-2: #282c31;
+
+  --cx-canvas: #141517;
+  --cx-surface: #1b1d20;
+  --cx-raised: #212429;
+
+  --cx-accent: #ffa733;
+  --cx-accent-press: #ffbc5e;
+  --cx-accent-ink: #ffc670;
+  --cx-accent-wash: #2e2216;
+  --cx-on-accent: #191a1c;
+
+  --cx-ok: #3fbf7f;     --cx-ok-ink: #6fd9a0;     --cx-ok-wash: #14261d;
+  --cx-warn: #f0a94a;   --cx-warn-ink: #f7c078;   --cx-warn-wash: #2a2114;
+  --cx-danger: #f0625c; --cx-danger-ink: #f79490; --cx-danger-wash: #2e1a1a;
+
+  --cx-chart-1: #7aa2e3;
+  --cx-chart-2: #4fb8aa;
+  --cx-chart-3: #eba25a;
+  --cx-chart-4: #ad8fe2;
+  --cx-chart-5: #e57f99;
+  --cx-chart-6: #9eacba;
+
+  --cx-code-bg: #282c31;
+  --cx-code-ink: #d3d6db;
+
+  --cx-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --cx-shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+  --cx-focus-ring: rgba(255, 167, 51, 0.65);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cx-canvas); /* body 必须显式设背景，透明会露出宿主底色还不报警 */
+  color: var(--cx-text);
+  font-family: var(--cx-font-sans);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible { outline: 2px solid var(--cx-focus-ring); outline-offset: 2px; border-radius: var(--cx-radius-sm); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ============ 页面骨架 ============ */
+.page {
+  max-width: 660px;
+  margin-inline: auto;
+  padding-block: 48px 64px;
+  padding-inline: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.masthead {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--cx-line);
+}
+.eyebrow { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.title { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.subtitle { margin: 0; font-size: 18px; line-height: 27px; color: var(--cx-muted); }
+
+.section { display: flex; flex-direction: column; gap: 12px; }
+.section > h2 { margin: 0; font-size: 22px; line-height: 30px; font-weight: 650; color: var(--cx-ink); text-wrap: balance; }
+.section > h3 { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--cx-ink); }
+.section > p { margin: 0; font-size: 16px; line-height: 28px; color: var(--cx-text); }
+.section > ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.section > ul > li { font-size: 16px; line-height: 28px; color: var(--cx-text); }
+.section > ul > li::marker { color: var(--cx-faint); }
+
+.footnote { border-top: 1px solid var(--cx-line); padding-top: 16px; }
+.footnote p { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+
+/* ============ lede / 摘要块 ============ */
+.lede {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 16px 20px;
+  background: var(--cx-fill);
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.lede__label { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--cx-muted); }
+.lede p { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+
+/* ---- readout（全页那一个大数字，也是全页唯一用到琥珀的地方）---- */
+.readout { display: flex; flex-direction: column; gap: 2px; }
+.readout__label { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--cx-muted); }
+.readout__value {
+  margin: 0; font-size: 44px; line-height: 1.05; font-weight: 650;
+  color: var(--cx-accent-ink); font-variant-numeric: tabular-nums;
+}
+.readout__note { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+
+
+/* ============ stat tiles（可选：一排小结读数） ============ */
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 16px;
+  background: var(--cx-surface);
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-md);
+}
+.stat__label { margin: 0; font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.stat__value { margin: 0; font-size: 22px; line-height: 28px; font-weight: 650; color: var(--cx-ink); font-variant-numeric: tabular-nums; }
+.stat__unit { margin-left: 4px; font-size: 13px; font-weight: 400; color: var(--cx-muted); }
+
+/* ============ 状态标签 ============ */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 10px;
+  font-size: 13px; line-height: 20px;
+  border-radius: var(--cx-radius-pill);
+  white-space: nowrap;
+}
+.pill__dot { width: 6px; height: 6px; border-radius: var(--cx-radius-pill); flex: none; }
+.pill--ok      { color: var(--cx-ok-ink);     background: var(--cx-ok-wash); }
+.pill--ok      .pill__dot { background: var(--cx-ok); }
+.pill--warn    { color: var(--cx-warn-ink);   background: var(--cx-warn-wash); }
+.pill--warn    .pill__dot { background: var(--cx-warn); }
+.pill--danger  { color: var(--cx-danger-ink); background: var(--cx-danger-wash); }
+.pill--danger  .pill__dot { background: var(--cx-danger); }
+.pill--neutral { color: var(--cx-muted);      background: var(--cx-fill); }
+.pill--neutral .pill__dot { background: var(--cx-faint); }
+
+/* ============ 阶段（有序：编号是真实顺序，不是装饰） ============ */
+.phases { counter-reset: phase; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.phase { display: grid; grid-template-columns: 26px 1fr; gap: 4px 12px; }
+.phase::before {
+  counter-increment: phase; content: counter(phase);
+  font-variant-numeric: tabular-nums; font-weight: 650; text-align: right;
+  font-size: 15px; line-height: 27px; color: var(--cx-faint);
+}
+.phase__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.phase__name { margin: 0; font-size: 18px; line-height: 27px; font-weight: 600; color: var(--cx-ink); }
+.phase__note { grid-column: 2; margin: 2px 0 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+
+/* ============ 事实行（负责人 / 拍板 / 日期） ============ */
+.facts {
+  margin: 0;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-md);
+  background: var(--cx-surface);
+}
+.fact {
+  display: grid; grid-template-columns: 5.5em 1fr; gap: 16px;
+  padding: 10px 16px; border-bottom: 1px solid var(--cx-line);
+}
+.fact:last-child { border-bottom: 0; }
+.fact dt { margin: 0; font-size: 13px; line-height: 24px; color: var(--cx-muted); }
+.fact dd { margin: 0; font-size: 15px; line-height: 24px; color: var(--cx-text); font-variant-numeric: tabular-nums; }
+
+/* ============ 数据表 ============ */
+.table-outer { position: relative; }
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-md);
+  background: var(--cx-surface);
+}
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 20px; }
+.table-wrap th, .table-wrap td {
+  padding: 10px 14px; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--cx-line);
+}
+.table-wrap thead th { font-size: 13px; font-weight: 600; color: var(--cx-muted); }
+.table-wrap tbody tr:last-child td { border-bottom: 0; }
+.table-wrap .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 窄屏右缘渐隐 + 一行小字，提示还有列没显示。scroll-hint 表格和图共用 */
+.scroll-hint { display: none; margin: 6px 0 0; font-size: 12px; line-height: 18px; color: var(--cx-faint); }
+@media (max-width: 720px) {
+  .table-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px;
+    background: linear-gradient(to right, transparent, var(--cx-surface));
+    pointer-events: none;
+    border-top-right-radius: var(--cx-radius-md); border-bottom-right-radius: var(--cx-radius-md);
+  }
+  .figure-outer::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 32px;
+    background: linear-gradient(to right, transparent, var(--cx-canvas));
+    pointer-events: none;
+  }
+  .scroll-hint { display: block; }
+}
+
+/* ============ 图 + 图注 + 数据表孪生体 ============ */
+.figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.figure-outer { position: relative; }
+.figure-scroll { overflow-x: auto; }
+/* min-width 保图内文字 ≥11px，max-width 免宽屏上文字被放大到离谱 */
+.figure svg { display: block; width: 100%; height: auto; min-width: 560px; max-width: 680px; }
+.figcaption { font-size: 13px; line-height: 20px; color: var(--cx-muted); }
+.data-twin { font-size: 13px; }
+.data-twin > summary { cursor: pointer; color: var(--cx-muted); padding: 2px 0; }
+.data-twin > summary:hover { color: var(--cx-text); }
+.data-twin[open] > summary { margin-bottom: 8px; }
+
+/* ============ callout（风险 / 说明） ============ */
+.callout {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 18px;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.callout__title { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
+.callout__body { margin: 0; font-size: 15px; line-height: 26px; color: var(--cx-text); }
+.callout--note   { background: var(--cx-fill); }
+.callout--note   .callout__title { color: var(--cx-muted); }
+.callout--warn   { background: var(--cx-warn-wash);   border-color: transparent; }
+.callout--warn   .callout__title { color: var(--cx-warn-ink); }
+.callout--danger { background: var(--cx-danger-wash); border-color: transparent; }
+.callout--danger .callout__title { color: var(--cx-danger-ink); }
+.callout-stack { display: flex; flex-direction: column; gap: 12px; }
+
+/* ============ 代码块与行内代码 ============ */
+.code {
+  margin: 0; padding: 14px 16px;
+  background: var(--cx-code-bg); color: var(--cx-code-ink);
+  border-radius: var(--cx-radius-md);
+  font-family: var(--cx-font-mono); font-size: 13px; line-height: 20px;
+  overflow-x: auto;
+}
+code:not(pre code) {
+  font-family: var(--cx-font-mono); font-size: 0.92em;
+  background: var(--cx-fill); border: 1px solid var(--cx-line);
+  border-radius: 4px; padding: 1px 4px;
+}
+
+/* ============ 目录 ============ */
+.toc {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px 20px;
+  border: 1px solid var(--cx-line);
+  border-radius: var(--cx-radius-lg);
+}
+.toc__label { margin: 0; font-size: 13px; font-weight: 600; color: var(--cx-muted); }
+.toc ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.toc li::marker { color: var(--cx-faint); font-variant-numeric: tabular-nums; }
+.toc a { color: var(--cx-text); text-decoration: none; }
+.toc a:hover { color: var(--cx-accent-ink); }
+
+/* ============ 按钮（可选：这一页若已有 readout 占用琥珀，就不要再放琥珀按钮） ============ */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--cx-radius-md);
+  font-size: 14px; line-height: 20px; font-weight: 600;
+  font-family: inherit; cursor: pointer;
+}
+.btn--primary { background: var(--cx-accent); color: var(--cx-on-accent); }
+.btn--primary:hover { background: var(--cx-accent-press); }
+.btn--secondary { background: transparent; border-color: var(--cx-line-2); color: var(--cx-text); }
+.btn--secondary:hover { background: var(--cx-fill); }
+
+/* ============ 打印：固定亮色，别让暗色 token 跟着纸走 ============ */
+@media print {
+  :root, :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    color-scheme: light;
+    --cx-ink: #191a1c; --cx-text: #36383c; --cx-muted: #5a5e66; --cx-faint: #747a82;
+    --cx-line: #ecedef; --cx-line-2: #e2e3e6; --cx-fill: #f4f5f7; --cx-fill-2: #eeeff1;
+    --cx-canvas: #ffffff; --cx-surface: #ffffff; --cx-raised: #ffffff;
+    --cx-accent: #f57f17; --cx-accent-press: #d96e0a; --cx-accent-ink: #9a5413;
+    --cx-accent-wash: #fdf1e2; --cx-on-accent: #ffffff;
+    --cx-ok: #1f9d55;     --cx-ok-ink: #12703a;     --cx-ok-wash: #e8f6ee;
+    --cx-warn: #e8901c;   --cx-warn-ink: #8f5406;   --cx-warn-wash: #faf0dc;
+    --cx-danger: #dc2626; --cx-danger-ink: #b91c1c; --cx-danger-wash: #fdecec;
+    --cx-chart-1: #3d6bb3; --cx-chart-2: #2a9d8f; --cx-chart-3: #d9822b;
+    --cx-chart-4: #8a63c2; --cx-chart-5: #c9506f; --cx-chart-6: #6b7b8c;
+    --cx-code-bg: #212121; --cx-code-ink: #e0e0e0;
+  }
+  .page { max-width: none; padding-block: 0; padding-inline: 0; }
+  .phase, .fact, .table-wrap, .figure, .callout, .lede, .stat, .toc { break-inside: avoid; }
+  .table-wrap thead { display: table-header-group; }
+  h2, h3 { break-after: avoid; }
+}
+
+/* ---- 窄屏（≤480px）：图不横向滚动，数值靠展开的数据表读 ----
+   手写 SVG 带 min-width，窄屏会横向滚动、图内文字缩到读不清。这里让图缩到一栏宽
+   （不再横滑），并由页尾的脚本把它的数据表孪生体展开——数值不只活在图形里。 */
+@media screen and (max-width: 480px) {
+  .figure svg { min-width: 0; }
+  .figure-scroll { overflow-x: visible; }
+  /* 图不再横滑，那行「左右滑动看图」的提示和右缘渐隐都不成立了，去掉 */
+  .figure > .scroll-hint { display: none; }
+  .figure-outer::after { display: none; }
+}
+</style>
+</head>
+<body>
+<!-- CONTENT:START -->
+<main class="page">
+
+  <style>code, .table-wrap code { overflow-wrap: anywhere; }</style>
+
+  <header class="masthead">
+    <p class="eyebrow">技术方案 · 2026-10-11</p>
+    <h1 class="title">说明文件收口</h1>
+    <p class="subtitle">统一到 AGENTS.md；描述按目录薄放，不逐文件；索引按需取，不预建。</p>
+  </header>
+
+  <p class="lede">结论先说：三件事里只有一件照原样做。命名收口要做——它是修 bug，根目录 CLAUDE.md 压着两个子目录 AGENTS.md，那 255 行现在没有任何 agent 读得到。另外两件按 AI 时代的实测要改方向：<strong>描述放「每目录一份、薄、手写」，不写进每个文件头</strong>；<strong>索引按需取，不预建</strong>。理由是官方明确不要做逐文件描述，而预建索引会过期。</p>
+
+  <nav class="toc">
+    <a href="#context">背景</a>
+    <a href="#outside">别人怎么做</a>
+    <a href="#approach">方案</a>
+    <a href="#phases">阶段</a>
+    <a href="#verification">验证</a>
+    <a href="#risks">风险</a>
+    <a href="#decision">执行与拍板</a>
+  </nav>
+
+  <section class="section" id="context">
+    <h2>背景</h2>
+    <p>仓库里关于「agent 该怎么在这儿干活」的说明文件有三份：根目录 <code>CLAUDE.md</code>（81 行），<code>backend/AGENTS.md</code>（49 行），<code>frontend/AGENTS.md</code>（206 行）。另有 <code>.claude/rules/</code> 下 6 份按路径触发的规则。</p>
+    <p>名字混着用不是风格问题，是功能问题。Claude Code 的默认设置叫 <code>claude-md-or-agents-md</code>：从工作目录往上数，只要存在一个 <code>CLAUDE.md</code>（或 <code>.claude/CLAUDE.md</code>、<code>CLAUDE.local.md</code>），所有 <code>AGENTS.md</code> 一律不读，包括子目录里的。根上有 <code>CLAUDE.md</code>，所以那 255 行现在是死文件。</p>
+    <p>平台这边还有一层：芝士的会话由三个 harness 之一驱动，三者对说明文件的取法各不相同。这一层决定了改名到底修好谁。</p>
+    <div class="table-outer"><div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>harness</th><th>根目录</th><th>子目录 CLAUDE.md</th><th>子目录 AGENTS.md</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>claude-code</td><td>不读</td><td>不读</td><td>不读</td></tr>
+          <tr><td>pi</td><td>读</td><td>读</td><td>不读</td></tr>
+          <tr><td>codex</td><td>未核</td><td>未核</td><td>未核</td></tr>
+        </tbody>
+      </table>
+    </div></div>
+    <p class="scroll-hint">左右滑动看全部列</p>
+    <p>claude-code 这一行不是遗漏：会话启动时带的是 <code>--setting-sources user</code>，代码注释写明是刻意排除宿主的上层说明（<code>harness/claude_code/remote_execution/client.py</code>）。pi 这一行是平台自己走树的实现（<code>harness/pi/repository.py</code>）：根目录读 <code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>CLAUDE.local.md</code>，全树读 <code>.claude/rules/**</code> 和任意层级的 <code>CLAUDE.md</code>，但嵌套清单里没有 <code>AGENTS.md</code>。两个 harness 对同一个仓库给出不同说法，正是 <code>pi/repository.py</code> 开头那段注释说要避免的事。</p>
+  </section>
+
+  <section class="section" id="outside">
+    <h2>别人怎么做</h2>
+    <p>这一节只收 AI 时代的材料——官方 agent 文档、真做过的仓库、2026 年的实测论文。上一轮拿 JSDoc、Sphinx、golint 那一套来判，问的是人类文档规范，答的不是这个问题，整段作废。</p>
+
+    <h3>三条路的名分差别很大</h3>
+    <p>真正被大规模采纳的，是<strong>每目录一份手写说明</strong>。AGENTS.md 已是事实标准（agents.md 自述 6 万+ 项目在用，2026 年起由 Linux Foundation 下的 AAIF 托管），Codex、Claude Code、Cursor 原生支持。你设想的「只展开一级、更深按需」在这套机制里有精确实现：Codex 从仓库根逐层走到当前目录，每目录最多读一个文件，近者覆盖远者，总量上限 32 KiB；Claude Code 的子目录 <code>CLAUDE.md</code> 只在读到该目录文件时才载入。真实大仓库的量级都是个位数到十几：airflow 14 份、vscode 8 份、openai/codex 2 份、rust 2 份——没有一个做到每个文件。</p>
+    <p>而<strong>「每文件/目录一段 schema 描述 + 生成索引」几乎全是失败或孤例</strong>。最完整的 RFC 实现 Agentic-Insights/codebase-context-spec 已归档，它自己的索引从 2024-12-08 起就没再更新过——正是「描述过期」的活样本。唯一还活着的同类项目 aoci-code（1,470★，单人）反而明文规定语义<strong>必须模型手写，禁止 AST/符号抽取/模板生成</strong>。采纳度差约 4000 倍：<code>.context/index.md</code> 公开文件 242 个，AGENTS.md 1,058,816 个。生成索引的工具（repomix、aider、code2prompt、gitingest）则几乎不写自然语言描述，只输出文件树和符号。</p>
+
+    <h3>实测：分两段，端到端那一半基本是负的</h3>
+    <p>「找到该改的文件」有正收益：SemNav 的语义卡片把 File Hit@10 从 68.33% 抬到 82.67%；角色感知摘要比文件路径表征高最多 40% Hit@5。但这不转化成成功率。</p>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p><strong>上下文文件整体不提升成功率，成本反涨 20% 以上。</strong>arXiv 2602.11988 直接测 AGENTS.md：这个结论跨不同模型、不同 agent、LLM 生成和人工提交的都成立。而且它单独点名：<strong>「仓库概述」这类内容——正是给 agent 描述目录/文件——不有用</strong>，真正有用的是「非标准的编码约定」。另有预注册研究（2607.27250）同样测不到正确率变化（效应界定在 ≤10–15 个百分点）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>摘要替代不了代码。</strong>arXiv 2607.09691：把文件剩余部分渲染成 UML 骨架和签名，跟直接删掉它解决的 issue 数一样多（N=70，p=0.75）；自然语言摘要答得出源码能答的行为问题只占 4/45（源码 27/45）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>静态索引输给按需探索。</strong>arXiv 2607.25431：200 题 SWE-bench Verified 上，按需候选+读完即退役解决 79 题，纯按需探索 66 题，Aider 的静态 repo map 只有 56 题。</p>
+      </div>
+    </div>
+    <p>还有两条成本教训：token 少不等于花得少（arXiv 2607.12161，工具输出砍 38.4% token，账单反涨 6.8%）；LSP 语义检索并不比 grep 省 token，甚至多花 6%–118%，而且免费给 agent 它也不用（使用率 0–6%）。</p>
+
+    <h3>官方怎么说</h3>
+    <p>Anthropic 的 best-practices 有一张 ✅Include/❌Exclude 表，<strong>「File-by-file descriptions of the codebase」就在 ❌ 栏</strong>，同栏还有「Anything Claude can figure out by reading code」。它推荐的是按目录分层、单个文件薄（目标 &lt;200 行）；索引用 glob/grep 让 agent 即取，官方给的理由正是「预建索引会过期」；规模再大就把约定搬到 Skills/Plugins/MCP。有意思的是它也反过来警告：按目录分层「随代码库增长难以治理，约定会漂移、文件会过时、根文件没人负责」。</p>
+    <p>关于「越深越没人读」：有实测说 AGENTS.md 100% 被发现、被引用的文件 90% 以上会话会读、目录 README 80%+，但<strong>嵌套 README 只有约 40%</strong>、孤儿文档不到 10%（Augment 的博客，中等可信度）。堆多了还会反噬。</p>
+  </section>
+
+  <section class="section" id="approach">
+    <h2>方案</h2>
+    <p>整体走仓库已经用过很多遍的路子：新做法只对新改动生效，存量冻结。<code>check-file-sizes.py</code>、<code>catalog-ratchet.py</code>、<code>scene-ratchet.py</code> 都是这个形状。</p>
+
+    <h3>一、命名收口到 AGENTS.md</h3>
+    <p>根目录 <code>CLAUDE.md</code> 改成 <code>AGENTS.md</code>，子目录两份已经是这个名。改完 Claude Code 会在启动时读根文件，并在用 Read 打开子目录里的文件时带进那一层的 AGENTS.md——正好是「就近一级、更深按需」，不用自己造机制。</p>
+    <p>预期收益要说准：这一步的价值是<strong>让那 255 行重新可达、让两个 harness 说法一致</strong>，不是提升 agent 合格率——按上面的实测，说明文件对成功率没有可测影响。它是修 bug，不是提性能。</p>
+    <p>只改名是半个修复。必须一起动的还有四处：</p>
+    <ul>
+      <li><code>pi/repository.py</code> 的嵌套清单（第 82 行）加上 <code>AGENTS.md</code>，否则 pi 那边照旧看不见那两份。</li>
+      <li><code>check-claude-md-review.py</code> 的 <code>GUARDED = "CLAUDE.md"</code>。它保证这份文件只有人批准才能合；改名会让这道护栏静默失效。</li>
+      <li><code>check-repo-rules.sh</code> 第 312 行盯住根 <code>CLAUDE.md</code> 的那条规则（不许出现平台 CLI 用法）。</li>
+      <li>三处把旧名字写死的引用：<code>claude-review.yml</code> 第 52 行让自动 reviewer 照着 CLAUDE.md 走；<code>ratchet-snapshot.py</code> 第 585 行把 <code>CLAUDE.md</code> 登记成 palette 那条 ratchet 的判据文件；<code>check-repo-rules.sh</code> 的规则与报错文案（第 312、333 行）。</li>
+    </ul>
+    <p>再补一道防呆：把 Project instructions 钉成 <code>claude-md-and-agents-md</code>，避开某个人的 <code>CLAUDE.local.md</code> 把整套机制关掉。这个值只在 user 设置、<code>--settings</code> 和管理设置里生效，写进项目设置无效，所以进每个人的 user 配置或平台的启动参数。</p>
+
+    <h3>二、描述：每目录一份、薄、手写，不做逐文件</h3>
+    <p>方向按实测改了。原设想是每个代码文件头加一段 schema 注释、索引由代码生成；实测和官方都指向不做这个，改为：</p>
+    <ul>
+      <li><strong>放「每目录一份」，不写进每个文件头。</strong>两条硬理由叠加：官方 ❌ 栏点名「逐文件描述」；前端 <code>src/</code> 1000 行上限<strong>把注释算进行数</strong>，逐文件描述头直接吃代码预算。而且「写进源码文件头、专门给 AI 读」这条在 AI 原生项目里没有先例。</li>
+      <li><strong>薄。</strong>几行就够：这块是干什么、改动时的注意点、和哪些目录强耦合。官方对单个说明文件的目标是 &lt;200 行；嵌套说明被读率只有约 40%，所以薄是硬要求。</li>
+      <li><strong>手写，不生成。</strong>被大规模采纳的形态就是手写。唯一同类的活项目 aoci-code 反而明文禁止生成。生成的那条路（CCS）已归档，且自证过期。</li>
+      <li><strong>先做关键目录，不追覆盖率。</strong>先给前后端入口附近几个高价值目录加，让 harness 走到那儿时读到高信号的一小段；不要为了「每个目录都有」去做全量。</li>
+      <li><strong>要 schema 字段就抄现成的。</strong>Cursor <code>.mdc</code> 用 description/globs，Copilot 用 applyTo+description，Skill 用 description。没有权威的「目录级描述 schema 模板」，自造字段名只会孤立。</li>
+    </ul>
+
+    <h3>三、索引：按需取，不预建</h3>
+    <p>原设想是生成一份「只展开一级」的索引。实测和官方都指向不预建：静态 repo map 在对比里输给按需探索；官方推荐 glob/grep 即取，理由就是预建索引会过期（CCS 自证、aoci 明文防生成、<code>codeindex-sync</code> 把维护一个代码索引记成一张生产事故表）。</p>
+    <p>所以：一级视图由 harness 现有的走树机制给（每目录一份说明，走到哪读到哪），跨目录的检索交给 agent 的 glob/grep。只有当真需要「跨全仓、走树覆盖不到」的检索时，才考虑上 MCP 式的按需查询服务（serena、code-index-mcp 那种符号级「一级视图 + 按需展开」），而不是预生成每文件描述。</p>
+  </section>
+
+  <section class="section" id="phases">
+    <h2>阶段</h2>
+    <ol class="phases">
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">命名收口</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">改名 + pi 清单 + 两道护栏 + 三处引用文字，一个 PR 做完。判据：改名前后的会话里，子目录 AGENTS.md 由不加载变成加载。</p>
+      </li>
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">给关键目录补说明</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">选前后端入口附近的几个高价值目录，各补一段薄的每目录说明。先这些，不铺开。</p>
+      </li>
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">量一次再决定要不要铺</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">量 agent 定位目标文件的命中率，验证「每目录说明」有没有带来增量。没有就不铺。</p>
+      </li>
+    </ol>
+    <p>索引那一件不进阶段——按上面的结论，它由 harness 走树加 glob/grep 覆盖，不单独建东西。</p>
+  </section>
+
+  <section class="section" id="verification">
+    <h2>验证</h2>
+    <p>每一步都要有能当场核对的动作，不是「确认没问题」。</p>
+    <ul>
+      <li>命名：改名前后的会话各截一次上下文，比对子目录 AGENTS.md 在不在里面。</li>
+      <li>pi：给 <code>test_pi_repository.py</code> 加一个临时仓库，断言嵌套 AGENTS.md 被读到——今天这个断言会失败，这正是要修的东西。</li>
+      <li>护栏：拿一个只改 AGENTS.md 的测试 PR 跑 <code>check-claude-md-review.py</code>，它必须报「需要人批准」。</li>
+      <li>关键目录说明：量 agent 定位目标文件的命中率和 $/solved，<strong>不量 token 数</strong>——实测证明 token 少不代表花得少。</li>
+      <li>薄：每目录说明的行数和被读到的情况都记录一次，验证「越深越没人读」，据此决定要不要继续铺。</li>
+    </ul>
+  </section>
+
+  <section class="section" id="risks">
+    <h2>风险</h2>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p><strong>别把说明文件当提性能的手段。</strong>两篇实测都说它对成功率没有可测影响，其中一篇还量到成本涨 20% 以上（2602.11988、2607.27250）。命名收口的正当收益是可达性和一致性。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>别做全量。</strong>嵌套说明被读率只有约 40%，孤儿文档不到 10%，堆多了反噬。追求「每个目录/每个文件都有」只会制造会过期的噪音。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>过期的描述会主动带偏 agent。</strong>有案例：一份记录了旧架构的 AGENTS.md 让 agent 照着做，做出能用但架构错的方案。对策是薄、放在会被读到的地方、有明确的复核触发点（如目录结构变更时）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>嵌套 AGENTS.md 的加载面比想的窄。</strong>只在用 Read 打开子目录文件时触发，用户 @-mention 不算，<code>cat</code>/<code>grep</code> 也不算，auto 模式还会静默漏。所以跨目录检索要靠 glob/grep 兜住。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>读 AGENTS.md 有版本门槛。</strong>要 Claude Code ≥ 2.1.277；Amazon Bedrock 或关掉遥测的会话读不到，只能靠 <code>CLAUDE.md</code> 里 <code>@AGENTS.md</code> 导入。改名之前先确认团队的版本。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="decision">
+    <h2>执行与拍板</h2>
+    <dl class="facts">
+      <div class="fact"><dt>负责人</dt><dd>未定</dd></div>
+      <div class="fact"><dt>时间</dt><dd>未定</dd></div>
+      <div class="fact"><dt>待定夺</dt><dd>命名收口做不做；关键目录选哪几个；要不要做「量一次再决定铺不铺」。</dd></div>
+    </dl>
+  </section>
+
+  <footer class="footnote">
+    <p>仓库现状数字取自 2026-10-11 的 <code>main</code>（6706 个受版本控制的文件，988 个后端 app 模块，1394 个前端 ts/tsx）。Claude Code 的行为依据官方 best-practices 与 memory 文档（<code>code.claude.com/docs/en/best-practices</code>、<code>/memory</code>，直接读 <code>AGENTS.md</code> 需 ≥ 2.1.277）；harness 行为依据本仓库代码。外部与论文结论的完整出处见 <code>_survey/ai-era.md</code>。</p>
+  </footer>
+
+</main>
+<!-- CONTENT:END -->
+
+
+<script>
+  // 窄屏（≤480px）：把手写 SVG 图的 data twin（数据表）展开，数值不只活在图形里；
+  // 图本身在窄屏由样式缩到一栏宽、不再横向滚动（见样式里的 480px 块）。
+  (() => {
+    const mq = window.matchMedia('(max-width: 480px)');
+    const sync = () => {
+      document.querySelectorAll('.figure').forEach((fig) => {
+        const twin = fig.querySelector('details.data-twin');
+        if (!twin) return;
+        if (mq.matches) {
+          if (!twin.open) { twin.open = true; twin.dataset.autoOpen = '1'; }
+        } else if (twin.dataset.autoOpen) {
+          twin.open = false;
+          delete twin.dataset.autoOpen;
+        }
+      });
+    };
+    sync();
+    mq.addEventListener('change', sync);
+  })();
+</script>
+</body>
+</html>
