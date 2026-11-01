@@ -238,7 +238,6 @@ import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/t
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
 import { AttachmentsApi } from '@/api/attachments'
@@ -248,6 +247,7 @@ import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { settledStage } from '@/lib/taskStages'
+import { toast } from '@/lib/toast'
 import { fmtFileSize } from '@/lib/usageFormat'
 import { useEvents } from '@/views/tasks/events'
 

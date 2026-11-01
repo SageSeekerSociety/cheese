@@ -1,8 +1,7 @@
-import { toast } from 'vuetify-sonner'
-
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
+import { toast } from '@/lib/toast'
 
 /** Connect GitHub to the signed-in account, or renew the connection it has:
  *  the same GitHub App authorization used for login and repository access.

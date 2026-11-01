@@ -1,10 +1,10 @@
 // 「批准 / 拒绝这条加入申请」：请求和两边的话术都落在这里，待办页「等你处理」那一行
 // 只管点。
 import { ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 export function useTeamJoinRequestAnswer() {
   /** 请求还没回来时再点不算数：连点、或者点完批准又点拒绝，只发第一下。 */

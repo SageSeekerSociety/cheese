@@ -17,7 +17,6 @@
 import type { McpServer, McpServerDraft, McpServerList } from '@/api'
 
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
 import { holdRevealUntil } from '@/composables/useRevealGate'
@@ -36,6 +35,7 @@ import {
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 
 export interface UseProjectMcpSettingsOptions {

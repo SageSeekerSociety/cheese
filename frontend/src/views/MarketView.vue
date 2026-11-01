@@ -3,12 +3,12 @@
 import type { SkillMarket as SkillMarketData } from '@/api/machineSkills'
 
 import { onMounted, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { listMyDevices } from '@/api'
 import { fetchMachineSkill, fetchSkillMarket } from '@/api/machineSkills'
 import { t } from '@/i18n'
 import { pickMyDevice } from '@/lib/myDevice'
+import { toast } from '@/lib/toast'
 import MarketViewView from '@/views/MarketViewView.vue'
 
 // 技能市场：公开目录，和哪台机器无关；但「装」要有个落点，所以连「我的一台机器」一起

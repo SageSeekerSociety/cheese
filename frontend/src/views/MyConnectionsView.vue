@@ -10,7 +10,6 @@ import type { Project } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import {
   checkIntegration,
@@ -29,6 +28,7 @@ import MyConnectionsViewView from './MyConnectionsViewView.vue'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
+import { toast } from '@/lib/toast'
 import { queryClient } from '@/query/client'
 import { projectsQuery } from '@/query/projects'
 

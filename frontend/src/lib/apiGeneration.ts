@@ -19,12 +19,18 @@
  * and a reload would drop them without a word. The button reloads the way
  * staleBuild.ts does: the waiting service worker takes over first, or the
  * reload could come back with the old index.html.
+ *
+ * That notice is then the only failure the page reports: every request it sends
+ * after the refusal is refused the same way, and each caller's own failure
+ * notice would stack another account of it (lib/toast.ts holds them). So it is
+ * shown with vuetify-sonner's own `toast`, the one notice the hold lets through.
  */
 import { watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
+import { holdFailureNotices } from '@/lib/toast'
 import { takeWaitingWorker } from '@/pwa'
 
 /** The generation this build speaks; absent in builds of the other vite configs, which then say nothing. */
@@ -67,6 +73,9 @@ let asked = false
 export function askToReload(): void {
   if (asked) return
   asked = true
+  // Held now, not when the notice shows: the callers whose requests were just
+  // refused raise their own failure notices as soon as this returns.
+  holdFailureNotices()
   if (firstPaintDone.value) {
     show()
     return

@@ -13,12 +13,12 @@ import type { SpaceInviteCode } from '@/types'
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
 import InviteCodesView from './InviteCodesView.vue'
 
 import { SpacesApi } from '@/api/spaces'
+import { toast } from '@/lib/toast'
 import { userRefRoute } from '@/lib/userRef'
 
 const route = useRoute()

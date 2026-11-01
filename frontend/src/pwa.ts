@@ -37,10 +37,10 @@
  */
 import type { Router } from 'vue-router'
 
-import { toast } from 'vuetify-sonner'
 import { registerSW } from 'virtual:pwa-register'
 
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 /**
  * 有了新 worker 之后，这一页的代码是不是落后于服务器上现在那一版。为真时下一次
