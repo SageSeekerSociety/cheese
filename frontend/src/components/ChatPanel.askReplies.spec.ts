@@ -9,7 +9,7 @@
 // 被问的人也可以不答：✕ 跳过这道题，房间里不出现任何消息，题上写着他跳过了；撤销
 // 之后题重新等他回答。
 //
-// 交付在等人决定时，芝士问的题带的是平台的按钮（「接受 PR #n」「关闭任务」）：点了
+// 交付在等人决定时，芝士问的题带的是平台的按钮（卡上的「采纳并完成任务」、任务的「关闭任务」）：点了
 // 不是回一句话，而是发卡上「采纳」、任务「关闭任务」发的那个请求。
 import type { Component } from 'vue'
 import type { Block, Topic } from '@/cx_types'
@@ -96,10 +96,16 @@ function decisionQuestion(topic: string, decided: string | null = null): Block {
       ...open.meta,
       options: [
         {
-          text: '接受 PR #7',
-          action: { kind: 'accept', card: 'card-7', pr: 7, head_sha: 'abc123', deliverable_revision: null },
+          text: 'accept',
+          action: {
+            kind: 'accept',
+            card: 'card-7',
+            completes_task: true,
+            head_sha: 'abc123',
+            deliverable_revision: null,
+          },
         },
-        { text: '关闭任务', action: { kind: 'close', card: 'card-7', task: 'task-7' } },
+        { text: 'close', action: { kind: 'close', card: 'card-7', task: 'task-7' } },
       ],
       answer_log: decided
         ? [{ kind: 'decided', option: decided, note: null, by: 'me', at: '2026-08-02T00:00:00Z', reply_id: null }]
@@ -599,10 +605,10 @@ describe('只有被问到的人能点选项', () => {
 })
 
 describe('交付在等人决定时，题上的按钮就是卡上、任务上的那个动作', () => {
-  it('点「接受 PR #7」发的是卡的采纳，带着问的时候卡上那一版，不发消息', async () => {
+  it('点「采纳并完成任务」发的是卡的采纳，带着问的时候卡上那一版，不发消息', async () => {
     history = [decisionQuestion('t-accept')]
     const { getByRole } = await open('t-accept')
-    await fireEvent.click(getByRole('button', { name: /接受 PR #7/ }))
+    await fireEvent.click(getByRole('button', { name: /采纳并完成任务/ }))
     await until(() => decisions.length > 0)
     expect(decisions).toHaveLength(1)
     expect(decisions[0].url).toContain('/accept-cards/card-7/accept')
@@ -621,12 +627,12 @@ describe('交付在等人决定时，题上的按钮就是卡上、任务上的�
   })
 
   it('交付定了：按钮收起，写着是谁、相当于哪个按钮，没有撤回', async () => {
-    history = [decisionQuestion('t-decided', '关闭任务')]
+    history = [decisionQuestion('t-decided', 'close')]
     const { container, queryByRole } = await open('t-decided')
     await waitFor(() => expect(container.querySelector('.ask-replies')?.textContent).toContain('关闭任务'), {
       timeout: 5_000,
     })
-    expect(queryByRole('button', { name: /接受 PR #7/ })).toBeNull()
+    expect(queryByRole('button', { name: /采纳并完成任务/ })).toBeNull()
     expect(queryByRole('button', { name: /撤回/ })).toBeNull()
   })
 })

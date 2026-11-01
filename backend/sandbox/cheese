@@ -1175,8 +1175,8 @@ PLATFORM_TOOLS = ToolTable(
                     "把当前任务已有的 draft PR 标记为可评审；请人验收用 request。"
                 ),
                 "ask": _verb(
-                    "交付还在等人决定时，在对话里问一句，带上平台的按钮：accept 是「接受」，"
-                    "和卡上的采纳一样；close 是「关闭任务」，关掉后这份交付作废。只有人点了按钮"
+                    "交付还在等人决定时，在对话里问一句，带上平台的按钮：accept 就是卡上的"
+                    "「采纳」按钮；close 就是「关闭任务」，关掉后这份交付作废。只有人点了按钮"
                     "才算：你不能替人接受，交付在等人时你也关不了任务。有人在对话里说要采纳"
                     "（「采纳」「接受」「可以合了」），回一个只给 accept 的问题；说要关掉"
                     "（「关掉吧」「不做了」），回一个只给 close 的；你认为任务该结束了，问一个"
@@ -1189,7 +1189,7 @@ PLATFORM_TOOLS = ToolTable(
                             "minItems": 1,
                             "maxItems": 2,
                             "items": {"type": "string", "enum": ["accept", "close"]},
-                            "description": "给哪几个按钮：accept 接受交付，close 关闭任务",
+                            "description": "给哪几个按钮：accept 采纳交付，close 关闭任务",
                         },
                     },
                     ["question", "offer"],
@@ -5743,7 +5743,7 @@ _SAY = {
     "cheese_card.ask": lambda a, d, e: (
         "已在对话里问了，带着按钮（消息 id "
         + "、".join(str(b.get("id")) for b in (d or {}).get("blocks") or [])
-        + "）。现在就停下，不要等：人点了「接受」或「关闭任务」，结果会告诉你；"
+        + "）。现在就停下，不要等：人点了「采纳」或「关闭任务」，结果会告诉你；"
         "他打字回复，回复会再把你叫起来。"
     ),
     # 卡片由平台渲染，所以这里只说结果。

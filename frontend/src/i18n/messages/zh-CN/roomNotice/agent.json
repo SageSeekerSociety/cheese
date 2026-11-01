@@ -182,8 +182,5 @@
   "roomFileEditorSavedAside": "{who} 保存时 {path} 已被改过，这一份另存为 {aside}，已告诉 {agent}",
   "ownAgentRoomConsent": "我已加入「{room}」（频道 ID：{room_id}）。你同意我参与吗？收到你的同意后，我才会在这个频道行动。",
   "ownAgentRoomYes": "同意",
-  "ownAgentRoomNo": "不同意",
-  "askDecisionAcceptPr": "接受 {pr}",
-  "askDecisionAccept": "接受这份交付",
-  "askDecisionClose": "关闭任务"
+  "ownAgentRoomNo": "不同意"
 }

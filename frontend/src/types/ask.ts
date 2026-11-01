@@ -23,7 +23,13 @@ export interface AskOption {
 /** 一道题上替交付做决定的按钮：`accept` 调卡的采纳（带着问的时候卡上那一版），
  *  `close` 调任务的关闭。谁能点由那两个接口自己判断，和卡上、任务上的按钮一样。 */
 export type AskAction =
-  | { kind: 'accept'; card: string; pr: number | null; head_sha: string | null; deliverable_revision: string | null }
+  | {
+      kind: 'accept'
+      card: string
+      completes_task: boolean
+      head_sha: string | null
+      deliverable_revision: string | null
+    }
   | { kind: 'close'; card: string; task: string }
 
 /** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）；

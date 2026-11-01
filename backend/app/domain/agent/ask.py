@@ -161,7 +161,9 @@ async def ask_to_decide(
     click. When a person says in words what the decision is (「采纳」,
     「关掉吧」), or the teammate thinks the task should close, this is how it
     hands the click to them. The question is the teammate's own words; the
-    buttons are the platform's: ``accept`` calls the card's own accept route
+    buttons are the platform's, worn with the names the card's and the task's
+    own buttons have (the page draws them from the action; ``text`` is only the
+    action's kind): ``accept`` calls the card's own accept route
     with the head and the deliverable the card shows now, ``close`` the task's
     own close route — the same routes, and the same checks on who may, as the
     card's and the task's own buttons. Nothing here decides anything: the
@@ -186,19 +188,18 @@ async def ask_to_decide(
             ]
         )
     )
-    pr = f"PR #{card.pr_number}" if card.pr_number else None
     options = []
     for kind in offers:
         if kind == "accept":
             options.append(
                 {
-                    "text": say("askDecisionAcceptPr", pr=pr)
-                    if pr
-                    else say("askDecisionAccept"),
+                    "text": kind,
                     "action": {
                         "kind": "accept",
                         "card": str(card.id),
-                        "pr": card.pr_number,
+                        # Picks the label, the one the card's own button wears
+                        # (「采纳并完成任务」 or 「采纳」).
+                        "completes_task": card.completes_task,
                         "head_sha": card.pr_head_sha,
                         "deliverable_revision": deliverable_revision(
                             place.project_id, card
@@ -209,7 +210,7 @@ async def ask_to_decide(
         else:
             options.append(
                 {
-                    "text": say("askDecisionClose"),
+                    "text": kind,
                     "action": {
                         "kind": "close",
                         "card": str(card.id),
@@ -222,7 +223,7 @@ async def ask_to_decide(
         project_id=place.project_id,
         conversation_id=place.conversation_id,
         seat=seat,
-        questions=[Question(_question_text(question), [*map(_plain, options)])],
+        questions=[Question(_question_text(question), options)],
         asked=asked,
         deadline=None,
     )
@@ -251,11 +252,6 @@ def _question_text(question: object) -> str:
     if not isinstance(question, str) or not question.strip():
         raise UnprocessableEntityError(say("askFieldRequired", field="question"))
     return question.strip()
-
-
-def _plain(option: dict) -> dict:
-    """The option as JSON keeps it: the label a plain string."""
-    return {**option, "text": str(option["text"])}
 
 
 def _deadline(body) -> datetime | None:

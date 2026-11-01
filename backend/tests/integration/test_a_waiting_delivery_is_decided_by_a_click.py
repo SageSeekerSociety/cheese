@@ -7,8 +7,8 @@ conversation instead of pressing accept on the card; the task's teammate asked
 the delivery nobody had decided.
 
 So the teammate cannot close a task whose delivery waits on a person. It asks,
-in the conversation, with the buttons that decide it — 「接受 PR #n」 and
-「关闭任务」 — and the decision is made when a person clicks one. A button does
+in the conversation, with the buttons that decide it — the card's accept and
+the task's close — and the decision is made when a person clicks one. A button does
 what the card's and the task's own buttons do: the same request, refused to
 the same people. Once the delivery is decided, however it was decided, the
 question stops waiting and says how it went.
@@ -102,12 +102,10 @@ def test_the_teammate_cannot_close_a_task_whose_delivery_waits(client):
 
 def test_the_teammate_asks_with_the_buttons_that_decide_it(client):
     _project_id, room_id, task_id, card_id = _waiting(client)
-    pr = _card(client, room_id)["pr_number"]
 
     question = _ask(client, room_id, task_id, ["accept", "close"])
 
     options = question["meta"]["options"]
-    assert [option["text"] for option in options] == [f"接受 PR #{pr}", "关闭任务"]
     assert [option["action"]["kind"] for option in options] == ["accept", "close"]
     assert {option["action"]["card"] for option in options} == {card_id}
     # Asked of whoever can make each decision: the reviewer accepts, the task's
@@ -142,7 +140,7 @@ def test_the_close_button_closes_the_task_for_someone_who_works_it(client):
     last = _meta(client, question["id"])["answer_log"][-1]
     assert (last["kind"], last["option"], last["by"]) == (
         "decided",
-        "关闭任务",
+        "close",
         "alice",
     )
     # The outcome is the task's, not something alice said on the question: she
@@ -156,7 +154,6 @@ def test_the_close_button_closes_the_task_for_someone_who_works_it(client):
 
 def test_the_accept_button_accepts_for_the_reviewer(client):
     _project_id, room_id, task_id, card_id = _waiting(client)
-    pr = _card(client, room_id)["pr_number"]
     question = _ask(client, room_id, task_id, ["accept"])
     accept = _action(question, "accept")
     body = {
@@ -187,7 +184,7 @@ def test_the_accept_button_accepts_for_the_reviewer(client):
     last = _meta(client, question["id"])["answer_log"][-1]
     assert (last["kind"], last["option"], last["by"]) == (
         "decided",
-        f"接受 PR #{pr}",
+        "accept",
         "bob",
     )
 

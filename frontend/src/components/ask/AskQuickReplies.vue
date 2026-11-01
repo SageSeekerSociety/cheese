@@ -47,7 +47,8 @@
  *
  * Some questions carry the platform's buttons instead of plain options: a
  * teammate asking a person to decide a delivery that waits on them
- * (`agent.ask.ask_to_decide`) offers 「接受 PR #1」 and 「关闭任务」. Such a button
+ * (`agent.ask.ask_to_decide`) offers the card's accept and the task's close,
+ * under the very names those buttons have (`acceptLabelKey`, 「关闭任务」). Such a button
  * is not a reply: clicking it emits `decide` and the panel calls the card's own
  * accept or the task's own close, the same request the card's and the task's
  * buttons make. The question then closes when the delivery is decided, however
@@ -75,6 +76,7 @@ import type { AskAction } from '../../types/ask'
 
 import { computed, ref, watch } from 'vue'
 
+import { acceptLabelKey } from '../../composables/acceptCard/labels'
 import { t } from '../../i18n'
 import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
@@ -213,14 +215,12 @@ function pick(option: AskOption) {
   emit('reply', label(option.text))
 }
 
-// 平台按钮上的字照看的人的语言写（库里存的是中文那一份，供芝士读）。
+// 平台按钮上的字就是卡上「采纳」、任务「关闭任务」那两个按钮的字：同一个动作只有一个
+// 名字。库里的 `text` 只记动作是哪一种。
 function optionLabel(option: AskOption): string {
   const action = option.action
-  if (action?.kind === 'accept')
-    return action.pr
-      ? t('roomNotice.askDecisionAcceptPr', { pr: `PR #${action.pr}` })
-      : t('roomNotice.askDecisionAccept')
-  if (action?.kind === 'close') return t('roomNotice.askDecisionClose')
+  if (action?.kind === 'accept') return t(acceptLabelKey(action.completes_task))
+  if (action?.kind === 'close') return t('work.task.close')
   return label(option.text)
 }
 // 一行答案说的是哪个按钮时，也照看的人的语言写。

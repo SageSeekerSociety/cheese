@@ -171,7 +171,7 @@ async def _tell_the_reviewer(
     )
 
 
-#: 卡的结局对应问题卡上的哪个按钮（`agent.ask.ask_to_decide`）：采纳就是「接受」，
+#: 卡的结局对应问题卡上的哪个按钮（`agent.ask.ask_to_decide`）：采纳就是「采纳」那个按钮，
 #: 任务关掉就是「关闭任务」；退回、作废、归档不对应哪一个。
 _DECIDED_AS = {"accepted": "accept", "closed": "close"}
 
