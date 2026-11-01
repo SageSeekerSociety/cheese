@@ -324,7 +324,7 @@ class WarmPoolService:
 
         None of this runs with a fixed pool size (``models.warm_pool_target``):
         then the target is 0, so no machine is prepared, and the unused ones
-        already there are deleted by their age rule below.
+        already there are deleted — a target of 0 has always meant that.
         """
         target = warm_pool_target()
         abandoned = (

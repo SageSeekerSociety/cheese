@@ -21,7 +21,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "7b3f1c8e5a02"
-down_revision: str | Sequence[str] | None = "c1ddf6d2257f"
+down_revision: str | Sequence[str] | None = 'c6e54428528a'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
