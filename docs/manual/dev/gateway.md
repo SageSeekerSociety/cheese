@@ -103,7 +103,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | 日志行 | 谁打的 | 字段 | 不含什么 |
 | --- | --- | --- | --- |
 | `gateway_request_timing` | 计量代理（`_log_gateway_timing`） | 请求与响应时间戳、选路结束时刻、准入耗时、`x-litellm-call-id`、状态 | 正文、凭据、任意请求头 |
-| `provider_http_timing` | 网关（补丁） | 进入请求、响应头、流完成/中断/提前关闭的时刻与时长、状态、结果分类 | URL、头、凭据、正文 |
+| `provider_http_timing` | 网关（补丁） | 进入请求、响应头、**上游第一个字节**、流完成/中断/提前关闭的时刻与时长、状态、结果分类 | URL、头、凭据、正文 |
 | `provider_credit out of credit` | 网关（`provider_credit.py`） | 因供应商账户没钱冷却的行：模型名、上游模型、部署 id | 地址、凭据、上游原话 |
 | `gateway rows out of credit` | 计量代理（`_report_out_of_credit_rows`） | 网关点名的行、flow id | 正文、凭据 |
 
