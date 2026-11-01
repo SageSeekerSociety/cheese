@@ -25,6 +25,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
+from app.api import thread_task
 from app.api.deps import get_work_runner
 from app.api.routes import topics_tasks
 from app.core.config import settings
@@ -40,7 +41,11 @@ from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import join_project_team, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_message,
+    session_auth_headers,
+)
 from tests.integration.test_the_composer_shows_who_a_message_is_for import (
     _channel,
     _task_with_a_turn,
@@ -236,6 +241,52 @@ def test_the_write_up_closer_and_a_teammate_change_both_finish(
     _finished(closed)
     assert changed.status_code == 200, changed.text
     assert closed is None
+
+
+def test_a_reply_in_a_thread_and_turning_that_thread_into_a_task_both_finish(
+    client, stub_hooks, monkeypatch
+):
+    """Someone replies in a 支线 at the moment someone else turns that 支线
+    into a task. A reply counts itself on the 支线 (trigger
+    ``blocks_thread_replied``) after taking the 支线's numbering; turning it
+    into a task is held once under way, the reply sent, then let go: both
+    finish."""
+    monkeypatch.setattr(
+        get_work_runner()._intake, "_schedule_message", lambda *a, **k: None
+    )
+    _, _, room = _channel(client)
+    root = post_message(client, room, "alice", {"content": "登录要不要加验证码？"})
+    thread = client.post(
+        f"/blocks/{root['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    post_message(client, thread, "alice", {"content": "先说一句"})
+    hold = _Hold()
+    monkeypatch.setattr(
+        thread_task, "thread_teammate", hold.around(thread_task.thread_teammate)
+    )
+
+    async def race():
+        turn = asyncio.ensure_future(_post(client, f"/blocks/{root['id']}/upgrade", {}))
+        await asyncio.wait_for(hold.reached.wait(), 10)
+        reply = asyncio.ensure_future(
+            _post(
+                client,
+                f"/topics/{thread}/messages",
+                {"request_id": str(uuid.uuid4()), "content": "同时回一句"},
+            )
+        )
+        await asyncio.sleep(0.5)
+        hold.release.set()
+        return await asyncio.wait_for(
+            asyncio.gather(turn, reply, return_exceptions=True), 20
+        )
+
+    turned, replied = client.portal.call(race)
+
+    _finished(turned)
+    _finished(replied)
+    assert turned.status_code == 200, turned.text
+    assert replied.status_code == 200, replied.text
 
 
 class _Sweep:
