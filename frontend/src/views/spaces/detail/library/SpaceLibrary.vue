@@ -33,13 +33,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import SpaceLibraryView from './SpaceLibraryView.vue'
 
 import { SpacesApi } from '@/api/spaces'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { announceDownload, announceDownloadFailure, saveBlob } from '@/lib/download'
+import { toast } from '@/lib/toast'
 
 const route = useRoute()
 const router = useRouter()

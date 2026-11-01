@@ -11,10 +11,10 @@
  */
 import { computed, onMounted, ref, shallowRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { AttachmentsApi } from '@/api/attachments'
 import { uploadPercent, type UploadProgress } from '@/api/partUpload'
+import { toast } from '@/lib/toast'
 
 /** 这道题带着的一份材料：发题时认附件 id，改题时认它在题目资料库里的名字。 */
 export interface PickedAttachment<Id extends number | string = number | string> {

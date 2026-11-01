@@ -8,13 +8,12 @@ import type { Router } from 'vue-router'
 import type { Topic } from '@/cx_types'
 import type { MenuCommand } from '.'
 
-import { toast } from 'vuetify-sonner'
-
 import { copyLink, linkOf } from './copy'
 
 import { createRoomTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { toast } from '@/lib/toast'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 export interface TopicActionHandlers {

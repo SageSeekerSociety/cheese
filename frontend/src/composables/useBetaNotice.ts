@@ -10,11 +10,11 @@
 import type { BetaCredits } from '@/types/creditOffers'
 
 import { computed, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { claimBetaCredits, getBetaCredits } from '@/api/creditOffers'
 import { t } from '@/i18n'
 import { storageGet, storageSet } from '@/lib/browserStorage'
+import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
 
 const key = (handle: string) => `cheese.betaNotice.${handle}`

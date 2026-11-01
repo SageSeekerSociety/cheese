@@ -2,7 +2,6 @@ import type { Locale } from '@/i18n'
 import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/api/users'
 import i18n, {
@@ -22,6 +21,7 @@ import { identityChanges } from '@/lib/identity'
 import { resetRoomLink } from '@/lib/roomLink'
 import { announceSignIn, announceSignOut, onSessionEvent, refreshSession } from '@/lib/session'
 import { forgetWindows } from '@/lib/siteWindow'
+import { toast } from '@/lib/toast'
 import { queryClient } from '@/query/client'
 import { forgetPersistedQueries } from '@/query/persist'
 import { forgetRoomSnapshots } from '@/query/snapshot'
