@@ -32,6 +32,7 @@ import './style.css'
 
 import { createApp, createSSRApp, watch } from 'vue'
 
+import { installPageTiming } from './lib/pageTiming'
 import { ensureStackBehind } from './router/pageStack'
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
@@ -85,6 +86,9 @@ watchForStaleBuild()
 // 现场即事实记录: browser-side errors report into the open topic's 现场 so
 // agents (who can't read a user's console) can debug them. See errorReporter.ts.
 installErrorReporter(app)
+
+// 每个项目页在读者浏览器里的真实耗时，平台管理员读回来看卡在哪（lib/pageTiming.ts）。
+installPageTiming(router)
 
 // 消息和文档里的 @人、#话题、文件 chip：Enter / 空格按下去和点一下一样（lib/refChip.ts）。
 installRefChipKeys()
