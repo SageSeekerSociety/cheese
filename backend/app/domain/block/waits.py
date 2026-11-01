@@ -21,15 +21,15 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     DateTime,
-    String,
+    Text,
     Uuid,
     any_,
     bindparam,
     column,
     func,
-    or_,
     select,
     table,
+    text,
     true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -39,9 +39,11 @@ from app.core.request_facts import recall, remember
 from app.domain.block.authorship import participant_blocks
 from app.domain.block.indexed_rows import (
     AGENT_CHECK_ROWS,
+    CONSUMED_TURN,
     FAILED_TURN_ROWS,
     LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
+    PROMPTED_TURN,
     UNANSWERED_ROWS,
 )
 from app.domain.block.models import (
@@ -576,17 +578,16 @@ class MemberWaits:
             of_rooms(Block.conversation_id, topic_ids),
             Block.created_at >= since,
             Block.kind == BlockKind.message,
-            or_(
-                _among(
-                    Block.meta[PROMPTED_TURN_META_KEY].as_string(),
-                    map(str, turns),
-                    String,
-                ),
-                _among(
-                    Block.meta[CONSUMED_TURN_META_KEY].as_string(),
-                    map(str, turns),
-                    String,
-                ),
+            # Written with the exact expressions `ix_blocks_prompted_turn` and
+            # `ix_blocks_consumed_turn` are built on (`indexed_rows`), so the
+            # planner can use them on the generic plan a cached statement
+            # switches to; `Block.meta[...].as_string()` binds the key and
+            # would not match.
+            text(
+                f"({PROMPTED_TURN.text} = ANY(:turns)"
+                f" OR {CONSUMED_TURN.text} = ANY(:turns))"
+            ).bindparams(
+                bindparam("turns", [str(t) for t in turns], type_=ARRAY(Text))
             ),
         )
         for (meta,) in (await self._session.execute(prompts)).all():

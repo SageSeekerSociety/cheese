@@ -29,10 +29,14 @@ from app.core.db import Base
 from app.domain.block.indexed_rows import (
     AGENT_CHECK_ROWS,
     COALESCED_ROWS,
+    CONSUMED_TURN,
+    CONSUMED_TURN_ROWS,
     EID,
     FAILED_TURN_ROWS,
     LAST_SAID_ROWS,
     MACHINE_EVENT_ROWS,
+    PROMPTED_TURN,
+    PROMPTED_TURN_ROWS,
     QUESTION_ROWS,
     QUEUED_MESSAGE_ROWS,
     SHOWN_ROWS,
@@ -295,6 +299,18 @@ class Block(UuidPk, Timestamps, Base):
         # Whether a conversation already holds a hook event id: asked for every
         # room event that lands (`has_any_eid`), and almost always answered no.
         Index("ix_blocks_conversation_eid", "conversation_id", EID),
+        # The messages a turn was handed or read, looked up by turn id for the
+        # few failed turns a room waits on (`waits._turn_owners`).
+        Index(
+            "ix_blocks_prompted_turn",
+            PROMPTED_TURN,
+            postgresql_where=PROMPTED_TURN_ROWS,
+        ),
+        Index(
+            "ix_blocks_consumed_turn",
+            CONSUMED_TURN,
+            postgresql_where=CONSUMED_TURN_ROWS,
+        ),
         Index(
             "ix_blocks_coalesced",
             "conversation_id",
