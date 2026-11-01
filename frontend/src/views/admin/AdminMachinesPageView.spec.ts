@@ -40,6 +40,10 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     offline_since: null,
     failed_at: null,
     released_at: null,
+    image_version: null,
+    image_outdated: null,
+    draining: false,
+    draining_since: null,
     enroll_attempts: 1,
     enroll_error: null,
     usage: null,
@@ -108,6 +112,7 @@ function overview(
       provider_probe_min: 5,
       last_provider_failure: null,
       refusing: false,
+      fixed_hosts: 0,
       warm_target: 0,
       ...pool,
     },
@@ -116,6 +121,7 @@ function overview(
       sandbox_memory_mb: 3072,
       sandbox_idle_s: 600,
       host_idle_hold_s: 1800,
+      rebuild_after_days: 14,
       vm_idle_s: 1800,
       sandbox_disk_budget_gb: 12,
       sandbox_inode_budget: 600000,
@@ -259,6 +265,25 @@ describe('机器', () => {
     expect(within(spare).queryByText(/Unclaimed|待领用/)).not.toBeNull()
     const booting = table.getByText('warm-booting').closest('[role="row"]') as HTMLElement
     expect(within(booting).queryByText(/Warming up|预热中/)).not.toBeNull()
+  })
+
+  it('滚动重建的宿主机标出「重建中」，版本旧了的标出「镜像过期」', () => {
+    const draining = i18n.global.t('admin.machines.draining')
+    const outdated = i18n.global.t('admin.machines.outdated')
+    const { getByText, queryByText } = mount({
+      overview: overview({ fixed_hosts: 2 }, [
+        host({ draining: true, draining_since: '2026-10-12T09:50:00Z', image_outdated: true }),
+        host({ id: 'h2', hostname: 'pool-b', image_outdated: true }),
+        host({ id: 'h3', hostname: 'pool-c' }),
+      ]),
+    })
+    const rows = getByText('pool-a').closest('[role="row"]') as HTMLElement
+    expect(within(rows).queryByText(draining)).not.toBeNull()
+    const stale = getByText('pool-b').closest('[role="row"]') as HTMLElement
+    expect(within(stale).queryByText(outdated)).not.toBeNull()
+    const fresh = getByText('pool-c').closest('[role="row"]') as HTMLElement
+    expect(within(fresh).queryByText(outdated)).toBeNull()
+    expect(queryByText(i18n.global.t('admin.machines.fixedFoot', { n: 2, days: 14 }))).not.toBeNull()
   })
 
   it('只有温机、还没有宿主机时，不说「一台宿主机都没有」', () => {

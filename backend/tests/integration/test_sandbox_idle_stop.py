@@ -151,6 +151,9 @@ def cloud(client, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 1)
     monkeypatch.setattr(settings, "cloud_pool_min_free_slots", 0)
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 0)
+    # Sized by demand: an empty host goes at once, which is what these tests
+    # measure.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_s", 600)
     monkeypatch.setattr(settings, "cloud_sandbox_background_cap_s", 3600)
     provider = FakeMicroCloud()

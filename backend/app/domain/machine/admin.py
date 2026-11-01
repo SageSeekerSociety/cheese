@@ -28,8 +28,10 @@ from sqlalchemy import String, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import ValidationError
 from app.domain.agent.environment import spec_of
-from app.domain.machine import infra_records, readings
+from app.domain.machine import enrollment, infra_records, readings
+from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
@@ -39,6 +41,7 @@ from app.domain.machine.models import (
     SandboxHome,
     WarmMachine,
     capacity,
+    warm_pool_target,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.run_record.models import RunRecord
@@ -59,6 +62,22 @@ _rooms = table("topics", column("id", Uuid), column("title", String))
 
 def _iso(at: datetime | None) -> str | None:
     return at.isoformat() if at is not None else None
+
+
+async def _current_image_version() -> str | None:
+    """What a host created right now would be made of, so the page can say
+    which hosts are out of date. Asks the provider with a short timeout, not
+    ``microcloud_timeout_s``: a page that only reports must not hang on a
+    provider that is away, and an unreadable version is shown as unknown rather
+    than as agreed."""
+    if not settings.microcloud_base_url or not settings.microcloud_tenant_secret:
+        return None
+    try:
+        return await enrollment.current_host_image_version(
+            MicroCloudClient(timeout=5.0)
+        )
+    except (MicroCloudError, ValidationError):
+        return None
 
 
 def host_phase(host: CloudHost, *, homes: int, online: bool) -> str:
@@ -250,6 +269,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         session, [h for h in hosts if h.released_at is None], now
     )
     sandbox_usage = await readings.sandboxes_now(session, [h.id for h in homes])
+    # What a host built now would be made of; None when the provider cannot be
+    # asked, in which case the page says the versions' age but not their state.
+    current_image = await _current_image_version()
 
     def online(device_id: str | None) -> bool:
         return device_id is not None and hub.is_online(device_id)
@@ -280,6 +302,16 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                 "offline_since": _iso(host.offline_since),
                 "failed_at": _iso(host.failed_at),
                 "released_at": _iso(host.released_at),
+                "image_version": host.image_version,
+                # None: the provider could not be asked, or this is a whole VM,
+                # which is never rolled.
+                "image_outdated": (
+                    None
+                    if current_image is None or host.whole_machine
+                    else host.image_version != current_image
+                ),
+                "draining": host.draining_since is not None,
+                "draining_since": _iso(host.draining_since),
                 "enroll_attempts": host.enroll_attempts,
                 "enroll_error": host.enroll_error or None,
                 "usage": usage.get(host.id),
@@ -350,13 +382,15 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "provider_probe_min": int(PROVIDER_PROBE_INTERVAL.total_seconds() // 60),
             "last_provider_failure": _iso(last_failure),
             "refusing": refusing,
-            "warm_target": settings.microcloud_warm_pool_size,
+            "fixed_hosts": settings.cloud_pool_fixed_hosts,
+            "warm_target": warm_pool_target(),
         },
         "config": {
             "slots_per_core": settings.cloud_host_slots_per_core,
             "sandbox_memory_mb": settings.cloud_sandbox_memory_mb,
             "sandbox_idle_s": settings.cloud_sandbox_idle_stop_s,
             "host_idle_hold_s": settings.cloud_host_idle_hold_s,
+            "rebuild_after_days": settings.cloud_host_rebuild_after_days,
             "vm_idle_s": settings.cloud_vm_idle_release_s,
             "sandbox_disk_budget_gb": settings.cloud_sandbox_disk_budget_gb,
             "sandbox_inode_budget": settings.cloud_sandbox_inode_budget,

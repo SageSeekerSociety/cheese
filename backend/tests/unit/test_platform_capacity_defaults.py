@@ -23,7 +23,7 @@ that releases an environment counts 「还在等 CI」 off three of them
 """
 
 from app.core.config import settings
-from app.domain.machine.models import CloudHost, capacity
+from app.domain.machine.models import CloudHost, capacity, warm_pool_target
 
 
 def test_the_pool_may_hold_twelve_hosts() -> None:
@@ -31,6 +31,31 @@ def test_the_pool_may_hold_twelve_hosts() -> None:
     standard sandbox slots, four to a host, and each place above ten
     over-commits the shared pool by a disk."""
     assert settings.cloud_pool_max_hosts == 12
+
+
+def test_a_fixed_pool_of_ten_leaves_two_places_for_whole_vms() -> None:
+    """The pool keeps ten ordinary hosts up whatever the demand, and the cap of
+    twelve leaves the other two places for whole cloud VMs."""
+    assert settings.cloud_pool_fixed_hosts == 10
+    assert settings.cloud_pool_fixed_hosts + 2 == settings.cloud_pool_max_hosts
+
+
+def test_a_fixed_pool_needs_no_warm_machines(monkeypatch) -> None:
+    """A fixed pool does not prepare machines ahead of demand: it keeps its own
+    hosts up, and a warm machine beside them would be one more running and
+    billed for nothing."""
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 2)
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 10)
+    assert warm_pool_target() == 0
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
+    assert warm_pool_target() == 2
+
+
+def test_a_host_is_rebuilt_after_two_weeks() -> None:
+    """The age fallback of the rolling rebuild: a host of the current image is
+    still rolled once it is older than this, so a fleet takes image updates
+    and an image omitted from the version does not stick forever."""
+    assert settings.cloud_host_rebuild_after_days == 14
 
 
 def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:

@@ -166,6 +166,7 @@ def _host(device_id, *, cores=4, memory_mb=8192, disk_gb=100, whole=False, **kw)
         created_at=datetime.now(UTC) - timedelta(hours=1),
         enrolled_at=datetime.now(UTC) - timedelta(hours=1),
         idle_since=None,
+        draining_since=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)

@@ -418,6 +418,33 @@ def test_enrollment_installs_no_system_package(sandbox_disk):
         assert manager not in code, manager
 
 
+def test_the_image_version_names_what_a_host_is_made_of():
+    """The digest covers the offering, the template, the spec and the enrollment
+    script, not one machine's credentials: two hosts of the same settings carry
+    the same version, and changing any of them leaves an older host out of date."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+
+    def version(template="debian13", cores=4):
+        return enrollment.host_image_version(
+            {**offering, "templateName": template},
+            cores=cores,
+            memory_mb=8192,
+            disk_gb=64,
+        )
+
+    current = version()
+    assert len(current) == enrollment.IMAGE_VERSION_CHARS
+    assert version() == current
+    assert version(template="debian14") != current
+    assert version(cores=8) != current
+
+
 def test_the_tools_are_checked_after_cheesehost_placed_them():
     """`link connect` places tmux, git and python3 where the system lacks
     them; a check before it would refuse a machine it was about to fix."""

@@ -76,7 +76,7 @@ from app.domain.machine.reaper import (
     free_slots,
 )
 from app.domain.machine.repositories import CloudHostRepository
-from app.domain.machine.supply import data_disk_gb, pick_offering
+from app.domain.machine.supply import data_disk_gb, effective_spec, pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.team.services import team_service
 from app.domain.usage.compute import VM, admit_start, vm_spec
@@ -262,7 +262,7 @@ class HostPool(PoolSweep):
         # admission may have added a host meanwhile, so look again after.
         await self._require_room_to_grow()
         await self._session.commit()
-        body, data_disk = await self._host_body()
+        body, data_disk, image_version = await self._host_body()
         await self._lock_holder(holder_id)
         await self._repo.lock_pool()
         if await self._repo.current_home(session_id) is not None:
@@ -271,7 +271,7 @@ class HostPool(PoolSweep):
         if host is not None:
             return host
         await self._require_room_to_grow()
-        return await self._acquire(body, home, data_disk)
+        return await self._acquire(body, home, data_disk, image_version=image_version)
 
     async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
@@ -383,9 +383,10 @@ class HostPool(PoolSweep):
         if sum(_counts_toward_cap(h) for h in hosts) >= settings.cloud_pool_max_hosts:
             raise CloudPoolFull(whole_machine=whole_machine)
 
-    async def _host_body(self) -> tuple[dict, int]:
-        """What every new host is asked for, and the data disk its offering
-        gives it, in GB. Reads the provider: call it with no lock held."""
+    async def _host_body(self) -> tuple[dict, int, str]:
+        """What every new host is asked for, the data disk its offering gives
+        it in GB, and the image version a host made of this now carries. Reads
+        the provider: call it with no lock held."""
         offering = await pick_offering(self._client)
         disk = data_disk_gb(offering)
         body = await self._body(
@@ -394,7 +395,15 @@ class HostPool(PoolSweep):
             memory_mb=settings.microcloud_default_memory_mb,
             disk_gb=settings.microcloud_default_disk_gb,
         )
-        return body, disk
+        # From the body, not the settings: a value the offering clamped is what
+        # the machine actually gets, and what a later version compares against.
+        version = enrollment.host_image_version(
+            offering,
+            cores=body["cores"],
+            memory_mb=body["memoryMb"],
+            disk_gb=body["diskGb"],
+        )
+        return body, disk, version
 
     async def _vm_body(self) -> dict:
         """What every whole cloud VM is asked for. Reads the provider: call it
@@ -409,16 +418,9 @@ class HostPool(PoolSweep):
     async def _body(
         self, offering: dict, *, cores: int, memory_mb: int, disk_gb: int
     ) -> dict:
-        spec = {
-            name: max(
-                int(offering[f"{name}Min"]), min(int(offering[f"{name}Max"]), value)
-            )
-            for name, value in (
-                ("cores", cores),
-                ("memoryMb", memory_mb),
-                ("diskGb", disk_gb),
-            )
-        }
+        spec = effective_spec(
+            offering, cores=cores, memory_mb=memory_mb, disk_gb=disk_gb
+        )
         customer_id, account_id = await self._platform_account()
         return {
             "customerId": customer_id,
@@ -433,15 +435,33 @@ class HostPool(PoolSweep):
         }
 
     async def _acquire(
-        self, body: dict, home: dict | None, data_disk: int
+        self,
+        body: dict,
+        home: dict | None,
+        data_disk: int,
+        *,
+        image_version: str | None = None,
     ) -> CloudHost:
         """One more host for the pool, holding ``home`` if given: a warm machine
         when one is ready, else a new one with a data disk of ``data_disk`` GB.
-        Called holding the pool; returns with no transaction open."""
-        warm = await self._warm_pool.reserve(body=body, home=home)
-        if warm is not None:
-            return warm
-        return await self._create(body, home, data_disk=data_disk)
+        Called holding the pool; returns with no transaction open.
+
+        ``image_version`` is what a host created this way is made of. A warm
+        machine keeps none: it was prepared before any of this was recorded, so
+        its row says unknown.
+
+        A fixed pool does not take warm machines at all: it keeps its own hosts
+        up, and the warm sweep deletes the unused ones (``models.warm_pool_target``).
+        Adopting one would add a host whose version is unknown only to have the
+        sweep roll it at once — one machine claimed and deleted for nothing.
+        """
+        if not settings.cloud_pool_fixed_hosts:
+            warm = await self._warm_pool.reserve(body=body, home=home)
+            if warm is not None:
+                return warm
+        return await self._create(
+            body, home, data_disk=data_disk, image_version=image_version
+        )
 
     async def _create(
         self,
@@ -450,6 +470,7 @@ class HostPool(PoolSweep):
         *,
         whole_machine: bool = False,
         data_disk: int | None = None,
+        image_version: str | None = None,
     ) -> CloudHost:
         host_id = uuid.uuid4()
         prefix = "vm" if whole_machine else "host"
@@ -486,6 +507,7 @@ class HostPool(PoolSweep):
             ai_mode="none",
             ai_status=AiStatus.unknown,
             bootstrap_key=bootstrap_private,
+            image_version=image_version,
             whole_machine=whole_machine,
             project_id=(
                 home["project_id"] if whole_machine and home is not None else None

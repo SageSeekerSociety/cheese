@@ -152,8 +152,7 @@
     "time": "几点",
     "minute": "分钟",
     "day": "日期",
-    "timezone": "时区",
-    "triggerUnset": "两个都不选也行：先存下来不跑，之后在「修改」里定"
+    "timezone": "时区"
   },
   "deleteTitle": "删除「{title}」",
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",
