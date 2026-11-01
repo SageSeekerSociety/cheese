@@ -30,9 +30,8 @@ services:
       - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     ports:
       - "127.0.0.1:${BACKEND_POOL_PORT:-18091}:8085"
-  # The gateway in front of the backends: the same proxies, so it can take a
-  # visitor's address from X-Forwarded-For and cap the connections one address
-  # holds (frontend/docker-entrypoint.sh). Empty limits nothing per address.
+  # The gateway in front of the backends caps the connections one visitor's
+  # address holds (frontend/docker-entrypoint.sh). Empty limits nothing.
   frontend:
     environment:
-      - GATEWAY_TRUSTED_PROXIES=${GATEWAY_TRUSTED_PROXIES:-}
+      - GATEWAY_CONNECTIONS_PER_ADDRESS=${GATEWAY_CONNECTIONS_PER_ADDRESS:-}

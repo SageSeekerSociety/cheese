@@ -979,10 +979,11 @@ visitor sent there and writes the address the layer4 router's PROXY header
 gave it; the dev box's front door appends its own and the backend resolves the
 client through `FORWARDED_ALLOW_IPS`. On dev every hop after Caddy is loopback
 or a docker network (`127.0.0.1,::1,172.16.0.0/12`, set in `deploy-dev.yml`);
-the frontend gateway is given the same hops (`GATEWAY_TRUSTED_PROXIES`) and caps
-the connections one visitor's address may hold at 2000, generous because a
-campus is one address behind NAT. Production sets neither until its own chain
-is checked: a hop left out of the list makes every visitor the same address.
+the frontend gateway resolves the same address (`mainland/main.conf`) and on
+dev caps the connections one visitor's address may hold at 2000
+(`GATEWAY_CONNECTIONS_PER_ADDRESS`), generous because a campus is one address
+behind NAT. Production sets neither until its own chain is checked: a hop left
+out of the list makes every visitor the same address.
 `GET /api/client-address` answers the address a caller is counted by. The upstream is not TLS with PROXY
 protocol to the dev box's `:18443`: with PROXY on, Caddy pools upstream
 connections per client address, so every new visitor would open its own and
@@ -1270,6 +1271,30 @@ GitHub and Google sign-in started on okcheese.cn run on okcheese.com, where
 their callback is registered, and the sign-in is handed back to okcheese.cn
 (`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
+
+**Which origin a visitor gets is decided by `MAINLAND_ENTRY`.** Set to
+`https://okcheese.cn`, the frontend image's nginx answers a request for a page on
+any other origin of the deployment — a navigation, asking for HTML — from a
+visitor whose address is in China with a 302 to it. Nobody else is moved: not a
+visitor outside China, not one signed in on the origin they are on (their session
+is that origin's cookie; a sign-in leaves `cheese_signed_in` at path `/` for
+this rule to see, because the refresh cookie is scoped to the auth routes and
+never rides a page request), not an API call or a WebSocket, not the desktop app
+(whose window runs only its own origin's pages, and names itself in its
+`User-Agent`), and not another host of the deployment. Unset, the rule is still
+in the image and fires for nobody, which is the default.
+
+The rules are `frontend/nginx/mainland/`, the domain names and the entry are
+written at container start by `frontend/scripts/mainland-redirect.sh`, and the
+address space that counts as China is `frontend/nginx/mainland/china-ip.txt` —
+regenerated monthly from APNIC by `scripts/ops/refresh-china-ip-ranges.py`
+(`--check` reports a stale one).
+
+A machine enrolled from an alias installs and approves on that alias: the
+connector's install script and the approve link name the origin the request
+arrived on, so a machine added from okcheese.cn keeps dialling it instead of
+crossing to Hong Kong on every request (`backend/app/api/routes/installer.py`,
+`.../connector/devices.py`).
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.

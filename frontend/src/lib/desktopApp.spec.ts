@@ -139,3 +139,67 @@ describe('authorizing from the app', () => {
     expect(takeSignInVerifier()).toBeNull()
   })
 })
+
+describe('leaveForBrowser', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.resetModules()
+  })
+
+  // Each load of a landing page in the window is a fresh page with a fresh copy of this module.
+  async function landing(path: string) {
+    const { leaveForBrowser } = await import('./desktopApp')
+    return leaveForBrowser(path)
+  }
+
+  it('hands a landing page to the browser once and never goes back into the app’s first page', async () => {
+    desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    const opened = vi.spyOn(window, 'open').mockReturnValue(null)
+    vi.spyOn(window.history, 'length', 'get').mockReturnValue(2)
+    // The entry before the landing page is the app's own first page, which goes
+    // on to the page the launching link named: this landing page again.
+    let loads = 0
+    let reentry: Promise<unknown> = Promise.resolve()
+    vi.spyOn(window.history, 'back').mockImplementation(() => {
+      if (++loads > 5) return
+      vi.resetModules()
+      reentry = landing('/previews/t')
+    })
+    const replaced: string[] = []
+    vi.spyOn(window.location, 'replace').mockImplementation((url: string | URL) => void replaced.push(String(url)))
+
+    expect(await landing('/previews/t')).toBe(true)
+    await reentry
+    await reentry
+
+    expect(opened).toHaveBeenCalledTimes(1)
+    expect(opened).toHaveBeenCalledWith(`${window.location.origin}/previews/t`, '_blank')
+    expect(replaced).toEqual(['/'])
+  })
+
+  it('returns the window to the ordinary page it came from, and to the start page from anywhere else', async () => {
+    desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    vi.spyOn(window, 'open').mockReturnValue(null)
+    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    const cases: [unknown, string][] = [
+      ['/projects/p/topics/t?tab=preview', '/projects/p/topics/t?tab=preview'],
+      ['/previews/t', '/'],
+      ['/Sites/p', '/'],
+      ['/account/signin?redirect=%2Fpreviews%2Ft', '/'],
+      ['//evil.example/', '/'],
+      [undefined, '/'],
+    ]
+    for (const [back, expected] of cases) {
+      vi.resetModules()
+      vi.spyOn(window.history, 'state', 'get').mockReturnValue(back === undefined ? null : { back })
+      await landing('/previews/t')
+      expect(replace).toHaveBeenLastCalledWith(expected)
+    }
+  })
+
+  it('leaves the page alone outside the app', async () => {
+    const opened = vi.spyOn(window, 'open')
+    expect(await landing('/previews/t')).toBe(false)
+    expect(opened).not.toHaveBeenCalled()
+  })
+})

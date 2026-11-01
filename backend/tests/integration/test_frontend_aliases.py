@@ -187,3 +187,88 @@ def test_a_refresh_sent_from_an_alias_passes_the_origin_gate(
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["accessToken"]
+
+
+def test_a_sign_in_leaves_a_marker_a_page_request_can_see(
+    api_client: TestClient, user_client: UserCreator, aliased: str
+):
+    """The mainland redirect spares a visitor who is signed in here, and it
+    decides on a page request. The refresh cookie is scoped to the auth routes
+    and never rides one, so the sign-in also leaves a path-`/` marker; signing
+    out removes both."""
+    user = user_client.create_user()
+    signed_in = api_client.post(
+        "/users/auth/login",
+        json={"username": user.username, "password": user.password},
+    )
+    marker = signed_in.cookies["cheese_signed_in"]
+    assert marker == "1"
+    # Both ride the same response, and the refresh cookie keeps its own path.
+    cookies = signed_in.headers.get_list("set-cookie")
+    assert any(c.startswith("cheese_signed_in=1") and "Path=/" in c for c in cookies), (
+        cookies
+    )
+    assert any(
+        "cheese_refresh=" in c and "Path=/api/users/auth" in c for c in cookies
+    ), cookies
+
+    signed_out = api_client.post(
+        "/users/auth/logout",
+        headers={"Cookie": f"cheese_refresh={signed_in.cookies['cheese_refresh']}"},
+    )
+    assert signed_out.status_code == 200, signed_out.text
+    cleared = signed_out.headers.get_list("set-cookie")
+    assert any(c.startswith("cheese_signed_in=") and "Path=/" in c for c in cleared), (
+        cleared
+    )
+
+
+def test_a_machine_enrolled_from_an_alias_installs_and_approves_on_it(
+    api_client: TestClient, aliased: str, monkeypatch: pytest.MonkeyPatch
+):
+    """The connector's install script and the approve link both name the origin
+    the machine enrolled from, not the canonical one. A machine installed from
+    the mainland entry then dials that entry — otherwise every request it makes
+    crosses to the canonical origin, the detour the entry exists to avoid."""
+    monkeypatch.setattr(settings, "connector_public_base", f"{CANONICAL}/api")
+    host = {"host": urlsplit(ALIAS).netloc}
+
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert on_alias.status_code == 200, on_alias.text
+    assert f'ORIGIN="{ALIAS}/api"' in on_alias.text
+
+    # The canonical origin, and any Host that is not this deployment's, keep the
+    # configured base: the script must never name a host the machine cannot use.
+    on_canonical = api_client.get(
+        "/connector/install.sh", headers={"host": urlsplit(CANONICAL).netloc}
+    )
+    assert f'ORIGIN="{CANONICAL}/api"' in on_canonical.text
+    on_unknown = api_client.get(
+        "/connector/install.sh", headers={"host": "elsewhere.example"}
+    )
+    assert f'ORIGIN="{CANONICAL}/api"' in on_unknown.text
+
+    started = api_client.post(
+        "/connector/auth/device/start", headers=host, json={"device_name": "alias-box"}
+    )
+    assert started.status_code == 200, started.text
+    approve_url = started.json()["approve_url"]
+    assert approve_url.startswith(f"{ALIAS}/connect?code="), approve_url
+
+
+def test_the_alias_carries_the_path_the_configured_base_was_given(
+    api_client: TestClient, aliased: str, monkeypatch: pytest.MonkeyPatch
+):
+    """A deployment whose connector base is the bare site origin (no `/api`)
+    installs from the alias with no `/api` either. Adding the mount to one shape
+    only would route its connector calls through the API proxy instead."""
+    host = {"host": urlsplit(ALIAS).netloc}
+
+    monkeypatch.setattr(settings, "connector_public_base", CANONICAL)
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert f'ORIGIN="{ALIAS}"' in on_alias.text, on_alias.text
+    assert f'ORIGIN="{ALIAS}/api"' not in on_alias.text
+
+    monkeypatch.setattr(settings, "connector_public_base", f"{CANONICAL}/api")
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert f'ORIGIN="{ALIAS}/api"' in on_alias.text, on_alias.text

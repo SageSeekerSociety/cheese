@@ -23,28 +23,26 @@ sed -i "s|__FORGE_EVENTS_UPSTREAM__|${FORGE_EVENTS_UPSTREAM:-backend:8081}|g" /e
 sed -i "s|__COLLAB_UPSTREAM__|${COLLAB_UPSTREAM:-collab:8902}|g" /etc/nginx/nginx.conf
 sed -i "s|__OFFICE_EDITOR_UPSTREAM__|${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}|g" /etc/nginx/nginx.conf
 
-# The proxies in front of this nginx, space-separated addresses or networks
-# (GATEWAY_TRUSTED_PROXIES). Given them, nginx takes the visitor's address from
-# X-Forwarded-For and caps the connections one address may hold
-# (GATEWAY_CONNECTIONS_PER_ADDRESS, generous: a campus is one address behind
-# NAT and every open tab holds a socket). Unset, nothing is limited per address.
-if [ -n "${GATEWAY_TRUSTED_PROXIES:-}" ]; then
-  per_address="${GATEWAY_CONNECTIONS_PER_ADDRESS:-2000}"
-  case "$per_address" in
-    ''|*[!0-9]*) echo "GATEWAY_CONNECTIONS_PER_ADDRESS must be a number, not '$per_address'" >&2; exit 1 ;;
+# How many connections one visitor's address may hold
+# (GATEWAY_CONNECTIONS_PER_ADDRESS). The visitor's address is the one
+# mainland/main.conf resolves from X-Forwarded-For. Generous on purpose: a
+# campus is one address behind NAT and every open tab holds a socket. Unset,
+# nothing is limited per address.
+if [ -n "${GATEWAY_CONNECTIONS_PER_ADDRESS:-}" ]; then
+  case "$GATEWAY_CONNECTIONS_PER_ADDRESS" in
+    *[!0-9]*) echo "GATEWAY_CONNECTIONS_PER_ADDRESS must be a number, not '$GATEWAY_CONNECTIONS_PER_ADDRESS'" >&2; exit 1 ;;
   esac
   {
-    # Commas or spaces between proxies, as FORWARDED_ALLOW_IPS writes them.
-    for proxy in $(printf '%s' "$GATEWAY_TRUSTED_PROXIES" | tr ',' ' '); do
-      echo "set_real_ip_from $proxy;"
-    done
-    echo "real_ip_header X-Forwarded-For;"
-    echo "real_ip_recursive on;"
     echo "limit_conn_zone \$binary_remote_addr zone=per_address:10m;"
-    echo "limit_conn per_address $per_address;"
+    echo "limit_conn per_address $GATEWAY_CONNECTIONS_PER_ADDRESS;"
     echo "limit_conn_status 429;"
   } > /etc/nginx/snippets/per-address.conf
 fi
+
+# Who this deployment sends from one of its origins to another, and where
+# (scripts/mainland-redirect.sh). Unset — the default — redirects nobody; a box
+# that turns it on needs no rebuild. nginx.conf includes both files either way.
+/usr/local/bin/mainland-redirect /etc/nginx
 
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 
