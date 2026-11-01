@@ -291,6 +291,7 @@ def test_direct_proxy_requests_obey_member_limits_before_calling_the_provider(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "test-key"
 

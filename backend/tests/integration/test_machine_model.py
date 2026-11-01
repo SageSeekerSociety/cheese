@@ -34,6 +34,7 @@ def _pool(monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         kind = "machine" if machine_conversation_id else "virtual"
         return f"sk-{kind}-for-" + str(project_id)[:8]

@@ -39,6 +39,7 @@ def test_admission_releases_its_database_connection_before_gateway_key(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         status = pool_status(client.test_app_engine)
         assert status is not None
@@ -71,6 +72,7 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "project-key"
 
@@ -167,6 +169,7 @@ def _project_key(monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "sk-virtual-for-" + str(project_id)[:8]
 
@@ -291,6 +294,7 @@ def test_no_project_key_refuses_rather_than_using_pool_credentials(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return None
 
@@ -605,6 +609,7 @@ def test_a_call_from_the_overview_while_the_project_dreams_is_the_rooms(
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "dream-key" if dream else "room-key"
 
