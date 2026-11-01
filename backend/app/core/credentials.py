@@ -22,7 +22,9 @@ import enum
 import hashlib
 import hmac
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 
 import jwt
@@ -103,22 +105,55 @@ def kind_of(token: str) -> Kind | None:
         return None
 
 
+#: Credentials whose signature this process has already checked, by (token,
+#: kind, key): an agent's request reads the same credential a dozen times
+#: across its auth dependencies and route (measured: 12 reads per model
+#: admission), and checking the signature is most of each read's 160 µs. A
+#: remembered one is decoded again without it, so PyJWT still judges its
+#: expiry on every read; a key that changed misses. Bounded, oldest out first.
+_SIGNED: OrderedDict[tuple[str, Kind, bytes], None] = OrderedDict()
+_SIGNED_MAX = 4096
+#: Sync auth helpers read credentials from FastAPI's threadpool too.
+_SIGNED_LOCK = threading.Lock()
+
+
 def read(token: str, kind: Kind) -> dict | None:
     """The claims of ``token`` if it is a valid, unexpired credential of
     ``kind``, else None — never an exception: this runs on whatever a caller
     sent."""
-    if kind_of(token) is not kind:
+    key = _key(kind)
+    seen = (token, kind, key)
+    with _SIGNED_LOCK:
+        signed = seen in _SIGNED
+    if not signed and kind_of(token) is not kind:
         return None
     try:
         claims = jwt.decode(
             token,
-            _key(kind),
+            key,
             algorithms=[_ALGORITHM],
-            options={"require": [] if kind in _UNEXPIRING else ["exp"]},
+            options={
+                "require": [] if kind in _UNEXPIRING else ["exp"],
+                "verify_signature": not signed,
+                "verify_exp": True,
+                "verify_nbf": True,
+                "verify_iat": True,
+            },
         )
     except jwt.PyJWTError:  # type: ignore[attr-defined]
+        with _SIGNED_LOCK:
+            _SIGNED.pop(seen, None)
         return None
-    return claims if isinstance(claims, dict) else None
+    if not isinstance(claims, dict):
+        return None
+    with _SIGNED_LOCK:
+        # Set again rather than moved: another thread may have let it go
+        # since it was looked up.
+        _SIGNED.pop(seen, None)
+        _SIGNED[seen] = None
+        if len(_SIGNED) > _SIGNED_MAX:
+            _SIGNED.popitem(last=False)
+    return claims
 
 
 def is_platform_secret(token: str) -> bool:

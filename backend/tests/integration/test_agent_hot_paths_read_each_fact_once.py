@@ -11,7 +11,9 @@ used to read some facts twice, or read facts nothing in it used:
   its own conversation, the same row in a room (`machine.holder._kind`);
 - admission read the payer's packs and the project's budget caps, then read
   them again on the gateway key's own session for the budget the key carries
-  (`routes/llm_proxy.py`).
+  (`routes/llm_proxy.py`);
+- the agent's credential had its signature checked again by every dependency
+  and helper that read it, a dozen times per admission (`core.credentials`).
 """
 
 from contextlib import contextmanager
@@ -160,3 +162,26 @@ async def test_a_budget_admission_cannot_work_out_is_left_to_the_key(
     assert answer.json()["data"]["allow"] is True
     assert answer.json()["data"]["supply"]["key"] == "sk-virt-1"
     assert len(calls) >= 2
+
+
+async def test_admission_checks_the_agents_signature_once(client, monkeypatch):
+    from app.core import credentials
+
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    decode = credentials.jwt.decode
+    signed: list[str] = []
+
+    def counted(token, *args, **kwargs):
+        if (kwargs.get("options") or {}).get("verify_signature", True):
+            signed.append(token)
+        return decode(token, *args, **kwargs)
+
+    monkeypatch.setattr(credentials.jwt, "decode", counted)
+    answer = _admit(client, room)
+
+    assert answer.json()["data"]["allow"] is True, answer.text
+    token = room.agent["Authorization"].split()[1]
+    assert signed.count(token) == 1
