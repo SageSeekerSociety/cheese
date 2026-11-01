@@ -531,10 +531,17 @@ class ProjectFiles:
             except (RedisError, TimeoutError):
                 cached = None
             if cached is not None:
+                # Only the shape this code writes counts: valid JSON of another
+                # shape (`null`, a string, an object) is not a list of paths
+                # and is a miss too, not a TypeError in the route's `sorted`.
                 try:
-                    return json.loads(cached)
+                    paths = json.loads(cached)
                 except (TypeError, ValueError):
-                    pass  # not a value this code wrote: compare instead
+                    paths = None
+                if isinstance(paths, list) and all(
+                    isinstance(path, str) for path in paths
+                ):
+                    return paths
         comparison = await self.comparison(refs)
         if comparison is None:
             return []

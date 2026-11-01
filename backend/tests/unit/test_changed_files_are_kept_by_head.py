@@ -37,6 +37,11 @@ class _Corrupt(_Store):
         return b"not json"
 
 
+class _WrongShape(_Store):
+    async def get(self, key):
+        return b'{"files": ["a1.py"]}'
+
+
 class _Files(ProjectFiles):
     def __init__(self, head: str):
         super().__init__(None, uuid.uuid4(), uuid.uuid4())  # type: ignore[arg-type]
@@ -103,6 +108,14 @@ def test_a_cache_that_does_not_answer_is_a_miss(monkeypatch):
 
 def test_an_undecodable_cache_entry_is_a_miss(monkeypatch):
     monkeypatch.setattr(forge_files, "get_redis_client", lambda: _Corrupt())
+    files = _Files("a1")
+
+    assert asyncio.run(files.changed_files()) == ["a1.py"]
+    assert len(files.compared) == 1
+
+
+def test_a_cache_entry_of_the_wrong_shape_is_a_miss(monkeypatch):
+    monkeypatch.setattr(forge_files, "get_redis_client", lambda: _WrongShape())
     files = _Files("a1")
 
     assert asyncio.run(files.changed_files()) == ["a1.py"]
