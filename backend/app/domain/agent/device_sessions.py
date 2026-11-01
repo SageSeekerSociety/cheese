@@ -4,25 +4,23 @@ from functools import cache
 
 from sqlalchemy import (
     ColumnElement,
-    Integer,
     Select,
     String,
     and_,
     bindparam,
     func,
-    literal,
     or_,
     select,
     true,
-    union_all,
 )
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
-from app.domain.device.models import DeviceRow, ModelCredentialHost
+from app.domain.device.owner_reads import token_holders
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task as RoomTask
 from app.domain.team.models import Team
@@ -40,21 +38,21 @@ def _running_select(device: ColumnElement[str], *, topic: bool) -> Select:
     executor = AgentSession.work_lease["device_id"].as_string()
     return (
         select(
-            AgentSession.id,
-            AgentSession.agent_handle,
-            AgentInstance.display_name,
-            AgentInstance.name_source,
-            Project.id,
-            Project.name,
-            Team.id,
-            Team.name,
-            Conversation.id,
-            Conversation.kind,
-            func.coalesce(RoomTask.title, Topic.title),
-            RoomTask.room_id,
-            Thread.room_id,
-            center,
-            executor,
+            AgentSession.id.label("session_id"),
+            AgentSession.agent_handle.label("handle"),
+            AgentInstance.display_name.label("display_name"),
+            AgentInstance.name_source.label("name_source"),
+            Project.id.label("project_id"),
+            Project.name.label("project_name"),
+            Team.id.label("team_id"),
+            Team.name.label("team_name"),
+            Conversation.id.label("conversation_id"),
+            Conversation.kind.label("kind"),
+            func.coalesce(RoomTask.title, Topic.title).label("title"),
+            RoomTask.room_id.label("task_room"),
+            Thread.room_id.label("thread_room"),
+            center.label("center"),
+            executor.label("executor"),
             func.min(AgentTurn.started_at).label("since"),
             *([Topic] if topic else []),
         )
@@ -112,71 +110,46 @@ def _running_on_statement() -> Select:
 
 @cache
 def _running_for_token_statement() -> Select:
-    """The machine a connector token belongs to, with what runs on it, in one
-    statement: the connector polls this every few seconds per machine, and the
-    token lookup was a statement of its own before it. A device token is looked
-    up before a credential host's, as `owner_reads.device_for_token` does; a
-    holder with nothing running comes back as one row of empty session
-    columns."""
-    digest = bindparam("digest", type_=String)
-    holder = union_all(
-        select(
-            DeviceRow.device_id.label("device_id"),
-            literal(0, Integer).label("rank"),
-        ).where(DeviceRow.token_digest == digest),
-        select(ModelCredentialHost.id, literal(1, Integer)).where(
-            ModelCredentialHost.token_digest == digest
-        ),
-    ).subquery("holder")
+    """The machine a connector token belongs to (`owner_reads.token_holders`),
+    with what runs on it, in one statement: the connector polls this every few
+    seconds per machine, and the token lookup was a statement of its own
+    before it. A holder with nothing running comes back as one row of empty
+    session columns."""
+    holder = token_holders(bindparam("digest", type_=String))
     running = _running_select(holder.c.device_id, topic=False).lateral("running")
     return (
         select(holder.c.device_id, running)
         .select_from(holder)
         .outerjoin(running, true())
-        .order_by(holder.c.rank, running.c.since)
+        .order_by(holder.c.credential_host, running.c.since)
     )
 
 
-def _described(device_id: str, row) -> dict:
-    (
-        sid,
-        handle,
-        name,
-        name_source,
-        project,
-        project_name,
-        team,
-        team_name,
-        conversation,
-        kind,
-        title,
-        task_room,
-        thread_room,
-        central,
-        execution,
-        since,
-    ) = row
+def _described(device_id: str, row: RowMapping) -> dict:
+    """One running session as the connector and the device page show it."""
+    name_source = row["name_source"]
+    conversation = row["conversation_id"]
     return {
-        "session_id": str(sid),
-        "agent_name": name or handle,
+        "session_id": str(row["session_id"]),
+        "agent_name": row["display_name"] or row["handle"],
         "agent_name_source": name_source.value if name_source else None,
-        "project_id": str(project),
-        "project_name": project_name,
-        "team_id": team,
-        "team_name": team_name,
+        "project_id": str(row["project_id"]),
+        "project_name": row["project_name"],
+        "team_id": row["team_id"],
+        "team_name": row["team_name"],
         "conversation_id": str(conversation),
-        "conversation_kind": kind.value,
-        "conversation_title": title or str(conversation),
-        "room_id": str(task_room or thread_room or conversation),
-        "roles": (["center"] if central == device_id else [])
-        + (["executor"] if execution == device_id else []),
-        "since": since.isoformat(),
+        "conversation_kind": row["kind"].value,
+        "conversation_title": row["title"] or str(conversation),
+        "room_id": str(row["task_room"] or row["thread_room"] or conversation),
+        "roles": (["center"] if row["center"] == device_id else [])
+        + (["executor"] if row["executor"] == device_id else []),
+        "since": row["since"].isoformat(),
     }
 
 
 async def running_on(db: AsyncSession, device_id: str) -> list[tuple[Topic, dict]]:
     rows = await db.execute(_running_on_statement(), {"device_id": device_id})
-    return [(row[-1], _described(device_id, row[:-1])) for row in rows]
+    return [(row.Topic, _described(device_id, row._mapping)) for row in rows]
 
 
 async def running_for_token(db: AsyncSession, token: str) -> list[dict] | None:
@@ -191,9 +164,9 @@ async def running_for_token(db: AsyncSession, token: str) -> list[dict] | None:
     ).all()
     if not rows:
         return None
-    device_id = rows[0][0]
+    device_id = rows[0].device_id
     return [
-        _described(device_id, row[1:])
+        _described(device_id, row._mapping)
         for row in rows
-        if row[0] == device_id and row[1] is not None
+        if row.device_id == device_id and row.session_id is not None
     ]
