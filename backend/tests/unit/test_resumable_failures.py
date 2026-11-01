@@ -35,8 +35,9 @@ from app.domain.agent.resumable_failures import (
         (
             "API Error: Server is temporarily limiting requests (not your usage "
             "limit) · Rate limited（rate_limit）",
-            RATE_LIMITED,
+            OVERLOADED,
         ),
+        ("API Error: 429 Too Many Requests（rate_limit）", RATE_LIMITED),
         (
             "API Error: Server is temporarily limiting requests (not your usage "
             "limit) · cheese: all Claude accounts are cooling down（rate_limit）",
@@ -128,6 +129,33 @@ def test_a_passing_failure_resumes(said, kind):
 )
 def test_a_failure_no_wait_changes_does_not_resume(said):
     assert classify(said) is None
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # A Gemini model behind the gateway throttling, as the turn ended.
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        " · litellm.RateLimitError: litellm.RateLimitError: geminiException - "
+        '{"error": {"code": 429, "message": "Resource has been exhausted (e.g. '
+        'check quota).", "status": "RESOURCE_EXHAUSTED"}}（rate_limit）',
+        "API Error: Server is temporarily limiting requests (not your usage limit)"
+        " · Rate limited（rate_limit）",
+    ],
+)
+def test_the_resume_and_the_card_name_a_throttled_turn_the_same_way(said):
+    """The room shows either the card (`cli_notices`) or the resume's own line
+    (`turn_resume`) for one failure, depending on whether a resume is still
+    coming; read two ways, a streak said 限流 while it retried and 过载 once it
+    stopped."""
+    from app.domain.agent.platform_failure_cli_notices import (
+        PROVIDER_OVERLOADED_CODE,
+        classify_cli_notice,
+    )
+
+    found = classify(said)
+    assert found is not None and found.kind == OVERLOADED
+    assert classify_cli_notice(said.split("（")[0]) == PROVIDER_OVERLOADED_CODE
 
 
 def test_a_status_the_session_reported_decides_without_the_words():

@@ -34,11 +34,11 @@ from app.domain.agent.platform_failures import (
 )
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.resumable_failures import (
-    POLICIES,
-    Policy,
+    OVERLOADED as THROTTLED_KIND,
 )
 from app.domain.agent.resumable_failures import (
-    RATE_LIMITED as RATE_KIND,
+    POLICIES,
+    Policy,
 )
 from app.domain.agent.run_records import for_site
 from app.domain.agent.service import AgentResult
@@ -269,7 +269,7 @@ async def test_a_rate_limited_turn_resumes_by_itself(
             for r in waiting
             if r["meta"].get("event_type") in ("api_retry", "turn_resume_wait")
         ] == ["api_retry", "turn_resume_wait"]
-        assert recovery_lines[0]["meta"]["reason"] == "rate_limited"
+        assert recovery_lines[0]["meta"]["reason"] == "overloaded"
         # The page following the room live learns when, as one reloading does.
         assert (
             datetime.fromisoformat(recovery_lines[0]["meta"]["due_at"])
@@ -454,7 +454,9 @@ async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path
 async def test_exhausted_resume_budget_shows_failure_card(
     business_db_factory, tmp_path, monkeypatch
 ):
-    monkeypatch.setitem(POLICIES, RATE_KIND, Policy(base_s=60, cap_s=1800, attempts=0))
+    monkeypatch.setitem(
+        POLICIES, THROTTLED_KIND, Policy(base_s=60, cap_s=1800, attempts=0)
+    )
     factory = business_db_factory
     conversation, _seat, _screen, runner, chat = await _first_turn_fails(
         factory, tmp_path, RATE_LIMITED
@@ -862,6 +864,52 @@ async def test_a_failing_seat_is_owed_one_resume_and_stops_after_its_streak(
     assert all(
         later > earlier for earlier, later in zip(waits, waits[1:], strict=False)
     )
+
+
+@pytest.mark.anyio
+async def test_a_spent_streak_is_told_once_however_often_the_seat_fails_again(
+    business_db_factory, monkeypatch
+):
+    """Once a streak has used its attempts, the seat may still be woken by
+    something else (a reminder every ten minutes) and fail the same way each
+    time. The conversation hears that automatic retries are used up once, not
+    once per failure: that line, repeated, is what filled one task with ~210
+    lines during a 26-hour egress outage."""
+    monkeypatch.setitem(
+        POLICIES, THROTTLED_KIND, Policy(base_s=60, cap_s=1800, attempts=1)
+    )
+    factory = business_db_factory
+    project, conversation, _seat, instance = await _room_with_agent(factory)
+    seat = agent_instance_handle(instance)
+
+    async def fail(now):
+        return await after_failure(
+            factory,
+            project_id=project,
+            conversation_id=conversation,
+            seat=seat,
+            failed_turn_id=uuid.uuid4(),
+            result=_failed(RATE_LIMITED),
+            route="subscription",
+            now=now,
+        )
+
+    now = datetime.now(UTC)
+    first = await fail(now)
+    now = first.due_at + timedelta(seconds=1)
+    assert await hand_due(factory, now=now) == 1
+    spent = await fail(now + timedelta(seconds=2))
+    assert spent.dropped_reason == "attempts_used_up"
+    for k in range(1, 4):
+        again = await fail(now + timedelta(minutes=10 * k))
+        assert again.dropped_reason == "attempts_used_up"
+
+    async with factory() as session:
+        visible = await for_site(session, conversation, since=None, until=None)
+    stopped = [
+        r for r in visible if r["meta"].get("event_type") == "turn_resume_stopped"
+    ]
+    assert [r["meta"].get("reason") for r in stopped] == ["attempts_used_up"]
 
 
 @pytest.mark.anyio

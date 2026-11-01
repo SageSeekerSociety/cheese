@@ -237,6 +237,134 @@ def test_a_running_session_whose_report_went_stale_is_asked_for_a_new_one(client
     assert client.portal.call(remind, now + 3 * threshold) == 0
 
 
+def _turn_in(client, task_id: str, *, failed: bool | str) -> uuid.UUID:
+    """A turn of the task's session that has ended; ``failed`` leaves the line
+    the platform posts for a failed turn (``True``), or for one it will
+    resume (``"resume"``)."""
+    from app.domain.agent.models import AgentTurn
+    from app.domain.agent.room_events import post_system_event
+    from app.domain.notice_meta import (
+        EVENT_TURN_FAILED,
+        EVENT_TURN_RESUME_WAIT,
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+        notice,
+    )
+
+    turn = uuid.uuid4()
+    now = datetime.now(UTC)
+    room = uuid.UUID(_task(client, task_id)["room_id"])
+
+    async def run() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                AgentTurn(
+                    id=turn,
+                    conversation_id=uuid.UUID(task_id),
+                    continuation_id=turn,
+                    author="alice",
+                    started_at=now,
+                    stopped_at=now,
+                )
+            )
+            await session.commit()
+        if failed:
+            kind = EVENT_TURN_RESUME_WAIT if failed == "resume" else EVENT_TURN_FAILED
+            await post_system_event(
+                client.test_factory,
+                room,
+                "这次没做完",
+                turn,
+                meta=notice(kind, severity=SEVERITY_WARN, who=WHO_PLATFORM),
+                inner_id=uuid.UUID(task_id),
+            )
+
+    client.portal.call(run)
+    return turn
+
+
+def _resume_owed(client, project_id: str, task_id: str, seat: str, turn) -> None:
+    from app.domain.agent.models import TurnResume
+
+    now = datetime.now(UTC)
+
+    async def owe() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                TurnResume(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(task_id),
+                    recipient_handle=seat,
+                    agent_instance_id=uuid.uuid4(),
+                    failed_turn_id=turn,
+                    reason="egress_offline",
+                    attempt=1,
+                    failed_at=now,
+                    due_at=now + timedelta(minutes=2),
+                )
+            )
+            await session.commit()
+
+    client.portal.call(owe)
+
+
+@pytest.mark.parametrize("last_turn", [True, "resume"], ids=["failed", "resuming"])
+def test_a_session_whose_last_turn_failed_is_not_asked(client, last_turn):
+    """Asking starts a turn on the same broken model, which fails again: one
+    more failed turn and one more line in the room every threshold, for as long
+    as the session stays up. A resume, or a person, wakes such a seat; once a
+    turn after it ends normally, the session is asked again."""
+    from app.domain.agent.turn.steps.reminders import StaleProgressReminder
+
+    _project_id, task_id, _seat = _a_task(client)
+    threshold = timedelta(seconds=settings.chat_progress_reminder_after_s)
+    now = datetime.now(UTC)
+    _said_at(client, task_id, now - 2 * threshold)
+    chat = _Chat(client)
+
+    async def sessions_running(_session):
+        return {uuid.UUID(task_id)}
+
+    remind = StaleProgressReminder(chat, sessions_running)
+
+    _turn_in(client, task_id, failed=last_turn)
+    asked = [client.portal.call(remind, now + k * threshold) for k in range(3)]
+    assert asked == [0, 0, 0]
+    assert chat.told == []
+
+    _turn_in(client, task_id, failed=False)
+    assert client.portal.call(remind, now + 3 * threshold) == 1
+
+
+def test_a_session_the_platform_owes_a_resume_is_not_asked(client):
+    """The resume is already coming; asking as well wakes the seat early on
+    the model that just failed it."""
+    from app.domain.agent.turn.steps.reminders import StaleProgressReminder
+
+    project_id, task_id, seat = _a_task(client)
+    threshold = timedelta(seconds=settings.chat_progress_reminder_after_s)
+    now = datetime.now(UTC)
+    _said_at(client, task_id, now - 2 * threshold)
+    chat = _Chat(client)
+
+    async def sessions_running(_session):
+        return {uuid.UUID(task_id)}
+
+    remind = StaleProgressReminder(chat, sessions_running)
+    # A turn something else started since: the resume is still owed.
+    _resume_owed(
+        client, project_id, task_id, seat, _turn_in(client, task_id, failed=True)
+    )
+    _turn_in(client, task_id, failed=False)
+
+    assert [client.portal.call(remind, now + k * threshold) for k in range(3)] == [
+        0,
+        0,
+        0,
+    ]
+    assert chat.told == []
+
+
 def test_a_teammate_that_never_reported_is_asked_once_its_session_has_run_a_while(
     client,
 ):
