@@ -29,14 +29,19 @@ sed -i "s|__OFFICE_EDITOR_UPSTREAM__|${OFFICE_EDITOR_UPSTREAM:-cheese-office-edi
 # (GATEWAY_CONNECTIONS_PER_ADDRESS, generous: a campus is one address behind
 # NAT and every open tab holds a socket). Unset, nothing is limited per address.
 if [ -n "${GATEWAY_TRUSTED_PROXIES:-}" ]; then
+  per_address="${GATEWAY_CONNECTIONS_PER_ADDRESS:-2000}"
+  case "$per_address" in
+    ''|*[!0-9]*) echo "GATEWAY_CONNECTIONS_PER_ADDRESS must be a number, not '$per_address'" >&2; exit 1 ;;
+  esac
   {
-    for proxy in $GATEWAY_TRUSTED_PROXIES; do
+    # Commas or spaces between proxies, as FORWARDED_ALLOW_IPS writes them.
+    for proxy in $(printf '%s' "$GATEWAY_TRUSTED_PROXIES" | tr ',' ' '); do
       echo "set_real_ip_from $proxy;"
     done
     echo "real_ip_header X-Forwarded-For;"
     echo "real_ip_recursive on;"
     echo "limit_conn_zone \$binary_remote_addr zone=per_address:10m;"
-    echo "limit_conn per_address ${GATEWAY_CONNECTIONS_PER_ADDRESS:-2000};"
+    echo "limit_conn per_address $per_address;"
     echo "limit_conn_status 429;"
   } > /etc/nginx/snippets/per-address.conf
 fi
