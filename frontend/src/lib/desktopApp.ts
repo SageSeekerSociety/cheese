@@ -5,7 +5,7 @@
 
 import type { ThemePreference } from '@/theme'
 
-import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
+import { storageGet, storageGetJson, storageRemove, storageSet, storageSetJson } from '@/lib/browserStorage'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
 export type DesktopAbility =
@@ -198,6 +198,42 @@ export function openInBrowser(url: string): boolean {
   if (!desktopCan('links')) return false
   // The app opens every new window in the browser.
   window.open(new URL(url, window.location.origin).href, '_blank')
+  return true
+}
+
+/** Where the window goes after a landing page hands itself to the browser: the
+ *  page it came from when that is an ordinary page of the app, else the start
+ *  page. Never a page that could hand over again: the landing pages, and the
+ *  account pages, whose sign-in redirects to the page it was asked for. */
+function afterLeaving(): string {
+  const back = (window.history.state as { back?: unknown } | null)?.back
+  if (typeof back !== 'string' || !back.startsWith('/') || back.startsWith('//')) return '/'
+  const first = back.slice(1).split(/[/?#]/)[0].toLowerCase()
+  return ['previews', 'sites', 'account'].includes(first) ? '/' : back
+}
+
+/** A page that hands the reader to the content domain at the top level (a
+ *  preview, a published Site) is the browser's to show: in the app the window
+ *  would end up on a page someone else wrote, with no way back. In the app,
+ *  opens `path` in the browser through the app's own opener, at most once per
+ *  address for as long as this window lives (recorded in session storage, so
+ *  a reload of the page, or the page arriving again, does not open it twice),
+ *  and replaces this page with where the window came from (`afterLeaving`).
+ *  False outside the app, where the caller goes on as in a browser. */
+export function leaveForBrowser(path: string): boolean {
+  const core = tauri()?.core
+  if (!core || !desktopCan('links')) return false
+  const url = new URL(path, window.location.origin).href
+  const key = `cheese.desktop.handedToBrowser:${url}`
+  let opening: Promise<unknown> = Promise.resolve()
+  if (storageGet(key, 'session') === null) {
+    storageSet(key, '1', 'session')
+    opening = core.invoke('plugin:opener|open_url', { url }).catch(() => {})
+  }
+  // Only once the app has answered: leaving the page while the call is in flight
+  // aborts its request, and Tauri then sends the call again another way, so the
+  // browser would open the page twice.
+  void opening.then(() => window.location.replace(afterLeaving()))
   return true
 }
 

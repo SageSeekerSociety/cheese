@@ -139,3 +139,84 @@ describe('authorizing from the app', () => {
     expect(takeSignInVerifier()).toBeNull()
   })
 })
+
+describe('leaveForBrowser', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.resetModules()
+    sessionStorage.clear()
+  })
+
+  // Every load of a landing page is a fresh page with a fresh copy of this module;
+  // only session storage carries over, as it does across reloads of the window.
+  async function landing(path: string) {
+    vi.resetModules()
+    const { leaveForBrowser } = await import('./desktopApp')
+    const left = leaveForBrowser(path)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return left
+  }
+
+  it('opens the page in the browser through the app once, however often the page loads again', async () => {
+    const invoke = desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    const opened = vi.spyOn(window, 'open')
+    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+
+    for (let load = 0; load < 3; load++) expect(await landing('/previews/t?path=%2Fa')).toBe(true)
+
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:opener|open_url')).toEqual([
+      ['plugin:opener|open_url', { url: `${window.location.origin}/previews/t?path=%2Fa` }],
+    ])
+    expect(opened).not.toHaveBeenCalled()
+    expect(replace).toHaveBeenCalledTimes(3)
+  })
+
+  it('opens another page in the browser even after one was opened', async () => {
+    const invoke = desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    await landing('/previews/t')
+    await landing('/sites/p')
+    expect(invoke.mock.calls.map(([, args]) => args)).toEqual([
+      { url: `${window.location.origin}/previews/t` },
+      { url: `${window.location.origin}/sites/p` },
+    ])
+  })
+
+  it('returns the window to the ordinary page it came from, and to the start page from anywhere else', async () => {
+    desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    const cases: [unknown, string][] = [
+      ['/projects/p/topics/t?tab=preview', '/projects/p/topics/t?tab=preview'],
+      ['/previews/t', '/'],
+      ['/Sites/p', '/'],
+      ['/account/signin?redirect=%2Fpreviews%2Ft', '/'],
+      ['//evil.example/', '/'],
+      [undefined, '/'],
+    ]
+    for (const [back, expected] of cases) {
+      vi.spyOn(window.history, 'state', 'get').mockReturnValue(back === undefined ? null : { back })
+      await landing('/previews/t')
+      expect(replace).toHaveBeenLastCalledWith(expected)
+    }
+  })
+
+  it('leaves the page only after the app has opened the browser', async () => {
+    let answer = () => {}
+    const invoke = vi.fn(() => new Promise<undefined>((resolve) => (answer = () => resolve(undefined))))
+    ;(window as AppWindow).__TAURI__ = { core: { invoke } }
+    ;(window as AppWindow).__CHEESE_APP__ = { can: ['links'] }
+    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    await landing('/previews/t')
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(replace).not.toHaveBeenCalled()
+    answer()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(replace).toHaveBeenCalledWith('/')
+  })
+
+  it('leaves the page alone outside the app, and in an app that cannot open links', async () => {
+    expect(await landing('/previews/t')).toBe(false)
+    desktopApp({ origin: 'https://okcheese.com', can: [] })
+    expect(await landing('/previews/t')).toBe(false)
+  })
+})

@@ -6,6 +6,7 @@ import { useRoute } from 'vue-router'
 
 import { ApiError, authToken, requestPreviewSession } from '../api'
 import { t } from '../i18n'
+import { leaveForBrowser } from '../lib/desktopApp'
 import { postPreviewSession } from '../lib/previewSession'
 
 import PreviewOpenViewView from './PreviewOpenViewView.vue'
@@ -37,6 +38,7 @@ async function openPreview() {
 watch(
   () => route.fullPath,
   () => {
+    if (leaveForBrowser(route.fullPath)) return
     generation += 1
     needsLogin.value = !authToken()
     if (!needsLogin.value) void openPreview()
