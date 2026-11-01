@@ -393,6 +393,25 @@ beside its realtime process (`backend/app/serve.py`,
   `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
   its workers as the backend's is: 5 connections each at 3 workers. A rollout
   runs both slots' pools, 30 more connections on dev's 200.
+- What it bought on dev (2026-10-31/11-01, one account, 30 s per level, the
+  reads a person opening a channel makes): at 20 concurrent clients the median
+  request went from 2.4 s to 0.36 s and a light read beside them from 1.2 s to
+  0.07 s. A write (marking a room read) kept 55 ms with 10 clients reading and
+  83 ms with 20, against 55 ms with none: reads no longer queue in front of the
+  realtime process. Above 10 clients one account meets its own request-rate
+  limit (about 22 a second), so the limit of the pool itself was not reached.
+- Production runs without it, and turning it on there takes two steps, not
+  dev's one. `API_POOL_WORKERS` in the environment of the step in
+  `deploy-prod.yml` that runs `deploy-docker.sh` layers
+  `docker-compose.api-pool.yml` and starts the pool, but nothing sends it a
+  read: app-router's `backend_pool_active` upstream is what does that, and prod
+  has no app-router (`ACTIVE_BACKEND_DIR` unset there; its release is the
+  in-place recreate of one backend). Install the standing data plane first
+  (`deploy/llm-tunnel/up.sh`, then `ACTIVE_BACKEND_DIR` in the box's
+  `deploy.env`). A release then runs the two slots, so check that the
+  database's `max_connections` covers both slots' pools during a rollout (the
+  arithmetic above; prod's server is still the default 100, so it may not),
+  and that the pool ports (18091 and 18092) are free on that host.
 
 ### dev — continuous deploy
 
