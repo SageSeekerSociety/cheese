@@ -131,3 +131,52 @@ def test_a_member_taken_off_the_board_is_refused_on_the_next_request(
 
     statements, r = _fresh_get(api_client, db_session, f"/spaces/{space}", token)
     assert r.status_code in (403, 404), r.text
+
+
+_TASK_ROW = re.compile(r"FROM task WHERE task\.id = \$1::BIGINT")
+_ROSTER = re.compile(
+    r"FROM task_membership WHERE task_membership\.task_id = \$1::BIGINT "
+    r"AND task_membership\.deleted_at IS NULL$"
+)
+_COUNT_SUBMISSIONS = re.compile(r"SELECT count\(task_submission\.id\)")
+
+
+def test_the_submissions_page_reads_its_own_claims_and_counts_only_past_a_page(
+    api_client: TestClient,
+    user_client: UserCreator,
+    upload_root: Path,  # noqa: F811
+    db_session,
+):
+    """A teacher's list of one claim's submissions reads the claims its rows
+    belong to, not every claim of the problem, and a first page that is not
+    full is its own total. The problem row is read once."""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="作业页", startMode="APPLY")
+    participants = []
+    for _ in range(4):
+        _, token = _member_of(user_client, api_client, board)
+        participant, _ = _claim_as_user(api_client, task_id, token)
+        _decide(api_client, board, task_id, participant, "APPROVED")
+        participants.append((participant, token))
+    participant, token = participants[0]
+    sent = api_client.post(
+        f"/tasks/{task_id}/participants/{participant}/submissions",
+        json=[{"text": "报告"}],
+        headers=_auth(token),
+    )
+    assert sent.status_code == 200, sent.text
+
+    url = f"/tasks/{task_id}/participants/{participant}/submissions"
+    for reader in (board["creator_token"], token):
+        statements, r = _fresh_get(api_client, db_session, url, reader)
+        assert r.status_code == 200, r.text
+        assert r.json()["data"]["page"]["total"] == 1, r.text
+        assert len(r.json()["data"]["submissions"]) == 1, r.text
+        assert _count(statements, _ROSTER) == 0, statements
+        assert _count(statements, _COUNT_SUBMISSIONS) == 0, statements
+        assert _count(statements, _TASK_ROW) == 1, statements
+
+    # A page that is full may have more behind it: it still counts.
+    statements, r = _fresh_get(api_client, db_session, url + "?pageSize=1", token)
+    assert r.status_code == 200, r.text
+    assert _count(statements, _COUNT_SUBMISSIONS) == 1, statements
