@@ -64,6 +64,7 @@ from app.core.sentences import listing, say
 from app.domain.agent import model_catalog
 from app.domain.agent.chat import ChatService
 from app.domain.agent.credits_notice import note_credits_refusal
+from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance.services import AgentInstanceService
@@ -451,6 +452,21 @@ async def admission(
             str(credit_context.work_id) if credit_context.work_id else ""
         )
 
+    # The project key carries a budget worked out from the same payer, packs
+    # and caps this admission just read: worked out here, those reads are
+    # answered again in this transaction rather than made again on the key's
+    # own session (`project_gateway_key`).
+    project_key = pool == GATEWAY and refused is None and from_proxy
+    budget_target = UNKNOWN_TARGET
+    if project_key and project is not None and credit_context is None:
+        try:
+            budget_target = await chat._gateway_budget_target(db, project_uuid)
+        except Exception:
+            # The key's own read path answers a failure here as no key, which
+            # the proxy refuses; raised from the route it would read as the
+            # backend unreachable and let the call through unchecked.
+            logger.exception("admission budget target failed for %s", project_uuid)
+
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
     # admissions from exhausting the pool while they wait.
@@ -472,7 +488,7 @@ async def admission(
     # session holds its own token: answering that with the key would put a
     # shared pool credential inside every room that can reach this route.
     # Anyone else (a pi runner admitting a subagent) gets the decision.
-    if pool == GATEWAY and refused is None and from_proxy:
+    if project_key:
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
@@ -482,7 +498,9 @@ async def admission(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(project_uuid)
+            supply["key"] = await chat.project_gateway_key(
+                project_uuid, budget_target=budget_target
+            )
 
     return ok(
         {
