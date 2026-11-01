@@ -23,6 +23,11 @@ sed -i "s|__FORGE_EVENTS_UPSTREAM__|${FORGE_EVENTS_UPSTREAM:-backend:8081}|g" /e
 sed -i "s|__COLLAB_UPSTREAM__|${COLLAB_UPSTREAM:-collab:8902}|g" /etc/nginx/nginx.conf
 sed -i "s|__OFFICE_EDITOR_UPSTREAM__|${OFFICE_EDITOR_UPSTREAM:-cheese-office-editor:80}|g" /etc/nginx/nginx.conf
 
+# Who this deployment sends from one of its origins to another, and where
+# (scripts/mainland-redirect.sh). Unset — the default — redirects nobody; a box
+# that turns it on needs no rebuild. nginx.conf includes both files either way.
+/usr/local/bin/mainland-redirect /etc/nginx
+
 /usr/local/bin/check-static-assets /usr/share/nginx/html
 
 exec "$@"

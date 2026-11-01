@@ -187,3 +187,36 @@ def test_a_refresh_sent_from_an_alias_passes_the_origin_gate(
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["accessToken"]
+
+
+def test_a_machine_enrolled_from_an_alias_installs_and_approves_on_it(
+    api_client: TestClient, aliased: str, monkeypatch: pytest.MonkeyPatch
+):
+    """The connector's install script and the approve link both name the origin
+    the machine enrolled from, not the canonical one. A machine installed from
+    the mainland entry then dials that entry — otherwise every request it makes
+    crosses to the canonical origin, the detour the entry exists to avoid."""
+    monkeypatch.setattr(settings, "connector_public_base", f"{CANONICAL}/api")
+    host = {"host": urlsplit(ALIAS).netloc}
+
+    on_alias = api_client.get("/connector/install.sh", headers=host)
+    assert on_alias.status_code == 200, on_alias.text
+    assert f'ORIGIN="{ALIAS}/api"' in on_alias.text
+
+    # The canonical origin, and any Host that is not this deployment's, keep the
+    # configured base: the script must never name a host the machine cannot use.
+    on_canonical = api_client.get(
+        "/connector/install.sh", headers={"host": urlsplit(CANONICAL).netloc}
+    )
+    assert f'ORIGIN="{CANONICAL}/api"' in on_canonical.text
+    on_unknown = api_client.get(
+        "/connector/install.sh", headers={"host": "elsewhere.example"}
+    )
+    assert f'ORIGIN="{CANONICAL}/api"' in on_unknown.text
+
+    started = api_client.post(
+        "/connector/auth/device/start", headers=host, json={"device_name": "alias-box"}
+    )
+    assert started.status_code == 200, started.text
+    approve_url = started.json()["approve_url"]
+    assert approve_url.startswith(f"{ALIAS}/connect?code="), approve_url

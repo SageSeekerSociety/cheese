@@ -36,6 +36,18 @@ const ORIGIN: &str = match option_env!("CHEESE_ORIGIN") {
 // macOS draws the window buttons over the page; elsewhere the system title bar stays.
 const TITLE_BAR: &str = if cfg!(target_os = "macos") { "overlay" } else { "native" };
 
+// What this window tells the server it is. The last token is what names it
+// (`frontend/nginx/mainland/main.conf`): the window runs only ORIGIN's pages —
+// anything else opens in the browser — so a redirect sent to it would land on a
+// page whose commands it may not call. A browser never carries that token. The
+// rest keeps the shape of a browser's, which the platform reads for the system
+// an account signs in from (frontend/src/views/user/settings/deviceName.ts).
+const USER_AGENT: &str = if cfg!(target_os = "windows") {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CheeseDesktop"
+} else {
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) CheeseDesktop"
+};
+
 // What a page the server sends may call. The opener plugin's init script turns a
 // click on an `<a target="_blank">` into `plugin:opener|open_url`, so a link in
 // the page needs `opener:allow-open-url` to reach that command at all; without it
@@ -391,6 +403,7 @@ fn main() {
                 start = serde_json::to_string(&start).unwrap_or_else(|_| "null".into()),
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .user_agent(USER_AGENT)
                 .initialization_script(about)
                 // On the page someone picks up a project tile in the rail and
                 // drops it where it should go, and drops a file on the library to

@@ -13,11 +13,13 @@ binary 404s until a build runs — the endpoint degrades, never crashes.
 """
 
 import asyncio
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
-from app.core.config import settings
+from app.core import origins
+from app.core.config import GATEWAY_MOUNT, settings
 from app.domain.agent import connector_build, toolchain
 from app.domain.agent.harness.claude_code import CLAUDE_PINNED_VERSION
 from app.domain.machine import claude_dist, pi_dist, toolchain_dist
@@ -42,11 +44,30 @@ def _origin(request: Request) -> str:
     default — it's right regardless of which port/host actually serves us. Only
     when `connector_public_base` is set to a real public origin (i.e. NOT the
     localhost dev default) do we prefer it, so a deployment behind an edge/proxy
-    can pin the externally-reachable name."""
+    can pin the externally-reachable name.
+
+    The pin names the canonical origin, and a deployment served under more than
+    one of its own (`app.core.origins`) installs from either: a machine installed
+    from the mainland entry dials that entry, or it would cross to Hong Kong on
+    every request — the detour the entry exists to avoid."""
     configured = settings.connector_public_base.rstrip("/")
     if configured and "localhost" not in configured and "127.0.0.1" not in configured:
-        return configured
+        arrived_on = _aliased_origin(request)
+        return f"{arrived_on}{GATEWAY_MOUNT}" if arrived_on else configured
     return str(request.base_url).rstrip("/")
+
+
+def _aliased_origin(request: Request) -> str | None:
+    """The deployment origin this request arrived on, when it is one of its
+    non-canonical ones. ``None`` for the canonical origin and for a Host that is
+    not this deployment's at all, which keeps the configured base."""
+    host = (request.headers.get("host") or "").strip().lower()
+    if not host:
+        return None
+    for origin in origins.all_origins():
+        if urlsplit(origin).netloc == host and origin != origins.canonical():
+            return origin
+    return None
 
 
 def _ws_control_url(origin: str) -> str:

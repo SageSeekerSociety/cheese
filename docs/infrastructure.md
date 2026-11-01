@@ -1216,6 +1216,28 @@ their callback is registered, and the sign-in is handed back to okcheese.cn
 (`backend/app/api/routes/app_sign_in.py`). Mailed links point to okcheese.com.
 Cookies are per host, so the two addresses keep separate sign-ins.
 
+**Which origin a visitor gets is decided by `MAINLAND_ENTRY`.** Set to
+`https://okcheese.cn`, the frontend image's nginx answers a request for a page on
+any other origin of the deployment — a navigation, asking for HTML — from a
+visitor whose address is in China with a 302 to it. Nobody else is moved: not a
+visitor outside China, not one signed in on the origin they are on (their session
+is that origin's cookie), not an API call or a WebSocket, not the desktop app
+(whose window runs only its own origin's pages, and names itself in its
+`User-Agent`), and not another host of the deployment. Unset, the rule is still
+in the image and fires for nobody, which is the default.
+
+The rules are `frontend/nginx/mainland/`, the domain names and the entry are
+written at container start by `frontend/scripts/mainland-redirect.sh`, and the
+address space that counts as China is `frontend/nginx/mainland/china-ip.txt` —
+regenerated monthly from APNIC by `scripts/ops/refresh-china-ip-ranges.py`
+(`--check` reports a stale one).
+
+A machine enrolled from an alias installs and approves on that alias: the
+connector's install script and the approve link name the origin the request
+arrived on, so a machine added from okcheese.cn keeps dialling it instead of
+crossing to Hong Kong on every request (`backend/app/api/routes/installer.py`,
+`.../connector/devices.py`).
+
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.
 

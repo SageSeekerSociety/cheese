@@ -31,6 +31,7 @@ from typing import Annotated, Any
 from fastapi import (
     APIRouter,
     Depends,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
@@ -46,7 +47,7 @@ from app.api.routes.connector.schemas import (
     DeviceStartRequest,
 )
 from app.api.write_access import ROUTE_DECIDES
-from app.core import background
+from app.core import background, origins
 from app.core.config import settings
 from app.core.errors import ForbiddenError, UnauthorizedError
 from app.core.sentences import say
@@ -208,7 +209,10 @@ async def _recover_business_state(device_id: str) -> None:
 
 @router.post("/auth/device/start", dependencies=[ROUTE_DECIDES])
 async def device_start(
-    body: DeviceStartRequest, service: DeviceServiceDep, db: DbSession
+    body: DeviceStartRequest,
+    request: Request,
+    service: DeviceServiceDep,
+    db: DbSession,
 ) -> dict[str, Any]:
     """Begin a device flow. The ``approve_url`` is built from the public base so a
     human can open it and approve this machine (fusion-design §5 device flow)."""
@@ -221,7 +225,9 @@ async def device_start(
     # It MUST be the frontend origin (the SPA serves ``/connect``), not
     # ``connector_public_base`` — that's the backend/webhook base (default
     # localhost:8099, the dead pre-merge cheesex port) and would 404 in a browser.
-    base = settings.frontend_url.rstrip("/")
+    # The origin is the one this request arrived on (`app.core.origins`), so a
+    # machine enrolled from the mainland entry gets a link back to that entry.
+    base = origins.of_request(request)
     approve_url = f"{base}/connect?code={code}"
     return {"device_code": code, "approve_url": approve_url, "interval": 2}
 
