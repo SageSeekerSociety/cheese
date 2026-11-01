@@ -10,7 +10,7 @@
   "sandboxPreparing": "Preparing the environment",
   "sandboxReady": "The environment is ready",
   "sandboxReplaced": "Preparing the environment failed; preparing it again",
-  "sandboxLost": "The environment stopped answering and was replaced: work pushed and backed up at the end of each run comes along, and changes made after that are gone",
+  "sandboxLost": "The environment stopped answering and was replaced: pushed commits come along, and everything else on it is gone",
   "sandboxReleased": "The environment was released after {minutes} minutes without activity. The next message starts a new one, and work pushed and backed up at the end of each run comes along.",
   "sandboxReleasedNoCredits": "Credits ran out, so the environment was released. Once there are credits again, the next message starts a new one, and work pushed and backed up at the end of each run comes along.",
   "sandboxReleasedDiskFull": "The computer's disk was nearly full and this environment held the most of it ({gb} GB, {files} files, mostly under {where}), so it was released. The next message starts a new one, and work pushed and backed up at the end of each run comes along. Delete temporary files once you are done with them, so they do not pile up.",
