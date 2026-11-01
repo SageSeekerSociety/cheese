@@ -570,6 +570,10 @@ class Runner(runner.Runner[Journal]):
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # How long each API call waited for its first token, by the message id
+        # it answered with, until the record that call's blocks land in takes
+        # it (``stream`` / ``observe``).
+        self.waits: dict[str, int] = {}
         # The last frame read off the child's stdout, for the readout of what
         # a session is doing (`heartbeat`). None until a frame, and the work is
         # the one in flight when THAT frame arrived — never `last_work`, so a
@@ -1021,6 +1025,17 @@ class Runner(runner.Runner[Journal]):
             return
         event = record.get("event") or {}
         kind = event.get("type")
+        if kind == "message_start":
+            # How long this call waited before its first token. The build says
+            # it here and nowhere else, and a streamed event is never
+            # journaled, so the number waits for the record this call's blocks
+            # land as (``observe``): that record is where a wait belongs, one
+            # per call, with what the wait was for.
+            wait = record.get("ttft_ms")
+            identifier = (event.get("message") or {}).get("id")
+            if isinstance(wait, int) and not isinstance(wait, bool) and identifier:
+                self.waits[str(identifier)] = wait
+            return
         if kind == "content_block_start":
             block = event.get("content_block") or {}
             self.streaming = event.get("index")
@@ -1146,6 +1161,13 @@ class Runner(runner.Runner[Journal]):
         stamp: dict = {}
         if isinstance(message, dict):
             if main and message.get("type") == "assistant":
+                # This call's wait, on the first block it landed as: the same
+                # message id is written once per finished block, and the wait
+                # belongs to the call, not to each of them.
+                answer = (message.get("message") or {}).get("id")
+                wait = self.waits.pop(str(answer), None) if answer else None
+                if wait is not None:
+                    stamp["first_token_ms"] = wait
                 if message.get("error"):
                     # The API refused the work; the result that follows says
                     # only that it failed, and this is the one record that says
