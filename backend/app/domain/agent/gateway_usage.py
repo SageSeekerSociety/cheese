@@ -33,7 +33,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -724,7 +724,7 @@ async def _gateway_project_env(
                 target = (
                     await service._gateway_budget_target(session, project_id)
                     if known_target is UNKNOWN_TARGET
-                    else known_target
+                    else cast("float | None", known_target)
                 )
                 in_step = _key_in_step(s, slot, target)
                 if in_step is not None:
