@@ -102,17 +102,25 @@ async def at_work(
     return AtWork(rooms, in_threads, running_tasks)
 
 
-async def answering(db: AsyncSession) -> dict[uuid.UUID, list[str]]:
-    """The seats at work in each conversation (a 支线, usually): whom a
-    message's line names as answering in it now.
+async def answering(
+    db: AsyncSession, conversations: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, list[str]]:
+    """The seats at work in each of these conversations (支线, usually): whom
+    a message's line names as answering in it now.
 
     The fact `at_work` reads — the runner's own word that a session is running
     — and not the realtime process's broker, so a page read on any backend
-    process says the same. Running sessions are few, so all of them are read
-    and the caller looks up the conversations it draws."""
+    process says the same. Only the conversations the caller draws are read:
+    a page with no 支线 under it asks nothing, and one with a few does not read
+    every session running on the platform."""
+    if not conversations:
+        return {}
     rows = await db.execute(
         select(SessionState.conversation_id, SessionState.agent_handle)
-        .where(SessionState.worker_status == RUNNING)
+        .where(
+            SessionState.worker_status == RUNNING,
+            SessionState.conversation_id.in_(list(dict.fromkeys(conversations))),
+        )
         .order_by(SessionState.agent_handle)
     )
     seats: dict[uuid.UUID, list[str]] = {}
