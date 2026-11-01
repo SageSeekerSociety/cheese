@@ -126,37 +126,16 @@ def _page(rows: int, blocks: int) -> dict:
 
 
 @pytest.mark.anyio
-async def test_a_short_page_of_large_rows_is_split_too(monkeypatch) -> None:
-    """The rows are few (a page, under the split threshold) but each is a whole
-    conversation: one `_dumps` of the page is ~7 MB and held the loop for ~78 ms.
-    The walk has to follow the size and not just the element count, or the shape
-    the condition exists for is the one it misses."""
-    data = _page(100, 200)
-    real = conditional._dumps
-    widest = 0
-
-    def counting(value):
-        nonlocal widest
-        text = real(value)
-        widest = max(widest, len(text))
-        return text
-
-    monkeypatch.setattr(conditional, "_dumps", counting)
-
-    response = await conditional.conditional_json(data, None)
-
-    assert response.body == _canonical(data)
-    # No call writes a whole page: the largest is a single row. Without the
-    # size check the page's items went out in one ~7 MB call.
-    assert widest < conditional.WALK_ABOVE_CHARS, widest
-
-
-@pytest.mark.anyio
-async def test_a_short_page_of_large_rows_leaves_the_loop_free() -> None:
+async def test_a_short_page_of_large_rows_is_correct_and_keeps_the_loop_free() -> None:
+    """Few rows (a page, under the split threshold), each a whole conversation: one
+    C call of the page is ~7 MB and held the loop for ~78 ms. The bytes must still
+    be `json.dumps`'s, and no stretch may keep the loop away for long."""
     data = _page(100, 200)
     worst = float("inf")
     for _ in range(3):
         worst = min(worst, await _worst_stall_during(data))
+    response = await conditional.conditional_json(data, None)
+    assert response.body == _canonical(data)
     assert worst < 0.05, worst
 
 
