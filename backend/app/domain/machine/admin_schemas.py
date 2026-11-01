@@ -7,6 +7,10 @@ from pydantic import BaseModel
 class SandboxUsageOut(BaseModel):
     memory_bytes: int | None
     memory_peak_bytes: int | None
+    anon_bytes: int | None
+    file_bytes: int | None
+    swap_bytes: int | None
+    oom_kills: int | None
     memory_read_at: str | None
     disk_bytes: int | None
     disk_inodes: int | None
@@ -21,6 +25,13 @@ class HostUsageOut(BaseModel):
     inodes_used: int | None
     memory_bytes: int | None
     memory_used_bytes: int | None
+    swap_bytes: int | None
+    swap_used_bytes: int | None
+    memory_pressure_some_avg10: float | None
+    memory_pressure_some_avg60: float | None
+    memory_pressure_full_avg10: float | None
+    memory_pressure_full_avg60: float | None
+    zswap: bool | None
     cpu_busy: float | None
     load1: float | None
     sandboxes: int | None

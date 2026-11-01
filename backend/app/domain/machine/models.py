@@ -415,6 +415,25 @@ class HostReading(UuidPk, Base):
     memory_available_bytes: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
+    # The host's swap file, and the pressure the kernel reports on its memory
+    # (percent of the last minute and five the kernel spent stalled, from
+    # /proc/pressure/memory), and whether zswap is loaded — NULL on a machine
+    # that reports none of them, as macOS's does.
+    swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    swap_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_pressure_some_avg10: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_some_avg60: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_full_avg10: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_full_avg60: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    zswap: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # A counter since the host started: what share of its cores it kept busy
     # is the difference between two readings.
     cpu_usage_usec: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -444,6 +463,14 @@ class SandboxUsage(Base):
     memory_read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Of that memory: what is anonymous (a process's own) and what is page
+    # cache; how much of the host's swap it uses (always 0 while a sandbox's
+    # `memory.swap.max` is 0); and how many times the kernel killed one of its
+    # processes for running out of memory since it started.
+    anon_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    file_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    oom_kills: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_read_at: Mapped[datetime | None] = mapped_column(
@@ -472,8 +499,15 @@ def capacity(host: CloudHost) -> int:
     by_memory = (
         sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
     )
+    # The swap file lives on the same data disk (`enrollment.DATA_DISK`), so the
+    # room its sandboxes have is that disk less the reserve and the file.
+    # Counted here rather than as an extra reserve so a deployment that turns
+    # swap off goes back to taking the whole disk, and so the disk guard's own
+    # floors keep their meaning: the file is already spent before any sandbox
+    # is placed.
+    swap_gb = -(-settings.cloud_host_swap_mb // 1024)
     by_disk = (
-        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb
+        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb - swap_gb
     ) // settings.cloud_sandbox_disk_gb
     return max(0, min(by_cores, by_memory, by_disk))
 

@@ -48,8 +48,14 @@ class MachineSettings(BaseModel):
     # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
-    # killed alone, not to share the machine out evenly. No swap, so a session
-    # at its limit is killed instead of pushing the machine into swap. CPU:
+    # killed alone, not to share the machine out evenly. No swap of its own
+    # (`cloud_sandbox_swap_mb` stays 0), so a session at its limit is killed
+    # instead of pushing the machine into swap; the idle page-cache reclaim
+    # (`sandbox_host.reclaim`) is only safe because nothing in a sandbox's
+    # cgroup can be swapped. The host itself keeps a swap file
+    # (`cloud_host_swap_mb`), so a burst in the machine's own processes —
+    # the connector, sshd, the release's language servers — is absorbed
+    # instead of the kernel killing them. CPU:
     # two cores each, so a session alone on a host gets half of it; when they
     # all run, sessions share by equal weight. Processes: stops a
     # fork bomb, well above the threads a Node or JVM build starts.
@@ -77,6 +83,20 @@ class MachineSettings(BaseModel):
     # 95–130 thousand inodes; one project's package store held 6.5 GB.
     cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
     cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
+    # A swap file on a pool host's data disk, made when the host enrolls
+    # (`enrollment.DATA_DISK`): 8 GiB, counted against the disk its sandboxes
+    # share (`models.capacity`) and left out at 0. Extra room nothing is
+    # expected to use in normal running — it turns a burst in the machine's
+    # own processes into a slow page rather than an OOM kill of the connector
+    # and every sandbox with it, and it is what lets a frozen sandbox's pages
+    # leave RAM entirely (step after this one). A sandbox still has no swap
+    # of its own.
+    cloud_host_swap_mb: int = Field(default=8192, ge=0)
+    # How eagerly the host swaps: the kernel's own default is 60, which
+    # trades page cache away for anonymous memory all the time. 10 keeps it
+    # to the case the file is for — memory actually short. Written to
+    # /etc/sysctl.d/90-cheese-swap.conf beside the file.
+    cloud_host_swappiness: int = Field(default=10, ge=0, le=100)
     # What one sandbox on a platform host may hold, however much room the rest
     # of the disk has: its home's project quota (`sandbox_host.py`), past
     # which its writes are refused (ENOSPC). Each project's package store on

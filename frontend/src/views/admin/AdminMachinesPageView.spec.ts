@@ -163,6 +163,13 @@ function usage(fields: Partial<HostUsage> = {}): HostUsage {
     inodes_used: 300_000,
     memory_bytes: 16 * GIB,
     memory_used_bytes: 6 * GIB,
+    swap_bytes: 8 * GIB,
+    swap_used_bytes: 0.5 * GIB,
+    memory_pressure_some_avg10: 1.5,
+    memory_pressure_some_avg60: 2.5,
+    memory_pressure_full_avg10: 0.2,
+    memory_pressure_full_avg60: 0.1,
+    zswap: false,
     cpu_busy: 0.25,
     load1: 1.2,
     sandboxes: 1,
@@ -242,6 +249,10 @@ describe('机器', () => {
       usage: {
         memory_bytes: 2.7 * GIB,
         memory_peak_bytes: 2.9 * GIB,
+        anon_bytes: 2.4 * GIB,
+        file_bytes: 0.3 * GIB,
+        swap_bytes: 0,
+        oom_kills: 0,
         memory_read_at: '2026-10-12T09:59:30Z',
         disk_bytes: 4e9,
         disk_inodes: 120_000,
@@ -254,6 +265,41 @@ describe('机器', () => {
     await fireEvent.click(getByText('pool-a'))
     expect(queryByText(/2\.7 \/ 3\.0 GiB/)).not.toBeNull()
     expect(queryByText(/4\.0 \/ 12 GB/)).not.toBeNull()
+  })
+
+  it('宿主机用了多少交换文件、内存有多紧，页面都说出来', () => {
+    const { getByText } = mount({ overview: overview({}, [host({ usage: usage() })]) })
+    // 交换那一根条，和内存那根分开。
+    expect(getByText('0.5 / 8.0 GiB')).toBeTruthy()
+    expect(
+      getByText(
+        /Memory pressure \(1 min \/ 5 min\): some 1\.5% \/ 2\.5%, full 0\.2% \/ 0\.1%|内存压力（1 分钟 \/ 5 分钟）：some 1\.5% \/ 2\.5%，full 0\.2% \/ 0\.1%/
+      )
+    ).toBeTruthy()
+  })
+
+  it('沙箱用了交换文件、被 OOM 杀过，页面把它们标出来', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.7 * GIB,
+        memory_peak_bytes: 2.9 * GIB,
+        anon_bytes: 2.4 * GIB,
+        file_bytes: 0.3 * GIB,
+        swap_bytes: 0.5 * GIB,
+        oom_kills: 2,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText, queryByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/swap 0\.5 GiB|交换 0\.5 GiB/)).not.toBeNull()
+    expect(queryByText(/OOM-killed 2 times|被 OOM 杀过 2 次/)).not.toBeNull()
   })
 
   it('还没被领走的温机也在宿主机表里，带着它此刻的阶段：在跑的机器一台都不漏', () => {

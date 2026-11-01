@@ -2,9 +2,10 @@
 machines page, and the alert when a host runs short.
 
 The disk guard reads every platform host once a minute (``disk_guard``), and
-with the same reading the host reports its memory, the CPU time its processes
-have taken, its load and what each sandbox's cgroup holds in memory
-(``sandbox_home.disk``). This keeps them:
+with the same reading the host reports its memory and swap, its memory
+pressure, whether zswap is loaded, the CPU time its processes have taken, its
+load and what each sandbox's cgroup holds — memory now and at most, anonymous
+and file pages, swap, OOM kills (``sandbox_home.disk``). This keeps them:
 
 - one ``HostReading`` per host per reading, for ``KEEP``, so the page shows the
   last one, how old it is, and the hours before it;
@@ -110,6 +111,9 @@ async def record(
     rows it was read for, and ``reading`` holds its homes only on a walk."""
     filesystem = reading["filesystem"]
     machine = reading.get("machine") or {}
+    pressure = machine.get("memory_pressure") or {}
+    some = pressure.get("some") or {}
+    full = pressure.get("full") or {}
     groups = reading.get("sandboxes")
     previous = await session.scalar(
         select(HostReading)
@@ -126,6 +130,13 @@ async def record(
         inodes_free=filesystem.get("inodes_free") if filesystem.get("inodes") else None,
         memory_bytes=machine.get("memory"),
         memory_available_bytes=machine.get("memory_available"),
+        swap_bytes=machine.get("swap_bytes"),
+        swap_free_bytes=machine.get("swap_free_bytes"),
+        memory_pressure_some_avg10=some.get("avg10"),
+        memory_pressure_some_avg60=some.get("avg60"),
+        memory_pressure_full_avg10=full.get("avg10"),
+        memory_pressure_full_avg60=full.get("avg60"),
+        zswap=machine.get("zswap"),
         cpu_usage_usec=machine.get("cpu_usage_usec"),
         load1=machine.get("load1"),
         sandboxes=len(groups) if groups is not None else None,
@@ -147,6 +158,10 @@ async def record(
             usage.setdefault(home_id, {}).update(
                 memory_bytes=group["memory"],
                 memory_peak_bytes=group.get("memory_peak"),
+                anon_bytes=group.get("anon"),
+                file_bytes=group.get("file"),
+                swap_bytes=group.get("swap"),
+                oom_kills=group.get("oom_kill"),
                 memory_read_at=now,
             )
     # What the alert needs, read now: a rollback below expires every row the
@@ -262,6 +277,13 @@ def _usage_of(last: HostReading, before: HostReading | None, cores: int) -> dict
         "inodes_used": _less(last.inodes, last.inodes_free),
         "memory_bytes": last.memory_bytes,
         "memory_used_bytes": _less(last.memory_bytes, last.memory_available_bytes),
+        "swap_bytes": last.swap_bytes,
+        "swap_used_bytes": _less(last.swap_bytes, last.swap_free_bytes),
+        "memory_pressure_some_avg10": last.memory_pressure_some_avg10,
+        "memory_pressure_some_avg60": last.memory_pressure_some_avg60,
+        "memory_pressure_full_avg10": last.memory_pressure_full_avg10,
+        "memory_pressure_full_avg60": last.memory_pressure_full_avg60,
+        "zswap": last.zswap,
         "cpu_busy": cpu_busy(last, before, cores),
         "load1": last.load1,
         "sandboxes": last.sandboxes,
@@ -326,6 +348,10 @@ async def sandboxes_now(
         row.home_id: {
             "memory_bytes": row.memory_bytes,
             "memory_peak_bytes": row.memory_peak_bytes,
+            "anon_bytes": row.anon_bytes,
+            "file_bytes": row.file_bytes,
+            "swap_bytes": row.swap_bytes,
+            "oom_kills": row.oom_kills,
             "memory_read_at": _iso(row.memory_read_at),
             "disk_bytes": row.disk_bytes,
             "disk_inodes": row.disk_inodes,

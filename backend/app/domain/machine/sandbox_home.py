@@ -17,11 +17,15 @@ runs there with nothing of ours importable, like that one.
   quota of its own (``sandbox_host.py``), and the kernel answers a
   ``statvfs`` of the home with that quota's limit and use: what each home
   holds, read without walking it. Also what the machine itself uses — its
-  memory, the CPU time its processes have taken, its load — and what each
-  sandbox's cgroup holds in memory now and at most (``machine``,
-  ``sandboxes``), for the admin machines page (``readings``). A reading this
-  machine cannot give, on one with no /proc, no sandbox cgroups or no
-  quotas, is left out, not guessed. Each sandbox named in ``idle`` is asked to
+  memory and swap, its memory pressure, whether zswap is loaded, the CPU time
+  its processes have taken, its load — and what each sandbox's cgroup holds
+  in memory now and at most, its anonymous and file pages, its swap and how
+  often it was OOM-killed (``machine``, ``sandboxes``), for the admin machines
+  page (``readings``). A reading this machine cannot give, on one with no
+  /proc, no sandbox cgroups, no PSI or no quotas, is left out, not guessed.
+  ``swap``, ``freeze`` and ``thaw`` wrap the helper's commands of those names
+  for the sandbox-freezing step; the lifecycle does not call them yet. Each
+  sandbox named in ``idle`` is asked to
   give back its page cache first (``sandbox_host.py reclaim``), where the
   machine has the helper.
 
@@ -41,6 +45,8 @@ from pathlib import Path
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 SANDBOX_CGROUPS = CGROUP_ROOT / "cheese-sandboxes"
 MEMINFO = Path("/proc/meminfo")
+PRESSURE_MEMORY = Path("/proc/pressure/memory")
+ZSWAP = Path("/sys/module/zswap")
 
 
 def destroy(cleanup, project, resource) -> dict:
@@ -92,17 +98,70 @@ def _number(path, field=None):
     return None
 
 
+# Unannotated for the same reason as `_number`: this runs on Python 3.9 too.
+def _fields(path, *names):
+    """The integers a kernel file keeps as ``key value`` lines, by key."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return {}
+    found = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in names and parts[1].isdigit():
+            found[parts[0]] = int(parts[1])
+    return found
+
+
+def _pressure(path):
+    """Memory pressure from /proc/pressure/memory: for ``some`` and ``full``,
+    the share of time it was stalled over the last minute and five, as the
+    kernel reports it (percent, not a fraction). None where the machine has
+    no such file (whenever the kernel was built without PSI)."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return None
+    found = {}
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) < 2 or parts[0] not in ("some", "full"):
+            continue
+        values = {}
+        for part in parts[1:]:
+            key, _, value = part.partition("=")
+            if key not in ("avg10", "avg60"):
+                continue
+            try:
+                values[key] = float(value)
+            except ValueError:
+                pass
+        if values:
+            found[parts[0]] = values
+    return found or None
+
+
 def machine() -> dict:
     """What this machine uses: its memory from /proc/meminfo, which in a
-    MicroCloud LXC is the container's own (lxcfs); the CPU time its processes
-    have taken, from its cgroup root, a counter the platform turns into a
-    share between two readings; its one-minute load."""
+    MicroCloud LXC is the container's own (lxcfs), and its swap; memory
+    pressure from /proc/pressure/memory; whether zswap is loaded; the CPU
+    time its processes have taken, from its cgroup root, a counter the
+    platform turns into a share between two readings; its one-minute load."""
     found = {}
     total = _number(MEMINFO, "MemTotal:")
     available = _number(MEMINFO, "MemAvailable:")
     if total and available is not None:
         found["memory"] = total * 1024
         found["memory_available"] = available * 1024
+    swap_total = _number(MEMINFO, "SwapTotal:")
+    swap_free = _number(MEMINFO, "SwapFree:")
+    if swap_total is not None and swap_free is not None:
+        found["swap_bytes"] = swap_total * 1024
+        found["swap_free_bytes"] = swap_free * 1024
+    pressure = _pressure(PRESSURE_MEMORY)
+    if pressure is not None:
+        found["memory_pressure"] = pressure
+    found["zswap"] = ZSWAP.is_dir()
     usage = _number(CGROUP_ROOT / "cpu.stat", "usage_usec")
     if usage is not None:
         found["cpu_usage_usec"] = usage
@@ -114,19 +173,29 @@ def machine() -> dict:
 
 
 def sandboxes() -> list:
-    """Each sandbox the helper gave a cgroup: its home's name, and the memory
-    it holds now and has held at most since it started."""
+    """Each sandbox the helper gave a cgroup: its home's name; the memory it
+    holds now and has held at most since it started, and how much of that is
+    anonymous and page cache; how much of the host's swap it uses (none at
+    `memory.swap.max` 0); and how many times the kernel has had to kill one
+    of its processes for running out of memory."""
     found = []
     groups = sorted(SANDBOX_CGROUPS.iterdir()) if SANDBOX_CGROUPS.is_dir() else []
     for group in groups:
         memory = _number(group / "memory.current") if group.is_dir() else None
         if memory is None:
             continue
+        stats = _fields(group / "memory.stat", "anon", "file")
         found.append(
             {
                 "resource": group.name,
                 "memory": memory,
                 "memory_peak": _number(group / "memory.peak"),
+                "swap": _number(group / "memory.swap.current"),
+                "anon": stats.get("anon"),
+                "file": stats.get("file"),
+                "oom_kill": _fields(group / "memory.events", "oom_kill").get(
+                    "oom_kill"
+                ),
             }
         )
     return found
@@ -159,6 +228,35 @@ def reclaim(cleanup, names) -> dict:
     if result.returncode:
         return {"reclaim_error": result.stderr.strip()[-300:]}
     return json.loads(result.stdout)
+
+
+def _helper(cleanup, *argv) -> dict:
+    """Run one of the helper's commands on the machine, which must be there:
+    a machine without it (a person's own computer) skips this."""
+    if not Path(cleanup["SANDBOX_HOST"]).exists():
+        return {}
+    result = cleanup["run_command"](["sudo", "-n", cleanup["SANDBOX_HOST"], *argv])
+    if result.returncode:
+        return {f"{argv[0]}_error": result.stderr.strip()[-300:]}
+    return json.loads(result.stdout)
+
+
+def swap(cleanup, name, mib) -> dict:
+    """Set how much of the host's swap one sandbox may use, in MiB
+    (`sandbox_host.py swap`). The lifecycle does not call this yet."""
+    return _helper(cleanup, "swap", str(name), str(mib))
+
+
+def freeze(cleanup, names) -> dict:
+    """Stop every process in these sandboxes (`sandbox_host.py freeze`). The
+    lifecycle does not call this yet."""
+    return _helper(cleanup, "freeze", *[str(name) for name in names])
+
+
+def thaw(cleanup, names) -> dict:
+    """Resume the processes of these sandboxes (`sandbox_host.py thaw`). The
+    lifecycle does not call this yet."""
+    return _helper(cleanup, "thaw", *[str(name) for name in names])
 
 
 def disk(cleanup, live, grace_s, idle=()) -> dict:
@@ -206,7 +304,13 @@ def disk(cleanup, live, grace_s, idle=()) -> dict:
     }
 
 
-ACTIONS = {"destroy": destroy, "disk": disk}
+ACTIONS = {
+    "destroy": destroy,
+    "disk": disk,
+    "swap": swap,
+    "freeze": freeze,
+    "thaw": thaw,
+}
 
 
 def main(cleanup, request):
