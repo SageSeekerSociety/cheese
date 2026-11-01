@@ -144,12 +144,7 @@ class IdentityService:
         found, cached = recall(self._session, key)
         if found:
             return cached
-        user = await self._users.get_by_handle(handle)
-        answer = (
-            await self._bindings.get_for_user(user.id) is not None
-            if user is not None
-            else False
-        )
+        answer = handle in await self._bindings.agent_handles([handle])
         remember(
             self._session,
             key,
@@ -159,7 +154,7 @@ class IdentityService:
         return answer
 
     async def agents_among(self, handles: Sequence[str]) -> set[str]:
-        """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，两次往返。
+        """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，一次往返。
 
         名册要对整张表问这一句。逐个 ``is_agent`` 是 N+1——一个 30 人的项目就是 60
         次往返，而判据本身（带不带 agent-binding）一次就能全部问出来。
@@ -180,13 +175,7 @@ class IdentityService:
                 missing.append(h)
         if not missing:
             return known
-        users = await self._users.get_by_handles(missing)
-        agent_ids = await self._bindings.agent_user_ids(
-            [user.id for user in users.values()]
-        )
-        found_agents = {
-            handle for handle, user in users.items() if user.id in agent_ids
-        }
+        found_agents = await self._bindings.agent_handles(missing)
         tables = frozenset({"user", "agent_bindings"})
         for h in missing:
             remember(self._session, ("is_agent", h), h in found_agents, tables=tables)

@@ -9,6 +9,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
+from app.domain.conversation.models import ConversationKind
 from app.domain.living_doc.services import Documents
 
 # `Task`, `TaskStatus` and `TopicStatus` are part of the answer this seam gives
@@ -149,6 +150,15 @@ class PlaceResolver:
                 place.room.id,
                 tables=frozenset({"tasks", "threads"}),
             )
+            if place.task is None and place.thread is None:
+                # A room's own conversation: what `machine.holder` asks of its
+                # kind next, on every request a session's tools make.
+                remember(
+                    self._session,
+                    ("conversation_kind", conversation_id),
+                    ConversationKind.room,
+                    tables=frozenset({"conversations"}),
+                )
         return place
 
     async def _conversation(self, conversation_id: uuid.UUID) -> Place | None:
