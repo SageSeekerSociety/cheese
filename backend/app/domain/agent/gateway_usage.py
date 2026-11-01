@@ -485,6 +485,17 @@ async def _model_kwargs(
     return kwargs, "gateway" if routed else "native"
 
 
+def room_key_in_step(settings: dict | None, target: float | None) -> str | None:
+    """The project key, when the project's settings as already read name one
+    whose budget is ``target``: what `_gateway_project_env`'s read path would
+    answer, without opening a session to read the project again."""
+    s = settings or {}
+    key = s.get(_ROOM_SLOT.key)
+    if isinstance(key, str) and key and s.get(_ROOM_SLOT.budget) == target:
+        return key
+    return None
+
+
 async def project_gateway_key(
     service: _GatewayUsage,
     sessions: async_sessionmaker,

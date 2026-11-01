@@ -456,8 +456,12 @@ async def admission(
     # and caps this admission just read: worked out here, those reads are
     # answered again in this transaction rather than made again on the key's
     # own session (`project_gateway_key`).
+    # When the project's settings, read at the top of this admission, already
+    # name a key in step with that budget, that key is the answer: the key's
+    # own read path would only read the project again to find the same.
     project_key = pool == GATEWAY and refused is None and from_proxy
     budget_target = UNKNOWN_TARGET
+    ready_key = None
     if project_key and project is not None and credit_context is None:
         try:
             budget_target = await chat._gateway_budget_target(db, project_uuid)
@@ -466,6 +470,8 @@ async def admission(
             # the proxy refuses; raised from the route it would read as the
             # backend unreachable and let the call through unchecked.
             logger.exception("admission budget target failed for %s", project_uuid)
+        else:
+            ready_key = chat.room_key_in_step(project.settings, budget_target)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -498,7 +504,7 @@ async def admission(
                 credit_owner_handle=credit_context.owner_handle,
             )
         else:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid, budget_target=budget_target
             )
 
