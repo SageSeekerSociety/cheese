@@ -130,6 +130,22 @@ class MachineSettings(BaseModel):
     # ten hosts' disks written full, so each place above ten over-commits it by
     # a disk. Raise this only as that pool grows.
     cloud_pool_max_hosts: int = Field(default=12, ge=1, le=500)
+    # How many ordinary hosts the pool keeps up, whatever the demand: ten, the
+    # number the shared thin pool above holds, leaving the other two places for
+    # whole cloud VMs. One is added until there are this many, an idle one is
+    # kept instead of released after `cloud_host_idle_hold_s`, and one above
+    # this number is released once it is idle. 0 = no fixed size: the pool is
+    # sized by demand (`cloud_pool_min_free_slots`) and an idle host is released
+    # again, which is what the platform did before this setting.
+    cloud_pool_fixed_hosts: int = Field(default=10, ge=0, le=500)
+    # A host older than this is rolled: taken out of rotation (it takes no new
+    # sandbox, and is released once its last one is gone) and replaced with a
+    # fresh one, so the fleet takes new enrollment scripts and templates without
+    # an outage. A host whose image version is no longer the current one is
+    # rolled regardless of age. 0 = age alone never rolls a host. Rolling needs
+    # a fixed size above (`cloud_pool_fixed_hosts`), and only one host is rolled
+    # at a time.
+    cloud_host_rebuild_after_days: int = Field(default=14, ge=0, le=365)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer

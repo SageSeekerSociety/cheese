@@ -94,6 +94,8 @@ def warm_case(client, monkeypatch):
     """One ready warm machine, enrolled and connected."""
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    # A warm pool is what a demand-sized pool keeps; a fixed pool keeps hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr("app.domain.machine.warm.device_hub.is_online", lambda _: True)
 
     async def seed():
@@ -200,6 +202,26 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
 def test_disabling_pool_deletes_only_unused_capacity(warm_case, monkeypatch):
     client, cloud = warm_case
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 0)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await WarmPoolService(session, cloud).sweep()
+            row = await session.scalar(select(WarmMachine))
+            assert row.state == "deleted"
+            assert await session.get(DeviceRow, "warm-test") is None
+
+    client.portal.call(lambda: run())
+    assert cloud.deleted == [200]
+
+
+def test_a_fixed_pool_prepares_no_warm_machine(warm_case, monkeypatch):
+    """A fixed pool keeps its own hosts up, so a warm machine beside it would be
+    one more machine running and billed for nothing: the sweep reads the target
+    as 0 and deletes the unused one already there, as a warm pool of size 0
+    always did."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 1)
 
     async def run():
         async with client.test_request_factory() as session:

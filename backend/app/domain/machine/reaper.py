@@ -32,6 +32,7 @@ from app.core.sentences import say
 from app.domain.agent_session.models import LEASE_DEVICE, LOST_KEY, AgentSession
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
+from app.domain.machine import enrollment
 from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -94,9 +95,12 @@ def free_slots(host: CloudHost, load: dict[uuid.UUID, int]) -> int:
 
 
 def accepting(host: CloudHost) -> bool:
-    """Whether a new session may be placed on this host."""
+    """Whether a new session may be placed on this host. A host being rebuilt
+    takes none: its sandboxes are the ones it already has, and it is released
+    once they are gone."""
     return (
         host.released_at is None
+        and host.draining_since is None
         and host.failed_at is None
         and not host.whole_machine
         and host.disk_full_since is None
@@ -176,23 +180,39 @@ class PoolSweep:
 
     # ``HostPool``'s own, called from ``maintain`` and ``_grow`` below.
     async def _provider_failing(self, now: datetime) -> int: ...
-    async def _host_body(self) -> tuple[dict, int]: ...
+    async def _host_body(self) -> tuple[dict, int, str]: ...
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None: ...
     async def _acquire(
-        self, body: dict, home: dict | None, data_disk: int
+        self,
+        body: dict,
+        home: dict | None,
+        data_disk: int,
+        *,
+        image_version: str | None = None,
     ) -> CloudHost: ...
 
     async def maintain(self) -> None:
         """Keep the pool the size its sessions need.
 
-        A host that has had no sandbox on it for ``cloud_host_idle_hold_s`` is
-        released — while the free slots left behind stay at least
-        ``cloud_pool_min_free_slots``. Also gives up on hosts the provider failed and on
+        With ``cloud_pool_fixed_hosts``, the pool is that many ordinary hosts
+        whatever the demand: one is added until there are that many, an idle
+        one is kept rather than released after the hold, and hosts above that
+        number are released once they are idle. Without it, a host that has had
+        no sandbox on it for ``cloud_host_idle_hold_s`` is released — while the
+        free slots left behind stay at least ``cloud_pool_min_free_slots`` —
+        and a host is added when the free slots fall below that floor.
+
+        Either way a host being rebuilt (``draining_since``) takes no new
+        sandbox and is released as soon as none is on it. In fixed mode the
+        oldest out-of-date host (``_outdated``) is drained, one at a time, when
+        the other hosts have room for a whole host's worth — so a rebuild never
+        costs the pool a slot. Also gives up on hosts the provider failed and on
         enrolled ones that stopped answering (``_lost``), closes the preparing
-        line of every room whose sandbox's host is up, and adds a host when the
-        free slots fall below that floor.
+        line of every room whose sandbox's host is up, and adds the hosts the
+        pool is short of.
         """
         now = datetime.now(UTC)
+        fixed = settings.cloud_pool_fixed_hosts
         await self._repo.lock_pool()
         hosts = await self._repo.live()
         load = await self._repo.occupancy()
@@ -210,6 +230,23 @@ class PoolSweep:
         live = [host for host in hosts if host not in failed and host not in lost]
         free = sum(free_slots(host, load) for host in live if accepting(host))
         hold = timedelta(seconds=settings.cloud_host_idle_hold_s)
+        # Ordinary hosts above the fixed size. They go by the old rule — idle
+        # past the hold — until the pool is back at its size. A draining host is
+        # not counted: it leaves for its own reason, and counting it here would
+        # release another host beside it and leave the pool short.
+        excess = (
+            max(
+                0,
+                sum(
+                    1
+                    for host in live
+                    if not host.whole_machine and host.draining_since is None
+                )
+                - fixed,
+            )
+            if fixed
+            else 0
+        )
         idle: list[CloudHost] = []
         for host in live:
             homes = load.get(host.id, 0)
@@ -220,24 +257,49 @@ class PoolSweep:
                     host.released_at = now
                     idle.append(host)
                 continue
+            if host.draining_since is not None:
+                # Going anyway: it takes no new sandbox, and leaves the moment
+                # its last one is gone rather than after the idle hold.
+                if not homes and host.machine_id is not None:
+                    host.released_at = now
+                    idle.append(host)
+                else:
+                    host.idle_since = None
+                continue
             if homes or host.machine_id is None or host.warm_claim_pending:
                 host.idle_since = None
                 continue
             idle_since = host.idle_since = host.idle_since or now
             if now - idle_since < hold:
                 continue
-            spare = free_slots(host, load) if accepting(host) else 0
-            if free - spare < settings.cloud_pool_min_free_slots:
-                continue
-            free -= spare
+            if fixed:
+                if not excess:
+                    # Part of the fixed pool: kept, however long it idles.
+                    continue
+                excess -= 1
+            else:
+                spare = free_slots(host, load) if accepting(host) else 0
+                if free - spare < settings.cloud_pool_min_free_slots:
+                    continue
+                free -= spare
             host.released_at = now
             idle.append(host)
         await self._session.flush()
-        grow = (
-            free < settings.cloud_pool_min_free_slots
-            and sum(_counts_toward_cap(h) for h in live) < settings.cloud_pool_max_hosts
-            and not await self._provider_failing(now)
-        )
+        if fixed:
+            grow = (
+                sum(1 for h in live if not h.whole_machine and h.released_at is None)
+                < fixed
+                and sum(_counts_toward_cap(h) for h in live)
+                < settings.cloud_pool_max_hosts
+                and not await self._provider_failing(now)
+            )
+        else:
+            grow = (
+                free < settings.cloud_pool_min_free_slots
+                and sum(_counts_toward_cap(h) for h in live)
+                < settings.cloud_pool_max_hosts
+                and not await self._provider_failing(now)
+            )
         await self._session.commit()
         for host in failed:
             await self._repo.lock_pool()
@@ -248,29 +310,119 @@ class PoolSweep:
         for host in idle:
             logger.info("cloud pool releasing idle host %s", host.hostname)
             await self._delete_at_provider(host)
+        if fixed and live and not any(host.draining_since is not None for host in live):
+            await self._drain_one(now)
         if grow:
             await self._grow()
         await self.settle_waiting()
 
     async def _grow(self) -> None:
-        """Add a host ahead of demand, if the free slots are still short once
-        the provider has been read."""
+        """Add the hosts the pool is short of, if it still is once the provider
+        has been read: one in demand mode, up to the fixed size in fixed mode."""
+        fixed = settings.cloud_pool_fixed_hosts
         try:
-            body, data_disk = await self._host_body()
-            await self._repo.lock_pool()
-            load = await self._repo.occupancy()
-            hosts = await self._repo.live()
-            free = sum(free_slots(host, load) for host in hosts if accepting(host))
-            if free >= settings.cloud_pool_min_free_slots:
-                await self._session.commit()
-                return
-            await self._require_room_to_grow()
-            host = await self._acquire(body, None, data_disk)
-        except (MicroCloudError, ValidationError, CloudKeepsFailing, CloudPoolFull):
+            body, data_disk, image_version = await self._host_body()
+        except (MicroCloudError, ValidationError):
             logger.warning("cloud pool could not add a host", exc_info=True)
-            await self._session.rollback()
             return
-        logger.info("cloud pool added host %s ahead of demand", host.hostname)
+        while True:
+            try:
+                await self._repo.lock_pool()
+                load = await self._repo.occupancy()
+                hosts = await self._repo.live()
+                if fixed:
+                    if sum(1 for host in hosts if not host.whole_machine) >= fixed:
+                        await self._session.commit()
+                        return
+                else:
+                    free = sum(
+                        free_slots(host, load) for host in hosts if accepting(host)
+                    )
+                    if free >= settings.cloud_pool_min_free_slots:
+                        await self._session.commit()
+                        return
+                await self._require_room_to_grow()
+                host = await self._acquire(
+                    body, None, data_disk, image_version=image_version
+                )
+            except (
+                MicroCloudError,
+                ValidationError,
+                CloudKeepsFailing,
+                CloudPoolFull,
+            ):
+                logger.warning("cloud pool could not add a host", exc_info=True)
+                await self._session.rollback()
+                return
+            logger.info("cloud pool added host %s ahead of demand", host.hostname)
+            if not fixed:
+                return
+
+    async def _drain_one(self, now: datetime) -> None:
+        """Take the oldest out-of-date host out of rotation, if one is out of
+        date and the others have room for a whole host's worth of sandboxes: a
+        rebuild then costs the pool no capacity. One at a time, and never while
+        the provider is failing.
+
+        A host being rebuilt still counts as a host of the fixed pool, so its
+        replacement is added only once it is gone (``maintain``), never beside
+        it. Reads the provider with no lock held, then looks at the pool again
+        under its lock."""
+        try:
+            version = await enrollment.current_host_image_version(self._client)
+        except (MicroCloudError, ValidationError):
+            # Without today's version no host can be called out of date; asking
+            # again next sweep is cheaper than guessing.
+            logger.warning(
+                "cloud pool could not read the current image version", exc_info=True
+            )
+            return
+        await self._repo.lock_pool()
+        hosts = await self._repo.live()
+        load = await self._repo.occupancy()
+        if any(host.draining_since is not None for host in hosts):
+            await self._session.commit()
+            return
+        if await self._provider_failing(now):
+            await self._session.commit()
+            return
+        stale = [
+            host
+            for host in hosts
+            if accepting(host)
+            and host.machine_id is not None
+            and host.device_id is not None
+            and capacity(host) > 0
+            and self._outdated(host, version, now)
+        ]
+        if not stale:
+            await self._session.commit()
+            return
+        host = min(stale, key=lambda h: (h.created_at, h.id))
+        others = sum(
+            free_slots(other, load)
+            for other in hosts
+            if accepting(other) and other.id != host.id
+        )
+        if others < capacity(host):
+            # The rest cannot take a whole host's worth: draining now would
+            # leave the pool short while the host is rebuilt.
+            await self._session.commit()
+            return
+        host.draining_since = now
+        host.idle_since = None
+        await self._session.commit()
+        logger.info("cloud pool rebuilding stale host %s", host.hostname)
+
+    def _outdated(self, host: CloudHost, version: str, now: datetime) -> bool:
+        """Whether a host no longer matches what a host created now would be:
+        its image version differs (NULL counts — a host from before the column
+        existed recorded nothing), or it is older than
+        ``cloud_host_rebuild_after_days`` when that is set."""
+        if host.image_version != version:
+            return True
+        days = settings.cloud_host_rebuild_after_days
+        return days > 0 and host.created_at < now - timedelta(days=days)
 
     async def _silent(self, host: CloudHost, now: datetime) -> bool:
         """An enrolled host whose connector has not reached the platform for
