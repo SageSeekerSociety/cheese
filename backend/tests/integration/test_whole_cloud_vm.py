@@ -75,6 +75,8 @@ def cloud(client, monkeypatch):
     # A pool host is kept this long once empty; a VM is not.
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 3600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
+    # The pool here is sized by demand; the VMs take the room the cap leaves.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     provider = FakeMicroCloud(offerings=[LXC, VM])
     monkeypatch.setattr(
         "app.domain.machine.services.MicroCloudClient", lambda: provider

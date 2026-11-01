@@ -84,6 +84,13 @@ export interface MachineHost {
   offline_since: string | null
   failed_at: string | null
   released_at: string | null
+  /** 建这台时所装的镜像版本；旧行（和温机）为 null，即不知道。 */
+  image_version: string | null
+  /** 和现在会建的那一版是否不同；问不到 provider、或是整机虚拟机时为 null。 */
+  image_outdated: boolean | null
+  /** 正在滚动重建：不再接新沙箱，等它空了就释放、换一台新的。 */
+  draining: boolean
+  draining_since: string | null
   enroll_attempts: number
   enroll_error: string | null
   /** 还没读到过（没注册、不在线、刚起来）时为 null。 */
@@ -127,6 +134,8 @@ export interface MachinesOverview {
     provider_probe_min: number
     last_provider_failure: string | null
     refusing: boolean
+    /** 固定常开的普通宿主机数；0 表示纯按需扩缩。 */
+    fixed_hosts: number
     warm_target: number
   }
   config: {
@@ -134,6 +143,8 @@ export interface MachinesOverview {
     sandbox_memory_mb: number
     sandbox_idle_s: number
     host_idle_hold_s: number
+    /** 固定池里宿主机只按年龄重建的天数；0 表示年龄不触发重建。 */
+    rebuild_after_days: number
     vm_idle_s: number
     sandbox_disk_budget_gb: number
     sandbox_inode_budget: number

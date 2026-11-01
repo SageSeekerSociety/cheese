@@ -66,6 +66,10 @@ class MachineHostOut(BaseModel):
     offline_since: str | None
     failed_at: str | None
     released_at: str | None
+    image_version: str | None
+    image_outdated: bool | None
+    draining: bool
+    draining_since: str | None
     enroll_attempts: int
     enroll_error: str | None
     usage: HostUsageOut | None
@@ -105,6 +109,7 @@ class MachinePoolOut(BaseModel):
     provider_probe_min: int
     last_provider_failure: str | None
     refusing: bool
+    fixed_hosts: int
     warm_target: int
 
 
@@ -113,6 +118,7 @@ class MachineConfigOut(BaseModel):
     sandbox_memory_mb: int
     sandbox_idle_s: int
     host_idle_hold_s: int
+    rebuild_after_days: int
     vm_idle_s: int
     sandbox_disk_budget_gb: int
     sandbox_inode_budget: int
