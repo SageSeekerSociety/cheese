@@ -242,3 +242,22 @@ async def test_admission_answers_a_key_in_step_from_the_project_it_read(
     assert again.json()["data"]["supply"]["key"] == "sk-virt-1", again.text
     assert len([s for s in seen if "FROM projects" in s]) == 1
     assert [s for s in seen if s.startswith("SELECT inside.room_id")] == []
+
+
+async def test_admission_reads_the_paying_team_with_its_plan(client, monkeypatch):
+    """Who pays for a project's model calls is its team on its plan: one
+    statement for both, where the team and the plan were two."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    teams = [s for s in seen if "FROM team" in s and "team_user_relation" not in s]
+    assert len(teams) == 1, teams
+    assert "JOIN plans" in teams[0]
+    assert [s for s in seen if s.startswith("SELECT plans.")] == []

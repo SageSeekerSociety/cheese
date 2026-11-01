@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.domain.team.models import Team
 from app.domain.team.services import team_service
 from app.domain.usage.models import Plan
 from app.domain.usage.windows import Window
@@ -135,20 +136,60 @@ async def payers_for_projects(
 ) -> dict[uuid.UUID, Payer]:
     """Each project's payer: its team, whoever in the room made the call."""
 
-    teams = await team_service(session).get_teams_by_ids(
-        sorted({p.team_id for p in projects})
-    )
-    terms = await terms_of(session, [t.plan_key for t in teams.values()] + ["free"])
+    teams = await _payer_teams(session, sorted({p.team_id for p in projects}))
+    keys = [plan_key for plan_key, _ in teams.values()]
+    if len(teams) < len({p.team_id for p in projects}):
+        keys.append("free")
+    terms = await terms_of(session, keys)
     out: dict[uuid.UUID, Payer] = {}
     for project in projects:
         team = teams.get(project.team_id)
         out[project.id] = Payer(
             team_id=project.team_id,
-            terms=terms[team.plan_key if team is not None else "free"],
+            terms=terms[team[0] if team is not None else "free"],
             project_id=project.id,
-            personal=team is not None and team.personal_owner_user_id is not None,
+            personal=team is not None and team[1],
         )
     return out
+
+
+async def _payer_teams(
+    session: AsyncSession, team_ids: list[int]
+) -> dict[int, tuple[str, bool]]:
+    """Team id → (plan key, whether it is someone's personal team), for the
+    teams among ``team_ids`` that exist. Read with the plans those teams are
+    on, in one statement: admitting a model call asks this every time, and the
+    team and its plan were two round trips. The plans' terms go into the
+    request's facts that `terms_of` answers from."""
+    if not isinstance(session, AsyncSession):
+        teams = await team_service(session).get_teams_by_ids(team_ids)
+        return {
+            t.id: (t.plan_key, t.personal_owner_user_id is not None)
+            for t in teams.values()
+        }
+    if session.autoflush:
+        await session.flush()
+    key = ("payer_teams", tuple(team_ids))
+    found, cached = recall(session, key)
+    if found:
+        return cached
+    rows = await session.execute(
+        select(Team.id, Team.plan_key, Team.personal_owner_user_id, Plan)
+        .outerjoin(Plan, Plan.key == Team.plan_key)
+        .where(Team.id.in_(team_ids), Team.deleted_at.is_(None))
+    )
+    teams: dict[int, tuple[str, bool]] = {}
+    for team_id, plan_key, owner, plan in rows:
+        teams[team_id] = (plan_key, owner is not None)
+        if plan is not None:
+            remember(
+                session,
+                ("plan_terms", plan.key),
+                Terms.of(plan),
+                tables=frozenset({"plans"}),
+            )
+    remember(session, key, teams, tables=frozenset({"team"}))
+    return teams
 
 
 async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Payer:
