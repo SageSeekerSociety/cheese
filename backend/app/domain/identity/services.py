@@ -144,7 +144,15 @@ class IdentityService:
         found, cached = recall(self._session, key)
         if found:
             return cached
-        answer = handle in await self._bindings.agent_handles([handle])
+        # A user this request has read already answers by its binding; one
+        # it has not is read with its binding in one statement.
+        loaded, unread = await self._users.loaded_by_handles([handle])
+        if handle in loaded:
+            answer = await self._bindings.get_for_user(loaded[handle].id) is not None
+        else:
+            answer = bool(unread) and handle in await self._bindings.agent_handles(
+                unread
+            )
         remember(
             self._session,
             key,
@@ -175,7 +183,18 @@ class IdentityService:
                 missing.append(h)
         if not missing:
             return known
-        found_agents = await self._bindings.agent_handles(missing)
+        # Users this request has read already answer by their bindings (often
+        # known by user id too); the rest are read with their bindings in one
+        # statement.
+        loaded, unread = await self._users.loaded_by_handles(missing)
+        agent_ids = (
+            await self._bindings.agent_user_ids([u.id for u in loaded.values()])
+            if loaded
+            else set()
+        )
+        found_agents = {h for h, u in loaded.items() if u.id in agent_ids}
+        if unread:
+            found_agents |= await self._bindings.agent_handles(unread)
         tables = frozenset({"user", "agent_bindings"})
         for h in missing:
             remember(self._session, ("is_agent", h), h in found_agents, tables=tables)

@@ -161,8 +161,11 @@ _AGENT_INSTANCES_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM agent_instances\b",
     re.IGNORECASE,
 )
+# Which of a batch are agents: the bindings of users already read, or the
+# users joined to their bindings in one statement (`agent_handles`).
 _AGENT_BINDINGS_IN_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\s+WHERE agent_bindings\.user_id IN\b",
+    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\s+WHERE agent_bindings\.user_id IN\b"
+    r"|^\s*SELECT\b[^;]*?\bJOIN agent_bindings ON\b",
     re.IGNORECASE,
 )
 _SESSION_STATES_SELECT = re.compile(
@@ -1978,7 +1981,7 @@ _PROJECT_ROLE_DEFS_SELECT = re.compile(
     re.IGNORECASE,
 )
 _AGENT_BINDINGS_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM agent_bindings\b",
+    r"^\s*SELECT\b[^;]*?\b(?:FROM|JOIN) agent_bindings\b",
     re.IGNORECASE,
 )
 
