@@ -70,6 +70,11 @@ def _empty(case: Case, host_id: uuid.UUID) -> None:
     case.run(go)
 
 
+#: Provider machine ids for the hosts a test puts on the rows itself, so two
+#: of them never claim the same machine.
+_SEEDED = {"machine": 9000}
+
+
 def _seed_host(
     case: Case,
     name: str,
@@ -82,13 +87,15 @@ def _seed_host(
 
     host_id = uuid.uuid4()
     device_id = f"dev-{name}"
+    _SEEDED["machine"] += 1
+    machine_id = _SEEDED["machine"]
 
     async def go():
         async with case.client.test_request_factory() as db:
             db.add(
                 CloudHost(
                     id=host_id,
-                    machine_id=9000 + abs(hash(name)) % 900,
+                    machine_id=machine_id,
                     customer_id=1,
                     account_id=1,
                     offering_id=1,

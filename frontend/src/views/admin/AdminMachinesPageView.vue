@@ -107,8 +107,7 @@ function spec(h: MachineHost | WarmMachineRow): string {
 /** 这一台此刻最该让人知道的一句：为什么坏、从什么时候起。 */
 function hostNote(h: MachineHost): string {
   if (h.phase === 'failed') return t('admin.machines.note.failed', { at: stamp(h.failed_at) })
-  if (h.draining && h.draining_since)
-    return t('admin.machines.note.draining', { for: since(h.draining_since) })
+  if (h.draining && h.draining_since) return t('admin.machines.note.draining', { for: since(h.draining_since) })
   if (h.phase === 'releasing') return t('admin.machines.note.releasing', { at: stamp(h.released_at) })
   if (h.phase === 'enroll_failing')
     return t('admin.machines.note.enrollFailing', { n: h.enroll_attempts, error: h.enroll_error ?? '' })
@@ -580,15 +579,10 @@ const failureNote = computed(() =>
       </p>
       <p v-if="overview.pool.fixed_hosts" class="mc-foot">
         {{
-          t(
-            overview.config.rebuild_after_days
-              ? 'admin.machines.fixedFoot'
-              : 'admin.machines.fixedFootNoAge',
-            {
-              n: overview.pool.fixed_hosts,
-              days: overview.config.rebuild_after_days,
-            }
-          )
+          t(overview.config.rebuild_after_days ? 'admin.machines.fixedFoot' : 'admin.machines.fixedFootNoAge', {
+            n: overview.pool.fixed_hosts,
+            days: overview.config.rebuild_after_days,
+          })
         }}
       </p>
       <p class="mc-foot">
