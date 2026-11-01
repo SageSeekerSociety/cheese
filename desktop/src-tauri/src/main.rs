@@ -104,10 +104,13 @@ fn from_content(url: &Url) -> bool {
 /// On macOS this is asked of every frame's navigation, not only the window's,
 /// and the handler is not told which frame it is: a mini-app or a preview the
 /// page loads into a frame from the content domain has to stay, or it opens in
-/// the browser and the frame stays empty. The window itself never goes there:
-/// the page frames that content sandboxed without `allow-top-navigation`, and
-/// links out of it open in the browser (`on_new_window`). Nor can a content
-/// page call the app: the IPC capability names the server's origin only.
+/// the browser and the frame stays empty. Nothing sends the window itself
+/// there: the page frames that content sandboxed without
+/// `allow-top-navigation`, links out of it open in the browser
+/// (`on_new_window`), and a `cheese://` link to the server's pages that hand
+/// over to the content domain at the top level opens in the browser too
+/// (links.rs). Nor can a content page call the app: the IPC capability names
+/// the server's origin only.
 fn stays_in_app(url: &Url) -> bool {
     (from_server(url) && !is_docs(url)) || from_app(url) || from_content(url)
 }
@@ -395,13 +398,13 @@ fn main() {
                     links::open(&linked, &link);
                 }
             });
-            // Started by a link (Windows, Linux): the first page goes on to that page.
-            let start = app
-                .deep_link()
-                .get_current()
-                .ok()
-                .flatten()
-                .and_then(|urls| urls.iter().find_map(links::page));
+            // Started by a link (Windows, Linux): the first page goes on to that
+            // page, or the link opens in the browser (links.rs).
+            let started_by = app.deep_link().get_current().ok().flatten().unwrap_or_default();
+            for link in &started_by {
+                links::hand_off(app.handle(), link);
+            }
+            let start = started_by.iter().find_map(links::page);
             let opener = app.handle().clone();
             let opener2 = app.handle().clone();
             // Anything that is not the server — docs, GitHub, a shared link — opens
