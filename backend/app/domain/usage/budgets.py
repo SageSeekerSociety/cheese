@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, null, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -247,7 +247,7 @@ class CreditBudgets:
             .group_by(ProjectCreditBudget.project_id)
         )
         if not with_gateway_spend:
-            rows = await self._session.execute(capped.add_columns(null()))
+            rows = await self._session.execute(capped)
         else:
             # Each sum is its own subquery, so neither multiplies the other's
             # rows; the gateway one is `UsageRepository`'s own, with the
@@ -268,11 +268,11 @@ class CreditBudgets:
             )
         caps: dict[uuid.UUID, tuple[float, float]] = {}
         gateway_spend: dict[uuid.UUID, float] = {}
-        for project_id, limit, used, gateway_usd in rows:
+        for project_id, limit, used, *spent in rows:
             if limit is not None:
                 caps[project_id] = (limit, used)
-            if gateway_usd is not None:
-                gateway_spend[project_id] = float(gateway_usd)
+            if spent and spent[0] is not None:
+                gateway_spend[project_id] = float(spent[0])
         if can_cache:
             remember(
                 self._session,
