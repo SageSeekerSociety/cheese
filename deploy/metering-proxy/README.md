@@ -239,7 +239,14 @@ that account until someone logs it in again. Use `<proxy home>/chatgpt-login.sh`
   egress, exactly like the Claude one; its login, refreshes and requests all
   leave through it. Two accounts may share an egress only with the same login
   on it: mitmproxy keeps one tunnel per proxy address, so the proxy refuses
-  their requests rather than let one ride the other's tunnel.
+  their requests rather than let one ride the other's tunnel. The egress is
+  checked the same way before a request goes out; one that does not answer
+  gets a 503 saying the subscription egress is offline, with no `retry-after`
+  (the gateway would sleep it out). The session's own proxy hop finds those
+  words in the gateway's answer and passes the session the same 503 a Claude
+  turn gets, but with `x-should-retry: false`, so the turn fails within
+  seconds and the platform's resume waits the egress out; it also reports the
+  failure as an offline egress, which the backend alerts an operator on.
 
 The gateway reaches the accounts on a third listener, `:8445`
 (`--mode reverse:https://chatgpt.com@8445`). It is published nowhere: the
