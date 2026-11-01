@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import Base
 from app.core.errors import NotFoundError, ValidationError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
@@ -84,6 +85,15 @@ class Place:
         )
 
 
+def _loaded[R: Base](row: R | None) -> R | None:
+    """A row the session already holds, or None when a commit or rollback has
+    expired it: its columns would load lazily, which an async session cannot
+    do, so the caller reads it afresh like a miss."""
+    if row is None:
+        return None
+    return None if inspect(row).expired_attributes else row
+
+
 def _can_cache(session: object) -> bool:
     return isinstance(session, AsyncSession)
 
@@ -105,11 +115,7 @@ class PlaceResolver:
             room = await self._session.get(Topic, place_id)
             return Place(room=room) if room is not None else None
         sync = self._session.sync_session
-        room = sync.identity_map.get(sync.identity_key(Topic, (place_id,)))
-        if room is not None and inspect(room).expired_attributes:
-            # Expired by a commit: its columns would load lazily, which an
-            # async session cannot do. Read it afresh like a miss.
-            room = None
+        room = _loaded(sync.identity_map.get(sync.identity_key(Topic, (place_id,))))
         if room is None:
             # Read with its project: nearly every route asks it next (whether
             # it is archived, before any write; who may do what in it).
@@ -190,8 +196,10 @@ class PlaceResolver:
 
     async def _conversation(self, conversation_id: uuid.UUID) -> Place | None:
         if _can_cache(self._session):
-            in_map = self._session.sync_session.identity_map.get(
-                self._session.sync_session.identity_key(Task, (conversation_id,))
+            in_map = _loaded(
+                self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Task, (conversation_id,))
+                )
             )
             if in_map is not None:
                 room_place = await self.resolve(in_map.room_id)
