@@ -1065,8 +1065,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
 
     # --- S3 storage (used when storage_type == "s3") ---
     s3_bucket: str = "cheese"
-    # The private bucket, for task snapshot bundles (room_task/snapshots.py)
-    # and the cloud sandbox home archives kept for a while
+    # The private bucket, for the cloud sandbox home archives kept for a while
     # (machine/retained_archives.py); the public upload bucket is never used
     # for them. The name is the bucket's first use: it also
     # holds the transcript objects `raw_transcripts` indexes.

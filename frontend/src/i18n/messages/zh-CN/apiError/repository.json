@@ -17,8 +17,6 @@
   "projectTaskNotFound": "这个项目没有此任务",
   "revisionDiffNotFound": "此版本的差异不存在",
   "subprocessNotKilled": "子进程 pid={pid} 在 SIGKILL 后仍未退出",
-  "taskBackupNotFound": "这条任务没有此备份",
-  "taskBackupTooLarge": "单次任务备份超过 512 MiB，请将大文件移入附件存储",
   "taskBaseVersionMissing": "任务的对比版本不存在",
   "taskEndedCreateNew": "这条任务已结束，请创建新任务",
   "taskFileChangedReload": "文件已有更新，请重新读取后再保存",

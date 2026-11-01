@@ -43,8 +43,6 @@ def test_a_seated_agent_reaches_its_task(client, seated):
     pid, _, _, task, headers = seated
     route = f"/projects/{pid}/git/tasks/{task.id}"
     assert client.get(route, headers=headers).status_code == 200
-    # No backup yet is an answer about the task, not about the caller.
-    assert client.get(f"{route}/snapshots/latest", headers=headers).status_code == 404
 
 
 def test_a_removed_agent_cannot_read_or_write_its_old_tasks(client, seated):
@@ -54,19 +52,6 @@ def test_a_removed_agent_cannot_read_or_write_its_old_tasks(client, seated):
 
     assert client.get(route, headers=headers).status_code == 403
     assert client.post(route, headers=headers).status_code == 403
-    assert client.get(f"{route}/snapshots/latest", headers=headers).status_code == 403
-    assert (
-        client.get(
-            f"{route}/snapshots/00000000-0000-0000-0000-000000000000", headers=headers
-        ).status_code
-        == 403
-    )
-    saved = client.put(
-        f"{route}/snapshots/{'a' * 40}",
-        content=b"bundle",
-        headers={**headers, "X-Cheese-Head": "b" * 40, "X-Content-Sha256": "c" * 64},
-    )
-    assert saved.status_code == 403
 
 
 def test_a_seated_agent_is_not_refused_the_forge_credential(client, seated):

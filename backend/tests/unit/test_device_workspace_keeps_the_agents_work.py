@@ -213,7 +213,7 @@ def test_sync_leaves_uncommitted_work_alone_without_changing_index_or_branch(dev
     assert not (home / "backups").exists()
 
 
-def test_sync_never_uploads_a_task_snapshot(device):
+def test_sync_never_uploads_uncommitted_files(device):
     """A checkpoint delivers commits to the forge and nothing else: the
     platform keeps no copy of the checkout's files."""
     cli, tasks, remote, home = device

@@ -465,7 +465,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/oauth/services/providers.py": 1,
     "app/domain/passkey/services.py": 5,
     "app/domain/project/environment.py": 2,
-    "app/domain/project/forge_migration.py": 20,
+    "app/domain/project/forge_migration.py": 14,
     "app/domain/project/forgejo_tokens.py": 7,
     "app/domain/project/github_app.py": 5,
     "app/domain/project/room_files.py": 1,

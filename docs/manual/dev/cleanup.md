@@ -7,6 +7,7 @@ covers:
   - backend/app/domain/room_cleanup/retire.py
   - backend/app/domain/agent/device_storage.py
   - backend/scripts/retained_files.py
+  - backend/scripts/purge_task_snapshots.py
   - deploy/README-room-cleanup.md
   - deploy/dev-box-disk-cleanup.sh
   - deploy/reclaim-room-caches.sh
@@ -75,6 +76,15 @@ covers:
 - 压好之后用预签名 PUT 传进私有桶 `transcripts/rooms/<项目>/<房间>/<资源>.tar.gz`，后端按主机报的大小和 MD5 核对桶里那份。桶里那份没有任何代码删。
 - 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉主机上的压缩包，操作变成 `complete`；前提是桶里那份核对过。还没传上去的（当时传失败，或者在有上传之前就留下的）先传，传不上去就留在主机上，过一阵再试。
 - 记录还在保留期内的时候取消归档，**什么都不会被还原**：房间拿到新的资源代际，agent 开新会话；那份压缩包按原计划到期。再归档一次，新代际的记录会在旁边存成第二份。
+
+## 一次性清理：任务快照 {#task-snapshot-purge}
+
+沙箱只推提交，平台不再存任务快照，读写快照的接口也已删掉。私有桶里 `task-snapshots/` 下的存量不导出，在部署机上手动跑一次清掉：
+
+    docker compose exec backend python -m scripts.purge_task_snapshots          # 只数
+    docker compose exec backend python -m scripts.purge_task_snapshots --apply  # 删
+
+它按前缀翻页列、逐个删，重复跑第二遍是零，不需要停机。`task_snapshots` 表已经没有代码读写，按两次发布的规矩在下一个 PR 里删。
 
 ## 独立时钟 {#timer}
 
