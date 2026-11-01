@@ -16,11 +16,18 @@ from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.project.services import ProjectService
 from app.domain.usage.balance import Refusal
 from app.domain.usage.models import (
+    GATEWAY_ROWS,
     MemberCreditBudget,
     ProjectCreditBudget,
     ResourceUsage,
     WorkCreditOwner,
 )
+
+
+def gateway_spend_key(project_ids) -> tuple:
+    """The request fact `UsageRepository.gateway_spend` answers from, which
+    `CreditBudgets.project_caps` records as it reads the caps."""
+    return ("gateway_spend", frozenset(project_ids))
 
 
 class CreditBudgets:
@@ -212,11 +219,16 @@ class CreditBudgets:
             found, cached = recall(self._session, key)
             if found:
                 return cached
-        rows = await self._session.execute(
+        # The projects' gateway spend rides along: admission asks it next, for
+        # the budget its gateway key carries (`UsageService._summaries`). Each
+        # sum is its own subquery, so neither multiplies the other's rows; the
+        # gateway one keeps `GATEWAY_ROWS`, the predicate of the index that
+        # answers it.
+        capped = (
             select(
                 ProjectCreditBudget.project_id,
                 ProjectCreditBudget.credits_limit,
-                func.coalesce(func.sum(ResourceUsage.credits), 0),
+                func.coalesce(func.sum(ResourceUsage.credits), 0).label("used"),
             )
             .outerjoin(
                 ResourceUsage,
@@ -231,13 +243,47 @@ class CreditBudgets:
                 ProjectCreditBudget.credits_limit.is_not(None),
             )
             .group_by(ProjectCreditBudget.project_id)
+            .subquery("capped")
         )
-        caps = {project_id: (limit, spent) for project_id, limit, spent in rows}
+        gateway = (
+            select(
+                ResourceUsage.project_id,
+                func.sum(ResourceUsage.cost_usd).label("spent"),
+            )
+            .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)
+            .group_by(ResourceUsage.project_id)
+            .subquery("gateway")
+        )
+        rows = await self._session.execute(
+            select(
+                func.coalesce(capped.c.project_id, gateway.c.project_id),
+                capped.c.credits_limit,
+                capped.c.used,
+                gateway.c.spent,
+            ).select_from(
+                capped.join(
+                    gateway, gateway.c.project_id == capped.c.project_id, full=True
+                )
+            )
+        )
+        caps: dict[uuid.UUID, tuple[float, float]] = {}
+        gateway_spend: dict[uuid.UUID, float] = {}
+        for project_id, limit, used, gateway_usd in rows:
+            if limit is not None:
+                caps[project_id] = (limit, used)
+            if gateway_usd is not None:
+                gateway_spend[project_id] = float(gateway_usd)
         if can_cache:
             remember(
                 self._session,
                 key,
                 caps,
+                tables=frozenset({"project_credit_budgets", "resource_usage"}),
+            )
+            remember(
+                self._session,
+                gateway_spend_key(project_ids),
+                gateway_spend,
                 tables=frozenset({"project_credit_budgets", "resource_usage"}),
             )
         return caps

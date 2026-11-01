@@ -7,9 +7,11 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
+from app.domain.usage.budgets import gateway_spend_key
 from app.domain.usage.models import (
     GATEWAY_ROWS,
     NOT_MODEL_CALLS,
@@ -147,6 +149,12 @@ class UsageRepository:
         project fetched to test its route."""
         if not project_ids:
             return {}
+        # Admission has read it already, with the project's credit cap
+        # (`CreditBudgets.project_caps`).
+        if isinstance(self._session, AsyncSession):
+            found, cached = recall(self._session, gateway_spend_key(project_ids))
+            if found:
+                return cached
         rows = await self._session.execute(
             select(ResourceUsage.project_id, func.sum(ResourceUsage.cost_usd))
             .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)

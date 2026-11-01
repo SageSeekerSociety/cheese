@@ -49,7 +49,11 @@ def test_admission_sums_gateway_spend_with_the_index_predicate(client):
 
     # The statement as sent, its project bound: the planner takes the covering
     # index for it (sequential scans off, so a near-empty table cannot hide it).
-    sql = re.sub(r"\$1::UUID", "CAST(:project AS uuid)", spend[0])
+    # The sum rides in the statement that reads the project's credit cap
+    # (`CreditBudgets.project_caps`), whose other parameters are bound too.
+    sql = re.sub(r"\$\d+::UUID", "CAST(:project AS uuid)", spend[0])
+    sql = re.sub(r"\$\d+::INTEGER", "0", sql)
+    sql = re.sub(r"\$\d+::TIMESTAMP WITH TIME ZONE", "now()", sql)
 
     async def plan() -> str:
         async with client.test_factory() as session:
