@@ -14,7 +14,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import Uuid, bindparam, func, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
@@ -182,14 +183,8 @@ async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
         if task_ids
         else None
     )
-    said = await session.scalar(
-        select(func.max(Block.created_at)).where(
-            Block.project_id == project_id,
-            Block.kind == BlockKind.message,
-            Block.conversation_id.in_(
-                await _conversations(session, project_id, room_ids, task_ids=task_ids)
-            ),
-        )
+    said = await _last_message_at(
+        session, await _conversations(session, project_id, room_ids, task_ids=task_ids)
     )
     major = "|".join(
         str(part)
@@ -200,6 +195,32 @@ async def marks(session: AsyncSession, project_id: uuid.UUID) -> Marks:
         )
     )
     return Marks(major=major, minor=str(said))
+
+
+async def _last_message_at(
+    session: AsyncSession, conversation_ids: list[uuid.UUID]
+) -> datetime | None:
+    """The newest message in any of these conversations.
+
+    Taken per conversation, each from the end of its run in
+    ``ix_blocks_conversation_kind_created``, then the latest of those. One
+    ``max`` over ``conversation_id IN (…)`` let the planner read every message
+    of the project instead: 350-400 ms of each ``GET /projects/{id}/situation``
+    on dev (2026-11-01, about 1,500 conversations).
+    """
+    if not conversation_ids:
+        return None
+    ids = (
+        func.unnest(bindparam("conversations", conversation_ids, type_=ARRAY(Uuid)))
+        .table_valued("id")
+        .render_derived()
+    )
+    newest = (
+        select(func.max(Block.created_at))
+        .where(Block.conversation_id == ids.c.id, Block.kind == BlockKind.message)
+        .scalar_subquery()
+    )
+    return await session.scalar(select(func.max(newest)).select_from(ids))
 
 
 async def _conversations(
