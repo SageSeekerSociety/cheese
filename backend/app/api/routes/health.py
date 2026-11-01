@@ -48,8 +48,12 @@ async def detailed_health_check(
     ``serving`` says what answered and how it saw the caller: the cores and
     load of the host (how many workers it can usefully run), and the client
     address the per-address limits key on, beside the forwarded chain it was
-    resolved from. ``client_address`` null with a chain present means a proxy
-    in front is not in ``FORWARDED_ALLOW_IPS`` or did not write the visitor.
+    resolved from. ``client_address`` is null when ``FORWARDED_ALLOW_IPS`` is
+    unset, empty or ``*``, and when ``peer`` — the address uvicorn ended on —
+    is itself one of the trusted proxies, so the chain named no client past
+    them. With a list configured, an address outside it is not null: uvicorn
+    takes the nearest one as ``peer``, which is why the raw chain and the list
+    are reported beside it.
     """
     report = await health_report()
     report["serving"] = {
