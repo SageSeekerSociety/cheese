@@ -12,6 +12,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+import pytest
+
 from app.domain.documents.compare import compare
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -191,3 +193,29 @@ def test_a_new_file_is_all_added():
 def test_a_file_that_cannot_be_read_has_no_comparison():
     assert compare(b"not a zip", b"not a zip either", "报告.docx") is None
     assert compare(None, b"x", "notes.txt") is None
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_cell_edits_are_found_with_package_absolute_relationships(absolute):
+    """A workbook's relationship spelling must not hide changed cell values."""
+
+    def saved(value):
+        raw = workbook({"A1": value})
+        if not absolute:
+            return raw
+        with zipfile.ZipFile(io.BytesIO(raw)) as source:
+            return _zip(
+                {
+                    name: source.read(name)
+                    .decode()
+                    .replace('Target="worksheets/', 'Target="/xl/worksheets/')
+                    for name in source.namelist()
+                }
+            )
+
+    result = compare(saved("40"), saved("41"), "budget.xlsx")
+
+    assert result is not None
+    assert result["identical"] is False
+    (cell,) = result["sheets"][0]["cells"]
+    assert (cell["address"], cell["before"], cell["after"]) == ("A1", "40", "41")

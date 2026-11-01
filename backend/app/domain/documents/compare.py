@@ -188,7 +188,7 @@ def _rels(z: zipfile.ZipFile, part: str) -> dict[str, str]:
     for rel in root.iter(f"{{{_PKG_REL}}}Relationship"):
         key, target = rel.get("Id"), rel.get("Target")
         if key and target and rel.get("TargetMode") != "External":
-            out[key] = posixpath.normpath(posixpath.join(folder, target))
+            out[key] = posixpath.normpath(posixpath.join(folder, target)).lstrip("/")
     return out
 
 
