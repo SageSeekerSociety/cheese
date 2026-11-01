@@ -78,6 +78,10 @@ _GW_CKPT = "llm_gateway_usage_ckpt"
 _GW_BUDGET = "llm_gateway_budget_usd"
 
 
+#: ``project_gateway_key`` was not told the project key's budget target.
+UNKNOWN_TARGET = object()
+
+
 @dataclass(frozen=True)
 class _KeySlot:
     """Where one of a project's gateway keys lives in its settings: the key,
@@ -491,6 +495,7 @@ async def project_gateway_key(
     task_id: uuid.UUID | None = None,
     credit_owner_handle: str | None = None,
     machine_conversation_id: uuid.UUID | None = None,
+    budget_target: float | None | object = UNKNOWN_TARGET,
 ) -> str | None:
     """The project's virtual gateway key, minted on first use — the same one
     a local sandbox turn runs on, or with ``dream`` the key its memory
@@ -500,7 +505,13 @@ async def project_gateway_key(
 
     With ``machine_conversation_id`` it is the key that conversation's
     sandboxes call on (`MachineGatewayKey`), for ``credit_owner_handle`` or,
-    without one, the project."""
+    without one, the project.
+
+    ``budget_target``: the project key's ``_gateway_budget_target``, when the
+    caller has just read it (`routes/llm_proxy.py`, in the transaction that
+    admitted the call); the project key's read path then does not read it
+    again. Only the project key takes it; the write path reads it under the
+    lock whatever is given."""
     if machine_conversation_id is not None:
         return await _machine_gateway_key(
             sessions,
@@ -519,6 +530,7 @@ async def project_gateway_key(
         gateway,
         project_id,
         slot=_DREAM_SLOT if dream else _ROOM_SLOT,
+        known_target=UNKNOWN_TARGET if dream else budget_target,
     )
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
@@ -660,6 +672,7 @@ async def _gateway_project_env(
     project_id: uuid.UUID,
     *,
     slot: _KeySlot = _ROOM_SLOT,
+    known_target: float | None | object = UNKNOWN_TARGET,
 ) -> dict | None:
     """Env override for a gateway-routed turn: mint (once) and return the
     project's virtual key in ``slot``, and keep its L2 max_budget in step with
@@ -689,7 +702,11 @@ async def _gateway_project_env(
             s = dict(project.settings or {})
             key = s.get(slot.key)
             if isinstance(key, str) and key:
-                target = await service._gateway_budget_target(session, project_id)
+                target = (
+                    await service._gateway_budget_target(session, project_id)
+                    if known_target is UNKNOWN_TARGET
+                    else known_target
+                )
                 if s.get(slot.budget) == target:
                     return {"ANTHROPIC_AUTH_TOKEN": key}
 

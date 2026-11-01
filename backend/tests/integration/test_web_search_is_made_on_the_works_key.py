@@ -50,6 +50,7 @@ def gateway(monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return f"sk-project-{project_id}"
 

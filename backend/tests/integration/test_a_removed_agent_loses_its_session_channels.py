@@ -74,6 +74,7 @@ def model_pool(monkeypatch):
         task_id=None,
         credit_owner_handle=None,
         machine_conversation_id=None,
+        budget_target=None,
     ):
         return "sk-project"
 

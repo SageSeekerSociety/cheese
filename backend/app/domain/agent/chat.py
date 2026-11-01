@@ -51,6 +51,7 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
+    UNKNOWN_TARGET,
     _gateway_project_env,
     _model_kwargs,
     _schedule_deferred_drain,
@@ -468,6 +469,7 @@ class ChatService(
         task_id: uuid.UUID | None = None,
         credit_owner_handle: str | None = None,
         machine_conversation_id: uuid.UUID | None = None,
+        budget_target: float | None | object = UNKNOWN_TARGET,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
         ``dream``, the key its memory consolidation runs on, and with
@@ -482,6 +484,7 @@ class ChatService(
             task_id=task_id,
             credit_owner_handle=credit_owner_handle,
             machine_conversation_id=machine_conversation_id,
+            budget_target=budget_target,
         )
 
     async def _gateway_budget_target(

@@ -37,6 +37,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.request_facts import recall, remember
 from app.core.sandbox_auth import (
     bind_resource_token,
     mint_personal_execution_credential,
@@ -323,9 +324,26 @@ async def personal_claims(
 async def _kind(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> ConversationKind | None:
-    return await db.scalar(
+    # A session's every tool call asks it twice, once for its holder and once
+    # for its own conversation, which are the same one in a room.
+    can_cache = isinstance(db, AsyncSession)
+    if can_cache:
+        if db.autoflush:
+            await db.flush()
+        found, kind = recall(db, ("conversation_kind", conversation_id))
+        if found:
+            return kind
+    kind = await db.scalar(
         select(Conversation.kind).where(Conversation.id == conversation_id)
     )
+    if can_cache:
+        remember(
+            db,
+            ("conversation_kind", conversation_id),
+            kind,
+            tables=frozenset({"conversations"}),
+        )
+    return kind
 
 
 async def task_of(db: AsyncSession, room: Room, session: AgentSession) -> Task | None:

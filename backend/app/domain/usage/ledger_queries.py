@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.usage.balance import Balance, Refusal, _balance, _live
 from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.models import ComputeGrant, PlanWindowUse
@@ -59,7 +60,23 @@ class LedgerQueries:
         stmt = select(ComputeGrant).where(or_(*conditions))
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
-        return list((await self._session.execute(stmt)).scalars())
+            return list((await self._session.execute(stmt)).scalars())
+        # Admitting a model call reads these packs, then reads them again for
+        # the budget its gateway key carries (`routes/llm_proxy.py`).
+        can_cache = isinstance(self._session, AsyncSession)
+        key = ("grant_candidates", frozenset(teams), frozenset(projects))
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return list(cached)
+        grants = list((await self._session.execute(stmt)).scalars())
+        if can_cache:
+            remember(
+                self._session, key, list(grants), tables=frozenset({"compute_grants"})
+            )
+        return grants
 
     async def _window_rows(
         self, payers: Iterable[Payer]
