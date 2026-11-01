@@ -58,7 +58,7 @@ async def test_a_sandbox_request_reads_its_session_and_room_once(client, monkeyp
     assert answer.status_code == 200, answer.text
     sessions = [s for s in statements if "FROM agent_sessions" in s]
     assert len(sessions) == 1, sessions
-    # Its lease names the room's resource: only the route the request names
-    # looks the room up, under the session's credential.
+    # Its lease names the room's resource, and the route the request names
+    # resolves the room before its access check asks for it.
     room_lookups = [s for s in statements if "inside.room_id" in s]
-    assert len(room_lookups) == 1, room_lookups
+    assert room_lookups == [], room_lookups

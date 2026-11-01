@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy import event
 
 from app.api.auth.resolver import ActorResolver
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -81,7 +82,8 @@ def _room_lookups(statements) -> int:
 @contextmanager
 def _door_handed_only_the_id():
     """The door as it was before the change: the id alone, no room row, so it
-    resolves the conversation's room itself."""
+    resolves the conversation's room itself — and resolving the place does not
+    leave the room behind for it either (`PlaceResolver.conversation`)."""
     original = ActorResolver.authorize_topic
 
     async def without_the_room(
@@ -93,7 +95,10 @@ def _door_handed_only_the_id():
             self, actor, project_id=project_id, topic_id=topic_id, enforce=enforce
         )
 
-    with patch.object(ActorResolver, "authorize_topic", without_the_room):
+    with (
+        patch.object(ActorResolver, "authorize_topic", without_the_room),
+        patch.object(PlaceResolver, "conversation", PlaceResolver._conversation),
+    ):
         yield
 
 

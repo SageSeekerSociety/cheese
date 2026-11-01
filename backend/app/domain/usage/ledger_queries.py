@@ -49,6 +49,17 @@ class LedgerQueries:
         payers = list(payers)
         projects = {p.project_id for p in payers if p.project_id is not None}
         teams = {p.team_id for p in payers}
+        # Admitting a model call reads these packs, then reads them again for
+        # the budget its gateway key carries (`routes/llm_proxy.py`); the
+        # second read is answered here, before its select is put together.
+        can_cache = not lock and isinstance(self._session, AsyncSession)
+        key = ("grant_candidates", frozenset(teams), frozenset(projects))
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return list(cached)
         conditions = [
             and_(
                 ComputeGrant.team_id.in_(teams),
@@ -61,16 +72,6 @@ class LedgerQueries:
         if lock:
             stmt = stmt.with_for_update().execution_options(populate_existing=True)
             return list((await self._session.execute(stmt)).scalars())
-        # Admitting a model call reads these packs, then reads them again for
-        # the budget its gateway key carries (`routes/llm_proxy.py`).
-        can_cache = isinstance(self._session, AsyncSession)
-        key = ("grant_candidates", frozenset(teams), frozenset(projects))
-        if can_cache:
-            if self._session.autoflush:
-                await self._session.flush()
-            found, cached = recall(self._session, key)
-            if found:
-                return list(cached)
         grants = list((await self._session.execute(stmt)).scalars())
         if can_cache:
             remember(
