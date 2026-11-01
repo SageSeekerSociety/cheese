@@ -344,3 +344,15 @@ async def test_admission_reads_the_gateway_spend_with_the_credit_cap(
     assert again.json()["data"]["allow"] is True, again.text
     spend = [s for s in seen if "sum(resource_usage.cost_usd)" in s]
     assert len(spend) == 1 and "FROM project_credit_budgets" in spend[0], spend
+
+
+async def test_asking_for_hands_reads_the_agents_account_with_the_session(
+    client, monkeypatch
+):
+    """The hands are given only while the credential's agent is still an
+    account; that is asked in the statement that reads the session."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    assert [s for s in seen if 'FROM "user"' in s and "agent_sessions" not in s] == []
+    sessions = [s for s in seen if "FROM agent_sessions" in s]
+    assert len(sessions) == 1 and 'FROM "user"' in sessions[0], sessions
