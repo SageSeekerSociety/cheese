@@ -162,7 +162,9 @@ class IdentityService:
         return answer
 
     async def agents_among(self, handles: Sequence[str]) -> set[str]:
-        """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user，一次往返。
+        """:meth:`is_agent` 的批量版：这些 handle 里哪些是 agent-user。本请求还没读过的
+        handle 连着各自的绑定一条语句问完；已读过的用户按绑定问（常已按用户 id 记过），
+        两种都有时是两条。
 
         名册要对整张表问这一句。逐个 ``is_agent`` 是 N+1——一个 30 人的项目就是 60
         次往返，而判据本身（带不带 agent-binding）一次就能全部问出来。
