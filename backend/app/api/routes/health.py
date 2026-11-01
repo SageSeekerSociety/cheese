@@ -11,8 +11,10 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.api.admin_deps import PlatformAdminDep
+from app.api.response import ok, typed_response
 from app.core.client_address import resolved_client_address
 from app.core.health import _REQUIRED_CHECKS, health_report
 from app.core.metrics import registry
@@ -31,6 +33,27 @@ async def health_check() -> dict[str, Any]:
     add a restart loop to the outage.
     """
     return {"status": "ok"}
+
+
+class ClientAddressOut(BaseModel):
+    address: str | None
+
+
+@router.get(
+    "/client-address",
+    summary="The caller's own address, as the server sees it",
+    openapi_extra={"x-public": True},
+    **typed_response(ClientAddressOut),
+)
+async def client_address(request: Request) -> dict[str, Any]:
+    """The address the per-address request limits count this caller by, or
+    null when the server cannot tell it from a proxy's.
+
+    It is the caller's own address and nobody else's, so it is public: a check
+    from outside the deployment is the only way to see that the proxies in
+    front hand the visitor's address through (`core/client_address.py`).
+    """
+    return ok(ClientAddressOut(address=resolved_client_address(request)).model_dump())
 
 
 @router.get("/health/detailed", summary="Detailed health check")

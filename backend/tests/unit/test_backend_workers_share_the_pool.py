@@ -39,6 +39,20 @@ def test_one_worker_gets_exactly_the_configured_pool():
     )
 
 
+@pytest.mark.parametrize("workers", [2, 3, 4, 8, 9, 18])
+def test_an_api_pool_worker_spends_the_whole_budget_it_is_given(workers):
+    """A pool worker takes no owner lock, so nothing is held back for one: the
+    pool asks the server for the budget it was given, divided among its
+    workers — the 4 and 2 per worker `serve.pool_env` promises by default."""
+    settings = Settings(
+        backend_role="api",
+        backend_workers=workers,
+        db_pool_size=4 * workers,
+        db_max_overflow=2 * workers,
+    )
+    assert settings.db_connections_per_worker() == (4, 2)
+
+
 @pytest.mark.parametrize("workers", [1, 2, 3, 4, 5, 6, 8, 9, 12, 18])
 def test_the_container_never_asks_the_server_for_more_than_one_process_did(workers):
     settings = Settings(backend_workers=workers)
