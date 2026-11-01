@@ -151,7 +151,7 @@ DECISIONS = ("accept", "close")
 
 
 async def ask_to_decide(
-    session, *, place, seat, card, question: str, offer: list[str]
+    session, *, place, seat, card, question: object, offer: list[str]
 ) -> list:
     """Ask, in the task's conversation, for the decision a waiting delivery
     needs — and offer the buttons that make it.
@@ -177,8 +177,8 @@ async def ask_to_decide(
     reviewers = (
         await AcceptService(session).reviewer_handles_for_cards([card.id])
     ).get(card.id, [])
-    people = [task.owner_handle, *(task.contributor_handles or [])]
-    asked = tuple(
+    people = [h for h in [task.owner_handle, *(task.contributor_handles or [])] if h]
+    asked: tuple[str, ...] = tuple(
         dict.fromkeys(
             [
                 *(reviewers if "accept" in offers else []),
@@ -247,7 +247,7 @@ async def ask_to_decide(
     return rows
 
 
-def _question_text(question) -> str:
+def _question_text(question: object) -> str:
     if not isinstance(question, str) or not question.strip():
         raise UnprocessableEntityError(say("askFieldRequired", field="question"))
     return question.strip()
