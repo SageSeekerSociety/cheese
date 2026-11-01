@@ -86,9 +86,11 @@ async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | 
     once; the next request asks again, and an admin stepped down is refused
     there."""
     key = ("space_seat", space_id, user_id)
-    found, cached = recall(session, key)
-    if found:
-        return cached
+    cacheable = isinstance(session, AsyncSession)
+    if cacheable:
+        found, cached = recall(session, key)
+        if found:
+            return cached
     seat: Seat | None = None
     relation = await SpaceAdminRelationRepository(session).get_relation(
         space_id, user_id
@@ -103,12 +105,13 @@ async def seat_of(session: AsyncSession, space_id: int, user_id: int) -> Seat | 
         )
     ):
         seat = Seat.member
-    remember(
-        session,
-        key,
-        seat,
-        tables=frozenset({"space_admin_relation", "space_member"}),
-    )
+    if cacheable:
+        remember(
+            session,
+            key,
+            seat,
+            tables=frozenset({"space_admin_relation", "space_member"}),
+        )
     return seat
 
 

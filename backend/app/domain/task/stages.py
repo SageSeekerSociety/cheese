@@ -167,16 +167,19 @@ async def list_stages(session: AsyncSession, task_id: int) -> list[TaskStage]:
     """The task's stages in order. A problem's progress asks them for the
     claim's states and again for the payload; a request reads them once."""
     key = ("task_stages", task_id)
-    found, cached = recall(session, key)
-    if found:
-        return list(cached)
+    cacheable = isinstance(session, AsyncSession)
+    if cacheable:
+        found, cached = recall(session, key)
+        if found:
+            return list(cached)
     stmt = (
         select(TaskStage)
         .where(TaskStage.task_id == task_id)
         .order_by(TaskStage.index.asc())
     )
     stages = list((await session.execute(stmt)).scalars().all())
-    remember(session, key, stages, tables=frozenset({"task_stages"}))
+    if cacheable:
+        remember(session, key, stages, tables=frozenset({"task_stages"}))
     return list(stages)
 
 

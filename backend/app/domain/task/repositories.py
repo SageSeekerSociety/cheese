@@ -611,11 +611,14 @@ class TaskMembershipRepository:
         ``get_by_task_and_member`` picks it. A problem's page asks it more than
         once; a request reads it once."""
         key = ("task_user_membership", task_id, user_id)
-        found, cached = recall(self._session, key)
-        if found:
-            return cached
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         claim = await self.get_by_task_and_member(task_id, user_id, is_team=False)
-        remember(self._session, key, claim, tables=_CLAIM_TABLES)
+        if cacheable:
+            remember(self._session, key, claim, tables=_CLAIM_TABLES)
         return claim
 
     async def list_team_memberships_for_user(
@@ -626,9 +629,11 @@ class TaskMembershipRepository:
         """Return team-type memberships for this task where the user belongs to
         the team, read once per request like ``get_user_membership``."""
         key = ("task_team_memberships", task_id, user_id)
-        found, cached = recall(self._session, key)
-        if found:
-            return list(cached)
+        cacheable = isinstance(self._session, AsyncSession)
+        if cacheable:
+            found, cached = recall(self._session, key)
+            if found:
+                return list(cached)
         membership_stmt: Select[tuple[TaskMembership]] = select(TaskMembership).where(
             and_(
                 TaskMembership.task_id == task_id,
@@ -643,7 +648,8 @@ class TaskMembershipRepository:
         )
         result = await self._session.execute(membership_stmt)
         claims = list(result.scalars().all())
-        remember(self._session, key, claims, tables=_CLAIM_TABLES)
+        if cacheable:
+            remember(self._session, key, claims, tables=_CLAIM_TABLES)
         return list(claims)
 
     async def hold_places(self, task_id: int) -> None:
