@@ -513,9 +513,10 @@ async def _shared_get(key: str) -> bytes | None:
     if redis is None:
         return None
     try:
-        return await redis.get(_shared_key(key))
+        body = await redis.get(_shared_key(key))
     except RedisError:
         return None
+    return body if isinstance(body, bytes) else None
 
 
 async def _shared_put(key: str, body: bytes) -> None:
