@@ -22,6 +22,7 @@ import enum
 import hashlib
 import hmac
 import secrets
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -112,6 +113,8 @@ def kind_of(token: str) -> Kind | None:
 #: expiry on every read; a key that changed misses. Bounded, oldest out first.
 _SIGNED: OrderedDict[tuple[str, Kind, bytes], None] = OrderedDict()
 _SIGNED_MAX = 4096
+#: Sync auth helpers read credentials from FastAPI's threadpool too.
+_SIGNED_LOCK = threading.Lock()
 
 
 def read(token: str, kind: Kind) -> dict | None:
@@ -120,7 +123,8 @@ def read(token: str, kind: Kind) -> dict | None:
     sent."""
     key = _key(kind)
     seen = (token, kind, key)
-    signed = seen in _SIGNED
+    with _SIGNED_LOCK:
+        signed = seen in _SIGNED
     if not signed and kind_of(token) is not kind:
         return None
     try:
@@ -137,13 +141,15 @@ def read(token: str, kind: Kind) -> dict | None:
             },
         )
     except jwt.PyJWTError:  # type: ignore[attr-defined]
-        _SIGNED.pop(seen, None)
+        with _SIGNED_LOCK:
+            _SIGNED.pop(seen, None)
         return None
     if not isinstance(claims, dict):
         return None
-    if signed:
-        _SIGNED.move_to_end(seen)
-    else:
+    with _SIGNED_LOCK:
+        # Set again rather than moved: another thread may have let it go
+        # since it was looked up.
+        _SIGNED.pop(seen, None)
         _SIGNED[seen] = None
         if len(_SIGNED) > _SIGNED_MAX:
             _SIGNED.popitem(last=False)
