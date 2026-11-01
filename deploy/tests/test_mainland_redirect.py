@@ -175,13 +175,16 @@ def check_generated_files() -> None:
         assert "okcheese.cn 1;" not in hosts, hosts
         assert "oops" not in hosts, hosts
         assert hosts.count("alias.example 1;") == 1, hosts
-        # MAINLAND_ENTRY is still refused outright rather than written.
-        try:
-            generated(Path(tmp) / "bad", "not an entry", "")
-        except subprocess.CalledProcessError:
-            pass
-        else:
-            raise AssertionError("a MAINLAND_ENTRY that is not an origin must be refused")
+        # MAINLAND_ENTRY is written verbatim into send.conf, so it is refused
+        # outright unless it is a bare origin — a path would smuggle config in
+        # past `if (...) { ... }` and fail as a syntax error, not a message.
+        for bad in ("not an entry", "https://okcheese.cn/;}", "https://okcheese.cn/app"):
+            try:
+                generated(Path(tmp) / "bad", bad, "")
+            except subprocess.CalledProcessError:
+                pass
+            else:
+                raise AssertionError(f"MAINLAND_ENTRY {bad!r} must be refused")
 
 
 def main() -> None:

@@ -23,13 +23,18 @@ origin_of() {
     sed -E 's|/+$||; s|^(https://[^/:]+):443$|\1|; s|^(http://[^/:]+):80$|\1|'
 }
 host_of() { printf '%s' "$1" | sed -E 's|^https?://||; s|/.*$||; s|:[0-9]+$||'; }
+# A name given with a path is still one of our origins — only its host becomes a
+# map key — but `MAINLAND_ENTRY` is written verbatim into `send.conf`, so that
+# one has to be the bare origin: a value with `;` or a brace after the first `/`
+# would pass the loose check and then be read as config.
 is_origin() { printf '%s' "$1" | grep -Eq '^https?://[a-z0-9.-]+(:[0-9]+)?(/.*)?$'; }
+is_bare_origin() { printf '%s' "$1" | grep -Eq '^https?://[a-z0-9.-]+(:[0-9]+)?$'; }
 refuse() { echo "MAINLAND REDIRECT: $*" >&2; exit 1; }
 
 entry=$(origin_of "${MAINLAND_ENTRY:-}")
 switch=0
 if [ -n "$entry" ]; then
-  is_origin "$entry" || refuse "MAINLAND_ENTRY must be an origin such as https://okcheese.cn, not '$MAINLAND_ENTRY'"
+  is_bare_origin "$entry" || refuse "MAINLAND_ENTRY must be an origin such as https://okcheese.cn, not '$MAINLAND_ENTRY'"
   switch=1
 fi
 
