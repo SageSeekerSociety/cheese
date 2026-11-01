@@ -8,7 +8,8 @@ used to read some facts twice, or read facts nothing in it used:
   room (four statements about the project's roster), an answer that only
   matters for a room other than its own (`app.auth.audience`);
 - a session's conversation kind was asked once for its holder and once for
-  its own conversation, the same row in a room (`machine.holder._kind`);
+  its own conversation, the same row in a room (`machine.holder._kind`), and
+  then even once was one too many: the route had already resolved the room;
 - admission read the payer's packs and the project's budget caps, then read
   them again on the gateway key's own session for the budget the key carries
   (`routes/llm_proxy.py`);
@@ -82,10 +83,12 @@ async def test_an_agent_asking_for_hands_in_its_room_reads_nothing_of_the_roster
     assert [s for s in seen if "FROM agent_bindings" in s] == []
 
 
-async def test_asking_for_hands_reads_the_conversation_kind_once(client, monkeypatch):
+async def test_asking_for_hands_reads_no_conversation_kind(client, monkeypatch):
+    """The route resolved the room's conversation through `topics`; that it is
+    a room is what the holder asks next, and is answered from it."""
     seen = await _asked_for_hands(client, monkeypatch)
 
-    assert len([s for s in seen if "SELECT conversations.kind" in s]) == 1
+    assert [s for s in seen if "SELECT conversations.kind" in s] == []
 
 
 async def test_asking_for_hands_does_not_ask_again_which_room_it_is_in(

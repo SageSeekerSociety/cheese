@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
 from app.domain.identity.models import AgentBinding, AgentBindingKind
+from app.domain.user.models import User
 
 _BINDING_TABLES = frozenset({"agent_bindings"})
 
@@ -75,3 +76,15 @@ class AgentBindingRepository:
                 tables=_BINDING_TABLES,
             )
         return known | fetched
+
+    async def agent_handles(self, handles: list[str]) -> set[str]:
+        """Which of ``handles`` name a live user carrying an agent binding, in
+        one statement: the user rows and their bindings were two round trips."""
+        if not handles:
+            return set()
+        rows = await self._session.scalars(
+            select(User.username)
+            .join(AgentBinding, AgentBinding.user_id == User.id)
+            .where(User.username.in_(handles), User.deleted_at.is_(None))
+        )
+        return set(rows.all())
