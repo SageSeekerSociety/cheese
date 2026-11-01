@@ -12,6 +12,8 @@ used to read some facts twice, or read facts nothing in it used:
 - admission read the payer's packs and the project's budget caps, then read
   them again on the gateway key's own session for the budget the key carries
   (`routes/llm_proxy.py`);
+- the room a conversation is in was asked again by the access check right
+  after the route had resolved the conversation (`room_task.place`);
 - the agent's credential had its signature checked again by every dependency
   and helper that read it, a dozen times per admission (`core.credentials`).
 """
@@ -84,6 +86,16 @@ async def test_asking_for_hands_reads_the_conversation_kind_once(client, monkeyp
     seen = await _asked_for_hands(client, monkeypatch)
 
     assert len([s for s in seen if "SELECT conversations.kind" in s]) == 1
+
+
+async def test_asking_for_hands_does_not_ask_again_which_room_it_is_in(
+    client, monkeypatch
+):
+    """The route resolves the conversation first; the access check after it
+    asks which room that conversation is in and is answered from it."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    assert [s for s in seen if "inside.room_id" in s] == []
 
 
 def _admit(client, room):
