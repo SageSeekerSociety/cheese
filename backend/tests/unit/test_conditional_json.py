@@ -1,8 +1,11 @@
-"""`conditional_json` hands the event loop back while it encodes a large list.
+"""`conditional_json` hands the event loop back while it encodes a large body.
 
 A 304 still needs the whole body to know its tag, so one `json.dumps` of a big
 envelope held the loop for the full encode — 227 ms on a 60,000-row list
 (#1825, 2026-10-17) — and every other request waited behind it, sent back or not.
+A short list whose rows are large stalls the same way: one call of a page of
+1,000-block conversations is over 100 ms, and the split has to follow the size
+of what is written, not only the number of elements.
 """
 
 import asyncio
@@ -100,10 +103,67 @@ async def test_no_more_than_the_threshold_of_elements_run_between_two_yields(
     assert max(gaps) <= conditional.YIELD_EVERY_ITEMS + 8
 
 
+def _page(rows: int, blocks: int) -> dict:
+    """A room's task page as `GET /topics/{id}/tasks` answers with no limit: a
+    short list of rows, each carrying its whole conversation."""
+    return {
+        "ok": True,
+        "data": {
+            "total": rows,
+            "items": [
+                {
+                    "id": f"task-{i}",
+                    "title": f"任务 {i}",
+                    "blocks": [
+                        {"id": j, "content": "x" * 300, "author": "符露夀"}
+                        for j in range(blocks)
+                    ],
+                }
+                for i in range(rows)
+            ],
+        },
+    }
+
+
+@pytest.mark.anyio
+async def test_a_short_page_of_large_rows_is_split_too(monkeypatch) -> None:
+    """The rows are few (a page, under the split threshold) but each is a whole
+    conversation: one `_dumps` of the page is ~7 MB and held the loop for ~78 ms.
+    The walk has to follow the size and not just the element count, or the shape
+    the condition exists for is the one it misses."""
+    data = _page(100, 200)
+    real = conditional._dumps
+    widest = 0
+
+    def counting(value):
+        nonlocal widest
+        text = real(value)
+        widest = max(widest, len(text))
+        return text
+
+    monkeypatch.setattr(conditional, "_dumps", counting)
+
+    response = await conditional.conditional_json(data, None)
+
+    assert response.body == _canonical(data)
+    # No call writes a whole page: the largest is a single row. Without the
+    # size check the page's items went out in one ~7 MB call.
+    assert widest < conditional.WALK_ABOVE_CHARS, widest
+
+
+@pytest.mark.anyio
+async def test_a_short_page_of_large_rows_leaves_the_loop_free() -> None:
+    data = _page(100, 200)
+    worst = float("inf")
+    for _ in range(3):
+        worst = min(worst, await _worst_stall_during(data))
+    assert worst < 0.05, worst
+
+
 @pytest.mark.anyio
 async def test_a_short_list_is_one_c_encode() -> None:
-    """A sidebar's worth of rows is encoded in one call, not walked in Python:
-    the walk is only for lists long enough to hold the loop."""
+    """A sidebar's worth of small rows is encoded in one call, not walked in
+    Python: the walk is only for lists long or large enough to hold the loop."""
     data = _rows(conditional.SPLIT_LISTS_LONGER_THAN)
     calls = 0
     real = conditional._dumps
