@@ -214,8 +214,12 @@ class TaskService:
         accepted: bool | None = None,
         rooms: Collection[uuid.UUID] | None = None,
         status: str | None = None,
+        open_or_touched_since: datetime | None = None,
     ) -> list[Task]:
         """这个项目里的活，最老的在前。
+
+        `open_or_touched_since` 只留还开着的、和那一刻之后建过、改过、采纳过、
+        关过的活：「最近进展」只看一个窗口，不用把整个项目的活都读出来。
 
         `rooms` 和 `status` 是把清单收窄交给数据库的两把刀（见 `list_for_project`）：
         给了就只装配满足的那些行。项目任务列表接口把「我看得见的房间」和 `status`
@@ -230,7 +234,11 @@ class TaskService:
         does not explicitly begin, commit or roll back.
         """
         return await self._repo.list_for_project(
-            project_id, accepted=accepted, rooms=rooms, status=status
+            project_id,
+            accepted=accepted,
+            rooms=rooms,
+            status=status,
+            open_or_touched_since=open_or_touched_since,
         )
 
     async def list_open(self) -> list[Task]:
