@@ -97,5 +97,4 @@ it('in the desktop app, opens the Site in the browser and never posts the window
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(submit).not.toHaveBeenCalled()
   expect(requestSiteSession).not.toHaveBeenCalled()
-  sessionStorage.clear()
 })

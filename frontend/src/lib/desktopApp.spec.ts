@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   desktopListenForNotices,
@@ -141,14 +141,20 @@ describe('authorizing from the app', () => {
 })
 
 describe('leaveForBrowser', () => {
+  // The test DOM keeps no history state, so the history entry the window is on is
+  // this variable: replaceState writes it, and a new arrival starts it over.
+  let entry: unknown = null
+  beforeEach(() => {
+    entry = null
+    vi.spyOn(window.history, 'state', 'get').mockImplementation(() => entry)
+    vi.spyOn(window.history, 'replaceState').mockImplementation((state: unknown) => void (entry = state))
+  })
   afterEach(() => {
     vi.restoreAllMocks()
     vi.resetModules()
-    sessionStorage.clear()
   })
 
-  // Every load of a landing page is a fresh page with a fresh copy of this module;
-  // only session storage carries over, as it does across reloads of the window.
+  // Every run of a landing page gets a fresh copy of this module, as a page load does.
   async function landing(path: string) {
     vi.resetModules()
     const { leaveForBrowser } = await import('./desktopApp')
@@ -157,47 +163,49 @@ describe('leaveForBrowser', () => {
     return left
   }
 
-  it('opens the page in the browser through the app once, however often the page loads again', async () => {
+  function arrivedBy(type: 'navigate' | 'reload') {
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([
+      { type, name: window.location.href } as unknown as PerformanceEntry,
+    ])
+  }
+
+  const opens = (invoke: ReturnType<typeof desktopApp>) =>
+    invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:opener|open_url')
+
+  it('opens the page in the browser through the app, and not again when the same load runs again', async () => {
     const invoke = desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
     const opened = vi.spyOn(window, 'open')
     const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    arrivedBy('navigate')
 
-    for (let load = 0; load < 3; load++) expect(await landing('/previews/t?path=%2Fa')).toBe(true)
+    await landing('/previews/t?path=%2Fa')
+    // The same history entry runs the page again (the window did not leave it yet).
+    await landing('/previews/t?path=%2Fa')
 
-    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:opener|open_url')).toEqual([
+    expect(opens(invoke)).toEqual([
       ['plugin:opener|open_url', { url: `${window.location.origin}/previews/t?path=%2Fa` }],
     ])
     expect(opened).not.toHaveBeenCalled()
-    expect(replace).toHaveBeenCalledTimes(3)
+    expect(replace).toHaveBeenCalledTimes(2)
   })
 
-  it('opens another page in the browser even after one was opened', async () => {
+  it('does not open the browser again when the page is reloaded', async () => {
     const invoke = desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
     vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    arrivedBy('reload')
     await landing('/previews/t')
-    await landing('/sites/p')
-    expect(invoke.mock.calls.map(([, args]) => args)).toEqual([
-      { url: `${window.location.origin}/previews/t` },
-      { url: `${window.location.origin}/sites/p` },
-    ])
+    expect(opens(invoke)).toEqual([])
   })
 
-  it('returns the window to the ordinary page it came from, and to the start page from anywhere else', async () => {
-    desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
-    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
-    const cases: [unknown, string][] = [
-      ['/projects/p/topics/t?tab=preview', '/projects/p/topics/t?tab=preview'],
-      ['/previews/t', '/'],
-      ['/Sites/p', '/'],
-      ['/account/signin?redirect=%2Fpreviews%2Ft', '/'],
-      ['//evil.example/', '/'],
-      [undefined, '/'],
-    ]
-    for (const [back, expected] of cases) {
-      vi.spyOn(window.history, 'state', 'get').mockReturnValue(back === undefined ? null : { back })
-      await landing('/previews/t')
-      expect(replace).toHaveBeenLastCalledWith(expected)
-    }
+  it('opens the browser each time a person arrives at the same page again', async () => {
+    const invoke = desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    arrivedBy('navigate')
+    await landing('/previews/t')
+    // A new arrival is a new history entry, with nothing written on it yet.
+    entry = null
+    await landing('/previews/t')
+    expect(opens(invoke)).toHaveLength(2)
   })
 
   it('leaves the page only after the app has opened the browser', async () => {
@@ -212,6 +220,24 @@ describe('leaveForBrowser', () => {
     answer()
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(replace).toHaveBeenCalledWith('/')
+  })
+
+  it('returns the window to the ordinary page it came from, and to the start page from anywhere else', async () => {
+    desktopApp({ origin: 'https://okcheese.com', can: ['links'] })
+    const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+    const cases: [unknown, string][] = [
+      ['/projects/p/topics/t?tab=preview', '/projects/p/topics/t?tab=preview'],
+      ['/previews/t', '/'],
+      ['/Sites/p', '/'],
+      ['/account/signin?redirect=%2Fpreviews%2Ft', '/'],
+      ['//evil.example/', '/'],
+      [undefined, '/'],
+    ]
+    for (const [back, expected] of cases) {
+      entry = back === undefined ? null : { back }
+      await landing('/previews/t')
+      expect(replace).toHaveBeenLastCalledWith(expected)
+    }
   })
 
   it('leaves the page alone outside the app, and in an app that cannot open links', async () => {

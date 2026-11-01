@@ -5,7 +5,7 @@
 
 import type { ThemePreference } from '@/theme'
 
-import { storageGet, storageGetJson, storageRemove, storageSet, storageSetJson } from '@/lib/browserStorage'
+import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
 
 /** What an app can do beyond the window itself; an older app lists fewer. */
 export type DesktopAbility =
@@ -212,22 +212,31 @@ function afterLeaving(): string {
   return ['previews', 'sites', 'account'].includes(first) ? '/' : back
 }
 
+/** Whether this run of a landing page repeats one that already handed it to the
+ *  browser: the same history entry (marked when it handed over), or the same
+ *  document loaded again in place (a reload, which the app also does by itself
+ *  when the page's process ends). A person following a link to it again is a new
+ *  history entry and a fresh load, so it is not. */
+function handedOverAlready(): boolean {
+  if ((window.history.state as { handedToBrowser?: unknown } | null)?.handedToBrowser) return true
+  const load = performance.getEntriesByType?.('navigation')[0] as PerformanceNavigationTiming | undefined
+  return load?.type === 'reload' && load.name === window.location.href
+}
+
 /** A page that hands the reader to the content domain at the top level (a
  *  preview, a published Site) is the browser's to show: in the app the window
  *  would end up on a page someone else wrote, with no way back. In the app,
- *  opens `path` in the browser through the app's own opener, at most once per
- *  address for as long as this window lives (recorded in session storage, so
- *  a reload of the page, or the page arriving again, does not open it twice),
- *  and replaces this page with where the window came from (`afterLeaving`).
- *  False outside the app, where the caller goes on as in a browser. */
+ *  opens `path` in the browser through the app's own opener, once for each time
+ *  a person arrives at the page (`handedOverAlready`), and replaces this page
+ *  with where the window came from (`afterLeaving`). False outside the app,
+ *  where the caller goes on as in a browser. */
 export function leaveForBrowser(path: string): boolean {
   const core = tauri()?.core
   if (!core || !desktopCan('links')) return false
-  const url = new URL(path, window.location.origin).href
-  const key = `cheese.desktop.handedToBrowser:${url}`
   let opening: Promise<unknown> = Promise.resolve()
-  if (storageGet(key, 'session') === null) {
-    storageSet(key, '1', 'session')
+  if (!handedOverAlready()) {
+    window.history.replaceState({ ...(window.history.state ?? {}), handedToBrowser: true }, '')
+    const url = new URL(path, window.location.origin).href
     opening = core.invoke('plugin:opener|open_url', { url }).catch(() => {})
   }
   // Only once the app has answered: leaving the page while the call is in flight

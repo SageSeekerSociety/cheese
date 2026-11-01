@@ -144,5 +144,4 @@ it('in the desktop app, opens the preview in the browser and never posts the win
   await new Promise((resolve) => setTimeout(resolve, 0))
   expect(submit).not.toHaveBeenCalled()
   expect(requestPreviewSession).not.toHaveBeenCalled()
-  sessionStorage.clear()
 })
