@@ -96,7 +96,6 @@
     "space_material.space_id",
     "task_access_domain.task_id",
     "task_membership.task_id",
-    "task_snapshots.task_id",
     "task_submission.membership_id",
     "task_submission_entry.task_submission_id",
     "task_submission_review.submission_id",

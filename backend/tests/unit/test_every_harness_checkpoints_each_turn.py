@@ -75,15 +75,15 @@ def machine(tmp_path, monkeypatch):
 
 
 async def checkpointed(platform, commit, tmp_path) -> None:
-    """The commit is on the task branch, and nothing was uploaded for the file
-    nobody committed."""
+    """The commit is on the task branch, and nothing was uploaded: the file
+    nobody committed stays only in the working tree."""
     async with asyncio.timeout(4):
         while platform.branch_head() != commit:
             await asyncio.sleep(0.1)
     deadline = asyncio.get_running_loop().time() + 2
     while asyncio.get_running_loop().time() < deadline:
         await asyncio.sleep(0.1)
-    assert platform.snapshots == []
+    assert platform.writes == []
     reader = tmp_path / "reader.git"
     subprocess.run(
         ["git", "clone", "-q", "--bare", str(platform.forge), str(reader)], check=True

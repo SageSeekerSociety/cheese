@@ -186,6 +186,8 @@ COPY --chown=cheese:python sandbox ./sandbox
 # file by file rather than `COPY scripts`: the rest of that directory is dev
 # probes and demo seeders that have no business in a production image.
 COPY --chown=cheese:python scripts/migrate_forge.py ./scripts/
+# An operator empties the retired task-snapshot prefix once, after deploy.
+COPY --chown=cheese:python scripts/purge_task_snapshots.py ./scripts/
 # Export only the App's public key to the separate event relay.
 COPY --chown=cheese:python scripts/forge_event_public_key.py ./scripts/
 # The dev deploy runs this after a release to move the feedback it fixes.

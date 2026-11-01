@@ -229,7 +229,6 @@ def test_room_cli_worktree_and_sync_use_platform_socket_without_room_token(
     resource = str(uuid.uuid4())
     room.target = {"resource_id": resource, "device_id": "acceptance-machine"}
     room.owner = tmp_path
-    room.snapshots = {}
     origin = tmp_path / "task-origin"
     origin.mkdir()
     (origin / "README.md").write_text("seed\n")

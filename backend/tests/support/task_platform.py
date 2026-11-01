@@ -3,18 +3,16 @@
 The forge is a bare repository on disk. The platform is an HTTP server that
 answers the routes the CLI calls for a task — the task itself and the room's
 messages — over a real socket, so the CLI is exercised as it runs on a machine
-and not through stand-ins for its own functions. A snapshot upload can only be
-recorded: the CLI no longer sends one, so a test that finds one here is seeing
-a regression.
+and not through stand-ins for its own functions. Any write the CLI still sends
+is recorded and refused: it keeps its work by pushing commits, so a test that
+finds one here is seeing a regression.
 """
 
-import hashlib
 import importlib.util
 import json
 import subprocess
 import threading
 import uuid
-from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -64,7 +62,8 @@ class TaskPlatform:
         subprocess.run(
             ["git", "clone", "-q", "--bare", str(seed), str(self.forge)], check=True
         )
-        self.snapshots: list[dict] = []
+        #: Every write the CLI sent, which is a regression if it is not empty.
+        self.writes: list[dict] = []
         self.room_messages: list[str] = []
         platform = self
 
@@ -99,21 +98,8 @@ class TaskPlatform:
                 return self.answer(404, b"{}")
 
             def do_PUT(self):
-                task = f"/projects/{platform.project}/git/tasks/{platform.task_id}"
-                assert self.path.startswith(f"{task}/snapshots/")
-                bundle = self.read_body()
-                digest = hashlib.sha256(bundle).hexdigest()
-                assert digest == self.headers["X-Content-SHA256"]
-                row = {
-                    "id": str(uuid.uuid4()),
-                    "snapshot_sha": self.path.rsplit("/", 1)[1],
-                    "head_sha": self.headers["X-Cheese-Head"],
-                    "digest": digest,
-                    "created_at": datetime.now(UTC).isoformat(),
-                    "bundle": bundle,
-                }
-                platform.snapshots.append(row)
-                return self.data({k: v for k, v in row.items() if k != "bundle"})
+                platform.writes.append({"path": self.path, "body": self.read_body()})
+                return self.answer(404, b"{}")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
