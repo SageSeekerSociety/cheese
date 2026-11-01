@@ -5,25 +5,62 @@ vi.mock('@/api/pageTimings', () => ({ reportPageTiming: vi.fn(() => Promise.reso
 import { installPageTiming } from './pageTiming'
 
 import { reportPageTiming } from '@/api/pageTimings'
+import { rememberProject } from '@/lib/addresses'
 
 const PROJECT = '0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0'
+const SLUG = 'helper'
 
-function fakeRouter() {
-  let hook: ((to: unknown, from: unknown, failure?: unknown) => void) | null = null
+type To = {
+  path: string
+  params: Record<string, string>
+  matched: { meta?: { projectFrame?: boolean } }[]
+  redirectedFrom?: unknown
+}
+type Hook = (to: To, from: To, failure?: unknown) => void
+
+function fakeRouter(onNavigation?: () => void) {
+  let before: ((to: To) => void) | null = null
+  let after: Hook | null = null
+  const from: To = { path: '/', params: {}, matched: [] }
   return {
-    afterEach: (fn: typeof hook) => {
-      hook = fn
+    beforeEach: (fn: (to: To) => void) => {
+      before = fn
     },
-    go: (to: unknown) => hook?.(to, {}, undefined),
+    afterEach: (fn: Hook) => {
+      after = fn
+    },
+    go: (to: To) => {
+      before?.(to)
+      onNavigation?.()
+      after?.(to, from, undefined)
+    },
   }
 }
 
+function projectPage(path: string): To {
+  return { path, params: { projectId: SLUG }, matched: [{ meta: { projectFrame: true } }] }
+}
+
+function signedIn() {
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'reader' }))
+}
+
 describe('pageTiming', () => {
+  let clock = 0
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.mocked(reportPageTiming).mockClear()
+    rememberProject(PROJECT, SLUG)
+    signedIn()
+    clock = 100
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
   })
-  afterEach(() => vi.useRealTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+    localStorage.clear()
+  })
 
   it("reports a project page's API requests with ids folded, and nothing else", () => {
     vi.spyOn(performance, 'getEntriesByType').mockImplementation((type: string) =>
@@ -31,9 +68,9 @@ describe('pageTiming', () => {
         ? ([
             {
               name: `${location.origin}/api/projects/${PROJECT}/progress?x=1`,
-              startTime: 10,
+              startTime: 120,
               duration: 250,
-              responseStart: 200,
+              responseStart: 310,
               transferSize: 900,
             },
             {
@@ -45,32 +82,80 @@ describe('pageTiming', () => {
             },
             {
               name: `${location.origin}/api/projects/${PROJECT}/page-timings`,
-              startTime: 20,
+              startTime: 130,
               duration: 5,
-              responseStart: 3,
+              responseStart: 103,
               transferSize: 1,
             },
           ] as unknown as PerformanceEntryList)
         : ([] as unknown as PerformanceEntryList)
     )
-    const router = fakeRouter()
+    let navigations = 0
+    const router = fakeRouter(() => {
+      navigations += 1
+      if (navigations > 1) clock = 300
+    })
     installPageTiming(router as never)
-    router.go({ path: `/projects/${PROJECT}/overview`, params: { projectId: PROJECT } })
+    router.go({ path: '/home', params: {}, matched: [] })
+    router.go(projectPage('/projects/helper/overview'))
     vi.advanceTimersByTime(8000)
 
     expect(reportPageTiming).toHaveBeenCalledTimes(1)
     const [projectId, timing] = vi.mocked(reportPageTiming).mock.calls[0]
     expect(projectId).toBe(PROJECT)
     expect(timing.route).toBe('/projects/:id/overview')
+    expect(timing.first_load).toBe(false)
+    // 这一跳起头时（100 ms）发出的请求算进来，即使 afterEach 已经走到 300 ms。
     expect(timing.requests).toEqual([
-      { path: '/projects/:id/progress', start: 10, duration: 250, ttfb: 190, bytes: 900 },
+      { path: '/projects/:id/progress', start: 20, duration: 250, ttfb: 190, bytes: 900 },
     ])
+  })
+
+  it('collects from zero on the first page load', () => {
+    vi.spyOn(performance, 'getEntriesByType').mockImplementation((type: string) =>
+      type === 'resource'
+        ? ([
+            {
+              name: `${location.origin}/api/projects/${PROJECT}/overview`,
+              startTime: 10,
+              duration: 90,
+              responseStart: 70,
+              transferSize: 500,
+            },
+          ] as unknown as PerformanceEntryList)
+        : ([] as unknown as PerformanceEntryList)
+    )
+    const router = fakeRouter()
+    installPageTiming(router as never)
+    router.go(projectPage('/projects/helper/overview'))
+    vi.advanceTimersByTime(8000)
+
+    const [, timing] = vi.mocked(reportPageTiming).mock.calls[0]
+    expect(timing.first_load).toBe(true)
+    expect(timing.requests).toEqual([{ path: '/projects/:id/overview', start: 10, duration: 90, ttfb: 60, bytes: 500 }])
   })
 
   it('reports nothing for a page outside a project', () => {
     const router = fakeRouter()
     installPageTiming(router as never)
-    router.go({ path: '/home', params: {} })
+    router.go({ path: '/home', params: {}, matched: [] })
+    vi.advanceTimersByTime(8000)
+    expect(reportPageTiming).not.toHaveBeenCalled()
+  })
+
+  it('reports nothing when signed out', () => {
+    localStorage.clear()
+    const router = fakeRouter()
+    installPageTiming(router as never)
+    router.go(projectPage('/projects/helper/overview'))
+    vi.advanceTimersByTime(8000)
+    expect(reportPageTiming).not.toHaveBeenCalled()
+  })
+
+  it('reports nothing for /sites/:projectId, which is not a project frame', () => {
+    const router = fakeRouter()
+    installPageTiming(router as never)
+    router.go({ path: `/sites/${SLUG}`, params: { projectId: PROJECT }, matched: [] })
     vi.advanceTimersByTime(8000)
     expect(reportPageTiming).not.toHaveBeenCalled()
   })
