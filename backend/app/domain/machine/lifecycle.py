@@ -84,7 +84,12 @@ from app.domain.agent import execution, resource_cleanup, turn_inputs
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import LOST_KEY, THAW_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LOST_KEY,
+    LOST_PROCESSES_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
@@ -1080,7 +1085,7 @@ class SandboxLifecycle:
         project, resource = str(holders.namespace_of(home)), home.resource_id
         await self._session.commit()
         try:
-            await run_on_host(
+            answered = await run_on_host(
                 self._hub,
                 device_id,
                 "destroy",
@@ -1092,6 +1097,10 @@ class SandboxLifecycle:
             # Marked, it takes no tool call; a later sweep tries again.
             logger.warning("destroying sandbox %s failed", home_id, exc_info=True)
             return False
+        # What was running when it went, as the host read it before stopping
+        # the executor. A host too old to answer the key names nothing; one
+        # that could not read its cgroup answers an empty list.
+        running = [str(one) for one in (answered or {}).get("processes") or [] if one]
         if holder_id is not None:
             await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
@@ -1109,10 +1118,15 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                row.execution_request = {
-                    **(row.execution_request or {}),
-                    LOST_KEY: True,
+                request = {
+                    key: value
+                    for key, value in (row.execution_request or {}).items()
+                    if key != LOST_PROCESSES_KEY
                 }
+                request[LOST_KEY] = True
+                if running:
+                    request[LOST_PROCESSES_KEY] = running
+                row.execution_request = request
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that

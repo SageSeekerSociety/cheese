@@ -41,7 +41,11 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LOST_KEY,
+    LOST_PROCESSES_KEY,
+    AgentSession,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lifecycle, session_work
 from app.domain.machine.models import SandboxHome
@@ -329,7 +333,7 @@ async def restore_preview_on_machine(
                     row.execution_request = {
                         k: v
                         for k, v in (row.execution_request or {}).items()
-                        if k != LOST_KEY
+                        if k not in (LOST_KEY, LOST_PROCESSES_KEY)
                     }
                     await db.commit()
         return True

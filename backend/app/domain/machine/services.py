@@ -374,12 +374,22 @@ class HostPool(PoolSweep):
             return await self._place_on_free(home)
         if not free:
             return None
+        project_key = home.get("project_id") or home.get("topic_id")
+        cached = await self._repo.stores(project_key) if project_key else set()
 
-        # A host that can run the sandbox now first; among those, the one with
-        # the fewest free slots, so the others can empty and be released.
+        # A host that can run the sandbox now first; then one that has this
+        # project's store, so its dependencies and cache are the ones this
+        # sandbox starts with — that beats packing, which is what decides
+        # among hosts equally good at that: the fewest free slots, so the
+        # others can empty and be released.
         def rank(host: CloudHost):
             ready = host.device_id is not None and self._hub.is_online(host.device_id)
-            return (not ready, free_slots(host, load), host.created_at)
+            return (
+                not ready,
+                host.id not in cached,
+                free_slots(host, load),
+                host.created_at,
+            )
 
         host = min(free, key=rank)
         await self._repo.put_home(host.id, home)

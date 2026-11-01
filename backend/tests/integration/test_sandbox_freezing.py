@@ -182,10 +182,13 @@ def test_a_tool_call_thaws_the_same_sandbox_and_its_work_is_there(icy):
     assert before is not None
     host_id, resource = before.host_id, before.resource_id
 
-    target = tool_call(icy, seat)["target"]
+    answer = tool_call(icy, seat, tells_agent=True)
 
     # Same host, same home, same processes.
-    assert target["device_id"] == device
+    assert answer["target"]["device_id"] == device
+    # Waking is not losing: nothing was destroyed, so the agent is told
+    # nothing about it. A notice here would say it is in a new sandbox.
+    assert "notice" not in answer
     after = home_row(icy, seat)
     assert after is not None
     assert (after.host_id, after.resource_id, after.frozen_at) == (
@@ -483,6 +486,9 @@ def test_deleting_a_frozen_sandbox_thaws_it_before_stopping_it(tmp_path):
         "sandbox_marker": lambda home: tmp_path / "marker",
     }
 
-    assert sandbox_home.destroy(cleanup, "project", "resource") == {"destroyed": True}
+    assert sandbox_home.destroy(cleanup, "project", "resource") == {
+        "destroyed": True,
+        "processes": [],
+    }
     assert order == ["thaw", "stop"]
     assert not home.exists()
