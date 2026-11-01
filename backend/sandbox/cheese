@@ -7641,94 +7641,6 @@ def _start_detached_serve_cmd(command: str, cwd: str, port: int) -> None:
         )
 
 
-def _relocate_home_in_command(command: str, old_home: str, new_home: str) -> str:
-    """Replace ``old_home`` with ``new_home`` only on path/token boundaries."""
-    if not command or not old_home or old_home == new_home:
-        return command
-    pattern = re.compile(
-        r"(?<=^)"
-        + re.escape(old_home)
-        + r"(?=/|[\s'\":]|$)|(?<=[\s='\":])"
-        + re.escape(old_home)
-        + r"(?=/|[\s'\":]|$)"
-    )
-    return pattern.sub(new_home, command)
-
-
-def _restore_served_app(raw_spec: str, wait_s: float | None) -> int:
-    """Bring a previously declared app and its preview tunnel back up in place.
-
-    Called by the platform when waking a sleeping preview without starting an
-    agent turn: opens the task checkout (or default-branch checkout) when the
-    sandbox is fresh, relocates paths from the previous sandbox home, starts
-    the recorded command if the port is silent, and brings the tunnel up.
-    """
-    up = os.environ.get("CHEESE_PREVIEW_UP", "")
-    if not up:
-        return 2
-    try:
-        spec = json.loads(raw_spec)
-        port = int(spec["port"])
-    except (ValueError, KeyError, TypeError):
-        return 2
-    if not (1 <= port <= 65535):
-        return 2
-    raw_task_id = spec.get("task_id")
-    task_id: str | None = None
-    if isinstance(raw_task_id, str) and raw_task_id.strip():
-        try:
-            task_id = str(uuid.UUID(raw_task_id.strip()))
-        except ValueError:
-            return 2
-    if task_id is not None:
-        task_dir = _task_root() / task_id
-        if not (task_dir / ".git").exists():
-            try:
-                _task_worktree(task_id)
-            except (Exception, SystemExit):
-                return 1
-    elif spec.get("checkout") is True:
-        checkout_dir = Path.home() / ".cheese" / "checkout"
-        if not (checkout_dir / ".git").exists():
-            try:
-                _checkout()
-            except (Exception, SystemExit):
-                return 1
-    old_home = str(spec.get("home") or "").strip().rstrip("/")
-    new_home = str(Path.home().resolve()).rstrip("/")
-    cwd = str(spec.get("cwd") or new_home).strip()
-    command = str(spec.get("command") or "").strip()
-    if old_home and old_home != new_home:
-        if cwd == old_home:
-            cwd = new_home
-        elif cwd.startswith(old_home + "/"):
-            cwd = new_home + cwd[len(old_home) :]
-        if command:
-            command = _relocate_home_in_command(command, old_home, new_home)
-    if not os.path.isdir(cwd):
-        fallback = _task_root() / task_id if task_id is not None else Path(new_home)
-        cwd = str(fallback) if fallback.is_dir() else new_home
-    if subprocess.call(["sh", up, str(port)]) != 0:
-        return 1
-    if _probe_app(port) is None:
-        if not command:
-            return 1
-        try:
-            _start_detached_serve_cmd(command, cwd, port)
-        except OSError:
-            return 1
-    timeout = _SERVE_WAIT_DEFAULT_S if wait_s is None else wait_s
-    if timeout > 0 and _wait_for_app(port, timeout) is None:
-        return 1
-    updated = _build_serve_meta(port, command, cwd)
-    if updated is not None:
-        with contextlib.suppress(OSError):
-            (Path.home() / ".cheese" / "cheese-preview.json").write_text(
-                json.dumps(updated, ensure_ascii=False)
-            )
-    return 0
-
-
 def source_fingerprint() -> str:
     """A short digest of THIS file's bytes.
 
@@ -7876,15 +7788,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="命令",
         help=(
             "启动这个应用的命令(如 './node_modules/.bin/vite preview --port 4173 --strictPort')。"
-            "给了它,应用还没起时会自动在后台拉起,沙箱休眠回收后平台也能直接按这条命令重启应用;"
+            "给了它,应用还没起时会自动在后台拉起;"
             "省略时自动从当前监听该端口的进程读取命令行与目录。"
         ),
-    )
-    psv.add_argument(
-        "--restore",
-        dest="restore_spec",
-        default=None,
-        help=argparse.SUPPRESS,
     )
 
     plib = sub.add_parser(
@@ -8152,8 +8058,6 @@ def main() -> None:
                 os.makedirs(parent, exist_ok=True)
             _raw_request("GET", f"{base}/attachments/{a.index}{where}", None, out=out)
     elif a.cmd == "serve":
-        if a.restore_spec:
-            sys.exit(_restore_served_app(a.restore_spec, a.wait))
         topic = _need("CHEESE_TOPIC", TOPIC)
         if not (1 <= a.port <= 65535):
             print(f"[cheese] {a.port} 不是一个端口号。", file=sys.stderr)
