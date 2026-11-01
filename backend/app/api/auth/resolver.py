@@ -706,8 +706,12 @@ class ActorResolver:
                 raise ValueError(  # i18n-exempt: programmer invariant, never shown
                     "can_access_topic needs topic_id or room"
                 )
-            topic_id = await conversations.room_of(self._session, topic_id)
-            room = await TopicRepository(self._session).get(topic_id)
+            room = await TopicRepository(self._session).room_of_conversation(topic_id)
+            topic_id = (
+                room.id
+                if room is not None
+                else await conversations.room_of(self._session, topic_id)
+            )
         else:
             # The room's id, not the conversation's: a task's or a 支线's id
             # names no room and no roster entry.

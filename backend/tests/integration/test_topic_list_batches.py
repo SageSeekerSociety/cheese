@@ -1088,8 +1088,9 @@ def test_room_snapshot_batches_open_and_recent_closed_tasks_in_one_pass(client):
     ]
 
 
+# `plans` read on its own, or joined to the paying team (`usage.payers`).
 _PLANS_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM plans\b",
+    r"^\s*SELECT\b[^;]*?\b(?:FROM|JOIN) plans\b",
     re.IGNORECASE,
 )
 _COMPUTE_GRANTS_SELECT = re.compile(

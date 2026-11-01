@@ -41,7 +41,14 @@ from tests.integration.conftest import (
 #: ``room_of``: the union over a room's tasks and 支线, aliased ``inside``. The
 #: two arms are adjacent in it, so the pattern is the seam between them — a
 #: notification read that correlates on both tables is not this lookup.
-_ROOM_LOOKUP = re.compile(r"FROM tasks\s+UNION ALL SELECT threads\.id", re.I)
+# Which room a conversation is in: asked on its own (`conversations.room_of`)
+# or inside the statement that reads that room's row
+# (`TopicRepository.room_of_conversation`).
+_ROOM_LOOKUP = re.compile(
+    r"FROM tasks\s+UNION ALL SELECT threads\.id"
+    r"|WHERE topics\.id = coalesce\(\(SELECT tasks\.room_id",
+    re.I,
+)
 
 
 def _room(client) -> str:
