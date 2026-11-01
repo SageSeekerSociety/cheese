@@ -170,7 +170,7 @@ async def _payer_teams(
         }
     if session.autoflush:
         await session.flush()
-    key = ("payer_teams", tuple(team_ids))
+    key = _payer_teams_key(team_ids)
     found, cached = recall(session, key)
     if found:
         return cached
@@ -201,7 +201,14 @@ async def payer_for_project(session: AsyncSession, project_id: uuid.UUID) -> Pay
     return (await payers_for_projects(session, [project]))[project.id]
 
 
-async def project_with_payer(session: AsyncSession, project_id: uuid.UUID):
+def _payer_teams_key(team_ids: list[int]) -> tuple:
+    """The request fact `_payer_teams` answers from, for these sorted team ids."""
+    return ("payer_teams", tuple(team_ids))
+
+
+async def project_with_payer(
+    session: AsyncSession, project_id: uuid.UUID
+) -> Project | None:
     """The project row, read with the team that pays for it and that team's
     plan in one statement, for a caller about to ask who pays (model
     admission, on every model call). What it read answers
@@ -230,7 +237,7 @@ async def project_with_payer(session: AsyncSession, project_id: uuid.UUID):
         _, plan_key, owner, plan = row
         remember(
             session,
-            ("payer_teams", (project.team_id,)),
+            _payer_teams_key([project.team_id]),
             {project.team_id: (plan_key, owner is not None)},
             tables=frozenset({"team"}),
         )
