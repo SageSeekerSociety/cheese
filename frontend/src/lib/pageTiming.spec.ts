@@ -22,19 +22,24 @@ function fakeRouter(onNavigation?: () => void) {
   let before: ((to: To) => void) | null = null
   let after: Hook | null = null
   const from: To = { path: '/', params: {}, matched: [] }
-  return {
+  const router = {
     beforeEach: (fn: (to: To) => void) => {
       before = fn
     },
     afterEach: (fn: Hook) => {
       after = fn
     },
-    go: (to: To) => {
+    before: (to: To) => {
       before?.(to)
       onNavigation?.()
-      after?.(to, from, undefined)
+    },
+    after: (to: To) => after?.(to, from, undefined),
+    go: (to: To) => {
+      router.before(to)
+      router.after(to)
     },
   }
+  return router
 }
 
 function projectPage(path: string): To {
@@ -133,6 +138,35 @@ describe('pageTiming', () => {
     const [, timing] = vi.mocked(reportPageTiming).mock.calls[0]
     expect(timing.first_load).toBe(true)
     expect(timing.requests).toEqual([{ path: '/projects/:id/overview', start: 10, duration: 90, ttfb: 60, bytes: 500 }])
+  })
+
+  it('keeps the start of the navigation a redirect came from', () => {
+    vi.spyOn(performance, 'getEntriesByType').mockImplementation((type: string) =>
+      type === 'resource'
+        ? ([
+            {
+              name: `${location.origin}/api/projects/${PROJECT}/overview`,
+              startTime: 120,
+              duration: 90,
+              responseStart: 170,
+              transferSize: 500,
+            },
+          ] as unknown as PerformanceEntryList)
+        : ([] as unknown as PerformanceEntryList)
+    )
+    const router = fakeRouter()
+    installPageTiming(router as never)
+    router.go({ path: '/home', params: {}, matched: [] })
+    clock = 100
+    router.before({ path: `/projects/${PROJECT}/overview`, params: { projectId: PROJECT }, matched: [] })
+    clock = 300
+    // The redirect target carries `redirectedFrom`; the start stays at the first hop.
+    router.after({ ...projectPage('/projects/helper/overview'), redirectedFrom: { path: '/x' } })
+    vi.advanceTimersByTime(8000)
+
+    const [, timing] = vi.mocked(reportPageTiming).mock.calls[0]
+    expect(timing.route).toBe('/projects/:id/overview')
+    expect(timing.requests).toEqual([{ path: '/projects/:id/overview', start: 20, duration: 90, ttfb: 50, bytes: 500 }])
   })
 
   it('reports nothing for a page outside a project', () => {
