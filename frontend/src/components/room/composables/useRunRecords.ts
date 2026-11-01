@@ -5,8 +5,9 @@
  *
  * 一轮没完成、平台排了自动重试：等的是后端那一行待重试（turn_resume）。打开、重连
  * 时 `room_state` 帧给出此刻还欠着的全部（`resumesNow`），之后它的每一步都是一条运行
- * 记录：排上（`turn_resume_wait`，带重试时刻 `meta.due_at`）、开始重试
- * （`turn_resume_started`）、取消（`turn_resume_stopped`）。
+ * 记录：排上（`turn_resume_wait`）、开始重试（`turn_resume_started`）、取消
+ * （`turn_resume_stopped`）。等着的时候输入框上方那一行说这位队友调用模型出错了、在自动
+ * 重试，和「正在工作」同一个位置；重试开始它变回「正在工作」，平台不再重试它就没了。
  *
  * 帧里的记录长得和一条事件块一样，改写过的（重试到第几次、整理完没有）用同一个 id
  * 再来一次，这里按 id 换掉旧的那一份。
@@ -20,7 +21,6 @@ import { computed, ref } from 'vue'
 
 import { t } from '@/i18n'
 import { isAgentBlock, isPersonBlock } from '@/lib/authorship'
-import { clockTime } from '@/lib/dateText'
 
 /** 手上最多留多少条：够算出每位队友此刻的状态，不会越攒越多。 */
 const KEPT = 200
@@ -57,6 +57,7 @@ function scheduled(record: Block): ResumeWait | null {
     resume_id: m.resume_id,
     due_at: m.due_at,
     since: record.created_at,
+    ...(typeof m.reason === 'string' ? { reason: m.reason } : {}),
   }
 }
 
@@ -176,7 +177,9 @@ export function useRunRecords() {
   })
 
   /**
-   * 输入框上方那一行里，排队的队友、等自动重试的队友各一行（名字由房间给）。
+   * 输入框上方那一行里，排队的队友、等自动重试的队友各一行（名字由房间给）。等自动重试的
+   * 那一行不说几点重试：只说调用模型出错了、在等，和等了多久。平台更新换掉了运行程序的那一
+   * 次（`runner_replaced`）不是出错，几秒内就接着做，照「正在工作」说。
    * `blocks` 是屏幕上的对话：之后有人开口、队友自己说了话的那次自动重试不再算在等。
    */
   function waitingLines(nameOf: (handle: string) => string, blocks: Block[] = []): MemberActivityLine[] {
@@ -195,9 +198,8 @@ export function useRunRecords() {
       lines.push({
         handle,
         name: nameOf(handle),
-        kind: 'working',
+        kind: wait.reason === 'runner_replaced' ? 'working' : 'retrying',
         since: Date.parse(wait.since) / 1000,
-        detail: t('work.room.site.status.resumeAt', { time: clockTime(Date.parse(wait.due_at)) }),
       })
     }
     return lines

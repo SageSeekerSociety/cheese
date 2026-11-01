@@ -8,8 +8,9 @@ A failure no wait changes (an invalid request, a refused credential, a spent
 balance), or whose service comes back only days later, does not, and a person
 speaking in the meantime takes the turn back.
 
-Whichever it is, the person who asked is told in the conversation that the turn
-did not finish: when the platform retries it, or why it will not.
+While the platform waits to retry, the conversation gets no line: the line
+above the composer says the teammate is waiting. When it does not retry, the
+conversation says the turn did not finish because calling the model failed.
 """
 
 import asyncio
@@ -18,13 +19,13 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select, text
 
 from app.api.deps import get_work_runner
 from app.core.config import settings
+from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.input_registration import confirm_receipt
 from app.domain.agent.models import AgentTurn, TurnResume
@@ -199,11 +200,6 @@ async def _turn_lines(factory, conversation, event_type: str) -> list[Block]:
         )
 
 
-def _clock(at: datetime) -> str:
-    """A time as the room line says it: Beijing time, HH:MM."""
-    return at.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%H:%M")
-
-
 async def _first_turn_fails(factory, tmp_path, failure: str, *, retrying=False):
     """A person gives the agent work and the turn ends on ``failure``."""
     _project, conversation, seat, _instance = await _room_with_agent(factory)
@@ -251,11 +247,10 @@ async def test_a_rate_limited_turn_resumes_by_itself(
     try:
         rows = await _owed_resumes(factory, conversation)
         assert len(rows) == 1, "the rate-limited turn left nothing to resume it"
-        # The person who asked is told the turn stopped and when it is retried,
-        # in the conversation, where a reload finds it again. Not a failure
-        # card: nobody has to step in.
-        [told] = await _turn_lines(factory, conversation, "turn_resume_wait")
-        assert _clock(rows[0].due_at) in told.content
+        # Nothing in the conversation while the platform waits: nobody has to
+        # step in, and the line above the composer says it is waiting
+        # (`waiting`, the run record below).
+        assert not await _turn_lines(factory, conversation, "turn_resume_wait")
         assert await _failure_cards(factory, conversation) == 0
         assert not [f for f in frames if f.get("type") == "error"]
         async with factory() as session:
@@ -313,7 +308,7 @@ async def test_a_rate_limited_turn_resumes_by_itself(
             "api_retry",
         ]
         assert await _failure_cards(factory, conversation) == 0
-        assert len(await _turn_lines(factory, conversation, "turn_resume_wait")) == 1
+        assert not await _turn_lines(factory, conversation, "turn_resume_wait")
         assert not [f for f in frames if f.get("type") == "error"]
         # Handed over once: the clock running again sends nothing more.
         assert await hand_due(factory, now=owed.due_at + timedelta(hours=1)) == 0
@@ -323,25 +318,25 @@ async def test_a_rate_limited_turn_resumes_by_itself(
 
 
 @pytest.mark.anyio
-async def test_the_same_failure_reported_again_is_told_once(
+async def test_the_same_failure_reported_again_is_decided_once(
     business_db_factory, tmp_path
 ):
     """The runner delivers a report again until everything that follows from
-    it is done, so the same failed turn can land twice. The conversation still
-    shows one line for it, with the retry time it first said."""
+    it is done, so the same failed turn can land twice. The retry decided the
+    first time stands, with the time it was due, and the conversation still
+    has no line for it."""
     factory = business_db_factory
     conversation, _seat, screen, runner, chat = await _first_turn_fails(
         factory, tmp_path, RATE_LIMITED
     )
     try:
         [owed] = await _owed_resumes(factory, conversation)
-        [told] = await _turn_lines(factory, conversation, "turn_resume_wait")
         async with factory() as session:
             project = (await session.get(Conversation, conversation)).project_id
         await chat.hook_events.accept(
             project,
             conversation,
-            told.turn_id,
+            owed.failed_turn_id,
             AgentResult(
                 text=RATE_LIMITED,
                 session_id="s",
@@ -354,8 +349,7 @@ async def test_the_same_failure_reported_again_is_told_once(
         )
         await runner.drain(timeout_s=10)
 
-        [again] = await _turn_lines(factory, conversation, "turn_resume_wait")
-        assert again.id == told.id
+        assert not await _turn_lines(factory, conversation, "turn_resume_wait")
         [still] = await _resumes(factory, conversation)
         assert still.id == owed.id and still.due_at == owed.due_at
         assert await _failure_cards(factory, conversation) == 0
@@ -369,8 +363,8 @@ async def test_a_service_back_only_days_later_fails_the_turn_and_says_so(
     business_db_factory, tmp_path, monkeypatch
 ):
     """Every subscription account is cooling for three days. That is not a
-    passing fault: the turn fails now and the conversation says why and when
-    the service expects to be back, instead of a resume days later."""
+    passing fault: the turn fails now, and the conversation says calling the
+    model failed, with a retry, instead of a resume days later."""
     factory = business_db_factory
     back_at = time.time() + 3 * 86400
     (tmp_path / "accounts.json").write_text(
@@ -393,7 +387,8 @@ async def test_a_service_back_only_days_later_fails_the_turn_and_says_so(
                 await asyncio.sleep(0.05)
         [failed] = await _turn_lines(factory, conversation, "turn_failed")
         back = datetime.fromtimestamp(back_at, UTC)
-        assert _clock(back) in failed.content
+        assert failed.content == say("turnFailedModelError")
+        assert failed.meta["retryable"] is True
         assert not await _turn_lines(factory, conversation, "turn_resume_wait")
         # Nothing is owed: no clock, however late, starts the turn again.
         assert all(
@@ -438,7 +433,7 @@ async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path
     )
     try:
         # Nothing about raising a cap happens by waiting: the seat stays idle
-        # and the room gets the failure card, which offers no retry.
+        # and the room gets the failure card.
         assert await _owed_resumes(factory, conversation, expected=False) == []
         assert await _failure_cards(factory, conversation) == 1
         later = datetime.now(UTC) + timedelta(days=1)
@@ -454,6 +449,8 @@ async def test_a_spent_upstream_cap_is_not_resumed(business_db_factory, tmp_path
 async def test_exhausted_resume_budget_shows_failure_card(
     business_db_factory, tmp_path, monkeypatch
 ):
+    """Once the platform will not retry again, the conversation says the turn
+    did not finish because calling the model failed, and offers a retry."""
     monkeypatch.setitem(POLICIES, RATE_KIND, Policy(base_s=60, cap_s=1800, attempts=0))
     factory = business_db_factory
     conversation, _seat, _screen, runner, chat = await _first_turn_fails(
@@ -463,7 +460,9 @@ async def test_exhausted_resume_budget_shows_failure_card(
         async with asyncio.timeout(HANG_S):
             while await _failure_cards(factory, conversation) == 0:
                 await asyncio.sleep(0.05)
-        assert await _failure_cards(factory, conversation) == 1
+        [card] = await _turn_lines(factory, conversation, "turn_failed")
+        assert card.content == say("turnFailedModelError")
+        assert card.meta["retryable"] is True
         async with factory() as session:
             visible = await for_site(session, conversation, since=None, until=None)
         assert [
@@ -701,8 +700,9 @@ async def test_a_room_hears_who_waits_for_a_retry_until_nothing_will_retry(
     business_db_factory, tmp_path
 ):
     """A page that opens or reconnects asks the room for its state: a seat the
-    platform will retry is in it, with the time; once a person has taken the
-    turn back, it is not, though the clock has yet to drop the resume."""
+    platform will retry is in it, with the time and what it waits out; once a
+    person has taken the turn back, it is not, though the clock has yet to drop
+    the resume."""
     factory = business_db_factory
     conversation, seat, _screen, runner, chat = await _first_turn_fails(
         factory, tmp_path, RATE_LIMITED
@@ -713,6 +713,7 @@ async def test_a_room_hears_who_waits_for_a_retry_until_nothing_will_retry(
             [wait] = await waiting(session, conversation)
         assert wait["seat"] == seat
         assert datetime.fromisoformat(wait["due_at"]) == owed.due_at
+        assert wait["reason"] == "rate_limited"
 
         await runner.receive_message(
             chat, conversation, author="u", content="hold on, I'll look first"

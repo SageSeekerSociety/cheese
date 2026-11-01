@@ -175,6 +175,12 @@ export interface EnvironmentTarget {
   query: Record<string, string>
 }
 
+/** 「你们接入的模型连接余额用完了」那一行指向的地方：项目设置的「AI 队友」，队友用哪份模型连接在那里换。 */
+export interface ModelConnectionTarget {
+  name: 'project-settings'
+  params: { projectId: string; section: 'agents' }
+}
+
 /** 时间线上的一行：要渲染的块，以及被折进它的那一串。 */
 export interface NoticeRow {
   block: Block
@@ -209,5 +215,12 @@ export function rowKeys(
   return { keys, byBlock }
 }
 
-export { actionResource, confirmTarget, environmentTarget, mailOutcomes, platformNotice } from './platformNoticeCards'
+export {
+  actionResource,
+  confirmTarget,
+  environmentTarget,
+  mailOutcomes,
+  modelConnectionTarget,
+  platformNotice,
+} from './platformNoticeCards'
 export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'

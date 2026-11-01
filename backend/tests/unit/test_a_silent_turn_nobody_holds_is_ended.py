@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, text
 
+from app.core.sentences import say
 from app.domain.agent import runtime_orphans
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
@@ -116,6 +117,16 @@ async def test_a_turn_nobody_holds_that_said_nothing_past_the_horizon_is_ended(
     )
     lines = await _lines_about(db_factory, turn)
     assert len(lines) == 1, f"房间里该有且只有一句说明，实际 {lines}"
+    # 平台停掉的这一轮不是模型出错：那句话只说没做完、已停下，带一个「重试」。
+    assert lines == [say("turnStopped")]
+    async with db_factory() as session:
+        [said] = await session.scalars(
+            select(Block).where(
+                Block.turn_id == turn,
+                Block.meta["event_type"].as_string() == EVENT_TURN_TIMEOUT,
+            )
+        )
+    assert said.meta["retryable"] is True
 
 
 @pytest.mark.anyio

@@ -8,9 +8,10 @@ at the reset the service named — when that is within `RESUME_HORIZON`. A
 recovery dated further out is written as dropped (`RECOVERS_LATE`): the turn
 has failed, and nothing is owed.
 
-Either way the conversation is told (`scheduled_notice`, `late_notice`): the
-person who asked sees that the turn did not finish and whether the platform
-will try again, and when. A clock (`hand_due`) turns a due
+While a resume is owed the conversation gets no line: the line above the
+composer says the teammate is waiting on it (`waiting`, the run records). Once
+the platform gives up the turn has failed, and its line says so like any
+other failed model call (`intake.hooks`). A clock (`hand_due`) turns a due
 row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
 so admission, leases, the closed-task check and the 30-second dispatch all stay
 the ledger's, exactly as for a timed delivery.
@@ -46,7 +47,6 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Final
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -121,10 +121,6 @@ DELIVERY_FAILED: Final = "delivery_failed"
 #: The failure dates its recovery beyond `RESUME_HORIZON`: not a passing fault.
 #: The row's ``due_at`` keeps when it said the service comes back.
 RECOVERS_LATE: Final = "recovers_late"
-
-#: The clock a room line names a time on: the platform says recovery times in
-#: Beijing time (docs/spec.md, 供应商错误结构化呈现), as the credit alerts do.
-_CLOCK: Final = ZoneInfo("Asia/Shanghai")
 
 _SAID_MAX: Final = 4000
 
@@ -362,60 +358,6 @@ _WAIT_KEYS: Final = {
     "quota_reset": "turnResumeWaitQuotaReset",
     "runner_replaced": "turnResumeWaitRunnerReplaced",
 }
-
-
-#: What failed, as the room line names it (`scheduled_notice`, `late_notice`).
-_REASON_KEYS: Final = {
-    "rate_limited": "turnEndedRateLimited",
-    "overloaded": "turnEndedOverloaded",
-    "stream_ended": "turnEndedStreamEnded",
-    "unreachable": "turnEndedUnreachable",
-    "egress_offline": "turnEndedEgressOffline",
-    "subscription_cooling": "turnEndedSubscriptionCooling",
-    "quota_reset": "turnEndedQuotaReset",
-    "runner_replaced": "turnEndedRunnerReplaced",
-}
-
-
-def scheduled_notice(row: TurnResume) -> tuple[str, dict]:
-    """The conversation's line for a failed turn the platform will start again:
-    that it did not finish, why, and about when the retry comes. The composer
-    shows the wait from the resume itself (`waiting`, the run records)."""
-    local = row.due_at.astimezone(_CLOCK)
-    return say(
-        "turnResumeScheduled",
-        time=local.strftime("%H:%M"),
-        reason=say(_REASON_KEYS[row.reason]),
-    ), {
-        **notice(EVENT_TURN_RESUME_WAIT, severity=SEVERITY_WARN, who=WHO_PLATFORM),
-        "reason": row.reason,
-        "resume_id": str(row.id),
-    }
-
-
-def late_notice(row: TurnResume) -> tuple[str, dict]:
-    """The conversation's line for a failed turn whose service comes back past
-    `RESUME_HORIZON`: why it failed, when the service expects to be back, and
-    what the person can do meanwhile. Nothing will retry it."""
-    local = row.due_at.astimezone(_CLOCK)
-    return say(
-        "turnFailedRecoversLate",
-        reason=say(_REASON_KEYS[row.reason]),
-        month=local.month,
-        day=local.day,
-        time=local.strftime("%H:%M"),
-    ), notice(
-        EVENT_TURN_FAILED,
-        severity=SEVERITY_ERROR,
-        who=WHO_HUMAN,
-        detail=say(
-            "hintAndServiceWords",
-            hint=say("turnFailedRecoversLateHint"),
-            said=row.said,
-        ),
-        detail_label=say("labelDetails"),
-        retryable=True,
-    )
 
 
 async def started_on_receipt(
@@ -728,8 +670,8 @@ async def hand_due(
 
 async def waiting(session: AsyncSession, conversation_id: uuid.UUID) -> list[dict]:
     """The resumes this conversation is still owed, as the room is told them
-    when it asks for its state (the `room_state` frame): whose, when it is
-    due, and since when it has waited. A row the clock would drop when due
+    when it asks for its state (the `room_state` frame): whose, why, when it
+    is due, and since when it has waited. A row the clock would drop when due
     (`_no_longer_applies`) is not one: nothing will retry it."""
     rows = list(
         await session.scalars(
@@ -748,6 +690,8 @@ async def waiting(session: AsyncSession, conversation_id: uuid.UUID) -> list[dic
             "resume_id": str(row.id),
             "due_at": row.due_at.isoformat(),
             "since": row.failed_at.isoformat(),
+            # What it waits out: a platform upgrade is not a failed model call.
+            "reason": row.reason,
         }
         for row in rows
         if await _no_longer_applies(session, row, room) is None

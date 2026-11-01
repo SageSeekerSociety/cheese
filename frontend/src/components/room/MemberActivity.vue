@@ -3,7 +3,9 @@
 // 什么，所以这里说的永远是某一位成员：在打字的人、有一轮在跑的 AI 队友。
 //
 // 坐在输入框上面自己的一格，小字一行，没人在忙时这一格不存在；打字的人合成一句（一位 / 两位 /
-// 好几位），在干活的队友各占一句，带上它此刻在做的那一步和干了多久。只凭 props 画。
+// 好几位），在干活的队友各占一句，带上它此刻在做的那一步和干了多久。调用模型出错、在等平台
+// 自动重试的队友也占一句，同一个位置和字号，只换开头那颗点（黄）和那句话，不说几点重试。
+// 只凭 props 画。
 //
 // 读屏那一句和眼睛看的那一句分开：眼睛看的那截带着「执行命令 pnpm test」这样从
 // live 帧来的当前一步、还有每秒往前走的用时 —— 帧一来就变、秒一秒地变，全塞进
@@ -18,7 +20,8 @@ import { formatSpan } from '@/lib/siteLog'
 
 const props = defineProps<{ lines: MemberActivityLine[] }>()
 
-const working = computed(() => props.lines.filter((l) => l.kind === 'working'))
+// 在干活的和在等自动重试的：都是一位队友的这一轮，各占一行、上下对齐。
+const working = computed(() => props.lines.filter((l) => l.kind !== 'typing'))
 const typing = computed(() => props.lines.filter((l) => l.kind === 'typing'))
 
 const typingText = computed(() => {
@@ -53,6 +56,7 @@ function fromAnEarlierTurn(line: MemberActivityLine): boolean {
 
 /** 谁、此刻那一步 —— 会变长的那一截，用省略号收在它自己身上。 */
 function workingHead(line: MemberActivityLine): string {
+  if (line.kind === 'retrying') return t('work.room.activity.retrying', { name: line.name })
   const parts = [t('work.room.activity.working', { name: line.name })]
   // 有从 live 帧读来的当前一步，就用它顶掉时间线上那一个相（「思考中」）—— 它更
   // 具体，而且一次长工具调用期间时间线上根本不长新行，那个相早就是旧的了。
@@ -75,6 +79,7 @@ function workingTotal(line: MemberActivityLine): string | null {
 const workingAria = computed(() =>
   working.value
     .map((line) => {
+      if (line.kind === 'retrying') return t('work.room.activity.retrying', { name: line.name })
       const parts = [t('work.room.activity.working', { name: line.name })]
       if (line.detail) parts.push(line.detail)
       return parts.join(separator.value)
@@ -85,8 +90,12 @@ const workingAria = computed(() =>
 
 <template>
   <div v-if="lines.length > 0" class="member-activity" data-testid="member-activity" aria-live="polite">
-    <div v-for="line in working" :key="line.handle" class="member-activity__line" data-kind="working">
-      <span class="status-dot status-dot--ok member-activity__dot" aria-hidden="true" />
+    <div v-for="line in working" :key="line.handle" class="member-activity__line" :data-kind="line.kind">
+      <span
+        class="status-dot member-activity__dot"
+        :class="line.kind === 'retrying' ? 'status-dot--warn' : 'status-dot--ok'"
+        aria-hidden="true"
+      />
       <!-- The step and the elapsed seconds churn on their own; keep both out of the live region. -->
       <span class="member-activity__text" aria-hidden="true">{{ workingHead(line) }}</span>
       <span v-if="workingTotal(line)" class="member-activity__meta" aria-hidden="true"

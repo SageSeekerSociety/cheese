@@ -21,7 +21,7 @@ import { parseDiffLines } from '../../lib/diff'
 import { docLineInTurn, docLineOf, isDocLine } from '../../lib/docEditLine'
 import { repeatsLine } from '../../lib/noticeRepeats'
 import { noticeNotified, noticeText } from '../../lib/noticeText'
-import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
+import { confirmTarget, environmentTarget, modelConnectionTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import NavLink from '../common/NavLink.vue'
@@ -248,6 +248,7 @@ const showRetry = computed(
 // 芝士整理的技能：这一行直接通到要确认的那一条。
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
+const modelConnectionAt = computed(() => modelConnectionTarget(props.block, props.projectId))
 
 // 提示里的人只是被提到（名字引用、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
 // 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
@@ -356,6 +357,9 @@ const ACTION_META: Record<string, { btn: string }> = {
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>
+        <NavLink v-if="modelConnectionAt" :to="modelConnectionAt" class="sys-btn" data-testid="notice-model-connection">
+          {{ t('work.room.notice.goModelConnection') }}
+        </NavLink>
         <button
           v-if="forAgentDetail"
           type="button"
@@ -544,6 +548,15 @@ const ACTION_META: Record<string, { btn: string }> = {
         <button v-if="showRetry" type="button" class="sys-btn" :disabled="retrying" @click.prevent.stop="emit('retry')">
           {{ t('work.room.retry.action') }}
         </button>
+        <NavLink
+          v-if="modelConnectionAt"
+          :to="modelConnectionAt"
+          class="sys-btn"
+          data-testid="notice-model-connection"
+          @click.stop
+        >
+          {{ t('work.room.notice.goModelConnection') }}
+        </NavLink>
       </summary>
       <div class="sys-fold">
         <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
