@@ -112,3 +112,12 @@ def test_readiness_does_not_publish_a_dependency_error(client, monkeypatch):
     body = response.json()
     assert "database" in body["unready"]
     assert body["checks"]["database"] == {"status": "down"}
+
+
+def test_anyone_can_ask_which_address_they_are_counted_by(client, monkeypatch):
+    """The caller's own address and nothing else, with no credential: the one
+    way to check from outside that the proxies hand a visitor's address on."""
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    r = client.get("/client-address", headers={"X-Forwarded-For": "203.0.113.9"})
+    assert r.status_code == 200, r.text
+    assert set(r.json()["data"]) == {"address"}

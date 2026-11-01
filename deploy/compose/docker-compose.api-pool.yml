@@ -14,6 +14,10 @@ services:
   backend:
     environment:
       - API_POOL_WORKERS=${API_POOL_WORKERS:-0}
+      # The pool's whole connection budget, split between its workers; unset
+      # gives 4 and 2 per worker (backend/app/serve.py).
+      - API_POOL_DB_POOL_SIZE=${API_POOL_DB_POOL_SIZE:-}
+      - API_POOL_DB_MAX_OVERFLOW=${API_POOL_DB_MAX_OVERFLOW:-}
       # Handles the per-client request limits leave alone (comma-separated):
       # dev names its shared development account so a load test measures the
       # backend, not that account's own quota. Empty limits everyone.

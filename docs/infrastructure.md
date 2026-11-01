@@ -386,13 +386,16 @@ beside its realtime process (`backend/app/serve.py`,
   the pool's backup, so a pool that does not answer costs nothing but its
   speed.
 - `API_POOL_WORKERS` defaults to 0: no pool, no pool port, every request to the
-  realtime process. dev's release workflow sets 3 and layers
+  realtime process. dev's release workflow sets 8 (its box has 16 cores) and layers
   `docker-compose.api-pool.yml` (pool ports 18091 and 18092 for the two slots).
   To turn it off on dev, set it to 0 in `deploy-dev.yml` and release.
 - The pool's database budget is its own (`API_POOL_DB_POOL_SIZE`,
   `API_POOL_DB_MAX_OVERFLOW`, 4 and 2 per worker by default), divided between
-  its workers as the backend's is: 5 connections each at 3 workers. A rollout
-  runs both slots' pools, 30 more connections on dev's 200.
+  its workers as the backend's is. dev sets 24 and 8: 32 per slot, 64 while a
+  rollout runs both slots' pools, on dev's 200.
+- At three workers dev saturated at about 30 requests a second
+  (2026-11-01, the exempt account, 20 to 100 clients: median 0.65 s at 20,
+  3.4 s at 100) with 4 of its 16 cores busy, which is why it runs eight.
 - What it bought on dev (2026-10-31/11-01, one account, 30 s per level, the
   reads a person opening a channel makes): at 20 concurrent clients the median
   request went from 2.4 s to 0.36 s and a light read beside them from 1.2 s to

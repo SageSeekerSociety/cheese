@@ -142,17 +142,23 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     def db_connections_per_worker(self) -> tuple[int, int]:
         """One worker's share of this container's pool budget: (size, overflow).
 
-        Together the workers hold what one process held before — the owner-lock
-        connection each of them keeps outside its pool (`core.ownership`)
-        included — so the arithmetic in
+        A realtime worker also keeps the owner-lock connection outside its pool
+        (`core.ownership`), so its share leaves one connection for it and the
+        workers together hold what one process held before: the arithmetic in
         `tests/unit/test_db_pool_fits_the_server.py` still describes the
-        container. At 1 it is exactly `db_pool_size` and `db_max_overflow`.
+        container. A pool worker never takes that lock
+        (`core.process_role`), so its share spends the whole budget — the 4
+        and 2 per worker `serve.pool_env` promises by default. At 1 worker it
+        is exactly `db_pool_size` and `db_max_overflow` either way.
         """
-        # The budget holds up to (db_pool_size + db_max_overflow + 1) // 2
+        # The realtime budget holds up to (db_pool_size + db_max_overflow + 1) // 2
         # workers — 18 at the defaults, a share down to one pooled connection
         # plus the lock. Past that the box has to raise `db_pool_size`.
         workers = max(1, self.backend_workers)
-        budget = max(0, (self.db_pool_size + self.db_max_overflow + 1) // workers - 1)
+        lock = 0 if self.backend_role == "api" else 1
+        budget = max(
+            0, (self.db_pool_size + self.db_max_overflow + lock) // workers - lock
+        )
         pool_size = max(1, min(self.db_pool_size // workers, budget))
         return pool_size, max(0, budget - pool_size)
 

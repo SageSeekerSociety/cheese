@@ -519,7 +519,13 @@ jobs:
           # dev runs the api pool beside each backend (backend/app/serve.py):
           # three workers for plain reads, the realtime process for the rest.
           # 0 turns it off on the next release.
-          API_POOL_WORKERS: "3"
+          # Eight: the dev box has 16 cores and the realtime process plus three
+          # workers saturated at about 30 requests a second (2026-11-01). Each
+          # worker gets 3 connections and 1 more under load, 32 per slot and 64
+          # while a rollout runs both, inside dev's 200 with the backends'.
+          API_POOL_WORKERS: "8"
+          API_POOL_DB_POOL_SIZE: "24"
+          API_POOL_DB_MAX_OVERFLOW: "8"
           # The shared development account load tests run from; the request
           # limits would otherwise cap them at one account's quota (~20/s).
           REQUEST_LIMIT_EXEMPT_HANDLES: "wangchangxin"
