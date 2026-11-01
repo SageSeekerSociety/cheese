@@ -69,3 +69,31 @@ it('两头都是文字节点时照旧只收选中的那一段', () => {
 
   expect(rectsIn(range, layer)).toHaveLength(1)
 })
+
+it('两头都落在文字层这一层元素上：夹在中间的那一段收得到', () => {
+  const { layer } = makeLayer()
+  const range = document.createRange()
+  // 起点在第二段文字之前，终点在第三段文字之前：只夹住第二段。
+  range.setStart(layer, 2)
+  range.setEnd(layer, 4)
+  expect(range.startContainer).toBe(layer)
+  expect(range.endContainer).toBe(layer)
+
+  expect(rectsIn(range, layer)).toHaveLength(1)
+})
+
+it('选区跨两页（两页各有自己的文字层）：两页各自只收落在选区里的那几段', () => {
+  const a = makeLayer()
+  const b = makeLayer()
+  const range = document.createRange()
+  // 第一页从第二段开始，到第二页第一段为止。两页的文字层不在同一个容器里，
+  // 这里量的是一页一页各自的那层（真产品里 `refresh` 就是一层一层叫的）。
+  range.setStart(a.nodes[1], 0)
+  range.setEnd(b.nodes[0], 4)
+  expect(a.layer.contains(range.startContainer)).toBe(true)
+  expect(b.layer.contains(range.endContainer)).toBe(true)
+
+  // 第一页从第二段开始，后面两段都还在选区里；第二页只收到第一段为止。
+  expect(rectsIn(range, a.layer)).toHaveLength(2)
+  expect(rectsIn(range, b.layer)).toHaveLength(1)
+})

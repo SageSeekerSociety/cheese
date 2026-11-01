@@ -60,30 +60,6 @@ export function selectionIn(panel: Element): Range | null {
 }
 
 /**
- * 这一段选区实实在在占的那一块：把它的每一条矩形并起来，**零宽零高的不要**。
- *
- * 为什么不直接 `range.getBoundingClientRect()`：选区的那一头落在元素上时（拖过一整行、
- * 往上多拖一点，浏览器给回来的那一头常常是文字层的容器），它会带上浏览器补出来的那种
- * 零宽的整行块，量出来比屏幕上亮着的那一道高出一截——框于是落到选区下面很远，读者看到
- * 的就是「高亮在这儿、按钮在那儿」（2026-11-01 负责人报的第 2 条）。并真矩形就跟着亮的
- * 那一道走；一条真矩形都没有（空行上点了一下）时退回它给的整块，别把框丢了。
- */
-function unionOfRects(range: Range): { top: number; bottom: number; left: number } | null {
-  let top = Infinity
-  let bottom = -Infinity
-  let left = Infinity
-  for (const rect of range.getClientRects()) {
-    if (!rect.width || !rect.height) continue
-    top = Math.min(top, rect.top)
-    bottom = Math.max(bottom, rect.bottom)
-    left = Math.min(left, rect.left)
-  }
-  if (top <= bottom) return { top, bottom, left }
-  const all = range.getBoundingClientRect()
-  return all.width || all.height ? { top: all.top, bottom: all.bottom, left: all.left } : null
-}
-
-/**
  * 按此刻的布局算一次。选中的一段每次现读它的矩形（内层滚动、换行都跟得上）；只有一个
  * 点的（点一格、钉一处）按记下以后内层和面板各滚了多少来平移。那一处不在可见区里就返回
  * null，框退回贴底。
@@ -96,7 +72,10 @@ export function measureAnchor(
   if (panel.clientWidth < FLOATING_MIN_WIDTH) return null
   const box = panel.getBoundingClientRect()
   let rect: { top: number; bottom: number; left: number } | null = null
-  if (range) rect = unionOfRects(range)
+  if (range) {
+    const r = range.getBoundingClientRect()
+    if (r.width || r.height) rect = { top: r.top, bottom: r.bottom, left: r.left }
+  }
   if (!rect && pointer) {
     const inner = pointer.scroller ? pointer.scroller.scrollTop - pointer.scrollTop : 0
     const y = pointer.y - inner - (panel.scrollTop - pointer.panelScrollTop)

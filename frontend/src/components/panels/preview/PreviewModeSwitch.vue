@@ -103,17 +103,13 @@ const items = computed(() => ALL_ITEMS.filter((item) => modes!.enabled(item.key)
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.mode-switch__item:hover:not(:disabled) {
+.mode-switch__item:hover {
   color: var(--text);
 }
 .mode-switch__item.is-on {
   color: var(--text);
   background: var(--raised);
   box-shadow: var(--shadow-1);
-}
-.mode-switch__item:disabled {
-  color: var(--faint);
-  cursor: default;
 }
 .mode-switch__label {
   white-space: nowrap;
