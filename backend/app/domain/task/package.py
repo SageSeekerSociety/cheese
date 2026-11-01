@@ -398,7 +398,10 @@ async def task_folder_shown(session: AsyncSession, project_id) -> bool:
     `claims.project_claim`）还在、已经通过。项目里每个人、每个 agent 看到的都一样——
     看的是项目的那一份申请，不是读的人自己名下别的申请。"""
     project = await session.get(Project, project_id)
-    if project is None or project.external_task_id is None:
+    if project is None:
+        return False
+    if project.external_task_id is None:
+        mount.known(session, project_id, None)
         return False
     task = await task_row(session, project.external_task_id)
     if task is None or task.deleted_at is not None:

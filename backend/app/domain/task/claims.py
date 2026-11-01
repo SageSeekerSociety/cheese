@@ -333,10 +333,21 @@ async def project_claim(
     return claim
 
 
+def _task_row_key(task_id: int) -> tuple[str, int]:
+    # Not ``("task_row", …)``: that key is a room task's row (`room_task.place`).
+    return ("challenge_task_row", task_id)
+
+
+def known_task(session: AsyncSession, task: Task) -> None:
+    """Someone already read this 题目 row in this request: `task_row` hands it
+    back instead of reading it again."""
+    remember(session, _task_row_key(task.id), task, tables=frozenset({"task"}))
+
+
 async def task_row(session: AsyncSession, task_id: int) -> Task | None:
     """项目来自的那道题目的行。`session.get` 只在有人还拿着它时才不再问数据库，
     项目详情里几步各自取一次、取完就丢，所以记在请求里。"""
-    key = ("task_row", task_id)
+    key = _task_row_key(task_id)
     found, cached = recall(session, key)
     if found:
         return cached

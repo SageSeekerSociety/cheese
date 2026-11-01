@@ -101,7 +101,8 @@ def test_a_task_projects_library_and_detail_ask_the_mount_and_claim_once(
     detail, r = _fresh_request(api_client, db_session, f"/projects/{project_id}", token)
     assert r.json()["data"]["task"]["id"] == task_id
     assert _count(detail, _CLAIM) == 1, detail
-    assert _count(detail, _TASK_ROW) == 1, detail
+    # The 壳 read the task row for the payload; the claim's steps reuse it.
+    assert _count(detail, _TASK_ROW) == 0, detail
 
 
 def test_a_project_not_from_a_task_reads_its_library_without_asking_the_mount(client):

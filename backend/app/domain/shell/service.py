@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.shell_catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
 from app.domain.space.models import Space, SpaceCategory
+from app.domain.task.claims import known_task
 from app.domain.task.models import Task
 from app.domain.task.protocol import resolve as resolve_protocol
 
@@ -93,6 +94,9 @@ async def effective_shells(
             await session.execute(select(Task).where(Task.id.in_(task_ids)))
         ).scalars()
         tasks = {t.id: t for t in found}
+        for task in tasks.values():
+            # The project's detail reads the same row again for its claim.
+            known_task(session, task)
         category_ids = {t.category_id for t in tasks.values() if t.category_id}
         if category_ids:
             cats = (

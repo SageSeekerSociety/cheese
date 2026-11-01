@@ -720,8 +720,12 @@ async def list_topic_blocks(
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
     narrow = {"kinds": kind, "author": author, "shown": shown}
+    # How many blocks the narrowed timeline holds. A read that already has all
+    # of them in hand says so itself; only a page with more beyond it counts.
+    total: int | None = None
     if limit is None:
         blocks = await repo.list_for_topic(place.conversation_id, **narrow)
+        total = len(blocks)
         if older_than is not None:
             blocks = [
                 b
@@ -760,7 +764,11 @@ async def list_topic_blocks(
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.conversation_id, **narrow)
+        if not has_more and not has_newer:
+            # The newest page with nothing older: the whole timeline.
+            total = len(blocks)
+    if total is None:
+        total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     by_id = {b.id: b for b in blocks}
     block_ids = list(by_id)
@@ -771,11 +779,10 @@ async def list_topic_blocks(
     )
     if place.inner_id is None:
         # The AI teammates at work in each 支线 right now (`topics_signals`).
-        seats = await topics_signals.answering(db)
         threads = await thread_reads.under_messages(
             db,
             block_ids,
-            replying=lambda thread: seats.get(thread, []),
+            replying=partial(topics_signals.answering, db),
             roots=by_id,
         )
     else:
