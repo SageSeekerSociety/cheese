@@ -177,6 +177,11 @@ def start_command(
             # idle executor ends before it stops (`end_left_behind`).
             self.groups.add(process.pid)
     self.log(command_id, "started", pid=process.pid, command=meta.get("command"))
+    with contextlib.suppress(OSError):
+        # The command's own run, apart from everything the platform spends
+        # around it: the caller cannot see either end of this, and a tool
+        # call's wall clock mixes the two (``read_command`` reports it).
+        write_json(record / "ran", {"started": time.monotonic()})
     threading.Thread(
         target=self._wait_command, args=(command_id, process), daemon=True
     ).start()
@@ -199,6 +204,13 @@ def _wait_command(self, command_id, process):
         self.active_at = time.monotonic()
     with contextlib.suppress(OSError):
         self.log(command_id, "exited", exit_code=code)
+    with contextlib.suppress(OSError, ValueError):
+        record = self._record(command_id)
+        began = json.loads((record / "ran").read_text())["started"]
+        # Written beside the command's own record, so a reader that comes
+        # later still sees it and one already reading waits for the exit file
+        # only.
+        write_json(record / "ran_ms", round((time.monotonic() - began) * 1000))
 
 
 def _tree(self, pid):
@@ -465,6 +477,8 @@ def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
         and err_offset + len(err) >= err_size
     ):
         answer["exit"] = int((record / "exit").read_text())
+        with contextlib.suppress(OSError, ValueError):
+            answer["ran_ms"] = int((record / "ran_ms").read_text())
         if answer["exit"] and (full := disk_full(self.root)):
             answer["disk"] = full
         # As the shell spelled it, which is the session's spelling too

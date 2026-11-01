@@ -2,7 +2,7 @@
 import type { LocatorAnchor } from './locatorAnchor'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch, watchEffect } from 'vue'
-import { onClickOutside } from '@vueuse/core'
+import { onClickOutside, useEventListener } from '@vueuse/core'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -186,6 +186,21 @@ async function expand() {
   // 点了「添加批注」就是要写：这一下把光标交过去（直接弹出的卡不抢，见 send 上面那段）。
   field.value?.focus()
 }
+
+// ---- 点别处就把这颗小按钮收掉 ----
+// 选一段字常常只是「刚才在读、在复制」，不一定是要写什么。读者接着点在本页别处——换一处
+// 指、或者只想把选中撤掉——那颗浮在字上的按钮还挂着，就挡着正文，而且按下去写的还是
+// 他刚刚已经不要的那一段。
+//
+// 判据用「浏览器把选区收掉了」：那就是他在说「不指这一处了」，不必逐个点按去猜。只看
+// 小按钮那一段（`armed`）：卡展开之后点输入框同样会把选区收掉，那一下不是取消，是在写
+// 这句话。
+useEventListener(typeof document === 'undefined' ? null : document, 'selectionchange', () => {
+  if (!armed.value) return
+  const selection = window.getSelection()
+  if (selection && !selection.isCollapsed) return
+  emit('cancel')
+})
 
 // ---- 弹在哪 ----
 // 弹在指的那一处旁边：先放在它下面，下面放不下就翻到上面；左右夹在面板里。高度要等

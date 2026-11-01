@@ -262,6 +262,36 @@ it('拖选一段字：先只出「添加批注」，点了才展开整张卡；E
   expect(ui.emitted().cancel).toHaveLength(1)
 })
 
+it('小按钮浮着的时候读者把选中撤掉（点正文别处）：按钮跟着收，不再挡字', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  expect(ui.getByTestId('locator-arm')).toBeTruthy()
+
+  // 点正文别处：浏览器把页面上那段选中收掉了。
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toHaveLength(1)
+})
+
+it('卡展开了以后点输入框（选区也会被收掉）不算取消：那是在写这句话', async () => {
+  const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
+  const ui = render(PreviewLocator, {
+    props: { target: { label: 'week-1.md', quote: '第一段' }, note: '', anchor, armFirst: true },
+    global: { stubs },
+  })
+  await fireEvent.click(ui.getByTestId('locator-arm'))
+  await waitFor(() => ui.getByPlaceholderText('输入修改要求或批注内容…'))
+
+  window.getSelection()!.removeAllRanges()
+  document.dispatchEvent(new Event('selectionchange'))
+
+  expect(ui.emitted().cancel).toBeUndefined()
+})
+
 it('先出按钮的一处滚出视野时按钮先藏起来，滚回来再出现，中途不变成整张卡', async () => {
   const anchor = { top: 100, bottom: 120, left: 40, panelWidth: 700, viewTop: 0, viewBottom: 800 }
   const ui = render(PreviewLocator, {

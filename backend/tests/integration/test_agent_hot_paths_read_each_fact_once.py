@@ -11,7 +11,11 @@ used to read some facts twice, or read facts nothing in it used:
   its own conversation, the same row in a room (`machine.holder._kind`);
 - admission read the payer's packs and the project's budget caps, then read
   them again on the gateway key's own session for the budget the key carries
-  (`routes/llm_proxy.py`).
+  (`routes/llm_proxy.py`);
+- the room a conversation is in was asked again by the access check right
+  after the route had resolved the conversation (`room_task.place`);
+- the agent's credential had its signature checked again by every dependency
+  and helper that read it, a dozen times per admission (`core.credentials`).
 """
 
 from contextlib import contextmanager
@@ -82,6 +86,16 @@ async def test_asking_for_hands_reads_the_conversation_kind_once(client, monkeyp
     seen = await _asked_for_hands(client, monkeypatch)
 
     assert len([s for s in seen if "SELECT conversations.kind" in s]) == 1
+
+
+async def test_asking_for_hands_does_not_ask_again_which_room_it_is_in(
+    client, monkeypatch
+):
+    """The route resolves the conversation first; the access check after it
+    asks which room that conversation is in and is answered from it."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    assert [s for s in seen if "inside.room_id" in s] == []
 
 
 def _admit(client, room):
@@ -160,3 +174,50 @@ async def test_a_budget_admission_cannot_work_out_is_left_to_the_key(
     assert answer.json()["data"]["allow"] is True
     assert answer.json()["data"]["supply"]["key"] == "sk-virt-1"
     assert len(calls) >= 2
+
+
+async def test_admission_checks_the_agents_signature_once(client, monkeypatch):
+    from app.core import credentials
+
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    decode = credentials.jwt.decode
+    signed: list[str] = []
+
+    def counted(token, *args, **kwargs):
+        if (kwargs.get("options") or {}).get("verify_signature", True):
+            signed.append(token)
+        return decode(token, *args, **kwargs)
+
+    monkeypatch.setattr(credentials.jwt, "decode", counted)
+    answer = _admit(client, room)
+
+    assert answer.json()["data"]["allow"] is True, answer.text
+    token = room.agent["Authorization"].split()[1]
+    assert signed.count(token) == 1
+
+
+async def test_admission_puts_the_packs_select_together_once(client, monkeypatch):
+    """The second read of the payer's packs is answered from the request
+    before its select is put together (about 150 µs a time)."""
+    from app.domain.usage import ledger_queries
+
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+    built: list[object] = []
+    select = ledger_queries.select
+
+    def counted(*args, **kwargs):
+        built.append(args)
+        return select(*args, **kwargs)
+
+    monkeypatch.setattr(ledger_queries, "select", counted)
+    answer = _admit(client, room)
+
+    assert answer.json()["data"]["allow"] is True, answer.text
+    assert len([a for a in built if a == (ledger_queries.ComputeGrant,)]) == 1

@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_session.models import LEASE_DEVICE, LOST_KEY, AgentSession
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine import enrollment
@@ -442,9 +442,7 @@ class PoolSweep:
         ):
             return False
         working = await self._session.scalar(
-            select(AgentSession.id)
-            .where(AgentSession.work_lease["device_id"].as_string() == host.device_id)
-            .limit(1)
+            select(AgentSession.id).where(LEASE_DEVICE == host.device_id).limit(1)
         )
         return working is None
 
@@ -497,7 +495,7 @@ class PoolSweep:
             row.id: row
             for row in await self._session.scalars(
                 select(AgentSession)
-                .where(AgentSession.work_lease["device_id"].as_string() == device_id)
+                .where(LEASE_DEVICE == device_id)
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )

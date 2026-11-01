@@ -38,6 +38,26 @@ export async function spaceManageGuard(to: RouteLocationNormalized): Promise<Rou
 }
 
 /**
+ * `/spaces/:spaceId/…` 的登录门：空间只对有席位的人开放，没登录的访客在这里读不到
+ * 任何东西 —— 板的详情、分类、题目，后端一律答 401。
+ *
+ * 以前这一段没有门：登录过期的人点开一条空间里的题目链接，会话恢复被服务端拒掉之后
+ * 他就成了访客（`AccountService.restoreSession` 只清会话、不跳转），页面照常挂上，
+ * 每个面板各自拉到一个 401，屏幕上是「获取分类失败」和「Request failed with
+ * status code 401」，没有一处告诉他该去登录。现在判据提到路由层：没登录就送去登录
+ * 页，`?redirect=` 带上这条地址，登录完回到他要看的那道题。
+ *
+ * 连不上（`restorePhase === 'unreachable'`）不算没登录：本地会话还在，界面那一层会
+ * 说「连不上、可以重试」，这时把人送去登录页就是把一个好好的会话当生人。
+ */
+export async function spaceSignInGuard(to: RouteLocationNormalized): Promise<RouteLocationRaw | true> {
+  const { default: account } = await import('@/services/account')
+  await account.sessionRestored
+  if (account.loggedIn || account.restorePhase === 'unreachable') return true
+  return { name: 'SignIn', query: { redirect: to.fullPath } }
+}
+
+/**
  * 一个空间（`/spaces/:spaceId/…`）。侧栏是 `SpaceSidebar.vue`，每一页的标题行由
  * 页面自己的 `PageHeader` 画，和侧栏顶那一行等高。
  */
@@ -55,6 +75,7 @@ export default {
     drawer: true,
   },
   redirect: { name: 'SpacesDetailTasks' },
+  beforeEnter: spaceSignInGuard,
   children: [
     {
       path: 'announcements',
