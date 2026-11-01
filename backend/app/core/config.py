@@ -995,8 +995,11 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     accept_pr_snapshot_floor_s: int = 60
     # How long one card read waits for those refreshes (one per card, side by
     # side); each is a few GitHub calls, and in sequence they once held
-    # `GET /topics/{id}/accept-card` for 40 s.
-    accept_pr_snapshot_read_wait_s: float = 2.0
+    # `GET /topics/{id}/accept-card` for 40 s. Short, because the card is part
+    # of opening a task page (one GitHub refresh measured 0.7-1.5 s): what is
+    # not done by then is written back and read by the card's next 15 s poll,
+    # and accepting re-checks mergeability itself.
+    accept_pr_snapshot_read_wait_s: float = 0.3
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.
