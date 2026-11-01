@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import functools
 import hashlib
 import json
 from typing import Any
@@ -65,54 +66,88 @@ def etag_for_json(data: Any) -> str:
     Returns the **unquoted** hex digest; the caller adds the quotes for the
     header — the same split as ``if_none_match_hits``, which compares unquoted.
     """
-    canonical = json.dumps(
-        data, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    canonical = _dumps(data)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-#: How many encoder chunks ``conditional_json`` writes between two yields to the
-#: event loop. The C encoder holds the GIL, so a worker thread does not help; what
-#: does is taking the pure-Python ``iterencode`` path and handing the loop back
-#: every so often. One stretch of 2,000 chunks is a few milliseconds, while one
-#: ``json.dumps`` of a 60,000-row envelope held the loop for about 227 ms (#1825,
-#: 2026-10-17).
-YIELD_EVERY_CHUNKS = 2000
+#: A list longer than this is written one element at a time, with a yield to the
+#: event loop every ``YIELD_EVERY_ITEMS`` elements; anything shorter, and every
+#: element, goes through the C encoder in one call.
+SPLIT_LISTS_LONGER_THAN = 200
+YIELD_EVERY_ITEMS = 500
 
-_CANONICAL_ENCODER = json.JSONEncoder(
-    sort_keys=True, ensure_ascii=False, separators=(",", ":")
+_dumps = functools.partial(
+    json.dumps, sort_keys=True, ensure_ascii=False, separators=(",", ":")
 )
+
+
+class _Body:
+    """The body as it is written: UTF-8 pieces, their running digest, and how
+    many list elements went out since the last yield."""
+
+    def __init__(self) -> None:
+        self.digest = hashlib.sha256()
+        self.pieces: list[bytes] = []
+        self.batch: list[str] = []
+        self.since_yield = 0
+
+    def write(self, text: str) -> None:
+        self.batch.append(text)
+
+    def flush(self) -> None:
+        piece = "".join(self.batch).encode("utf-8")
+        self.batch.clear()
+        self.digest.update(piece)
+        self.pieces.append(piece)
+
+
+async def _write(value: Any, body: _Body) -> None:
+    """``value`` as ``_dumps`` would write it, with the long lists split.
+
+    A dict with string keys is walked in key order and a long list element by
+    element, so the text is the same as one ``_dumps(value)``: the separators
+    are ``,`` and ``:`` either way, and a part encoded alone is encoded exactly
+    as it would be inside the whole. Any other dict (keys json.dumps would
+    convert) and every short list or scalar is one C ``_dumps`` call.
+    """
+    if isinstance(value, dict) and all(type(key) is str for key in value):
+        body.write("{")
+        for index, key in enumerate(sorted(value)):
+            body.write(("," if index else "") + _dumps(key) + ":")
+            await _write(value[key], body)
+        body.write("}")
+    elif isinstance(value, list | tuple) and len(value) > SPLIT_LISTS_LONGER_THAN:
+        body.write("[")
+        for index, item in enumerate(value):
+            body.write(("," if index else "") + _dumps(item))
+            body.since_yield += 1
+            if body.since_yield >= YIELD_EVERY_ITEMS:
+                body.since_yield = 0
+                body.flush()
+                await asyncio.sleep(0)
+        body.write("]")
+    else:
+        body.write(_dumps(value))
 
 
 async def _encode_yielding(data: Any) -> tuple[bytes, str]:
     """The canonical body and its digest, yielding to the loop every
-    ``YIELD_EVERY_CHUNKS`` encoder chunks.
+    ``YIELD_EVERY_ITEMS`` elements of a long list.
 
     The body is ``json.dumps(data, sort_keys=True, ensure_ascii=False,
-    separators=(",", ":"))`` as UTF-8, byte for byte. Each stretch of chunks is
-    turned into bytes and fed to the hash before the yield, so the tail after the
-    last yield is one ``bytes.join`` — joining, encoding and hashing the whole body
-    in one go is itself about 100 ms on a 60,000-row (8 MB) list.
+    separators=(",", ":"))`` as UTF-8, byte for byte. One ``json.dumps`` of a
+    60,000-row envelope held the loop for about 227 ms (#1825, 2026-10-17), so a
+    long list is written element by element with yields between stretches.
 
-    ``iterencode`` is slower than the C ``dumps`` (several times the wall time on a
-    big list); that is the price of never holding the loop for the whole encode.
-    With 20 requests in flight the tail goes from seconds to tens of milliseconds.
+    Each element still goes through the C encoder. The pure-Python
+    ``iterencode`` this used before kept the loop free too, but cost about 47 ms
+    of a 18-channel `GET /topics` on every poll (2026-11-01), several times the
+    C encode, for lists far too short to need splitting.
     """
-    digest = hashlib.sha256()
-    pieces: list[bytes] = []
-    batch: list[str] = []
-    for chunk in _CANONICAL_ENCODER.iterencode(data):
-        batch.append(chunk)
-        if len(batch) >= YIELD_EVERY_CHUNKS:
-            piece = "".join(batch).encode("utf-8")
-            batch.clear()
-            digest.update(piece)
-            pieces.append(piece)
-            await asyncio.sleep(0)
-    piece = "".join(batch).encode("utf-8")
-    digest.update(piece)
-    pieces.append(piece)
-    return b"".join(pieces), digest.hexdigest()
+    body = _Body()
+    await _write(data, body)
+    body.flush()
+    return b"".join(body.pieces), body.digest.hexdigest()
 
 
 async def conditional_json(

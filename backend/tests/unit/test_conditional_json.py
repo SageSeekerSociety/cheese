@@ -66,27 +66,25 @@ async def test_body_and_etag_are_byte_for_byte_what_json_dumps_gives() -> None:
 
 
 @pytest.mark.anyio
-async def test_no_more_than_the_threshold_of_chunks_run_between_two_yields(
+async def test_no_more_than_the_threshold_of_elements_run_between_two_yields(
     monkeypatch,
 ) -> None:
-    encoder = conditional._CANONICAL_ENCODER
-    real = type(encoder).iterencode
-    produced = 0
+    real = conditional._dumps
+    encoded = 0
 
-    def counting(data):
-        nonlocal produced
-        for chunk in real(encoder, data):
-            produced += 1
-            yield chunk
+    def counting(value):
+        nonlocal encoded
+        encoded += 1
+        return real(value)
 
-    monkeypatch.setattr(encoder, "iterencode", counting)
+    monkeypatch.setattr(conditional, "_dumps", counting)
 
     seen: list[int] = []
     done = False
 
     async def ticker() -> None:
         while not done:
-            seen.append(produced)
+            seen.append(encoded)
             await asyncio.sleep(0)
 
     task = asyncio.create_task(ticker())
@@ -94,11 +92,49 @@ async def test_no_more_than_the_threshold_of_chunks_run_between_two_yields(
     await conditional.conditional_json(_rows(ROWS), None)
     done = True
     await task
-    seen.append(produced)
+    seen.append(encoded)
 
-    assert produced > 10 * conditional.YIELD_EVERY_CHUNKS
+    assert encoded > 10 * conditional.YIELD_EVERY_ITEMS
     gaps = [b - a for a, b in itertools.pairwise(seen)]
-    assert max(gaps) <= conditional.YIELD_EVERY_CHUNKS
+    # The envelope's own few keys ride along with the first stretch.
+    assert max(gaps) <= conditional.YIELD_EVERY_ITEMS + 8
+
+
+@pytest.mark.anyio
+async def test_a_short_list_is_one_c_encode() -> None:
+    """A sidebar's worth of rows is encoded in one call, not walked in Python:
+    the walk is only for lists long enough to hold the loop."""
+    data = _rows(conditional.SPLIT_LISTS_LONGER_THAN)
+    calls = 0
+    real = conditional._dumps
+
+    def counting(value):
+        nonlocal calls
+        calls += 1
+        return real(value)
+
+    conditional._dumps = counting
+    try:
+        response = await conditional.conditional_json(data, None)
+    finally:
+        conditional._dumps = real
+    assert response.body == _canonical(data)
+    assert calls < 10
+
+
+@pytest.mark.anyio
+async def test_odd_shapes_come_out_as_json_dumps_writes_them() -> None:
+    data = {
+        "b": [{"y": 1, "x": [1.5, None, True]}]
+        * (conditional.SPLIT_LISTS_LONGER_THAN + 3),
+        "a": {2: "int keys", 1: "are converted by json.dumps"},
+        "c": ("tu", "ple"),
+        "d": {},
+        "e": [],
+        "\u00e9": "é",
+    }
+    response = await conditional.conditional_json(data, None)
+    assert response.body == _canonical(data)
 
 
 @pytest.mark.anyio
