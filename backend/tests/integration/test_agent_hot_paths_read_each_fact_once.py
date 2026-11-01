@@ -197,3 +197,27 @@ async def test_admission_checks_the_agents_signature_once(client, monkeypatch):
     assert answer.json()["data"]["allow"] is True, answer.text
     token = room.agent["Authorization"].split()[1]
     assert signed.count(token) == 1
+
+
+async def test_admission_puts_the_packs_select_together_once(client, monkeypatch):
+    """The second read of the payer's packs is answered from the request
+    before its select is put together (about 150 µs a time)."""
+    from app.domain.usage import ledger_queries
+
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+    built: list[object] = []
+    select = ledger_queries.select
+
+    def counted(*args, **kwargs):
+        built.append(args)
+        return select(*args, **kwargs)
+
+    monkeypatch.setattr(ledger_queries, "select", counted)
+    answer = _admit(client, room)
+
+    assert answer.json()["data"]["allow"] is True, answer.text
+    assert len([a for a in built if a == (ledger_queries.ComputeGrant,)]) == 1
