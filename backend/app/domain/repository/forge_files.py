@@ -2,10 +2,12 @@
 
 import asyncio
 import base64
+import json
 import uuid
 from typing import Any
 from urllib.parse import quote
 
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import release_read_session
@@ -17,6 +19,7 @@ from app.core.errors import (
     UpstreamUnavailableError,
     ValidationError,
 )
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
@@ -64,6 +67,16 @@ def clean_path(path: str) -> str:
     ):
         raise ValidationError(say("taskFilePathOutside"))
     return path
+
+
+#: How long one head's changed paths are kept. The comparison is three-dot,
+#: from the merge base, so it moves only when the head does; the expiry covers
+#: the base branch being merged into the task branch's history some other way.
+_CHANGED_FILES_TTL = 6 * 3600
+
+
+def _changed_files_key(project_id: uuid.UUID, base: str, head: str) -> str:
+    return f"cheesex:changed-files:{project_id}:{base}:{head}"
 
 
 def _landed_head(task: Any) -> str | None:
@@ -416,7 +429,9 @@ class ProjectFiles:
             )
         return changes
 
-    async def comparison(self):
+    async def _refs(self) -> tuple[str, str] | None:
+        """The base branch and head commit the task's changes are read between,
+        or None while the task has no pushed commit."""
         task = await self.task()
         if task is None or not task.branch_name:
             return None
@@ -426,6 +441,13 @@ class ProjectFiles:
         if not head:
             return None  # The task has not pushed its first commit yet.
         base = task.base_branch or await default_branch(self.project_id, self.session)
+        return base, head
+
+    async def comparison(self, refs: tuple[str, str] | None = None):
+        refs = refs or await self._refs()
+        if refs is None:
+            return None
+        base, head = refs
         comparison = await self._data(
             self.project_id,
             self.session,
@@ -488,12 +510,33 @@ class ProjectFiles:
         ]
 
     async def changed_files(self):
-        comparison = await self.comparison()
+        """The task's changed paths. A head commit's changes against its base
+        stay what they were, so they are kept by commit (`_CHANGED_FILES_TTL`)
+        and an unchanged branch costs one head lookup instead of a comparison."""
+        refs = await self._refs()
+        if refs is None:
+            return []
+        key = _changed_files_key(self.project_id, *refs)
+        redis = get_redis_client()
+        if redis is not None:
+            try:
+                cached = await redis.get(key)
+            except RedisError:
+                cached = None
+            if cached is not None:
+                return json.loads(cached)
+        comparison = await self.comparison(refs)
         if comparison is None:
             return []
         if comparison.get("files") is None:
             raise GatewayUnavailableError(say("forgeNoChangedFiles"))
-        return [entry["filename"] for entry in comparison["files"]]
+        paths = [entry["filename"] for entry in comparison["files"]]
+        if redis is not None:
+            try:
+                await redis.set(key, json.dumps(paths), ex=_CHANGED_FILES_TTL)
+            except RedisError:
+                pass
+        return paths
 
     async def diff(self, source: str, ref: str | None = None):
         if ref and ref.startswith("-"):

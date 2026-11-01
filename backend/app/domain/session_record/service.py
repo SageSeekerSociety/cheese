@@ -37,6 +37,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.obs import scrub_secrets
+from app.core.redis import get_redis_client
 from app.core.storage import StorageBackend, private_storage
 from app.domain.conversation.models import Conversation
 from app.domain.session_record import models as session_record_models
@@ -492,17 +494,57 @@ def _remember_sealed(key: str, body: bytes) -> None:
         _sealed_bytes -= len(gone)
 
 
+#: How long a sealed body stays in the cache the backend's processes share.
+#: The API runs as several processes and a reader's next request usually lands
+#: on another one, whose own cache (`_sealed_bodies`) is cold: without the
+#: shared copy every page of an open 现场 paid the bucket round trip again.
+SHARED_SEALED_TTL_S = 3600
+#: Bodies above this stay out of the shared cache, which has no memory cap of
+#: its own; they still reach the process cache.
+SHARED_SEALED_MAX_BYTES = 4 << 20
+
+
+def _shared_key(key: str) -> str:
+    return f"cheesex:sealed-body:{key}"
+
+
+async def _shared_get(key: str) -> bytes | None:
+    redis = get_redis_client()
+    if redis is None:
+        return None
+    try:
+        return await redis.get(_shared_key(key))
+    except RedisError:
+        return None
+
+
+async def _shared_put(key: str, body: bytes) -> None:
+    redis = get_redis_client()
+    if redis is None or len(body) > SHARED_SEALED_MAX_BYTES:
+        return
+    try:
+        await redis.set(_shared_key(key), body, ex=SHARED_SEALED_TTL_S)
+    except RedisError:
+        pass
+
+
 async def sealed_body(storage: StorageBackend, key: str) -> bytes:
-    """One sealed object's bytes, from this process's cache when it has them."""
+    """One sealed object's bytes, from this process's cache when it has them,
+    else from the cache the processes share, else from the bucket."""
     body = _sealed_bodies.get(key)
     if body is not None:
         _sealed_bodies.move_to_end(key)
+        return body
+    body = await _shared_get(key)
+    if body is not None:
+        _remember_sealed(key, body)
         return body
     body = await storage.download(key)
     if body is None:
         # i18n-exempt: an invariant broken in storage, a 500 for the logs
         raise RuntimeError(f"sealed session records missing: {key}")
     _remember_sealed(key, body)
+    await _shared_put(key, body)
     return body
 
 

@@ -297,6 +297,23 @@ def test_reading_the_same_page_again_keeps_the_sealed_body(
     assert len(bucket.bodies) == first, "a sealed object is immutable; it was refetched"
 
 
+def test_another_process_reads_the_sealed_body_from_the_shared_cache(
+    client, tmp_path, monkeypatch
+):
+    """The API runs as several processes; the reader's next request lands on
+    one whose own cache is cold. It takes the body from the shared cache."""
+    bucket, topic = _sealed(client, tmp_path, monkeypatch, count=900)
+    bucket.bodies.clear()
+    _site(client, topic)
+    assert bucket.bodies
+
+    service._sealed_bodies.clear()
+    bucket.bodies.clear()
+    _site(client, topic)
+
+    assert bucket.bodies == [], "a body another process had read was refetched"
+
+
 def test_a_page_spanning_several_turns_fetches_them_together(
     client, tmp_path, monkeypatch
 ):
