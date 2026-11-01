@@ -146,7 +146,8 @@
       "waiting": "Waiting for host",
       "working": "Working",
       "idle": "Idle",
-      "stopping": "Being destroyed"
+      "stopping": "Being destroyed",
+      "frozen": "Frozen"
     },
     "note": {
       "failed": "Broken by the provider, given up at {at}; waiting for the provider to delete it",
@@ -162,7 +163,9 @@
       "stopping": "Being destroyed for {for}",
       "active": "Last tool call {ago} ago",
       "reclaim": "reclaimed in {in} at the earliest",
-      "overdue": "past its idle time and not reclaimed yet (the room's AI teammate stopping later, or a background command still running, pushes it back)"
+      "overdue": "past its idle time and not reclaimed yet (the room's AI teammate stopping later, or a background command still running, pushes it back)",
+      "frozen": "Frozen {for} (processes stopped, not billed)",
+      "discard": "discarded at latest {in}"
     },
     "placed": "Placed {at}",
     "personal": "Personal conversation",

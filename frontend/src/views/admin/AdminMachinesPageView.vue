@@ -63,6 +63,7 @@ const STATE_LABEL: Record<SandboxState, string> = {
   working: 'admin.machines.state.working',
   idle: 'admin.machines.state.idle',
   stopping: 'admin.machines.state.stopping',
+  frozen: 'admin.machines.state.frozen',
 }
 
 /** 圆点：坏了的红、要留意的黄、正常的绿、走完了或还没开始的灰。 */
@@ -76,6 +77,17 @@ function stateDot(state: SandboxState): string {
   if (state === 'waiting') return 'status-dot--warn'
   if (state === 'working') return 'status-dot--ok'
   return 'status-dot--muted'
+}
+
+/** 冻着的沙箱不再跑、也不再计费，到 keep 之后才回收：说清它什么时候走。 */
+function frozenWhen(s: MachineSandbox): string {
+  const sleeping = t('admin.machines.when.frozen', { for: since(s.active_at) })
+  if (!s.idle_deadline) return sleeping
+  const due = new Date(s.idle_deadline).getTime() <= nowMs.value
+  const after = due
+    ? t('admin.machines.when.overdue')
+    : t('admin.machines.when.discard', { in: until(s.idle_deadline) })
+  return `${sleeping} · ${after}`
 }
 
 const nowMs = computed(() => (props.overview ? new Date(props.overview.now).getTime() : Date.now()))
@@ -120,6 +132,7 @@ function hostNote(h: MachineHost): string {
 function sandboxWhen(s: MachineSandbox): string {
   if (s.state === 'waiting') return t('admin.machines.when.waiting', { for: since(s.waiting_since) })
   if (s.state === 'stopping') return t('admin.machines.when.stopping', { for: since(s.stopped_at) })
+  if (s.state === 'frozen') return frozenWhen(s)
   const active = t('admin.machines.when.active', { ago: since(s.active_at) })
   if (s.state === 'idle' && s.idle_deadline) {
     const due = new Date(s.idle_deadline).getTime() <= nowMs.value

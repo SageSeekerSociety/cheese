@@ -51,8 +51,11 @@ class MachineSettings(BaseModel):
     # killed alone, not to share the machine out evenly. No swap of its own
     # (`cloud_sandbox_swap_mb` stays 0), so a session at its limit is killed
     # instead of pushing the machine into swap; the idle page-cache reclaim
-    # (`sandbox_host.reclaim`) is only safe because nothing in a sandbox's
-    # cgroup can be swapped. The host itself keeps a swap file
+    # (`sandbox_host.reclaim`) is only safe because nothing in a running
+    # sandbox's cgroup can be swapped. A frozen sandbox is the exception: its
+    # processes do not run, so it is allowed this much swap while it sleeps
+    # (`machine/lifecycle.py`), so pages it will not touch may leave the
+    # machine. The host itself keeps a swap file
     # (`cloud_host_swap_mb`), so a burst in the machine's own processes —
     # the connector, sshd, the release's language servers — is absorbed
     # instead of the kernel killing them. CPU:
@@ -132,6 +135,19 @@ class MachineSettings(BaseModel):
     # computer keeps the idle time above, and a whole cloud VM is released on
     # its own clock (`cloud_vm_idle_release_s`).
     cloud_sandbox_idle_stop_pressed_s: int = Field(default=180, ge=1, le=86400)
+    # An idle cloud sandbox is frozen instead of destroyed: its processes are
+    # stopped (`cgroup.freeze`), whatever of its memory the kernel can take is
+    # given back, and its home, its work and its executor wait on the host
+    # (`machine/lifecycle.py`). The session's next tool call wakes the same
+    # sandbox. Off, an idle sandbox is destroyed as it always was. Only a
+    # standard sandbox on a platform host is frozen; a whole cloud VM and a
+    # sandbox on somebody's own computer keep the old lifecycle.
+    cloud_sandbox_freeze: bool = True
+    # How long a frozen sandbox is kept before it is destroyed anyway: it holds
+    # its host's slot and its home the whole time, so it cannot be kept for
+    # good. A slot needed, a disk running short or a host being rebuilt take a
+    # frozen sandbox sooner (`machine/lifecycle.py`, `disk_guard`, `reaper`).
+    cloud_sandbox_frozen_keep_s: int = Field(default=7200, ge=60, le=30 * 86400)
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.

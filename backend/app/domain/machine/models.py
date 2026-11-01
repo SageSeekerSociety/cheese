@@ -358,6 +358,12 @@ class SandboxHome(UuidPk, Timestamps, Base):
     active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # When the sandbox was frozen once idle (`machine/lifecycle.py`): its
+    # processes are stopped on the host and it is not billed. The row stays, so
+    # the session's next tool call wakes this same home. NULL while it runs.
+    frozen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Since when the sandbox is being destroyed: its home is being deleted
     # from the host, and the row goes once it is. A tool call meanwhile waits.
     stopped_at: Mapped[datetime | None] = mapped_column(

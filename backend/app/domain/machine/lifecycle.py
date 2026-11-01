@@ -28,6 +28,20 @@ project has run out
 of credits is destroyed as soon as its room runs no turn (``metering``), idle
 or not.
 
+**Frozen**, an idle sandbox on one of the platform's hosts is kept instead of
+destroyed (`cloud_sandbox_freeze`): one checkpoint of its session runs first,
+then its processes are stopped (`cgroup.freeze`), it is allowed the host's swap
+file (`memory.swap.max`) and asked to give back what memory the kernel can take
+(`memory.reclaim`). Its home, its work and its executor wait on the host, it is
+not billed, and its session's next tool call wakes this same sandbox — same
+host, same home, same processes (`session_work._install`) — rather than
+building a new one. A frozen sandbox holds its host's slot while it sleeps, so
+it cannot be kept for good: past `cloud_sandbox_frozen_keep_s` it is destroyed
+as any idle sandbox always was. A slot the pool needs, a disk running short and
+a host being rebuilt take a frozen sandbox sooner, oldest first. A whole cloud
+VM and a sandbox on a person's own computer are not frozen: they keep the
+lifecycle below.
+
 **Destroyed**, a sandbox's executor and everything still running in its home
 are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
 then its row goes, and on a host with it the host's slot. A machine that is
@@ -70,7 +84,7 @@ from app.domain.agent import execution, resource_cleanup, turn_inputs
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import LOST_KEY, AgentSession
+from app.domain.agent_session.models import LOST_KEY, THAW_KEY, AgentSession
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
@@ -141,6 +155,94 @@ async def run_on_host(hub, device_id: str, action: str, timeout: float, **reques
     return json.loads(str(result["stdout"]).strip().splitlines()[-1])
 
 
+async def thaw_on_host(hub, device_id: str, resource: str) -> None:
+    """Wake a frozen sandbox on its host: let it use no swap (`memory.swap.max`
+    back to 0, so it does not sit in the swap file while it runs) and resume
+    its processes (`sandbox_home.thaw`). Raises ``SandboxHomeError`` when the
+    host cannot thaw it; a host that cannot set the swap limit still thaws.
+
+    Called with no database lock held (`session_work._install` and the freeze
+    below): it is a round trip to the machine.
+    """
+    try:
+        answer = await run_on_host(
+            hub, device_id, "swap", timeout=30, name=resource, mib=0
+        )
+        if answer.get("swap_error"):
+            logger.warning(
+                "setting sandbox %s's swap back to 0 failed: %s",
+                resource,
+                answer["swap_error"],
+            )
+    except (RuntimeError, TimeoutError):
+        logger.warning("setting sandbox %s's swap back to 0 failed", resource)
+    answer = await run_on_host(hub, device_id, "thaw", timeout=30, names=[resource])
+    if answer.get("thaw_error"):
+        raise SandboxHomeError(str(answer["thaw_error"]))
+
+
+async def _checkpoint(hub, lease: dict, start) -> bool:
+    """The session's one checkpoint, then the sandbox is stopped.
+
+    A frozen sandbox's processes do not run, so the checkpoint is impossible
+    once it is frozen — and a session woken out of a freeze would otherwise
+    have work in it that was never pushed. It is the same command a turn's
+    Stop runs (`session_work.checkpoint`) and fails the same way: whatever
+    happens, the sandbox is still frozen."""
+    # deferred-import: `session_work` imports `lifecycle` for `SandboxRemoving`
+    from app.domain.machine import session_work
+
+    try:
+        return await session_work.checkpoint(lease, start)
+    except Exception:
+        logger.warning("checkpoint before freezing failed", exc_info=True)
+        return False
+
+
+async def frozen_sessions(db, session_ids) -> set[uuid.UUID]:
+    """Which of these sessions' homes are frozen. A frozen sandbox cannot run
+    the checkpoint a room's cleanup or an environment switch would ask it for:
+    it was checkpointed before it was frozen and nothing ran since
+    (`session_work.checkpoint_room`, `switch_environment`)."""
+    return set(
+        await db.scalars(
+            select(SandboxHome.session_id).where(
+                SandboxHome.session_id.in_(list(session_ids)),
+                SandboxHome.frozen_at.is_not(None),
+            )
+        )
+    )
+
+
+async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> None:
+    """Wake a sandbox a tool call has already asked for (`THAW_KEY`), before
+    its executor is asked anything (`session_work._install`, under the claim,
+    with no database lock held).
+
+    The row was marked woken under the pool lock (`HostPool.place`); its
+    processes are still stopped until this runs, so a call sent now would wait
+    on the freezer. A failed thaw is raised, not swallowed: the attempt lapses
+    and the next one tries again, which is better than an executor nobody can
+    reach for a minute.
+    """
+    marker = await db.scalar(
+        select(AgentSession.execution_request).where(AgentSession.id == session_id)
+    )
+    await db.commit()
+    thawing = (marker or {}).get(THAW_KEY)
+    if not thawing or str(thawing) != str(work_resource):
+        return
+    await thaw_on_host(hub, device_id, str(work_resource))
+    row = await db.scalar(
+        select(AgentSession).where(AgentSession.id == session_id).with_for_update()
+    )
+    if row is not None and (row.execution_request or {}).get(THAW_KEY) == thawing:
+        left = dict(row.execution_request or {})
+        left.pop(THAW_KEY, None)
+        row.execution_request = left
+    await db.commit()
+
+
 def _idle_for(spec: str) -> timedelta:
     """How long a sandbox of ``spec`` is kept idle; a spec that no longer
     exists is held to the standard one's."""
@@ -163,6 +265,20 @@ def _pressed_idle() -> timedelta:
     """How long a sandbox on a platform host is kept idle while the pool has
     no room for another one (`cloud_sandbox_idle_stop_pressed_s`)."""
     return timedelta(seconds=settings.cloud_sandbox_idle_stop_pressed_s)
+
+
+def _frozen_keep() -> timedelta:
+    """How long a frozen sandbox is kept before it is destroyed anyway
+    (`cloud_sandbox_frozen_keep_s`): it holds its host's slot the whole
+    time."""
+    return timedelta(seconds=settings.cloud_sandbox_frozen_keep_s)
+
+
+def frozen_eviction_key(home) -> tuple:
+    """What ranks a frozen sandbox for eviction: the one frozen longest ago
+    first. A function rather than a column order, so what has a preview can be
+    kept for last in a later step: return a tuple that sorts those after."""
+    return (home.frozen_at, home.id)
 
 
 #: How long an open turn's interval may stand and still count as its session at
@@ -269,8 +385,10 @@ class SandboxLifecycle:
                 SandboxHome.topic_id,
                 SandboxHome.host_id,
                 SandboxHome.active_at,
+                SandboxHome.frozen_at,
                 SandboxHome.stopped_at,
                 SandboxHome.spec,
+                SandboxHome.resource_id,
                 func.coalesce(CloudHost.device_id, SandboxHome.device_id).label(
                     "device_id"
                 ),
@@ -287,6 +405,10 @@ class SandboxLifecycle:
                     & CloudHost.whole_machine.is_(False),
                 ),
                 or_(
+                    # A frozen sandbox is looked at whatever its idle clock
+                    # says: it is not running, so it is not pinged, and what
+                    # may end it is its keep time or an eviction elsewhere.
+                    SandboxHome.frozen_at.is_not(None),
                     SandboxHome.stopped_at < now - STOP_HOLD,
                     (SandboxHome.stopped_at.is_(None))
                     & (SandboxHome.active_at < now - narrow)
@@ -304,21 +426,51 @@ class SandboxLifecycle:
             if not self._hub.is_online(home.device_id):
                 continue
             current = home.session_id is not None
-            held = None
+            holder_id = home.topic_id if current else None
             if home.stopped_at is not None:
                 # An unfinished removal: done again, whatever it is now.
-                idle = now - home.active_at
-            else:
-                held = self._held_for(home, pressed)
-                since = await self._idle_since(home, now, held)
-                if since is None:
+                if await self._destroy(
+                    home.id,
+                    holder_id,
+                    home.device_id,
+                    max(now - home.active_at, timedelta()),
+                    idle_for=_idle_for(home.spec),
+                ):
+                    destroyed += 1
+                continue
+            if home.frozen_at is not None:
+                # Frozen: it is not pinged and no turn can be running on it.
+                # Past its keep time it is destroyed; before that it waits for
+                # its session or for a slot to be needed elsewhere.
+                if now - home.frozen_at < _frozen_keep():
                     continue
-                idle = now - since
+                if await self._destroy(
+                    home.id,
+                    holder_id,
+                    home.device_id,
+                    now - home.frozen_at,
+                    idle_for=_idle_for(home.spec),
+                    frozen=True,
+                ):
+                    destroyed += 1
+                continue
+            held = self._held_for(home, pressed)
+            since = await self._idle_since(home, now, held)
+            if since is None:
+                continue
+            idle = now - since
+            if (
+                settings.cloud_sandbox_freeze
+                and home.host_id is not None
+                and await self._freeze(home, holder_id, held)
+            ):
+                # Kept on its host: its slot and its home stay its session's.
+                continue
             # A home its session still uses is destroyed under its holder's
             # lock.
             if await self._destroy(
                 home.id,
-                home.topic_id if current else None,
+                holder_id,
                 home.device_id,
                 idle,
                 idle_for=held,
@@ -557,6 +709,267 @@ class SandboxLifecycle:
         await self._session.commit()
         return answer
 
+    async def _freeze(self, home, holder_id, held: timedelta) -> bool:
+        """Keep an idle sandbox on its host rather than destroying it.
+
+        Taken like a destroy — the holder's lock, the home's, the look again —
+        because a tool call arriving meanwhile must either see it frozen (and
+        wake it) or move its idle clock first. The session's one checkpoint
+        runs between the two lockings, with no lock held; a checkpoint that
+        fails does not keep the sandbox awake. Answers whether the sandbox is
+        frozen now; False leaves the caller its old destroy.
+        """
+        home_id = home.id
+        device_id = home.device_id
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
+        row = await self._repo.lock_home(home_id)
+        now = datetime.now(UTC)
+        if row is None or row.frozen_at is not None or row.stopped_at is not None:
+            await self._session.commit()
+            return False
+        if now - row.active_at < held:
+            await self._session.commit()
+            return False
+        lease: dict = {}
+        start = None
+        if row.session_id is not None:
+            session_row = await self._session.scalar(
+                select(AgentSession)
+                .where(AgentSession.id == row.session_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if session_row is not None:
+                lease = session_row.work_lease or {}
+                until = lease.get("claim_until")
+                if until and datetime.fromisoformat(until) > now:
+                    # A tool call is starting it right now.
+                    await self._session.commit()
+                    return False
+                open_turns, last_end = await self._turns_of(row.session_id, now)
+                if open_turns or (last_end is not None and now - last_end < held):
+                    await self._session.commit()
+                    return False
+                if await self._session_recovering(row.session_id):
+                    await self._session.commit()
+                    return False
+                if lease.get("status", "ready") == "ready" and lease.get("state"):
+                    # The same checkpoint a turn's Stop runs, so a freeze
+                    # loses no more than a destroy would.
+                    try:
+                        from app.domain.machine import session_work
+
+                        start = await session_work.restart_executor(
+                            self._session, session_row, lease
+                        )
+                    except Exception:
+                        logger.warning(
+                            "no checkpoint for session %s before freezing",
+                            row.session_id,
+                            exc_info=True,
+                        )
+        active_seen = row.active_at
+        await self._session.commit()
+        if start is not None:
+            await _checkpoint(self._hub, lease, start)
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
+        row = await self._repo.lock_home(home_id)
+        now = datetime.now(UTC)
+        if row is None or row.frozen_at is not None or row.stopped_at is not None:
+            await self._session.commit()
+            return False
+        if row.active_at > active_seen or now - row.active_at < held:
+            # A tool call came in while the checkpoint ran (it moves the idle
+            # clock): the sandbox is not idle any more.
+            await self._session.commit()
+            return False
+        if row.session_id is not None:
+            open_turns, last_end = await self._turns_of(row.session_id, now)
+            if open_turns or (last_end is not None and now - last_end < held):
+                await self._session.commit()
+                return False
+        resource = row.resource_id
+        marked = now
+        row.frozen_at = marked
+        await self._session.commit()
+        # The clock stops here: the run is charged to when the sandbox stopped
+        # running, and the meter's own sweep would otherwise close it a little
+        # late (`metering.observe`).
+        await metering.stop_billing(self._session, home_id)
+        try:
+            await self._freeze_on_host(device_id, resource)
+        except (RuntimeError, TimeoutError, SandboxHomeError):
+            # The host cannot stop it: fall back to the old lifecycle rather
+            # than call a running sandbox frozen. It may have stopped before
+            # failing (the freeze is one command, its swap and reclaim after),
+            # so it is thawed before it is called running again.
+            logger.warning("freezing sandbox %s failed", home_id, exc_info=True)
+            try:
+                await run_on_host(
+                    self._hub, device_id, "thaw", timeout=30, names=[resource]
+                )
+            except (RuntimeError, TimeoutError):
+                logger.warning(
+                    "sandbox %s may have stayed frozen", home_id, exc_info=True
+                )
+            row = await self._repo.lock_home(home_id)
+            if row is not None and row.frozen_at == marked:
+                row.frozen_at = None
+            await self._session.commit()
+            return False
+        # A tool call, or a destroy, may have asked for it back while its
+        # processes were being stopped: never leave it frozen then.
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
+        row = await self._repo.lock_home(home_id)
+        woke = (
+            row is None
+            or row.frozen_at != marked
+            or row.stopped_at is not None
+            or row.active_at > active_seen
+        )
+        await self._session.commit()
+        if woke:
+            try:
+                await thaw_on_host(self._hub, device_id, resource)
+            except (RuntimeError, TimeoutError, SandboxHomeError):
+                logger.warning(
+                    "sandbox %s asked to wake while freezing stayed frozen",
+                    home_id,
+                    exc_info=True,
+                )
+        return not woke
+
+    async def _freeze_on_host(self, device_id: str, resource: str) -> None:
+        """Stop a sandbox's processes, let it swap, and have it give memory
+        back (``sandbox_home``'s ``freeze``, ``swap`` and ``reclaim``).
+
+        The freeze must go through — a sandbox that is not stopped cannot be
+        kept unbilled — so its failure is raised. Swap and reclaim only give
+        the host memory back: a host with no swap file freezes just the same
+        without the first."""
+        answer = await run_on_host(
+            self._hub, device_id, "freeze", timeout=30, names=[resource]
+        )
+        if answer.get("freeze_error"):
+            raise SandboxHomeError(str(answer["freeze_error"]))
+        try:
+            swapped = await run_on_host(
+                self._hub,
+                device_id,
+                "swap",
+                timeout=30,
+                name=resource,
+                mib=settings.cloud_sandbox_memory_mb,
+            )
+            if swapped.get("swap_error"):
+                logger.warning(
+                    "letting sandbox %s swap failed: %s",
+                    resource,
+                    swapped["swap_error"],
+                )
+        except (RuntimeError, TimeoutError):
+            logger.warning("letting sandbox %s swap failed", resource)
+        try:
+            given = await run_on_host(
+                self._hub, device_id, "reclaim", timeout=60, names=[resource]
+            )
+            if given.get("reclaim_error"):
+                logger.warning(
+                    "having sandbox %s give memory back failed: %s",
+                    resource,
+                    given["reclaim_error"],
+                )
+        except (RuntimeError, TimeoutError):
+            logger.warning("having sandbox %s give memory back failed", resource)
+
+    async def destroy_frozen_on(
+        self,
+        device_id: str,
+        *,
+        host_id: uuid.UUID | None = None,
+        limit: int = DESTROYS_PER_SWEEP,
+    ) -> int:
+        """Destroy the frozen sandboxes on one machine, oldest first: called
+        by the disk guard on a host short of room and by the reaper on a host
+        being rebuilt (``disk_guard``, ``reaper``). No holder is taken — these
+        run in their own sweep — and one thawed or in use meanwhile is left to
+        the idle sweep."""
+        now = datetime.now(UTC)
+        device = func.coalesce(CloudHost.device_id, SandboxHome.device_id)
+        query = (
+            select(SandboxHome)
+            .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .where(
+                device == device_id,
+                SandboxHome.frozen_at.is_not(None),
+                SandboxHome.stopped_at.is_(None),
+            )
+        )
+        if host_id is not None:
+            query = query.where(SandboxHome.host_id == host_id)
+        rows = list(await self._session.scalars(query.order_by(SandboxHome.frozen_at)))
+        await self._session.commit()
+        if not self._hub.is_online(device_id):
+            return 0
+        rows.sort(key=frozen_eviction_key)
+        destroyed = 0
+        for home in rows[:limit]:
+            if await self._destroy(
+                home.id,
+                None,
+                device_id,
+                now - home.frozen_at,
+                idle_for=_idle_for(home.spec),
+                frozen=True,
+            ):
+                destroyed += 1
+        return destroyed
+
+    async def evict_one_frozen(self) -> bool:
+        """Destroy the frozen sandbox frozen longest ago on an accepting host,
+        when no accepting host has a free slot: the pool calls this before
+        opening another host (``HostPool.place``). Frozen sandboxes still
+        count in the occupancy; the one gone frees its slot for the session
+        waiting. False when nothing was evicted and the old path stands."""
+        load = await self._repo.occupancy()
+        hosts = [
+            host
+            for host in await self._repo.live()
+            if accepting(host)
+            and host.device_id is not None
+            and self._hub.is_online(host.device_id)
+        ]
+        await self._session.commit()
+        if not hosts or any(free_slots(host, load) for host in hosts):
+            return False
+        by_id = {host.id: host for host in hosts}
+        rows = list(
+            await self._session.scalars(
+                select(SandboxHome).where(
+                    SandboxHome.host_id.in_(list(by_id)),
+                    SandboxHome.frozen_at.is_not(None),
+                    SandboxHome.stopped_at.is_(None),
+                )
+            )
+        )
+        await self._session.commit()
+        if not rows:
+            return False
+        home = min(rows, key=frozen_eviction_key)
+        host = by_id[home.host_id]
+        assert host.device_id is not None
+        return await self._destroy(
+            home.id,
+            None,
+            host.device_id,
+            datetime.now(UTC) - home.frozen_at,
+            idle_for=_idle_for(home.spec),
+            frozen=True,
+        )
+
     async def _destroy(
         self,
         home_id: uuid.UUID,
@@ -565,6 +978,7 @@ class SandboxLifecycle:
         idle: timedelta | None,
         *,
         idle_for: timedelta | None = None,
+        frozen: bool = False,
     ) -> bool:
         """Destroy one sandbox: idle for ``idle``, or, with ``idle`` None,
         because its project's credits ran out (``metering.unpaid_sandboxes``)
@@ -572,7 +986,10 @@ class SandboxLifecycle:
 
         ``idle_for`` is how long this home was to be kept before it counts as
         idle — the shorter pressed time for a cloud sandbox (``_held_for``);
-        without it, its spec's."""
+        without it, its spec's. ``frozen`` says the caller picked it while it
+        was frozen (past its keep time, or to free a slot): it is not in use,
+        so the idle and turn checks are skipped — but if it woke before this
+        lock was taken, it is left to the idle sweep instead."""
         if holder_id is not None:
             # The holder's lock first, as a tool call takes it: one that arrives
             # now waits until the home is marked, and then waits for it to go.
@@ -585,10 +1002,26 @@ class SandboxLifecycle:
             await self._session.commit()
             return False
         held = idle_for if idle_for is not None else _idle_for(home.spec)
-        if home.stopped_at is None and idle is not None and now - home.active_at < held:
+        was_frozen = home.frozen_at is not None
+        if frozen and home.stopped_at is None and not was_frozen:
+            # A tool call woke it between the look and this lock; it is in use
+            # again, and the idle sweep decides on it as any running sandbox.
             await self._session.commit()
             return False
-        if home.stopped_at is None and idle is not None and home.session_id is not None:
+        if (
+            home.stopped_at is None
+            and idle is not None
+            and not was_frozen
+            and now - home.active_at < held
+        ):
+            await self._session.commit()
+            return False
+        if (
+            home.stopped_at is None
+            and idle is not None
+            and not was_frozen
+            and home.session_id is not None
+        ):
             # The home was picked from a look taken before this lock. A turn
             # may have started since — the sweep that picked it ran a second
             # before the session woke to a background command's result — and a
@@ -602,7 +1035,11 @@ class SandboxLifecycle:
             # Another sweep is removing it.
             await self._session.commit()
             return False
-        if idle is not None and await self._session_recovering(home.session_id):
+        if (
+            idle is not None
+            and not was_frozen
+            and await self._session_recovering(home.session_id)
+        ):
             await self._session.commit()
             return False
         unpaid = home.stopped_at is None and idle is None

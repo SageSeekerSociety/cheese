@@ -155,6 +155,9 @@ def cloud(client, monkeypatch, tmp_path):
     # measure.
     monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr(settings, "cloud_sandbox_idle_stop_s", 600)
+    # These pin what an idle sandbox always did: destroyed. Freezing is its
+    # own file (`test_sandbox_freezing.py`).
+    monkeypatch.setattr(settings, "cloud_sandbox_freeze", False)
     monkeypatch.setattr(settings, "cloud_sandbox_background_cap_s", 3600)
     provider = FakeMicroCloud()
     monkeypatch.setattr(

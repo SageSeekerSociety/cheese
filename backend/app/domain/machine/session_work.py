@@ -37,7 +37,12 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEFT_HOST_KEY,
+    LOST_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_of
 from app.domain.delivery.ledger import deliver
@@ -52,7 +57,11 @@ from app.domain.machine.environments import device_for_spec, environment_of
 from app.domain.machine.infra_records import keep_refusal
 from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
-from app.domain.machine.lifecycle import SandboxRemoving
+from app.domain.machine.lifecycle import (
+    SandboxRemoving,
+    frozen_sessions,
+    thaw_if_asked,
+)
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
@@ -341,8 +350,12 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
             )
         )
     )
+    # Frozen: checkpointed before it was frozen, and nothing ran since.
+    frozen = await frozen_sessions(session, [row.id for row in rows])
     starts = []
     for row in rows:
+        if row.id in frozen:
+            continue
         lease = row.work_lease or {}
         if lease.get("status", "ready") != "ready" or not lease.get("state"):
             continue
@@ -650,7 +663,9 @@ async def switch_environment(
         # The machine was unbound: nothing can reach it, and nothing left on it
         # can be cleaned up.
         old = None
-    if old:
+    # A frozen sandbox is not checkpointed: it was before it was frozen, and
+    # its stopped processes could not run `cheese sync` now.
+    if old and not await frozen_sessions(db, [session_id]):
         generation = request.get("generation")
         start = await restart_executor(db, row, old)
         await db.commit()
@@ -772,6 +787,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("room_resource_id") != resource
         or lease.get("setup_digest") != _setup_digest(env)
         or request.get(LOST_KEY)
+        or request.get(THAW_KEY)
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
         or not holder.signed_for(claims)
@@ -1286,6 +1302,13 @@ async def _install(
         )
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
+                await thaw_if_asked(
+                    db,
+                    hub,
+                    session_id=session_id,
+                    device_id=device_id,
+                    work_resource=work_resource,
+                )
                 async with shown as heard:
                     info = await _start_executor(
                         hub,
