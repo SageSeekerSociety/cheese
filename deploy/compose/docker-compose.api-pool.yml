@@ -18,5 +18,11 @@ services:
       # dev names its shared development account so a load test measures the
       # backend, not that account's own quota. Empty limits everyone.
       - REQUEST_LIMIT_EXEMPT_HANDLES=${REQUEST_LIMIT_EXEMPT_HANDLES:-}
+      # The proxies in front of the backend, whose X-Forwarded-For uvicorn
+      # believes. Unset, every request carries a proxy's address, the
+      # backend cannot tell clients apart (core/client_address.py), and a
+      # request without a signed-in account is not limited at all: measured
+      # on dev 2026-11-01, 160 anonymous requests in 2 s all answered 200.
+      - FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-}
     ports:
       - "127.0.0.1:${BACKEND_POOL_PORT:-18091}:8085"

@@ -523,6 +523,11 @@ jobs:
           # The shared development account load tests run from; the request
           # limits would otherwise cap them at one account's quota (~20/s).
           REQUEST_LIMIT_EXEMPT_HANDLES: "wangchangxin"
+          # Every hop between a visitor and the backend on this box: the edge
+          # (Hong Kong / Beijing Caddy) arrives over SSH tunnels on loopback,
+          # and the front door, frontend and app-router reach the backend over
+          # the docker networks. Caddy writes the visitor's own address first.
+          FORWARDED_ALLOW_IPS: "127.0.0.1,::1,172.16.0.0/12"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
       - name: Install the dev database backup writer from this release
