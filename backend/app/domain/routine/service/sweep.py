@@ -54,12 +54,18 @@ async def publish_run_messages(
             await session.scalars(select(Block).where(Block.id.in_(message_ids)))
         )
         runs = await runs_under(session, message_ids)
+
+        async def replying(
+            threads: list[uuid.UUID],
+        ) -> dict[uuid.UUID, list[str]]:
+            # This process's broker: who it is driving a turn for in each.
+            return {
+                thread: sorted(set(broker.activity.turn_agents(str(thread)).values()))
+                for thread in threads
+            }
+
         threads = await thread_reads.under_messages(
-            session,
-            message_ids,
-            replying=lambda thread: sorted(
-                set(broker.activity.turn_agents(str(thread)).values())
-            ),
+            session, message_ids, replying=replying
         )
         reactions = await BlockRepository(session).reactions_for_blocks(message_ids)
     for message in messages:
