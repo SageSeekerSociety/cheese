@@ -28,7 +28,7 @@ from tests.support.counting_session import counting_sql
 
 _COUNT = re.compile(r"SELECT count\(\*\) AS count_1 FROM blocks")
 _RUNNING = re.compile(r"FROM session_states WHERE session_states\.worker_status")
-_RUNNING_IN = re.compile(r"session_states\.conversation_id IN")
+_RUNNING_IN = re.compile(r"session_states\.conversation_id = ANY")
 
 
 def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
