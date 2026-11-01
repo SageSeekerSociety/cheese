@@ -65,6 +65,7 @@ from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission as ProjectPermission
 from app.domain.room_task.place import Place, place_or_404
+from app.domain.topic_membership.services import TopicMemberService
 
 WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -258,6 +259,11 @@ class _CanInChannel(WriteAccess):
     ) -> InChannel:
         assert self.permission is not None
         place = await place_or_404(db, topic_id)
+        # The room's roster, read once for the request: the door below asks the
+        # caller's seat in it, and what these routes do next (whom a message is
+        # for, who answers here) reads the same rows. Asked for the one seat
+        # first, the roster was read again right after.
+        await TopicMemberService(db).list_for_topic(place.room_id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
