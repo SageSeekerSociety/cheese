@@ -313,11 +313,10 @@ def test_a_sent_message_groups_under_itself_without_a_second_write(client, beare
         "the message's self-reference was written as a second statement:\n"
         + "\n".join(patched)
     )
+    # The route answers with the block as the write produced it (`landed`);
+    # nobody asks for it by id afterwards.
     reads = [s for s in statements if _BLOCK_BY_ID.search(s)]
-    assert len(reads) == 1, (
-        "the write re-read its own row; only the route's read of the anchor "
-        "it returns should ask for it by id:\n" + "\n".join(reads)
-    )
+    assert not reads, "the message was read back by id:\n" + "\n".join(reads)
     client_id_scans = [
         s
         for s in statements
@@ -329,7 +328,14 @@ def test_a_sent_message_groups_under_itself_without_a_second_write(client, beare
         "sending a message scanned blocks by author/client_id instead of "
         "relying on idempotency_keys:\n" + "\n".join(client_id_scans)
     )
-    topic_by_id = [s for s in statements if "FROM topics WHERE topics.id =" in s]
+    # The room is read once, with its project (`PlaceResolver.resolve`).
+    topic_by_id = [
+        s
+        for s in statements
+        if re.search(
+            r"FROM topics (LEFT OUTER JOIN projects ON .*?)?WHERE topics\.id =", s
+        )
+    ]
     assert len(topic_by_id) == 1, (
         "the route and writer read the room row more than once:\n"
         + "\n".join(topic_by_id)

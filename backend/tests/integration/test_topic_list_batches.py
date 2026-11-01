@@ -153,8 +153,9 @@ _ALL_TASKS_SELECT = re.compile(
     r"^\s*SELECT tasks\.[^;]*?\bFROM tasks\b",
     re.IGNORECASE,
 )
+# `projects` read on its own, or with the room it was resolved with.
 _PROJECTS_SELECT = re.compile(
-    r"^\s*SELECT\b[^;]*?\bFROM projects\b",
+    r"^\s*SELECT\b[^;]*?\b(?:FROM|JOIN) projects\b",
     re.IGNORECASE,
 )
 _AGENT_INSTANCES_SELECT = re.compile(
