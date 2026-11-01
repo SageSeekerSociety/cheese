@@ -9,6 +9,7 @@ recorded instead of run.
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.api.deps import get_work_runner
 from app.api.preview_runtime import SNAPSHOT_CSP
@@ -206,43 +207,20 @@ def test_waking_needs_a_member_who_may_ask_the_agent(client, preview_config, run
     assert runner.submitted == []
 
 
-def test_waking_an_app_with_serve_meta_restarts_it_on_machine_without_a_model_turn(
-    client, preview_config, runner, monkeypatch
-):
-    """When `cheese serve` recorded its launch spec (`serve`), waking a sleeping
-    app brings the sandbox and the app back up directly on the machine without
-    spending an agent turn; if direct restore fails, it falls back to a turn."""
-    import time
+def _seed_sandbox(client, topic_id, seat) -> uuid.UUID:
+    """A session whose sandbox is on a platform host, as the pool leaves it."""
 
-    from app.domain.agent import execution
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.agent_session.models import LOST_KEY
-    from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import preview_wake
+    async def _seed() -> uuid.UUID:
+        from datetime import UTC, datetime, timedelta
 
-    topic_id, seat = _room(client)
-    task_id = str(uuid.uuid4())
-    serve_spec = {
-        "port": 5173,
-        "command": "python3 -m http.server 5173 --bind 127.0.0.1",
-        "cwd": f"/home/cheese/.cheese/tasks/{task_id}",
-        "home": "/home/cheese",
-        "task_id": task_id,
-    }
-    machine = FakeMachine().attach(topic_id, seat)
-    try:
-        shown = client.post(
-            f"/topics/{topic_id}/shown",
-            json={"path": "Vue dev server", "as": "app", "serve": serve_spec},
-            headers=ALICE,
+        from app.domain.agent_session.services import AgentSessionService
+        from app.domain.machine.models import (
+            AiStatus,
+            CloudHost,
+            MachineStatus,
+            SandboxHome,
         )
-        assert shown.status_code == 200, shown.text
-        assert shown.json()["data"]["meta"]["serve"] == serve_spec
-    finally:
-        machine.detach()
 
-    # Seed the seat's session with a destroyed sandbox marker (`LOST_KEY`).
-    async def _seed_session() -> uuid.UUID:
         async with client.test_request_factory() as db:
             row = await AgentSessionService(db).ensure(
                 topic_id, seat, harness="claude-code"
@@ -252,136 +230,122 @@ def test_waking_an_app_with_serve_meta_restarts_it_on_machine_without_a_model_tu
                 "resource_id": str(topic_id),
                 "channel": "device",
             }
-            row.work_lease = {
-                "kind": "device",
-                "device_id": "box-1",
-                "status": "ready",
-                "state": "/box-1/state",
-                "workspace": "/box-1/work",
-                "generation": "gen-1",
-            }
-            row.execution_request = {"generation": "gen-1", LOST_KEY: True}
+            host = CloudHost(
+                customer_id=1,
+                account_id=1,
+                offering_id=1,
+                hostname=f"host-{uuid.uuid4().hex[:8]}",
+                login_user="cheese",
+                cores=2,
+                memory_mb=4096,
+                disk_gb=20,
+                device_id="box-1",
+                status=MachineStatus.running,
+                ai_mode="none",
+                ai_status=AiStatus.disabled,
+                bootstrap_key="k",
+            )
+            db.add(host)
+            await db.flush()
+            home = SandboxHome(
+                host_id=host.id,
+                topic_id=topic_id,
+                room_resource_id=str(topic_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=row.id,
+                device_id=None,
+                spec="standard",
+                active_at=datetime.now(UTC) - timedelta(minutes=15),
+            )
+            db.add(home)
             await db.commit()
             return row.id
 
-    session_id = client.portal.call(_seed_session)
-    invoked: list[dict] = []
-    reattached: list[FakeMachine] = []
-
-    async def _fake_ensure(db, **kwargs):
-        return {
-            "target": {
-                "kind": "device",
-                "device_id": "box-1",
-                "status": "ready",
-                "state": "/box-1/state",
-                "workspace": "/box-1/work",
-            },
-            "token": "tok",
-        }
-
-    async def _fake_call(target, method, params, **_kwargs):
-        invoked.append({"target": target, "method": method, "params": params})
-        # Simulate `cheese serve 5173 --restore ...` bringing the tunnel & app up.
-        reattached.append(FakeMachine().attach(topic_id, seat))
-        return {"value": {"stdout": "", "stderr": ""}}
-
-    monkeypatch.setattr(preview_wake.session_work, "ensure", _fake_ensure)
-    monkeypatch.setattr(execution, "call", _fake_call)
-    monkeypatch.setattr(device_hub, "is_online", lambda _dev: True)
-
-    try:
-        woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
-        assert woke.status_code == 200, woke.text
-        assert woke.json()["data"] == {"started": True}
-
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            status = client.get(
-                f"/topics/{topic_id}/preview/wake-status", headers=ALICE
-            ).json()["data"]
-            if status["app_up"]:
-                break
-            time.sleep(0.05)
-        assert status["app_up"] is True
-        assert status["tunnel_up"] is True
-        # Zero LLM turns started!
-        assert runner.submitted == []
-        assert len(invoked) == 1
-        assert invoked[0]["method"] == "invoke"
-        assert "cheese serve 5173 --restore" in invoked[0]["params"]["args"]["command"]
-
-        # And LOST_KEY was cleared because the task checkout was restored.
-        async def _read_lost() -> bool:
-            async with client.test_request_factory() as db:
-                row = await AgentSessionService(db).by_id(session_id)
-                return bool((row.execution_request or {}).get(LOST_KEY))
-
-        assert client.portal.call(_read_lost) is False
-    finally:
-        for m in reattached:
-            m.detach()
+    return client.portal.call(_seed)
 
 
-def test_waking_falls_back_to_agent_turn_when_direct_restore_fails(
+def _freeze(client, session_id) -> str:
+    """The session's home frozen, as the sweep freezes it. Returns its resource."""
+
+    async def _do() -> str:
+        from datetime import UTC, datetime, timedelta
+
+        from app.domain.machine.models import SandboxHome
+
+        async with client.test_request_factory() as db:
+            home = await db.scalar(
+                select(SandboxHome).where(SandboxHome.session_id == session_id)
+            )
+            home.frozen_at = datetime.now(UTC) - timedelta(minutes=5)
+            home.active_at = datetime.now(UTC) - timedelta(minutes=15)
+            await db.commit()
+            return str(home.resource_id)
+
+    return client.portal.call(_do)
+
+
+def test_waking_an_app_whose_sandbox_still_exists_thaws_it_without_a_model_turn(
     client, preview_config, runner, monkeypatch
 ):
-    """If the direct machine restore fails (e.g. command exits non-zero), the
-    platform falls back to starting an agent turn so the user is not stuck."""
+    """The sandbox is still there, frozen: waking thaws it in place through the
+    same path a tool call's wake takes, and the app goes on running. No launch
+    command is run and no agent turn is spent."""
     import time
 
     from app.domain.agent import execution
-    from app.domain.agent_session.services import AgentSessionService
-    from app.domain.machine import preview_wake
+    from app.domain.machine import lifecycle
 
     topic_id, seat = _room(client)
-    serve_spec = {
-        "port": 5173,
-        "command": "npm run dev",
-        "cwd": "/home/cheese/room",
-        "home": "/home/cheese",
-    }
     machine = FakeMachine().attach(topic_id, seat)
     try:
-        shown = client.post(
-            f"/topics/{topic_id}/shown",
-            json={"path": "npm run dev", "as": "app", "serve": serve_spec},
-            headers=ALICE,
-        )
-        assert shown.status_code == 200, shown.text
+        _declare(client, topic_id, path="npm run dev")
     finally:
         machine.detach()
+    session_id = _seed_sandbox(client, topic_id, seat)
+    resource = _freeze(client, session_id)
+    thawed: list[tuple[str, str]] = []
 
-    async def _seed_session():
-        async with client.test_request_factory() as db:
-            row = await AgentSessionService(db).ensure(
-                topic_id, seat, harness="claude-code"
-            )
-            row.runtime_location = {
-                "device_id": "center",
-                "resource_id": str(topic_id),
-                "channel": "device",
-            }
-            await db.commit()
+    async def _fake_thaw(hub, device_id, work_resource):
+        thawed.append((device_id, work_resource))
 
-    client.portal.call(_seed_session)
+    async def _no_command(*_args, **_kwargs):
+        raise AssertionError("waking a live sandbox must not run a launch command")
 
-    async def _fake_ensure(db, **_kwargs):
-        return {
-            "target": {
-                "kind": "device",
-                "device_id": "box-1",
-                "status": "ready",
-                "state": "/box-1/state",
-                "workspace": "/box-1/work",
-            }
-        }
+    monkeypatch.setattr(lifecycle, "thaw_on_host", _fake_thaw)
+    monkeypatch.setattr(execution, "call", _no_command)
 
-    async def _failing_call(target, method, params, **_kwargs):
-        return {"value": {"stdout": "Exit code 1\n", "stderr": "port failed"}}
+    woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
+    assert woke.status_code == 200, woke.text
+    assert woke.json()["data"] == {"started": True}
+    deadline = time.monotonic() + 5.0
+    while not thawed and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert thawed == [("box-1", resource)]
+    assert runner.submitted == []
 
-    monkeypatch.setattr(preview_wake.session_work, "ensure", _fake_ensure)
-    monkeypatch.setattr(execution, "call", _failing_call)
+
+def test_waking_falls_back_to_agent_turn_when_the_sandbox_cannot_come_up(
+    client, preview_config, runner, monkeypatch
+):
+    """If the sandbox cannot be brought up, the user is not stuck: the teammate
+    gets a turn to start the app again."""
+    import time
+
+    from app.domain.machine import lifecycle
+
+    topic_id, seat = _room(client)
+    machine = FakeMachine().attach(topic_id, seat)
+    try:
+        _declare(client, topic_id, path="npm run dev")
+    finally:
+        machine.detach()
+    session_id = _seed_sandbox(client, topic_id, seat)
+    _freeze(client, session_id)
+
+    async def _failing_thaw(hub, device_id, work_resource):
+        raise lifecycle.SandboxHomeError("no such sandbox")
+
+    monkeypatch.setattr(lifecycle, "thaw_on_host", _failing_thaw)
 
     woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
     assert woke.status_code == 200, woke.text
@@ -391,7 +355,7 @@ def test_waking_falls_back_to_agent_turn_when_direct_restore_fails(
     while not runner.submitted and time.monotonic() < deadline:
         time.sleep(0.05)
     assert len(runner.submitted) == 1
-    assert "cheese serve" in runner.submitted[0]["content"]
+    assert "npm run dev" in runner.submitted[0]["content"]
 
 
 def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_config):
@@ -484,3 +448,94 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
     assert first > stale + timedelta(minutes=10)
     assert second == stale
     assert other == stale
+
+
+def test_opening_a_frozen_sandboxes_preview_thaws_it(
+    client, preview_config, monkeypatch
+):
+    """Browsing a preview is using the sandbox: one found frozen is thawed in
+    the background, so the app somebody opened goes on running."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent_session.models import THAW_KEY
+    from app.domain.agent_session.services import AgentSessionService
+    from app.domain.machine import lifecycle
+    from app.domain.machine.models import (
+        AiStatus,
+        CloudHost,
+        MachineStatus,
+        SandboxHome,
+    )
+    from app.domain.machine.preview_wake import (
+        clear_preview_touch_cache,
+        touch_preview_activity,
+    )
+
+    topic_id, seat = _room(client)
+    clear_preview_touch_cache()
+    stale = datetime.now(UTC) - timedelta(minutes=15)
+
+    async def _seed() -> tuple[uuid.UUID, str, uuid.UUID]:
+        async with client.test_request_factory() as db:
+            row = await AgentSessionService(db).ensure(
+                topic_id, seat, harness="claude-code"
+            )
+            host = CloudHost(
+                customer_id=1,
+                account_id=1,
+                offering_id=1,
+                hostname=f"host-{uuid.uuid4().hex[:8]}",
+                login_user="cheese",
+                cores=2,
+                memory_mb=4096,
+                disk_gb=20,
+                device_id="box-1",
+                status=MachineStatus.running,
+                ai_mode="none",
+                ai_status=AiStatus.disabled,
+                bootstrap_key="k",
+            )
+            db.add(host)
+            await db.flush()
+            home = SandboxHome(
+                host_id=host.id,
+                topic_id=topic_id,
+                room_resource_id=str(topic_id),
+                resource_id=str(uuid.uuid4()),
+                session_id=row.id,
+                device_id=None,
+                spec="standard",
+                active_at=stale,
+                frozen_at=stale,
+            )
+            db.add(home)
+            await db.commit()
+            return home.id, home.resource_id, row.id
+
+    home_id, resource, session_id = client.portal.call(_seed)
+    thawed: list[tuple[str, str]] = []
+
+    async def _fake_thaw(hub, device_id, work_resource):
+        thawed.append((device_id, work_resource))
+
+    monkeypatch.setattr(lifecycle, "thaw_on_host", _fake_thaw)
+
+    async def _touch() -> tuple[bool, datetime | None, bool]:
+        async with client.test_request_factory() as db:
+            tasks = await touch_preview_activity(db, topic_id, seat)
+        assert len(tasks) == 1, "a frozen sandbox was not asked to thaw"
+        started = await tasks[0]
+        async with client.test_request_factory() as db:
+            home = await db.get(SandboxHome, home_id)
+            row = await AgentSessionService(db).by_id(session_id)
+            return (
+                started,
+                home.frozen_at,
+                bool((row.execution_request or {}).get(THAW_KEY)),
+            )
+
+    started, frozen_at, still_thawing = client.portal.call(_touch)
+    assert started is True
+    assert thawed == [("box-1", resource)]
+    assert frozen_at is None
+    assert still_thawing is False

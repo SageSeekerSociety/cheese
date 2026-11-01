@@ -40,6 +40,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import (
     LEFT_HOST_KEY,
     LOST_KEY,
+    LOST_PROCESSES_KEY,
     THAW_KEY,
     AgentSession,
 )
@@ -72,6 +73,7 @@ from app.domain.machine.sandbox_wait import (
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
+    STOPPED_PROCESSES,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -1437,11 +1439,14 @@ async def _install(
             and target["status"] == "ready"
             and (row.execution_request or {}).get(LOST_KEY)
         )
+        stopped = []
         if lost:
+            request = row.execution_request or {}
+            stopped = [str(one) for one in request.get(LOST_PROCESSES_KEY) or [] if one]
             row.execution_request = {
                 key: value
-                for key, value in (row.execution_request or {}).items()
-                if key != LOST_KEY
+                for key, value in request.items()
+                if key not in (LOST_KEY, LOST_PROCESSES_KEY)
             }
         conversation_id = row.conversation_id
         device = (
@@ -1486,6 +1491,12 @@ async def _install(
             )
         lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
         notices = [lost_notice] * bool(lost)
+        if stopped:
+            notices.append(
+                STOPPED_PROCESSES.format(
+                    processes="\n".join(f"  {one}" for one in stopped)
+                )
+            )
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {
