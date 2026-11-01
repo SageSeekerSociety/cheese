@@ -41,7 +41,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, String, literal_column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -91,6 +91,12 @@ class SessionPlace:
     lease: dict | None
 
 
+#: The device a session's lease is on, as `ix_agent_sessions_lease_device`
+#: indexes it. The key is written as a literal, not bound, so the index serves
+#: a prepared statement's generic plan too (`LEASE_DEVICE`).
+LEASE_DEVICE_SQL = "(work_lease ->> 'device_id')"
+
+
 class AgentSession(UuidPk, Timestamps, Base):
     __tablename__ = "agent_sessions"
     # One session per agent per conversation.
@@ -102,6 +108,9 @@ class AgentSession(UuidPk, Timestamps, Base):
             "harness",
             unique=True,
         ),
+        # Which session holds a sandbox on a device: every request a sandbox
+        # makes through its device link asks it (`machine.caller.caller_of`).
+        Index("ix_agent_sessions_lease_device", text(LEASE_DEVICE_SQL)),
     )
 
     # The conversation this session is in: a room's or a task's id.
@@ -261,3 +270,7 @@ class AgentRead(Base):
     read_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     read_through_block_id: Mapped[uuid.UUID] = mapped_column()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+#: ``AgentSession.work_lease["device_id"]`` spelled the way the index is.
+LEASE_DEVICE = literal_column("(agent_sessions.work_lease ->> 'device_id')", String)
