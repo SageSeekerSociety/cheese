@@ -359,7 +359,9 @@ async def settle_for(
     await _settle(session, keys, outcome, delivery_where=cond)
 
 
-async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) -> None:
+async def settle_card(
+    session: AsyncSession, card_id: uuid.UUID, outcome: dict
+) -> set[uuid.UUID]:
     """这张验收卡办完了：关于它的每一条提示一并结掉。
 
     一张卡等的是**一件事**，说的话却有好几句：递上来时「待你审阅」，检查全绿时
@@ -369,10 +371,12 @@ async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) 
     `agent/announce.py`），一个卡号就够。
 
     结的是「等验收人动手」的那些；说**结局**的那几条（合了、作废了、PR 被关了）
-    不带卡号：它们正是在这个决定之后才说出来的。
+    不带卡号：它们正是在这个决定之后才说出来的。返回结掉的是哪几件事（事件 id）：
+    其中芝士请人决定这张卡的那道题（`agent.ask.ask_to_decide`），事件 id 就是题的
+    id，调用方据此把题收起来。
     """
     cond = Delivery.payload["cardId"].as_string() == str(card_id)
-    await _settle(
+    return await _settle(
         session,
         select(Delivery.dedup_key).where(cond),
         outcome,
@@ -386,8 +390,8 @@ async def _settle(
     outcome: dict,
     *,
     delivery_where=None,
-) -> None:
-    """把 `keys` 选出来的那几笔投递结掉。"""
+) -> set[uuid.UUID]:
+    """把 `keys` 选出来的那几笔投递结掉；返回它们是哪几件事（事件 id）。"""
     if session.autoflush and (session.new or session.dirty or session.deleted):
         await session.flush()
     now = _utcnow()
@@ -413,19 +417,18 @@ async def _settle(
     delivery_cond = (
         delivery_where if delivery_where is not None else Delivery.dedup_key.in_(keys)
     )
-    deliv_ids = set(
-        (
-            await session.scalars(
-                update(Delivery)
-                .where(delivery_cond)
-                .values(
-                    payload=func.coalesce(Delivery.payload, empty).op("||")(patch),
-                )
-                .returning(Delivery.id)
-                .execution_options(synchronize_session=False)
+    settled = (
+        await session.execute(
+            update(Delivery)
+            .where(delivery_cond)
+            .values(
+                payload=func.coalesce(Delivery.payload, empty).op("||")(patch),
             )
-        ).all()
-    )
+            .returning(Delivery.id, Delivery.event_id)
+            .execution_options(synchronize_session=False)
+        )
+    ).all()
+    deliv_ids = {row[0] for row in settled}
     if notif_ids or deliv_ids:
         for obj in session.sync_session.identity_map.values():
             if (
@@ -448,6 +451,7 @@ async def _settle(
                 attributes.set_committed_value(
                     obj, "payload", {**(obj.payload or {}), **outcome}
                 )
+    return {row[1] for row in settled}
 
 
 async def resend_unsent_deliveries(sessions: SessionFactory) -> dict[str, int]:

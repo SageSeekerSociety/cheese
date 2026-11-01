@@ -17,8 +17,7 @@ Callers authorize the seat and commit; nothing here publishes or delivers.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import cast, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select
 
 from app.core.errors import (
     ConflictError,
@@ -340,44 +339,47 @@ async def expire_question(
 
 
 async def settle_decision(
-    session, *, conversation_id, card_id, chosen: str | None, by: str
+    session, *, question_ids, card_id, chosen: str | None, by: str
 ) -> list[Block]:
-    """The delivery ``card_id`` was decided: the questions whose buttons decide
-    it (`agent.ask.ask_to_decide`) stop waiting, and say how it went.
+    """The delivery ``card_id`` was decided: of the messages ``question_ids``
+    names, the questions whose buttons decide it (`agent.ask.ask_to_decide`)
+    stop waiting, and say how it went.
 
-    A button does nothing but call the card's own route, so the decision is
-    made — and recorded here — wherever it is made: a click on one of these
-    buttons, the card's own button, a merge on the forge, the task closing.
-    ``chosen`` is the button kind the decision amounts to (``accept`` /
-    ``close``). Either way the question is closed with ``decided``, an entry
+    ``question_ids`` are the events whose notices the decision settled
+    (`delivery.ledger.settle_card`): a question's notice carries its card and
+    its event is the question itself, so no other read finds them, and a card
+    nobody asked about costs nothing here. A button does nothing but call the
+    card's own route, so the decision is made, and recorded here, wherever it
+    is made: a click on one of these buttons, the card's own button, a merge
+    on the forge, the task closing. ``chosen`` is the button kind it amounts to
+    (``accept`` / ``close``). The question is closed with ``decided``, an entry
     that is not an answer and that nobody withdraws: the decision is the
     card's, and taking it off the question would offer buttons for a delivery
     that is already decided. It names the button the decision amounts to when
     the question offered one (``option``), and nothing when it did not (a
-    return, a void, a close it never offered). Returns the
-    questions it changed, for the caller to show once committed. Flush, not
-    commit.
+    return, a void, a close it never offered). Returns the questions it
+    changed, for the caller to show once committed. Flush, not commit.
     """
+    if not question_ids:
+        return []
     rows = await session.scalars(
-        select(Block).where(
-            QUESTION_ROWS,
-            Block.conversation_id == conversation_id,
-            cast(Block.meta, JSONB).contains(
-                {"options": [{"action": {"card": str(card_id)}}]}
-            ),
-        )
+        select(Block).where(QUESTION_ROWS, Block.id.in_(question_ids))
     )
     changed = []
     now = datetime.now(UTC)
     for question in rows:
         meta = dict(question.meta or {})
+        options = meta.get("options") or []
+        actions = [(o or {}).get("action") or {} for o in options]
+        if not any(a.get("card") == str(card_id) for a in actions):
+            continue
         if not answerable(meta):
             continue
         offered = next(
             (
-                option["text"]
-                for option in meta.get("options") or []
-                if ((option or {}).get("action") or {}).get("kind") == chosen
+                o["text"]
+                for o, a in zip(options, actions, strict=True)
+                if a.get("kind") == chosen
             ),
             None,
         )

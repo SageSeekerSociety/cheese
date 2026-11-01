@@ -200,25 +200,24 @@ async def _settle_the_card(
     if settle_card is None:  # pragma: no cover - 接线漏了才会走到
         # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError("settle_card was not handed in")
-    await settle_card(session, card.id, {"outcome": outcome})
-    if card.task_id is not None:
-        # 对话里问「要接受还是关掉」的那几道题，按钮决定的就是这张卡：卡一有决定，
-        # 它们一起收起来，免得留着两个点了也没用的按钮。
-        for question in await settle_decision(
+    settled = await settle_card(session, card.id, {"outcome": outcome})
+    # 对话里问「要接受还是关掉」的那道题，通知带着卡号、事件就是题本身：上面结掉
+    # 的事件里有它，题就一起收起来，免得留着点了也没用的按钮。
+    for question in await settle_decision(
+        session,
+        question_ids=settled,
+        card_id=card.id,
+        chosen=_DECIDED_AS.get(outcome),
+        by=card.decided_by or "",
+    ):
+        show_once_committed(
             session,
-            conversation_id=card.task_id,
-            card_id=card.id,
-            chosen=_DECIDED_AS.get(outcome),
-            by=card.decided_by or "",
-        ):
-            show_once_committed(
-                session,
-                question.conversation_id,
-                {
-                    "type": "block_updated",
-                    "block": BlockOut.model_validate(question).model_dump(mode="json"),
-                },
-            )
+            question.conversation_id,
+            {
+                "type": "block_updated",
+                "block": BlockOut.model_validate(question).model_dump(mode="json"),
+            },
+        )
     if outcome in ("accepted", "rejected") and card.task_id is not None:
         task = await session.get(Task, card.task_id)
         if task is not None:
