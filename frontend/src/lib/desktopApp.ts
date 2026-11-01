@@ -201,33 +201,16 @@ export function openInBrowser(url: string): boolean {
   return true
 }
 
-/** Where the window goes after a landing page hands itself to the browser: the
- *  page it came from when that is an ordinary page of the app, else the start
- *  page. Never a page that could hand over again (the landing pages, and the
- *  account pages, whose sign-in redirects to one) and never the history entry before the first page
- *  of the app: in the desktop app that is the app's own first page, which goes
- *  on to the page a `cheese://` link named at launch, a landing page again. */
-function afterLeaving(): string {
-  const back = (window.history.state as { back?: unknown } | null)?.back
-  if (typeof back !== 'string' || !back.startsWith('/') || back.startsWith('//')) return '/'
-  const first = back.slice(1).split(/[/?#]/)[0].toLowerCase()
-  return ['previews', 'sites', 'account'].includes(first) ? '/' : back
-}
-
-let leftForBrowser = false
-
 /** A page that hands the reader to the content domain at the top level (a
  *  preview, a published Site) is the browser's to show: in the app, the
  *  window would end up on a page someone else wrote, with no way back. Opens
- *  `path` in the browser, once per page load, and replaces this page with
- *  where the window came from (`afterLeaving`); false outside the app, where
- *  the caller goes on as in a browser. */
+ *  `path` in the browser and takes the window back where it came from (the
+ *  start page when it came from nowhere); false outside the app, where the
+ *  caller goes on as in a browser. */
 export function leaveForBrowser(path: string): boolean {
-  if (!desktopCan('links')) return false
-  if (leftForBrowser) return true
-  leftForBrowser = true
-  openInBrowser(path)
-  window.location.replace(afterLeaving())
+  if (!openInBrowser(path)) return false
+  if (window.history.length > 1) window.history.back()
+  else window.location.replace('/')
   return true
 }
 
