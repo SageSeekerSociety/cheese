@@ -59,9 +59,11 @@ the loop variable. Any other loop is read once, as written.
    is session-level and covers every migration. A migration that loses a lock
    to live traffic — its `lock_timeout` runs out, or Postgres picks it as a
    deadlock's victim — is rolled back whole and run again, up to 10 times with
-   backoff (`run_migrations_retrying_lock_contention` in `app/core/db.py`); a
-   migration that already committed part of itself in an `autocommit_block` is
-   not. A deploy whose Nth migration still fails leaves the database at N−1
+   backoff (`run_migrations_retrying_lock_contention` in `app/core/db.py`),
+   and no retry starts more than 10 minutes after the first attempt. Not
+   retried: a migration that already committed part of itself in an
+   `autocommit_block`, and a lock error a `with_lock_retries` loop let out after
+   spending its own attempts (one retry layer per lock). A deploy whose Nth migration still fails leaves the database at N−1
    (no longer all-or-nothing) with the old backend serving on it; rerunning the
    upgrade resumes from there. Another reason each migration must be safe under
    the previous release.

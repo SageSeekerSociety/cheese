@@ -56,7 +56,7 @@ def _hold_a_read(
                 if seconds is not None:
                     await asyncio.sleep(seconds)
                     return
-                for _ in range(600):
+                for _ in range(2400):  # the migration's process may start slowly
                     if await watcher.fetchval(
                         "SELECT count(*) FROM pg_locks l JOIN pg_class c"
                         " ON c.oid = l.relation"
@@ -156,3 +156,94 @@ def test_a_migration_that_committed_part_of_itself_is_not_run_again():
         finally:
             request.join()
         assert runs == 1
+
+
+def _migrate_against_a_held_table(db, upgrade, **retrying) -> None:
+    """Run ``upgrade`` under the retrying runner while a live request reads
+    ``agent_turns`` for longer than the whole run."""
+    from app.core.db import (
+        MigrationProgress,
+        run_migrations_retrying_lock_contention,
+    )
+
+    held = threading.Event()
+    request = threading.Thread(
+        target=_hold_a_read,
+        args=(db.url.replace("+asyncpg", ""), "agent_turns", held),
+        kwargs={"seconds": 4.0},
+    )
+    request.start()
+
+    def migrate(connection) -> None:
+        progress = MigrationProgress(connection)
+        run_migrations_retrying_lock_contention(
+            connection,
+            progress,
+            lambda: upgrade(connection),
+            sleep=lambda _s: None,
+            **retrying,
+        )
+
+    async def go() -> None:
+        engine = create_async_engine(db.url)
+        try:
+            async with engine.connect() as conn:
+                await conn.run_sync(migrate)
+        finally:
+            await engine.dispose()
+
+    try:
+        assert held.wait(10)
+        asyncio.run(go())
+    finally:
+        request.join()
+
+
+def test_a_migration_whose_lock_retry_loop_gave_up_is_not_run_again():
+    """``with_lock_retries`` already retried for its own ~320 s; one retry layer
+    per lock, so the migration fails instead of running that loop again."""
+    import sys
+
+    sys.path.insert(0, str(_BACKEND / "alembic"))
+    from migration_helpers import lock_retries_sql
+
+    # The helper's loop, shortened from 100 tries of 3 s to 2 of 100 ms.
+    loop = (
+        lock_retries_sql("agent_turns")
+        .replace("attempts >= 100", "attempts >= 2")
+        .replace("'3s'", "'100ms'")
+    )
+    runs = 0
+
+    def upgrade(connection) -> None:
+        nonlocal runs
+        runs += 1
+        connection.execute(text(loop))
+
+    with database_at(_BEFORE) as db:
+        with pytest.raises(DBAPIError, match="lock"):
+            _migrate_against_a_held_table(db, upgrade)
+    assert runs == 1
+
+
+def test_retries_stop_being_started_once_the_budget_is_spent():
+    """Each try here takes 300 s by the clock; a 600 s budget leaves room for a
+    second try and not a third."""
+    now = 0.0
+
+    def clock() -> float:
+        return now
+
+    runs = 0
+
+    def upgrade(connection) -> None:
+        nonlocal runs, now
+        runs += 1
+        now += 300.0
+        connection.execute(text("SET lock_timeout = '100ms'"))
+        connection.execute(text("ALTER TABLE agent_turns ADD COLUMN y int"))
+
+    with database_at(_BEFORE) as db:
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            _migrate_against_a_held_table(db, upgrade, budget_s=600.0, clock=clock)
+    assert runs == 2
