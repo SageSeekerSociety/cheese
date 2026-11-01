@@ -205,30 +205,18 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     starter_max_bytes: int = 2 * 1024 * 1024 * 1024
     starter_max_ratio: int = 200
     redis_url: str = "redis://localhost:6379/0"
-    # Per-client request limits (`app/core/request_limits.py`). Measured on the
-    # shared deployment, a normal browser peaks at 14 requests in flight, 14/s
-    # and 111/min — a page fans out one request per project — so these sit
-    # above that and below what one runaway page did to the whole process.
+    # Per-client request limits (`app/core/request_limits.py`; the numbers and
+    # why they are these: docs/api-conventions.md). `request_ip_*` are an
+    # address's, `request_limit_exempt_handles` the accounts not limited (dev's).
     request_rate_per_s: float = Field(default=20.0, gt=0)
     request_rate_burst: int = Field(default=100, ge=1)
     request_concurrency: int = Field(default=16, ge=1)
-    # The same limits for a request with no signed-in account, counted by the
-    # client's address. A campus or an office puts hundreds of people behind one
-    # NAT address, and a lecture hall opening a shared link or the sign-in page
-    # at once is all of them anonymous at once; these only stop one source
-    # flooding the backend. Signed-in requests are counted per account above.
     request_ip_rate_per_s: float = Field(default=200.0, gt=0)
     request_ip_rate_burst: int = Field(default=2000, ge=1)
     request_ip_concurrency: int = Field(default=128, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
-    # How long a rate check, or the closed-account check
-    # (``app.core.deleted_accounts``), may wait on Redis before the request goes
-    # through unchecked: a hung Redis must not hang every request with it.
     request_limit_redis_timeout_s: float = Field(default=0.25, gt=0)
-    # Accounts the limits above do not apply to, comma-separated handles. Empty
-    # everywhere but dev, which names the shared development account so a load
-    # test from it measures the backend rather than its own quota.
     request_limit_exempt_handles: str = ""
     # The process that owns device WebSockets is released independently from the
     # business backend. Empty keeps the in-process hub for local development and
