@@ -2,12 +2,13 @@
 // 文档条上的「看 / 批注 / 改」三段。照原型：三颗并排的键，选中的那颗底色亮一点，
 // 每颗带图标和一行 title（原型里也是 title，不是常显的说明字）。
 //
-// 「改」那一颗跟着这一份能不能改：不能改时是灰的，点它不生效，title 换一句话说清为什么
-// （原型里那句「运行中应用请通过批注交由芝士修改源码」同一条道理）。灰的键留在原处——
-// 一会儿摆一会儿藏，读者会以为这一段不可靠。
+// 「改」那一颗只在**这一份真能就地改**的时候才摆（markdown 有协同会话、Office 那几种
+// 在桌面宽上）。不能改就不摆：一颗灰着的键按下去什么都不做，读者还得悬停才知道为什么，
+// 而它旁边那两颗本来就是「读」和「说」——能做的事一件没少。所以 PDF、图片、网页这些
+// 上看到的是两颗。
 //
-// 整份模式没有时不摆：那几处（资料库、产物页）没有话题页，按下去什么都不做的三颗键
-// 比不摆更糟。
+// 整份模式没有时不摆：那几处（资料库、产物页）没有话题页，按下去什么都不做的键比不摆
+// 更糟。
 import type { PreviewMode } from '@/composables/panelPreview/previewMode'
 
 import { computed, inject } from 'vue'
@@ -27,7 +28,7 @@ const modes = inject(PREVIEW_MODE, null)
  *  对 `modes` 都用「一定在」的写法。 */
 const active = computed<PreviewMode>(() => modes!.mode.value)
 
-const items = computed(() => [
+const ALL_ITEMS = [
   {
     key: 'view' as const,
     label: t('work.room.preview.modeView'),
@@ -46,11 +47,12 @@ const items = computed(() => [
     icon: 'mdi-pencil-outline',
     title: t('work.room.preview.modeEditTitle'),
   },
-])
+]
 
-function usable(key: PreviewMode): boolean {
-  return modes!.enabled(key)
-}
+/** 摆出来的那几颗：这一份开不起「改」时它就不摆，而不是灰着。判据每次现问
+ *  （`modes.enabled`），markdown 的协同会话连上那一刻它就自己出现——那一下「改」是
+ *  真能用的，不是一会儿能一会儿不能。 */
+const items = computed(() => ALL_ITEMS.filter((item) => modes!.enabled(item.key)))
 </script>
 
 <template>
@@ -63,8 +65,7 @@ function usable(key: PreviewMode): boolean {
       type="button"
       class="mode-switch__item"
       :class="{ 'is-on': active === item.key }"
-      :disabled="!usable(item.key)"
-      :title="usable(item.key) ? item.title : t('work.room.preview.modeEditBlocked')"
+      :title="item.title"
       :aria-pressed="active === item.key"
       :data-testid="`preview-mode-${item.key}`"
       @click="modes!.set(item.key)"

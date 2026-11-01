@@ -4,7 +4,7 @@
 // 文档类（PDF、Word、表格、Markdown、代码）的这一条在 `PreviewDocStage` 里，带着它们自己
 // 的大纲、对比、看原文。这三类没有那些，但「现在是在读还是在指」「这是第几版、谁改的」
 // 是同一件事，读者换一种文件不该换一套说法：三段和版本行照文档条摆。「改」在这三类上
-// 开不起来，键是灰的，悬停说为什么（`PreviewModeSwitch` 自己判）。
+// 开不起来，那一颗就不摆（`PreviewModeSwitch` 自己判）。
 //
 // 旧版在这几类上画不出来，版本菜单里点旧版是灰的，底下一条去历史里下载（`onPick: 'none'`）。
 import type { PreviewVersionsBundle } from '@/composables/panelPreview/versions'

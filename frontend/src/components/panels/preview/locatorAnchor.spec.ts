@@ -17,7 +17,11 @@ function panel({ width = 800, height = 600, scrollTop = 0, top = 100, left = 50 
   return el
 }
 function rangeAt(top: number, bottom: number, left: number) {
-  return { getBoundingClientRect: () => ({ top, bottom, left, width: 40, height: bottom - top }) } as unknown as Range
+  const rect = { top, bottom, left, width: 40, height: bottom - top }
+  return {
+    getBoundingClientRect: () => rect,
+    getClientRects: () => [rect],
+  } as unknown as Range
 }
 
 it('选中的一段：用它的矩形，换成面板内容坐标', () => {
@@ -47,8 +51,27 @@ it('面板太窄：不弹', () => {
 it('选中的一段没有矩形（已经不在页面上）且没有点：不弹', () => {
   const empty = {
     getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, width: 0, height: 0 }),
+    getClientRects: () => [],
   } as unknown as Range
   expect(measureAnchor(panel(), empty, null)).toBeNull()
+})
+
+it('浏览器补出来的零宽整行块不算：框跟着屏幕上亮着的那一道，不落到下面很远', () => {
+  // 选区的那一头落在元素上时，getBoundingClientRect 会把补出来的零宽块也算进去（量到过
+  // 一条从 161 到 300 的整行块，而真选中的字在 248–300 那两行）。框要贴着字，不贴着补块。
+  const stray = { top: 161, bottom: 300, left: 155, width: 0, height: 139 }
+  const line1 = { top: 248, bottom: 263, left: 659, width: 230, height: 15 }
+  const line2 = { top: 267, bottom: 282, left: 221, width: 467, height: 15 }
+  const range = {
+    // 整块（含补出来的那一块）是浏览器给的：直接用它，框会落到 300 那一行下面。
+    getBoundingClientRect: () => ({ top: 161, bottom: 300, left: 155, width: 612, height: 139 }),
+    getClientRects: () => [line1, line2, stray],
+  } as unknown as Range
+  const a = measureAnchor(panel({ scrollTop: 0, top: 0 }), range, null)
+  expect(a?.top).toBe(248)
+  expect(a?.bottom).toBe(282)
+  // 面板左边在 50：换成面板内容坐标。
+  expect(a?.left).toBe(171)
 })
 
 it('点出来的一处：面板自己往下滚，那一点在内容里的位置不变（框跟着内容走）', () => {

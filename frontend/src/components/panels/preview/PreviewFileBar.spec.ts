@@ -50,11 +50,13 @@ function mount(current: typeof entry | null) {
   })
 }
 
-it('摆出类型、三段和这一版；「改」在这几类上是灰的', () => {
+it('摆出类型、「看 / 批注」和这一版；不能改的图上不摆「改」', () => {
   const ui = mount(entry)
   expect(ui.container.textContent).toContain('图片')
   expect(ui.getByTestId('version-picker').textContent).toContain('第 2 版')
-  expect(ui.getByTestId('preview-mode-edit').hasAttribute('disabled')).toBe(true)
+  expect(ui.getByTestId('preview-mode-view')).toBeTruthy()
+  expect(ui.getByTestId('preview-mode-note')).toBeTruthy()
+  expect(ui.queryByTestId('preview-mode-edit')).toBeNull()
   expect(ui.queryByTestId('file-bar-history')).toBeNull()
 })
 
