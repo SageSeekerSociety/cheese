@@ -7,11 +7,10 @@ from typing import Any
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.request_facts import recall
+from app.core.request_facts import recall, remember
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.budgets import gateway_spend_key
 from app.domain.usage.models import (
     GATEWAY_ROWS,
     NOT_MODEL_CALLS,
@@ -47,6 +46,36 @@ def unpriced_tokens() -> Any:
             ),
             else_=0,
         )
+    )
+
+
+def gateway_spend_select(project_ids: list[uuid.UUID]):
+    """Project id → ``spent``, the USD its gateway key has spent, ever, for
+    the projects among ``project_ids`` with gateway rows."""
+    return (
+        select(
+            ResourceUsage.project_id,
+            func.sum(ResourceUsage.cost_usd).label("spent"),
+        )
+        .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)
+        .group_by(ResourceUsage.project_id)
+    )
+
+
+def _gateway_spend_key(project_ids) -> tuple:
+    return ("gateway_spend", frozenset(project_ids))
+
+
+def remember_gateway_spend(
+    session: AsyncSession, project_ids: list[uuid.UUID], spent: dict
+) -> None:
+    """Leave ``spent`` (`gateway_spend_select`'s answer for ``project_ids``)
+    for `UsageRepository.gateway_spend` to answer from in this request."""
+    remember(
+        session,
+        _gateway_spend_key(project_ids),
+        spent,
+        tables=frozenset({"resource_usage"}),
     )
 
 
@@ -146,21 +175,21 @@ class UsageRepository:
         Read on every model admission. ``GATEWAY_ROWS`` is the literal predicate
         of ``ix_resource_usage_gateway_spend``, which carries ``cost_usd``: the
         sum comes from the index alone instead of every usage row of the
-        project fetched to test its route."""
+        project fetched to test its route. Admission has usually read it
+        already, with the projects' credit caps (`CreditBudgets.project_caps`).
+        A project with no gateway rows is absent: callers read 0 for it."""
         if not project_ids:
             return {}
-        # Admission has read it already, with the project's credit cap
-        # (`CreditBudgets.project_caps`).
-        if isinstance(self._session, AsyncSession):
-            found, cached = recall(self._session, gateway_spend_key(project_ids))
+        can_cache = isinstance(self._session, AsyncSession)
+        if can_cache:
+            found, cached = recall(self._session, _gateway_spend_key(project_ids))
             if found:
                 return cached
-        rows = await self._session.execute(
-            select(ResourceUsage.project_id, func.sum(ResourceUsage.cost_usd))
-            .where(ResourceUsage.project_id.in_(project_ids), GATEWAY_ROWS)
-            .group_by(ResourceUsage.project_id)
-        )
-        return {pid: float(spent or 0.0) for pid, spent in rows}
+        rows = await self._session.execute(gateway_spend_select(project_ids))
+        spent = {pid: float(usd) for pid, usd in rows if usd is not None}
+        if can_cache:
+            remember_gateway_spend(self._session, project_ids, spent)
+        return spent
 
     async def credits_by_work(
         self, work_ids: list[uuid.UUID], *, since: datetime, until: datetime

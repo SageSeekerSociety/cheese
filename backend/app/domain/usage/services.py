@@ -162,7 +162,9 @@ class UsageService:
     async def _summaries(self, payers: dict) -> dict[uuid.UUID, dict]:
         balances = await ledger.Ledger(self._session).balances(payers)
         # Caps first: their statement brings the gateway spend with it.
-        caps = await CreditBudgets(self._session).project_caps(list(payers))
+        caps = await CreditBudgets(self._session).project_caps(
+            list(payers), with_gateway_spend=True
+        )
         spent = await self._repo.gateway_spend(list(payers))
         out = {}
         for key, balance in balances.items():
