@@ -157,7 +157,7 @@
   "turnFailedRetryLater": "改好的文件都还在。稍后可以重试。",
   "turnFailedService": "这次没做完",
   "turnFailedModelError": "这次没做完：调用的模型出错了",
-  "turnFailedOwnBalance": "这次没做完：你们接入的 {service}（项目设置里的「模型连接」）余额用完了。充值后点「重试」，或者换一个模型连接。",
+  "turnFailedOwnBalance": "这次没做完：你们接入的 {service} 余额用完了。充值后点「重试」，或者在项目设置的「AI 队友」里换一个。",
   "turnStopped": "这次没做完，已停下",
   "turnFailedWith": "这次没做完：{reason}",
   "turnLimit": "这次超过时间上限，已停下。",

@@ -157,7 +157,7 @@
   "turnFailedRetryLater": "Files already changed are still there. You can retry later.",
   "turnFailedService": "Stopped before finishing",
   "turnFailedModelError": "Stopped before finishing: the call to the model failed",
-  "turnFailedOwnBalance": "Stopped before finishing: {service}, the model service you connected (“Model connection” in the project settings), has run out of balance. Top it up and press Retry, or switch to another model connection.",
+  "turnFailedOwnBalance": "Stopped before finishing: the {service} you connected has run out of balance. Top it up and press Retry, or switch to another one under “AI teammates” in the project settings.",
   "turnStopped": "Stopped before finishing, and halted",
   "turnFailedWith": "Stopped before finishing: {reason}",
   "turnLimit": "This hit its time limit and was stopped.",

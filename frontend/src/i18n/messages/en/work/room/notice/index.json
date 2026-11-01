@@ -6,7 +6,7 @@
   "filesChanged": "Changed files: {n}",
   "goConfirm": "Review and confirm",
   "goEnvironment": "Open environment settings",
-  "goModelConnection": "Open model connections",
+  "goAgentSettings": "Open AI teammates settings",
   "moreFiles": "{n} more files",
   "platform": "Platform",
   "quote": "“{text}”",

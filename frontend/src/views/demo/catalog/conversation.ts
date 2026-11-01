@@ -145,7 +145,7 @@ const MODEL_ERROR = failureLine('model-error', '这次没做完：调用的模�
 
 const OWN_BALANCE = failureLine(
   'own-balance',
-  '这次没做完：你们接入的 DeepSeek（项目设置里的「模型连接」）余额用完了。充值后点「重试」，或者换一个模型连接。',
+  '这次没做完：你们接入的 DeepSeek 余额用完了。充值后点「重试」，或者在项目设置的「AI 队友」里换一个。',
   {
     retryable: true,
     code: 'own_out_of_credit',
@@ -365,7 +365,7 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '没做完：接入的模型连接没钱了',
-        note: '项目自己接入的模型连接余额用完：说出是哪一个、去哪里换，带「重试」和「去模型连接」。',
+        note: '项目自己接入的模型连接余额用完：说出是哪一个、去哪里换，带「重试」和「去 AI 队友设置」。',
         props: failureNotice(OWN_BALANCE),
         expect: '你们接入的 DeepSeek',
       },

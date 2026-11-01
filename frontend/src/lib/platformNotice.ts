@@ -175,8 +175,8 @@ export interface EnvironmentTarget {
   query: Record<string, string>
 }
 
-/** 「你们接入的模型连接余额用完了」那一行指向的地方：项目设置的「AI 队友」，队友用哪份模型连接在那里换。 */
-export interface ModelConnectionTarget {
+/** 「你们接入的 … 余额用完了」那一行指向的地方：项目设置的「AI 队友」，队友用哪份模型连接在那里换。 */
+export interface AgentSettingsTarget {
   name: 'project-settings'
   params: { projectId: string; section: 'agents' }
 }
@@ -217,10 +217,10 @@ export function rowKeys(
 
 export {
   actionResource,
+  agentSettingsTarget,
   confirmTarget,
   environmentTarget,
   mailOutcomes,
-  modelConnectionTarget,
   platformNotice,
 } from './platformNoticeCards'
 export { collapseNotices, rendersInRoom } from './platformNoticeCollapse'

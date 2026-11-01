@@ -9,13 +9,13 @@
 import type { Block } from '../cx_types'
 import type { DocEdit } from './docEdits'
 import type {
+  AgentSettingsTarget,
   ChangeSummary,
   ConfirmTarget,
   EnvironmentTarget,
   LibraryDocCard,
   MailDraftView,
   MailOutcome,
-  ModelConnectionTarget,
   NoticeOccurrence,
   PlatformNotice,
 } from './platformNotice'
@@ -219,11 +219,8 @@ export function environmentTarget(block: Block, projectId: string | null | undef
 }
 
 /** 这一轮跑在项目自己接入的模型连接上、那份连接余额用完了（`own_out_of_credit`）：
- *  「去模型连接」带人去换。 */
-export function modelConnectionTarget(
-  block: Block,
-  projectId: string | null | undefined
-): ModelConnectionTarget | null {
+ *  「去 AI 队友设置」带人去换一份。 */
+export function agentSettingsTarget(block: Block, projectId: string | null | undefined): AgentSettingsTarget | null {
   const m = meta(block)
   if (!projectId || str(m?.event_type) !== 'turn_failed' || str(m?.code) !== 'own_out_of_credit') return null
   return { name: 'project-settings', params: { projectId, section: 'agents' } }
