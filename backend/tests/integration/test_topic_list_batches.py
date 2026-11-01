@@ -2716,3 +2716,83 @@ def test_delivery_member_removal_and_agent_deactivation_deduplicate_sql(client):
     assert len(deact_sql) <= 6, (
         f"expected <= 6 SQL statements on DELETE /projects/{{id}}/agents/{{id}}, got {len(deact_sql)}: {deact_sql}"
     )
+
+
+_TEAM_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM team\b",
+    re.IGNORECASE,
+)
+_PROJECT_TRANSFERS_SELECT = re.compile(
+    r"^\s*SELECT\b[^;]*?\bFROM project_transfers\b",
+    re.IGNORECASE,
+)
+
+
+def test_roles_transfers_settle_and_agent_create_deduplicate_sql(client):
+    """`GET /projects/{id}/members` avoids querying `"user"` for project agent
+    seat handles in `roster()`, `GET /projects/{id}/roles` uses
+    `people_in_project(..., include_team_info=False)` without querying `team`,
+    `POST /projects/{id}/transfer` and `DELETE /projects/{id}/transfer` avoid
+    refreshing `ProjectTransfer` and settle `notification`/`deliveries` via
+    `UPDATE ... RETURNING`, and `POST /projects/{id}/agents` skips probing
+    `"user"` for a freshly minted agent instance UUID."""
+    pid, _room_ids = _seed_populated_project(client)
+    headers = session_auth_headers("alice")
+
+    with counting_sql(client) as mem_sql:
+        r_mem = client.get(f"/projects/{pid}/members", headers=headers)
+    assert r_mem.status_code == 200, r_mem.text
+    assert len(mem_sql) <= 14, (
+        f"expected <= 14 SQL statements on GET /projects/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
+    )
+
+    with counting_sql(client) as roles_sql:
+        r_roles = client.get(f"/projects/{pid}/roles", headers=headers)
+    assert r_roles.status_code == 200, r_roles.text
+    assert _count(roles_sql, _TEAM_SELECT) == 0, [
+        s for s in roles_sql if _TEAM_SELECT.search(s)
+    ]
+    assert len(roles_sql) <= 9, (
+        f"expected <= 9 SQL statements on GET /projects/{{id}}/roles, got {len(roles_sql)}: {roles_sql}"
+    )
+
+    with counting_sql(client) as tr_sql:
+        r_tr = client.post(
+            f"/projects/{pid}/transfer",
+            json={"to_handle": "bob"},
+            headers=headers,
+        )
+    assert r_tr.status_code == 200, r_tr.text
+    assert _count(tr_sql, _PROJECT_TRANSFERS_SELECT) == 1, [
+        s for s in tr_sql if _PROJECT_TRANSFERS_SELECT.search(s)
+    ]
+    assert len(tr_sql) <= 24, (
+        f"expected <= 24 SQL statements on POST /projects/{{id}}/transfer, got {len(tr_sql)}: {tr_sql}"
+    )
+
+    with counting_sql(client) as cancel_sql:
+        r_cancel = client.delete(
+            f"/projects/{pid}/transfer",
+            headers=headers,
+        )
+    assert r_cancel.status_code == 200, r_cancel.text
+    assert _count(cancel_sql, _NOTIFICATION_SELECT) == 0, [
+        s for s in cancel_sql if _NOTIFICATION_SELECT.search(s)
+    ]
+    assert _count(cancel_sql, _DELIVERIES_SELECT) == 0, [
+        s for s in cancel_sql if _DELIVERIES_SELECT.search(s)
+    ]
+    assert len(cancel_sql) <= 8, (
+        f"expected <= 8 SQL statements on DELETE /projects/{{id}}/transfer, got {len(cancel_sql)}: {cancel_sql}"
+    )
+
+    with counting_sql(client) as ag_sql:
+        r_ag = client.post(
+            f"/projects/{pid}/agents",
+            json={"handle": "helper-b26", "display_name": "Helper B26"},
+            headers=headers,
+        )
+    assert r_ag.status_code in (200, 201), r_ag.text
+    assert len(ag_sql) <= 13, (
+        f"expected <= 13 SQL statements on POST /projects/{{id}}/agents, got {len(ag_sql)}: {ag_sql}"
+    )

@@ -482,14 +482,16 @@ class ProjectService:
         """
         return await self._repo.teams_for_projects(projects)
 
-    async def people(self, project_id: uuid.UUID) -> list[dict]:
+    async def people(
+        self, project_id: uuid.UUID, *, include_team_info: bool = True
+    ) -> list[dict]:
         """这个项目里的**人**：成员行、所属小队、所有者，合成的一张表。
 
         名册的两个来源之一，另一个是这个项目的队友；合起来那张表由
         ``membership/roster.py`` 的 ``roster()`` 给出，它是这里唯一的调用方。想问
         「这个项目里有谁」的走那边——只读人这一半，答案里就没有队友。
         """
-        return await self._repo.people(project_id)
+        return await self._repo.people(project_id, include_team_info=include_team_info)
 
     async def person(self, handle: str) -> dict:
         """``{name, avatar_id}`` for someone not on the roster yet, by the same
