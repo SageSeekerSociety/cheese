@@ -212,6 +212,14 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     request_rate_per_s: float = Field(default=20.0, gt=0)
     request_rate_burst: int = Field(default=100, ge=1)
     request_concurrency: int = Field(default=16, ge=1)
+    # The same limits for a request with no signed-in account, counted by the
+    # client's address. A campus or an office puts hundreds of people behind one
+    # NAT address, and a lecture hall opening a shared link or the sign-in page
+    # at once is all of them anonymous at once; these only stop one source
+    # flooding the backend. Signed-in requests are counted per account above.
+    request_ip_rate_per_s: float = Field(default=200.0, gt=0)
+    request_ip_rate_burst: int = Field(default=2000, ge=1)
+    request_ip_concurrency: int = Field(default=128, ge=1)
     request_queue_depth: int = Field(default=64, ge=0)
     request_queue_timeout_s: float = Field(default=15.0, ge=0)
     # How long a rate check, or the closed-account check

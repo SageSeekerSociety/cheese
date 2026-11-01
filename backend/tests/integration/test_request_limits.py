@@ -30,6 +30,9 @@ def limits(monkeypatch):
         "request_concurrency",
         "request_queue_depth",
         "request_queue_timeout_s",
+        "request_ip_rate_per_s",
+        "request_ip_rate_burst",
+        "request_ip_concurrency",
     ):
         monkeypatch.setattr(settings, name, type(settings).model_fields[name].default)
     # The Redis-down warning is said at most once a minute per process, so a
@@ -40,8 +43,12 @@ def limits(monkeypatch):
     )
 
     def narrow(**values) -> None:
+        # The address limits follow the account ones unless a test sets its own:
+        # most cases here are about how a limit behaves, not whose it is.
         for name, value in values.items():
             monkeypatch.setattr(settings, f"request_{name}", value)
+            if name in ("rate_per_s", "rate_burst", "concurrency"):
+                monkeypatch.setattr(settings, f"request_ip_{name}", value)
 
     return narrow
 
@@ -148,6 +155,20 @@ async def test_an_exempt_account_is_not_limited_and_others_still_are(
     assert [r.status_code for r in free] == [200] * 6
     assert "ratelimit" not in free[0].headers
     assert [r.status_code for r in counted] == [200, 200, 429]
+
+
+async def test_an_address_has_room_for_everyone_behind_it(limits, monkeypatch) -> None:
+    """A request with no account is counted by its address, and an address is
+    a whole campus behind NAT: it gets the address limits, not one account's."""
+    monkeypatch.setattr(settings, "request_rate_burst", 2)
+    monkeypatch.setattr(settings, "request_rate_per_s", 0.2)
+    monkeypatch.setattr(settings, "request_ip_rate_burst", 5)
+    monkeypatch.setattr(settings, "request_ip_rate_per_s", 0.2)
+    monkeypatch.setenv("FORWARDED_ALLOW_IPS", "127.0.0.1")
+    async with _client() as client:
+        anonymous = [await client.get("/version") for _ in range(6)]
+    assert [r.status_code for r in anonymous] == [200] * 5 + [429]
+    assert anonymous[0].headers["ratelimit-policy"].startswith('"rate";q=5;')
 
 
 async def test_the_quota_comes_back_at_the_sustained_rate(limits) -> None:

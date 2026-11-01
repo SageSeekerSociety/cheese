@@ -156,19 +156,42 @@ class _RedisWarning:
 _redis_warning = _RedisWarning()
 
 
-async def _check_rate(key: str) -> _RateAnswer | None:
+@dataclass(frozen=True)
+class _Quota:
+    rate_per_s: float
+    burst: int
+    concurrency: int
+
+
+def _quota(kind: str) -> _Quota:
+    """The limits for one kind of principal. An address stands for everyone
+    behind it, so it gets the address limits (``request_ip_*``)."""
+    if kind == "ip":
+        return _Quota(
+            settings.request_ip_rate_per_s,
+            settings.request_ip_rate_burst,
+            settings.request_ip_concurrency,
+        )
+    return _Quota(
+        settings.request_rate_per_s,
+        settings.request_rate_burst,
+        settings.request_concurrency,
+    )
+
+
+async def _check_rate(key: str, quota: _Quota) -> _RateAnswer | None:
     """The GCRA answer for one request of ``key``, or None when Redis could
     not give one (the request then goes through)."""
     client = get_redis_client()
     if client is None:
         return None
-    interval = max(1, round(1000 / settings.request_rate_per_s))
+    interval = max(1, round(1000 / quota.rate_per_s))
     try:
         script = client.register_script(_GCRA)
         answer = await asyncio.wait_for(
             script(
                 keys=[f"request-rate:{key}"],
-                args=[int(time.time() * 1000), interval, settings.request_rate_burst],
+                args=[int(time.time() * 1000), interval, quota.burst],
             ),
             timeout=settings.request_limit_redis_timeout_s,
         )
@@ -240,12 +263,11 @@ class ConcurrencyLimiter:
             self._lines.pop(key, None)
 
 
-def _policy_header() -> str:
-    burst = settings.request_rate_burst
-    window = max(1, math.ceil(burst / settings.request_rate_per_s))
+def _policy_header(quota: _Quota) -> str:
+    window = max(1, math.ceil(quota.burst / quota.rate_per_s))
     return (
-        f'"{RATE}";q={burst};w={window}, '
-        f'"{CONCURRENCY}";q={settings.request_concurrency};qu="concurrent-requests"'
+        f'"{RATE}";q={quota.burst};w={window}, '
+        f'"{CONCURRENCY}";q={quota.concurrency};qu="concurrent-requests"'
     )
 
 
@@ -257,7 +279,9 @@ def _rate_item(rate: _RateAnswer) -> str:
     return f'"{RATE}";r={rate.remaining};t={_seconds(rate.reset_ms)}'
 
 
-def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONResponse:
+def _refusal(
+    policy: str, retry_after: int, path: str, kind: str, quota: _Quota
+) -> JSONResponse:
     """The 429. Its `RateLimit` names only the policy that refused, whose
     window is exactly `Retry-After` — the draft has the server never send a
     `Retry-After` earlier than a window it reports alongside."""
@@ -279,7 +303,7 @@ def _refusal(policy: str, retry_after: int, path: str, kind: str) -> JSONRespons
     item = f'"{RATE}";r=0;t={retry_after}' if policy == RATE else f'"{CONCURRENCY}";r=0'
     headers = {
         "Retry-After": str(retry_after),
-        "RateLimit-Policy": _policy_header(),
+        "RateLimit-Policy": _policy_header(quota),
         "RateLimit": item,
     }
     return JSONResponse(body, status_code=429, headers=headers)
@@ -327,25 +351,26 @@ class RequestLimits:
         if kind == "user" and key.removeprefix("user:") in _exempt_handles():
             await self.app(scope, receive, send)
             return
-        rate = await _check_rate(key)
+        quota = _quota(kind)
+        rate = await _check_rate(key, quota)
         if rate is not None and not rate.allowed:
             retry_after = max(1, _seconds(rate.retry_after_ms))
-            await _refusal(RATE, retry_after, path, kind)(scope, receive, send)
+            await _refusal(RATE, retry_after, path, kind, quota)(scope, receive, send)
             return
         admitted = await self.concurrency.acquire(
             key,
-            limit=settings.request_concurrency,
+            limit=quota.concurrency,
             depth=settings.request_queue_depth,
             timeout=settings.request_queue_timeout_s,
         )
         if not admitted:
-            await _refusal(CONCURRENCY, 1, path, kind)(scope, receive, send)
+            await _refusal(CONCURRENCY, 1, path, kind, quota)(scope, receive, send)
             return
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 raw = list(message.get("headers", []))
-                raw.append((b"ratelimit-policy", _policy_header().encode()))
+                raw.append((b"ratelimit-policy", _policy_header(quota).encode()))
                 if rate is not None:
                     raw.append((b"ratelimit", _rate_item(rate).encode()))
                 message = {**message, "headers": raw}

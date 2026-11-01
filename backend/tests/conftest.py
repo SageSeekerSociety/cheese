@@ -208,7 +208,10 @@ settings.model_spend_cap_alert_interval_s = 0
 # shipped numbers back.
 settings.request_rate_per_s = 1_000_000.0
 settings.request_rate_burst = 1_000_000_000
+settings.request_ip_rate_burst = 1_000_000_000
 settings.request_concurrency = 1_000_000
+settings.request_ip_rate_per_s = 1_000_000.0
+settings.request_ip_concurrency = 1_000_000
 
 
 #: Compiled SQL shared by the engines tests build. SQLAlchemy keys a compiled
