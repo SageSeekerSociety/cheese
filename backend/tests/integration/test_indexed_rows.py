@@ -708,12 +708,17 @@ async def test_whose_turn_failed_is_read_by_turn_id_not_from_every_message(
             )
         await session.flush()
         await session.execute(text("ANALYZE blocks"))
-        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        # No `enable_seqscan = off` here, and hundreds of turns asked about, as
+        # a room list asks: the indexes are partial, PostgreSQL keeps no
+        # statistics on a partial index's expression, and without the extended
+        # statistics (`st_blocks_*_turn`) the planner prices each turn at its
+        # default 0.5% of the table and reads the whole of it instead.
+        asked = {handed, read, *(uuid.uuid4() for _ in range(300))}
         with statements(session) as seen:
             owners = await MemberWaits(session)._turn_owners(
                 [room.id for room in rooms.values()],
                 seeded["now"] - timedelta(days=7),
-                {handed, read},
+                asked,
             )
         assert owners == {handed: "cheese-a", read: "cheese-b"}
 
@@ -721,9 +726,20 @@ async def test_whose_turn_failed_is_read_by_turn_id_not_from_every_message(
         found = [(sql, p) for sql, p in seen if "prompted_turn" in sql]
         assert len(found) == 1, seen
         sql, params = found[0]
-        plan = await _generic_plan(conn, "probe_turn_owners", sql, params)
-        assert "ix_blocks_prompted_turn" in plan, plan
-        assert "ix_blocks_consumed_turn" in plan, plan
+        # Both plans a cached statement runs on: the custom ones of its first
+        # executions, priced with the hundreds of turns in hand, and the
+        # generic one it may switch to.
+        for mode in ("force_custom_plan", "force_generic_plan"):
+            await conn.exec_driver_sql("PREPARE probe_turn_owners AS " + sql)
+            await conn.exec_driver_sql(f"SET LOCAL plan_cache_mode = {mode}")
+            args = ", ".join(_literal(value) for value in params)
+            rows = await conn.exec_driver_sql(
+                f"EXPLAIN EXECUTE probe_turn_owners({args})"
+            )
+            plan = "\n".join(row[0] for row in rows.all())
+            await conn.exec_driver_sql("DEALLOCATE probe_turn_owners")
+            assert "ix_blocks_prompted_turn" in plan, f"{mode}:\n{plan}"
+            assert "ix_blocks_consumed_turn" in plan, f"{mode}:\n{plan}"
         await session.rollback()
 
 
