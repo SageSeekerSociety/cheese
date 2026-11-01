@@ -320,13 +320,11 @@ it('切到「批注」：同一段选中直接出卡，不走那颗小按钮', a
   width.mockRestore()
 })
 
-it('这一份改不了时「改」是灰的，点了不切过去', async () => {
+it('这一份改不了时「改」那一颗不摆', async () => {
   const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800)
   // markdown 只有在协同会话连上时才可改；这里没给 liveEdit，所以「改」不给。
   const ui = mount()
-  const edit = ui.getByTestId('preview-mode-edit') as HTMLButtonElement
-  expect(edit.disabled).toBe(true)
-  await fireEvent.click(edit)
+  expect(ui.queryByTestId('preview-mode-edit')).toBeNull()
   expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true')
   width.mockRestore()
 })

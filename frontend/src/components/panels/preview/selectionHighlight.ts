@@ -184,7 +184,7 @@ function intersects(range: Range, layer: HTMLElement): boolean {
  *  1 页拖到第 2 页时，它会给出两个 528×747 的整页块（选区在某一片元素边界上越过去时，
  *  浏览器按最近的可选容器补一块）。那些不是字，画出来就是整页一片橙。这里改成走到
  *  文字层里那几个真文字节点上量：一个节点一段，块就是那一行字自己的框。 */
-function rectsIn(range: Range, layer: HTMLElement): SelectionRect[] {
+export function rectsIn(range: Range, layer: HTMLElement): SelectionRect[] {
   const out: SelectionRect[] = []
   const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
   let node = walker.nextNode()
@@ -193,16 +193,25 @@ function rectsIn(range: Range, layer: HTMLElement): SelectionRect[] {
     if (text.trim()) {
       const sub = document.createRange()
       try {
-        // 这一段落在选区里的哪一截：两头各自和「选区的那一头」比文档顺序。
-        // 这一段排在选区起点之后 → 从这一段的头开始收；排在起点之前 → 整段都在选区外。
-        const from =
-          range.startContainer === node ? range.startOffset : follows(range.startContainer, node) ? 0 : text.length
-        // 这一段排在终点之前 → 收到这一段的尾；排在终点之后 → 整段都在选区外。
-        const to = range.endContainer === node ? range.endOffset : follows(range.endContainer, node) ? 0 : text.length
-        if (to > from) {
-          sub.setStart(node, from)
-          sub.setEnd(node, to)
-          for (const rect of sub.getClientRects()) out.push(rect)
+        // 这一段落在选区里的哪一截：两头各自和「选区的那一头」比位置。
+        //
+        // 不能用 `compareDocumentPosition` 比：选区的那一头常常是**元素**而不是文字节点
+        // ——拖选时越过一段的边界，浏览器给的终点是包着那几段文字的那个容器，偏移量是
+        // 「第几个孩子」。那时「这个文字节点排在终点容器之后吗」永远答「是」，每一段都
+        // 被判成整段进选区（起点那侧用同一个比法又答「不进」），结果一条都收不到，橙色
+        // 整个灭掉——读者拖过两行就看到「高亮没了」。`comparePoint` 比的是「这个点相对
+        // 选区在哪儿」：负数是起点之前、正数是终点之后、0 是在里面，两头都用它。
+        const head = range.comparePoint(node, 0)
+        const tail = range.comparePoint(node, text.length)
+        if (head <= 0 && tail >= 0) {
+          // 起点落在这段里才用它自己的偏移，否则这一整段都在选区里。
+          const from = head < 0 ? range.startOffset : 0
+          const to = tail > 0 ? range.endOffset : text.length
+          if (to > from) {
+            sub.setStart(node, from)
+            sub.setEnd(node, to)
+            for (const rect of sub.getClientRects()) out.push(rect)
+          }
         }
       } catch {
         // 这一段的边界算不出来（选区已经不在文档里）：跳过它，别的段照画。
@@ -211,12 +220,6 @@ function rectsIn(range: Range, layer: HTMLElement): SelectionRect[] {
     node = walker.nextNode()
   }
   return out
-}
-
-/** `node` 在 `from` 之后（文档顺序）。选区那一头可能是文字层里某一个文字节点，也可能
- *  是包着它们的元素：后者按元素自身的顺序比，比出来的答案一样。 */
-function follows(from: Node, node: Node): boolean {
-  return (from.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
 }
 
 /** 这一页上文字层里每一段文字的上下沿，按画布坐标。底色要靠着这些行收边：

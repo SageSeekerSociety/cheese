@@ -219,17 +219,15 @@ it('协同会话自己结束之后模式回到「看」：不然拖选什么都�
   await waitFor(() => expect(ui.getByTestId('preview-mode-view').getAttribute('aria-pressed')).toBe('true'))
 })
 
-it('手机上「改」那一段是灰的：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
+it('手机上不摆「改」：那边编辑器是只读的，点开一个存不下去的编辑器比不露更糟', async () => {
   editableMarkdown()
   const width = window.innerWidth
   window.innerWidth = 400
   try {
     const ui = mount()
-    // 正文画出来了，说明这一档确实上了屏；只是进不去「改」。
+    // 正文画出来了，说明这一档确实上了屏；只是「改」那一颗整个不出现。
     await screen.findByTestId('markdown')
-    const edit = screen.getByTestId('preview-mode-edit') as HTMLButtonElement
-    expect(edit.disabled).toBe(true)
-    await fireEvent.click(edit)
+    expect(ui.queryByTestId('preview-mode-edit')).toBeNull()
     expect(ui.queryByTestId('markdown-live')).toBeNull()
   } finally {
     window.innerWidth = width
