@@ -104,9 +104,11 @@ def host_phase(host: CloudHost, *, homes: int, online: bool) -> str:
 
 
 def sandbox_state(home: SandboxHome, now: datetime) -> str:
-    """销毁中、在等宿主机（会话已被告知「正在准备」）、工作中、空闲。"""
+    """销毁中、已冻结、在等宿主机（会话已被告知「正在准备」）、工作中、空闲。"""
     if home.stopped_at is not None:
         return "stopping"
+    if home.frozen_at is not None:
+        return "frozen"
     if home.waiting_since is not None:
         return "waiting"
     if now - home.active_at <= WORKING_WITHIN:
@@ -118,6 +120,9 @@ def _idle_deadline(home: SandboxHome) -> datetime | None:
     """最早什么时候因空闲被回收：最近一次工具调用加上规格的空闲时长。真正的判据还
     看房间最后一轮何时结束、后台命令还在不在跑（``SandboxLifecycle._idle_since``），
     所以这是下限，不是时刻表。"""
+    if home.frozen_at is not None:
+        # Frozen for good past its keep time: the sweep destroys it then.
+        return home.frozen_at + timedelta(seconds=settings.cloud_sandbox_frozen_keep_s)
     spec = spec_of(home.spec)
     if spec is None or home.stopped_at is not None or home.waiting_since is not None:
         return None

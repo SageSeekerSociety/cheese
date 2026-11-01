@@ -83,6 +83,13 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+# How much longer than the sleep it asked for a wake-up may take before this
+# executor believes it was stopped meanwhile — a frozen sandbox's processes do
+# not run, so the freezer's sleep and every clock this executor reads while it
+# is stopped (``time.monotonic`` included) jump forward by however long it
+# slept. Four times the sleep plus this: ordinary wake-up lateness stays well
+# inside it, a freeze of seconds does not.
+THAW_JUMP = 2.0
 OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
 EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
 EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
@@ -360,11 +367,36 @@ class Executor:
     def idle_stop(self, idle_s):
         return commands.idle_stop(self, idle_s)
 
+    def _woke(self, since, slept) -> bool:
+        """Whether this process was stopped between the sleep that started at
+        ``since`` and now: a wake-up much later than ``slept`` asked for means
+        a frozen sandbox ran again, and every clock moved with it. Asked in
+        each loop that measures how long something has gone untouched, so a
+        freeze is not read as an abandoned command or an idle executor."""
+        return time.monotonic() - since > slept * 4 + THAW_JUMP
+
+    def _thawed(self) -> None:
+        """Everything the loops measure their waits from is now: the executor
+        has just woken, and none of the time it slept counts as time nothing
+        used it."""
+        now = time.monotonic()
+        self.active_at = now
+        with self.command_lock:
+            for entry in self.running.values():
+                entry["read_at"] = now
+        self.log("service", "thawed", commands=len(self.running))
+
     def _reap(self):
         """Stop a watched command whose reader is gone for good, and forget a
         finished one nobody collected (`COMMAND_ABANDONED_S`)."""
         while True:
+            since = time.monotonic()
             time.sleep(30)
+            if self._woke(since, 30):
+                # Frozen meanwhile: the command nobody read did not wait, it
+                # slept with the sandbox, and its reader comes back to it.
+                self._thawed()
+                continue
             now = time.monotonic()
             with self.command_lock:
                 stale = [
@@ -617,7 +649,15 @@ def serve(state):
 
             def leave_when_idle():
                 while not executor.idle_stop(idle_s):
-                    time.sleep(min(EXECUTOR_IDLE_CHECK_S, idle_s / 4))
+                    slept = min(EXECUTOR_IDLE_CHECK_S, idle_s / 4)
+                    since = time.monotonic()
+                    time.sleep(slept)
+                    if executor._woke(since, slept):
+                        # The sandbox was frozen and has just woken. It did not
+                        # sit idle through that: nothing ran that could have
+                        # used it. The wake starts the idle clock again rather
+                        # than stopping the executor the moment it thaws.
+                        executor._thawed()
                     # Every look, so a group that emptied is forgotten before
                     # its number can be handed to a process of somebody else's.
                     executor.prune_groups()

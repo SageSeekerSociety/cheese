@@ -74,6 +74,9 @@ async def release_idle(db, lifecycle) -> int:
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
                 SandboxHome.active_at < now - idle_for,
+                # A whole cloud VM is not frozen (``lifecycle``): it is
+                # released, and this is where that happens.
+                SandboxHome.frozen_at.is_(None),
             )
             .order_by(SandboxHome.active_at)
         )

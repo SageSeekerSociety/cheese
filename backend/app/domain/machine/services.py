@@ -36,7 +36,12 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent import environment
-from app.domain.agent_session.models import LEFT_HOST_KEY, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEFT_HOST_KEY,
+    LOST_KEY,
+    THAW_KEY,
+    AgentSession,
+)
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -45,7 +50,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine import holder as holders
 from app.domain.machine.holder import SandboxHolder
-from app.domain.machine.lifecycle import SandboxRemoving
+from app.domain.machine.lifecycle import SandboxLifecycle, SandboxRemoving
 from app.domain.machine.microcloud import MicroCloudClient
 from app.domain.machine.models import (
     GONE,
@@ -158,6 +163,10 @@ class HostPool(PoolSweep):
         agent_session = await self._session.get(AgentSession, session_id)
         if agent_session is None:
             raise NotFoundError("agent session not found")
+        # A frozen sandbox is being woken (`THAW_KEY`): it is not in use yet,
+        # though its row no longer says frozen, so every look goes through the
+        # pool until its executor answers again.
+        thawing = bool((agent_session.execution_request or {}).get(THAW_KEY))
         holder_id = await holders.holder_of(
             self._session, agent_session.conversation_id
         )
@@ -172,7 +181,12 @@ class HostPool(PoolSweep):
             # idle sweep, and the session is placed on a host below.
             await self.leave(session_id)
             home = None
-        if home is not None and home.host_id is not None:
+        if (
+            home is not None
+            and home.host_id is not None
+            and home.frozen_at is None
+            and not thawing
+        ):
             host = await self._repo.get(home.host_id)
             assert host is not None
             if host.warm_claim_pending:
@@ -228,6 +242,18 @@ class HostPool(PoolSweep):
                 await self.forget(host)
                 home = None
             elif _keeps(host):
+                request = await self._session.scalar(
+                    select(AgentSession.execution_request).where(
+                        AgentSession.id == session_id
+                    )
+                )
+                if home.frozen_at is not None or (request or {}).get(THAW_KEY):
+                    # Frozen, or already asked to wake: hand it back now and
+                    # let the install thaw it with no lock held.
+                    await self._wake_frozen(home, session_id)
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
                 if self._answers(host) or not await self.leave_unusable(
                     session_id, host.id
                 ):
@@ -256,6 +282,25 @@ class HostPool(PoolSweep):
             return await self._place_on_own_vm(session_id, holder, home)
         avoid = await self._moved_off(session_id)
         host = await self._place_on_free(home, avoid)
+        if host is None and settings.cloud_sandbox_freeze:
+            # No host has room: a frozen sandbox on a host that could take one
+            # gives up its slot first — it is not in use, and its session
+            # wakes it to a new one when it comes back. Its destroy commits,
+            # so the holder and the pool are taken again before retrying.
+            await self._session.commit()
+            evicted = await SandboxLifecycle(
+                self._session, hub=self._hub
+            ).evict_one_frozen()
+            await self._lock_holder(holder_id)
+            await self._repo.lock_pool()
+            if await self._repo.current_home(session_id) is not None:
+                return await self.place(
+                    session_id, actor=actor, resource_id=resource_id
+                )
+            if evicted:
+                host = await self._place_on_free(home, avoid)
+                if host is not None:
+                    return host
         if host is not None:
             return host
         # No host has room. The provider is read with no lock held; another
@@ -714,14 +759,41 @@ class HostPool(PoolSweep):
         if (
             home is None
             or home.stopped_at is not None
+            or home.frozen_at is not None
             or home.active_at is None
             or datetime.now(UTC) - home.active_at >= ACTIVE_STEP
         ):
+            return False
+        request = await self._session.scalar(
+            select(AgentSession.execution_request).where(AgentSession.id == session_id)
+        )
+        if (request or {}).get(THAW_KEY):
+            # The row says it is awake but its processes are still stopped:
+            # sending a call to it now would wait on the freezer.
             return False
         if home.host_id is None:
             return home.device_id == device_id
         host = await self._repo.get(home.host_id)
         return host is not None and host.device_id == device_id and _keeps(host)
+
+    async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
+        """Ask for a frozen sandbox to be woken, under the pool's lock.
+
+        The mark goes at once so a concurrent freeze sees that somebody wants
+        it back (``lifecycle._freeze`` re-checks after stopping the processes
+        and thaws it itself); ``THAW_KEY`` is left for the install, which does
+        the host call with no database lock held (`session_work._install`).
+        The idle clock moves to now: the first real tool call lands here."""
+        home.frozen_at = None
+        home.active_at = datetime.now(UTC)
+        row = await self._session.scalar(
+            select(AgentSession).where(AgentSession.id == session_id)
+        )
+        if row is not None:
+            row.execution_request = {
+                **(row.execution_request or {}),
+                THAW_KEY: home.resource_id,
+            }
 
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.

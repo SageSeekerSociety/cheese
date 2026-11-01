@@ -63,6 +63,15 @@ LOST_KEY = "sandbox_lost"
 #: preference for the fullest host would otherwise do. Cleared by that
 #: placement (``HostPool._placed_off``).
 LEFT_HOST_KEY = "sandbox_left_host"
+#: Set in a session's ``execution_request`` when a tool call arrives for a
+#: frozen cloud sandbox: the resource id of that sandbox. The row's home is
+#: kept, its ``frozen_at`` is cleared under the pool lock and its ``active_at``
+#: moved to now, but its processes are still stopped, and neither the pool nor
+#: the executor may be asked anything until they run again. The actual thaw
+#: happens off the database locks, in ``session_work._install`` before the
+#: executor starts; it clears this. A stale value is harmless: the same home
+#: thawing twice is a no-op (`machine/services.py`, `sandbox_home.thaw`).
+THAW_KEY = "sandbox_thaw"
 
 
 @dataclass(frozen=True, slots=True)

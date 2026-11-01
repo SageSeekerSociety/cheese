@@ -23,11 +23,12 @@ runs there with nothing of ours importable, like that one.
   often it was OOM-killed (``machine``, ``sandboxes``), for the admin machines
   page (``readings``). A reading this machine cannot give, on one with no
   /proc, no sandbox cgroups, no PSI or no quotas, is left out, not guessed.
-  ``swap``, ``freeze`` and ``thaw`` wrap the helper's commands of those names
-  for the sandbox-freezing step; the lifecycle does not call them yet. Each
-  sandbox named in ``idle`` is asked to
-  give back its page cache first (``sandbox_host.py reclaim``), where the
-  machine has the helper.
+  ``swap``, ``freeze``, ``thaw`` and ``reclaim`` wrap the helper's commands of
+  those names, which the lifecycle uses to freeze an idle sandbox and to wake
+  it (``freeze`` stops its processes, ``swap`` changes how much of the host's
+  swap it may use, ``reclaim`` makes it give memory back). Each sandbox named
+  in ``idle`` is asked to give back its page cache first
+  (``sandbox_host.py reclaim``), where the machine has the helper.
 
 Answers one line of JSON.
 """
@@ -51,6 +52,12 @@ ZSWAP = Path("/sys/module/zswap")
 
 def destroy(cleanup, project, resource) -> dict:
     home, work = cleanup["resource_paths"](Path.home(), project, resource)
+    # A frozen sandbox's executor cannot answer the stop below: its processes
+    # are stopped by the freezer, so a request sent over its socket waits for
+    # a reply that only a thaw can allow. Thaw first; it changes nothing on a
+    # sandbox that is not frozen, and the helper's `down` below kills whatever
+    # is left even if this cannot run.
+    thaw(cleanup, [home.name])
     if home.exists():
         cleanup["stop_executor"](home, resource)
     cleanup["end_holders"]([home, work])
@@ -243,19 +250,22 @@ def _helper(cleanup, *argv) -> dict:
 
 def swap(cleanup, name, mib) -> dict:
     """Set how much of the host's swap one sandbox may use, in MiB
-    (`sandbox_host.py swap`). The lifecycle does not call this yet."""
+    (`sandbox_host.py swap`). A frozen sandbox gets its memory limit while it
+    sleeps, so pages the kernel can do without may leave it; waking it sets
+    this back to 0 (`machine/lifecycle.py`)."""
     return _helper(cleanup, "swap", str(name), str(mib))
 
 
 def freeze(cleanup, names) -> dict:
-    """Stop every process in these sandboxes (`sandbox_host.py freeze`). The
-    lifecycle does not call this yet."""
+    """Stop every process in these sandboxes (`sandbox_host.py freeze`): the
+    idle freeze, before `swap` and `reclaim` give back what their memory the
+    machine can do without (`machine/lifecycle.py`)."""
     return _helper(cleanup, "freeze", *[str(name) for name in names])
 
 
 def thaw(cleanup, names) -> dict:
-    """Resume the processes of these sandboxes (`sandbox_host.py thaw`). The
-    lifecycle does not call this yet."""
+    """Resume the processes of these sandboxes (`sandbox_host.py thaw`), the
+    wake a session's next tool call asks for (`machine/lifecycle.py`)."""
     return _helper(cleanup, "thaw", *[str(name) for name in names])
 
 
@@ -310,6 +320,7 @@ ACTIONS = {
     "swap": swap,
     "freeze": freeze,
     "thaw": thaw,
+    "reclaim": reclaim,
 }
 
 

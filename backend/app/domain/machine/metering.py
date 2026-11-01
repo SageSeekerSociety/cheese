@@ -36,6 +36,7 @@ from app.domain.machine import holder as holders
 from app.domain.machine.models import GONE, CloudHost, SandboxHome
 from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
 from app.domain.usage.ledger import Ledger
+from app.domain.usage.models import ComputeRun
 
 logger = logging.getLogger("cheese.machine.metering")
 
@@ -45,8 +46,13 @@ _checked_at: datetime | None = None
 _unpriced_logged = False
 
 
-def _running():
-    return (
+def _running(*, include_frozen: bool = False):
+    """Every sandbox that is billed: on a live host, past its preparation and
+    not being destroyed. A frozen one runs nothing and is not billed unless
+    ``include_frozen`` — the credits check takes those too, since a project
+    with no credits left keeps no sandbox, asleep or not."""
+
+    running = (
         select(
             SandboxHome.id,
             SandboxHome.project_id,
@@ -62,6 +68,9 @@ def _running():
             CloudHost.whole_machine.is_(False),
         )
     )
+    if not include_frozen:
+        running = running.where(SandboxHome.frozen_at.is_(None))
+    return running
 
 
 def vm_subject(host_id: uuid.UUID) -> str:
@@ -173,6 +182,28 @@ async def observe(session: AsyncSession) -> dict[str, int]:
     return {"opened": opened + vms_opened, "closed": closed + vms_closed}
 
 
+async def stop_billing(session: AsyncSession, home_id: uuid.UUID) -> None:
+    """Close the compute run of a sandbox that just stopped running — it was
+    frozen (`lifecycle._freeze`) — so the frozen minutes are not charged.
+    Only that run: a whole VM's own run, whose subject is the host, or a run
+    of anything else, is not this. A sandbox with no open run closes
+    nothing."""
+    run = await session.scalar(
+        select(ComputeRun)
+        .where(
+            ComputeRun.subject == str(home_id),
+            ComputeRun.kind == SANDBOX,
+            ComputeRun.ended_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if run is not None:
+        now = datetime.now(UTC)
+        run.ended_at = max(now, run.started_at)
+        await session.flush()
+    await session.commit()
+
+
 async def unpaid_sandboxes(session: AsyncSession) -> list:
     """The running sandboxes whose holder's payer has no credits left and
     whose holder runs no turn: those to destroy. Asked at most every
@@ -183,7 +214,11 @@ async def unpaid_sandboxes(session: AsyncSession) -> list:
     if _checked_at is not None and now - _checked_at < CREDIT_CHECK:
         return []
     _checked_at = now
-    rows = (await session.execute(_running().add_columns(CloudHost.device_id))).all()
+    rows = (
+        await session.execute(
+            _running(include_frozen=True).add_columns(CloudHost.device_id)
+        )
+    ).all()
     payers = await holders.payers(session, list({row.topic_id for row in rows}))
     verdicts = await Ledger(session).admit_many(payers)
     due = [row for row in rows if verdicts.get(row.topic_id) is not None]

@@ -132,6 +132,10 @@ class _Session:
     async def commit(self):
         self.commits += 1
 
+    async def scalar(self, query):
+        # The session's execution request, read to see whether a thaw waits.
+        return self.row.execution_request
+
 
 class _Hub:
     def __init__(self, online):
@@ -185,6 +189,7 @@ class _Case:
             conversation_id=uuid.uuid4(),
             stopped_at=None,
             active_at=None,
+            frozen_at=None,
         )
         self.row = SimpleNamespace(
             conversation_id=self.home.conversation_id,

@@ -146,7 +146,8 @@
       "waiting": "等宿主机",
       "working": "工作中",
       "idle": "空闲",
-      "stopping": "销毁中"
+      "stopping": "销毁中",
+      "frozen": "已冻结"
     },
     "note": {
       "failed": "provider 弄坏了，{at} 放弃，等 provider 删掉",
@@ -162,7 +163,9 @@
       "stopping": "销毁已 {for}",
       "active": "{ago}前用过工具",
       "reclaim": "最早 {in}后回收",
-      "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）"
+      "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）",
+      "frozen": "已冻结 {for}（进程停着，不计费）",
+      "discard": "最迟 {in}后销毁"
     },
     "placed": "{at} 放上来",
     "personal": "个人对话",

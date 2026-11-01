@@ -630,7 +630,10 @@ def test_swap_and_freezing_are_refused_for_another_users_sandbox(
 def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     name = str(room.resource)
-    before = int((sandbox_host.CGROUP / name / "memory.current").read_text())
+    # What freezing must keep: the sandbox's processes, all of them. Its
+    # memory is no measure — the kernel may reclaim a little cache meanwhile.
+    before = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before
 
     for command, state in (("freeze", "1"), ("thaw", "0")):
         answer = subprocess.run(
@@ -642,7 +645,8 @@ def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service
         events = (sandbox_host.CGROUP / name / "cgroup.events").read_text()
         assert f"frozen {state}" in events
 
-    assert int((sandbox_host.CGROUP / name / "memory.current").read_text()) >= before
+    after = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before <= after
     assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 

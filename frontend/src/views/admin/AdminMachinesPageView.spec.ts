@@ -313,6 +313,41 @@ describe('机器', () => {
     expect(within(booting).queryByText(/Warming up|预热中/)).not.toBeNull()
   })
 
+  it('冻结的沙箱标出「已冻结」，说它什么时候最迟销毁、不再计费', async () => {
+    const [mine] = host().sandboxes
+    const frozen = host({
+      sandboxes: [
+        {
+          ...mine,
+          state: 'frozen',
+          active_at: '2026-10-12T08:30:00Z',
+          idle_deadline: '2026-10-12T10:30:00Z',
+        },
+      ],
+    })
+    const { getByText, queryByText } = mount({ overview: overview({}, [frozen]) })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(i18n.global.t('admin.machines.state.frozen'))).not.toBeNull()
+    // 冻了多久、最迟什么时候销毁：两件都是一个冻着的沙箱要让人知道的。
+    expect(
+      queryByText(/Frozen 1\.5 h \(processes stopped, not billed\)|已冻结 1\.5 小时（进程停着，不计费）/)
+    ).not.toBeNull()
+    expect(queryByText(/discarded at latest 30 min|最迟 30 分钟后销毁/)).not.toBeNull()
+  })
+
+  it('冻结的沙箱过了最迟销毁时间还没走，页面说它已过期，不画一个负的倒计时', async () => {
+    const [mine] = host().sandboxes
+    const late = host({
+      sandboxes: [
+        { ...mine, state: 'frozen', active_at: '2026-10-12T08:30:00Z', idle_deadline: '2026-10-12T09:30:00Z' },
+      ],
+    })
+    const { getByText, queryByText } = mount({ overview: overview({}, [late]) })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/past its idle time|已过空闲期/)).not.toBeNull()
+    expect(queryByText(/discarded at latest|最迟 .*后销毁/)).toBeNull()
+  })
+
   it('滚动重建的宿主机标出「重建中」，版本旧了的标出「镜像过期」', () => {
     const draining = i18n.global.t('admin.machines.draining')
     const outdated = i18n.global.t('admin.machines.outdated')
