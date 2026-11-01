@@ -118,10 +118,18 @@ async def recent(
     `hidden_rooms` 是读者看不见的私密频道：只在那里交付过的产物版本不算给他。
     """
     since = now - WINDOW
+    # Only work that is still open or was touched inside the window can say
+    # anything here: a task's created, accepted and closed moments are its own
+    # columns, and a card is only returned on a task under review, which is open
+    # then (or closed since, inside the window). Reading the
+    # whole project and every acceptance it ever had was 0.4-0.65 s of this
+    # request on dev (2026-11-01, about 1,400 tasks).
     seen = set(rooms)
     tasks = [
         t
-        for t in await TaskService(session).list_in_project(project_id)
+        for t in await TaskService(session).list_in_project(
+            project_id, rooms=seen, open_or_touched_since=since
+        )
         if t.room_id in seen
     ]
     found: list[Happening] = []

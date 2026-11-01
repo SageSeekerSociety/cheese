@@ -456,6 +456,7 @@ class TaskRepository:
         accepted: bool | None = None,
         rooms: Collection[uuid.UUID] | None = None,
         status: str | None = None,
+        open_or_touched_since: datetime | None = None,
     ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
@@ -480,6 +481,17 @@ class TaskRepository:
             stmt = stmt.where(Task.room_id.in_(list(rooms)))
         if status is not None:
             stmt = stmt.where(Task.status == TaskStatus(status))
+        if open_or_touched_since is not None:
+            since = open_or_touched_since
+            stmt = stmt.where(
+                or_(
+                    Task.status == TaskStatus.open,
+                    Task.created_at >= since,
+                    Task.updated_at >= since,
+                    Task.accepted_at >= since,
+                    Task.closed_at >= since,
+                )
+            )
         stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
 
