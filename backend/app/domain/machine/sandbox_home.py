@@ -4,11 +4,14 @@ Piped to ``python3 -`` on the host (``lifecycle.program``) after the source of
 ``agent/resource_cleanup.py``, whose helpers arrive as ``cleanup``: this file
 runs there with nothing of ours importable, like that one.
 
-- ``destroy``: end the session's sandbox and delete its home. Its executor is
-  asked to stop, then whatever still holds the home — a dev server, a
-  background command — is ended, and the home, the legacy work directory and
-  the sandbox's temporary directory are removed. A home already gone is not
-  an error.
+- ``destroy``: end the session's sandbox and delete its home. Before its
+  executor is asked to stop, what is still running in the sandbox is read
+  from its cgroup — each process's command line, with what looks like a
+  secret masked — so the session can be told what went with it (``processes``).
+  Its executor is asked to stop, then whatever still holds the home — a dev
+  server, a background command — is ended, and the home, the legacy work
+  directory and the sandbox's temporary directory are removed. A home already
+  gone is not an error.
 - ``disk``: how full the filesystem the homes are on is, in bytes and in
   inodes, and the machine's own when the homes are on another (``system``),
   and which sandbox homes on this machine are not among ``live`` and
@@ -35,6 +38,7 @@ Answers one line of JSON.
 
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -45,9 +49,98 @@ from pathlib import Path
 #: by test_footprint_root.py). Its files are readable by every user.
 CGROUP_ROOT = Path("/sys/fs/cgroup")
 SANDBOX_CGROUPS = CGROUP_ROOT / "cheese-sandboxes"
-MEMINFO = Path("/proc/meminfo")
-PRESSURE_MEMORY = Path("/proc/pressure/memory")
+PROC = Path("/proc")
+MEMINFO = PROC / "meminfo"
+PRESSURE_MEMORY = PROC / "pressure/memory"
 ZSWAP = Path("/sys/module/zswap")
+
+#: How many of a destroyed sandbox's processes are named to its session, and
+#: how much of each command line: enough to recognise what was running, short
+#: enough to sit in a tool result.
+LOST_PROCESSES_MAX = 10
+LOST_PROCESS_CHARS = 200
+#: Programs that are the sandbox's own machinery or only wait on the process
+#: beside them, and would name nothing the session started.
+_PLUMBING_SUFFIXES = ("remote-execution/runtime.py", "cheese-environment.py")
+_SHELLS = {"sh", "bash", "dash", "zsh", "fish", "busybox"}
+_PRIVILEGE = {"sudo", "su"}
+
+#: A value a command line gives a secret to, by the flag or variable it is on:
+#: ``--token=…``, ``--password …``, ``PASSWORD=…``.
+_SECRET_FLAG = re.compile(
+    r"(?i)\b((?:--?)?[a-z0-9_-]*(?:token|password|passwd|secret|api[-_]?key|"
+    r"access[-_]?key|private[-_]?key|authorization)[a-z0-9_-]*)"
+    r"(=|\s+)(\S+)"
+)
+#: ``Authorization: Bearer …`` and a bare ``Bearer …``.
+_AUTH_HEADER = re.compile(r"(?i)\b(authorization\s*:\s*)(?:bearer\s+)?(\S+)")
+_BEARER = re.compile(r"(?i)\b(bearer\s+)([^\s]+)")
+#: A run long enough to be a key or token rather than a word or a path: no
+#: dots or slashes in it, and both letters and digits (see ``_looks_random``).
+_RANDOM_RUN = re.compile(r"(?<!\S)[A-Za-z0-9_+=-]{32,}(?!\S)")
+
+
+def _looks_random(run: str) -> bool:
+    return any("0" <= char <= "9" for char in run) and any(
+        char.isalpha() for char in run
+    )
+
+
+def _redact(line: str) -> str:
+    """``line`` with what looks like a secret masked: the value after a flag
+    or variable that names one, an authorization header, and a long random
+    run (an access key, a token). Wrong in the safe direction only: a value
+    wrongly masked costs a reader a detail, a secret left in a tool result is
+    in the transcript for good."""
+    line = _AUTH_HEADER.sub(r"\1***", line)
+    line = _BEARER.sub(r"\1***", line)
+    line = _SECRET_FLAG.sub(r"\1\2***", line)
+    return _RANDOM_RUN.sub(
+        lambda match: "***" if _looks_random(match.group()) else match.group(), line
+    )
+
+
+def processes(name) -> list:
+    """What runs in the sandbox whose cgroup is named ``name``, read from its
+    cgroup's ``cgroup.procs``: each process's command line, the executor and
+    bare shell wrappers left out (their own children are listed), secrets
+    masked, at most ``LOST_PROCESSES_MAX`` of them.
+
+    Read before the sandbox is stopped: afterwards there is nothing to read.
+    A cgroup that is not there, or a pid that went between the two reads,
+    contributes nothing — this is a description of what was there, not an
+    inventory that has to be complete."""
+    try:
+        pids = (SANDBOX_CGROUPS / str(name) / "cgroup.procs").read_text().split()
+    except OSError:
+        return []
+    found = []
+    for pid in pids:
+        try:
+            raw = (PROC / pid / "cmdline").read_bytes()
+        except OSError:
+            continue
+        argv = [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+        if not argv or _plumbing(argv):
+            continue
+        line = _redact(" ".join(argv))[:LOST_PROCESS_CHARS]
+        if line not in found:
+            found.append(line)
+        if len(found) >= LOST_PROCESSES_MAX:
+            break
+    return found
+
+
+def _plumbing(argv) -> bool:
+    """Whether a process is the sandbox's own machinery rather than something
+    the session started: the executor, or a shell that only carries the
+    command beside it in this cgroup."""
+    if any(arg.endswith(_PLUMBING_SUFFIXES) for arg in argv):
+        return True
+    command = Path(argv[0]).name
+    if command in _PRIVILEGE:
+        return True
+    return command in _SHELLS and "-c" in argv
 
 
 def destroy(cleanup, project, resource) -> dict:
@@ -58,6 +151,10 @@ def destroy(cleanup, project, resource) -> dict:
     # sandbox that is not frozen, and the helper's `down` below kills whatever
     # is left even if this cannot run.
     thaw(cleanup, [home.name])
+    # Thawed, but before the executor is stopped: what the session loses with
+    # this sandbox. Read here, after the thaw, because a process stopped by
+    # the freezer still has its command line.
+    running = processes(home.name)
     if home.exists():
         cleanup["stop_executor"](home, resource)
     cleanup["end_holders"]([home, work])
@@ -68,7 +165,7 @@ def destroy(cleanup, project, resource) -> dict:
     # Last, as the room's cleanup does: until the home is gone, it is the
     # sandbox's to have written.
     cleanup["sandbox_marker"](home).unlink(missing_ok=True)
-    return {"destroyed": True}
+    return {"destroyed": True, "processes": running}
 
 
 def filesystem(path: Path) -> dict:

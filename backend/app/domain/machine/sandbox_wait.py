@@ -43,6 +43,11 @@ SANDBOX_REPLACED = (
     "沙箱环境已换成新的。之前的文件、装过的软件和正在运行的进程都不在了，需要的重新"
     "生成、重新安装、重新启动。"
 )
+# What was running in the sandbox when it was destroyed, said after the notice
+# above: one command line a line, as the host read them before stopping the
+# executor (``sandbox_home.destroy``). Left out when there was nothing to name
+# or the host could not read it, so the notice reads as it always did.
+STOPPED_PROCESSES = "停掉的进程：\n{processes}"
 
 
 async def _home_removed(db, session_id) -> bool:

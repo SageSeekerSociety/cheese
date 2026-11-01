@@ -31,6 +31,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent.environment import spec_of
 from app.domain.machine import enrollment, infra_records, readings
+from app.domain.machine.lifecycle import previewed_sessions
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
@@ -116,13 +117,19 @@ def sandbox_state(home: SandboxHome, now: datetime) -> str:
     return "idle"
 
 
-def _idle_deadline(home: SandboxHome) -> datetime | None:
+def _idle_deadline(home: SandboxHome, previewed: bool = False) -> datetime | None:
     """最早什么时候因空闲被回收：最近一次工具调用加上规格的空闲时长。真正的判据还
     看房间最后一轮何时结束、后台命令还在不在跑（``SandboxLifecycle._idle_since``），
     所以这是下限，不是时刻表。"""
     if home.frozen_at is not None:
-        # Frozen for good past its keep time: the sweep destroys it then.
-        return home.frozen_at + timedelta(seconds=settings.cloud_sandbox_frozen_keep_s)
+        # Frozen for good past its keep time: the sweep destroys it then. A
+        # conversation that previews an app is kept the longer time.
+        seconds = (
+            settings.cloud_sandbox_frozen_keep_preview_s
+            if previewed
+            else settings.cloud_sandbox_frozen_keep_s
+        )
+        return home.frozen_at + timedelta(seconds=seconds)
     spec = spec_of(home.spec)
     if spec is None or home.stopped_at is not None or home.waiting_since is not None:
         return None
@@ -265,6 +272,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         )
     )
     projects, rooms = await _names(session, homes, hosts)
+    previewed = await previewed_sessions(
+        session, [home.session_id for home in homes if home.session_id is not None]
+    )
     by_host: dict[uuid.UUID, list[SandboxHome]] = defaultdict(list)
     for home in homes:
         assert home.host_id is not None
@@ -338,7 +348,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                         "waiting_since": _iso(home.waiting_since),
                         "active_at": _iso(home.active_at),
                         "stopped_at": _iso(home.stopped_at),
-                        "idle_deadline": _iso(_idle_deadline(home)),
+                        "idle_deadline": _iso(
+                            _idle_deadline(home, home.session_id in previewed)
+                        ),
                         "usage": sandbox_usage.get(home.id),
                     }
                     for home in on
