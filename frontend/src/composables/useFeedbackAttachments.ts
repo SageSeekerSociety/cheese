@@ -24,9 +24,9 @@ import type { FeedbackDraft } from '@/stores/feedback/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { uploadFeedbackAttachment } from '@/api/feedback'
+import { toast } from '@/lib/toast'
 import { fmtFileSize } from '@/lib/usageFormat'
 import { useFeedbackStore } from '@/stores/feedback'
 

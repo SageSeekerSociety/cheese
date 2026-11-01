@@ -22,7 +22,6 @@ import type { Task } from '@/types'
 
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { createEmptyResult, usePaging } from '@/utils/paging'
@@ -33,6 +32,7 @@ import AuditTaskView from './AuditTaskView.vue'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
+import { toast } from '@/lib/toast'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

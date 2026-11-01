@@ -6,12 +6,12 @@ import type { MaybeRefOrGetter } from 'vue'
 import type { User } from '@/types'
 
 import { computed, ref, toValue, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { getErrorMessage } from '@/utils/errors'
 
 import { QuestionApi } from '@/api/questions'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import AccountService from '@/services/account'
 
 export function useQuestionInvitations(

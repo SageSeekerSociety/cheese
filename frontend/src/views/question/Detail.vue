@@ -39,7 +39,6 @@ import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -53,6 +52,7 @@ import { AnswersApi } from '@/api/answers'
 import { QuestionApi } from '@/api/questions'
 import { NewAttitudeType } from '@/constants'
 import { questionDataInjectionKey } from '@/keys'
+import { toast } from '@/lib/toast'
 import DetailView from '@/views/question/DetailView.vue'
 
 const { t } = useI18n()

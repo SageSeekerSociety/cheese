@@ -13,7 +13,6 @@
 import type { ProjectAgent } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { useAgentSkills } from '@/composables/useAgentSkills'
 import { useProjectAgents } from '@/composables/useProjectAgents'
@@ -28,6 +27,7 @@ import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 import { teammateName } from '@/lib/agentNames'
 import { effortLabel, typeLabel } from '@/lib/projectAgents'
+import { toast } from '@/lib/toast'
 
 defineOptions({ name: 'AgentTeamSettings' })
 
