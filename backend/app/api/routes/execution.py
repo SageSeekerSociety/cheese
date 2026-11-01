@@ -246,7 +246,7 @@ async def execute(
     ):
         # The turn ended after its sandbox was destroyed while idle: there is
         # nothing on a machine to push, and what the sandbox held was pushed
-        # and backed up by the checkpoint of the turn that last used it. The
+        # by the checkpoint of the turn that last used it, or is gone. The
         # host may be gone too, so asking it would only fail.
         return {}
     # A person's 芝士 works only on the platform's own machines: a person's

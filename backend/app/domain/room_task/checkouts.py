@@ -6,8 +6,8 @@ archived, so an old room carries every task it ever had — 56 checkouts, about
 20 GB, in one room on dev.
 
 The platform knows which tasks are closed, and names them; the machine removes
-each checkout that no process is inside. A closed task's work went to its
-branch and snapshot at each turn's checkpoint, so nothing waits on publication.
+each checkout that no process is inside. A closed task's work is what it
+pushed to its branch, so nothing waits on publication.
 It goes over the device exec the room's own archive cleanup uses, which needs
 no executor running there: an idle session usually has none.
 

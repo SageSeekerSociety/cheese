@@ -243,7 +243,7 @@ CLOSING_INSIST = (
 # --- a turn's checkpoint --------------------------------------------------------
 #
 # A turn ends with its work in the project: on the room's machine every task
-# checkout holding something unpushed is backed up to the platform and pushed
+# checkout holding unpushed commits is pushed
 # (the executor's ``checkpoint`` control, which runs ``cheese sync --all``).
 # That is what a sandbox replaced after the turn comes back from, so it is the
 # same for every harness. Claude Code asks for it from its Stop hook

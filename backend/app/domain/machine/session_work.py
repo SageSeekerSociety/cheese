@@ -278,11 +278,10 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
     """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
-    --all``): every task checkout's unpushed commits go to its branch, and
-    what is not committed is backed up as a snapshot. Whatever happens — the
-    machine is away, the command fails or outlasts ``PUSH_WAIT_S`` — the caller
-    goes on: what a lost checkpoint loses is what changed since the last
-    turn's, which the platform snapshot of that turn already holds. Answers
+    --all``): every task checkout's unpushed commits go to its branch. What is
+    not committed is not kept. Whatever happens — the machine is away, the
+    command fails or outlasts ``PUSH_WAIT_S`` — the caller goes on: what a lost
+    checkpoint loses is what was committed since the last turn's push. Answers
     whether it ran to the end, for the log.
 
     The session's executor runs only while the session is in use, so ``start``
@@ -332,8 +331,8 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
     (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
-    cleanup goes on whatever they answer: what a lost checkpoint loses is held
-    by the snapshot of the session's last turn."""
+    cleanup goes on whatever they answer: what a lost checkpoint does not push
+    goes with the machine."""
     rows = list(
         await session.scalars(
             select(AgentSession).where(

@@ -79,7 +79,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 要手的动作是 `lease_path` 上一个 `POST`：平台先等有界的一段时间让机器准备，客户端再问到期限为止。拿到之后把机器名、代际写进配置，把凭据写进 `token_file`、目标写进 `target_file`（原子替换），并关掉旧连接。返回的是「这次的手跟之前是不是同一个租约」（`changed_lease`）——换了租约、且配了 `target_file` 时，会先把上下文树与仓库指令读回来，然后**主动抛一个错**，让调用方先读新可用仓库的说明再发下一个工具。
 - 换成新机器时工作区路径会重写：`file_path` / `path` / `notebook_path` / `command` / `body` / `cwd` 里原来的工作区前缀换成新的。**丢应答的调用不重放**（注释写得很直白：重连只给下一次调用用，这一次绝不重放）。
 - 项目 MCP 不走房间的机器：平台持有它的凭据、由平台发 `POST /topics/{id}/mcp/{name}`，所以不为它占一台机器。
-- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支和上一轮的快照开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
+- 机器一侧的规矩在 `machine/session_work.py`：**这位队友自己的执行环境是唯一的来源**（`agent_environments`，见[每位队友一个执行环境](/dev/turn#seats-machine)）。规格是平台机器的沙箱，第一次要手时 `HostPool.place`（`machine/services.py`）把它放到任意一台还有空位的宿主机上，没有空位时领预热机器或现开一台，宿主机不属于房间、频道或会话；某个人的电脑这一规格，放在那个人接入项目、给得出沙箱的一台上（`environments.device_for_spec`）；不进沙箱的，就是选定的那台电脑。沙箱空闲后就销毁，什么都不留（`machine/lifecycle.py`），之后回合结束的 checkpoint 不再去问任何机器，执行路由直接答「没有要推的」（`routes/execution.py`，`sandbox_destroyed`），从没拿到过沙箱的会话也一样；下次要手时放进一个新沙箱，像任何新沙箱一样从任务分支开始，那次工具调用的结果告诉 agent 沙箱换了新的。规格是 `vm` 时，`place` 为这条会话现开一台虚拟机，那台虚拟机本身就是它的沙箱，执行器装上去时不再套 bubblewrap（`_sandboxed` 返回 False）；这台虚拟机会话闲置后推送、释放（`machine/cloud_vm.py`）。换执行环境只换这一位队友（`switch_environment`）：它先在离开的那台上做一次尽力而为的 checkpoint（`checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S = 150` 秒），推没推上去、那台够不够得着都照常换；它的机器还在分配中时不换，答「分配仍在进行」。
 - 会话主机不能干项目的活：租约所在的机器就是会话进程所在的那台时，`_attempt` 抛 `ForbiddenError("Project tools cannot execute on the session host")`——两处（`_attempt` 里 lease 那一处、以及 777 行附近那一处）。房间正在跑任务且 `if_idle` 时整个不换（`SessionWorking`，「正在运行任务，稍后再换」）。
 
 ## 沙箱归谁 {#holder}
@@ -144,5 +144,5 @@ The backend probe resolves `CHEESE_PROFILE_ROOT` on the device, and session laun
 
 - 判「够不着」只看状态码是不够的，还要看 409 的形状；反过来说，把它放宽成「一切非 200」会让 agent 在机器好好的时候放弃整轮的文件与命令操作，并向人报告机器掉线——那是假话。
 - 租约不是会话的属性而是「这次调用」的属性：没要手之前什么都别假设，`deferred` 形态下 `ping` 与 `context_fs tree` 之外的一切都会抛。
-- 换执行环境、房间清理、虚拟机沙箱的闲置释放都只做**一次**尽力而为的 checkpoint，之后照常进行，不拒绝、不重试、不为它留着机器：推不上去丢的只是上一轮 Stop checkpoint 之后的改动，那一轮的快照在平台上。
+- 换执行环境、房间清理、虚拟机沙箱的闲置释放都只做**一次**尽力而为的 checkpoint，之后照常进行，不拒绝、不重试、不为它留着机器：推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。
 - 会话主机与工作机器重合是明确禁止的，不是「性能差不多的选择」。
