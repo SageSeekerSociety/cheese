@@ -34,6 +34,11 @@ from collections import Counter, deque
 from datetime import UTC, datetime
 from types import FrameType
 
+try:
+    from greenlet import getcurrent
+except ImportError:  # pragma: no cover - SQLAlchemy's asyncio needs it
+    getcurrent = None
+
 BEAT_S = 0.05
 SAMPLE_S = 0.02
 # A stall worth its stack: well above what a single request's Python takes,
@@ -70,9 +75,20 @@ def stall_status() -> dict:
 def _where(frame: FrameType | None) -> tuple[str, ...]:
     """The stack from ``frame`` outwards. The backend's own frames are kept,
     and the one frame of anything else that the innermost of them called (the
-    library call holding the loop); the frames between are left out."""
+    library call holding the loop); the frames between are left out.
+
+    SQLAlchemy runs a statement's result handling (rows, JSON decoding) in a
+    greenlet of its own, whose frames end at the greenlet: the stack carries
+    on in the greenlet that switched to it, where the backend's frames are."""
     out: list[str] = []
-    while frame is not None and len(out) < DEPTH:
+    glet = getcurrent() if getcurrent is not None else None
+    while len(out) < DEPTH:
+        if frame is None:
+            glet = glet.parent if glet is not None else None
+            if glet is None:
+                break
+            frame = glet.gr_frame
+            continue
         code = frame.f_code
         path = code.co_filename
         if path.startswith(_APP):

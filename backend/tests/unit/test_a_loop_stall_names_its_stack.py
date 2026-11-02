@@ -83,3 +83,27 @@ def test_a_stopped_watcher_leaves_no_alarm_behind():
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
     assert loop_stalls.stall_status()["active"] is False
+
+
+def test_a_stall_inside_a_greenlet_names_the_frames_that_switched_to_it(
+    monkeypatch,
+):
+    import greenlet
+
+    loop_stalls = _stalls()
+    # This module's frames stand in for the backend's own.
+    monkeypatch.setattr(loop_stalls, "_APP", __file__.rsplit("/", 1)[0] + "/")
+
+    def rows_decoded_in_a_greenlet() -> None:
+        greenlet.greenlet(hold_the_loop_for_a_while).switch()
+
+    async def go() -> None:
+        watcher = asyncio.create_task(loop_stalls.watch_loop_stalls(iterations=12))
+        await asyncio.sleep(0.12)
+        rows_decoded_in_a_greenlet()
+        await watcher
+
+    asyncio.run(go())
+    stack = loop_stalls.stall_status()["recent"][0]["stack"]
+    assert any("hold_the_loop_for_a_while" in frame for frame in stack)
+    assert any("rows_decoded_in_a_greenlet" in frame for frame in stack)
