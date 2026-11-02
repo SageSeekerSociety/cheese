@@ -16,7 +16,6 @@ from app.core import db as app_db
 from app.core.config import settings
 
 
-
 def test_a_statement_stays_prepared_while_two_hundred_others_run(client):
     async def go() -> tuple[bool, int]:
         # Built as the application's engine is, on this test's own loop.
