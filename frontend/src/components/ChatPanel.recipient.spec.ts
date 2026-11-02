@@ -1,6 +1,7 @@
 // 发出去之后的两件事：
-// - 只有自己一个人、这条又没交给 AI 队友：自己那条下面说一声，并给出「回复并 @ 它」那条路；
-//   有别人在的频道里不说（频道默认是人和人说话）。
+// - 这条谁也没交给、而发的人看起来在等 AI 队友（后端回的 `unasked`）：队友在它下面对发的人
+//   一个人说一声「仅你可见」，给出「交给它」（回复这一条并 @ 它）和「不用了」；按哪颗都收起，
+//   刷新之后不再出现。后端没这么说（人和人正常聊天）就什么都不说。
 // - 发的时候看到的是「交给」队友，送到时已经不交给了（打字时任务关了）：这条不发，原话回到
 //   输入框，就地问交给谁，不显示成交给了队友的一条。
 import type { Component } from 'vue'
@@ -26,7 +27,7 @@ const server = {
   /** 输入框问「交给谁」时后端的回答。 */
   addressing: { agent: null, reason: null, people: [], place: 'channel', task_status: null } as Record<string, unknown>,
   /** 发出去那一条，后端是落库（并说没别人在），还是因为收件人变了退回来。 */
-  answer: 'posted' as 'posted' | 'alone' | 'readdressed',
+  answer: 'posted' as 'posted' | 'alone' | 'after_agent' | 'readdressed',
   sent: [] as Record<string, unknown>[],
 }
 
@@ -95,7 +96,8 @@ beforeEach(() => {
           },
           409
         )
-      return json({ code: 200, data: { ...stored(body), ...(server.answer === 'alone' ? { alone: true } : {}) } })
+      const unasked = server.answer === 'alone' || server.answer === 'after_agent' ? { unasked: server.answer } : {}
+      return json({ code: 200, data: { ...stored(body), ...unasked } })
     }
     if (u.includes('/members'))
       return json({
@@ -137,28 +139,64 @@ async function openAndSend(text: string) {
   return { ...view, box }
 }
 
-const RECEIPT = '已发布。这里目前只有你；本条未请求芝士处理。'
+const NOTICE = '这条没有交给我，我不会回复。要交给我吗？'
 
-describe('只有自己一个人时，没交给谁的一条', () => {
-  it('自己那条下面说一声；「回复并 @芝士」回复这一条并 @ 上它', async () => {
+describe('谁也没交给、看起来在等队友的一条：仅你可见的一句', () => {
+  it.each(['alone', 'after_agent'] as const)('后端说 %s：队友在下面说一声，标着仅你可见', async (why) => {
+    server.answer = why
+    const view = await openAndSend('帮我列个下周的计划')
+
+    expect(view.container.textContent).toContain(NOTICE)
+    expect(view.container.textContent).toContain('仅你可见')
+    view.unmount()
+  })
+
+  it('「交给芝士」回复这一条并 @ 上它，这一句收起', async () => {
     server.answer = 'alone'
     const view = await openAndSend('帮我列个下周的计划')
 
-    expect(view.container.textContent).toContain(RECEIPT)
-    await fireEvent.click(view.getByRole('button', { name: '回复并 @芝士' }))
+    await fireEvent.click(view.getByRole('button', { name: '交给芝士' }))
     await settle()
 
     expect(composerText(view.box)).toContain(`<@${SEAT}>`)
     expect(view.container.querySelector('.composer')!.textContent).toContain('帮我列个下周的计划')
+    expect(view.container.textContent).not.toContain(NOTICE)
     view.unmount()
   })
 
-  it('有别人在的频道里不说', async () => {
+  it('「不用了」收起，正文不动', async () => {
+    server.answer = 'after_agent'
+    const view = await openAndSend('再加上回滚')
+
+    await fireEvent.click(view.getByRole('button', { name: '不用了' }))
+    await settle()
+
+    expect(view.container.textContent).not.toContain(NOTICE)
+    expect(composerText(view.box)).toBe('')
+    view.unmount()
+  })
+
+  it('刷新之后不再出现：它只在发送的回答里', async () => {
+    server.answer = 'alone'
+    const first = await openAndSend('帮我列个下周的计划')
+    expect(first.container.textContent).toContain(NOTICE)
+    first.unmount()
+
+    const again = render(Panel, {
+      props: { topic: { id: 't1', project_id: 'p1', title: '综合', kind: 'root' } as Topic, showComposer: true },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await settle()
+    expect(again.container.textContent).not.toContain(NOTICE)
+    again.unmount()
+  })
+
+  it('人和人正常聊天（后端没说）：什么都不说', async () => {
     server.answer = 'posted'
     const view = await openAndSend('明天几点开会？')
 
     expect(server.sent).toHaveLength(1)
-    expect(view.container.textContent).not.toContain(RECEIPT)
+    expect(view.container.textContent).not.toContain(NOTICE)
     view.unmount()
   })
 })

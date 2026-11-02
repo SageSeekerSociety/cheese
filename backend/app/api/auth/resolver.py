@@ -600,6 +600,20 @@ class ActorResolver:
                 actor = replace(actor, user_id=user.id)
         return actor
 
+    def signed_in_handle(self) -> str | None:
+        """The handle a person's verified sign-in names, read off the token
+        without the database; None for any other caller. A hint for reading
+        ahead (`place_or_404(member=...)`), never a decision: `resolve` still
+        decides who the caller is."""
+        if self._cheese_token or not self._bearer:
+            return None
+        claims = verify_access_token(self._bearer)
+        # A token that states no handle carries the user id in its place; the
+        # handle is then the account's, which only the database knows.
+        if claims is None or not claims.handle_from_claim:
+            return None
+        return claims.handle
+
     def presented_sign_in(self) -> bool:
         """Whether the request carried a person's sign-in at all — verified or
         not. A route that answers per caller turns a failed one into a 401

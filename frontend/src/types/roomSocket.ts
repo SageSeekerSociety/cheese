@@ -15,6 +15,9 @@ export interface ResumeWait {
   due_at: string
   /** 那一轮没完成的时刻，ISO：从它起算在等。 */
   since: string
+  /** 在等什么过去（`resumable_failures` 的那几类）。`runner_replaced` 是平台更新，不是
+   *  调用模型出错；老后端不带。 */
+  reason?: string
 }
 
 /**

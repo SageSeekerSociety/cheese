@@ -30,7 +30,9 @@ from app.api.deps import get_chat_service
 from app.core.sandbox_auth import SANDBOX_TOKEN
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import session_work as work_lease
+from app.domain.topic.models import Topic
 from app.domain.usage.ledger import Ledger
+from tests.integration import test_switch_pushes_first as switch
 from tests.integration.test_gateway_usage import FakeGateway
 from tests.integration.test_switch_pushes_first import _machines, _room
 
@@ -344,3 +346,103 @@ async def test_admission_reads_the_gateway_spend_with_the_credit_cap(
     assert again.json()["data"]["allow"] is True, again.text
     spend = [s for s in seen if "sum(resource_usage.cost_usd)" in s]
     assert len(spend) == 1 and "FROM project_credit_budgets" in spend[0], spend
+
+
+async def test_asking_for_hands_reads_the_agents_account_with_the_session(
+    client, monkeypatch
+):
+    """The hands are given only while the credential's agent is still an
+    account; that is asked in the statement that reads the session."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    assert [s for s in seen if 'FROM "user"' in s and "agent_sessions" not in s] == []
+    sessions = [s for s in seen if "FROM agent_sessions" in s]
+    assert len(sessions) == 1 and 'FROM "user"' in sessions[0], sessions
+
+
+async def test_admission_reads_the_projects_agents_with_the_project(
+    client, monkeypatch
+):
+    """Admission asks which of the project's agents the credential's seat is;
+    the project's agents come in the statement that reads the project."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    agents = [s for s in seen if "agent_instances" in s]
+    assert len(agents) == 1 and "FROM projects" in agents[0], agents
+
+
+async def test_asking_for_hands_reads_the_room_with_the_agents_seat(
+    client, monkeypatch
+):
+    """The seat the credential's agent holds is read with the room."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    seats = [s for s in seen if "topic_memberships" in s]
+    assert len(seats) == 1 and "FROM topics" in seats[0], seats
+
+
+async def _admitted_in_a_task(client, monkeypatch) -> list[str]:
+    """A model call from the session working a task: the credential names the
+    task, so the call is paid by the task's owner and runs on the task's key."""
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", FakeGateway())
+    room = await _room(client, in_task=True)
+    async with client.test_factory() as db:
+        topic = await db.get(Topic, room.topic_id)
+        resource = str(topic.resource_id or room.topic_id)
+    token = switch.bind_resource_token(
+        switch.mint_scoped_token(
+            project_id=str(room.project_id),
+            topic_id=str(room.conversation_id),
+            agent_handle=room.agent_handle,
+        ),
+        resource,
+        session_id=str(room.session_id),
+    )
+    admit = lambda: client.post(  # noqa: E731
+        "/llm/admission",
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
+        json={"session": token},
+    )
+    first = admit()
+    assert first.json()["data"]["supply"]["key"], first.text
+    with _statements() as seen:
+        again = admit()
+    assert again.json()["data"]["allow"] is True, again.text
+    assert again.json()["data"]["supply"]["key"], again.text
+    return seen
+
+
+async def test_a_tasks_admission_checks_its_key_in_its_own_transaction(
+    client, monkeypatch
+):
+    """The task's key is checked on the admission's own reads: the project
+    and its payer are not read again on a session of its own."""
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    assert len([s for s in seen if "FROM projects" in s]) == 1, seen
+    assert len([s for s in seen if "FROM compute_grants" in s]) == 1, seen
+
+
+async def test_a_tasks_admission_reads_the_owners_cap_once(client, monkeypatch):
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    assert len([s for s in seen if "FROM member_credit_budgets" in s]) == 1, seen
+
+
+async def test_a_tasks_admission_does_not_look_for_the_task_among_rooms(
+    client, monkeypatch
+):
+    """The access check found which room the task is in; resolving the task
+    after it does not ask `topics` for the task's own id first."""
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    assert len([s for s in seen if re.search(r"FROM topics\b", s)]) == 1, seen

@@ -67,6 +67,7 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
@@ -307,7 +308,9 @@ async def admission(
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
     # Read with who pays for it: admission asks that next, every model call.
-    project = await project_with_payer(db, project_uuid)
+    project = await project_with_payer(
+        db, project_uuid, ride_along=project_agents_ride_along(db)
+    )
     if project is not None:
         try:
             await _require_model_caller(db, token, project_uuid)
@@ -478,6 +481,15 @@ async def admission(
             logger.exception("admission budget target failed for %s", project_uuid)
         else:
             ready_key = chat.room_key_in_step(project.settings, budget_target)
+    elif project_key and credit_context is not None:
+        # A task's key, asked here for the same reason: this transaction has
+        # the project and its payer, which a session of its own reads again.
+        try:
+            ready_key = await chat.task_key_in_step(
+                db, project_uuid, credit_context.task_id, credit_context.owner_handle
+            )
+        except Exception:
+            logger.exception("admission task key check failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -504,7 +516,7 @@ async def admission(
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,

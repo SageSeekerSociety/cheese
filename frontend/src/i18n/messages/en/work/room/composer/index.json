@@ -19,6 +19,7 @@
   "summonOffMany": "Hand to {name} (⌘/Ctrl+Enter). Right-click to pick another teammate",
   "summonOffManyTouch": "Hand to {name}. Long-press to pick another teammate",
   "summonOn": "This goes to {name}. Click to cancel",
+  "summonOnLabel": "To {name}",
   "summonOnMany": "This goes to {names}",
   "summonPeopleOnly": "This one goes only to the people you mentioned",
   "summonPicker": "Hand to which teammate",
