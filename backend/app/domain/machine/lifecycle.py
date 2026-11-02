@@ -75,6 +75,7 @@ a whole cloud VM is neither this sweep's nor a user of the shared slots
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -97,6 +98,7 @@ from app.domain.agent_session.models import (
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
+from app.domain.machine.infra_records import keep_frozen
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.reaper import accepting, free_slots
@@ -277,7 +279,7 @@ async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
     return found
 
 
-async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> None:
+async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> bool:
     """Wake a sandbox a tool call has already asked for (`THAW_KEY`), before
     its executor is asked anything (`session_work._install`, under the claim,
     with no database lock held).
@@ -286,7 +288,7 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     processes are still stopped until this runs, so a call sent now would wait
     on the freezer. A failed thaw is raised, not swallowed: the attempt lapses
     and the next one tries again, which is better than an executor nobody can
-    reach for a minute.
+    reach for a minute. Answers whether it thawed one.
     """
     marker = await db.scalar(
         select(AgentSession.execution_request).where(AgentSession.id == session_id)
@@ -294,7 +296,7 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     await db.commit()
     thawing = (marker or {}).get(THAW_KEY)
     if not thawing or str(thawing) != str(work_resource):
-        return
+        return False
     await thaw_on_host(hub, device_id, str(work_resource))
     row = await db.scalar(
         select(AgentSession).where(AgentSession.id == session_id).with_for_update()
@@ -304,6 +306,7 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
         left.pop(THAW_KEY, None)
         row.execution_request = left
     await db.commit()
+    return True
 
 
 def _idle_for(spec: str) -> timedelta:
@@ -864,9 +867,13 @@ class SandboxLifecycle:
                             exc_info=True,
                         )
         active_seen = row.active_at
+        session_id, topic_id = row.session_id, row.topic_id
         await self._session.commit()
+        began = time.monotonic()
+        checkpoint_s = None
         if start is not None:
             await _checkpoint(self._hub, lease, start)
+            checkpoint_s = time.monotonic() - began
         if holder_id is not None:
             await holders.lock(self._session, holder_id)
         row = await self._repo.lock_home(home_id)
@@ -892,6 +899,7 @@ class SandboxLifecycle:
         # running, and the meter's own sweep would otherwise close it a little
         # late (`metering.observe`).
         await metering.stop_billing(self._session, home_id)
+        on_host = time.monotonic()
         try:
             await self._freeze_on_host(device_id, resource)
         except (RuntimeError, TimeoutError, SandboxHomeError):
@@ -924,6 +932,17 @@ class SandboxLifecycle:
             or row.stopped_at is not None
             or row.active_at > active_seen
         )
+        if not woke:
+            await keep_frozen(
+                self._session,
+                conversation_id=topic_id,
+                session_id=session_id,
+                stages={
+                    "checkpoint": checkpoint_s,
+                    "freeze": time.monotonic() - on_host,
+                },
+                total_s=time.monotonic() - began,
+            )
         await self._session.commit()
         if woke:
             try:

@@ -148,6 +148,7 @@ function overview(
       hosts_lost: 0,
       hosts_lost_by_reason: {},
       sandboxes_lost: 0,
+      timings: {},
     },
   }
 }
@@ -199,6 +200,19 @@ describe('机器', () => {
       overview: overview({ provider_failures: 3, refusing: true, last_provider_failure: '2026-10-12T09:58:00Z' }),
     })
     expect(bad.queryByText(refusing)).not.toBeNull()
+  })
+
+  it('过去 24 小时准备沙箱的每一段耗时都写出来', () => {
+    const page = overview()
+    page.history.timings = {
+      sandbox_prepared: {
+        total: { count: 3, p50_s: 12, p95_s: 40 },
+        executor: { count: 3, p50_s: 9, p95_s: 30 },
+      },
+    }
+    const { getByText } = mount({ overview: page })
+    expect(getByText(/Preparing a sandbox \(3\)|准备沙箱（3 次）/)).toBeTruthy()
+    expect(getByText(/(total|合计) 12 ?(s|秒).*(executor|装执行器) 9 ?(s|秒)/)).toBeTruthy()
   })
 
   it('点开一台宿主机，看见它上面的沙箱', async () => {

@@ -181,8 +181,24 @@
     "fact": {
       "prepared": "Sandboxes started",
       "ready": "Became ready",
-      "wait": "Wait p50 / p95 / max",
+      "wait": "Host start wait p50 / p95 / max",
       "waitValue": "{p50} / {p95} / {max}",
+      "timed": {
+        "sandbox_prepared": "Preparing a sandbox ({count}) p50 / p95",
+        "sandbox_frozen": "Freezing ({count}) p50 / p95",
+        "sandbox_checked_out": "Opening a task checkout ({count}, dependencies included) p50 / p95"
+      },
+      "stageValue": "{stage} {p50} / {p95}",
+      "stage": {
+        "total": "total",
+        "place": "placing",
+        "host": "host start",
+        "thaw": "thaw",
+        "executor": "executor",
+        "checkpoint": "checkpoint",
+        "freeze": "host freeze",
+        "checkout": "checkout"
+      },
       "abandoned": "Given up before ready",
       "replaced": "Moved off a broken host",
       "released": "Reclaimed (idle / out of credits)",

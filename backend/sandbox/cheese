@@ -6331,6 +6331,127 @@ def _page_assets(page: str) -> list[str]:
     return found
 
 
+#: The host's copy of a project's repository takes the packs of the sandboxes
+#: that give to it, and every so many of them is repacked into one.
+HOST_REPOSITORY_PACKS = 40
+
+
+def _host_repository() -> Path | None:
+    """This host's copy of the project's repository, which every sandbox of
+    the project on the host starts its own from: beside the project's package
+    caches (`UV_CACHE_DIR`'s directory), the one place each of them can write.
+    None where there is no such place.
+
+    It holds what the sandboxes fetched — the commits and the files they
+    checked out — and nothing else: it is never fetched into from the forge,
+    so what crosses the platform to reach a host is what crossed it before
+    (`_open_from_forge`). A sandbox copies its objects and is then on its own
+    (`_seed_from_host`): nothing of a sandbox's repository points into it, so
+    it can be repacked, or lost, under them."""
+    cache = os.environ.get("UV_CACHE_DIR")
+    if not cache or not Path(cache).parent.is_dir():
+        return None
+    return Path(cache).parent / "git" / "repository.git"
+
+
+@contextlib.contextmanager
+def _host_repository_held(host: Path):
+    host.parent.mkdir(parents=True, exist_ok=True)
+    with (host.parent / "repository.lock").open("a") as lock:
+        _lock(lock)
+        yield
+
+
+def _copy_pack(source: Path, target_dir: Path) -> None:
+    """Copy one pack's files, its index last and by rename: git takes a pack
+    for there once its index is."""
+    import shutil
+
+    stem = source.with_suffix("")
+    for suffix in (".pack", ".rev", ".promisor", ".idx"):
+        part = stem.with_suffix(suffix)
+        target = target_dir / part.name
+        if not part.exists() or target.exists():
+            continue
+        partial = target_dir / (part.name + ".part")
+        shutil.copyfile(part, partial)
+        os.replace(partial, target)
+
+
+def _seed_from_host(repo: Path) -> None:
+    """Start a sandbox's repository from the host's copy, where there is one:
+    its packs copied in, and its branches kept as `refs/cheese-host/…` so the
+    fetch that follows asks the forge only for what is newer. Measured on
+    cheese's own, 95 MB: copied in 0.1 s, the fetch after it 1.4 s, the
+    checkout 1.3 s, against 11 s and 30 s from the forge alone (2026-11-02).
+    Anything wrong leaves no repository, and the caller fetches from the forge
+    as it did before."""
+    import shutil
+
+    host = _host_repository()
+    if host is None or not (host / "objects" / "pack").is_dir():
+        return
+    try:
+        with _host_repository_held(host):
+            _git_task(repo.parent, "init", "-q", "--bare", str(repo))
+            target = repo / "objects" / "pack"
+            for pack in sorted((host / "objects" / "pack").glob("*.pack")):
+                _copy_pack(pack, target)
+            heads = _git_task(
+                host, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads"
+            )
+            for line in heads.splitlines():
+                name, ref = line.split(" ", 1)
+                _git_task(
+                    repo,
+                    "update-ref",
+                    "refs/cheese-host/" + ref.removeprefix("refs/heads/"),
+                    name,
+                )
+    except (OSError, RuntimeError, ValueError):
+        shutil.rmtree(repo, ignore_errors=True)
+
+
+def _give_to_host(repo: Path, base: str) -> None:
+    """Give the host's copy what this sandbox fetched that it does not have:
+    the packs it lacks, then the base branch's tip. Only when the tip moved,
+    so a host is given once per change of the base, not once per sandbox; and
+    never failing the checkout that asked."""
+    host = _host_repository()
+    if host is None:
+        return
+    try:
+        tip = _git_task(repo, "rev-parse", f"refs/remotes/origin/{base}")
+        with _host_repository_held(host):
+            if not (host / "objects").is_dir():
+                _git_task(host.parent, "init", "-q", "--bare", str(host))
+                # What it is given is partial, as the sandboxes fetched it:
+                # files nobody checked out are not there. Said so, its own git
+                # (repack) takes them for missing on purpose, and asks nowhere.
+                for key, value in (
+                    ("core.repositoryformatversion", "1"),
+                    ("extensions.partialclone", "origin"),
+                    ("remote.origin.url", "file:///dev/null"),
+                    ("remote.origin.promisor", "true"),
+                ):
+                    _git_task(host, "config", key, value)
+            try:
+                known = _git_task(host, "rev-parse", "--verify", f"refs/heads/{base}")
+            except RuntimeError:
+                known = None
+            if known == tip:
+                return
+            target = host / "objects" / "pack"
+            for pack in sorted((repo / "objects" / "pack").glob("*.pack")):
+                _copy_pack(pack, target)
+            _git_task(host, "cat-file", "-e", tip)
+            _git_task(host, "update-ref", f"refs/heads/{base}", tip)
+            if len(list(target.glob("*.pack"))) > HOST_REPOSITORY_PACKS:
+                _git_task(host, "repack", "-a", "-d", "-q")
+    except (OSError, RuntimeError, ValueError):
+        return
+
+
 def _prepare_repository(repo: Path, data: dict) -> None:
     """This machine's copy of the project's repository, able to reach its forge.
 
@@ -6418,7 +6539,10 @@ def _task_worktree(task_id: str, *, reinstall: bool = False) -> Path:
         # branches are as this checkout last fetched or pushed them; `git
         # fetch` brings them up to date.
         if not _opened_as_left(task_dir, data):
+            if not repo.exists():
+                _seed_from_host(repo)
             _open_from_forge(repo, task_dir, data)
+            _give_to_host(repo, data["base"])
         marker = Path(
             _git_task(task_dir, "rev-parse", "--git-path", "cheese-task.json")
         )

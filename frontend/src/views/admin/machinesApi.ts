@@ -192,7 +192,17 @@ export interface MachinesOverview {
     hosts_lost: number
     hosts_lost_by_reason: Partial<Record<'provider_error' | 'never_enrolled' | 'connector_away', number>>
     sandboxes_lost: number
+    /** 按种类（准备、冻结、打开任务目录）和段（含 total）的耗时分位数。 */
+    timings: Partial<Record<TimedKind, Record<string, StageTiming>>>
   }
+}
+
+export type TimedKind = 'sandbox_prepared' | 'sandbox_frozen' | 'sandbox_checked_out'
+
+export interface StageTiming {
+  count: number
+  p50_s: number | null
+  p95_s: number | null
 }
 
 export function getMachines(): Promise<MachinesOverview> {

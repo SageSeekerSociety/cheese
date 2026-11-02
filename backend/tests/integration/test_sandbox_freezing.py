@@ -40,6 +40,7 @@ from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
+from app.domain.run_record.models import RunRecord
 from app.domain.usage.compute import SANDBOX, ComputeMeter
 from app.domain.usage.ledger import Ledger, payer_for_project
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
@@ -72,6 +73,23 @@ def home_row(case, seat) -> SandboxHome | None:
             return await db.scalar(
                 select(SandboxHome).where(SandboxHome.session_id == seat.session)
             )
+
+    return run(case, read)
+
+
+def timed(case, kind: str) -> list[dict]:
+    """What the sandboxes kept of how long their steps took, oldest first."""
+
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return [
+                record.meta
+                for record in await db.scalars(
+                    select(RunRecord)
+                    .where(RunRecord.kind == kind)
+                    .order_by(RunRecord.created_at)
+                )
+            ]
 
     return run(case, read)
 
@@ -134,6 +152,10 @@ def test_an_idle_sandbox_is_frozen_not_destroyed(icy):
     asked = [action for (_, action) in actions(icy)]
     assert "freeze" in asked
     assert "destroy" not in asked
+    # And it kept how long freezing it took.
+    [frozen] = timed(icy, "sandbox_frozen")
+    assert "freeze" in frozen["stages"]
+    assert frozen["session_id"] == str(seat.session)
 
 
 def test_a_frozen_sandbox_is_not_billed(icy):
@@ -203,6 +225,8 @@ def test_a_tool_call_thaws_the_same_sandbox_and_its_work_is_there(icy):
     assert "thaw" in asked
     assert "destroy" not in asked
     assert (home / "room" / "notes.md").exists()
+    # The wake is kept with how long the thaw took.
+    assert "thaw" in timed(icy, "sandbox_prepared")[-1]["stages"]
 
 
 def test_a_frozen_sandbox_past_its_keep_time_is_destroyed(icy):

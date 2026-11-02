@@ -189,6 +189,7 @@ async def _history(
                         "sandbox_asleep",
                         infra_records.REFUSED,
                         infra_records.HOST_LOST,
+                        *infra_records.TIMED,
                     ]
                 ),
                 RunRecord.created_at >= since,
@@ -201,8 +202,18 @@ async def _history(
     replaced = released_idle = released_unpaid = sandboxes_lost = 0
     refused: dict[str, set[str]] = defaultdict(set)
     hosts_lost: dict[str, int] = defaultdict(int)
+    # 每种计时（准备、冻结、检出）每一段的秒数，外加整段。
+    timed: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for kind, severity, meta, at in rows:
         meta = meta or {}
+        if kind in infra_records.TIMED:
+            for stage, seconds in {
+                **(meta.get("stages") or {}),
+                "total": meta.get("total_s"),
+            }.items():
+                if isinstance(seconds, (int, float)):
+                    timed[kind][stage].append(float(seconds))
+            continue
         home = meta.get("home")
         said = ((meta.get("i18n") or {}).get("content") or {}).get("key")
         if kind == infra_records.REFUSED:
@@ -244,6 +255,17 @@ async def _history(
         "wait_p50_s": _percentile(waits, 50),
         "wait_p95_s": _percentile(waits, 95),
         "wait_max_s": waits[-1] if waits else None,
+        "timings": {
+            kind: {
+                stage: {
+                    "count": len(values),
+                    "p50_s": _percentile(sorted(values), 50),
+                    "p95_s": _percentile(sorted(values), 95),
+                }
+                for stage, values in stages.items()
+            }
+            for kind, stages in timed.items()
+        },
     }
 
 
