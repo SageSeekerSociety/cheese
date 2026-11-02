@@ -51,7 +51,10 @@
  * under the very names those buttons have (`acceptLabelKey`, 「关闭任务」). Such a button
  * is not a reply: clicking it emits `decide` and the panel calls the card's own
  * accept or the task's own close, the same request the card's and the task's
- * buttons make. The question then closes when the delivery is decided, however
+ * buttons make. On a task page the accept button reads the very state the
+ * delivery bar's 采纳 reads (`injectAcceptCard`): the same label, greyed out
+ * whenever the bar's is and with the same reason on hover, and a click is the
+ * bar's own `onAcceptCard`. The question then closes when the delivery is decided, however
  * it was decided (`decided`), and says how; that line is the card's, so nobody
  * takes it back.
  *
@@ -77,6 +80,7 @@ import type { AskAction } from '../../types/ask'
 import { computed, ref, watch } from 'vue'
 
 import { acceptLabelKey } from '../../composables/acceptCard/labels'
+import { injectAcceptCard } from '../../composables/useAcceptCard'
 import { t } from '../../i18n'
 import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
@@ -207,7 +211,7 @@ const locked = computed(() => sent.value || !!props.answering)
 // 点一个选项：那几个字就是对这道题的回复。`disabled` 挡得住手，这里挡得住同一趟里
 // 又冒出来的第二下（键盘的数字键也走这里）。
 function pick(option: AskOption) {
-  if (locked.value || !canAnswer.value) return
+  if (locked.value || !canAnswer.value || optionOff(option)) return
   // 平台的按钮不发消息：谁在做、做没做成由面板管（`useAskResponse.decide`），成了题自己
   // 会随交付的结果收起来。
   if (option.action) return emit('decide', option.action)
@@ -219,10 +223,31 @@ function pick(option: AskOption) {
 // 名字。库里的 `text` 只记动作是哪一种。
 function optionLabel(option: AskOption): string {
   const action = option.action
+  const bound = boundAccept(option)
+  if (bound) return bound.acceptLabel.value
   if (action?.kind === 'accept') return t(acceptLabelKey(action.completes_task))
   if (action?.kind === 'close') return t('work.task.close')
   return label(option.text)
 }
+// 任务页取的那一份采纳卡（交付栏读的就是它）。题上的「采纳」问的是同一张卡时，字、
+// 灰不灰、为什么灰都读它，不另算一遍：同一个动作在同一屏上只有一种状态。卡已经不是
+// 那一张（定了）时题也随之收起，用不到它。
+const acceptCard = injectAcceptCard()
+function boundAccept(option: AskOption) {
+  const action = option.action
+  if (action?.kind !== 'accept' || !acceptCard) return null
+  return acceptCard.pendingCard.value?.id === action.card ? acceptCard : null
+}
+// 交付栏上的采纳按钮灰着（或者根本不给这个人点）时，题上这个也灰着。
+function optionOff(option: AskOption): boolean {
+  const bound = boundAccept(option)
+  return !!bound && (!bound.decisionOpen.value || !!bound.acceptBlockedTitle.value || bound.acceptBusy.value)
+}
+// 为什么灰：交付栏按钮上那一句。
+function optionTitle(option: AskOption): string | undefined {
+  return boundAccept(option)?.acceptBlockedTitle.value ?? undefined
+}
+
 // 一行答案说的是哪个按钮时，也照看的人的语言写。
 function answerText(text: string): string {
   const option = options.value.find((o) => o.action && o.text === text)
@@ -351,25 +376,31 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
       </ul>
       <p v-if="closedLine" class="ask-replies__row ask-replies__closed">{{ closedLine }}</p>
       <div v-if="choosing" class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
-        <button
+        <!-- 灰着的按钮不出 title，提示挂在外面这一层上（和交付栏的采纳按钮一样）。 -->
+        <span
           v-for="(option, index) in options"
           :key="option.text"
-          type="button"
-          class="ask-replies__option"
-          :disabled="!canAnswer || locked"
-          @click="pick(option)"
+          class="ask-replies__slot"
+          :title="optionTitle(option)"
         >
-          <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
-          <span class="ask-replies__body">
-            <span class="ask-replies__label"
-              ><span class="ask-replies__text">{{ optionLabel(option) }}</span
-              ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
-                t('ask.replies.recommended')
-              }}</span></span
-            >
-            <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
-          </span>
-        </button>
+          <button
+            type="button"
+            class="ask-replies__option"
+            :disabled="!canAnswer || locked || optionOff(option)"
+            @click="pick(option)"
+          >
+            <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
+            <span class="ask-replies__body">
+              <span class="ask-replies__label"
+                ><span class="ask-replies__text">{{ optionLabel(option) }}</span
+                ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
+                  t('ask.replies.recommended')
+                }}</span></span
+              >
+              <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
+            </span>
+          </button>
+        </span>
         <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer || locked }">
           <textarea
             ref="otherField"
@@ -478,6 +509,9 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 .ask-replies__other,
 .ask-replies__row {
   border-top: 1px solid var(--line);
+}
+.ask-replies__slot {
+  display: block;
 }
 .ask-replies__option {
   display: grid;

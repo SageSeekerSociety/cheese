@@ -24,6 +24,7 @@
 import type { Ref } from 'vue'
 import type { Block } from '../cx_types'
 import type { AskAction } from '../types/ask'
+import type { AcceptCardState } from './useAcceptCard'
 
 import { ref } from 'vue'
 
@@ -38,6 +39,9 @@ export interface AskResponseDeps {
   errorMsg: Ref<string | null>
   /** 看着这间房的人：采纳的请求带上他（后端照旧按登录的人认）。 */
   viewer: Readonly<Ref<string>>
+  /** 任务页取的那一份采纳卡（`provideAcceptCard`）；题上的「采纳」问的是它那张卡时，
+   *  点下去就是交付栏那一下（`onAcceptCard`）。不在任务页上是 null。 */
+  acceptCard?: AcceptCardState | null
 }
 
 export function useAskResponse(deps: AskResponseDeps) {
@@ -66,7 +70,9 @@ export function useAskResponse(deps: AskResponseDeps) {
 
   const decide = (_question: Block, action: AskAction) =>
     respond(async () => {
-      if (action.kind === 'accept')
+      const bar = deps.acceptCard
+      if (action.kind === 'accept' && bar?.pendingCard.value?.id === action.card) await bar.onAcceptCard()
+      else if (action.kind === 'accept')
         await acceptCard(action.card, deps.viewer.value, action.head_sha, action.deliverable_revision)
       else await closeTask(action.task)
       return null

@@ -14,6 +14,7 @@ import type { ChapterRow } from '../types/chapters'
 
 import { computed, provide, ref, watch } from 'vue'
 
+import { injectAcceptCard } from '../composables/useAcceptCard'
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
@@ -394,7 +395,7 @@ const {
   withdrawQuestionAnswer,
   skipQuestion,
   decide: decideFromQuestion,
-} = useAskResponse({ timeline: panel.timeline, errorMsg, viewer })
+} = useAskResponse({ timeline: panel.timeline, errorMsg, viewer, acceptCard: injectAcceptCard() })
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
