@@ -305,6 +305,9 @@ def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
 ):
     monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 256)
+    # No swap: with some, what does not fit is swapped out instead of killed,
+    # which is what the swap is for, and not what this asks.
+    monkeypatch.setattr(settings, "cloud_sandbox_swap_mb", 0)
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
 
     result = room.bash(
@@ -686,7 +689,8 @@ def test_a_sandbox_is_slowed_before_its_limit_and_killed_whole_at_it(
     limit = settings.cloud_sandbox_memory_mb << 20
 
     assert int((group / "memory.max").read_text()) == limit
-    assert int((group / "memory.high").read_text()) == limit // 5 * 4
+    # The kernel keeps it in whole pages.
+    assert int((group / "memory.high").read_text()) == limit // 5 * 4 // 4096 * 4096
     assert (group / "memory.oom.group").read_text().strip() == "1"
 
 
