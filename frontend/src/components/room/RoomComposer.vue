@@ -75,7 +75,7 @@ const props = defineProps<{
   alwaysSummon: boolean
   /** 和 AI 队友私聊时为 false：只有它一位，⌘/Ctrl+Enter 没有可交的人，就是发送。 */
   handOff?: boolean
-  /** 输入框那一行提示语。 */
+  /** 输入框那一行提示语。交给过队友的支线里换成「回复芝士…」，见 `placeholderText`。 */
   hint: string
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
   atts: ChatAttachment[]
@@ -403,6 +403,23 @@ const summonFixed = computed(
   () => (props.alwaysSummon && props.handOff !== false) || addressing.value?.reason === 'thread'
 )
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
+
+// 输入框空着时那句提示语说这条交给谁。交给过队友的支线里，每句都交给它，提示语就写
+// 「回复芝士…」；没交给过任何队友的支线照旧是房间给的那句（「在支线中回复」）。判据是后端
+// 对空草稿的回答（`reason: 'thread'`），和头像读的是同一个。记的是最近一次**空草稿**的回答：
+// 提示语只在空着时看得见，打字时的回答（只 @ 了人就不交给）不归它，清空之后也不用等一次来回。
+const emptyAnswer = ref<Addressing | null>(null)
+watch([addressing, addressingFresh], ([now, fresh]) => {
+  if (fresh && !draft.value.trim()) emptyAnswer.value = now
+})
+watch(
+  () => props.place,
+  () => (emptyAnswer.value = null)
+)
+const placeholderText = computed(() => {
+  const agent = emptyAnswer.value?.reason === 'thread' ? emptyAnswer.value.agent : null
+  return agent ? t('work.room.composer.placeholderThread', { name: mateOf(agent).label }) : props.hint
+})
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
 
 // ---- 打字的时候任务关了 ----
@@ -789,8 +806,8 @@ defineExpose({
         v-model:caret="caret"
         class="composer-input"
         :names="chipNames"
-        :placeholder="sendableCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : hint"
-        :label="hint"
+        :placeholder="sendableCount > 0 ? t('work.room.preview.pendingSummaryPlaceholder') : placeholderText"
+        :label="placeholderText"
         :title="keysTitle"
         @keydown="onComposerKey"
         @paste="onPaste"
