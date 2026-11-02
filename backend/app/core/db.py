@@ -61,6 +61,9 @@ else:
         "max_overflow": _pool_overflow,
         "pool_timeout": settings.db_pool_timeout_s,
         "pool_pre_ping": settings.db_pool_pre_ping,
+        "connect_args": {
+            "prepared_statement_cache_size": settings.db_statement_cache_size
+        },
     }
 
 
