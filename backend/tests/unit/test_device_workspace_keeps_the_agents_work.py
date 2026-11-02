@@ -1281,3 +1281,85 @@ def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device)
     (told,) = (home / "posted.jsonl").read_text().splitlines()
     assert "#17" in json.loads(told)["body"]["content"]
     assert "PUT " not in (home / "requests.log").read_text()
+
+
+@pytest.fixture
+def two_sandboxes(device, tmp_path, monkeypatch):
+    """Two sandboxes of the project on one host: each its own home, both the
+    host's store of the project, where its package caches and its copy of the
+    repository are."""
+    cli, tasks, remote, home = device
+    store = tmp_path / "store"
+    (store / "uv-cache").mkdir(parents=True)
+    monkeypatch.setenv("UV_CACHE_DIR", str(store / "uv-cache"))
+    other = tmp_path / "home-2"
+    other.mkdir()
+    return cli, tasks, remote, home, other, store
+
+
+def test_the_first_sandbox_on_a_host_gives_the_host_its_repository(two_sandboxes):
+    cli, tasks, remote, home, other, store = two_sandboxes
+    task = next(iter(tasks))
+    cli._task_worktree(task)
+
+    host = store / "git" / "repository.git"
+    assert git(host, "rev-parse", "refs/heads/main") == git(remote, "rev-parse", "main")
+
+
+def test_a_later_sandbox_starts_from_the_hosts_copy_and_still_fetches(
+    two_sandboxes, monkeypatch, tmp_path
+):
+    cli, tasks, remote, home, other, store = two_sandboxes
+    first, second = list(tasks)
+    cli._task_worktree(first)
+    # The base moved on the forge after the host was given its copy.
+    seed = tmp_path / "later"
+    git(tmp_path, "clone", "-q", str(remote), str(seed))
+    git(seed, "config", "user.name", "worker")
+    git(seed, "config", "user.email", "worker@example.com")
+    (seed / "later.txt").write_text("later\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "-m", "later")
+    git(seed, "push", "-q", "origin", "main")
+
+    monkeypatch.setenv("HOME", str(other))
+    work = cli._task_worktree(second)
+
+    repo = other / ".cheese" / "repositories" / f"{os.environ['CHEESE_PROJECT']}.git"
+    # Started from the host's copy, a repository of its own: nothing in it
+    # points into the host's.
+    assert git(repo, "for-each-ref", "--format=%(refname)", "refs/cheese-host")
+    assert not (repo / "objects" / "info" / "alternates").exists()
+    # And still as new as the forge.
+    assert git(repo, "rev-parse", "refs/remotes/origin/main") == git(
+        remote, "rev-parse", "main"
+    )
+    assert (work / "same.txt").read_text() == "base\n"
+    # The host is given the newer base in turn.
+    host = store / "git" / "repository.git"
+    assert git(host, "rev-parse", "refs/heads/main") == git(remote, "rev-parse", "main")
+
+
+def test_a_broken_host_copy_leaves_the_sandbox_to_the_forge(two_sandboxes, monkeypatch):
+    cli, tasks, remote, home, other, store = two_sandboxes
+    first, second = list(tasks)
+    cli._task_worktree(first)
+    host = store / "git" / "repository.git"
+    for pack in (host / "objects" / "pack").iterdir():
+        pack.write_bytes(b"not a pack")
+
+    monkeypatch.setenv("HOME", str(other))
+    work = cli._task_worktree(second)
+
+    assert (work / "same.txt").read_text() == "base\n"
+
+
+def test_the_host_copy_is_repacked_once_it_holds_enough_packs(
+    two_sandboxes, monkeypatch
+):
+    cli, tasks, remote, home, other, store = two_sandboxes
+    monkeypatch.setattr(cli, "HOST_REPOSITORY_PACKS", 0)
+    cli._task_worktree(next(iter(tasks)))
+
+    packs = list((store / "git" / "repository.git" / "objects" / "pack").glob("*.pack"))
+    assert len(packs) == 1
