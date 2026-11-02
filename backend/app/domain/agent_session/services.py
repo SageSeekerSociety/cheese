@@ -245,7 +245,7 @@ class AgentSessionService:
         return placed[0].harness if placed else None
 
     async def placed_sessions(
-        self,
+        self, *, harness: str | None = None, device_id: str | None = None
     ) -> list[
         tuple[
             uuid.UUID,
@@ -270,7 +270,9 @@ class AgentSessionService:
         (FB-56).
         """
         found = []
-        for row, project_id, room_id in await self._repo.placed_everywhere():
+        for row, project_id, room_id in await self._repo.placed_everywhere(
+            harness=harness, device_id=device_id
+        ):
             place = row.place()
             if place is not None:
                 found.append(
