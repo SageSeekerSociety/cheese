@@ -10,7 +10,6 @@ from sqlalchemy import (
     Uuid,
     and_,
     bindparam,
-    exists,
     func,
     inspect,
     select,
@@ -20,12 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import NotFoundError, UnprocessableEntityError
-from app.core.request_facts import remember
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.conversation.numbering import CREATED_TASKS_KEY
 from app.domain.identity.handles import names_a_person
-from app.domain.identity.models import AgentBinding
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
@@ -54,28 +53,30 @@ class TaskService:
     async def with_people(self, task_id: uuid.UUID) -> Task | None:
         """The task, read with whether its owner and its creator are AI
         teammates: who pays for its work asks that next (`credit_owner`),
-        and each was a statement of its own. A task the session holds
-        already is answered without reading."""
+        and each was a statement of its own. A task the session holds, with
+        both answers known, is answered without reading."""
         if not isinstance(self._session, AsyncSession):
             # A hand-written stand-in session (unit tests) has no identity map.
             return await self._repo.get(task_id)
         held = self._session.sync_session.identity_map.get(
             self._session.sync_session.identity_key(Task, (task_id,))
         )
-        if held is not None and not inspect(held).expired_attributes:
-            return held
-
-        def is_agent(handle):
-            return exists().where(
-                User.username == handle,
-                User.deleted_at.is_(None),
-                AgentBinding.user_id == User.id,
+        if (
+            held is not None
+            and not inspect(held).expired_attributes
+            and all(
+                recall(self._session, ("is_agent", handle))[0]
+                for handle in (held.owner_handle, held.created_by)
+                if handle
             )
-
+        ):
+            return held
         row = (
             await self._session.execute(
                 select(
-                    Task, is_agent(Task.owner_handle), is_agent(Task.created_by)
+                    Task,
+                    names_a_live_agent(Task.owner_handle),
+                    names_a_live_agent(Task.created_by),
                 ).where(Task.id == task_id)
             )
         ).first()
