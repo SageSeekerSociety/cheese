@@ -490,3 +490,14 @@ async def test_a_rooms_admission_does_not_look_for_a_task(client, monkeypatch):
 
     assert again.json()["data"]["allow"] is True, again.text
     assert [s for s in seen if s.startswith("SELECT tasks.")] == [], seen
+
+
+async def test_a_tasks_admission_reads_the_owners_cap_with_the_projects(
+    client, monkeypatch
+):
+    """The task owner's own cap is read in the statement that reads the
+    project's cap and gateway spend."""
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    members = [s for s in seen if "member_credit_budgets" in s]
+    assert len(members) == 1 and "project_credit_budgets" in members[0], members
