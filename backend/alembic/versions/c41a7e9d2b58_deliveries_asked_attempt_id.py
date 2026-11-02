@@ -12,6 +12,7 @@ Create Date: 2026-11-02 18:30:00
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
 
@@ -22,8 +23,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    with_lock_retries("deliveries")
     op.add_column("deliveries", sa.Column("asked_attempt_id", sa.Uuid(), nullable=True))
 
 
 def downgrade() -> None:
+    with_lock_retries("deliveries")
     op.drop_column("deliveries", "asked_attempt_id")
