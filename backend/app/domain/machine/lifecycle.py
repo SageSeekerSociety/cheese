@@ -443,8 +443,6 @@ class SandboxLifecycle:
         """A host being rebuilt (`reaper._drain_one`) waits for its active
         sandboxes to go idle, but a frozen one is not in use: it goes at
         once, so the rebuild is not held up by work nobody is doing."""
-        if not settings.cloud_sandbox_freeze:
-            return 0
         hosts = [
             host
             for host in await self._repo.live()
@@ -455,7 +453,8 @@ class SandboxLifecycle:
         now = datetime.now(UTC)
         for host in hosts:
             assert host.device_id is not None
-            gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
+            if settings.cloud_sandbox_freeze:
+                gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
             assert host.draining_since is not None
             if now - host.draining_since < timedelta(
                 seconds=settings.cloud_host_drain_wait_s

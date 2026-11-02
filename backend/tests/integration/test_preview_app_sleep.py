@@ -358,6 +358,40 @@ def test_waking_falls_back_to_agent_turn_when_the_sandbox_cannot_come_up(
     assert "npm run dev" in runner.submitted[0]["content"]
 
 
+def test_waking_an_app_that_exited_in_a_running_sandbox_asks_the_agent(
+    client, preview_config, runner, monkeypatch
+):
+    """The sandbox runs but its app no longer answers: nothing thaws, and the
+    teammate gets a turn to start the app again."""
+    import time
+
+    from app.domain.machine import lifecycle
+
+    topic_id, seat = _room(client)
+    machine = FakeMachine().attach(topic_id, seat)
+    try:
+        _declare(client, topic_id, path="npm run dev")
+    finally:
+        machine.detach()
+    _seed_sandbox(client, topic_id, seat)
+    thawed: list[str] = []
+
+    async def _fake_thaw(hub, device_id, work_resource):
+        thawed.append(device_id)
+
+    monkeypatch.setattr(lifecycle, "thaw_on_host", _fake_thaw)
+
+    woke = client.post(f"/topics/{topic_id}/preview/wake", headers=ALICE)
+    assert woke.status_code == 200, woke.text
+
+    deadline = time.monotonic() + 5.0
+    while not runner.submitted and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(runner.submitted) == 1
+    assert "npm run dev" in runner.submitted[0]["content"]
+    assert thawed == []
+
+
 def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_config):
     """Browsing a previewed app moves its session's `SandboxHome.active_at`
     forward (throttled to `ACTIVE_STEP`) so the idle sweeper does not reclaim
