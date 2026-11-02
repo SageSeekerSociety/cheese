@@ -64,6 +64,7 @@ const STATE_LABEL: Record<SandboxState, string> = {
   idle: 'admin.machines.state.idle',
   stopping: 'admin.machines.state.stopping',
   frozen: 'admin.machines.state.frozen',
+  parked: 'admin.machines.state.parked',
 }
 
 /** 圆点：坏了的红、要留意的黄、正常的绿、走完了或还没开始的灰。 */
