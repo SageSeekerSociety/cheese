@@ -608,7 +608,11 @@ class ActorResolver:
         if self._cheese_token or not self._bearer:
             return None
         claims = verify_access_token(self._bearer)
-        return claims.handle if claims is not None else None
+        # A token that states no handle carries the user id in its place; the
+        # handle is then the account's, which only the database knows.
+        if claims is None or not claims.handle_from_claim:
+            return None
+        return claims.handle
 
     def presented_sign_in(self) -> bool:
         """Whether the request carried a person's sign-in at all — verified or
