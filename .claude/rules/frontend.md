@@ -66,6 +66,24 @@ change, `frontend-design` walks the checklist for the parts no gate can see.
 If you find yourself writing `:root[data-theme='dark'] .thing { ... }`, stop:
 nine times out of ten the real fix is that `.thing` picked the wrong token.
 
+### Look at it in both themes, in every state, before you hand it over
+
+A change to colour, a border or an interactive control is checked in the light
+**and** the dark theme (`data-theme` on `<html>`), and in each state a reader
+meets: at rest, hover, focus, and dragging or pressed where the control has
+them. One screenshot per theme × state, rendered in a real browser (DOM tests
+have no paint). The resting state is the one that gets skipped and the one that
+matters most: a control a reader cannot see at rest is a control they never
+find. That is how #5128 shipped two resize handles drawn in `--line` / `--line-2`
+that were near-white on the light surface — the cursor changed on hover, nothing
+on screen said "drag here" — and why #5129 gave them a `--faint` grip that shows
+at rest and darkens on hover.
+
+- A thing a reader must find (a handle, a drop zone, an affordance) needs a mark
+  visible at rest. `--line` and `--line-2` are hairlines for separating content,
+  not affordances; `--faint` is the floor for a mark that must be seen (3:1).
+- Hover and drag darken toward `--muted` / `--text`, never only toward `--faint`.
+
 ## Motion: it moves only to explain a change
 
 Full rules: [`docs/design-system.md` §9](../../docs/design-system.md#9-动效) —
