@@ -11,7 +11,6 @@ import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, ReplyPreview, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 import type { RefNames } from '../../lib/refChip'
-import type { AskAction } from '../../types/ask'
 
 import { computed, ref } from 'vue'
 
@@ -162,8 +161,6 @@ const emit = defineEmits<{
   (e: 'ask-withdraw', block: Block): void
   /** 这道题不回答，跳过。 */
   (e: 'ask-skip', block: Block): void
-  /** 点了题上平台给的按钮（接受交付、关闭任务）。 */
-  (e: 'ask-decide', block: Block, action: AskAction): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -430,7 +427,6 @@ const told = computed(() => toldByMessage(props.refs))
         @reply="emit('ask-reply', block, $event)"
         @withdraw="emit('ask-withdraw', block)"
         @skip="emit('ask-skip', block)"
-        @decide="emit('ask-decide', block, $event)"
       >
         <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
       </AskQuickReplies>

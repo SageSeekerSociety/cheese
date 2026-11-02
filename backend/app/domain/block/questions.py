@@ -27,18 +27,15 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.block.asked import (
-    DECIDED,
     EXPIRED,
     SKIPPED,
     WITHDRAWN,
-    answerable,
     answered,
     closed_by_the_asker,
     may_answer,
     skipped_by,
     skipped_by_all,
 )
-from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_author import AuthorType
@@ -228,10 +225,9 @@ def skip_question(question: Block, *, by: str) -> bool:
 
 
 def answered_by(question: Block, handle: str) -> bool:
-    """``handle`` 在这道题上答过话没有。交付有了结果的那一条（``decided``）不算：
-    那是卡上的决定，不是他在题上说的话，撤不掉。"""
+    """``handle`` 在这道题上答过话没有。"""
     return any(
-        (entry or {}).get("by") == handle and (entry or {}).get("kind") != DECIDED
+        (entry or {}).get("by") == handle
         for entry in ((question.meta or {}).get("answer_log") or [])
     )
 
@@ -258,7 +254,7 @@ async def withdraw_answer(session, *, question: Block, by: str) -> Block:
         "answer_log": [
             entry
             for entry in (meta.get("answer_log") or [])
-            if (entry or {}).get("by") != by or (entry or {}).get("kind") == DECIDED
+            if (entry or {}).get("by") != by
         ],
     }
     await session.flush()
@@ -336,56 +332,3 @@ async def expire_question(
     }
     await session.flush()
     return question
-
-
-async def settle_decision(
-    session, *, question_ids, card_id, chosen: str | None, by: str
-) -> list[Block]:
-    """The delivery ``card_id`` was decided: of the messages ``question_ids``
-    names, the questions whose buttons decide it (`agent.ask.ask_to_decide`)
-    stop waiting, and say how it went.
-
-    ``question_ids`` are the events whose notices the decision settled
-    (`delivery.ledger.settle_card`): a question's notice carries its card and
-    its event is the question itself, so no other read finds them, and a card
-    nobody asked about costs nothing here. A button does nothing but call the
-    card's own route, so the decision is made, and recorded here, wherever it
-    is made: a click on one of these buttons, the card's own button, a merge
-    on the forge, the task closing. ``chosen`` is the button kind it amounts to
-    (``accept`` / ``close``). The question is closed with ``decided``, an entry
-    that is not an answer and that nobody withdraws: the decision is the
-    card's, and taking it off the question would offer buttons for a delivery
-    that is already decided. It names the button the decision amounts to when
-    the question offered one (``option``), and nothing when it did not (a
-    return, a void, a close it never offered). Returns the questions it
-    changed, for the caller to show once committed. Flush, not commit.
-    """
-    if not question_ids:
-        return []
-    rows = await session.scalars(
-        select(Block).where(QUESTION_ROWS, Block.id.in_(question_ids))
-    )
-    changed = []
-    now = datetime.now(UTC)
-    for question in rows:
-        meta = dict(question.meta or {})
-        options = meta.get("options") or []
-        actions = [(o or {}).get("action") or {} for o in options]
-        if not any(a.get("card") == str(card_id) for a in actions):
-            continue
-        if not answerable(meta):
-            continue
-        offered = next(
-            (
-                o["text"]
-                for o, a in zip(options, actions, strict=True)
-                if a.get("kind") == chosen
-            ),
-            None,
-        )
-        entry = {**_closed_entry(DECIDED, by=by, at=now), "option": offered}
-        question.meta = {**meta, "answer_log": [*(meta.get("answer_log") or []), entry]}
-        changed.append(question)
-    if changed:
-        await session.flush()
-    return changed

@@ -245,7 +245,7 @@ export function register(on) {
         // A read is one verb of an object, by its key (`cheese_chat.list`).
         const key = typeof args.action === "string" && args.action ? `${name}.${args.action}` : name;
         // Reading the room is on the way to answering it, and answers nothing.
-        if (owed.answers.includes(name) || owed.answers.includes(key)) {
+        if (owed.answers.includes(name)) {
           answered = owed.id;
           // And where the runner reads it, to know the turn may end (`insist`).
           await $.fs.write(owed.answered, owed.id);

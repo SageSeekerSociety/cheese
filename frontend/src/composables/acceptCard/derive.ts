@@ -10,7 +10,6 @@ import type { useWorkspaceStore } from '@/stores/workspace'
 
 import { computed } from 'vue'
 
-import { acceptLabelKey } from '@/composables/acceptCard/labels'
 import { useUserRef } from '@/composables/useUserRef'
 
 import { t } from '@/i18n'
@@ -125,7 +124,8 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
     const card = pendingCard.value
     if (needsPr.value) return t('work.room.accept.createPr')
     if (card?.status === 'conflict') return t('work.room.accept.retryAccept')
-    return t(acceptLabelKey(card?.completes_task !== false))
+    if (card?.completes_task === false) return t('work.room.accept.acceptAction')
+    return t('work.room.accept.acceptAndComplete')
   })
   // 「仍要采纳」：明知合并态不是 clean 仍合并。只在按钮灰着、而挡住它的不是另一个
   // 还没合的任务时有。

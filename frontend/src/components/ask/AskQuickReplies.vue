@@ -45,19 +45,6 @@
  * is undone at once, without a confirmation: it is his own, and undoing it only
  * puts the options back in front of him.
  *
- * Some questions carry the platform's buttons instead of plain options: a
- * teammate asking a person to decide a delivery that waits on them
- * (`agent.ask.ask_to_decide`) offers the card's accept and the task's close,
- * under the very names those buttons have (`acceptLabelKey`, 「关闭任务」). Such a button
- * is not a reply: clicking it emits `decide` and the panel calls the card's own
- * accept or the task's own close, the same request the card's and the task's
- * buttons make. On a task page the accept button reads the very state the
- * delivery bar's 采纳 reads (`injectAcceptCard`): the same label, greyed out
- * whenever the bar's is and with the same reason on hover, and a click is the
- * bar's own `onAcceptCard`. The question then closes when the delivery is decided, however
- * it was decided (`decided`), and says how; that line is the card's, so nobody
- * takes it back.
- *
  * The one who answered can take it back: a question takes one answer, so a
  * misclick otherwise has no way out. That is the answerer's own line — nobody
  * else's — and it comes off the question, not out of the room: the message they
@@ -74,13 +61,9 @@
  * or the server refused it and the line sits in the room with 「重试」.
  */
 import type { Block } from '../../cx_types'
-import type { AskOption } from '../../lib/blockDisplay'
-import type { AskAction } from '../../types/ask'
 
 import { computed, ref, watch } from 'vue'
 
-import { acceptLabelKey } from '../../composables/acceptCard/labels'
-import { injectAcceptCard } from '../../composables/useAcceptCard'
 import { t } from '../../i18n'
 import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
@@ -109,8 +92,6 @@ const emit = defineEmits<{
   /** 撤回自己的答复，或撤销自己的跳过：服务端是同一个动作。 */
   (e: 'withdraw'): void
   (e: 'skip'): void
-  /** 点了平台给的按钮（接受交付、关闭任务）：做那个动作，不是回一句话。 */
-  (e: 'decide', action: AskAction): void
 }>()
 
 const options = computed(() => askOptions(props.block) ?? [])
@@ -121,8 +102,7 @@ const askedAll = computed(() => !!meta.value.asked_all)
 const responses = computed(() => askAnswers(props.block))
 /** 提问方把题收起来了：撤回（不再等人答）或过期（还能答）。 */
 const closedByAsker = computed(() => askClosedByAsker(props.block))
-// 撤回了，或者按钮要决定的交付已经有了结果：都不再等人答，选项收起。
-const withdrawn = computed(() => closedByAsker.value === 'withdrawn' || closedByAsker.value === 'decided')
+const withdrawn = computed(() => closedByAsker.value === 'withdrawn')
 /** 真正的回答（不是跳过）：有一条，题就对所有人了结了。 */
 const answers = computed(() => responses.value.filter((a) => !a.skipped))
 const skips = computed(() => responses.value.filter((a) => a.skipped))
@@ -135,7 +115,7 @@ const mySkip = computed(() => props.viewer != null && skips.value.some((s) => s.
 const skipLines = computed(() => (skippedByAll.value ? skips.value : skips.value.filter((s) => s.by === props.viewer)))
 // 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
 // 一直有的权利，后端不看这两件事。
-const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer && !a.decided))
+const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
 // 点选项、在末行写自己的答案、跳过，都只给能回答这道题的人：点了名就是名单上的人，问所有人
 // 就是频道里谁都行（名单是问出口那一刻的人，后来进频道的也算），没点名也是谁都行。
 // 和服务端 `block.asked.may_answer` 同一条。
@@ -184,8 +164,6 @@ const choosing = computed(
 // 选项换掉之后那一行说明。提问方收起来的先说它；过期的那条只是不再等人，选项还在
 // 下面（见模板：这一行和选项可以同时出现）。
 const closedLine = computed(() => {
-  // 交付有了结果、而它相当于题上的某个按钮时，上面那一行答案已经说了是谁、点的哪个。
-  if (closedByAsker.value === 'decided') return answers.value.length ? '' : t('ask.replies.decided')
   if (closedByAsker.value) return t(`ask.replies.${closedByAsker.value}`)
   if (props.closed && !skippedByAll.value) return t('ask.replies.closed')
   return ''
@@ -210,48 +188,10 @@ const locked = computed(() => sent.value || !!props.answering)
 
 // 点一个选项：那几个字就是对这道题的回复。`disabled` 挡得住手，这里挡得住同一趟里
 // 又冒出来的第二下（键盘的数字键也走这里）。
-function pick(option: AskOption) {
-  if (locked.value || !canAnswer.value || optionOff(option)) return
-  // 平台的按钮不发消息：谁在做、做没做成由面板管（`useAskResponse.decide`），成了题自己
-  // 会随交付的结果收起来。
-  if (option.action) return emit('decide', option.action)
+function pick(text: string) {
+  if (locked.value || !canAnswer.value) return
   sent.value = true
-  emit('reply', label(option.text))
-}
-
-// 平台按钮上的字就是卡上「采纳」、任务「关闭任务」那两个按钮的字：同一个动作只有一个
-// 名字。库里的 `text` 只记动作是哪一种。
-function optionLabel(option: AskOption): string {
-  const action = option.action
-  const bound = boundAccept(option)
-  if (bound) return bound.acceptLabel.value
-  if (action?.kind === 'accept') return t(acceptLabelKey(action.completes_task))
-  if (action?.kind === 'close') return t('work.task.close')
-  return label(option.text)
-}
-// 任务页取的那一份采纳卡（交付栏读的就是它）。题上的「采纳」问的是同一张卡时，字、
-// 灰不灰、为什么灰都读它，不另算一遍：同一个动作在同一屏上只有一种状态。卡已经不是
-// 那一张（定了）时题也随之收起，用不到它。
-const acceptCard = injectAcceptCard()
-function boundAccept(option: AskOption) {
-  const action = option.action
-  if (action?.kind !== 'accept' || !acceptCard) return null
-  return acceptCard.pendingCard.value?.id === action.card ? acceptCard : null
-}
-// 交付栏上的采纳按钮灰着（或者根本不给这个人点）时，题上这个也灰着。
-function optionOff(option: AskOption): boolean {
-  const bound = boundAccept(option)
-  return !!bound && (!bound.decisionOpen.value || !!bound.acceptBlockedTitle.value || bound.acceptBusy.value)
-}
-// 为什么灰：交付栏按钮上那一句。
-function optionTitle(option: AskOption): string | undefined {
-  return boundAccept(option)?.acceptBlockedTitle.value ?? undefined
-}
-
-// 一行答案说的是哪个按钮时，也照看的人的语言写。
-function answerText(text: string): string {
-  const option = options.value.find((o) => o.action && o.text === text)
-  return option ? optionLabel(option) : text
+  emit('reply', label(text))
 }
 
 // 卡片有焦点时按 1–9 就是点第几个选项。末行输入框里的数字是在打字，不算；带修饰键的
@@ -263,7 +203,7 @@ function onCardKey(e: KeyboardEvent) {
   const option = options.value[Number(e.key) - 1]
   if (!option) return
   e.preventDefault()
-  pick(option)
+  pick(option.text)
 }
 
 function confirmWithdraw() {
@@ -346,10 +286,10 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
     <ul v-if="answers.length" class="ask-replies__answers">
       <li v-for="(answer, index) in answers" :key="index" class="ask-replies__row">
         <span class="ask-replies__answer">{{
-          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answerText(answer.text) })
+          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
         }}</span>
         <button
-          v-if="answer.by === viewer && !answer.decided"
+          v-if="answer.by === viewer"
           type="button"
           class="ask-replies__withdraw"
           :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
@@ -376,31 +316,25 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
       </ul>
       <p v-if="closedLine" class="ask-replies__row ask-replies__closed">{{ closedLine }}</p>
       <div v-if="choosing" class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
-        <!-- 灰着的按钮不出 title，提示挂在外面这一层上（和交付栏的采纳按钮一样）。 -->
-        <span
+        <button
           v-for="(option, index) in options"
           :key="option.text"
-          class="ask-replies__slot"
-          :title="optionTitle(option)"
+          type="button"
+          class="ask-replies__option"
+          :disabled="!canAnswer || locked"
+          @click="pick(option.text)"
         >
-          <button
-            type="button"
-            class="ask-replies__option"
-            :disabled="!canAnswer || locked || optionOff(option)"
-            @click="pick(option)"
-          >
-            <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
-            <span class="ask-replies__body">
-              <span class="ask-replies__label"
-                ><span class="ask-replies__text">{{ optionLabel(option) }}</span
-                ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
-                  t('ask.replies.recommended')
-                }}</span></span
-              >
-              <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
-            </span>
-          </button>
-        </span>
+          <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
+          <span class="ask-replies__body">
+            <span class="ask-replies__label"
+              ><span class="ask-replies__text">{{ label(option.text) }}</span
+              ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
+                t('ask.replies.recommended')
+              }}</span></span
+            >
+            <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
+          </span>
+        </button>
         <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer || locked }">
           <textarea
             ref="otherField"
@@ -509,9 +443,6 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 .ask-replies__other,
 .ask-replies__row {
   border-top: 1px solid var(--line);
-}
-.ask-replies__slot {
-  display: block;
 }
 .ask-replies__option {
   display: grid;

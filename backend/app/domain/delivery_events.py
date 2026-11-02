@@ -189,8 +189,8 @@ class Settle(Protocol):
 
 
 class SettleCard(Protocol):
-    """这张验收卡办完了：关于它的每一条提示一并结掉；返回结掉的那几件事的事件 id。"""
+    """这张验收卡办完了：关于它的每一条提示一并结掉。"""
 
     async def __call__(
         self, session: AsyncSession, card_id: uuid.UUID, outcome: dict
-    ) -> set[uuid.UUID]: ...
+    ) -> None: ...

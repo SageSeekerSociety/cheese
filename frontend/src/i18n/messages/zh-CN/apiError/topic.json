@@ -63,7 +63,5 @@
   "threadRestoreNotYours": "只有开这条支线的人和频道管理员能把它放回来",
   "threadRestoreSignIn": "恢复这条支线需要登录",
   "threadNotFound": "找不到这条支线",
-  "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出",
-  "askDecisionOffer": "offer 是要给的按钮：accept（接受交付）、close（关闭任务），给一个或两个，不重复",
-  "askDecisionNothingWaits": "这件任务没有在等人决定的交付，不用问"
+  "addressingChanged": "这条消息现在不会交给 AI 队友，没有发出"
 }

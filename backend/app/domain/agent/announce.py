@@ -257,12 +257,8 @@ async def notify_question(
     question: str,
     asker: str,
     asked: tuple[str, ...],
-    about_card: uuid.UUID | None = None,
 ) -> None:
     """芝士问了一个问题、这一轮就此结束 —— 通知等这个回答的人。
-
-    ``about_card``：题的按钮决定的是这张验收卡（`ask.ask_to_decide`）。卡号随通知
-    投出去，卡一有决定，这条就和卡上那几句「等你」一起结掉（`ledger.settle_card`）。
 
     **不走 `announce`。** 提问本身就是时间线上那条消息（`kind=message`，作者是
     芝士），再 announce 一次等于同一件事在房间里说两遍。所以这里只做投递这一半。
@@ -298,7 +294,6 @@ async def notify_question(
                 # 这条消息在哪条会话里 —— 任务或支线里问的题，通知点开要回到那条
                 # 线，不是回到频道（`_asked_where`）。
                 **_asked_where(place),
-                **({"cardId": str(about_card)} if about_card else {}),
             },
             # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
             # id，就是为了这个时刻拿得到。

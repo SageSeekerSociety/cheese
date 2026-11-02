@@ -19,7 +19,6 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { RefNames } from '../../lib/refChip'
-import type { AskAction } from '../../types/ask'
 import type { ChapterRow } from '../../types/chapters'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -177,7 +176,6 @@ const emit = defineEmits<{
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
   (e: 'ask-skip', block: Block): void
-  (e: 'ask-decide', block: Block, action: AskAction): void
   (e: 'ask-group-submit', questionId: string, answers: Record<string, GroupAnswer>): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
@@ -686,7 +684,6 @@ const rowLabels = computed(() =>
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
               @ask-skip="emit('ask-skip', $event)"
-              @ask-decide="(block, action) => emit('ask-decide', block, action)"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"

@@ -557,7 +557,7 @@ class RemoteTools:
                 )
                 # A read is one verb of an object (`cheese_chat.list`).
                 key = f"{params['tool']}.{action}" if action else params["tool"]
-                if params["tool"] in owed["answers"] or key in owed["answers"]:
+                if params["tool"] in owed["answers"]:
                     self.answered = owed["id"]
                     # And where the runner reads it, to know the turn may end.
                     Path(owed["answered"]).write_text(owed["id"])

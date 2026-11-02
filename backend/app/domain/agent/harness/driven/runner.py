@@ -152,7 +152,7 @@ def socket_path(state: Path) -> str:
 # The rule is decided here, once for every harness: which input owes an answer
 # (the platform says so when it delivers a person's message; a platform notice
 # owes nothing), from when (the moment the harness accepts it), what answers it
-# (`REPLY_TOOLS`, and `REPLY_VERBS` by key), what may still be read on the way to answering
+# (`REPLY_TOOLS`), what may still be read on the way to answering
 # (`REPLY_READS`), what the refusal says (`REPLY_OWED`), and when it lapses (the
 # turn ends with nothing unread). What differs is only where each harness lets a
 # tool call be refused, so each harness's tool path reads the file below and
@@ -196,10 +196,6 @@ def socket_path(state: Path) -> str:
 REPLY_OWED_ENV = "CHEESE_REPLY_OWED"
 #: The platform tools that answer a person, by their name in the tool table.
 REPLY_TOOLS = ("chat_send", "cheese_ask")
-#: One verb of an object that answers a person too, by its key
-#: (`<tool>.<action>`): asking them to decide a waiting delivery is a question
-#: in the room, as `cheese_ask` is, with the platform's buttons on it.
-REPLY_VERBS = ("cheese_card.ask",)
 #: The platform tools that read the room's own messages: let through, and no
 #: answer. Each is one verb of `cheese_chat`, by its key (`<tool>.<action>`):
 #: editing a message of one's own is in the same tool and answers nobody.
@@ -374,7 +370,7 @@ class Runner(Generic[J]):  # noqa: UP046
             json.dumps(
                 {
                     "id": identifier,
-                    "answers": [*REPLY_TOOLS, *REPLY_VERBS],
+                    "answers": list(REPLY_TOOLS),
                     "reads": list(REPLY_READS),
                     "reason": REPLY_OWED,
                     # Where the tool path writes the id down once it lets a
@@ -393,7 +389,7 @@ class Runner(Generic[J]):  # noqa: UP046
         session's). A reply starts the count again."""
         action = arguments.get("action") if isinstance(arguments, dict) else None
         key = f"{tool}.{action}" if isinstance(action, str) and action else tool
-        if tool in REPLY_TOOLS or key in REPLY_VERBS:
+        if tool in REPLY_TOOLS:
             self.since_reply = []
         else:
             self.since_reply.append(key)

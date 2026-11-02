@@ -922,12 +922,11 @@ function holdToAnswering(pi: any) {
   pi.on("tool_call", async (event: any) => {
     const debt = unanswered();
     if (!debt) return;
-    // A reply or a read can be one verb of an object, by its key
-    // (`cheese_card.ask`, `cheese_chat.list`).
-    const action = event.input?.action;
-    const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
     // Reading the room is on the way to answering it, and answers nothing.
-    if (!debt.answers.includes(event.toolName) && !debt.answers.includes(key)) {
+    if (!debt.answers.includes(event.toolName)) {
+      // A read is one verb of an object, by its key (`cheese_chat.list`).
+      const action = event.input?.action;
+      const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
       if (debt.reads.includes(key)) return;
       return { block: true, reason: debt.reason };
     }

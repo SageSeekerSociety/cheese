@@ -679,27 +679,6 @@ async def test_the_session_may_read_the_room_before_it_answers(tmp_path, harness
 
 @pytest.mark.anyio
 @every_harness
-async def test_asking_for_the_delivery_decision_answers_the_person(tmp_path, harness):
-    """Someone types 「采纳」 while a delivery waits on them: the session answers
-    with the platform's button (`cheese_card(action=ask)`), a question in the
-    room as `cheese_ask` is, and needs no other reply before it goes on."""
-    steps = [
-        call(
-            "cheese_card",
-            {"action": "ask", "question": "要接受 PR #1 吗？", "offer": ["accept"]},
-        ),
-        shell("touch AFTER"),
-    ]
-    async with harness(tmp_path, steps) as session:
-        await session.send("[someone]: 采纳", owes_reply=True)
-        await session.finished(len(steps) + 1)
-
-        assert REFUSED not in session.told(1)
-        assert (session.machine / "AFTER").exists()
-
-
-@pytest.mark.anyio
-@every_harness
 async def test_a_turn_nobody_asked_for_owes_nobody_an_answer(tmp_path, harness):
     steps = [shell("touch FIRST")]
     async with harness(tmp_path, steps) as session:

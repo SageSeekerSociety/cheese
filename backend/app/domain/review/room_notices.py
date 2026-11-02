@@ -45,12 +45,9 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
-from app.core.live_frames import show_once_committed
 from app.core.sentences import say
 from app.domain import happenings
 from app.domain.addressing import Event
-from app.domain.block.questions import settle_decision
-from app.domain.block.schemas import BlockOut
 from app.domain.deliverables import artifacts
 from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
@@ -171,11 +168,6 @@ async def _tell_the_reviewer(
     )
 
 
-#: 卡的结局对应问题卡上的哪个按钮（`agent.ask.ask_to_decide`）：采纳就是「采纳」那个按钮，
-#: 任务关掉就是「关闭任务」；退回、作废、归档不对应哪一个。
-_DECIDED_AS = {"accepted": "accept", "closed": "close"}
-
-
 async def _settle_the_card(
     session: AsyncSession,
     card: AcceptCard,
@@ -200,24 +192,7 @@ async def _settle_the_card(
     if settle_card is None:  # pragma: no cover - 接线漏了才会走到
         # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError("settle_card was not handed in")
-    settled = await settle_card(session, card.id, {"outcome": outcome})
-    # 对话里问「要接受还是关掉」的那道题，通知带着卡号、事件就是题本身：上面结掉
-    # 的事件里有它，题就一起收起来，免得留着点了也没用的按钮。
-    for question in await settle_decision(
-        session,
-        question_ids=settled,
-        card_id=card.id,
-        chosen=_DECIDED_AS.get(outcome),
-        by=card.decided_by or "",
-    ):
-        show_once_committed(
-            session,
-            question.conversation_id,
-            {
-                "type": "block_updated",
-                "block": BlockOut.model_validate(question).model_dump(mode="json"),
-            },
-        )
+    await settle_card(session, card.id, {"outcome": outcome})
     if outcome in ("accepted", "rejected") and card.task_id is not None:
         task = await session.get(Task, card.task_id)
         if task is not None:

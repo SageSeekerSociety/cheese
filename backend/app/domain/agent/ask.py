@@ -31,7 +31,6 @@ from app.domain.block.asked import SKIPPED, asked_of, settled, skipped_by_all
 from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import Block
 from app.domain.block.questions import (
-    Question,
     expire_question,
     parse_questions,
     post_questions,
@@ -44,7 +43,6 @@ from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.ledger import settle, settle_for
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
-from app.domain.review.services import AcceptService, deliverable_revision
 from app.domain.room_task.place import Place
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -143,115 +141,6 @@ async def ask(session, *, place, seat, body) -> list:
             },
         )
     return rows
-
-
-#: The buttons a question about a waiting delivery may carry
-#: (`ask_to_decide`), in the order they are shown.
-DECISIONS = ("accept", "close")
-
-
-async def ask_to_decide(
-    session, *, place, seat, card, question: object, offer: list[str]
-) -> list:
-    """Ask, in the task's conversation, for the decision a waiting delivery
-    needs — and offer the buttons that make it.
-
-    The teammate does not accept a delivery, and does not close a task whose
-    delivery waits on a person: both are the person's decision, made by a
-    click. When a person says in words what the decision is (「采纳」,
-    「关掉吧」), or the teammate thinks the task should close, this is how it
-    hands the click to them. The question is the teammate's own words; the
-    buttons are the platform's, worn with the names the card's and the task's
-    own buttons have (the page draws them from the action; ``text`` is only the
-    action's kind): ``accept`` calls the card's own accept route
-    with the head and the deliverable the card shows now, ``close`` the task's
-    own close route — the same routes, and the same checks on who may, as the
-    card's and the task's own buttons. Nothing here decides anything: the
-    question settles when the card does (`block.questions.settle_decision`).
-
-    It asks whoever may make the decisions it offers: the card's reviewers for
-    ``accept``, the task's owner and collaborators for ``close``.
-    """
-    offers = [kind for kind in DECISIONS if kind in offer]
-    if not offers or len(offers) != len(set(offer)):
-        raise UnprocessableEntityError(say("askDecisionOffer"))
-    task = place.task
-    reviewers = (
-        await AcceptService(session).reviewer_handles_for_cards([card.id])
-    ).get(card.id, [])
-    people = [h for h in [task.owner_handle, *(task.contributor_handles or [])] if h]
-    asked: tuple[str, ...] = tuple(
-        dict.fromkeys(
-            [
-                *(reviewers if "accept" in offers else []),
-                *(people if "close" in offers else []),
-            ]
-        )
-    )
-    options = []
-    for kind in offers:
-        if kind == "accept":
-            options.append(
-                {
-                    "text": kind,
-                    "action": {
-                        "kind": "accept",
-                        "card": str(card.id),
-                        # Picks the label, the one the card's own button wears
-                        # (「采纳并完成任务」 or 「采纳」).
-                        "completes_task": card.completes_task,
-                        "head_sha": card.pr_head_sha,
-                        "deliverable_revision": deliverable_revision(
-                            place.project_id, card
-                        ),
-                    },
-                }
-            )
-        else:
-            options.append(
-                {
-                    "text": kind,
-                    "action": {
-                        "kind": "close",
-                        "card": str(card.id),
-                        "task": str(task.id),
-                    },
-                }
-            )
-    rows = await post_questions(
-        session,
-        project_id=place.project_id,
-        conversation_id=place.conversation_id,
-        seat=seat,
-        questions=[Question(_question_text(question), options)],
-        asked=asked,
-        deadline=None,
-    )
-    await notify_question(
-        session,
-        place=place,
-        block=rows[0],
-        question=rows[0].content,
-        asker=seat,
-        asked=asked,
-        about_card=card.id,
-    )
-    for row in rows:
-        show_once_committed(
-            session,
-            row.conversation_id,
-            {
-                "type": "assistant_block",
-                "block": BlockOut.model_validate(row).model_dump(mode="json"),
-            },
-        )
-    return rows
-
-
-def _question_text(question: object) -> str:
-    if not isinstance(question, str) or not question.strip():
-        raise UnprocessableEntityError(say("askFieldRequired", field="question"))
-    return question.strip()
 
 
 def _deadline(body) -> datetime | None:

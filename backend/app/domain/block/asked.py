@@ -14,14 +14,12 @@ person a question names has skipped it is it settled by the skips, and a
 question asked of everyone never is: the channel is not a fixed list of people
 who could all decline.
 
-Three entries are neither: the asking agent taking its own question back
-(``withdrawn``, `block.questions.withdraw_question`), the clock running out
-on one nobody answered (``expired``, `block.questions.expire_question`), and
-the delivery a question's buttons decide being decided some other way
-(``decided``, `block.questions.settle_decision`). All three settle it — it
-stops waiting and leaves the 待你回答 lists — but none is an answer, so
-``answered`` is false for them; only an expired one may still be answered
-afterwards (the card keeps its field).
+Two entries are neither: the asking agent taking its own question back
+(``withdrawn``, `block.questions.withdraw_question`) and the clock running out
+on one nobody answered (``expired``, `block.questions.expire_question`). Both
+settle it — it stops waiting and leaves the 待你回答 lists — but neither is an
+answer, so ``answered`` is false for them and the question may still be
+answered afterwards (`expired` in particular: the card keeps its field).
 
 Who may respond to it at all — click an option, write an answer, skip it — is
 `may_answer`, one rule for all three: the people it names; anyone in the
@@ -44,13 +42,9 @@ SKIPPED = "skipped"
 WITHDRAWN = "withdrawn"
 #: Nobody answered it within its deadline (`block.questions.expire_question`).
 EXPIRED = "expired"
-#: The delivery its buttons decide was decided another way — on the card, on
-#: the forge, or by the task closing — with none of its buttons
-#: (`block.questions.settle_decision`).
-DECIDED = "decided"
-#: The kinds that settle a question without anybody answering it. They are
+#: The two kinds that settle a question without anybody answering it. They are
 #: not answers: ``answered`` stays false, and the card is free to take one.
-CLOSED_BY_THE_ASKER = (WITHDRAWN, EXPIRED, DECIDED)
+CLOSED_BY_THE_ASKER = (WITHDRAWN, EXPIRED)
 
 
 def asked_of(meta: dict | None) -> tuple[str, ...]:
@@ -123,11 +117,10 @@ def closed_by_the_asker(meta: dict | None) -> bool:
 
 
 def withdrawn_by_the_asker(meta: dict | None) -> bool:
-    """Whether it is closed for good — the asking agent took it back, or what it
-    asked about was decided — as opposed to its clock simply running out. Only
-    those are a reason to refuse a late answer."""
+    """Whether the asking agent took it back — as opposed to its clock simply
+    running out. Only the first is a reason to refuse a late answer."""
     return any(
-        (entry or {}).get("kind") in (WITHDRAWN, DECIDED)
+        (entry or {}).get("kind") == WITHDRAWN
         for entry in ((meta or {}).get("answer_log") or [])
     )
 

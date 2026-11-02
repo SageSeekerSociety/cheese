@@ -262,9 +262,8 @@ async def conclude_task(
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
         # Closing voids a delivery still waiting on a person (below), and whether
-        # it is voided is that person's decision: the teammate asks for it with
-        # the buttons that make it (`cheese_card(action=ask)`), and the close
-        # happens when a person clicks.
+        # it is voided is that person's decision, made on the interface; the
+        # refusal tells the teammate where the person clicks.
         if await AcceptService(db).waiting_card(task.id) is not None:
             raise ConflictError(say("taskCloseWhileDeliveryWaits"))
     elif not TaskService.takes_part(task, actor.handle):

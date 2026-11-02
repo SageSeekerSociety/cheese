@@ -14,7 +14,6 @@ import type { ChapterRow } from '../types/chapters'
 
 import { computed, provide, ref, watch } from 'vue'
 
-import { injectAcceptCard } from '../composables/useAcceptCard'
 import { useAskGroupAnswer } from '../composables/useAskGroupAnswer'
 import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
@@ -391,11 +390,7 @@ const {
 
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
-const {
-  withdrawQuestionAnswer,
-  skipQuestion,
-  decide: decideFromQuestion,
-} = useAskResponse({ timeline: panel.timeline, errorMsg, viewer, acceptCard: injectAcceptCard() })
+const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
@@ -615,7 +610,6 @@ useComposerShortcut({
             @ask-reply="replyToQuestion"
             @ask-withdraw="withdrawQuestionAnswer"
             @ask-skip="skipQuestion"
-            @ask-decide="decideFromQuestion"
             @ask-group-submit="submitAskGroup"
             @checklist="changeChecklist"
             @download="downloadAttachment"
