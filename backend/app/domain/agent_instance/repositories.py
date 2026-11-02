@@ -6,13 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.domain.agent_instance.facts import (
+    AGENT_INSTANCE_TABLES,
+    remember_project_agents,
+)
 from app.domain.agent_instance.models import AgentInstance, NameSource
 from app.domain.identity.handles import (
-    agent_instance_handle,
     agent_instance_id_bounds,
 )
 
-AGENT_INSTANCE_TABLES = _AGENT_INSTANCE_TABLES = frozenset({"agent_instances"})
+_AGENT_INSTANCE_TABLES = AGENT_INSTANCE_TABLES
 
 
 class AgentInstanceRepository:
@@ -113,23 +116,5 @@ class AgentInstanceRepository:
         )
         rows = list(result.scalars())
         if isinstance(self._session, AsyncSession):
-            remember(
-                self._session,
-                ("project_agent_instances", project_id),
-                tuple(rows),
-                tables=_AGENT_INSTANCE_TABLES,
-            )
-            for inst in rows:
-                remember(
-                    self._session,
-                    ("agent_instance_by_id", inst.id),
-                    inst,
-                    tables=_AGENT_INSTANCE_TABLES,
-                )
-                remember(
-                    self._session,
-                    ("seat_project", agent_instance_handle(inst.id)),
-                    inst.project_id,
-                    tables=_AGENT_INSTANCE_TABLES,
-                )
+            remember_project_agents(self._session, project_id, rows)
         return rows

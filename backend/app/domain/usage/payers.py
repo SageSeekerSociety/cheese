@@ -29,6 +29,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.domain.agent_instance.facts import remember_project_agents
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.team.services import team_service
@@ -222,17 +224,27 @@ async def project_with_payer(
     found, cached = recall(session, ("project", project_id))
     if found:
         return cached
-    row = (
+    # The project's agent instances ride along, one row each: admission asks
+    # which of them the credential's seat is next (`for_seat_handle`).
+    rows = (
         await session.execute(
             select(Project, Team.plan_key, Team.personal_owner_user_id, Plan)
+            .add_columns(AgentInstance)
             .outerjoin(
                 Team, and_(Team.id == Project.team_id, Team.deleted_at.is_(None))
             )
             .outerjoin(Plan, Plan.key == Team.plan_key)
+            .outerjoin(AgentInstance, AgentInstance.project_id == Project.id)
             .where(Project.id == project_id)
+            .order_by(AgentInstance.created_at)
         )
-    ).first()
+    ).all()
+    row = rows[0][:4] if rows else None
     project = row[0] if row is not None else None
+    if project is not None:
+        remember_project_agents(
+            session, project.id, [r[4] for r in rows if r[4] is not None]
+        )
     remember(session, ("project", project_id), project, tables=frozenset({"projects"}))
     if row is not None and project is not None and row[1] is not None:
         _, plan_key, owner, plan = row
