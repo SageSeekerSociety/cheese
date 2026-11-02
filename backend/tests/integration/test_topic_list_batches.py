@@ -1918,15 +1918,16 @@ def test_set_member_role_reuses_cached_standing_dependencies_before_commit(clien
     assert _count(role_sql, _PROJECTS_SELECT) == 1, [
         s for s in role_sql if _PROJECTS_SELECT.search(s)
     ]
-    # The roster row is read in the statement that reads where each person
-    # sits (`project_roles._read_seat`: alice's, then bob's), not on its own.
+    # The roster row and the recorded role are read in the statement that
+    # reads where each person sits (`project_roles._read_seat`: alice's, then
+    # bob's), not on their own.
     assert _count(role_sql, _PROJECT_MEMBERS_SELECT) == 0, [
         s for s in role_sql if _PROJECT_MEMBERS_SELECT.search(s)
     ]
     assert _count(role_sql, _SEAT_READ) <= 2, [
         s for s in role_sql if _SEAT_READ.search(s)
     ]
-    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 1, [
+    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 0, [
         s for s in role_sql if _PROJECT_ROLES_SELECT.search(s)
     ]
     assert len(role_sql) <= 12, (
