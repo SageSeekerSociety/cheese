@@ -481,6 +481,15 @@ async def admission(
             logger.exception("admission budget target failed for %s", project_uuid)
         else:
             ready_key = chat.room_key_in_step(project.settings, budget_target)
+    elif project_key and credit_context is not None:
+        # A task's key, asked here for the same reason: this transaction has
+        # the project and its payer, which a session of its own reads again.
+        try:
+            ready_key = await chat.task_key_in_step(
+                db, project_uuid, credit_context.task_id, credit_context.owner_handle
+            )
+        except Exception:
+            logger.exception("admission task key check failed for %s", project_uuid)
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -507,7 +516,7 @@ async def admission(
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
         if credit_context is not None:
-            supply["key"] = await chat.project_gateway_key(
+            supply["key"] = ready_key or await chat.project_gateway_key(
                 project_uuid,
                 task_id=credit_context.task_id,
                 credit_owner_handle=credit_context.owner_handle,
