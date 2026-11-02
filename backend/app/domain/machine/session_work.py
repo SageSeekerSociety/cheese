@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -773,9 +773,21 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     if holder is None:
         return None
     resource = holder.generation
-    row = await AgentSessionService(db).by_id(session_id)
-    if row is None:
+    # The session's row, with whether the agent its credential names is still
+    # a live account: the last thing asked below, in the same statement.
+    found = (
+        await db.execute(
+            select(
+                AgentSession,
+                exists().where(
+                    User.username == claims.get("a", ""), User.deleted_at.is_(None)
+                ),
+            ).where(AgentSession.id == session_id)
+        )
+    ).first()
+    if found is None:
         return None
+    row, agent_live = found
     lease = row.work_lease or {}
     request = row.execution_request or {}
     location = row.runtime_location or {}
@@ -807,7 +819,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         session_id, lease["device_id"]
     ):
         return None
-    if await user_by_handle(db, claims.get("a", "")) is None:
+    if not agent_live:
         return None
     await db.commit()
     return {
