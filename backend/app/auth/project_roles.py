@@ -428,8 +428,9 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
                 ),
             )
             # The anchor gives one row; nothing in the schema stops a person
-            # holding two live team rows, which would give two. Either one
-            # answers, as `_team_role`'s own read takes whichever comes first.
+            # holding two live team rows, which would give two. The oldest
+            # answers, the same one every time.
+            .order_by(TeamUserRelation.id)
             .limit(1)
         )
     ).one()
