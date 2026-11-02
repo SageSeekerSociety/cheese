@@ -285,7 +285,8 @@ def _strings(value) -> list[str]:
 
 
 class GraphQLSyntaxError(ValueError):
-    pass
+    """The document is not one this reader can read. Never shown to anyone:
+    the request it came with is refused as unreadable."""
 
 
 @dataclass
@@ -315,7 +316,7 @@ def _tokens(text: str) -> list[tuple[str, str]]:
     while at < len(text):
         match = _TOKEN.match(text, at)
         if not match:
-            raise GraphQLSyntaxError(f"unexpected character at {at}")
+            raise GraphQLSyntaxError
         at = match.end()
         kind = match.lastgroup or ""
         if kind == "skip":
@@ -344,7 +345,7 @@ def parse_operations(text: str) -> list[Operation]:
         nonlocal at
         token = peek()
         if token[0] == "eof" or (value is not None and token[1] != value):
-            raise GraphQLSyntaxError(f"expected {value!r}, got {token[1]!r}")
+            raise GraphQLSyntaxError
         at += 1
         return token
 
@@ -388,12 +389,12 @@ def parse_operations(text: str) -> list[Operation]:
                 continue
             kind, name = take()
             if kind != "name":
-                raise GraphQLSyntaxError(f"expected a field, got {name!r}")
+                raise GraphQLSyntaxError
             if peek()[1] == ":":
                 take(":")
                 kind, name = take()
                 if kind != "name":
-                    raise GraphQLSyntaxError("expected a field after an alias")
+                    raise GraphQLSyntaxError
             args = balanced("(", ")") if peek()[1] == "(" else []
             directives()
             if peek()[1] == "{":
@@ -410,7 +411,7 @@ def parse_operations(text: str) -> list[Operation]:
             ops.append(op)
             continue
         if kind != "name":
-            raise GraphQLSyntaxError(f"unexpected {value!r}")
+            raise GraphQLSyntaxError
         if value == "fragment":
             take()
             take()
@@ -420,7 +421,7 @@ def parse_operations(text: str) -> list[Operation]:
             selection_set(Operation("fragment", None), False)
             continue
         if value not in ("query", "mutation", "subscription"):
-            raise GraphQLSyntaxError(f"unexpected {value!r}")
+            raise GraphQLSyntaxError
         take()
         name = take()[1] if peek()[0] == "name" else None
         if peek()[1] == "(":
