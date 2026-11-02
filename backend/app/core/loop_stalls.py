@@ -60,7 +60,9 @@ _samples: Counter[tuple[str, ...]] = Counter()
 # is the collector freeing what died, and `gc_ms` on the stall says how much
 # of it the collector took.
 _gc_runs = [[0, 0.0, 0.0] for _ in range(3)]
-_gc_started = 0.0
+# When the pass in flight began; None between passes, so a "stop" whose
+# "start" this callback never saw is not charged.
+_gc_started: float | None = None
 _gc_since_beat = 0.0
 # Whether a watcher is sampling: the alarm handler re-arms only while it is,
 # so an alarm handled after the watcher stopped cannot start another one.
@@ -125,7 +127,10 @@ def _on_gc(phase: str, info: dict) -> None:
     if phase == "start":
         _gc_started = time.perf_counter()
         return
+    if _gc_started is None:
+        return
     took = time.perf_counter() - _gc_started
+    _gc_started = None
     _gc_since_beat += took
     runs = _gc_runs[min(info.get("generation", 2), 2)]
     runs[0] += 1

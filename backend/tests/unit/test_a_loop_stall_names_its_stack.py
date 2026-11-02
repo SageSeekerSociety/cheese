@@ -134,3 +134,10 @@ def test_a_stall_says_how_much_of_it_the_collector_took():
     assert status["gc"][2]["collections"] > before
     assert status["recent"][0]["gc_ms"] > 0
     assert gc.callbacks.count(loop_stalls._on_gc) == 0
+
+
+def test_a_collection_whose_start_was_not_seen_is_not_charged():
+    loop_stalls = _stalls()
+    before = [dict(g) for g in loop_stalls.stall_status()["gc"]]
+    loop_stalls._on_gc("stop", {"generation": 2})
+    assert loop_stalls.stall_status()["gc"] == before
