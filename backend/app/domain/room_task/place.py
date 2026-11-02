@@ -238,11 +238,9 @@ class PlaceResolver:
         # (`room_of_conversation` leaves this fact on the access check).
         known_room = None
         if _can_cache(self._session):
-            found_room, known_room = recall(
+            _, known_room = recall(
                 self._session, ("conversation_room_id", conversation_id)
             )
-            if not found_room:
-                known_room = None
         if known_room is None or known_room == conversation_id:
             place = await self.resolve(conversation_id, member=member)
             if place is not None:
