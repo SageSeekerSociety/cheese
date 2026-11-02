@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from sqlalchemy import Select, and_, inspect, select
+from sqlalchemy import Select, Uuid, and_, inspect, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import Base
@@ -13,6 +13,7 @@ from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import ConversationKind
+from app.domain.conversation.services import room_column
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 
@@ -266,6 +267,10 @@ class PlaceResolver:
                     if room_place is not None
                     else None
                 )
+            if self._knows_nothing_of(conversation_id):
+                return await self._read_conversation(
+                    conversation_id, member=member, ride_along=ride_along
+                )
         # A conversation the request already knows to be in another room is
         # a task or a 支线: asking `topics` for it would only find nothing
         # (`room_of_conversation` leaves this fact on the access check).
@@ -315,6 +320,97 @@ class PlaceResolver:
                 if room_place is not None
                 else None
             )
+        return None
+
+    def _knows_nothing_of(self, conversation_id: uuid.UUID) -> bool:
+        """Whether neither the session nor the request's facts hold anything
+        of this conversation: then it is read whole in one statement."""
+        sync = self._session.sync_session
+        if sync.identity_map.get(sync.identity_key(Topic, (conversation_id,))):
+            return False
+        return not any(
+            recall(self._session, (kind, conversation_id))[0]
+            for kind in ("topic_row", "task_row", "conversation_room_id")
+        )
+
+    async def _read_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        member: str | None,
+        ride_along: RideAlong | None,
+    ) -> Place | None:
+        """The conversation's room with its project, and its task or 支线 when
+        it is one, in one statement. A task's id was asked of `topics` first,
+        found nothing there, and was then read as a task, and its room after
+        it: three statements for every route a task's page calls."""
+        stmt = (
+            select(Topic, Project, Task, Thread)
+            .outerjoin(Project, Project.id == Topic.project_id)
+            .outerjoin(Task, Task.id == conversation_id)
+            .outerjoin(Thread, Thread.id == conversation_id)
+            .where(Topic.id == room_column(literal(conversation_id, type_=Uuid)))
+        )
+        if member is not None:
+            stmt = stmt.add_columns(TopicMembership.role).outerjoin(
+                TopicMembership,
+                and_(
+                    TopicMembership.topic_id == Topic.id,
+                    TopicMembership.member_handle == member,
+                ),
+            )
+        width = len(stmt.column_descriptions)
+        record = None
+        if ride_along is not None:
+            stmt, record = ride_along(stmt)
+        rows = (await self._session.execute(stmt)).all()
+        if not rows:
+            for kind, tables in (("topic_row", "topics"), ("task_row", "tasks")):
+                remember(
+                    self._session,
+                    (kind, conversation_id),
+                    None,
+                    tables=frozenset({tables}),
+                )
+            return None
+        room, project, task, thread = rows[0][:4]
+        if record is not None and project is not None:
+            record(project, [tuple(r[width:]) for r in rows])
+        if project is not None:
+            remember(
+                self._session,
+                ("project", project.id),
+                project,
+                tables=frozenset({"projects"}),
+            )
+        remember(
+            self._session, ("topic_row", room.id), room, tables=frozenset({"topics"})
+        )
+        if member is not None:
+            remember(
+                self._session,
+                ("topic_member_role", room.id, member),
+                rows[0][4],
+                tables=frozenset({"topic_memberships"}),
+            )
+        if room.id == conversation_id:
+            return Place(room=room)
+        remember(
+            self._session,
+            ("topic_row", conversation_id),
+            None,
+            tables=frozenset({"topics"}),
+        )
+        remember(
+            self._session,
+            ("task_row", conversation_id),
+            task,
+            tables=frozenset({"tasks"}),
+        )
+        if task is not None:
+            return Place(room=room, task=task)
+        if thread is not None:
+            return Place(room=room, thread=thread)
         return None
 
     async def inner_place(self, conversation_id: uuid.UUID) -> Place | None:

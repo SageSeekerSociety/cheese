@@ -181,6 +181,15 @@ _EXCLUSIONS_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM project_member_exclusions\b",
     re.IGNORECASE,
 )
+# Where one person sits in a project, read in one statement
+# (`project_roles._read_seat`): it carries their exclusion, roster row, role and
+# team row beside their account, and is not the list reads counted below.
+_SEAT_READ = re.compile(
+    r'^\s*SELECT "user"\.id\b[^;]*?\bLEFT OUTER JOIN team_user_relation\b',
+    re.IGNORECASE,
+)
+
+
 _TEAM_MEMBERS_PER_TEAM_SELECT = re.compile(
     r"^\s*SELECT\b[^;]*?\bFROM team_user_relation\s+WHERE team_user_relation\.team_id =",
     re.IGNORECASE,
@@ -482,9 +491,10 @@ def test_project_members_list_deduplicates_project_exclusions_and_counts(client)
     assert _count(seen, _PROJECT_MEMBERS_COUNT_SELECT) == 0, [
         s for s in seen if _PROJECT_MEMBERS_COUNT_SELECT.search(s)
     ]
-    assert _count(seen, _EXCLUSIONS_SELECT) == 1, [
-        s for s in seen if _EXCLUSIONS_SELECT.search(s)
+    exclusions = [
+        s for s in seen if _EXCLUSIONS_SELECT.search(s) and not _SEAT_READ.search(s)
     ]
+    assert len(exclusions) == 1, exclusions
     assert _count(seen, _AGENT_INSTANCES_SELECT) == 1, [
         s for s in seen if _AGENT_INSTANCES_SELECT.search(s)
     ]
@@ -826,9 +836,14 @@ def test_room_tasks_and_accept_cards_deduplicate_room_cards_and_forges(client):
     assert r_cards.status_code == 200, r_cards.text
     assert len(r_cards.json()["data"]["data"]) == 1
 
-    assert _count(cards_sql, _ALL_TASKS_SELECT) == 1, [
-        s for s in cards_sql if _ALL_TASKS_SELECT.search(s)
+    # The task is read on its own, or with its room in the statement that
+    # resolves the conversation (`PlaceResolver._read_conversation`).
+    task_reads = [
+        s
+        for s in cards_sql
+        if _ALL_TASKS_SELECT.search(s) or "LEFT OUTER JOIN tasks ON tasks.id =" in s
     ]
+    assert len(task_reads) == 1, task_reads
     assert _count(cards_sql, _PROJECT_FORGES_SELECT) == 1, [
         s for s in cards_sql if _PROJECT_FORGES_SELECT.search(s)
     ]
@@ -1425,9 +1440,12 @@ def test_list_project_members_deduplicates_project_members_owner_profile_and_tea
     assert _count(mem_sql, _PROJECT_MEMBERS_SELECT) == 1, [
         s for s in mem_sql if _PROJECT_MEMBERS_SELECT.search(s)
     ]
-    assert _count(mem_sql, _TEAM_USER_REL_JOIN_SELECT) == 1, [
-        s for s in mem_sql if _TEAM_USER_REL_JOIN_SELECT.search(s)
+    team_rows = [
+        s
+        for s in mem_sql
+        if _TEAM_USER_REL_JOIN_SELECT.search(s) and not _SEAT_READ.search(s)
     ]
+    assert len(team_rows) == 1, team_rows
     assert len(mem_sql) <= 15, (
         f"expected <= 15 SQL statements on GET /projects/{{id}}/members, got {len(mem_sql)}: {mem_sql}"
     )
@@ -1900,10 +1918,16 @@ def test_set_member_role_reuses_cached_standing_dependencies_before_commit(clien
     assert _count(role_sql, _PROJECTS_SELECT) == 1, [
         s for s in role_sql if _PROJECTS_SELECT.search(s)
     ]
-    assert _count(role_sql, _PROJECT_MEMBERS_SELECT) == 1, [
+    # The roster row and the recorded role are read in the statement that
+    # reads where each person sits (`project_roles._read_seat`: alice's, then
+    # bob's), not on their own.
+    assert _count(role_sql, _PROJECT_MEMBERS_SELECT) == 0, [
         s for s in role_sql if _PROJECT_MEMBERS_SELECT.search(s)
     ]
-    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 1, [
+    assert _count(role_sql, _SEAT_READ) <= 2, [
+        s for s in role_sql if _SEAT_READ.search(s)
+    ]
+    assert _count(role_sql, _PROJECT_ROLES_SELECT) == 0, [
         s for s in role_sql if _PROJECT_ROLES_SELECT.search(s)
     ]
     assert len(role_sql) <= 12, (

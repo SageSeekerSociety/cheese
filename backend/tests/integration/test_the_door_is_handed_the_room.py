@@ -83,7 +83,14 @@ def _statements_while(client, request):
 
 
 def _room_lookups(statements) -> int:
-    return sum(1 for statement in statements if _ROOM_LOOKUP.search(statement))
+    # The route's own read of its place (`PlaceResolver._read_conversation`)
+    # finds the room the same way, with the project and the task beside it:
+    # that is the read the door is handed, not a lookup the door makes.
+    return sum(
+        1
+        for statement in statements
+        if _ROOM_LOOKUP.search(statement) and "JOIN projects" not in statement
+    )
 
 
 @contextmanager
