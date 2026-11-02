@@ -19,7 +19,7 @@ from pathlib import Path
 if sys.platform != "win32":
     import fcntl
 
-VERSION = "2.1.299"
+VERSION = "2.1.316"
 # The platform's own directory inside a room's home, and the one it used before.
 # A harness's config dir is the harness's; everything the platform installs —
 # the executor, its helpers, the CLI, the environment runner — lives here.
