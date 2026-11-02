@@ -12,7 +12,7 @@
 // 才算一次；翻过一页之后，要等事件停够一小段时间（惯性结束）才认下一次。鼠标滚轮一格一个
 // 事件、位移一下就过门槛，所以一格翻一页；连着快速拨的几格算一次。
 
-import { onBeforeUnmount, watch, type Ref } from 'vue'
+import { onBeforeUnmount, type Ref, watch } from 'vue'
 
 /** 攒够这么多像素算一次翻页。鼠标一格是 100 左右，触控板轻划一下几十。 */
 export const TURN_THRESHOLD = 50
@@ -118,7 +118,8 @@ export function useSlideWheel(options: SlideWheelOptions) {
     const factor = scale / gestureScale
     gestureScale = scale
     const point = event as Event & { clientX?: number; clientY?: number }
-    if (factor && factor !== 1) options.zoom(factor, stagePoint({ clientX: point.clientX ?? 0, clientY: point.clientY ?? 0 }))
+    if (factor && factor !== 1)
+      options.zoom(factor, stagePoint({ clientX: point.clientX ?? 0, clientY: point.clientY ?? 0 }))
   }
 
   let bound: HTMLElement | null = null

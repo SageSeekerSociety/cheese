@@ -11,6 +11,8 @@ const props = defineProps<{
   revision: number
   paint: (page: number, host: HTMLElement, options: SlidePaintOptions) => Promise<void>
   cancelPaint: (host: HTMLElement) => void
+  /** 每一页的两样标记：隐藏页（缩略图压暗、标「隐藏」）、写了备注（左下角一个小记号）。 */
+  marks?: readonly { hidden: boolean; noted: boolean }[]
 }>()
 const emit = defineEmits<{ select: [page: number] }>()
 const rail = ref<HTMLElement | null>(null)
@@ -116,13 +118,22 @@ onBeforeUnmount(() => {
       type="button"
       class="slide-rail__page"
       :data-slide-page="page"
-      :aria-label="t('slides.goPage', { page })"
+      :aria-label="
+        marks?.[page - 1]?.hidden
+          ? `${t('slides.goPage', { page })} · ${t('slides.hiddenSlide')}`
+          : t('slides.goPage', { page })
+      "
+      :class="{ 'is-hidden-slide': marks?.[page - 1]?.hidden }"
       :aria-current="current === page ? 'page' : undefined"
       @click="emit('select', page)"
     >
       <span class="slide-rail__thumb">
         <span :ref="(el) => setHost(page, el)" class="slide-rail__image" />
         <span class="slide-rail__no" aria-hidden="true">{{ page }}</span>
+        <span v-if="marks?.[page - 1]?.hidden" class="slide-rail__tag" aria-hidden="true">{{
+          t('slides.hiddenSlide')
+        }}</span>
+        <span v-if="marks?.[page - 1]?.noted" class="slide-rail__noted" :title="t('slides.notes')" aria-hidden="true" />
       </span>
     </button>
     <div :style="{ height: `${Math.max(0, count - start - pages.length) * rowHeight}px` }" />
@@ -193,5 +204,30 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 14px;
   font-variant-numeric: tabular-nums;
+}
+.slide-rail__page.is-hidden-slide .slide-rail__image {
+  opacity: 0.45;
+}
+.slide-rail__tag {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+/* 写了备注的那几页：左下角一个小圆点，找讲稿写到哪一页用。 */
+.slide-rail__noted {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 </style>

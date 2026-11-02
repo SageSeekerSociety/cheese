@@ -5,7 +5,7 @@
 
 import type { FromPresenter, PresenterDeck, ToPresenter } from '@/lib/slidePresenter'
 
-import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
+import { onBeforeUnmount, type Ref, ref, watch } from 'vue'
 
 import { newPresenterId, openPresenterWindow, presenterChannel } from '@/lib/slidePresenter'
 

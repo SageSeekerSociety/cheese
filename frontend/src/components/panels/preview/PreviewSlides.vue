@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { SlidePageContext, SlideSource } from './slidesContext'
 import type { SlideNote } from '@/lib/slideNotes'
+import type { SlidePageContext, SlideSource } from './slidesContext'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DragGesture } from '@use-gesture/vanilla'
@@ -10,8 +10,8 @@ import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
-import { pageRatio } from './slidesContext'
 import SlideNotesDock from './SlideNotesDock.vue'
+import { pageRatio } from './slidesContext'
 import SlideThumbRail from './SlideThumbRail.vue'
 import { useSlidePresenterLink } from './useSlidePresenterLink'
 import { useSlideWheel } from './useSlideWheel'
@@ -268,9 +268,9 @@ function keyboard(event: KeyboardEvent) {
     else resetZoom()
     return
   }
-  const direction = ({ ArrowRight: 1, ArrowDown: 1, PageDown: 1, ' ': 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 } as const)[
-    event.key as 'ArrowRight'
-  ]
+  const direction = (
+    { ArrowRight: 1, ArrowDown: 1, PageDown: 1, ' ': 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 } as const
+  )[event.key as 'ArrowRight']
   // 空格只在放映时翻页（翻页笔、PowerPoint 的习惯）；读稿时空格留给浏览器滚动。
   if (direction !== undefined && (event.key !== ' ' || presenting.value)) {
     event.preventDefault()
@@ -355,9 +355,7 @@ watch(
     await paint(current.value, host, {
       width: Math.max(32, (size.value.width - 2 * pad.x) * scale),
       height:
-        fit.value || presenting.value
-          ? Math.max(32, (size.value.height - pad.top - pad.bottom) * scale)
-          : undefined,
+        fit.value || presenting.value ? Math.max(32, (size.value.height - pad.top - pad.bottom) * scale) : undefined,
       text: true,
       maxScale: 8,
     })
@@ -457,8 +455,7 @@ useSlideWheel({
 // 开一个窗口给讲的人自己看（讲稿、下一页、计时），这一边同时进入放映，投给台下。
 const presenterBlocked = ref(false)
 const presenter = useSlidePresenterLink({
-  deck: () =>
-    props.data && ready.value ? { bytes: props.data, notes: aligned.value, title: props.title } : null,
+  deck: () => (props.data && ready.value ? { bytes: props.data, notes: aligned.value, title: props.title } : null),
   page: current,
   go,
 })
@@ -497,13 +494,42 @@ onBeforeUnmount(() => {
       <header v-if="!presenting" class="slides__toolbar">
         <span v-if="title" class="slides__title t-body">{{ title }}</span>
         <span class="slides__spacer" />
+        <div v-if="ready && !narrow" class="slides__zoom" role="group" :aria-label="t('slides.zoomReset')">
+          <button
+            type="button"
+            class="slides__tool"
+            :aria-label="t('slides.zoomOut')"
+            :title="t('slides.zoomOut')"
+            @click="zoomBy(0.8)"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            class="slides__tool slides__zoom-level"
+            :title="t('slides.zoomReset')"
+            data-testid="slides-zoom"
+            @click="resetZoom"
+          >
+            {{ zoomLabel }}
+          </button>
+          <button
+            type="button"
+            class="slides__tool"
+            :aria-label="t('slides.zoomIn')"
+            :title="t('slides.zoomIn')"
+            @click="zoomBy(1.25)"
+          >
+            +
+          </button>
+        </div>
         <button
-          v-if="ready && hasNotes"
+          v-if="ready"
           type="button"
           class="slides__tool"
           :aria-pressed="showNotes"
           data-testid="slides-notes-toggle"
-          @click="notesOpen = !notesOpen"
+          @click="toggleNotes"
         >
           {{ t('slides.notes') }}
         </button>
@@ -555,6 +581,7 @@ onBeforeUnmount(() => {
       <div v-else class="slides__body">
         <SlideThumbRail
           v-if="showRail"
+          :marks="railMarks"
           :count="count"
           :current="current"
           :revision="revision"
@@ -562,7 +589,7 @@ onBeforeUnmount(() => {
           :cancel-paint="cancelPaint"
           @select="go"
         />
-        <div class="slides__main">
+        <div ref="main" class="slides__main">
           <!-- 一页上方那一条：‹ 4 / 6 › … 放映。页码本身是个能跳的输入框，看起来还是「4 / 6」。
                放映时同一条挪到屏幕底部：翻页和跳页都还在手边，只是一片半透明的小胶囊。 -->
           <div class="slides__bar" :class="{ 'slides__bar--present': presenting }">
@@ -589,6 +616,13 @@ onBeforeUnmount(() => {
               />
               <span class="t-meta">/ {{ count }}</span>
             </form>
+            <span
+              v-if="isHidden(current)"
+              class="slides__hidden"
+              :title="t('slides.hiddenSlideHint')"
+              data-testid="slides-hidden"
+              >{{ t('slides.hiddenSlide') }}</span
+            >
             <button
               type="button"
               class="slides__chev"
@@ -601,6 +635,17 @@ onBeforeUnmount(() => {
             </button>
             <span v-if="!presenting" class="slides__spacer" />
             <span v-if="presenting" class="slides__bar-hint">{{ t('slides.presentHint') }}</span>
+            <button
+              v-if="!presenting && !narrow"
+              type="button"
+              class="slides__present slides__present--quiet"
+              :disabled="!ready"
+              :title="t('slides.presenterHint')"
+              data-testid="slides-presenter"
+              @click="presenterView"
+            >
+              {{ t('slides.presenterView') }}
+            </button>
             <button
               v-if="!presenting"
               ref="presentButton"
@@ -619,29 +664,23 @@ onBeforeUnmount(() => {
           <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
           <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- a mouse selection on the slide is quoted and (while presenting) a click turns the page; the keyboard turns pages on the reader around it, which is why the stage itself is not focusable -->
           <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @click="pointAdvance">
-            <!-- 幻灯片和它下面那条备注是一个整体：一起居中、一起滚。分开摆的话备注会贴在
-                 这一格的下沿，离幻灯片很远——读者看不出它说的是这一页。宽度也跟着幻灯片
-                 走（下面那一列按内容撑开，页宽由 `useSlidesPdf` 写死在页自己身上）。 -->
-            <div class="slides__column">
-              <div
-                ref="sheet"
-                class="slides__sheet"
-                :class="{ 'is-dragging': dragX !== 0 }"
-                :data-page="current"
-                :style="dragX ? { transform: `translateX(${dragX}px)` } : undefined"
-              />
-              <!-- 演讲者备注：幻灯片下面那一条空闲里的正文。放映时不出现（见脚本里那一段）。 -->
-              <section
-                v-if="showNotes"
-                class="slides__notes"
-                data-testid="slides-notes"
-                :aria-label="t('slides.notes')"
-              >
-                <p v-if="pageNote" class="slides__notes-text">{{ pageNote }}</p>
-                <p v-else class="slides__notes-empty t-meta">{{ t('slides.notesEmpty') }}</p>
-              </section>
-            </div>
+            <div
+              ref="sheet"
+              class="slides__sheet"
+              :class="{ 'is-hidden-slide': isHidden(current) && !presenting }"
+              :data-page="current"
+            />
           </div>
+          <SlideNotesDock
+            v-if="showNotes"
+            :note="pageNote"
+            :any-notes="hasNotes"
+            :page="current"
+            :height="notesShownHeight"
+            :max-height="notesMax"
+            @resize="resizeNotes"
+            @close="closeNotes"
+          />
         </div>
       </div>
       <!-- 放映没有工具栏；留一颗看得见的出口，触屏上没有 Esc 也退得出来（原型只有那句提示）。-->
@@ -664,6 +703,7 @@ onBeforeUnmount(() => {
         {{ problem || t('slides.rendererMissing') }}
       </p>
       <p v-if="pageFailure" class="slides__notice t-meta" role="alert">{{ pageFailure }}</p>
+      <p v-if="presenterBlocked" class="slides__notice t-meta" role="alert">{{ t('slides.presenterBlocked') }}</p>
     </section>
   </Teleport>
 </template>
@@ -860,11 +900,32 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border-radius: 8px;
   box-shadow: var(--shadow-2);
-  /* 松手弹回原处时有个过程；跟着手指走的那一段不能有，否则一路慢半拍。 */
-  transition: transform var(--dur-quick) var(--ease-standard);
 }
-.slides__sheet.is-dragging {
-  transition: none;
+/* 隐藏页照常看得到（和 PowerPoint 的编辑视图一样），压暗一点，页码旁标着「隐藏」。 */
+.slides__sheet.is-hidden-slide {
+  opacity: 0.6;
+}
+.slides__hidden {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--muted);
+  background: var(--fill-2);
+}
+.slides__zoom {
+  display: inline-flex;
+  align-items: center;
+}
+.slides__zoom-level {
+  min-width: 52px;
+  font-variant-numeric: tabular-nums;
+}
+.slides__present--quiet {
+  margin-right: 6px;
+  border-color: transparent;
+  color: var(--muted);
 }
 /* 窄处：一页铺满宽度，四周只留 8px；横着滑归翻页，竖着滑照旧滚。缩略图和「适合页面」
    不摆——一栏缩略图在手机上要占掉三分之一屏，而一页本来就是按宽度铺的。 */
@@ -874,44 +935,6 @@ onBeforeUnmount(() => {
 }
 .slides--narrow .slides__bar {
   padding: 4px 8px 0;
-}
-/* 幻灯片加它下面那条备注：一列，宽由幻灯片定（页宽写死在页自己身上，这一列跟着撑开）。
-   靠上摆，上下多出来的空间留在下面——原型也是这么摆的。 */
-.slides__column {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  align-items: stretch;
-  /* 宽度由幻灯片说了算，不能被备注撑开：一段没有换行的长备注（中文里常见）会把这一列
-     撑到几千像素宽，幻灯片也跟着歪出屏幕。舞台的内容宽就是一页的宽（四周那圈 padding
-     之外正好留给页），所以卡在 100% 上即可。 */
-  min-width: 0;
-  max-width: 100%;
-}
-/* 幻灯片下面那一行：讲稿。不上边框、不铺底——它和幻灯片之间只隔一点空，读者一眼看得出
-   是同一条；画一条横贯面板的线会把这条绑到面板下沿上，离幻灯片太远。 */
-.slides__notes {
-  flex: none;
-  min-width: 0;
-  /* 一份备注可以很长，高度有个上限：再长就在自己里面滚，不把幻灯片挤小（读者是来看这一页
-     的）。上限按视口算，不用百分比——百分比要有一个定高祖先才生效，而这一列是内容撑开的。 */
-  max-height: 22vh;
-  overflow: auto;
-  margin-top: 10px;
-}
-.slides__notes-text {
-  margin: 0;
-  /* 13 / --muted：比正文小一档、比装饰色重一档。原型这一行用的是最淡的那个色和 12px，
-     一整段讲稿用那个色读起来吃力；讲的人和屏幕的距离也更远。 */
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.slides__notes-empty {
-  margin: 0;
-  color: var(--faint);
 }
 .slides__exit {
   position: fixed;
@@ -938,171 +961,7 @@ onBeforeUnmount(() => {
   outline: 2px solid var(--present-ink);
   outline-offset: 2px;
 }
-/* 放映时这一条落在屏幕底部，压在一小片半透明上：翻页和跳页都还在手边。 */
-.slides__bar--present {
-  position: fixed;
-  bottom: 16px;
-  left: 50%;
-  z-index: 1;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--present-fill);
-  color: var(--present-ink);
-  transform: translateX(-50%);
-  cursor: default;
-}
-.slides__bar--present .slides__chev {
-  color: var(--present-muted);
-}
-.slides__bar--present .slides__chev:hover:not(:disabled) {
-  background: var(--present-fill-2);
-  color: var(--present-ink);
-}
-.slides__bar--present .slides__chev:disabled {
-  color: var(--present-muted);
-  opacity: 0.45;
-}
-.slides__bar--present .slides__jump {
-  color: var(--present-muted);
-}
-.slides__bar--present .slides__jump input {
-  color: var(--present-ink);
-}
-.slides__bar--present .slides__jump input:hover:not(:disabled) {
-  border-color: var(--present-fill-2);
-}
-.slides__bar--present .slides__jump input:focus {
-  border-color: var(--present-ink);
-  background: var(--present-fill);
-}
-.slides__bar-hint {
-  margin-left: 8px;
-  padding-left: 10px;
-  border-left: 1px solid var(--present-fill-2);
-  color: var(--present-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.slides__state {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 32px 24px;
-  color: var(--muted);
-  text-align: center;
-  background: var(--canvas);
-}
-.slides__state p {
-  margin: 0;
-  max-width: 40ch;
-}
-.slides__state-title {
-  color: var(--text);
-  font-size: 15px;
-}
-.slides__state-icon {
-  width: 28px;
-  height: 28px;
-  fill: var(--faint);
-}
-.slides__state--loading {
-  gap: 12px;
-}
-.slides__spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--line-2);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: slides-spin 0.8s linear infinite;
-}
-@keyframes slides-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .slides__spinner {
-    animation-duration: 2.4s;
-  }
-  .slides__sheet {
-    transition: none;
-  }
-}
-.slides__notice {
-  margin: 0;
-  padding: 8px 16px;
-  color: var(--danger-ink);
-}
-.slides__notice[role='status'] {
-  color: var(--muted);
-}
-.slides__sheet :deep(canvas) {
-  display: block;
-  border-radius: 8px;
-}
-/* 这一份和 PreviewPages 里 `.pv-text` 那一段是同一套写法：改一处时两处一起改。
- *
- * pdf.js 6 只把几何写成变量，字号和 transform 得由样式从这里乘出来。少了这一段，
- * 字还是透明的、位置也对，坏在看不见的地方——每个 span 按继承来的字号排版，盒子
- * 大小和纸上那些字对不上，选中落在隔壁，高亮盖不住。 */
-.slides__sheet :deep(.slide-text-layer) {
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
-  position: absolute;
-  text-align: initial;
-  inset: 0;
-  /* `clip` 不是 `hidden`：hidden 是一个能滚的框，一路拖下去选的时候浏览器会把它自己
-     滚走，高亮跟着离开纸面，再被页框裁掉。 */
-  overflow: clip;
-  line-height: 1;
-  letter-spacing: normal;
-  word-spacing: normal;
-  text-size-adjust: none;
-  forced-color-adjust: none;
-  transform-origin: 0 0;
-  caret-color: CanvasText;
-  z-index: 0;
-}
-.slides__sheet :deep(.slide-text-layer span),
-.slides__sheet :deep(.slide-text-layer br) {
-  position: absolute;
-  white-space: pre;
-  color: transparent;
-  cursor: text;
-  transform-origin: 0 0;
-  user-select: text;
-}
-.slides__sheet :deep(.slide-text-layer > :not(.markedContent)),
-.slides__sheet :deep(.slide-text-layer .markedContent span:not(.markedContent)) {
-  z-index: 1;
-  --font-height: 0;
-  --scale-x: 1;
-  --rotate: 0deg;
-  font-size: calc(var(--text-scale-factor) * var(--font-height));
-  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
-}
-.slides__sheet :deep(.slide-text-layer .markedContent) {
-  display: contents;
-}
-/* 选中只剩底色，底色不在这里画——和 PreviewPages 里那一段同一套写法，改一处时两处
-   一起改。这一条把浏览器那一层关掉，自己画的那一层在下面。`color` 还是要点明：正文
-   本来是透明的，不写的话浏览器会按「被选中的文字」给它上色，选中的那几个字上又叠出
-   一层同形状的字。 */
-.slides__sheet :deep(.slide-text-layer ::selection) {
-  background: transparent;
-  color: transparent;
-}
-/* 自己画的那一层的样式在 `preview-selection-paint.css`：和分页文档共用一份，两档的
-   选中底色才不可能变成两个颜色。 */
-.slides__sheet :deep(.slide-paint-error) {
-  padding: 32px 16px;
-  color: var(--danger-ink);
-}
 </style>
 
+<style scoped src="./slides-stage.css"></style>
 <style src="./preview-selection-paint.css"></style>

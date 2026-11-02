@@ -139,12 +139,9 @@ function key(event: KeyboardEvent) {
           :style="{ '--level': paragraph.level ?? 0 }"
         >
           <span v-if="marks[i]" class="slide-notes__mark" aria-hidden="true">{{ marks[i] }}</span>
-          <span
-            v-for="(run, j) in paragraph.runs"
-            :key="j"
-            :class="{ 'is-bold': run.bold, 'is-italic': run.italic }"
-            >{{ run.text }}</span
-          >
+          <span v-for="(run, j) in paragraph.runs" :key="j" :class="{ 'is-bold': run.bold, 'is-italic': run.italic }">{{
+            run.text
+          }}</span>
         </p>
       </template>
       <p v-else class="slide-notes__empty t-meta">

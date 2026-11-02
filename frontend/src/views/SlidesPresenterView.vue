@@ -4,8 +4,8 @@
 //
 // 不取数、不读地址：频道号在自己的窗口名上（`lib/slidePresenter.ts`），稿子整份由放映那边
 // 递过来。没有频道号（有人直接打开了这个地址）就说一句，让他回到幻灯片上按「讲者视图」。
-import type { FromPresenter, ToPresenter } from '@/lib/slidePresenter'
 import type { SlideNote } from '@/lib/slideNotes'
+import type { FromPresenter, ToPresenter } from '@/lib/slidePresenter'
 
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 
@@ -32,8 +32,7 @@ function hear(event: MessageEvent<ToPresenter>) {
     title.value = message.deck.title
     page.value = message.deck.page
     ended.value = false
-    if (typeof document !== 'undefined')
-      document.title = `${t('slides.presenterView')} · ${message.deck.title}`
+    if (typeof document !== 'undefined') document.title = `${t('slides.presenterView')} · ${message.deck.title}`
   } else if (message.type === 'page') page.value = message.page
   else if (message.type === 'end') ended.value = true
 }

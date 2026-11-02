@@ -11,10 +11,11 @@ import type { SlideNote } from '@/lib/slideNotes'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { useSlidesPdf } from '@/composables/useSlidesPdf'
+
 import SlideNotesDock from './SlideNotesDock.vue'
 import { useSlideWheel } from './useSlideWheel'
 
-import { useSlidesPdf } from '@/composables/useSlidesPdf'
 import { t } from '@/i18n'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { hasNoteText } from '@/lib/slideNotes'
@@ -62,9 +63,7 @@ const pausedAt = ref<number | null>(null)
 const tick = ref(Date.now())
 let timer: number | undefined
 const elapsed = computed(() => Math.max(0, (pausedAt.value ?? tick.value) - started.value))
-const clock = computed(() =>
-  new Date(tick.value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-)
+const clock = computed(() => new Date(tick.value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 function format(ms: number) {
   const s = Math.floor(ms / 1000)
   const h = Math.floor(s / 3600)
@@ -213,9 +212,8 @@ watch(
             ‹ {{ t('slides.previous') }}
           </button>
           <span class="presenter__page"
-            >{{ page }} / {{ count }}<span v-if="hidden(page)" class="presenter__hidden">{{
-              t('slides.hiddenSlide')
-            }}</span></span
+            >{{ page }} / {{ count
+            }}<span v-if="hidden(page)" class="presenter__hidden">{{ t('slides.hiddenSlide') }}</span></span
           >
           <button type="button" class="presenter__chev" :disabled="!nextPage" @click="go(1)">
             {{ t('slides.next') }} ›

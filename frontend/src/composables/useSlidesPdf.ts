@@ -112,7 +112,7 @@ export function useSlidesPdf(data: WatchSource<ArrayBuffer | null>) {
         0.05,
         Math.min(
           options.width / base.width,
-          options.height ? options.height / base.height : (options.maxScale ?? 2),
+          options.height ? options.height / base.height : options.maxScale ?? 2,
           options.maxScale ?? 2
         )
       )
