@@ -211,6 +211,10 @@ def _payer_teams_key(team_ids: list[int]) -> tuple:
 #: the select, the select with its columns and joins added, and what to do with
 #: the extra columns of each row once the project is read (the rows are one
 #: per joined row, the project's columns repeated).
+#: Project, plan key, personal owner and plan: the columns `project_with_payer`
+#: reads itself, ahead of any a ride-along adds.
+_PAYER_COLUMNS = 4
+
 RideAlong = Callable[[Select], tuple[Select, Callable[[Project, list[tuple]], None]]]
 
 
@@ -225,7 +229,9 @@ async def project_with_payer(
     admission, on every model call). What it read answers
     `ProjectRepository.get` and `payers_for_projects` for the rest of the
     request; without request facts it is the project alone. ``ride_along``
-    adds a caller's own read to the statement (`RideAlong`)."""
+    adds a caller's own read to the statement (`RideAlong`), and runs only
+    when this call reads the project: a project the request has read already
+    is answered from the facts and the caller reads its own rows as before."""
     if not isinstance(session, AsyncSession):
         return await session.get(Project, project_id)
     if session.autoflush:
@@ -243,10 +249,10 @@ async def project_with_payer(
     if ride_along is not None:
         stmt, record = ride_along(stmt)
     rows = (await session.execute(stmt)).all()
-    row = rows[0][:4] if rows else None
+    row = rows[0][:_PAYER_COLUMNS] if rows else None
     project = row[0] if row is not None else None
     if record is not None and project is not None:
-        record(project, [tuple(r[4:]) for r in rows])
+        record(project, [tuple(r[_PAYER_COLUMNS:]) for r in rows])
     remember(session, ("project", project_id), project, tables=frozenset({"projects"}))
     if row is not None and project is not None and row[1] is not None:
         _, plan_key, owner, plan = row
