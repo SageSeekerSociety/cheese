@@ -838,7 +838,10 @@ def stopping(binary, root):
         mark = session.user(
             do(
                 "Bash",
-                command="sleep 30; echo NOT_INTERRUPTED",
+                # Not `sleep 30`: from 2.1.310 a build offering Monitor
+                # refuses a long foreground sleep before it starts, and so
+                # does the fixture's, which disables nonessential traffic.
+                command="python3 -c 'import time; time.sleep(30)'; echo NOT_INTERRUPTED",
                 description="to interrupt",
             )
         )

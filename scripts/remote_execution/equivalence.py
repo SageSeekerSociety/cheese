@@ -1070,7 +1070,7 @@ def step_task_stop_tool(run):
 
 
 def step_interrupt(run):
-    mark = run.session.user(bash("sleep 303"))
+    mark = run.session.user(bash("env sleep 303"))
     run.session.wait(is_("system", "task_started"), 60, mark)
     before = settle(lambda: alive("sleep 303"))
     run.session.control({"subtype": "interrupt"})
@@ -1082,7 +1082,7 @@ def step_interrupt(run):
 def step_timeout(run):
     # Well past the point where the build reports a foreground command as a
     # task: a timeout close to it made that report a race between the runs.
-    turn(run, bash("sleep 304", timeout=8000))
+    turn(run, bash("env sleep 304", timeout=8000))
     gone = settle(lambda: not alive("sleep 304"))
     # The two TERM-ignoring commands are looked at after the same five seconds
     # in every run: what is compared is the state both runs are in then, and a
