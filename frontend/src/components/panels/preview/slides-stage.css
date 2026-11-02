@@ -1,0 +1,167 @@
+/* PreviewSlides 的放映层、状态行和页面画布（含 pdf.js 文字层）的样式。从组件里搬出来只为
+   让组件本身短一些；它们照样是 scoped 的（组件里用 `<style scoped src>` 引进来）。 */
+/* 放映时这一条落在屏幕底部，压在一小片半透明上：翻页和跳页都还在手边。 */
+.slides__bar--present {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--present-fill);
+  color: var(--present-ink);
+  transform: translateX(-50%);
+  cursor: default;
+}
+.slides__bar--present .slides__chev {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__chev:hover:not(:disabled) {
+  background: var(--present-fill-2);
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__chev:disabled {
+  color: var(--present-muted);
+  opacity: 0.45;
+}
+.slides__bar--present .slides__jump {
+  color: var(--present-muted);
+}
+.slides__bar--present .slides__jump input {
+  color: var(--present-ink);
+}
+.slides__bar--present .slides__jump input:hover:not(:disabled) {
+  border-color: var(--present-fill-2);
+}
+.slides__bar--present .slides__jump input:focus {
+  border-color: var(--present-ink);
+  background: var(--present-fill);
+}
+.slides__bar-hint {
+  margin-left: 8px;
+  padding-left: 10px;
+  border-left: 1px solid var(--present-fill-2);
+  color: var(--present-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.slides__state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px 24px;
+  color: var(--muted);
+  text-align: center;
+  background: var(--canvas);
+}
+.slides__state p {
+  margin: 0;
+  max-width: 40ch;
+}
+.slides__state-title {
+  color: var(--text);
+  font-size: 15px;
+}
+.slides__state-icon {
+  width: 28px;
+  height: 28px;
+  fill: var(--faint);
+}
+.slides__state--loading {
+  gap: 12px;
+}
+.slides__spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: slides-spin 0.8s linear infinite;
+}
+@keyframes slides-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slides__spinner {
+    animation-duration: 2.4s;
+  }
+  .slides__sheet {
+    transition: none;
+  }
+}
+.slides__notice {
+  margin: 0;
+  padding: 8px 16px;
+  color: var(--danger-ink);
+}
+.slides__notice[role='status'] {
+  color: var(--muted);
+}
+.slides__sheet :deep(canvas) {
+  display: block;
+  border-radius: 8px;
+}
+/* 这一份和 PreviewPages 里 `.pv-text` 那一段是同一套写法：改一处时两处一起改。
+ *
+ * pdf.js 6 只把几何写成变量，字号和 transform 得由样式从这里乘出来。少了这一段，
+ * 字还是透明的、位置也对，坏在看不见的地方——每个 span 按继承来的字号排版，盒子
+ * 大小和纸上那些字对不上，选中落在隔壁，高亮盖不住。 */
+.slides__sheet :deep(.slide-text-layer) {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  /* `clip` 不是 `hidden`：hidden 是一个能滚的框，一路拖下去选的时候浏览器会把它自己
+     滚走，高亮跟着离开纸面，再被页框裁掉。 */
+  overflow: clip;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+.slides__sheet :deep(.slide-text-layer span),
+.slides__sheet :deep(.slide-text-layer br) {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+}
+.slides__sheet :deep(.slide-text-layer > :not(.markedContent)),
+.slides__sheet :deep(.slide-text-layer .markedContent span:not(.markedContent)) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.slides__sheet :deep(.slide-text-layer .markedContent) {
+  display: contents;
+}
+/* 选中只剩底色，底色不在这里画——和 PreviewPages 里那一段同一套写法，改一处时两处
+   一起改。这一条把浏览器那一层关掉，自己画的那一层在下面。`color` 还是要点明：正文
+   本来是透明的，不写的话浏览器会按「被选中的文字」给它上色，选中的那几个字上又叠出
+   一层同形状的字。 */
+.slides__sheet :deep(.slide-text-layer ::selection) {
+  background: transparent;
+  color: transparent;
+}
+/* 自己画的那一层的样式在 `preview-selection-paint.css`：和分页文档共用一份，两档的
+   选中底色才不可能变成两个颜色。 */
+.slides__sheet :deep(.slide-paint-error) {
+  padding: 32px 16px;
+  color: var(--danger-ink);
+}

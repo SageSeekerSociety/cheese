@@ -23,6 +23,7 @@ import { useDocumentBytes, useDocumentPage } from '../../lib/documentBytes'
 import { sameDocumentIdentity } from '../../lib/documentIdentity'
 import { pageViewOf, SLIDE_SUFFIXES, suffixOf } from '../../lib/fileKind'
 import { NARROW_PX } from '../../lib/previewNarrow'
+import { type SlideNote, slideNotesOf } from '../../lib/slideNotes'
 
 export interface DocumentBytesDeps {
   props: PanelPreviewProps
@@ -123,7 +124,7 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
   // 备注不在幻灯片上，而这一格拿到的是转换后的 PDF，所以它读不出来，得单独要一次。
   // 只有演示稿问；慢一步回来的那一份是上一份文件的备注，贴到眼前这一版上就是错的，
   // 所以回来时再核一次身份（和 `slideContext` 同一条纪律）。
-  const slideNotes = ref<string[]>([])
+  const slideNotes = ref<SlideNote[]>([])
   let notesKey = ''
   let notesGeneration = 0
   const slidesIdentity = () =>
@@ -149,7 +150,7 @@ export function usePanelPreviewDocument(deps: DocumentBytesDeps) {
         const current = slidesIdentity()
         if (!current || JSON.stringify([current, docNonce.value]) !== key) return
         notesKey = key
-        slideNotes.value = got.readable ? got.notes : []
+        slideNotes.value = got.readable ? slideNotesOf(got) : []
       } catch {
         // 备注要不到不影响读这一页：那一块不摆就是了，报错留给正文那边说。
         if (mine === notesGeneration) slideNotes.value = []

@@ -38,6 +38,7 @@ module-level APIRouter under `app.api.routes`, so the same
 
 import asyncio
 import uuid
+from dataclasses import asdict
 from typing import Literal
 from urllib.parse import quote
 
@@ -63,7 +64,7 @@ from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.model_images import model_media_type
 from app.core.sentences import exception_text, say
-from app.domain.documents.notes import slide_notes
+from app.domain.documents.notes import deck_notes
 from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
@@ -167,6 +168,23 @@ class RoomAttachmentOut(BaseModel):
     in_library: bool
 
 
+class NoteRunOut(BaseModel):
+    text: str
+    bold: bool = False
+    italic: bool = False
+
+
+class NoteParagraphOut(BaseModel):
+    runs: list[NoteRunOut]
+    level: int = 0
+    bullet: Literal["dot", "number"] | None = None
+
+
+class SlideNotesOut(BaseModel):
+    hidden: bool
+    paragraphs: list[NoteParagraphOut]
+
+
 class AttachmentNotesOut(BaseModel):
     """A deck's speaker notes, one entry per slide (index 0 is slide 1).
 
@@ -176,6 +194,9 @@ class AttachmentNotesOut(BaseModel):
     """
 
     notes: list[str]
+    #: The same notes slide by slide with what a speaker reads by kept: outline
+    #: level, bullets, bold and italic, and whether the slide is hidden.
+    slides: list[SlideNotesOut] = []
     readable: bool
     version: str
 
@@ -519,11 +540,12 @@ async def attachment_notes(
         )
     # Reading a zip is CPU work on bytes that may be 200MB; keep it off the loop
     # the same way the comparison does.
-    notes = await asyncio.to_thread(slide_notes, data)
+    slides = await asyncio.to_thread(deck_notes, data)
     return ok(
         {
-            "notes": notes or [],
-            "readable": notes is not None,
+            "notes": [slide.text for slide in slides or []],
+            "slides": [asdict(slide) for slide in slides or []],
+            "readable": slides is not None,
             "version": content_version(data),
         }
     )

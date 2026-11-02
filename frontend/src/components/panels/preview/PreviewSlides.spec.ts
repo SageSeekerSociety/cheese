@@ -1,3 +1,5 @@
+import type { SlideNote } from '@/lib/slideNotes'
+
 import { nextTick, reactive } from 'vue'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -79,6 +81,7 @@ function documentFixture(count = 20) {
 const identity = { topicId: 'room', taskId: 'task', source: 'committed' as const, path: 'deck.pptx', version: 'v7' }
 beforeEach(() => {
   setLocale('zh-CN')
+  localStorage.clear()
   pdf.requests.length = 0
   pdf.renders.length = 0
   pdf.holdRender = false
@@ -94,6 +97,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 async function loaded(count = 20) {
   const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context: identity, canDownload: true } })
@@ -447,48 +451,177 @@ describe('slide reader contract (PDF.js substituted)', () => {
 })
 
 describe('演讲者备注', () => {
-  /** 挂一份带备注的稿子：`notes` 下标即页码。 */
-  async function withNotes(notes: readonly string[], count = 3) {
-    const ui = render(PreviewSlides, { props: { data: new ArrayBuffer(8), context: identity, notes } })
+  type Page = string | { text?: string; hidden?: boolean; paragraphs?: SlideNote['paragraphs'] }
+  /** 原稿的每一页：一串字就是这一页的备注，对象可以标隐藏、给带格式的段落。 */
+  function deckNotes(pages: readonly Page[]): SlideNote[] {
+    return pages.map((page) => {
+      const spec = typeof page === 'string' ? { text: page } : page
+      return {
+        hidden: !!spec.hidden,
+        paragraphs: spec.paragraphs ?? (spec.text ? [{ runs: [{ text: spec.text }] }] : []),
+      }
+    })
+  }
+  /** 挂一份稿子：`pages` 是原稿的页（含隐藏页），`count` 是转出来的 PDF 有几页。 */
+  async function withNotes(pages: readonly Page[], count = pages.length) {
+    const ui = render(PreviewSlides, {
+      props: { data: new ArrayBuffer(8), context: identity, notes: deckNotes(pages) },
+    })
     await waitFor(() => expect(pdf.requests).toHaveLength(1))
     pdf.requests[0]!.resolve(documentFixture(count))
     await waitFor(() => expect(ui.getByRole('button', { name: '下一页' })).toHaveProperty('disabled', false))
     return ui
   }
 
-  it('这一页的备注写在幻灯片下面，翻页跟着换', async () => {
-    const ui = await withNotes(['第一页的话', '第二页的话'], 3)
+  it('这一页的备注摆在阅读区底部，翻页跟着换', async () => {
+    const ui = await withNotes(['第一页的话', '第二页的话', ''])
     expect(ui.getByTestId('slides-notes').textContent).toContain('第一页的话')
     await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
     expect(ui.getByTestId('slides-notes').textContent).toContain('第二页的话')
   })
 
   it('某一页没有备注时说一句，而不是把这一块整个抽掉', async () => {
-    // 第三页没有备注：这一块还在，写的是「这一页没有备注」——抽掉了读者会以为这一档
-    // 没有备注这个功能，而不是这一页恰好没有。
-    const ui = await withNotes(['第一页的话'], 3)
+    const ui = await withNotes(['第一页的话', '', ''])
     await fireEvent.click(ui.getByRole('button', { name: '跳转到第 3 页' }))
     expect(ui.getByTestId('slides-notes').textContent).toContain('这一页没有备注')
   })
 
-  it('整份都没有备注时不摆这一块，也不摆工具栏上那颗开关', async () => {
-    const ui = await withNotes([], 3)
+  it('整份都没有备注：开关照样在，默认不展开，点开说「这份演示稿没有写」', async () => {
+    // 以前这种稿子连开关都不摆，读者分不清是稿子没写，还是这里没有这个功能。
+    const ui = await withNotes(['', '', ''])
     expect(ui.queryByTestId('slides-notes')).toBeNull()
-    expect(ui.queryByTestId('slides-notes-toggle')).toBeNull()
+    await fireEvent.click(ui.getByTestId('slides-notes-toggle'))
+    expect(ui.getByTestId('slides-notes').textContent).toContain('这份演示稿没有写演讲者备注')
   })
 
-  it('可以收起；收起来之后工具栏那颗开关还在', async () => {
-    const ui = await withNotes(['第一页的话'], 2)
+  it('可以收起；收起来之后工具栏那颗开关还在，开关记在这台浏览器上', async () => {
+    const ui = await withNotes(['第一页的话', ''])
     await fireEvent.click(ui.getByTestId('slides-notes-toggle'))
     expect(ui.queryByTestId('slides-notes')).toBeNull()
+    expect(localStorage.getItem('cheese.slides.notesOpen')).toBe('0')
     await fireEvent.click(ui.getByTestId('slides-notes-toggle'))
     expect(ui.getByTestId('slides-notes').textContent).toContain('第一页的话')
   })
 
   it('放映时不出现：备注是给讲的人看的，不是给台下看的', async () => {
-    const ui = await withNotes(['只给讲的人看'], 2)
+    const ui = await withNotes(['只给讲的人看', ''])
     expect(ui.getByTestId('slides-notes')).toBeTruthy()
     await fireEvent.click(ui.getByRole('button', { name: '放映' }))
     expect(document.querySelector('[data-testid="slides-notes"]')).toBeNull()
+  })
+
+  it('讲稿照原稿的样子读：大纲级别、项目符号、编号、加粗', async () => {
+    const ui = await withNotes([
+      {
+        paragraphs: [
+          { runs: [{ text: '先讲' }, { text: '结论', bold: true }] },
+          { runs: [{ text: '停一下' }], level: 1, bullet: 'dot' },
+          { runs: [{ text: '第一点' }], bullet: 'number' },
+          { runs: [{ text: '第二点' }], bullet: 'number' },
+        ],
+      },
+      '',
+    ])
+    const notes = ui.getByTestId('slides-notes')
+    expect(notes.querySelector('.is-bold')?.textContent).toBe('结论')
+    const marks = [...notes.querySelectorAll('.slide-notes__mark')].map((el) => el.textContent)
+    expect(marks).toEqual(['•', '1.', '2.'])
+  })
+
+  it('隐藏页照常显示并标「隐藏」，讲稿不错位；放映时跳过它', async () => {
+    const ui = await withNotes(['第一页', { text: '备用页', hidden: true }, '第三页'])
+    await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
+    expect(ui.getByTestId('slides-hidden').textContent).toBe('隐藏')
+    expect(ui.getByTestId('slides-notes').textContent).toContain('备用页')
+    await fireEvent.click(ui.getByRole('button', { name: '上一页' }))
+    await fireEvent.click(ui.getByRole('button', { name: '放映' }))
+    await fireEvent.keyDown(document.querySelector('.slides')!, { key: 'ArrowRight' })
+    expect(shownPage()).toBe('3')
+  })
+
+  it('老转换没导出隐藏页时，按不隐藏的那几页对讲稿', async () => {
+    // 缓存里还是老 PDF（3 页的稿子转出 2 页）：第 2 页的 PDF 是原稿第 3 页。
+    const ui = await withNotes(['第一页', { text: '备用页', hidden: true }, '第三页'], 2)
+    await fireEvent.click(ui.getByRole('button', { name: '下一页' }))
+    expect(ui.getByTestId('slides-notes').textContent).toContain('第三页')
+    expect(ui.queryByTestId('slides-hidden')).toBeNull()
+  })
+
+  it('页数怎么都对不上时不给讲稿：贴错页比没有更坏', async () => {
+    const ui = await withNotes(['一', '二', '三'], 5)
+    expect(ui.queryByTestId('slides-notes')).toBeNull()
+  })
+})
+
+describe('滚轮和缩放', () => {
+  let clock = 0
+  beforeEach(() => {
+    clock = 1000
+    vi.spyOn(performance, 'now').mockImplementation(() => clock)
+  })
+  function wheel(target: Element, init: WheelEventInit) {
+    const event = new WheelEvent('wheel', { bubbles: true, cancelable: true, ...init })
+    // happy-dom 的 WheelEvent 不收修饰键，补上（浏览器里触控板捏合就是带 ctrlKey 的 wheel）。
+    if (init.ctrlKey) Object.defineProperty(event, 'ctrlKey', { value: true })
+    target.dispatchEvent(event)
+    return event
+  }
+  const main = () => document.querySelector('.slides__main')!
+
+  it('一次滚动翻一页；同一次滚动里的惯性不再翻，停一下再滚才翻下一页', async () => {
+    const ui = await loaded(5)
+    const first = wheel(main(), { deltaY: 30 })
+    clock += 16
+    wheel(main(), { deltaY: 30 })
+    await nextTick()
+    expect(pageInput(ui).value).toBe('2')
+    expect(first.defaultPrevented).toBe(true)
+    clock += 16
+    wheel(main(), { deltaY: 120 })
+    await nextTick()
+    expect(pageInput(ui).value).toBe('2')
+    clock += 400
+    wheel(main(), { deltaY: -100 })
+    await nextTick()
+    expect(pageInput(ui).value).toBe('1')
+  })
+
+  it('触控板左右划也翻页', async () => {
+    const ui = await loaded(5)
+    wheel(main(), { deltaX: 80, deltaY: 4 })
+    await nextTick()
+    expect(pageInput(ui).value).toBe('2')
+  })
+
+  it('Ctrl + 滚轮缩放这一页，不交给浏览器缩放整个界面；按 0 回到 100%', async () => {
+    const ui = await loaded(5)
+    const event = wheel(main(), { deltaY: -100, ctrlKey: true })
+    expect(event.defaultPrevented).toBe(true)
+    await nextTick()
+    expect(ui.getByTestId('slides-zoom').textContent?.trim()).toBe('125%')
+    expect(pageInput(ui).value).toBe('1')
+    const reader = document.querySelector<HTMLElement>('.slides')!
+    reader.focus()
+    await fireEvent.keyDown(reader, { key: '0' })
+    expect(ui.getByTestId('slides-zoom').textContent?.trim()).toBe('100%')
+  })
+
+  it('滚轮落在备注区上只滚备注，不翻页', async () => {
+    const ui = render(PreviewSlides, {
+      props: {
+        data: new ArrayBuffer(8),
+        context: identity,
+        notes: [
+          { hidden: false, paragraphs: [{ runs: [{ text: '很长的讲稿' }] }] },
+          { hidden: false, paragraphs: [] },
+        ],
+      },
+    })
+    await waitFor(() => expect(pdf.requests).toHaveLength(1))
+    pdf.requests[0]!.resolve(documentFixture(2))
+    await waitFor(() => expect(ui.getByTestId('slides-notes')).toBeTruthy())
+    wheel(ui.getByTestId('slides-notes'), { deltaY: 200 })
+    await nextTick()
+    expect(pageInput(ui).value).toBe('1')
   })
 })

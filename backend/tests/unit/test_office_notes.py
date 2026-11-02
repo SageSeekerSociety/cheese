@@ -12,7 +12,7 @@ from __future__ import annotations
 import io
 import zipfile
 
-from app.domain.documents.notes import slide_notes
+from app.domain.documents.notes import NoteParagraph, NoteRun, deck_notes, slide_notes
 
 P = "http://schemas.openxmlformats.org/presentationml/2006/main"
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -57,8 +57,11 @@ def _notes(*shapes: str) -> str:
     )
 
 
-def _slide() -> str:
-    return f'<p:sld xmlns:p="{P}" xmlns:a="{A}"><p:cSld><p:spTree/></p:cSld></p:sld>'
+def _slide(hidden: bool = False) -> str:
+    show = ' show="0"' if hidden else ""
+    return (
+        f'<p:sld xmlns:p="{P}" xmlns:a="{A}"{show}><p:cSld><p:spTree/></p:cSld></p:sld>'
+    )
 
 
 def deck(
@@ -66,6 +69,8 @@ def deck(
     notes: dict[int, str | None],
     slide_count: int,
     numbered: dict[int, int] | None = None,
+    hidden: frozenset[int] = frozenset(),
+    body: dict[int, str] | None = None,
 ):
     """A deck whose notes parts are named by `numbered` (slide → notes file
     number), so page order and file numbering can be made to disagree.
@@ -89,7 +94,7 @@ def deck(
         ),
     }
     for n in range(1, slide_count + 1):
-        parts[f"ppt/slides/slide{n}.xml"] = _slide()
+        parts[f"ppt/slides/slide{n}.xml"] = _slide(n in hidden)
         rows: list[tuple[str, str]] = []
         if n in notes:
             number = (numbered or {}).get(n, n)
@@ -98,7 +103,7 @@ def deck(
                 # The page number box comes first, exactly as PowerPoint orders
                 # the tree — this is what leaks in if it is not skipped.
                 _shape(str(n), "sldNum"),
-                _shape(notes[n] or ""),
+                (body or {}).get(n) or _shape(notes[n] or ""),
             )
         parts[f"ppt/slides/_rels/slide{n}.xml.rels"] = _rels(*rows)
     return _zip(parts)
@@ -146,3 +151,38 @@ def test_a_slide_with_no_notes_part_is_empty_and_the_rest_still_reads():
 def test_a_file_that_is_not_a_deck_has_no_notes_to_show():
     assert slide_notes(b"not a zip at all") is None
     assert slide_notes(_zip({"[Content_Types].xml": TYPES})) is None
+
+
+def test_a_hidden_slide_keeps_its_place_and_says_it_is_hidden():
+    # PowerPoint numbers a hidden slide and keeps its notes; the preview shows it
+    # marked. Dropping it here would put slide 3's notes under slide 2.
+    raw = deck(slide_count=3, notes={2: "备用页", 3: "第三页"}, hidden=frozenset({2}))
+    read = deck_notes(raw)
+    assert read is not None
+    assert [slide.hidden for slide in read] == [False, True, False]
+    assert [slide.text for slide in read] == ["", "备用页", "第三页"]
+
+
+def test_outline_level_bullets_and_emphasis_survive():
+    body = (
+        '<p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody>'
+        '<a:p><a:r><a:t>先讲</a:t></a:r><a:r><a:rPr b="1"/><a:t>结论</a:t></a:r></a:p>'
+        '<a:p><a:pPr lvl="1"><a:buChar char="•"/></a:pPr><a:r><a:rPr i="1"/><a:t>停一下</a:t></a:r></a:p>'
+        '<a:p><a:pPr><a:buAutoNum type="arabicPeriod"/></a:pPr><a:r><a:t>第一点</a:t></a:r>'
+        "<a:br/><a:r><a:t>换行</a:t></a:r></a:p>"
+        "<a:p><a:r><a:t>   </a:t></a:r></a:p>"
+        "</p:txBody></p:sp>"
+    )
+    read = deck_notes(deck(slide_count=1, notes={1: None}, body={1: body}))
+    assert read is not None
+    assert read[0].paragraphs == (
+        NoteParagraph((NoteRun("先讲"), NoteRun("结论", bold=True))),
+        NoteParagraph((NoteRun("停一下", italic=True),), level=1, bullet="dot"),
+        NoteParagraph(
+            (NoteRun("第一点"), NoteRun("\n"), NoteRun("换行")), bullet="number"
+        ),
+    )
+    # The plain form is what the old field carries, a paragraph per line.
+    assert slide_notes(deck(slide_count=1, notes={1: None}, body={1: body})) == [
+        "先讲结论\n停一下\n第一点\n换行"
+    ]
