@@ -427,6 +427,10 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
                     ProjectRole.user_handle == handle,
                 ),
             )
+            # The anchor gives one row; nothing in the schema stops a person
+            # holding two live team rows, which would give two. Either one
+            # answers, as `_team_role`'s own read takes whichever comes first.
+            .limit(1)
         )
     ).one()
     user, team_role, member, role, role_id, is_excluded, is_agent = row
