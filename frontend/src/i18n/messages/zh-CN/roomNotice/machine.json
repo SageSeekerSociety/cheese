@@ -27,5 +27,6 @@
   "executorInstallFailed": "为「{device}」安装 AI 队友的运行程序失败",
   "sandboxTimedCheckedOut": "任务目录已就绪，用了 {seconds} 秒",
   "sandboxTimedFrozen": "环境空闲，已冻结，用了 {seconds} 秒",
-  "sandboxTimedPrepared": "环境已就绪，用了 {seconds} 秒"
+  "sandboxTimedPrepared": "环境已就绪，用了 {seconds} 秒",
+  "sandboxTimedParked": "空闲沙箱已停机留盘，用了 {seconds} 秒"
 }

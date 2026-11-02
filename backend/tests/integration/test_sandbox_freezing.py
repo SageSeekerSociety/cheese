@@ -37,7 +37,8 @@ from app.domain.event_author import AuthorType
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.disk_guard import DiskGuard
-from app.domain.machine.models import CloudHost, SandboxHome
+from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
+from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.services import HostPool
 from app.domain.run_record.models import RunRecord
@@ -229,7 +230,10 @@ def test_a_tool_call_thaws_the_same_sandbox_and_its_work_is_there(icy):
     assert "thaw" in timed(icy, "sandbox_prepared")[-1]["stages"]
 
 
-def test_a_frozen_sandbox_past_its_keep_time_is_destroyed(icy):
+def test_with_parking_off_a_frozen_sandbox_past_its_keep_time_is_destroyed(
+    icy, monkeypatch
+):
+    monkeypatch.setattr(settings, "cloud_sandbox_park", False)
     seat, home, _ = a_seat_working(icy)
     frozen_for(icy, seat, timedelta(seconds=settings.cloud_sandbox_frozen_keep_s + 60))
 
@@ -286,8 +290,11 @@ def test_a_frozen_sandbox_whose_room_previews_an_app_is_kept_longer(icy):
     frozen_for(
         icy, seat, timedelta(seconds=settings.cloud_sandbox_frozen_keep_preview_s + 60)
     )
-    assert freeze_sweep(icy)["destroyed"] == 1
-    assert not home.exists()
+    # Past the longer one it is parked, as any frozen sandbox past its keep.
+    freeze_sweep(icy)
+    row = home_row(icy, seat)
+    assert row is not None and row.parked_at is not None
+    assert home.exists()
 
 
 def test_no_place_evicts_the_frozen_sandbox_frozen_longest_ago(icy, monkeypatch):
@@ -586,3 +593,88 @@ def test_deleting_a_frozen_sandbox_thaws_it_before_stopping_it(tmp_path):
     }
     assert order == ["thaw", "stop"]
     assert not home.exists()
+
+
+def parked_for(case, seat, by: timedelta) -> None:
+    """The sandbox has been parked for ``by``."""
+
+    async def age():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
+                .values(parked_at=datetime.now(UTC) - by)
+            )
+            await db.commit()
+
+    run(case, age)
+
+
+def a_seat_parked(case):
+    seat, home, device = a_seat_working(case)
+    frozen_for(case, seat, timedelta(seconds=settings.cloud_sandbox_frozen_keep_s + 60))
+    freeze_sweep(case)
+    return seat, home, device
+
+
+def test_a_frozen_sandbox_past_its_keep_time_is_parked_with_its_home_kept(icy):
+    seat, home, device = a_seat_parked(icy)
+
+    row = home_row(icy, seat)
+    assert row is not None and row.parked_at is not None
+    # Its processes were stopped on the host; its home and work were not.
+    asked = [action for (_, action) in actions(icy)]
+    assert "park" in asked and "destroy" not in asked
+    assert (home / "room" / "notes.md").read_text() == "not committed anywhere\n"
+    # It holds no slot any more.
+
+    async def load():
+        async with icy.client.test_request_factory() as db:
+            return await CloudHostRepository(db).occupancy()
+
+    assert not run(icy, load).get(row.host_id)
+    [parked] = timed(icy, "sandbox_parked")
+    assert parked["session_id"] == str(seat.session)
+
+
+def test_a_parked_sandbox_starts_again_where_it_was_and_says_so(icy):
+    seat, home, device = a_seat_parked(icy)
+    before = home_row(icy, seat)
+    assert before is not None
+
+    answer = tool_call(icy, seat, tells_agent=True)
+
+    assert answer["target"]["device_id"] == device
+    after = home_row(icy, seat)
+    assert after is not None
+    assert (after.host_id, after.resource_id) == (before.host_id, before.resource_id)
+    assert (after.parked_at, after.frozen_at) == (None, None)
+    assert (home / "room" / "notes.md").exists()
+    # Told its files are there and its processes are not.
+    assert "原来的位置重新启动" in answer["notice"]
+
+
+def test_a_parked_sandbox_past_two_days_is_destroyed(icy):
+    seat, home, _ = a_seat_parked(icy)
+    parked_for(icy, seat, timedelta(seconds=settings.cloud_sandbox_parked_keep_s + 60))
+
+    assert freeze_sweep(icy)["destroyed"] == 1
+    assert home_row(icy, seat) is None
+    assert not home.exists()
+
+
+def test_parked_homes_past_their_hosts_budget_go_oldest_first(icy, monkeypatch):
+    seat, home, _ = a_seat_parked(icy)
+    monkeypatch.setattr(settings, "cloud_host_parked_budget_gb", 0)
+
+    async def weigh():
+        async with icy.client.test_request_factory() as db:
+            row = await CloudHostRepository(db).current_home(seat.session)
+            assert row is not None
+            await db.merge(SandboxUsage(home_id=row.id, disk_bytes=10**9))
+            await db.commit()
+
+    run(icy, weigh)
+
+    assert freeze_sweep(icy)["destroyed"] == 1
+    assert home_row(icy, seat) is None

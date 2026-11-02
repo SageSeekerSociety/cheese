@@ -154,6 +154,8 @@ function sandboxWhen(s: MachineSandbox): string {
   if (s.state === 'waiting') return t('admin.machines.when.waiting', { for: since(s.waiting_since) })
   if (s.state === 'stopping') return t('admin.machines.when.stopping', { for: since(s.stopped_at) })
   if (s.state === 'frozen') return frozenWhen(s)
+  if (s.state === 'parked')
+    return t('admin.machines.when.parked', { in: s.idle_deadline ? until(s.idle_deadline) : '—' })
   const active = t('admin.machines.when.active', { ago: since(s.active_at) })
   if (s.state === 'idle' && s.idle_deadline) {
     const due = new Date(s.idle_deadline).getTime() <= nowMs.value

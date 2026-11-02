@@ -27,5 +27,6 @@
   "executorInstallFailed": "Installing the AI teammate's runtime on “{device}” failed",
   "sandboxTimedCheckedOut": "The task checkout was ready in {seconds} s",
   "sandboxTimedFrozen": "The idle environment was frozen in {seconds} s",
-  "sandboxTimedPrepared": "The environment was ready in {seconds} s"
+  "sandboxTimedPrepared": "The environment was ready in {seconds} s",
+  "sandboxTimedParked": "The idle environment was parked in {seconds} s"
 }

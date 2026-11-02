@@ -567,8 +567,7 @@ class SandboxLifecycle:
                 if now - home.frozen_at < _frozen_keep(home.session_id in previewed):
                     continue
                 if settings.cloud_sandbox_park and home.host_id in parkable:
-                    if await self._park(home.id, holder_id, home.device_id):
-                        destroyed += 1
+                    await self._park(home.id, holder_id, home.device_id)
                     continue
                 if await self._destroy(
                     home.id,
