@@ -583,7 +583,7 @@ const failureNote = computed(() =>
                       stage: t(`admin.machines.fact.stage.${stage}`),
                       p50: duration(timing.p50_s),
                       p95: duration(timing.p95_s),
-                    }),
+                    })
                   )
                   .join(' · ')
               }}
