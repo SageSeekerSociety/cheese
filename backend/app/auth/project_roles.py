@@ -378,63 +378,56 @@ async def _standing(
 
 async def _read_seat(session: AsyncSession, project: Project, handle: str) -> None:
     """Read in one statement what `_standing` asks of ``handle``: whether
-    they are an agent, their account, their team row, whether they are
-    excluded, their roster row and the role recorded for them. Each was a
-    statement of its own, up to six for a member's permission check; the
-    answers are left as the facts those reads answer from."""
+    they are an agent, their account and their team row, and for anyone but
+    the project's recorded owner whether they are excluded, their roster row
+    and the role recorded for them. Each was a statement of its own, up to
+    six for a member's permission check; the answers are left as the facts
+    those reads answer from. The owner is answered without the roster, which
+    a route reading the roster whole reads anyway."""
     if not isinstance(session, AsyncSession):
         return
     pid = project.id
     if recall(session, ("project_member_row", pid, handle))[0]:
         return
+    member_side = handle != project.owner_handle
     anchor = select(literal(1).label("one")).subquery("one")
-    excluded = exists().where(
-        ProjectMemberExclusion.project_id == pid,
-        ProjectMemberExclusion.user_handle == handle,
-    )
-    row = (
-        await session.execute(
-            select(
-                User,
-                TeamUserRelation.role,
-                ProjectMember,
-                ProjectRole.role,
-                ProjectRole.role_id,
-                excluded,
-                names_a_live_agent(literal(handle)),
-            )
-            .select_from(anchor)
-            .outerjoin(User, and_(User.username == handle, User.deleted_at.is_(None)))
-            .outerjoin(
-                TeamUserRelation,
-                and_(
-                    TeamUserRelation.user_id == User.id,
-                    TeamUserRelation.team_id == project.team_id,
-                    TeamUserRelation.deleted_at.is_(None),
-                ),
-            )
-            .outerjoin(
-                ProjectMember,
-                and_(
-                    ProjectMember.project_id == pid,
-                    ProjectMember.user_handle == handle,
-                ),
-            )
-            .outerjoin(
-                ProjectRole,
-                and_(
-                    ProjectRole.project_id == pid,
-                    ProjectRole.user_handle == handle,
-                ),
-            )
-            # The anchor gives one row; nothing in the schema stops a person
-            # holding two live team rows, which would give two. The oldest
-            # answers, the same one every time.
-            .order_by(TeamUserRelation.id)
-            .limit(1)
+    columns: list = [User, TeamUserRelation.role, names_a_live_agent(literal(handle))]
+    if member_side:
+        columns += [
+            ProjectMember,
+            ProjectRole.role,
+            ProjectRole.role_id,
+            exists().where(
+                ProjectMemberExclusion.project_id == pid,
+                ProjectMemberExclusion.user_handle == handle,
+            ),
+        ]
+    stmt = (
+        select(*columns)
+        .select_from(anchor)
+        .outerjoin(User, and_(User.username == handle, User.deleted_at.is_(None)))
+        .outerjoin(
+            TeamUserRelation,
+            and_(
+                TeamUserRelation.user_id == User.id,
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+            ),
         )
-    ).one()
-    user, team_role, member, role, role_id, is_excluded, is_agent = row
+    )
+    if member_side:
+        stmt = stmt.outerjoin(
+            ProjectMember,
+            and_(ProjectMember.project_id == pid, ProjectMember.user_handle == handle),
+        ).outerjoin(
+            ProjectRole,
+            and_(ProjectRole.project_id == pid, ProjectRole.user_handle == handle),
+        )
+    # The anchor gives one row; nothing in the schema stops a person holding
+    # two live team rows, which would give two. The oldest answers, the same
+    # one every time.
+    row = (await session.execute(stmt.order_by(TeamUserRelation.id).limit(1))).one()
+    user, team_role, is_agent = row[0], row[1], row[2]
     remember(
         session,
         ("is_agent", handle),
@@ -451,6 +444,9 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
                 team_role,
                 tables=frozenset({"team_user_relation"}),
             )
+    if not member_side:
+        return
+    member, role, role_id, is_excluded = row[3], row[4], row[5], row[6]
     remember(
         session,
         ("project_member_excluded", pid, handle),
