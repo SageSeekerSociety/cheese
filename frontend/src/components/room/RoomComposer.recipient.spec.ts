@@ -218,7 +218,7 @@ describe('发之前看得见这条交给谁', () => {
     const { box, avatar } = mount({ place: 'task-1', alwaysSummon: true })
     await fillComposer(box(), '先做后端两个接口')
     await settle()
-    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('在这里你说的话都会交给芝士')
 
     await fillComposer(box(), '@Alice 你看下这个接口')
     await settle()
@@ -274,7 +274,7 @@ describe('打字时任务关了', () => {
     const view = mount({ place: 'task-1', alwaysSummon: true })
     await fillComposer(view.box(), '再加一个导出接口')
     await settle()
-    expect(view.avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
+    expect(view.avatar().getAttribute('aria-label')).toBe('在这里你说的话都会交给芝士')
     backend.task = 'closed'
     view.placeState.value = 'closed'
     await settle()
@@ -321,7 +321,7 @@ describe('打字时任务关了', () => {
     await fillComposer(box(), '再加一个导出接口，带筛选')
     await enter(box())
 
-    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('在这里你说的话都会交给芝士')
     expect(onSend).toHaveBeenCalledWith({ content: '再加一个导出接口，带筛选', summon: true, expectsAgent: true })
   })
 
@@ -329,7 +329,7 @@ describe('打字时任务关了', () => {
     backend.task = 'open'
     const { box, avatar, onSend } = mount({ place: 'task-1', alwaysSummon: true })
     await settle()
-    expect(avatar().getAttribute('aria-label')).toBe('任务里你说的话都会交给芝士')
+    expect(avatar().getAttribute('aria-label')).toBe('在这里你说的话都会交给芝士')
 
     await fillComposer(box(), '再加一个导出接口')
     backend.task = 'closed'
