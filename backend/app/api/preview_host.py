@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import mimetypes
 import re
 import time
@@ -29,10 +30,15 @@ from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
-from app.domain.machine.preview_wake import touch_preview_activity
+from app.domain.machine.preview_wake import (
+    PREVIEW_TOUCH_STEP_S,
+    touch_preview_activity,
+)
 from app.domain.remote_mcp import apps
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
+
+logger = logging.getLogger("cheese.preview_host")
 
 AUTH_PATH = "/_cheese/session"
 # 房间文件在这个内容域上的地址。它和 `AUTH_PATH` 同住 `/_cheese/` 这个命名空间：
@@ -570,6 +576,24 @@ class PreviewHostMiddleware:
         response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
+    async def _keep_touching(self, conversation_id, seat, project_id) -> None:
+        """Touch the previewed sandbox every ``PREVIEW_TOUCH_STEP_S`` while a
+        live connection to it (a dev server's HMR socket) stays open: a page
+        that only holds that socket sends no request, and was taken for
+        nobody looking once the idle time passed."""
+        while True:
+            await asyncio.sleep(PREVIEW_TOUCH_STEP_S)
+            try:
+                async with self.sessions() as sessions:
+                    session = await anext(sessions)
+                    await touch_preview_activity(
+                        session, conversation_id, seat, project_id=project_id
+                    )
+            except Exception:
+                logger.warning(
+                    "keeping a previewed sandbox in use failed", exc_info=True
+                )
+
     async def websocket(
         self, websocket: WebSocket, topic_id: uuid.UUID, content: str | None = None
     ) -> None:
@@ -606,13 +630,22 @@ class PreviewHostMiddleware:
                     project_id=place.project_id,
                 )
             # No DB session or read transaction lives for the HMR connection.
-            async with asyncio.timeout(max(0, claims["exp"] - time.time())):
-                await relay_ws(
-                    websocket,
-                    topic_id,
-                    seat,
-                    **({"instance": resource["instance"]} if resource else {}),
-                )
+            # While it is open the page is being looked at: the sandbox is kept
+            # in use as by its HTTP requests, each touch with a session of its
+            # own (`_keep_touching`).
+            keeping = asyncio.create_task(
+                self._keep_touching(place.conversation_id, seat, place.project_id)
+            )
+            try:
+                async with asyncio.timeout(max(0, claims["exp"] - time.time())):
+                    await relay_ws(
+                        websocket,
+                        topic_id,
+                        seat,
+                        **({"instance": resource["instance"]} if resource else {}),
+                    )
+            finally:
+                keeping.cancel()
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:
                 await websocket.close(code=1008)

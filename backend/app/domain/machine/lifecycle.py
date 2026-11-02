@@ -334,6 +334,18 @@ def _pressed_idle() -> timedelta:
     return timedelta(seconds=settings.cloud_sandbox_idle_stop_pressed_s)
 
 
+#: How long a sandbox in use on a host being rebuilt must have gone without a
+#: tool call, with no turn of its session open, before it is moved off the
+#: host (``_release_frozen_on_draining_hosts``): between two turns.
+DRAIN_GAP = timedelta(minutes=2)
+
+
+def _turn_hold() -> timedelta:
+    """How long an open turn holds its session's sandbox without using it
+    (`cloud_sandbox_turn_hold_s`, `_turns_of`)."""
+    return timedelta(seconds=settings.cloud_sandbox_turn_hold_s)
+
+
 def _frozen_keep(preview: bool = False) -> timedelta:
     """How long a frozen sandbox is kept before it is destroyed anyway
     (`cloud_sandbox_frozen_keep_s`): it holds its host's slot the whole
@@ -431,8 +443,6 @@ class SandboxLifecycle:
         """A host being rebuilt (`reaper._drain_one`) waits for its active
         sandboxes to go idle, but a frozen one is not in use: it goes at
         once, so the rebuild is not held up by work nobody is doing."""
-        if not settings.cloud_sandbox_freeze:
-            return 0
         hosts = [
             host
             for host in await self._repo.live()
@@ -440,9 +450,40 @@ class SandboxLifecycle:
         ]
         await self._session.commit()
         gone = 0
+        now = datetime.now(UTC)
         for host in hosts:
             assert host.device_id is not None
-            gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
+            if settings.cloud_sandbox_freeze:
+                gone += await self.destroy_frozen_on(host.device_id, host_id=host.id)
+            assert host.draining_since is not None
+            if now - host.draining_since < timedelta(
+                seconds=settings.cloud_host_drain_wait_s
+            ):
+                continue
+            # Waited long enough for its sandboxes to go idle: one still in use
+            # goes between two of its turns — none open and no tool call for a
+            # couple of minutes — and its session's next call gets a new one
+            # elsewhere, told so. One sandbox at work for a day otherwise held
+            # the whole fleet's rebuild (dev, 2026-11-01: ten hours).
+            rows = list(
+                await self._session.scalars(
+                    select(SandboxHome).where(
+                        SandboxHome.host_id == host.id,
+                        SandboxHome.frozen_at.is_(None),
+                        SandboxHome.stopped_at.is_(None),
+                    )
+                )
+            )
+            await self._session.commit()
+            for home in rows:
+                if await self._destroy(
+                    home.id,
+                    home.topic_id if home.session_id is not None else None,
+                    host.device_id,
+                    now - home.active_at,
+                    idle_for=DRAIN_GAP,
+                ):
+                    gone += 1
         return gone
 
     async def destroy_idle(self) -> int:
@@ -466,7 +507,10 @@ class SandboxLifecycle:
                 or_(
                     and_(
                         AgentTurn.stopped_at.is_(None),
-                        AgentTurn.started_at > now - STALE_TURN,
+                        or_(
+                            AgentTurn.started_at > now - _turn_hold(),
+                            SandboxHome.active_at > now - _turn_hold(),
+                        ),
                     ),
                     AgentTurn.stopped_at > now - narrow,
                 ),
@@ -551,7 +595,7 @@ class SandboxLifecycle:
                     home.id,
                     holder_id,
                     home.device_id,
-                    now - home.frozen_at,
+                    now - home.active_at,
                     idle_for=_idle_for(home.spec),
                     frozen=True,
                 ):
@@ -573,7 +617,7 @@ class SandboxLifecycle:
                     home.id,
                     holder_id,
                     home.device_id,
-                    now - home.frozen_at,
+                    now - home.active_at,
                     idle_for=_idle_for(home.spec),
                     frozen=True,
                 ):
@@ -684,7 +728,9 @@ class SandboxLifecycle:
             await self._session.commit()
             if recovering:
                 return None
-        open_turns, last_end = await self._turns_of(home.session_id, now)
+        open_turns, last_end = await self._turns_of(
+            home.session_id, now, home.active_at
+        )
         await self._session.commit()
         if open_turns:
             return None
@@ -733,7 +779,9 @@ class SandboxLifecycle:
                 # A turn may have started while the machine was asked (the
                 # ping is a round trip): a session at work keeps even a command
                 # it just started.
-                open_turns, _ = await self._turns_of(home.session_id, datetime.now(UTC))
+                open_turns, _ = await self._turns_of(
+                    home.session_id, datetime.now(UTC), home.active_at
+                )
                 await self._session.commit()
                 if open_turns:
                     return None
@@ -758,23 +806,32 @@ class SandboxLifecycle:
         _asked.pop(home.id, None)
         return since
 
-    async def _turns_of(self, session_id, now: datetime) -> tuple[int, datetime | None]:
-        """How many turns of the session are open, and when its last one
-        stopped: the two things that say whether it is at work."""
+    async def _turns_of(
+        self, session_id, now: datetime, active_at: datetime | None = None
+    ) -> tuple[int, datetime | None]:
+        """How many turns of the session hold its sandbox, and when its last
+        one stopped: the two things that say whether it is at work.
+
+        An open turn holds it while it started, or the sandbox was last used,
+        within ``_turn_hold``. A turn that runs for hours and works in its
+        sandbox keeps it however long it runs; one that has not touched it for
+        that long — a subagent reading the web, a turn left open by a runner
+        that died — no longer does, and the sandbox may freeze: the turn's
+        next tool call thaws it in seconds."""
+        hold = now - _turn_hold()
         turns = (
             await self._session.execute(
                 select(
-                    # An interval left open past the orphan sweep's limit is a
-                    # corpse, and must not read as this session still at work.
+                    func.count().filter(AgentTurn.stopped_at.is_(None)),
                     func.count().filter(
-                        AgentTurn.stopped_at.is_(None),
-                        AgentTurn.started_at > now - STALE_TURN,
+                        AgentTurn.stopped_at.is_(None), AgentTurn.started_at > hold
                     ),
                     func.max(AgentTurn.stopped_at),
                 ).where(_own_turns(session_id))
             )
         ).one()
-        return int(turns[0]), turns[1]
+        used = active_at is None or active_at > hold
+        return int(turns[0] if used else turns[1]), turns[2]
 
     async def _wake(self, home_id: uuid.UUID, now: datetime) -> None:
         """Move a home's idle clock to now: the session is waking to work in
@@ -875,7 +932,9 @@ class SandboxLifecycle:
                     # A tool call is starting it right now.
                     await self._session.commit()
                     return False
-                open_turns, last_end = await self._turns_of(row.session_id, now)
+                open_turns, last_end = await self._turns_of(
+                    row.session_id, now, row.active_at
+                )
                 if open_turns or (last_end is not None and now - last_end < held):
                     await self._session.commit()
                     return False
@@ -916,7 +975,9 @@ class SandboxLifecycle:
             await self._session.commit()
             return False
         if row.session_id is not None:
-            open_turns, last_end = await self._turns_of(row.session_id, now)
+            open_turns, last_end = await self._turns_of(
+                row.session_id, now, row.active_at
+            )
             if open_turns or (last_end is not None and now - last_end < held):
                 await self._session.commit()
                 return False
@@ -1074,7 +1135,7 @@ class SandboxLifecycle:
                 home.id,
                 None,
                 device_id,
-                now - home.frozen_at,
+                now - home.active_at,
                 idle_for=_idle_for(home.spec),
                 frozen=True,
             ):
@@ -1128,7 +1189,7 @@ class SandboxLifecycle:
             home.id,
             None,
             host.device_id,
-            datetime.now(UTC) - home.frozen_at,
+            datetime.now(UTC) - home.active_at,
             idle_for=_idle_for(home.spec),
             frozen=True,
         )
@@ -1224,7 +1285,7 @@ class SandboxLifecycle:
             home.id,
             None,
             device_id,
-            datetime.now(UTC) - home.frozen_at,
+            datetime.now(UTC) - home.active_at,
             idle_for=_idle_for(home.spec),
             frozen=True,
         )
@@ -1267,7 +1328,7 @@ class SandboxLifecycle:
                 home.id,
                 None,
                 device_id,
-                datetime.now(UTC) - home.frozen_at,
+                datetime.now(UTC) - home.active_at,
                 idle_for=_idle_for(home.spec),
                 frozen=True,
             ):
@@ -1331,7 +1392,9 @@ class SandboxLifecycle:
             # before the session woke to a background command's result — and a
             # session at work keeps its sandbox however long it was idle when
             # the look was taken.
-            open_turns, last_end = await self._turns_of(home.session_id, now)
+            open_turns, last_end = await self._turns_of(
+                home.session_id, now, home.active_at
+            )
             if open_turns or (last_end is not None and now - last_end < held):
                 await self._session.commit()
                 return False

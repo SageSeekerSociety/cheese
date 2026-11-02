@@ -335,7 +335,7 @@ def _sandbox_home(client, task: dict, task_id: uuid.UUID) -> uuid.UUID:
                 room_resource_id=str(task_id),
                 resource_id=str(task_id),
                 session_id=placed.id,
-                active_at=datetime.now(UTC) - timedelta(minutes=20),
+                active_at=datetime.now(UTC) - timedelta(minutes=40),
             )
             session.add(home)
             await session.commit()
@@ -350,7 +350,7 @@ def _destroy(client, home_id: uuid.UUID, task_id: uuid.UUID, hub) -> bool:
     async def go() -> bool:
         async with client.test_factory() as session:
             return await SandboxLifecycle(session, hub=hub)._destroy(
-                home_id, task_id, "host-a", timedelta(minutes=20)
+                home_id, task_id, "host-a", timedelta(minutes=40)
             )
 
     return client.portal.call(go)
@@ -359,7 +359,7 @@ def _destroy(client, home_id: uuid.UUID, task_id: uuid.UUID, hub) -> bool:
 def test_destroying_the_machine_ends_the_turn_that_was_running_on_it(client):
     """平台自己销毁一台机器时，它上面那一轮就此结束：轮次关掉、会话不再报在干活。
 
-    这一轮早就过了机器「还算它在干活」的两小时线，所以回收照常发生；差别只在
+    这一轮早就过了机器「还算它在干活」的线（沙箱 40 分钟没用，超过 30 分钟的轮次占用期），所以回收照常发生；差别只在
     销毁那一步现在会记下「这轮随机器没了」——平台是唯一能说这句话的一方。
     """
     with _working_task(client) as (channel, task, room, task_id):
