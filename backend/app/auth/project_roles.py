@@ -37,13 +37,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import and_, exists, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ForbiddenError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import (
     MemberRepository,
@@ -338,6 +339,13 @@ async def _standing(
     project = await ProjectRepository(session).get(project_id)
     if project is None:
         return None
+    if (
+        isinstance(session, AsyncSession)
+        and not recall(session, ("is_agent", handle))[0]
+    ):
+        # Nothing yet says who ``handle`` is: read it all now, the next
+        # question included.
+        await _read_seat(session, project, handle)
     if await IdentityService(session).is_agent(handle):
         on_roster = await MemberRepository(session).get(
             project_id=project_id, user_handle=handle
@@ -348,6 +356,7 @@ async def _standing(
     everything = PEOPLE_PERMISSIONS
     if handle == await owner_of(session, project):
         return Standing(seat=Seat.owner, permissions=everything, role="owner")
+    await _read_seat(session, project, handle)
     user = await UserRepository(session).get_by_username(handle)
     members = MemberRepository(session)
     excluded = await members.is_excluded(project_id=project_id, user_handle=handle)
@@ -370,6 +379,98 @@ async def _standing(
         project_id=project_id, user_handle=handle
     )
     return _held(roles, recorded)
+
+
+async def _read_seat(session: AsyncSession, project: Project, handle: str) -> None:
+    """Read in one statement what `_standing` asks of ``handle``: whether
+    they are an agent, their account, their team row, whether they are
+    excluded, their roster row and the role recorded for them. Each was a
+    statement of its own, up to six for a member's permission check; the
+    answers are left as the facts those reads answer from."""
+    if not isinstance(session, AsyncSession):
+        return
+    pid = project.id
+    if recall(session, ("project_member_row", pid, handle))[0]:
+        return
+    anchor = select(literal(1).label("one")).subquery("one")
+    excluded = exists().where(
+        ProjectMemberExclusion.project_id == pid,
+        ProjectMemberExclusion.user_handle == handle,
+    )
+    row = (
+        await session.execute(
+            select(
+                User,
+                TeamUserRelation.role,
+                ProjectMember,
+                ProjectRole.role,
+                ProjectRole.role_id,
+                excluded,
+                names_a_live_agent(literal(handle)),
+            )
+            .select_from(anchor)
+            .outerjoin(User, and_(User.username == handle, User.deleted_at.is_(None)))
+            .outerjoin(
+                TeamUserRelation,
+                and_(
+                    TeamUserRelation.user_id == User.id,
+                    TeamUserRelation.team_id == project.team_id,
+                    TeamUserRelation.deleted_at.is_(None),
+                ),
+            )
+            .outerjoin(
+                ProjectMember,
+                and_(
+                    ProjectMember.project_id == pid,
+                    ProjectMember.user_handle == handle,
+                ),
+            )
+            .outerjoin(
+                ProjectRole,
+                and_(
+                    ProjectRole.project_id == pid,
+                    ProjectRole.user_handle == handle,
+                ),
+            )
+        )
+    ).first()
+    if row is None:
+        return
+    user, team_role, member, role, role_id, is_excluded, is_agent = row
+    remember(
+        session,
+        ("is_agent", handle),
+        bool(is_agent),
+        tables=frozenset({"user", "agent_bindings"}),
+    )
+    remember(session, ("user_by_username", handle), user, tables=frozenset({"user"}))
+    if user is not None:
+        remember(session, ("user_by_id", user.id), user, tables=frozenset({"user"}))
+        if project.team_id is not None:
+            remember(
+                session,
+                ("team_user_role", project.team_id, user.id),
+                team_role,
+                tables=frozenset({"team_user_relation"}),
+            )
+    remember(
+        session,
+        ("project_member_excluded", pid, handle),
+        bool(is_excluded),
+        tables=frozenset({"project_member_exclusions"}),
+    )
+    remember(
+        session,
+        ("project_member_row", pid, handle),
+        member,
+        tables=frozenset({"project_members"}),
+    )
+    remember(
+        session,
+        ("project_role_of", pid, handle),
+        role_key(role, role_id) if role is not None else None,
+        tables=frozenset({"project_roles"}),
+    )
 
 
 async def seats(
