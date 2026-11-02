@@ -533,10 +533,20 @@ def capacity(host: CloudHost) -> int:
     with no data disk recorded, which cannot hold a sandbox to a disk limit."""
     if host.whole_machine or host.sandbox_disk_gb is None:
         return 0
-    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
     by_memory = (
         sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
     )
+    return max(0, min(hard_capacity(host), by_memory))
+
+
+def hard_capacity(host: CloudHost) -> int:
+    """The sandboxes a host runs at once at most, whatever their memory: per
+    core, by the deployment's setting, and no more than fit on its data disk.
+    Past ``capacity`` a host takes one only when its reading says the memory
+    is there (``reaper.memory_admits``)."""
+    if host.whole_machine or host.sandbox_disk_gb is None:
+        return 0
+    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
     # The swap file lives on the same data disk (`enrollment.DATA_DISK`), so the
     # room its sandboxes have is that disk less the reserve and the file.
     # Counted here rather than as an extra reserve so a deployment that turns
@@ -547,7 +557,7 @@ def capacity(host: CloudHost) -> int:
     by_disk = (
         int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb - swap_gb
     ) // settings.cloud_sandbox_disk_gb
-    return max(0, min(by_cores, by_memory, by_disk))
+    return max(0, min(by_cores, by_disk))
 
 
 def warm_pool_target() -> int:

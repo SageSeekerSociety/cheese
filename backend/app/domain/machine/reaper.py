@@ -45,8 +45,10 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
+    HostReading,
     MachineStatus,
     capacity,
+    hard_capacity,
 )
 from app.domain.machine.progress import (
     publish_line,
@@ -92,6 +94,40 @@ class CloudPoolFull(Exception):
 def free_slots(host: CloudHost, load: dict[uuid.UUID, int]) -> int:
     """How many more sandboxes a host can be given."""
     return max(0, capacity(host) - load.get(host.id, 0))
+
+
+def memory_admits(
+    host: CloudHost,
+    load: dict[uuid.UUID, int],
+    reading: HostReading | None,
+    placed_since: int,
+    now: datetime,
+) -> bool:
+    """Whether a host with no reserved slot left takes one more sandbox all the
+    same, on what it reads (``cloud_pool_admit_by_use``): below its cores and
+    its disk (``hard_capacity``), its last reading recent, its memory under
+    little pressure, and enough of it available for one more sandbox at its
+    limit and the headroom — counting each of the ``placed_since`` sandboxes
+    placed on it after that reading at its full limit, since the reading does
+    not have them yet. No reading, or one too old or without the numbers,
+    admits nothing: the reserved slots are what the host is known to hold."""
+    if not settings.cloud_pool_admit_by_use:
+        return False
+    if load.get(host.id, 0) >= hard_capacity(host):
+        return False
+    if (
+        reading is None
+        or reading.memory_available_bytes is None
+        or reading.memory_pressure_some_avg60 is None
+        or now - reading.read_at
+        > timedelta(seconds=settings.cloud_pool_admit_reading_s)
+    ):
+        return False
+    if reading.memory_pressure_some_avg60 >= settings.cloud_pool_admit_pressure:
+        return False
+    limit = settings.cloud_sandbox_memory_mb << 20
+    needed = limit + (settings.cloud_pool_admit_headroom_mb << 20)
+    return reading.memory_available_bytes - placed_since * limit >= needed
 
 
 def accepting(host: CloudHost) -> bool:
