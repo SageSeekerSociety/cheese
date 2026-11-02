@@ -3,14 +3,17 @@
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import Base
 from app.core.errors import NotFoundError, ValidationError
 from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import ConversationKind
 from app.domain.living_doc.services import Documents
+from app.domain.project.models import Project
 
 # `Task`, `TaskStatus` and `TopicStatus` are part of the answer this seam gives
 # about a place — which row an id names, whether its work is still open, whether
@@ -82,6 +85,15 @@ class Place:
         )
 
 
+def _loaded[R: Base](row: R | None) -> R | None:
+    """A row the session already holds, or None when a commit or rollback has
+    expired it: its columns would load lazily, which an async session cannot
+    do, so the caller reads it afresh like a miss."""
+    if row is None:
+        return None
+    return None if inspect(row).expired_attributes else row
+
+
 def _can_cache(session: object) -> bool:
     return isinstance(session, AsyncSession)
 
@@ -99,14 +111,35 @@ class PlaceResolver:
             found, cached = recall(self._session, ("topic_row", place_id))
             if found:
                 return Place(room=cached) if cached is not None else None
-        room = await self._session.get(Topic, place_id)
-        if _can_cache(self._session):
-            remember(
-                self._session,
-                ("topic_row", place_id),
-                room,
-                tables=frozenset({"topics"}),
-            )
+        if not _can_cache(self._session):
+            room = await self._session.get(Topic, place_id)
+            return Place(room=room) if room is not None else None
+        sync = self._session.sync_session
+        room = _loaded(sync.identity_map.get(sync.identity_key(Topic, (place_id,))))
+        if room is None:
+            # Read with its project: nearly every route asks it next (whether
+            # it is archived, before any write; who may do what in it).
+            row = (
+                await self._session.execute(
+                    select(Topic, Project)
+                    .outerjoin(Project, Project.id == Topic.project_id)
+                    .where(Topic.id == place_id)
+                )
+            ).first()
+            room, project = (row[0], row[1]) if row is not None else (None, None)
+            if project is not None:
+                remember(
+                    self._session,
+                    ("project", project.id),
+                    project,
+                    tables=frozenset({"projects"}),
+                )
+        remember(
+            self._session,
+            ("topic_row", place_id),
+            room,
+            tables=frozenset({"topics"}),
+        )
         return Place(room=room) if room is not None else None
 
     async def task_place(self, task_id: uuid.UUID) -> Place | None:
@@ -163,8 +196,10 @@ class PlaceResolver:
 
     async def _conversation(self, conversation_id: uuid.UUID) -> Place | None:
         if _can_cache(self._session):
-            in_map = self._session.sync_session.identity_map.get(
-                self._session.sync_session.identity_key(Task, (conversation_id,))
+            in_map = _loaded(
+                self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(Task, (conversation_id,))
+                )
             )
             if in_map is not None:
                 room_place = await self.resolve(in_map.room_id)

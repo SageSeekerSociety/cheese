@@ -91,9 +91,14 @@ class ActorResolver:
         cheese_token: str,
         writes: bool = False,
         allow_machine: bool = False,
+        bind_user_id: bool = True,
     ):
         self._session = session
         self._allow_machine = allow_machine
+        # Whether `resolve` looks up the user id of an actor whose credential
+        # carried none (`_bound`). A caller that only asks where the actor sits,
+        # which is answered by handle, skips that read.
+        self._bind_user_id = bind_user_id
         # Whether this request changes something. A write that names a project,
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
@@ -589,7 +594,7 @@ class ActorResolver:
         legacy cheesex token puts the handle in ``sub`` and carries no id
         either), so branching on it just left those callers unbound."""
         actor = await self._recover_numeric_handle(actor)
-        if actor.authenticated and actor.user_id is None:
+        if self._bind_user_id and actor.authenticated and actor.user_id is None:
             user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
             if user is not None:
                 actor = replace(actor, user_id=user.id)

@@ -10,11 +10,10 @@ keeps its work (`Place.keeps_work`).
 
 import uuid
 
-from sqlalchemy import select
-
 from app.api.task_instructions import say_became_task
 from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.identity.handles import recipient_seat
 from app.domain.room_task.dispatch import create_task
 from app.domain.room_task.models import Task
@@ -44,11 +43,16 @@ async def turn_into_task(
     two people pressing at once make one task.
 
     Unnamed (``title`` None), the platform names it from the conversation, as
-    any task made without a title (`room_task/naming.py`)."""
-    locked = await db.scalar(
-        select(Thread).where(Thread.id == thread.id).with_for_update()
-    )
-    assert locked is not None
+    any task made without a title (`room_task/naming.py`).
+
+    The 支线's numbering, with its channel's, is what makes two presses one
+    task: the second waits here until the first commits, then reads its task.
+    It is taken before anything else is locked, the batch `create_task` takes
+    (`conversation.numbering`). Not the 支线's row: a reply holds the 支线's
+    numbering and then writes that row (trigger ``blocks_thread_replied``), so
+    a lock on the row taken first would wait on the reply the other way
+    round."""
+    await lock_conversations(db, [thread.room_id, thread.id])
     existing = await db.get(Task, thread.id)
     if existing is not None:
         return existing, False

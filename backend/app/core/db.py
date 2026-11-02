@@ -249,6 +249,116 @@ def apply_migration_timeouts(connection: Connection) -> None:
     )
 
 
+#: SQLSTATEs a migration's transaction ends with when it lost a race for a lock
+#: against live traffic: ``lock_not_available`` (its ``lock_timeout`` ran out)
+#: and ``deadlock_detected`` (Postgres chose it as the deadlock's victim).
+_LOCK_CONTENTION = frozenset({"55P03", "40P01"})
+
+
+class MigrationProgress:
+    """Whether the migration now running has committed any of its own work.
+
+    Alembic commits each migration on its own (``transaction_per_migration``),
+    right after ``on_version_apply`` stamps its revision. Any other commit is an
+    ``autocommit_block`` committing part of the migration that is still
+    running; that migration can no longer be undone by a rollback, so it is not
+    run again.
+    """
+
+    def __init__(self, connection: Connection) -> None:
+        self.committed_partway = False
+        self._stamped = False
+        event.listen(connection, "commit", self._committed)
+
+    def version_applied(self, **_: Any) -> None:
+        """Alembic's ``on_version_apply`` callback."""
+        self._stamped = True
+
+    def _committed(self, _connection: Connection) -> None:
+        if self._stamped:
+            self._stamped = False
+            self.committed_partway = False
+        else:
+            self.committed_partway = True
+
+
+def _given_up_by_a_retry_loop(exc: DBAPIError) -> bool:
+    """Whether this lock error escaped a PL/pgSQL block: a ``with_lock_retries``
+    loop (``migration_helpers``) catches every lock error inside it and lets one
+    out only once it has spent its own attempts, re-raised from inside the
+    ``DO`` block, which Postgres records in the error's CONTEXT."""
+    context = getattr(getattr(exc.orig, "__cause__", None), "context", None) or ""
+    return "PL/pgSQL function" in context
+
+
+#: Retries start only within this long of the first attempt, so the upgrade
+#: fails inside the deploy job's budget (deploy-prod.yml: 30 minutes); the last
+#: attempt can still run a ``with_lock_retries`` loop of about 320 s after it.
+MIGRATION_RETRY_BUDGET_S = 600.0
+
+
+def run_migrations_retrying_lock_contention(
+    connection: Connection,
+    progress: MigrationProgress,
+    run: Callable[[], None],
+    *,
+    attempts: int = 10,
+    budget_s: float = MIGRATION_RETRY_BUDGET_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Run ``run`` (the upgrade), and when a migration loses a lock race with
+    the backend still serving, roll that migration back and run it again.
+
+    A deploy migrates while the previous release serves (``.claude/rules/
+    migrations.md``), so a migration's DDL competes for locks with live
+    requests. ``lock_timeout`` keeps it from stalling them; this makes losing
+    that race cost a retry instead of the deploy. Every lock a migration takes
+    is covered, the ones it takes implicitly included (dropping a column drops
+    its foreign key, which locks the referenced table): the transaction that
+    timed out or was chosen as a deadlock's victim is rolled back whole, so it
+    releases everything and the migration starts over from its first statement.
+    This is strong_migrations' ``lock_timeout_retries`` and GitLab's
+    ``with_lock_retries`` for transactional migrations.
+
+    There is one retry layer per lock. A ``with_lock_retries`` loop already
+    retries its own ``LOCK TABLE`` for about 320 s; when it gives up, the tables
+    have stayed busy that long and the migration fails rather than running that
+    loop again. Retries stop being started ``budget_s`` after the first attempt.
+
+    Migrations already committed stay committed: alembic resumes from the
+    stamped revision. A migration that committed part of itself (an
+    ``autocommit_block``) is not retried, since running it again would repeat
+    work a rollback cannot take back.
+    """
+    started = clock()
+    for attempt in range(1, attempts + 1):
+        try:
+            run()
+            return
+        except DBAPIError as exc:
+            contention = getattr(exc.orig, "sqlstate", None) in _LOCK_CONTENTION
+            wait = min(2.0 ** (attempt - 1), 30.0)
+            if (
+                not contention
+                or _given_up_by_a_retry_loop(exc)
+                or progress.committed_partway
+                or attempt == attempts
+                or clock() + wait - started > budget_s
+            ):
+                raise
+            connection.rollback()
+            logger.warning(
+                "migration lost a lock to live traffic (%s); rolled back, "
+                "retrying in %.0fs (attempt %d of %d)",
+                exc.orig,
+                wait,
+                attempt + 1,
+                attempts,
+            )
+            sleep(wait)
+
+
 def _set_request_lock_timeout(
     session: Session, transaction: SessionTransaction, connection: Connection
 ) -> None:

@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -40,6 +40,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import (
     LEFT_HOST_KEY,
     LOST_KEY,
+    LOST_PROCESSES_KEY,
     THAW_KEY,
     AgentSession,
 )
@@ -72,6 +73,7 @@ from app.domain.machine.sandbox_wait import (
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
+    STOPPED_PROCESSES,
     VM_PREPARING,
     _cloud_progress,
     _home_removed,
@@ -771,9 +773,21 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     if holder is None:
         return None
     resource = holder.generation
-    row = await AgentSessionService(db).by_id(session_id)
-    if row is None:
+    # The session's row, with whether the agent its credential names is still
+    # a live account: the last thing asked below, in the same statement.
+    found = (
+        await db.execute(
+            select(
+                AgentSession,
+                exists().where(
+                    User.username == claims.get("a", ""), User.deleted_at.is_(None)
+                ),
+            ).where(AgentSession.id == session_id)
+        )
+    ).first()
+    if found is None:
         return None
+    row, agent_live = found
     lease = row.work_lease or {}
     request = row.execution_request or {}
     location = row.runtime_location or {}
@@ -805,7 +819,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         session_id, lease["device_id"]
     ):
         return None
-    if await user_by_handle(db, claims.get("a", "")) is None:
+    if not agent_live:
         return None
     await db.commit()
     return {
@@ -1437,11 +1451,14 @@ async def _install(
             and target["status"] == "ready"
             and (row.execution_request or {}).get(LOST_KEY)
         )
+        stopped = []
         if lost:
+            request = row.execution_request or {}
+            stopped = [str(one) for one in request.get(LOST_PROCESSES_KEY) or [] if one]
             row.execution_request = {
                 key: value
-                for key, value in (row.execution_request or {}).items()
-                if key != LOST_KEY
+                for key, value in request.items()
+                if key not in (LOST_KEY, LOST_PROCESSES_KEY)
             }
         conversation_id = row.conversation_id
         device = (
@@ -1486,6 +1503,12 @@ async def _install(
             )
         lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
         notices = [lost_notice] * bool(lost)
+        if stopped:
+            notices.append(
+                STOPPED_PROCESSES.format(
+                    processes="\n".join(f"  {one}" for one in stopped)
+                )
+            )
         if disk_full_mb is not None:
             notices.append(DISK_FULL_NOTICE.format(mb=disk_full_mb))
         return {

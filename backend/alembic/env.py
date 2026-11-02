@@ -24,7 +24,12 @@ from migration_helpers import CI_POSTGRES_MAJOR  # noqa: E402
 
 import app.models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
-from app.core.db import Base, apply_migration_timeouts  # noqa: E402
+from app.core.db import (  # noqa: E402
+    Base,
+    MigrationProgress,
+    apply_migration_timeouts,
+    run_migrations_retrying_lock_contention,
+)
 
 log = logging.getLogger("alembic.env")
 
@@ -101,6 +106,7 @@ def do_run_migrations(connection: Connection) -> None:
     # SQLAlchemy autobegan above as an "external" transaction and run the whole
     # upgrade inside it, which is what transaction_per_migration turns off.
     connection.commit()
+    progress = MigrationProgress(connection)
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
@@ -108,10 +114,14 @@ def do_run_migrations(connection: Connection) -> None:
         # locks and the row locks of its backfill end with it, instead of being
         # held until the last migration of the deploy finishes.
         transaction_per_migration=True,
+        on_version_apply=progress.version_applied,
     )
 
-    with context.begin_transaction():
-        context.run_migrations()
+    def upgrade() -> None:
+        with context.begin_transaction():
+            context.run_migrations()
+
+    run_migrations_retrying_lock_contention(connection, progress, upgrade)
 
 
 async def run_async_migrations() -> None:
