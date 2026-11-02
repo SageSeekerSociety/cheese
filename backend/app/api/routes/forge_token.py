@@ -23,10 +23,11 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import PresentedCredential, require_seated_agent
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core import credentials
@@ -40,6 +41,7 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
 from app.domain.project.forgejo_tokens import ForgejoTokenError, credential_is_leased
 from app.domain.project.github_app import GitHubAppError
+from app.domain.review.services import AcceptService
 from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -293,6 +295,22 @@ async def _seated(db: AsyncSession, token: str, project_id: uuid.UUID) -> bool:
     return True
 
 
+async def _seated_project(
+    request: Request, db: AsyncSession
+) -> tuple[str, dict, uuid.UUID]:
+    """The scoped credential a sandbox presents, its claims and the project it
+    names, once the agent it names is still seated there."""
+    token = credentials.presented(request.headers)
+    claims = scoped_token_claims(token) if token else None
+    if not token or not claims or not claims.get("p"):
+        raise AuthenticationRequiredError("A scoped cheese token is required")
+    project_id = uuid.UUID(claims["p"])
+    await require_seated_agent(
+        db, token, project_id=project_id, topic_id=None, allow_machine=True
+    )
+    return token, claims, project_id
+
+
 @router.get("/forge-token")
 async def sandbox_forge_token(
     request: Request, response: Response, db: AsyncSession = Depends(get_db)
@@ -300,14 +318,7 @@ async def sandbox_forge_token(
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
-    token = credentials.presented(request.headers)
-    claims = scoped_token_claims(token) if token else None
-    if not claims or not claims.get("p"):
-        raise AuthenticationRequiredError("A scoped cheese token is required")
-    project_id = uuid.UUID(claims["p"])
-    await require_seated_agent(
-        db, token, project_id=project_id, topic_id=None, allow_machine=True
-    )
+    _token, claims, project_id = await _seated_project(request, db)
     # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes. On GitHub it
@@ -376,3 +387,24 @@ async def sandbox_forge_token(
             ),
         }
     )
+
+
+class HeldDeliveries(BaseModel):
+    """Pull requests that are deliveries waiting on a person, and their branches."""
+
+    numbers: list[int]
+    branches: list[str]
+
+
+@router.get("/forge-held", **typed_response(HeldDeliveries))
+async def sandbox_forge_held(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """The project's pull requests that are deliveries waiting on a person,
+    and their branches: the forge proxy outside the sandbox refuses an agent
+    closing one of them, or deleting its branch (`forge_proxy.pr_close_targets`),
+    because that would void the delivery, which is the person's decision. Asked
+    on every such request, so a delivery filed a moment ago counts."""
+    _token, _claims, project_id = await _seated_project(request, db)
+    numbers, branches = await AcceptService(db).held_pr_deliveries(project_id)
+    return ok({"numbers": numbers, "branches": branches})

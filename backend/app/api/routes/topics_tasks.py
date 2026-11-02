@@ -249,7 +249,9 @@ async def conclude_task(
 
     Closing is not undone by reopening (its open cards are voided, its pull
     request closed), so it is kept to the people whose word the task's
-    teammate acts on (`TaskService.takes_part`); reopening is wider.
+    teammate acts on (`TaskService.takes_part`); reopening is wider. Its own
+    session may not close it while a delivery on it waits on a person: that
+    close would void the delivery, which is the person's decision.
     """
     place, actor, task = await task_conversation(db, resolver, topic_id)
     # Before anything else is locked: the task lock order (`lock_order`); the
@@ -259,6 +261,11 @@ async def conclude_task(
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
             raise ForbiddenError(say("taskOwnSessionCloses"))
+        # Closing voids a delivery still waiting on a person (below), and whether
+        # it is voided is that person's decision, made on the interface; the
+        # refusal tells the teammate where the person clicks.
+        if await AcceptService(db).waiting_card(task.id) is not None:
+            raise ConflictError(say("taskCloseWhileDeliveryWaits"))
     elif not TaskService.takes_part(task, actor.handle):
         raise ForbiddenError(say("taskOwnSessionCloses"))
     credits = {"reporter_handle", "contributor_handles"} & body.model_fields_set
