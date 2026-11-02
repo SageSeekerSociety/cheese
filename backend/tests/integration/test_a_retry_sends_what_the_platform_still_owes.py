@@ -116,6 +116,28 @@ def _failure_lines(client, task_id: str) -> list[dict]:
     return [b for b in blocks if (b.get("meta") or {}).get("retryable") is True]
 
 
+def _platform_tries_again(client, task_id: str) -> int:
+    """Time passes until the instruction's backoff runs out, and the platform's
+    own sweep of the ledger tries it again. Returns how many it tried."""
+    factory = client.test_request_factory
+    chat = client.app.dependency_overrides[get_chat_service]()
+
+    async def sweep() -> int:
+        async with factory() as session:
+            await session.execute(
+                update(Delivery)
+                .where(
+                    Delivery.conversation_id == uuid.UUID(task_id),
+                    Delivery.sent_at.is_(None),
+                )
+                .values(retry_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+            await session.commit()
+        return await dispatch_pending(factory, chat=chat, runner=get_work_runner())
+
+    return client.portal.call(sweep)
+
+
 def test_the_platform_trying_an_instruction_again_does_not_say_it_failed_again(
     client, stub_hooks
 ):
@@ -129,24 +151,9 @@ def test_the_platform_trying_an_instruction_again_does_not_say_it_failed_again(
     task_id = _started_task(client)
     assert len(_failure_lines(client, task_id)) == 1
     factory = client.test_request_factory
-    chat = client.app.dependency_overrides[get_chat_service]()
-
-    async def tries_left() -> int:
-        async with factory() as session:
-            await session.execute(
-                update(Delivery)
-                .where(
-                    Delivery.conversation_id == uuid.UUID(task_id),
-                    Delivery.sent_at.is_(None),
-                )
-                # Time passes: its backoff has run out.
-                .values(retry_at=datetime.now(UTC) - timedelta(seconds=1))
-            )
-            await session.commit()
-        return await dispatch_pending(factory, chat=chat, runner=get_work_runner())
 
     for _ in range(3):
-        assert client.portal.call(tries_left) == 1
+        assert _platform_tries_again(client, task_id) == 1
         wait_work_idle()
 
     async def attempts() -> list[int]:
@@ -163,3 +170,19 @@ def test_the_platform_trying_an_instruction_again_does_not_say_it_failed_again(
     assert client.portal.call(attempts) == [4]
     # ... and the task says so once.
     assert len(_failure_lines(client, task_id)) == 1
+
+
+def test_a_retry_a_person_asked_for_says_how_it_went(client, stub_hooks):
+    """Someone pressed 「重试」 and it could not start again: the task says so,
+    one line more, so the press visibly did something. The platform's own
+    tries after that still add nothing."""
+    task_id = _started_task(client)
+    assert len(_failure_lines(client, task_id)) == 1
+
+    assert _summon(client, task_id) == {"started": True}
+    wait_work_idle()
+    assert len(_failure_lines(client, task_id)) == 2
+
+    assert _platform_tries_again(client, task_id) == 1
+    wait_work_idle()
+    assert len(_failure_lines(client, task_id)) == 2

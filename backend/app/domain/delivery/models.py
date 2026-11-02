@@ -69,6 +69,10 @@ class Delivery(UuidPk, Base):
         String(24), default="pending", server_default="pending"
     )
     attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    #: The latest attempt a person asked for (「重试」), as opposed to the
+    #: platform trying again on its own backoff. A person who asked hears how
+    #: their try went; the platform's own tries of one instruction say so once.
+    asked_attempt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
