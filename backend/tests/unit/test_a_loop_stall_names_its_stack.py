@@ -46,3 +46,40 @@ def test_a_loop_that_keeps_yielding_keeps_no_stall():
     before = loop_stalls.stall_status()["count"]
     asyncio.run(go())
     assert loop_stalls.stall_status()["count"] == before
+
+
+def test_a_watcher_off_the_main_thread_says_it_is_not_measuring():
+    import threading
+
+    loop_stalls = _stalls()
+    seen = {}
+
+    def off_main() -> None:
+        asyncio.run(loop_stalls.watch_loop_stalls(iterations=2))
+        seen["active"] = loop_stalls.stall_status()["active"]
+
+    thread = threading.Thread(target=off_main)
+    thread.start()
+    thread.join()
+    assert seen == {"active": False}
+
+
+def test_a_stopped_watcher_leaves_no_alarm_behind():
+    import signal
+
+    loop_stalls = _stalls()
+
+    async def go() -> None:
+        watcher = asyncio.create_task(loop_stalls.watch_loop_stalls())
+        await asyncio.sleep(0.06)
+        hold_the_loop_for_a_while()
+        watcher.cancel()
+        try:
+            await watcher
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(go())
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert signal.getsignal(signal.SIGALRM) is signal.SIG_DFL
+    assert loop_stalls.stall_status()["active"] is False

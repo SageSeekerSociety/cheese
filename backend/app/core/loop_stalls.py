@@ -49,11 +49,17 @@ _worst: list[dict] = []
 _recent: deque[dict] = deque(maxlen=KEEP)
 _count = 0
 _samples: Counter[tuple[str, ...]] = Counter()
+# Whether a watcher is sampling: the alarm handler re-arms only while it is,
+# so an alarm handled after the watcher stopped cannot start another one.
+_active = False
 
 
 def stall_status() -> dict:
     """The stalls kept so far: how many there were, the worst and the latest."""
     return {
+        # False where nothing measures (no watcher, or one off the main
+        # thread): a count of 0 then says nothing about the loop.
+        "active": _active,
         "threshold_ms": round(STALL_S * 1000),
         "count": _count,
         "worst": list(_worst),
@@ -82,6 +88,8 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
 
 
 def _on_alarm(signum: int, frame: FrameType | None) -> None:
+    if not _active:
+        return
     _samples[_where(frame)] += 1
     signal.setitimer(signal.ITIMER_REAL, SAMPLE_S)
 
@@ -106,12 +114,17 @@ def _keep(late: float, samples: Counter[tuple[str, ...]]) -> None:
 
 async def watch_loop_stalls(*, iterations: int | None = None) -> None:
     """Beat on the loop and keep where it was each time a beat came late."""
+    global _active
     if threading.current_thread() is not threading.main_thread():
         return
-    if signal.getsignal(signal.SIGALRM) not in (signal.SIG_DFL, None):
-        return  # someone else's alarm; not ours to take
+    previous = signal.getsignal(signal.SIGALRM)
+    if previous is not signal.SIG_DFL:
+        # Someone else's alarm (a Python handler, or None: one installed
+        # outside Python); not ours to take.
+        return
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.siginterrupt(signal.SIGALRM, False)
+    _active = True
     try:
         while iterations is None or iterations > 0:
             if iterations is not None:
@@ -130,5 +143,6 @@ async def watch_loop_stalls(*, iterations: int | None = None) -> None:
             if late > STALL_S:
                 _keep(late, samples)
     finally:
+        _active = False
         signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, signal.SIG_DFL)
+        signal.signal(signal.SIGALRM, previous)
