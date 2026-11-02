@@ -43,7 +43,11 @@ jobs:
       E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
       # Names this shard's evidence and artifacts, e.g. e2e-1-of-2.
       E2E_SUITE: e2e-${{ matrix.shard }}-of-${{ strategy.job-total }}
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the fixture CI pull requires GNU timeout
+    # (backend/tests/forgejo/pull-ci.sh). ubuntu-latest became 26.04 on
+    # 2026-11-01, whose timeout is uutils with different signal semantics.
+    # Move this label only after that check no longer needs GNU behavior.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: mirror.gcr.io/paradedb/paradedb:v0.24.0-pg17@sha256:663ecc6dac5165ae2a664c7bd16fb8d8970867e89006ae4f6aa9cd26b1a2a3a4
@@ -307,7 +311,8 @@ jobs:
   # runs the directory against it, so a red forge contract fails this workflow.
   forgejo:
     name: forgejo live
-    runs-on: ubuntu-latest
+    # Same pin and reason as the shards above: pull-ci.sh needs GNU timeout.
+    runs-on: ubuntu-24.04
     env:
       JWT_SECRET: test-secret
       ENVIRONMENT: test
