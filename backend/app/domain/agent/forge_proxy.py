@@ -13,7 +13,8 @@ Two Unix domain sockets live in the room's read-only platform socket directory
   refuses pull-request merges (`PUT /repos/{owner}/{repo}/pulls/{n}/merge` and
   GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`) with `403`,
   refuses closing a pull request that is a delivery waiting on a person, or
-  deleting its branch (`pr_close_targets`, asked of `platform.sock`), with `403`,
+  deleting or emptying its branch (`forge_requests.read`, asked of
+  `platform.sock`), with `403`,
   replaces `placeholder` credentials with a cached single-repository token
   obtained from `platform.sock` using `X-Cheese-Proxy-Proof`, and connects
   directly to the forge (or falls back to the platform when the forge is
@@ -53,13 +54,18 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zlib
-from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 if sys.platform != "win32":
     import fcntl
+
+# Shipped beside this file (`RELEASE_FILES`); run as a script, its directory is
+# first on `sys.path`.
+if __package__:
+    from . import forge_requests
+else:
+    import forge_requests  # type: ignore[no-redef]
 
 PLACEHOLDER_TOKEN = "placeholder"
 MERGE_REFUSED_MESSAGE = (
@@ -67,9 +73,6 @@ MERGE_REFUSED_MESSAGE = (
     "to submit it for project review."
 )
 
-_REST_MERGE_RE = re.compile(
-    r"^(?:/api/v[13])?/repos/[^/]+/[^/]+/pulls/\d+/merge/*$", re.IGNORECASE
-)
 _GRAPHQL_MERGE_RE = re.compile(rb"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
 _SYSTEM_CA_PATHS = (
     "/etc/ssl/certs/ca-certificates.crt",
@@ -90,148 +93,31 @@ def _lock(file) -> None:
         fcntl.flock(file, fcntl.LOCK_EX)
 
 
-def is_pr_merge_request(method: str, path: str, body: bytes = b"") -> bool:
-    """Whether an HTTP request to a forge API attempts to merge a pull request."""
-    clean_path = urllib.parse.urlsplit(path).path or "/"
-    upper = method.upper()
-    if upper == "PUT" and _REST_MERGE_RE.match(clean_path):
+def is_pr_merge_request(
+    method: str, path: str, body: bytes = b"", headers: dict | None = None
+) -> bool:
+    """Whether an HTTP request to a forge API attempts to merge a pull request,
+    read as the forge reads it (`forge_requests.read`). A GraphQL request that
+    cannot be parsed counts when its bytes name a merge."""
+    write = forge_requests.read(method, path, headers or {}, body)
+    if write.merge:
         return True
-    if upper == "POST" and clean_path.rstrip("/") in ("/graphql", "/api/graphql"):
-        return bool(_GRAPHQL_MERGE_RE.search(body))
-    return False
+    clean = forge_requests.normalized_path(path)
+    return (
+        write.unreadable
+        and clean.endswith("/graphql")
+        and bool(_GRAPHQL_MERGE_RE.search(body))
+    )
 
 
 #: A pull request the platform holds as a delivery waiting on a person is
-#: that person's to close: closing it voids the delivery. The agent asks them.
+#: that person's to close: closing it voids the delivery. The agent tells them
+#: where to click.
 HELD_REFUSED_MESSAGE = (
     "[cheese] This pull request is a delivery waiting for a person's decision. "
-    "Closing it, or deleting its branch, would void the delivery, and that is "
-    "theirs to decide: ask them with cheese_card(action=ask)."
+    "Closing it, deleting or emptying its branch would void the delivery, and "
+    "that is theirs to decide in the task's interface."
 )
-
-_REST_CLOSE_RE = re.compile(
-    r"^(?:/api/v[13])?/repos/[^/]+/[^/]+/(?:pulls|issues)/(\d+)/*$", re.IGNORECASE
-)
-_REST_BRANCH_DELETE_RE = re.compile(
-    r"^(?:/api/v[13])?/repos/[^/]+/[^/]+/(?:git/refs/heads|branches)/(.+?)/*$",
-    re.IGNORECASE,
-)
-_GRAPHQL_CLOSE_RE = re.compile(rb"\b(?:closePullRequest|closeIssue|deleteRef)\b")
-_GRAPHQL_UPDATE_RE = re.compile(rb"\b(?:updatePullRequest|updateIssue)\b")
-_GRAPHQL_CLOSED_RE = re.compile(rb"\bCLOSED\b")
-#: A GitHub global node id: `PR_kwDO…` / `I_kwDO…` / `REF_kwDO…`, or the
-#: legacy base64 form.
-_NODE_ID_RE = re.compile(
-    r"^(?:[A-Z][A-Za-z]{0,5}_[A-Za-z0-9_-]{6,}|MD[A-Za-z0-9+/=]{8,})$"
-)
-_ZERO_SHA_RE = re.compile(rb"^(?:0{40}|0{64})$")
-_HEADS = b"refs/heads/"
-
-
-@dataclass(frozen=True)
-class CloseTargets:
-    """What a forge request would close: pull requests by number, branches by
-    name, and GitHub node ids still to be resolved to either."""
-
-    numbers: frozenset[int] = frozenset()
-    branches: frozenset[str] = frozenset()
-    node_ids: frozenset[str] = frozenset()
-
-
-def pr_close_targets(
-    method: str, path: str, body: bytes = b"", *, encoding: str = ""
-) -> CloseTargets | None:
-    """The pull requests and branches a forge request would close or delete,
-    or None when it closes nothing.
-
-    Closing a pull request: REST `PATCH …/pulls/{n}` or `…/issues/{n}` (a pull
-    request is an issue too) with `state: closed`; GraphQL `closePullRequest`,
-    `closeIssue`, or `updatePullRequest` / `updateIssue` to `CLOSED`. Deleting
-    its branch closes it as well: REST `DELETE …/git/refs/heads/{b}` (GitHub) or
-    `…/branches/{b}` (Forgejo), GraphQL `deleteRef`, and a push that deletes
-    `refs/heads/{b}`."""
-    clean_path = urllib.parse.urlsplit(path).path or "/"
-    upper = method.upper()
-    if upper == "PATCH" and (match := _REST_CLOSE_RE.match(clean_path)):
-        try:
-            state = json.loads(body or b"{}").get("state")
-        except (ValueError, AttributeError):
-            return None
-        if str(state).lower() != "closed":
-            return None
-        return CloseTargets(numbers=frozenset({int(match.group(1))}))
-    if upper == "DELETE" and (match := _REST_BRANCH_DELETE_RE.match(clean_path)):
-        branch = urllib.parse.unquote(match.group(1))
-        return CloseTargets(branches=frozenset({branch}))
-    if upper == "POST" and clean_path.rstrip("/") in ("/graphql", "/api/graphql"):
-        if not (
-            _GRAPHQL_CLOSE_RE.search(body)
-            or (_GRAPHQL_UPDATE_RE.search(body) and _GRAPHQL_CLOSED_RE.search(body))
-        ):
-            return None
-        return CloseTargets(node_ids=frozenset(_node_ids(body)))
-    if upper == "POST" and clean_path.endswith("/git-receive-pack"):
-        if encoding.lower() == "gzip":
-            try:
-                body = zlib.decompress(body, 16 + zlib.MAX_WBITS)
-            except zlib.error:
-                return None
-        deleted = _pushed_deletions(body)
-        return CloseTargets(branches=frozenset(deleted)) if deleted else None
-    return None
-
-
-def _node_ids(body: bytes) -> set[str]:
-    """Every string in a GraphQL request that is shaped like a node id: in its
-    variables, or written into the query itself."""
-    try:
-        request = json.loads(body)
-    except ValueError:
-        return set()
-    found: set[str] = set()
-
-    def walk(value) -> None:
-        if isinstance(value, str):
-            if _NODE_ID_RE.match(value):
-                found.add(value)
-        elif isinstance(value, dict):
-            for item in value.values():
-                walk(item)
-        elif isinstance(value, list):
-            for item in value:
-                walk(item)
-
-    if isinstance(request, dict):
-        walk(request.get("variables"))
-        for literal in re.findall(
-            r'"((?:[^"\\]|\\.)*)"', str(request.get("query") or "")
-        ):
-            walk(literal)
-    return found
-
-
-def _pushed_deletions(body: bytes) -> set[str]:
-    """The branches a git push deletes: its command list (pkt-lines up to the
-    first flush) names `<old> <zero sha> refs/heads/<branch>` for each."""
-    deleted: set[str] = set()
-    at = 0
-    while at + 4 <= len(body):
-        try:
-            size = int(body[at : at + 4], 16)
-        except ValueError:
-            break
-        if size < 4:
-            break
-        line = body[at + 4 : at + size].split(b"\0", 1)[0].rstrip(b"\n")
-        at += size
-        parts = line.split(b" ")
-        if (
-            len(parts) == 3
-            and _ZERO_SHA_RE.match(parts[1])
-            and parts[2].startswith(_HEADS)
-        ):
-            deleted.add(parts[2][len(_HEADS) :].decode("utf-8", "replace"))
-    return deleted
 
 
 def rewrite_authorization(
@@ -694,7 +580,7 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
                 connection.close()
             return
         body = self._read_body()
-        if is_pr_merge_request(self.command, self.path, body):
+        if is_pr_merge_request(self.command, self.path, body, dict(self.headers)):
             payload = json.dumps({"message": MERGE_REFUSED_MESSAGE}).encode("utf-8")
             self.send_response(403, "Forbidden")
             self.send_header("Content-Type", "application/json")
@@ -743,14 +629,9 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
             headers["Content-Length"] = str(len(body))
         headers["Connection"] = "close"
 
-        targets = pr_close_targets(
-            self.command,
-            self.path,
-            body,
-            encoding=self.headers.get("Content-Encoding", ""),
-        )
-        if targets is not None and proxy.closes_held_delivery(
-            targets,
+        write = forge_requests.read(self.command, self.path, dict(self.headers), body)
+        if write.any() and proxy.closes_held_delivery(
+            write,
             scheme=self.target_scheme,
             host=self.target_host,
             port=self.target_port,
@@ -885,7 +766,7 @@ class ForgeProxyRuntime:
 
     def closes_held_delivery(
         self,
-        targets: CloseTargets,
+        write: forge_requests.ForgeWrite,
         *,
         scheme: str,
         host: str,
@@ -894,30 +775,73 @@ class ForgeProxyRuntime:
         headers: dict[str, str],
         forge: dict,
     ) -> bool:
-        """Whether a request closing `targets` would close a pull request the
-        platform holds as a delivery waiting on a person.
+        """Whether `write` would close a pull request the platform holds as a
+        delivery waiting on a person: close it, delete or rename its branch,
+        or leave its branch with no commits over its base (a forge closes a
+        pull request whose head is gone or empty).
 
-        Asked of the platform each time, never cached. Node ids are resolved on
-        the forge with the request's own credential. Where either answer cannot
-        be had, the request is refused: it is a close, and closing a held
+        Asked of the platform each time, never cached. Node ids are resolved,
+        and a pushed commit compared with the base, on the forge with the
+        proxy's credential. Where an answer cannot be had, or the request
+        could not be read, it is refused: it is a close, and closing a held
         delivery cannot be taken back."""
         try:
-            held = self.platform.held_deliveries()
+            held = self.platform.held_deliveries()["prs"]
         except (OSError, ValueError, KeyError, TypeError):
             return True
-        numbers = {int(n) for n in held.get("numbers") or []}
-        branches = set(held.get("branches") or [])
-        if not numbers and not branches:
+        if not held:
             return False
-        if targets.numbers & numbers or targets.branches & branches:
+        numbers = {int(pr["number"]) for pr in held}
+        bases = {pr["branch"]: pr.get("base") for pr in held if pr.get("branch")}
+        if write.unreadable or write.numbers & numbers or write.names & set(bases):
             return True
-        if not targets.node_ids:
-            return False
+        for rest in write.ref_paths:
+            for branch in bases:
+                if rest in (f"git/refs/heads/{branch}", f"branches/{branch}"):
+                    return True
+                if rest.startswith(f"branches/{branch}/"):
+                    return True
+        for branch, sha in write.pushes:
+            if branch not in bases:
+                continue
+            if forge_requests.is_deletion(sha):
+                return True
+            if not self._ahead_of_base(forge, bases[branch], sha):
+                return True
+        if write.node_ids:
+            return self._names_held(
+                write.node_ids,
+                numbers,
+                set(bases),
+                scheme=scheme,
+                host=host,
+                port=port,
+                path=path,
+                headers=headers,
+                forge=forge,
+            )
+        return False
+
+    def _names_held(
+        self,
+        node_ids: frozenset[str],
+        numbers: set[int],
+        branches: set[str],
+        *,
+        scheme: str,
+        host: str,
+        port: int,
+        path: str,
+        headers: dict[str, str],
+        forge: dict,
+    ) -> bool:
+        """Whether any of these GitHub node ids is a held pull request (or
+        its issue) or a held branch's ref; True when they cannot be resolved."""
         query = json.dumps(
             {
                 "query": "query($ids:[ID!]!){nodes(ids:$ids){"
                 "... on PullRequest{number} ... on Issue{number} ... on Ref{name}}}",
-                "variables": {"ids": sorted(targets.node_ids)},
+                "variables": {"ids": sorted(node_ids)},
             }
         ).encode("utf-8")
         try:
@@ -943,13 +867,51 @@ class ForgeProxyRuntime:
             nodes = json.loads(answer)["data"]["nodes"]
         except (OSError, ValueError, KeyError, TypeError):
             return True
-        if status != 200:
+        if status != 200 or not isinstance(nodes, list):
             return True
         for node in nodes:
             node = node or {}
             if node.get("number") in numbers or node.get("name") in branches:
                 return True
         return False
+
+    def _ahead_of_base(self, forge: dict, base: str | None, sha: str) -> bool:
+        """Whether `sha`, pushed to a held branch, still has commits over the
+        branch's base. A commit the forge has never seen comes in with this
+        push, so it is not in the base. Asked of the forge's compare API; an
+        answer it cannot read is a no."""
+        api = urllib.parse.urlsplit(forge.get("api_url") or "https://api.github.com")
+        repo = forge.get("repo") or ""
+        if not base or not repo or not api.hostname:
+            return False
+        tls = (api.scheme or "https") == "https"
+        compare = urllib.parse.quote(f"{base}...{sha}", safe="./")
+        try:
+            status, _reason, _headers, answer = self.forward_forge_http(
+                scheme="https" if tls else "http",
+                host=api.hostname,
+                port=api.port or (443 if tls else 80),
+                method="GET",
+                path=f"{api.path.rstrip('/')}/repos/{repo}/compare/{compare}",
+                headers={
+                    "Host": api.netloc,
+                    "Authorization": f"token {forge.get('token') or ''}",
+                    "Accept": "application/json",
+                    "User-Agent": "cheese-forge-proxy",
+                    "Connection": "close",
+                },
+                body=b"",
+                forge=forge,
+            )
+            if status == 404:
+                return True
+            if status != 200:
+                return False
+            answer_data = json.loads(answer)
+        except (OSError, ValueError):
+            return False
+        ahead = answer_data.get("ahead_by", answer_data.get("total_commits"))
+        return isinstance(ahead, int) and ahead > 0
 
     def forward_forge_http(
         self,

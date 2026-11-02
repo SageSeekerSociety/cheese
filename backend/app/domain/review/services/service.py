@@ -266,17 +266,15 @@ class AcceptService:
             None,
         )
 
-    async def held_pr_deliveries(
-        self, project_id: uuid.UUID
-    ) -> tuple[list[int], list[str]]:
-        """这个项目里骑着 PR、还在等人决定的交付：PR 号和它们的分支。关掉这样的
-        PR（或删掉它的分支）就是作废那份交付，所以队友经 forge 代理做不了
-        （`agent.forge_proxy.pr_close_targets`）。"""
+    async def held_pr_deliveries(self, project_id: uuid.UUID) -> list[dict]:
+        """这个项目里骑着 PR、还在等人决定的交付：PR 号、它的分支和要并进去的分支。
+        关掉这样的 PR，删掉、改名或清空它的分支，都是作废那份交付，所以队友经
+        forge 代理做不了（`agent.forge_requests`）。"""
         rows = await self._repo.held_pr_deliveries(project_id, OPEN_CARD_STATUSES)
-        return (
-            sorted({number for number, _ in rows}),
-            sorted({branch for _, branch in rows if branch}),
-        )
+        return [
+            {"number": number, "branch": branch, "base": base}
+            for number, branch, base in sorted(rows, key=lambda row: row[0])
+        ]
 
     async def reviewer_handles_for_cards(
         self, card_ids: list[uuid.UUID]

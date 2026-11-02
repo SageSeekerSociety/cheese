@@ -84,20 +84,20 @@ def test_the_forge_proxy_is_told_which_pull_requests_wait(client):
     project_id, room_id, task_id, card_id = _waiting(client)
     pr = _card(client, room_id)["pr_number"]
 
-    async def branch() -> str:
+    async def branches() -> tuple[str, str]:
         async with client.test_factory() as session:
             task = await session.get(Task, task_id)
             assert task is not None
-            return task.branch_name
+            return task.branch_name, task.base_branch
 
     sandbox = {
         "Authorization": f"Bearer {mint_scoped_token(project_id=str(project_id))}"
     }
     held = client.get("/sandbox/forge-held", headers=sandbox)
     assert held.status_code == 200, held.text
+    branch, base = client.portal.call(branches)
     assert held.json()["data"] == {
-        "numbers": [pr],
-        "branches": [client.portal.call(branch)],
+        "prs": [{"number": pr, "branch": branch, "base": base}]
     }
 
     client.post(
@@ -106,4 +106,4 @@ def test_the_forge_proxy_is_told_which_pull_requests_wait(client):
         headers=session_auth_headers("bob"),
     )
     held = client.get("/sandbox/forge-held", headers=sandbox)
-    assert held.json()["data"] == {"numbers": [], "branches": []}
+    assert held.json()["data"] == {"prs": []}

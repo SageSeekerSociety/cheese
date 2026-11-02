@@ -13,6 +13,7 @@ in front of a recording forge, asking a stand-in platform socket which pull
 requests wait.
 """
 
+import gzip
 import http.client
 import json
 import os
@@ -30,6 +31,11 @@ HELD_PR = 1
 HELD_BRANCH = "cheese/held-task"
 #: GitHub node ids the forge resolves: the held pull request and another one.
 NODES = {"PR_kwDOAAheld01": HELD_PR, "PR_kwDOAAfree02": 2}
+#: A commit already on the forge with nothing over `main` (pushing the held
+#: branch to it leaves the pull request empty, and the forge closes it).
+BASE_TIP = "b" * 40
+#: A commit the forge has not seen: it comes in with the push itself.
+NEW_COMMIT = "c" * 40
 
 
 class _UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
@@ -51,11 +57,18 @@ def forge():
             body = self.rfile.read(length) if length else b""
             seen.append((self.command, self.path, body))
             payload: dict = {}
+            status = 200
             if self.path == "/graphql" and b"nodes(ids:" in body:
                 ids = json.loads(body)["variables"]["ids"]
                 payload = {"data": {"nodes": [{"number": NODES[i]} for i in ids]}}
+            if "/compare/" in self.path:
+                # GitHub's compare: how far the pushed commit is past the base.
+                if self.path.endswith(BASE_TIP):
+                    payload = {"status": "behind", "ahead_by": 0}
+                else:
+                    status, payload = 404, {"message": "No commit found"}
             raw = json.dumps(payload).encode()
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
@@ -88,10 +101,15 @@ def proxy(forge):
                         "kind": "github_app",
                         "token": "installation-token",
                         "api_url": f"http://127.0.0.1:{port}",
+                        "repo": "acme/widgets",
                     }
                 },
                 "/api/sandbox/forge-held": {
-                    "data": {"numbers": [HELD_PR], "branches": [HELD_BRANCH]}
+                    "data": {
+                        "prs": [
+                            {"number": HELD_PR, "branch": HELD_BRANCH, "base": "main"}
+                        ]
+                    }
                 },
             }[self.path]
             raw = json.dumps(payload).encode()
@@ -135,14 +153,14 @@ def proxy(forge):
     os.unlink(platform_dir / "platform.sock")
 
 
-def _send(port: int, method: str, path: str, body: bytes) -> int:
+def _send(port: int, method: str, path: str, body: bytes, **headers: str) -> int:
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         conn.request(
             method,
             path,
             body=body,
-            headers={"Authorization": "token placeholder"},
+            headers={"Authorization": "token placeholder", **headers},
         )
         response = conn.getresponse()
         response.read()
@@ -170,31 +188,172 @@ def _push_deleting(branch: str) -> bytes:
     return f"{len(line) + 4:04x}".encode() + line + b"0000"
 
 
+def _graphql(query: str, variables: dict | None = None) -> bytes:
+    return _json({"query": query, "variables": variables or {}})
+
+
+def _escaped_graphql_close(node: str) -> bytes:
+    """`closePullRequest` with its first letter as a JSON `\\u` escape: the
+    same request to a JSON parser, other bytes to a pattern."""
+    return _graphql_close(node).replace(b"closePullRequest", b"\\u0063losePullRequest")
+
+
+def _push(*updates: tuple[str, str, str], gzip_members: int = 0) -> bytes:
+    lines = b""
+    for index, (old, new, ref) in enumerate(updates):
+        text = f"{old} {new} {ref}" + ("\0report-status" if index == 0 else "") + "\n"
+        line = text.encode()
+        lines += f"{len(line) + 4:04x}".encode() + line
+    body = lines + b"0000"
+    if not gzip_members:
+        return body
+    # Split into several gzip members, as a client may stream it.
+    step = max(1, len(body) // gzip_members)
+    parts = [body[i : i + step] for i in range(0, len(body), step)]
+    return b"".join(gzip.compress(part) for part in parts)
+
+
+GZIP = {"Content-Encoding": "gzip"}
+FORM = {"Content-Type": "application/x-www-form-urlencoded"}
+CLOSED = _json({"state": "closed"})
+
+#: (method, path, body, headers): requests that close the held pull request,
+#: or delete, rename or empty its branch, each said a different way.
 CLOSES_THE_HELD_PR = {
-    "REST close": (
-        "PATCH",
-        f"/repos/acme/widgets/pulls/{HELD_PR}",
-        _json({"state": "closed"}),
-    ),
+    "REST close": ("PATCH", f"/repos/acme/widgets/pulls/{HELD_PR}", CLOSED, {}),
     "REST close as an issue": (
         "PATCH",
         f"/repos/acme/widgets/issues/{HELD_PR}",
-        _json({"state": "closed"}),
+        CLOSED,
+        {},
+    ),
+    "REST close under the platform forge's base path": (
+        "PATCH",
+        f"/forge/api/v1/repos/acme/widgets/pulls/{HELD_PR}",
+        CLOSED,
+        {},
+    ),
+    "REST close as an issue under the base path": (
+        "PATCH",
+        f"/forge/api/v1/repos/acme/widgets/issues/{HELD_PR}",
+        CLOSED,
+        {},
+    ),
+    "REST close with doubled slashes": (
+        "PATCH",
+        f"//repos/acme//widgets/pulls//{HELD_PR}/",
+        CLOSED,
+        {},
+    ),
+    "REST close through /repositories/{id}": (
+        "PATCH",
+        f"/repositories/4242/pulls/{HELD_PR}",
+        CLOSED,
+        {},
+    ),
+    "REST close, form-encoded": (
+        "PATCH",
+        f"/repos/acme/widgets/pulls/{HELD_PR}",
+        b"state=closed",
+        FORM,
+    ),
+    "REST close as POST with a method override": (
+        "POST",
+        f"/repos/acme/widgets/pulls/{HELD_PR}",
+        CLOSED,
+        {"X-HTTP-Method-Override": "PATCH"},
+    ),
+    "REST edit with a body that cannot be read": (
+        "PATCH",
+        f"/repos/acme/widgets/pulls/{HELD_PR}",
+        b"\xff\xfe not a body",
+        {},
     ),
     "GraphQL close (gh pr close)": (
         "POST",
         "/graphql",
         _graphql_close("PR_kwDOAAheld01"),
+        {},
+    ),
+    "GraphQL close spelled with a JSON escape": (
+        "POST",
+        "/graphql",
+        _escaped_graphql_close("PR_kwDOAAheld01"),
+        {},
+    ),
+    "GraphQL close under an alias, after a comment": (
+        "POST",
+        "/graphql",
+        _graphql(
+            "# tidy up\nmutation Tidy { done: closePullRequest(input: "
+            '{pullRequestId: "PR_kwDOAAheld01"}) { clientMutationId } }'
+        ),
+        {},
+    ),
+    "GraphQL updateRefs on the branch": (
+        "POST",
+        "/graphql",
+        _graphql(
+            "mutation($r: ID!, $u: [RefUpdate!]!) { updateRefs(input: "
+            "{repositoryId: $r, refUpdates: $u}) { clientMutationId } }",
+            {
+                "r": "R_kwDOAArepo01",
+                "u": [{"name": f"refs/heads/{HELD_BRANCH}", "afterOid": BASE_TIP}],
+            },
+        ),
+        {},
+    ),
+    "GraphQL mutation that cannot be parsed": (
+        "POST",
+        "/graphql",
+        _graphql("mutation { closePullRequest(input: {pullRequestId: "),
+        {},
     ),
     "REST branch delete": (
         "DELETE",
         f"/repos/acme/widgets/git/refs/heads/{HELD_BRANCH}",
         b"",
+        {},
+    ),
+    "REST branch delete under the base path": (
+        "DELETE",
+        f"/forge/api/v1/repos/acme/widgets/branches/{HELD_BRANCH}",
+        b"",
+        {},
+    ),
+    "REST branch rename (then delete it under its new name)": (
+        "POST",
+        f"/repos/acme/widgets/branches/{HELD_BRANCH}/rename",
+        _json({"new_name": "gone"}),
+        {},
     ),
     "push deleting its branch": (
         "POST",
         "/acme/widgets.git/git-receive-pack",
-        _push_deleting(HELD_BRANCH),
+        _push(("1" * 40, "0" * 40, f"refs/heads/{HELD_BRANCH}")),
+        {},
+    ),
+    "push deleting its branch, gzip in several members": (
+        "POST",
+        "/acme/widgets.git/git-receive-pack",
+        _push(
+            ("2" * 40, "0" * 40, "refs/heads/cheese/other-task"),
+            ("1" * 40, "0" * 40, f"refs/heads/{HELD_BRANCH}"),
+            gzip_members=3,
+        ),
+        GZIP,
+    ),
+    "force-push leaving its branch with nothing over the base": (
+        "POST",
+        "/acme/widgets.git/git-receive-pack",
+        _push(("1" * 40, BASE_TIP, f"refs/heads/{HELD_BRANCH}")),
+        {},
+    ),
+    "push whose body cannot be decompressed": (
+        "POST",
+        "/acme/widgets.git/git-receive-pack",
+        b"not gzip at all",
+        GZIP,
     ),
 }
 
@@ -202,35 +361,61 @@ LEAVES_THE_HELD_PR = {
     "REST close of another PR": (
         "PATCH",
         "/repos/acme/widgets/pulls/2",
-        _json({"state": "closed"}),
+        CLOSED,
+        {},
     ),
     "REST retitle of the held PR": (
         "PATCH",
         f"/repos/acme/widgets/pulls/{HELD_PR}",
         _json({"title": "fix(login): keep the session"}),
+        {},
+    ),
+    "REST retitle of the held PR, form-encoded": (
+        "PATCH",
+        f"/forge/api/v1/repos/acme/widgets/pulls/{HELD_PR}",
+        b"title=keep+the+session",
+        FORM,
     ),
     "GraphQL close of another PR": (
         "POST",
         "/graphql",
         _graphql_close("PR_kwDOAAfree02"),
+        {},
+    ),
+    "GraphQL query naming closePullRequest only as a string": (
+        "POST",
+        "/graphql",
+        _graphql(
+            'query { search(query: "closePullRequest", type: ISSUE, first: 1) { issueCount } }'
+        ),
+        {},
     ),
     "push deleting another branch": (
         "POST",
         "/acme/widgets.git/git-receive-pack",
-        _push_deleting("cheese/other-task"),
+        _push(("2" * 40, "0" * 40, "refs/heads/cheese/other-task")),
+        {},
+    ),
+    "push of new commits to the held branch": (
+        "POST",
+        "/acme/widgets.git/git-receive-pack",
+        _push(("1" * 40, NEW_COMMIT, f"refs/heads/{HELD_BRANCH}"), gzip_members=2),
+        GZIP,
     ),
 }
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "body"),
+    ("method", "path", "body", "headers"),
     CLOSES_THE_HELD_PR.values(),
     ids=CLOSES_THE_HELD_PR.keys(),
 )
-def test_closing_a_waiting_delivery_is_refused(proxy, forge, method, path, body):
+def test_closing_a_waiting_delivery_is_refused(
+    proxy, forge, method, path, body, headers
+):
     _port, seen = forge
 
-    status = _send(proxy, method, path, body)
+    status = _send(proxy, method, path, body, **headers)
 
     assert status == 403
     # Nothing that request said reached the forge (looking a node id up is
@@ -239,14 +424,14 @@ def test_closing_a_waiting_delivery_is_refused(proxy, forge, method, path, body)
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "body"),
+    ("method", "path", "body", "headers"),
     LEAVES_THE_HELD_PR.values(),
     ids=LEAVES_THE_HELD_PR.keys(),
 )
-def test_everything_else_reaches_the_forge(proxy, forge, method, path, body):
+def test_everything_else_reaches_the_forge(proxy, forge, method, path, body, headers):
     _port, seen = forge
 
-    status = _send(proxy, method, path, body)
+    status = _send(proxy, method, path, body, **headers)
 
     assert status == 200
     assert (method, path, body) in seen

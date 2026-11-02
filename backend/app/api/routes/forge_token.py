@@ -389,11 +389,16 @@ async def sandbox_forge_token(
     )
 
 
-class HeldDeliveries(BaseModel):
-    """Pull requests that are deliveries waiting on a person, and their branches."""
+class HeldPullRequest(BaseModel):
+    """A pull request that is a delivery waiting on a person."""
 
-    numbers: list[int]
-    branches: list[str]
+    number: int
+    branch: str | None
+    base: str | None
+
+
+class HeldDeliveries(BaseModel):
+    prs: list[HeldPullRequest]
 
 
 @router.get("/forge-held", **typed_response(HeldDeliveries))
@@ -401,10 +406,10 @@ async def sandbox_forge_held(
     request: Request, db: AsyncSession = Depends(get_db)
 ) -> dict:
     """The project's pull requests that are deliveries waiting on a person,
-    and their branches: the forge proxy outside the sandbox refuses an agent
-    closing one of them, or deleting its branch (`forge_proxy.pr_close_targets`),
+    their branches and bases: the forge proxy outside the sandbox refuses an
+    agent closing one of them, or deleting or emptying its branch
+    (`forge_requests.read`),
     because that would void the delivery, which is the person's decision. Asked
     on every such request, so a delivery filed a moment ago counts."""
     _token, _claims, project_id = await _seated_project(request, db)
-    numbers, branches = await AcceptService(db).held_pr_deliveries(project_id)
-    return ok({"numbers": numbers, "branches": branches})
+    return ok({"prs": await AcceptService(db).held_pr_deliveries(project_id)})
