@@ -353,9 +353,13 @@ watch(
     const pad = frame.value
     const scale = presenting.value ? 1 : zoom.value
     await paint(current.value, host, {
-      width: Math.max(32, (size.value.width - 2 * pad.x) * scale),
+      // 少算 1px：页宽是小数，四舍五入后可能比舞台多出一点点，于是冒出滚动条；Windows 上的
+      // 滚动条占地方，一条竖的又把宽度挤小，接着横的也出来。
+      width: Math.max(32, (size.value.width - 2 * pad.x - 1) * scale),
       height:
-        fit.value || presenting.value ? Math.max(32, (size.value.height - pad.top - pad.bottom) * scale) : undefined,
+        fit.value || presenting.value
+          ? Math.max(32, (size.value.height - pad.top - pad.bottom - 1) * scale)
+          : undefined,
       text: true,
       maxScale: 8,
     })
@@ -663,7 +667,14 @@ onBeforeUnmount(() => {
           </div>
           <!-- The stage never holds keyboard focus (the reader around it does), so only a pointer selection is quoted here. -->
           <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- a mouse selection on the slide is quoted and (while presenting) a click turns the page; the keyboard turns pages on the reader around it, which is why the stage itself is not focusable -->
-          <div ref="stage" class="slides__stage" @mousedown.self="root?.focus()" @mouseup="quote" @click="pointAdvance">
+          <div
+            ref="stage"
+            class="slides__stage"
+            :class="{ 'slides__stage--fitted': zoom <= 1 && (fit || presenting) }"
+            @mousedown.self="root?.focus()"
+            @mouseup="quote"
+            @click="pointAdvance"
+          >
             <div
               ref="sheet"
               class="slides__sheet"
@@ -888,6 +899,10 @@ onBeforeUnmount(() => {
   justify-content: safe center;
   padding: 16px;
   background: var(--canvas);
+}
+.slides__stage--fitted {
+  /* 整页都在屏上时不会有该滚的东西：不让一像素的取整误差换来两条滚动条。 */
+  overflow: hidden;
 }
 .slides--presenting .slides__stage {
   padding: 24px 24px 44px;
