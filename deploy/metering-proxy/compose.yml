@@ -90,8 +90,17 @@ services:
     # room. Scoped to this container's network namespace.
     sysctls:
       net.ipv4.tcp_syn_retries: "3"
+    # `confdir` is mitmproxy's default (~/.mitmproxy, the CERTS_DIR mount) and
+    # is set anyway, deliberately: mitmproxy 12 opens the listeners before its
+    # `running` event, and its TLS addon builds the certificate store on that
+    # event unless `confdir` arrives as an option at startup. Sessions redial
+    # the moment a release recreates this container, a handshake in that gap
+    # fails with "'NoneType' object has no attribute 'get_cert'", and mitmproxy
+    # exits on an error logged during startup (deploy run 41392766820).
+    # deploy/tests/test_metering_startup.py holds this line in place.
     command: >
       mitmdump --listen-host 0.0.0.0
+      --set confdir=/home/mitmproxy/.mitmproxy
       --mode regular@8444
       --mode reverse:https://chatgpt.com@8445
       --ssl-insecure
