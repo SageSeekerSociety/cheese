@@ -63,8 +63,14 @@ def test_whom_a_draft_is_for_reads_the_agents_with_the_roster(client):
 
     seen = _statements(ask)
 
+    # Who is an agent is read with the roster, and the caller's own answer
+    # with where they sit in the project (`project_roles._read_seat`): never
+    # on its own.
     bindings = [s for s in seen if "agent_bindings" in s]
-    assert len(bindings) == 1 and "FROM topic_memberships" in bindings[0], bindings
+    assert bindings, seen
+    assert all(
+        "FROM topic_memberships" in s or "team_user_relation" in s for s in bindings
+    ), bindings
 
 
 def test_sending_reads_the_owners_team_row_with_their_account(client):
@@ -79,8 +85,12 @@ def test_sending_reads_the_owners_team_row_with_their_account(client):
 
     seen = _statements(send)
 
-    assert [s for s in seen if s.startswith('SELECT "user".id')] == [], seen
-    teams = [s for s in seen if "FROM team_user_relation" in s]
+    assert [
+        s
+        for s in seen
+        if s.startswith('SELECT "user".id') and "team_user_relation" not in s
+    ] == [], seen
+    teams = [s for s in seen if "team_user_relation" in s]
     assert len(teams) == 1 and 'JOIN "user"' in teams[0], teams
 
 

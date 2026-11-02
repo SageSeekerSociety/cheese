@@ -339,13 +339,9 @@ async def _standing(
     project = await ProjectRepository(session).get(project_id)
     if project is None:
         return None
-    if (
-        isinstance(session, AsyncSession)
-        and not recall(session, ("is_agent", handle))[0]
-    ):
-        # Nothing yet says who ``handle`` is: read it all now, the next
-        # question included.
-        await _read_seat(session, project, handle)
+    # Everything below asks of ``handle``, read at once (the owner's own
+    # account included, when they are the one asking).
+    await _read_seat(session, project, handle)
     if await IdentityService(session).is_agent(handle):
         on_roster = await MemberRepository(session).get(
             project_id=project_id, user_handle=handle
@@ -356,7 +352,6 @@ async def _standing(
     everything = PEOPLE_PERMISSIONS
     if handle == await owner_of(session, project):
         return Standing(seat=Seat.owner, permissions=everything, role="owner")
-    await _read_seat(session, project, handle)
     user = await UserRepository(session).get_by_username(handle)
     members = MemberRepository(session)
     excluded = await members.is_excluded(project_id=project_id, user_handle=handle)
@@ -433,9 +428,7 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
                 ),
             )
         )
-    ).first()
-    if row is None:
-        return
+    ).one()
     user, team_role, member, role, role_id, is_excluded, is_agent = row
     remember(
         session,
