@@ -15,6 +15,7 @@ from app.domain.usage.models import (
     GATEWAY_ROWS,
     NOT_MODEL_CALLS,
     ResourceUsage,
+    TaskGatewayAccount,
     call_count,
 )
 
@@ -77,6 +78,22 @@ def remember_gateway_spend(
         spent,
         tables=frozenset({"resource_usage"}),
     )
+
+
+def task_gateway_spend_select(
+    project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+):
+    """USD a task's gateway key has spent for ``owner_handle``, ever."""
+    return select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
+        ResourceUsage.project_id == project_id,
+        ResourceUsage.conversation_id == task_id,
+        ResourceUsage.credit_owner_handle == owner_handle,
+        ResourceUsage.route == "gateway",
+    )
+
+
+def _task_gateway_spend_key(project_id, task_id, owner_handle) -> tuple:
+    return ("task_gateway_spend", project_id, task_id, owner_handle)
 
 
 class UsageRepository:
@@ -227,17 +244,49 @@ class UsageRepository:
     async def task_gateway_spend(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
     ) -> float:
+        key = _task_gateway_spend_key(project_id, task_id, owner_handle)
+        if isinstance(self._session, AsyncSession):
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
         return float(
             await self._session.scalar(
-                select(func.coalesce(func.sum(ResourceUsage.cost_usd), 0)).where(
-                    ResourceUsage.project_id == project_id,
-                    ResourceUsage.conversation_id == task_id,
-                    ResourceUsage.credit_owner_handle == owner_handle,
-                    ResourceUsage.route == "gateway",
-                )
+                task_gateway_spend_select(project_id, task_id, owner_handle)
             )
             or 0
         )
+
+    async def task_gateway_account(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ) -> TaskGatewayAccount | None:
+        """The task's gateway account for ``owner_handle``, read with what the
+        task has spent through it: the key's budget is worked out from that
+        next (`UsageService.task_gateway_budget`), and it was a statement of
+        its own. The spend is left for `task_gateway_spend`."""
+        row = (
+            await self._session.execute(
+                select(
+                    TaskGatewayAccount,
+                    task_gateway_spend_select(
+                        project_id, task_id, owner_handle
+                    ).scalar_subquery(),
+                ).where(
+                    TaskGatewayAccount.conversation_id == task_id,
+                    TaskGatewayAccount.owner_handle == owner_handle,
+                )
+            )
+        ).first()
+        if row is None:
+            return None
+        account, spent = row
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                _task_gateway_spend_key(project_id, task_id, owner_handle),
+                float(spent or 0),
+                tables=frozenset({"resource_usage"}),
+            )
+        return account
 
     async def _agg(self, where) -> dict:
         # The public `turns` key is retained for wire compatibility, but its

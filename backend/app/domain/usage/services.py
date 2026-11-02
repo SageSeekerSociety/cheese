@@ -91,6 +91,13 @@ class UsageService:
             "layer": "project_budget" if by_budget else "plan",
         }
 
+    async def task_gateway_account(
+        self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
+    ):
+        """The task's gateway account for ``owner_handle``, or None; read with
+        the spend `task_gateway_budget` asks next."""
+        return await self._repo.task_gateway_account(project_id, task_id, owner_handle)
+
     async def task_gateway_budget(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
     ) -> float | None:
