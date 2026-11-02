@@ -446,3 +446,47 @@ async def test_a_tasks_admission_does_not_look_for_the_task_among_rooms(
     seen = await _admitted_in_a_task(client, monkeypatch)
 
     assert len([s for s in seen if re.search(r"FROM topics\b", s)]) == 1, seen
+
+
+async def test_a_tasks_admission_reads_whether_its_people_are_agents_with_it(
+    client, monkeypatch
+):
+    """Who pays for a task's work is its human owner or creator: whether they
+    are agents is read in the statement that reads the task."""
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    bindings = [s for s in seen if "agent_bindings" in s]
+    assert len(bindings) == 1 and "FROM tasks" in bindings[0], bindings
+
+
+async def test_a_tasks_admission_reads_the_keys_spend_with_its_account(
+    client, monkeypatch
+):
+    """The task key's budget is its spend plus what the task may still spend;
+    the spend comes in the statement that reads the key's account."""
+    seen = await _admitted_in_a_task(client, monkeypatch)
+
+    accounts = [s for s in seen if "task_gateway_accounts" in s]
+    assert len(accounts) == 1 and "sum(resource_usage.cost_usd)" in accounts[0]
+    assert [
+        s
+        for s in seen
+        if "sum(resource_usage.cost_usd)" in s
+        and "task_gateway_accounts" not in s
+        and "conversation_id" in s
+    ] == [], seen
+
+
+async def test_a_rooms_admission_does_not_look_for_a_task(client, monkeypatch):
+    """A room's own session has no task to pay for its work."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    assert [s for s in seen if s.startswith("SELECT tasks.")] == [], seen

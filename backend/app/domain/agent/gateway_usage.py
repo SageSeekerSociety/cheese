@@ -564,12 +564,11 @@ async def task_key_in_step(
     is in step with what the task may spend; None to ask `project_gateway_key`.
     Read on ``session``: admission asks it on its own, whose request facts
     already hold the project and its payer (`routes/llm_proxy.py`)."""
-    account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
+    usage = UsageService(session)
+    account = await usage.task_gateway_account(project_id, task_id, owner_handle)
     if account is None or account.project_id != project_id or not account.gateway_key:
         return None
-    target = await UsageService(session).task_gateway_budget(
-        project_id, task_id, owner_handle
-    )
+    target = await usage.task_gateway_budget(project_id, task_id, owner_handle)
     return account.gateway_key if account.budget_usd == target else None
 
 

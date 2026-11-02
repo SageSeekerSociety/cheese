@@ -2,13 +2,12 @@
 
 import uuid
 
-from sqlalchemy import delete, exists, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
-from app.domain.identity.models import AgentBinding
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.topic.models import TopicMembership, TopicRole
-from app.domain.user.models import User
 
 _TOPIC_MEMBER_TABLES = frozenset({"topic_memberships"})
 #: What ``("is_agent", handle)`` is read from (`IdentityService.agents_among`).
@@ -82,15 +81,7 @@ class TopicMembershipRepository:
         # reads a roster asks that next nearly every time
         # (`TopicMemberService.agent_handles`), and it was a statement of its
         # own. Left as `IdentityService.agents_among` leaves it.
-        agent = (
-            exists()
-            .where(
-                User.username == TopicMembership.member_handle,
-                User.deleted_at.is_(None),
-                AgentBinding.user_id == User.id,
-            )
-            .label("is_agent")
-        )
+        agent = names_a_live_agent(TopicMembership.member_handle).label("is_agent")
         pairs = (
             await self._session.execute(
                 select(TopicMembership, agent)
