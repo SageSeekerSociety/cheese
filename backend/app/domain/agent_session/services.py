@@ -260,12 +260,13 @@ class AgentSessionService:
     ]:
         """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
         place, let_go)`` for every placed session — what a channel re-adopts after a
-        restart. ``inner_id`` is the task's or the 支线's, None for a room's
-        own session.
+        restart — or, with ``harness`` and ``device_id``, for that harness's
+        sessions placed on that machine. ``inner_id`` is the task's or the
+        支线's, None for a room's own session.
 
         One per (conversation, agent, harness) seat, and each comes back on its
-        own seat. Every channel reads this same list and keeps the rows whose
-        harness is its own. The stored resume token travels because it is the
+        own seat. A channel asks for its own harness and keeps the rows placed
+        through it. The stored resume token travels because it is the
         provenance a terminal answer has to match before it may close anything
         (FB-56).
         """

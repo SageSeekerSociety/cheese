@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
 from app.core.db import after_own_commit
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.models import LEASE_DEVICE, AgentSession
 from app.domain.conversation.services import of_room, room_column
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
@@ -77,9 +77,11 @@ async def remove_closed_checkouts(
             query = query.where(of_room(AgentSession.conversation_id, room_id))
         if device_id is not None:
             # Only the sessions holding a lease on that machine, now or left.
+            # The retained arm has no index, so this still scans the sessions,
+            # in the database: what it spares is decoding them here.
             query = query.where(
                 or_(
-                    AgentSession.work_lease["device_id"].as_string() == device_id,
+                    LEASE_DEVICE == device_id,
                     cast(AgentSession.execution_request, JSONB)[
                         "retained_leases"
                     ].contains([{"device_id": device_id}]),

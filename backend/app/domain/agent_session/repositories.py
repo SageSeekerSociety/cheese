@@ -448,7 +448,9 @@ class AgentSessionRepository:
         ``harness`` and ``device_id`` narrow it to one harness's sessions, and
         to those placed on one machine: a reconnecting device's recovery asks
         once per harness, and reading every placed session on the platform for
-        each ask held the event loop a third of a second.
+        each ask held the event loop a third of a second. No index serves the
+        machine's key in ``runtime_location``: the narrowing scans the sessions
+        in the database, and spares this process decoding the rest.
         """
         room = room_column(AgentSession.conversation_id)
         stmt = (

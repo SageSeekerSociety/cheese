@@ -82,4 +82,8 @@ def test_the_checkout_sweep_of_a_machine_reads_its_leases_not_whole_rows(client)
         if "FROM agent_sessions JOIN topics" in s and "topics.status !=" in s
     ]
     assert "agent_sessions.harness" not in read, read
-    assert "work_lease ->>" in read, read
+    # The lease's machine in the spelling `ix_agent_sessions_lease_device`
+    # indexes, and the request's retained leases as the one path, not whole.
+    assert "work_lease ->> 'device_id'" in read, read
+    assert "execution_request ->" in read, read
+    assert "agent_sessions.execution_request," not in read, read
