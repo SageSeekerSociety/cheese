@@ -349,6 +349,77 @@ CLOSES_THE_HELD_PR = {
         _push(("1" * 40, BASE_TIP, f"refs/heads/{HELD_BRANCH}")),
         {},
     ),
+    "REST close with the key in capitals (Go decodes keys case-insensitively)": (
+        "PATCH",
+        f"/repos/acme/widgets/pulls/{HELD_PR}",
+        b'{"STATE": "closed"}',
+        {},
+    ),
+    "REST close with the key folded (ſ is s to Go)": (
+        "PATCH",
+        f"/forge/api/v1/repos/acme/widgets/pulls/{HELD_PR}",
+        '{"\u017ftate": "closed"}'.encode(),
+        {},
+    ),
+    "REST close where a later key overrides an earlier one": (
+        "PATCH",
+        f"/forge/api/v1/repos/acme/widgets/pulls/{HELD_PR}",
+        b'{"state": "open", "State": "closed"}',
+        {},
+    ),
+    "REST delete of the pull request as an issue": (
+        "DELETE",
+        f"/forge/api/v1/repos/acme/widgets/issues/{HELD_PR}",
+        b"",
+        {},
+    ),
+    "REST delete of the repository": ("DELETE", "/repos/acme/widgets", b"", {}),
+    "REST branch delete with the slash encoded twice": (
+        "DELETE",
+        "/repos/acme/widgets/git/refs/heads/cheese%252Fheld-task",
+        b"",
+        {},
+    ),
+    "GraphQL close by updatePullRequest with CLOSED as a variable default": (
+        "POST",
+        "/graphql",
+        _graphql(
+            "mutation($s: PullRequestUpdateState = CLOSED) { updatePullRequest("
+            'input: {pullRequestId: "PR_kwDOAAheld01", state: $s}) '
+            "{ clientMutationId } }"
+        ),
+        {},
+    ),
+    "GraphQL close with variables sent as a JSON string": (
+        "POST",
+        "/graphql",
+        _json(
+            {
+                "query": "mutation($id: ID!) { closePullRequest(input: "
+                "{pullRequestId: $id}) { clientMutationId } }",
+                "variables": json.dumps({"id": "PR_kwDOAAheld01"}),
+            }
+        ),
+        {},
+    ),
+    "push to the held pull request's base (it would be marked merged)": (
+        "POST",
+        "/acme/widgets.git/git-receive-pack",
+        _push(("1" * 40, NEW_COMMIT, "refs/heads/main")),
+        {},
+    ),
+    "REST update of the base branch's ref": (
+        "PATCH",
+        "/repos/acme/widgets/git/refs/heads/main",
+        _json({"sha": "1" * 40, "force": False}),
+        {},
+    ),
+    "REST merge of the held branch into the base without a pull request": (
+        "POST",
+        "/repos/acme/widgets/merges",
+        _json({"base": "main", "head": HELD_BRANCH}),
+        {},
+    ),
     "push whose body cannot be decompressed": (
         "POST",
         "/acme/widgets.git/git-receive-pack",
@@ -387,6 +458,21 @@ LEAVES_THE_HELD_PR = {
         "/graphql",
         _graphql(
             'query { search(query: "closePullRequest", type: ISSUE, first: 1) { issueCount } }'
+        ),
+        {},
+    ),
+    "REST edit where a later key reopens (Go keeps the last)": (
+        "PATCH",
+        f"/repos/acme/widgets/pulls/{HELD_PR}",
+        b'{"State": "closed", "state": "open"}',
+        {},
+    ),
+    "GraphQL retitle of the held PR": (
+        "POST",
+        "/graphql",
+        _graphql(
+            'mutation { updatePullRequest(input: {pullRequestId: "PR_kwDOAAheld01", '
+            'title: "keep the session"}) { clientMutationId } }'
         ),
         {},
     ),

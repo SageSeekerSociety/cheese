@@ -775,10 +775,13 @@ class ForgeProxyRuntime:
         headers: dict[str, str],
         forge: dict,
     ) -> bool:
-        """Whether `write` would close a pull request the platform holds as a
-        delivery waiting on a person: close it, delete or rename its branch,
-        or leave its branch with no commits over its base (a forge closes a
-        pull request whose head is gone or empty).
+        """Whether `write` would decide a pull request the platform holds as a
+        delivery waiting on a person: close or delete it, delete or rename its
+        branch, leave its branch with no commits over its base (a forge closes
+        a pull request whose head is gone or empty), write to its base branch
+        (a forge marks a pull request merged once its head reaches the base,
+        and a push cannot be read for whether it does), or delete the
+        repository.
 
         Asked of the platform each time, never cached. Node ids are resolved,
         and a pushed commit compared with the base, on the forge with the
@@ -793,15 +796,21 @@ class ForgeProxyRuntime:
             return False
         numbers = {int(pr["number"]) for pr in held}
         bases = {pr["branch"]: pr.get("base") for pr in held if pr.get("branch")}
-        if write.unreadable or write.numbers & numbers or write.names & set(bases):
+        targets = {pr["base"] for pr in held if pr.get("base")}
+        guarded = set(bases) | targets
+        if write.unreadable or write.deletes_repository:
+            return True
+        if write.numbers & numbers or write.names & guarded:
             return True
         for rest in write.ref_paths:
-            for branch in bases:
+            for branch in guarded:
                 if rest in (f"git/refs/heads/{branch}", f"branches/{branch}"):
                     return True
                 if rest.startswith(f"branches/{branch}/"):
                     return True
         for branch, sha in write.pushes:
+            if branch in targets:
+                return True
             if branch not in bases:
                 continue
             if forge_requests.is_deletion(sha):

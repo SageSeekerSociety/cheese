@@ -53,6 +53,7 @@ NODE_ID_RE = re.compile(
     r"^(?:[A-Z][A-Za-z]{0,5}_[A-Za-z0-9_-]{6,}|MD[A-Za-z0-9+/=]{8,})$"
 )
 _REPO_RE = re.compile(r"/(?:repos/[^/]+/[^/]+|repositories/\d+)/(.+)$")
+_REPO_ROOT_RE = re.compile(r"/(?:repos/[^/]+/[^/]+|repositories/\d+)$")
 _ZERO = re.compile(r"^0+$")
 _SHA = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _HEADS = "refs/heads/"
@@ -76,8 +77,10 @@ class ForgeWrite:
     #: (branch, new sha) of each branch a push updates; an all-zero sha
     #: deletes it.
     pushes: tuple[tuple[str, str], ...] = ()
-    #: It merges a pull request.
+    #: It merges a pull request, or branches outside a pull request.
     merge: bool = False
+    #: It deletes the repository.
+    deletes_repository: bool = False
     #: It could close or delete and could not be read.
     unreadable: bool = False
 
@@ -89,6 +92,7 @@ class ForgeWrite:
             or self.node_ids
             or self.pushes
             or self.merge
+            or self.deletes_repository
             or self.unreadable
         )
 
@@ -107,6 +111,8 @@ def read(method: str, path: str, headers: Mapping[str, str], body: bytes) -> For
         return _read_graphql(body) if method == "POST" else ForgeWrite()
     if method not in WRITES:
         return ForgeWrite()
+    if method == "DELETE" and _REPO_ROOT_RE.search(clean):
+        return ForgeWrite(deletes_repository=True)
     match = _REPO_RE.search(clean)
     if not match:
         return ForgeWrite()
@@ -114,12 +120,18 @@ def read(method: str, path: str, headers: Mapping[str, str], body: bytes) -> For
     if rest.startswith(("git/refs/", "branches/")):
         return ForgeWrite(ref_paths=frozenset({rest}))
     number = re.fullmatch(r"(?:pulls|issues)/(\d+)", rest)
-    if number and method in ("PATCH", "PUT", "POST"):
-        fields = _fields(lower.get("content-type", ""), body)
-        if fields is None or str(fields.get("state", "")).lower() == "closed":
+    if number and method == "DELETE":
+        return ForgeWrite(numbers=frozenset({int(number.group(1))}))
+    if number:
+        pairs = _fields(lower.get("content-type", ""), body)
+        if pairs is None or str(_decoded_field(pairs, "state")).lower() == "closed":
             return ForgeWrite(numbers=frozenset({int(number.group(1))}))
         return ForgeWrite()
     if re.fullmatch(r"pulls/\d+/merge", rest) and method in ("PUT", "POST"):
+        return ForgeWrite(merge=True)
+    # Merging one branch into another without a pull request (GitHub's
+    # `POST /repos/{o}/{r}/merges`) is a merge too.
+    if rest == "merges" and method == "POST":
         return ForgeWrite(merge=True)
     return ForgeWrite()
 
@@ -133,32 +145,56 @@ def normalized_path(path: str) -> str:
         raw = urllib.parse.urlsplit(path).path or "/"
     else:
         raw = path.split("?", 1)[0].split("#", 1)[0] or "/"
-    decoded = urllib.parse.unquote(raw)
+    # Decoded until it stops changing: a router may decode a part again
+    # (`%252F` → `%2F` → `/`), so the reading that finds the most is the one
+    # that counts.
+    decoded = raw
+    for _ in range(8):
+        again = urllib.parse.unquote(decoded)
+        if again == decoded:
+            break
+        decoded = again
     collapsed = re.sub(r"/{2,}", "/", decoded)
     resolved = posixpath.normpath(collapsed)
     return "/" + resolved.lstrip("/") if resolved != "." else "/"
 
 
-def _fields(content_type: str, body: bytes) -> dict | None:
-    """The body's top-level fields, read by its content type; None when it
-    cannot be read. An empty body has no fields."""
+def _fields(content_type: str, body: bytes) -> list[tuple[str, object]] | None:
+    """The body's top-level fields as (key, value) pairs in the order sent,
+    read by its content type; None when it cannot be read. An empty body has
+    no fields."""
     if not body.strip():
-        return {}
+        return []
     kind = content_type.split(";", 1)[0].strip().lower()
     try:
         text = body.decode("utf-8")
     except UnicodeDecodeError:
         return None
     if kind == "application/x-www-form-urlencoded":
-        return {k: v[-1] for k, v in urllib.parse.parse_qs(text).items()}
+        return list(urllib.parse.parse_qsl(text, keep_blank_values=True))
     try:
-        value = json.loads(text)
+        value = json.loads(text, object_pairs_hook=_Pairs)
     except ValueError:
         if kind in ("", "text/plain"):
-            parsed = urllib.parse.parse_qs(text, strict_parsing=True)
-            return {k: v[-1] for k, v in parsed.items()} if parsed else None
+            parsed = urllib.parse.parse_qsl(text, strict_parsing=True)
+            return list(parsed) if parsed else None
         return None
-    return value if isinstance(value, dict) else None
+    return list(value) if isinstance(value, _Pairs) else None
+
+
+class _Pairs(list):
+    """A JSON object kept as its (key, value) pairs, duplicates included."""
+
+
+def _decoded_field(pairs: list[tuple[str, object]], name: str) -> object:
+    """The value a forge's decoder gives field `name`: Go's encoding/json
+    matches keys case-insensitively (with Unicode folding, so `ſtate` is
+    `state`) and lets a later key overwrite an earlier one."""
+    value: object = None
+    for key, item in pairs:
+        if key.casefold() == name.casefold():
+            value = item
+    return value
 
 
 # --- git push -----------------------------------------------------------------
@@ -244,19 +280,28 @@ def _read_graphql(body: bytes) -> ForgeWrite:
         for op in operations
         if op.kind == "mutation" and (not wanted or op.name == wanted)
     ]
-    variables = _strings(request.get("variables"))
+    provided = request.get("variables")
+    if isinstance(provided, str):
+        # Some servers take the variables as a JSON string.
+        try:
+            provided = json.loads(provided) if provided.strip() else {}
+        except ValueError:
+            return ForgeWrite(unreadable=True)
+    variables = _strings(provided)
     merge = False
     unreadable = False
     node_ids: set[str] = set()
     names: set[str] = set()
     for op in mutations:
         unreadable = unreadable or op.spreads
+        # A variable's value is what was sent, or else its declared default.
+        known = variables + op.defaults
         for name, args in op.fields:
             if name in MERGE_FIELDS:
                 merge = True
             if name not in CLOSING_FIELDS:
                 continue
-            values = args + variables
+            values = args + known
             if name in UPDATE_FIELDS and "CLOSED" not in values:
                 continue
             for value in values:
@@ -297,6 +342,8 @@ class Operation:
     fields: list[tuple[str, list[str]]] = field(default_factory=list)
     #: A named fragment is spread at the top level: its fields are not read.
     spreads: bool = False
+    #: The string and enum values in its variable definitions (defaults).
+    defaults: list[str] = field(default_factory=list)
 
 
 _TOKEN = re.compile(
@@ -424,10 +471,9 @@ def parse_operations(text: str) -> list[Operation]:
             raise GraphQLSyntaxError
         take()
         name = take()[1] if peek()[0] == "name" else None
-        if peek()[1] == "(":
-            balanced("(", ")")
+        defaults = balanced("(", ")") if peek()[1] == "(" else []
         directives()
-        op = Operation(value, name)
+        op = Operation(value, name, defaults=defaults)
         selection_set(op, True)
         ops.append(op)
     return ops
