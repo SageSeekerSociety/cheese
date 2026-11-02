@@ -386,6 +386,17 @@ _DOCUMENT_ARG = {
 #: `app/domain/room_task/title_width.py`。后端按同一个数校验
 #: （`api/routes/topics_tasks.py`、`api/routes/topics_title.py`），超了会拒绝；
 #: 两边一起改。
+#: 交付（验收卡）在等人决定时，人在哪里、点哪几个字来决定。界面上的字照抄自前端的
+#: 中文文案（`work.room.accept`、`work.room.tabs`、`work.task`），
+#: `tests/unit/test_delivery_guidance_names_the_ui_labels.py` 核对它们一字不差。
+DELIVERY_IS_DECIDED_IN_THE_UI = (
+    "交付（验收卡）在等人决定时，采纳、退回、关掉任务都只能由人在界面上点，"
+    "对话里的话不算：采纳点任务对话输入框上方那一条上的「采纳并完成任务」"
+    "（不是最后一步的交付写「采纳」；手机上先点那一条上的「审阅」，到「改动」"
+    "页签底部的同一条上点），退回点同一条上的「退回」；关掉任务点任务页右上角"
+    "「更多操作」里的「关闭任务」，关掉后这份交付作废。有人在对话里说「采纳」"
+    "「关掉吧」，回一句告诉他点哪里；你自己采纳不了，交付在等人时也关不了任务。"
+)
 TITLE_WIDTH_NOTE = "宽度不超过 12 个汉字（一个汉字算一个，英文、数字、空格各算半个）"
 
 
@@ -1056,7 +1067,7 @@ PLATFORM_TOOLS = ToolTable(
                     "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
                     "替别人解冲突让他自己推、界面原型或 demo、只给提需求的人这一次用的文件），"
                     "写明结论关闭；最后一步的交付采纳后，平台会让你写一次总结，写完用它关闭"
-                    "任务、结论写一句结果。",
+                    "任务、结论写一句结果。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "conclusion": _text("关闭原因或最终说明"),
                         "reported_by": _text("需求提出者的 handle"),
@@ -1089,7 +1100,7 @@ PLATFORM_TOOLS = ToolTable(
                     "new_artifact（新名字，配 about）必给其一；交合并时两个都不给，"
                     "交的是项目那个仓库，平台自己认得出。about 说这样东西本身是什么、给谁的："
                     "第 1 版和第 20 版都要成立；换到清单上另一项头上也说得通就是白写；"
-                    "不抄 subject，抄了会被打回。",
+                    "不抄 subject，抄了会被打回。" + DELIVERY_IS_DECIDED_IN_THE_UI,
                     {
                         "subject": _text(
                             "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
