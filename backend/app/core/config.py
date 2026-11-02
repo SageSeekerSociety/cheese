@@ -277,7 +277,7 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     # session needs: a turn that would start one waits until the host has that
     # much available.
     agent_session_memory_max_mb: int = 3072
-    private_chat_executor_image: str = "cheese-private-executor:2.1.299"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.316"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也

@@ -19,6 +19,23 @@ from app.domain.agent.harness.claude_code import device_launch
 from tests.pinned_claude import claude_binary
 
 
+def _plain(value):
+    """Request content as the model reads it: `cache_control` moves with the
+    breakpoints, and a message's text may be sent as a string or as a block."""
+    if isinstance(value, dict):
+        if (
+            set(value) <= {"type", "text", "cache_control"}
+            and value.get("type") == "text"
+        ):
+            return value["text"]
+        return {k: _plain(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        if len(value) == 1:
+            return _plain(value[0])
+        return [_plain(v) for v in value]
+    return value
+
+
 @pytest.mark.parametrize(
     "child_default,agent_type",
     [
@@ -164,6 +181,9 @@ def test_native_child_default_and_explicit_model_reach_admission(
                 "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                # As a room's session runs (`remote_execution/client.py`):
+                # behind a custom base URL tool search is on from 2.1.304.
+                "ENABLE_TOOL_SEARCH": "false",
                 "CLAUDE_CODE_SUBAGENT_MODEL": child_default,
                 "BUN_OPTIONS": f"--preload={transport}",
             },
@@ -173,9 +193,7 @@ def test_native_child_default_and_explicit_model_reach_admission(
         (tmp_path / "runner.log").write_bytes(result.stdout + b"\n" + result.stderr)
         assert result.returncode == 0, result.stderr.decode()
         summary = json.loads(result.stdout)
-        assert summary["subagent_stats"]["spawned"] == (
-            0 if agent_type == "fork" else 2
-        ), summary
+        assert summary["subagent_stats"]["spawned"] == 2, summary
     finally:
         server.shutdown()
         server.server_close()
@@ -187,25 +205,24 @@ def test_native_child_default_and_explicit_model_reach_admission(
         if item["headers"].get("x-claude-code-request-class") == "subagent"
     ]
     if agent_type == "fork":
-        assert not children
-        errors = [
-            block["content"]
-            for item in requests
-            for message in item["body"].get("messages", [])
-            for block in message.get("content", [])
-            if isinstance(block, dict)
-            and block.get("type") == "tool_result"
-            and block.get("is_error")
-        ]
-        assert errors and all(
-            "Agent type 'fork' not found" in error for error in errors
-        )
-        model_schema = next(
-            tool["input_schema"]["properties"]["model"]
-            for tool in requests[0]["body"]["tools"]
-            if tool["name"] == "Agent"
-        )
-        assert "forks always inherit the parent model" in model_schema["description"]
+        # 2.1.302 turned forks on in `claude -p` (`CLAUDE_CODE_FORK_SUBAGENT=0`
+        # would turn them off; a room's session does not set it). A fork is
+        # the parent's conversation carried on: the parent's model, whatever
+        # the call or CLAUDE_CODE_SUBAGENT_MODEL names, the parent's tools,
+        # and the parent's history in front of its directive, so its first
+        # request reads the parent's prompt cache.
+        assert len(children) == 2
+        parent = requests[0]["body"]
+        for child in children:
+            body = child["body"]
+            assert body["model"] == parent["model"] == "claude-opus-5-5"
+            assert body["tools"] == parent["tools"]
+            history = body["messages"][: len(parent["messages"])]
+            assert _plain(history) == _plain(parent["messages"])
+            assert "Spawn both fixture children" in json.dumps(history)
+            # The system prompt too, but for the billing line, which marks
+            # the request a subagent's.
+            assert _plain(body["system"][1:]) == _plain(parent["system"][1:])
         return
     assert len(children) == 2
     assert {child["body"]["model"] for child in children} == {
