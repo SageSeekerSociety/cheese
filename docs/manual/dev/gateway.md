@@ -169,7 +169,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | 角色 | 用在哪 | 没人指过时读的设置项 |
 |---|---|---|
 | `agent_model` | 没设默认模型的项目跑在它上面；网关从没答过话时目录只剩它 | `AGENT_MODEL` |
-| `subagent_model` | 没设分身默认、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目照旧跟着项目的默认模型 | 无：不设就跟着项目的默认模型 |
+| `subagent_model` | 分身默认和项目主模型都没设、且有权用这个模型的项目，分身默认跑它。有没有权和它自己的轮次过同一道闸门（`policy.gate.check`：团队方案的档位、管理员的境外开通、项目自己的档位策略）；没权的项目落到平台的默认模型 | 无：不设就落到平台的默认模型 |
 | `assistant_model` | 个人芝士、助手的动作闸门 | `ASSISTANT_MODEL` |
 | `docs_assistant_model` | 问芝士 | `DOCS_ASSISTANT_MODEL` |
 | `topic_naming_model` | 话题命名 | `TOPIC_NAMING_MODEL` |
@@ -177,7 +177,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `voice_asr_model` / `voice_polish_model` | 语音输入的转写与整理 | `VOICE_ASR_MODEL` / `VOICE_POLISH_MODEL` |
 | `memory_migration_model` | 旧记忆表的迁移 | `MEMORY_MIGRATION_MODEL` |
 
-- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准。
+- 选择存在平台库的 `platform_model_roles` 里，审计记在 `gateway_admin_audit`（动作 `role.set`）。读的一方在 `app.core.model_roles`，后台每 30 秒从库里刷新一次，写的那个进程写完当场刷新。项目自己设了默认模型、分身默认的，在那个项目里仍以项目的为准：分身先取项目的分身默认，再取项目主模型，都没设才轮到 `subagent_model`。
 - 默认模型与分身默认只能指到上架的模型（它们要提供给项目选），指着它们的模型也不能下架；其余角色只能指到在用、计价的模型：两向都写了价、至少一向 > 0，或者是免费线路（语音转写跑在一个不上架、输出价为 0 的模型上）。
 - 这些工作各用一把平台自己铸的虚拟 key，key 只放行一个模型（`service_keys.KeySpec`）。改角色时服务层先把 key 放宽到新旧两个模型，存好选择；等每个进程都读到新选择（30 秒刷新之后再过 15 秒）再收窄到新模型，所以没有一刻哪个进程用的模型被 key 拒掉。收窄没做成（进程退出、网关拒绝）时 key 多放行一个模型，只记日志。
 - 模型列表里每个模型带着跑在它上面的角色（`roles`）。有角色时停用、删除它，或停用、删除它最后一条在用的线路，服务层都拒绝，要先把角色指走；页面在编辑、停用、删除这个模型之前弹框列出这些角色。没人指过的角色读设置项，那个值也算「跑在它上面」：部署之后 `deepseek-flash`、`qwen-audio-asr`、`glm-5.2` 这几个设置项默认值指着的模型，同样不能直接停用或删除。

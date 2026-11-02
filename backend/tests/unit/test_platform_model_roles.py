@@ -199,26 +199,34 @@ def test_a_projects_own_subagent_default_still_wins():
     )
 
 
+def test_a_projects_main_model_beats_the_platform_subagent_default():
+    """A project that chose what its work runs on gets its subagents on it too."""
+    model_roles.install({"subagent_model": "gemini"})
+    policy = gate.policy_of({}, None, overseas_approved=True)
+
+    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
+
+
 def test_an_approved_team_gets_an_overseas_platform_subagent_default():
     model_roles.install({"subagent_model": "gemini"})
     policy = gate.policy_of({}, None, overseas_approved=True)
 
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "gemini"
+    assert subagent_default({}, _CHOICES, policy) == "gemini"
 
 
-def test_a_team_not_approved_for_overseas_models_keeps_its_main_default():
+def test_a_team_not_approved_for_overseas_models_keeps_the_catalogue_default():
     """The same gate its own turns pass: it could not run the model."""
     model_roles.install({"subagent_model": "gemini"})
     policy = gate.policy_of({}, None, overseas_approved=False)
 
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
+    assert subagent_default({}, _CHOICES, policy) is None
 
 
-def test_a_plan_without_the_models_tier_keeps_its_main_default():
+def test_a_plan_without_the_models_tier_keeps_the_catalogue_default():
     model_roles.install({"subagent_model": "kimi"})
     policy = gate.policy_of({}, frozenset({"included"}), overseas_approved=False)
 
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
+    assert subagent_default({}, _CHOICES, policy) is None
     # With no platform choice at all, as before: the project's main default.
     model_roles.reset()
     assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
