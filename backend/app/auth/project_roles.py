@@ -382,8 +382,9 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
     the project's recorded owner whether they are excluded, their roster row
     and the role recorded for them. Each was a statement of its own, up to
     six for a member's permission check; the answers are left as the facts
-    those reads answer from. The owner is answered without the roster, which
-    a route reading the roster whole reads anyway."""
+    those reads answer from. The recorded owner is read without the roster,
+    which a route reading the roster whole reads anyway; a recorded owner
+    who has left the team then has the rest read one by one, as before."""
     if not isinstance(session, AsyncSession):
         return
     pid = project.id
@@ -427,7 +428,10 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
     # two live team rows, which would give two. The oldest answers, the same
     # one every time.
     row = (await session.execute(stmt.order_by(TeamUserRelation.id).limit(1))).one()
-    user, team_role, is_agent = row[0], row[1], row[2]
+    if member_side:
+        user, team_role, is_agent, member, role, role_id, is_excluded = row
+    else:
+        user, team_role, is_agent = row
     remember(
         session,
         ("is_agent", handle),
@@ -446,7 +450,6 @@ async def _read_seat(session: AsyncSession, project: Project, handle: str) -> No
             )
     if not member_side:
         return
-    member, role, role_id, is_excluded = row[3], row[4], row[5], row[6]
     remember(
         session,
         ("project_member_excluded", pid, handle),
