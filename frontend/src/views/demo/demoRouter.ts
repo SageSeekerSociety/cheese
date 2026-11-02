@@ -81,6 +81,8 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/spaces/:spaceId/library', name: 'SpacesLibrary', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
+  // 平台事件行的「去环境设置」「去 AI 队友设置」（`RoomNotice`）指向项目设置的一栏。
+  { path: '/projects/:projectId/settings/:section?', name: 'project-settings', component: blank },
   { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
   // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上
   // 「查看该回答」、回答卡片上面那颗「查看全部 N 条回答」都按名字指。名字与路径照

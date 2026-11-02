@@ -9,6 +9,7 @@
 import type { Block } from '../cx_types'
 import type { DocEdit } from './docEdits'
 import type {
+  AgentSettingsTarget,
   ChangeSummary,
   ConfirmTarget,
   EnvironmentTarget,
@@ -217,6 +218,14 @@ export function environmentTarget(block: Block, projectId: string | null | undef
   }
 }
 
+/** 这一轮跑在项目自己接入的模型连接上、那份连接余额用完了（`own_out_of_credit`）：
+ *  「去 AI 队友设置」带人去换一份。 */
+export function agentSettingsTarget(block: Block, projectId: string | null | undefined): AgentSettingsTarget | null {
+  const m = meta(block)
+  if (!projectId || str(m?.event_type) !== 'turn_failed' || str(m?.code) !== 'own_out_of_credit') return null
+  return { name: 'project-settings', params: { projectId, section: 'agents' } }
+}
+
 /**
  * 这条事件怎么渲染。
  *
@@ -257,7 +266,9 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   const mail = mailDraftView(block)
   if (mail) return { mode: 'mail-draft', mail, outcome: null }
 
-  if (str(m?.detail)) {
+  // 带「重试」的那几种即使没有展开的详情也是这一档：「重试」只画在这一档上，落到淡行
+  // 就没了（一轮被平台停下的那一句只有一句话和「重试」）。
+  if (str(m?.detail) || m?.retryable === true) {
     // 退回的理由是审阅的人写给芝士的话，不是日志：读时间线的人要一眼看到为什么退回，
     // 不该再点开一次。
     const quote = run.length === 1 && QUOTED_DETAIL.has(str(m?.event_type)) ? noticeText(block, 'detail') : ''

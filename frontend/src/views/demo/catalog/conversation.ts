@@ -1,6 +1,6 @@
 /**
  * 对话区那一册：对话栏里的一条消息（`RoomMessage`）、平台在房间里说的话
- * （`RoomNotice`）。
+ * （`RoomNotice`）、输入框上方那一行谁在忙（`MemberActivity`）。
  *
  * 样例文字来自 `../catalogFixtures.ts`；「改了资料库文档」那一格用的平台事件在
  * `../catalogDocLine.ts`。
@@ -25,35 +25,12 @@ import {
   WANG_LINES,
 } from '../catalogFixtures'
 
+import MemberActivity from '@/components/room/MemberActivity.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import { platformNotice } from '@/lib/platformNotice'
 
-/** 平台更新换掉 AI 队友运行的程序之后，房间里那一行：这一轮没完成，约几点自动重试（`turn_resume_wait`）。 */
-const UPGRADE_RESUME_WAIT: Block = {
-  id: 'catalog-upgrade-resume-wait',
-  conversation_id: 'demo',
-  kind: 'event',
-  author_type: 'platform',
-  author: 'cheese',
-  content: '这一轮没完成，约 14:33 自动重试（平台更新）',
-  turn_id: 'catalog-turn',
-  created_at: new Date('2026-10-19T14:32:00+08:00').toISOString(),
-  meta: {
-    event_type: 'turn_resume_wait',
-    severity: 'warn',
-    who: 'platform',
-    reason: 'runner_replaced',
-    i18n: {
-      content: {
-        key: 'turnResumeScheduled',
-        params: { time: '14:33', reason: { key: 'turnEndedRunnerReplaced', params: {} } },
-      },
-    },
-  },
-}
-
-/** 同一件事没排上自动重试时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
+/** 平台更新打断了一轮、又没能自己接着做时，这次的失败那一行（`turn_failed`）：改动都在，重试一次接着做。 */
 const UPGRADE_TURN_FAILED: Block = {
   id: 'catalog-upgrade-turn-failed',
   conversation_id: 'demo',
@@ -136,6 +113,95 @@ function upgradeNotice(block: Block): Record<string, unknown> {
     refs: ROOM_REFS,
   }
 }
+
+/** 一轮没做完时平台替队友说的那一行（`turn_failed` / `turn_timeout`，后端那张表看成 `for_agent`）。 */
+function failureLine(id: string, content: string, meta: Record<string, unknown>): Block {
+  return {
+    id: `catalog-failure-${id}`,
+    conversation_id: 'demo',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'cheese',
+    content,
+    turn_id: 'catalog-turn',
+    created_at: new Date('2026-11-01T14:32:00+08:00').toISOString(),
+    shown_as: 'for_agent',
+    meta: { event_type: 'turn_failed', severity: 'error', who: 'human', ...meta },
+  }
+}
+
+const OVERLOADED_WORDS = 'API Error: 529 Overloaded. This is a server-side issue, usually temporary.'
+
+const MODEL_ERROR = failureLine('model-error', '这次没做完：调用的模型出错了', {
+  retryable: true,
+  code: 'model_error',
+  detail: OVERLOADED_WORDS,
+  detail_label: '服务原话',
+  i18n: {
+    content: { key: 'turnFailedModelError', params: {} },
+    detail_label: { key: 'labelServiceWords', params: {} },
+  },
+})
+
+const OWN_BALANCE = failureLine(
+  'own-balance',
+  '这次没做完：你们接入的 DeepSeek 余额用完了。充值后点「重试」，或者在项目设置的「AI 队友」里换一个。',
+  {
+    retryable: true,
+    code: 'own_out_of_credit',
+    detail: '{"error":{"message":"Insufficient Balance","code":"invalid_request_error"}}',
+    detail_label: '服务原话',
+    i18n: {
+      content: { key: 'turnFailedOwnBalance', params: { service: 'DeepSeek' } },
+      detail_label: { key: 'labelServiceWords', params: {} },
+    },
+  }
+)
+
+const REQUEST_REFUSED = failureLine('refused', '这次没做完', {
+  detail:
+    '模型服务把这次请求当作无效请求拒收了，多半是对话里有它不接受的内容，比如一张解不开的图片。重试会把同样的内容再发一遍，结果一样；需要管理员处理。',
+  detail_label: '详细说明',
+  i18n: {
+    content: { key: 'turnFailedService', params: {} },
+    detail_label: { key: 'labelDetails', params: {} },
+  },
+})
+
+const TURN_STOPPED = failureLine('stopped', '这次没做完，已停下', {
+  event_type: 'turn_timeout',
+  severity: 'warn',
+  retryable: true,
+  i18n: { content: { key: 'turnStopped', params: {} } },
+})
+
+function failureNotice(block: Block): Record<string, unknown> {
+  return {
+    block,
+    notice: platformNotice(block),
+    run: [block],
+    agent: { name: AGENT_NAME, handle: 'cheese' },
+    time: '14:32',
+    agentName: AGENT_NAME,
+    refs: ROOM_REFS,
+    canRetry: true,
+    projectId: 'demo-project',
+  }
+}
+
+/** 输入框上方那一行里的一位队友：`minutes` 分钟前开始（用时从它算）。 */
+function activityLine(
+  handle: string,
+  name: string,
+  kind: 'working' | 'retrying',
+  minutes: number,
+  step?: string
+): Record<string, unknown> {
+  return { handle, name, kind, since: Math.floor(Date.now() / 1000) - minutes * 60, step: step ?? null }
+}
+
+const CHEESE_WORKING = activityLine('cheese', '芝士', 'working', 2, '执行命令 pnpm test')
+const SPARK_RETRYING = activityLine('spark', '火花', 'retrying', 3)
 
 export const CONVERSATION_ENTRIES: CatalogEntry[] = [
   {
@@ -286,16 +352,35 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         expect: '3 处',
       },
       {
-        name: '平台更新：自动接着做',
-        note: '更新换掉了上一版本起的程序，新程序接着同一段对话；这一行说这一轮没完成、约几点自动重试。',
-        props: upgradeNotice(UPGRADE_RESUME_WAIT),
-        expect: '约 14:33 自动重试',
-      },
-      {
-        name: '平台更新：没排上自动重试',
-        note: '自动重试没排上时，这一行说改动都还在，给一个「重试」。',
+        name: '平台更新：没能自己接着做',
+        note: '平台更新打断的那一轮通常几秒内自己接着做，对话里不落字；没能接着做时，这一行说改动都还在，给一个「重试」。',
         props: upgradeNotice(UPGRADE_TURN_FAILED),
         expect: '平台更新打断了',
+      },
+      {
+        name: '没做完：调用的模型出错了',
+        note: '模型那一侧的失败（自动重试用完、要很久才恢复、平台的额度不足、过载）都是这一句，带「重试」；服务原话收在展开里。',
+        props: failureNotice(MODEL_ERROR),
+        expect: '调用的模型出错了',
+      },
+      {
+        name: '没做完：接入的模型连接没钱了',
+        note: '项目自己接入的模型连接余额用完：说出是哪一个、去哪里换，带「重试」和「去 AI 队友设置」。',
+        props: failureNotice(OWN_BALANCE),
+        expect: '你们接入的 DeepSeek',
+      },
+      {
+        name: '没做完：请求被模型拒收',
+        note: '模型把这次请求当作无效请求拒收：照旧，不给「重试」。',
+        props: failureNotice(REQUEST_REFUSED),
+        expect: '这次没做完',
+        expectSelector: '[data-testid="platform-notice"]',
+      },
+      {
+        name: '没做完，已停下',
+        note: '一轮很久没有任何输出、平台把它停下了：这是平台的问题，不说模型出错；带「重试」，同时告警给运维。',
+        props: failureNotice(TURN_STOPPED),
+        expect: '这次没做完，已停下',
       },
       {
         name: '运行程序下载中',
@@ -314,6 +399,34 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '这一次在时限里没下完：说下到哪了，下次接着下，同一行到时再接着更新。',
         props: installNotice(INSTALL_STOPPED),
         expect: '接着下载',
+      },
+    ],
+  },
+  {
+    id: 'member-activity',
+    title: 'MemberActivity',
+    about: '输入框上方那一行：谁在打字、哪位 AI 队友在干活、哪位调用模型出错了在等平台自动重试。',
+    file: 'src/components/room/MemberActivity.vue',
+    component: MemberActivity,
+    needs: ['i18n'],
+    states: [
+      {
+        name: '一位在干活',
+        note: '绿点，「谁正在工作… · 此刻那一步 · 用时」。',
+        props: { lines: [CHEESE_WORKING] },
+        expect: '执行命令 pnpm test',
+      },
+      {
+        name: '一位在等自动重试',
+        note: '同一行、同一个位置和字号，只换成黄点和这一句；不说几点重试，用时从出错时算。',
+        props: { lines: [SPARK_RETRYING] },
+        expect: '火花调用的模型出错了，正在自动重试',
+      },
+      {
+        name: '两位：一位在干活，一位在等',
+        note: '各占一行，上下对齐，只差开头那颗点和那句话。',
+        props: { lines: [CHEESE_WORKING, SPARK_RETRYING] },
+        expect: '芝士正在工作',
       },
     ],
   },

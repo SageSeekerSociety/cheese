@@ -3,8 +3,9 @@
 The platform's own account with a model provider can run dry. Each provider
 says so in its own words and status — a 429 like a rate limit, a 400 like a bad
 request, or the gateway's 402 once no row of the model has credit — and only the
-platform's administrators can top it up. The room is told they have it in hand,
-never sent to pay, and never told it is an overload that waiting fixes.
+platform's administrators can top it up. The room hears what it hears of any
+failed model call, with a retry, and is never sent to pay; the administrators
+are told it was the account, and never told so of a passing overload.
 
 The other way a turn's money runs out (#715): the PROJECT's compute credits are
 spent, the metering proxy 429s every `/v1/messages` call, and Claude Code reads
@@ -72,18 +73,22 @@ PLATFORM_OUT_OF_CREDIT = [
 @pytest.mark.parametrize("detail", PLATFORM_OUT_OF_CREDIT)
 def test_a_platform_account_out_of_credit_is_the_platforms_to_fix(detail):
     """Only the platform's administrators can top up its account with a
-    provider, so the room's card says the platform has it in hand — the same
-    card whichever provider ran dry and however Claude Code wrapped it — never
-    one that sends the reader to pay or reads as a passing overload. A retry
-    is offered: it succeeds once the account is topped up."""
-    from app.domain.agent.turn.state.notices import _turn_failure_notice
+    provider: the room reads a failed model call — the same line whichever
+    provider ran dry and however Claude Code wrapped it — with a retry that
+    works once the account is topped up, and the administrators are told it is
+    the account."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        PROVIDER_OUT_OF_CREDIT,
+        _turn_failure_notice,
+        platform_side_cause,
+    )
 
     line, meta = _turn_failure_notice(detail, None)
-    reference, _ = _turn_failure_notice(PLATFORM_OUT_OF_CREDIT[0], None)
-    assert line == reference
-    assert meta["who"] == "platform"
+    assert line == say("turnFailedModelError")
     assert meta["retryable"] is True
     assert detail in meta["detail"]
+    assert platform_side_cause(detail) == PROVIDER_OUT_OF_CREDIT
 
 
 @pytest.mark.parametrize(
@@ -105,13 +110,34 @@ def test_a_platform_account_out_of_credit_is_the_platforms_to_fix(detail):
     ],
 )
 def test_a_transient_failure_is_not_mistaken_for_it(detail):
-    """Wrongly calling a blip 'out of credit' would tell the room an account
-    is empty when it is fine — the error in the other direction."""
-    from app.domain.agent.turn.state.notices import _turn_failure_notice
+    """Wrongly calling a blip 'out of credit' would tell the administrators an
+    account is empty when it is fine — the error in the other direction."""
+    from app.domain.agent.turn.state.notices import (
+        PROVIDER_OUT_OF_CREDIT,
+        platform_side_cause,
+    )
 
-    line, _ = _turn_failure_notice(detail, None)
-    reference, _ = _turn_failure_notice(PLATFORM_OUT_OF_CREDIT[0], None)
-    assert line != reference
+    assert platform_side_cause(detail) != PROVIDER_OUT_OF_CREDIT
+
+
+def test_the_projects_own_connection_out_of_credit_names_it_and_where_to_change_it():
+    """A turn on a model connection the project's people added, whose account
+    ran dry, is theirs to top up: the line names that connection, a retry is
+    offered for after the top-up, the room can go to change the connection, and
+    the platform's administrators are not told."""
+    from app.domain.agent.turn.state.notices import (
+        OWN_OUT_OF_CREDIT_CODE,
+        _turn_failure_notice,
+        platform_side_cause,
+    )
+
+    detail = PLATFORM_OUT_OF_CREDIT[-4]
+    line, meta = _turn_failure_notice(detail, None, own=True, service="DeepSeek")
+    assert line.key == "turnFailedOwnBalance"
+    assert "DeepSeek" in line
+    assert meta["retryable"] is True
+    assert meta["code"] == OWN_OUT_OF_CREDIT_CODE
+    assert platform_side_cause(detail, own=True) is None
 
 
 # --- #715: a turn admission refused for spent PROJECT credits -----------------

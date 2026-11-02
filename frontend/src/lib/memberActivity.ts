@@ -22,7 +22,8 @@ export interface MemberWait {
 export interface MemberActivityLine {
   handle: string
   name: string
-  kind: 'typing' | 'working'
+  /** `retrying`：这位队友的这一轮调用模型出错了，在等平台自动重试（useRunRecords）。 */
+  kind: 'typing' | 'working' | 'retrying'
   /** epoch 秒。 */
   since: number
   /** 干活的队友此刻在做的那一步（「思考中」「正在读文件」）；没有就不说。 */

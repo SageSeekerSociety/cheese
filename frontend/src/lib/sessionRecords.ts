@@ -22,6 +22,11 @@ export interface RecordNode {
   children: RecordNode[]
 }
 
+/** The platform's own retry of a failed turn: scheduled, started, given up. The
+ *  line above the composer says a teammate is waiting on it, and the conversation
+ *  says when it was given up; the overview does not tell it a third time. */
+const RESUME_EVENTS = new Set(['turn_resume_wait', 'turn_resume_started', 'turn_resume_stopped'])
+
 /** A status series has one current reading in the overview, every fact in raw. */
 export function overviewRecords(blocks: Block[]): Block[] {
   const latest = new Map<string, string>()
@@ -29,7 +34,10 @@ export function overviewRecords(blocks: Block[]): Block[] {
     if ('run_record' in block) latest.set(String(block.meta?.series_id ?? block.id), block.id)
   }
   return blocks.filter(
-    (block) => !('run_record' in block) || latest.get(String(block.meta?.series_id ?? block.id)) === block.id
+    (block) =>
+      !('run_record' in block) ||
+      (latest.get(String(block.meta?.series_id ?? block.id)) === block.id &&
+        !RESUME_EVENTS.has(String(block.meta?.event_type ?? '')))
   )
 }
 
