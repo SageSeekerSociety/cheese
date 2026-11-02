@@ -91,9 +91,14 @@ class ActorResolver:
         cheese_token: str,
         writes: bool = False,
         allow_machine: bool = False,
+        bind_user_id: bool = True,
     ):
         self._session = session
         self._allow_machine = allow_machine
+        # Whether `resolve` looks up the user id of an actor whose credential
+        # carried none (`_bound`). A caller that only asks where the actor sits,
+        # which is answered by handle, skips that read.
+        self._bind_user_id = bind_user_id
         # Whether this request changes something. A write that names a project,
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
@@ -589,11 +594,25 @@ class ActorResolver:
         legacy cheesex token puts the handle in ``sub`` and carries no id
         either), so branching on it just left those callers unbound."""
         actor = await self._recover_numeric_handle(actor)
-        if actor.authenticated and actor.user_id is None:
+        if self._bind_user_id and actor.authenticated and actor.user_id is None:
             user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
             if user is not None:
                 actor = replace(actor, user_id=user.id)
         return actor
+
+    def signed_in_handle(self) -> str | None:
+        """The handle a person's verified sign-in names, read off the token
+        without the database; None for any other caller. A hint for reading
+        ahead (`place_or_404(member=...)`), never a decision: `resolve` still
+        decides who the caller is."""
+        if self._cheese_token or not self._bearer:
+            return None
+        claims = verify_access_token(self._bearer)
+        # A token that states no handle carries the user id in its place; the
+        # handle is then the account's, which only the database knows.
+        if claims is None or not claims.handle_from_claim:
+            return None
+        return claims.handle
 
     def presented_sign_in(self) -> bool:
         """Whether the request carried a person's sign-in at all — verified or

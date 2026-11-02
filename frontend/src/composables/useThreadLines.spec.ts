@@ -1,4 +1,4 @@
-/** 支线那几条规矩：输入框什么时候先带上「@芝士 」，主线上什么时候写「正在回复」。 */
+/** 支线那几条规矩：主线上什么时候写「正在回复」。 */
 import type { Block } from '../cx_types'
 
 import { ref } from 'vue'
@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/api/threads', () => ({ listThreads: vi.fn(), getThread: vi.fn() }))
 
-import { summonPrefill, useThreadLines } from './useThreadLines'
+import { useThreadLines } from './useThreadLines'
 
 import { listThreads } from '@/api/threads'
 import { setLocale } from '@/i18n'
@@ -25,23 +25,6 @@ function message(author: string, called: boolean, at = new Date().toISOString())
     created_at: at,
   }
 }
-const mine = (m: Block) => m.author === ME
-
-describe('支线输入框先带上「@芝士 」', () => {
-  it('我在这条支线里的上一句叫过它', () => {
-    const said = [message(ME, true), message('bob', false)]
-    expect(summonPrefill(said, mine, '<@cheese>')).toBe('<@cheese> ')
-  })
-
-  it('我上一句没叫它，哪怕更早叫过', () => {
-    const said = [message(ME, true), message(ME, false)]
-    expect(summonPrefill(said, mine, '<@cheese>')).toBe('')
-  })
-
-  it('我还没在这里说过话', () => {
-    expect(summonPrefill([message('bob', true)], mine, '<@cheese>')).toBe('')
-  })
-})
 
 describe('主线上「正在回复」', () => {
   function lines(mainLine: boolean) {

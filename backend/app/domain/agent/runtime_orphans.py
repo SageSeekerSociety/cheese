@@ -9,6 +9,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
+from app.core import alerting
 from app.core.background import hold
 from app.core.sentences import say
 from app.domain.addressing import Addressed
@@ -19,6 +20,7 @@ from app.domain.agent.repositories import TurnRecord
 from app.domain.agent.turn_ledger import utcnow
 from app.domain.block.models import Block
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
+from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record.models import RunRecord
 from app.domain.topic_membership.services import addressable_seat
 
@@ -122,18 +124,51 @@ def _unheld(self, chat_service, record: TurnRecord) -> bool:
     )
 
 
-def _wedged_notice(record: TurnRecord, now: datetime) -> tuple[str, dict]:
-    """The room's line for a turn stopped for producing nothing: the platform
-    does not retry it, a person looks and asks again."""
-    return say("turnWedged", minutes=round(record.age_s(now) / 60)), notice(
+def _wedged_notice() -> tuple[str, dict]:
+    """The room's line for a turn the platform stopped for producing nothing:
+    it did not finish and has stopped, with a retry. Not a failed model call —
+    the platform lost the turn — so the line does not blame the model, and its
+    operators are told (`_tell_operators_wedged`)."""
+    return say("turnStopped"), notice(
         EVENT_TURN_TIMEOUT,
         severity=SEVERITY_WARN,
         # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
         who=WHO_HUMAN,
-        detail=say("turnWedgedDetail"),
-        detail_label=say("labelDetails"),
         retryable=True,
     )
+
+
+async def _tell_operators_wedged(
+    chat_service, record: TurnRecord, now: datetime
+) -> None:
+    """A turn the platform had to stop is the platform's bug: its operators get
+    where it was and which turn, to find out why. Never raises."""
+    try:
+        async with chat_service.session_factory() as session:
+            place = await PlaceResolver(session).conversation(record.topic_id)
+        where = (
+            [f"频道 {place.room_id}"]
+            + ([f"任务 {place.task_id}"] if place.task_id else [])
+            + ([f"支线 {place.thread_id}"] if place.thread_id else [])
+            if place is not None
+            else [f"对话 {record.topic_id}"]
+        )
+        alerting.send(
+            "AI 队友的一轮被强制停止",
+            [
+                *where,
+                f"轮次 {record.turn_id}",
+                f"队友 {record.agent_handle or record.author}",
+                f"{round(record.age_s(now) / 60)} 分钟没有任何输出，没有进程拿着它",
+                "房间里看到的是「这次没做完，已停下」。",
+            ],
+            key=f"turn-wedged-{record.turn_id}",
+            when=time.time(),
+        )
+    except Exception:  # the room's line is what matters to the room
+        logger.exception(
+            "could not tell operators about wedged turn %s", record.turn_id
+        )
 
 
 async def _silent_unknown_turns(
@@ -203,7 +238,7 @@ async def _close_silent(
         said = await turn_inputs.close_silent_turns(
             chat_service.session_factory,
             records,
-            lambda record: _wedged_notice(record, now),
+            lambda record: _wedged_notice(),
             lambda record: _unheld(self, chat_service, record),
         )
     except Exception:  # nothing committed: the next sweep finds them open
@@ -211,6 +246,7 @@ async def _close_silent(
         return {}
     for turn_id, block in said.items():
         logger.info("orphan turn %s closed as silent; no auto-retry", turn_id)
+        await _tell_operators_wedged(chat_service, records[turn_id], now)
         if block is None:
             continue
         topic_id = records[turn_id].topic_id
@@ -427,7 +463,8 @@ async def sweep_orphans(
         if topic_id in wedged_topics:
             continue
         wedged_topics.add(topic_id)
-        text, meta = _wedged_notice(record, now)
+        text, meta = _wedged_notice()
+        await _tell_operators_wedged(chat_service, record, now)
         await self._post_orphan_event(
             chat_service,
             topic_id,

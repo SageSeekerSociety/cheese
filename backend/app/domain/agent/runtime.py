@@ -443,6 +443,7 @@ class AgentWorkRunner:
         handoff: HumanHandoff | None = None,
         by_assistant: bool = False,
         expects_agent: bool = False,
+        landed: list[dict] | None = None,
     ) -> uuid.UUID:
         refuse_on_api_pool("take in a message for a turn")
         return await self._intake.receive_message(
@@ -458,6 +459,7 @@ class AgentWorkRunner:
             handoff=handoff,
             by_assistant=by_assistant,
             expects_agent=expects_agent,
+            landed=landed,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:

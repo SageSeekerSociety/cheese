@@ -477,7 +477,7 @@ class Runner(runner.Runner[Journal]):
             on_request=self.on_tool,
         )
         self.session = Session(client)
-        self.listener = asyncio.create_task(client.listen())
+        self.listener = asyncio.create_task(self.read_or_end(client.listen()))
         await client.initialize()
         self.cwd = cwd
         if self.skills is not None:

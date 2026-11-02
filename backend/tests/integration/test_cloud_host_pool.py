@@ -326,6 +326,64 @@ def test_sessions_of_two_projects_share_a_host_with_room(pool):
     assert len(pool.cloud.created) == 1
 
 
+def _empty_host(pool, host_id: uuid.UUID, *, draining: bool = False) -> None:
+    """Destroy every sandbox on a host, as the idle sweep does, and optionally
+    make it one the pool is rebuilding. Its project stores stay: they are
+    what outlive a sandbox."""
+
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
+            if draining:
+                host = await db.get(CloudHost, host_id)
+                host.draining_since = datetime.now(UTC)
+            await db.commit()
+
+    pool.run(go)
+
+
+def test_a_host_that_has_this_projects_store_beats_the_one_packing_would_choose(pool):
+    """Packing puts the next sandbox on the host with the fewest free slots.
+    A host that has placed this project before is chosen first instead: its
+    store — dependencies, build cache — is there, and a sandbox started on it
+    does not fetch and build them again."""
+    alice = pool.room("alice", 2)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+
+    first = pool.place("alice", alice[0])
+    pool.up(first)
+    # Bob fills the host, so Carol's sandbox makes a second one.
+    assert pool.place("bob", bob) == first
+    second = pool.place("carol", carol)
+    assert second != first
+    pool.up(second)
+
+    # Alice's sandbox and Bob's are gone; Alice's project store is not, and
+    # the first host is now the emptier of the two.
+    _empty_host(pool, first)
+
+    assert pool.place("alice", alice[1]) == first
+
+
+def test_a_draining_host_is_not_chosen_for_its_store(pool):
+    """A host being rebuilt takes no new sandbox however good its store is:
+    what is placed there would be destroyed with it."""
+    alice = pool.room("alice", 2)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+
+    cached = pool.place("alice", alice[0])
+    pool.up(cached)
+    assert pool.place("bob", bob) == cached
+    other = pool.place("carol", carol)
+    assert other != cached
+    pool.up(other)
+    _empty_host(pool, cached, draining=True)
+
+    assert pool.place("alice", alice[1]) == other
+
+
 def _enrolled_long_ago_and_offline(pool, host_id, device, *, offline_for=None):
     async def go():
         async with pool.client.test_request_factory() as db:

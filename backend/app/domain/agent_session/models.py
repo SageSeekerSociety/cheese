@@ -56,6 +56,13 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 #: (idle, or given up with its host). Cleared by the first tool call that lands
 #: in a new one; until then the room's lease still names the machine it was on.
 LOST_KEY = "sandbox_lost"
+#: Set beside ``LOST_KEY`` when the host could say what was running in the
+#: sandbox it destroyed (``sandbox_home.destroy``): each process's command
+#: line, its executor and bare shells left out, secrets masked. Read with
+#: ``LOST_KEY`` into the notice the next tool call carries, and cleared with
+#: it. Absent when nothing was running, or the host could not read it — the
+#: copy is the same as before there were processes to name.
+LOST_PROCESSES_KEY = "sandbox_lost_processes"
 #: Set in a session's ``execution_request`` when it asked for another cloud
 #: sandbox while it already had one — the spec it is on, asked again
 #: (``session_work.switch_environment``). The host it left is named here so its

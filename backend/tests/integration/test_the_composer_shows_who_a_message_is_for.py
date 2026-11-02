@@ -5,15 +5,18 @@ The rules a person can state without the code:
 
 - A draft is for the AI teammate exactly when sending it would start the
   teammate's turn: it @-s the teammate, it replies to the teammate's message,
-  or its task's owner says it in an open task. Otherwise it is for the people
-  it @-s, or for nobody in particular.
+  its task's owner says it in an open task, or a person says it in a 支线 a
+  teammate was called into and it @-s no one but people. Otherwise it is for
+  the people it @-s, or for nobody in particular.
 - Asking who a draft is for writes nothing and wakes nobody.
 - A message sent as one for the teammate that no longer is (its task closed
   while it was typed) is not posted as discussion; the sender is told whom it
   is for now.
-- A message that asks nobody, said where its sender is the only person, comes
-  back saying so. 综合 holds everyone in the project whether or not they ever
-  opened it.
+- A message that asks nobody comes back offering to hand it to the teammate
+  only where its sender looks to be waiting for the teammate: they are the
+  only person in the channel (综合 holds everyone in the project whether or
+  not they ever opened it), or their message just before it there was for the
+  teammate. The offer is told to the sender alone and never stored.
 """
 
 import asyncio
@@ -137,6 +140,36 @@ def test_a_reply_to_the_teammate_is_for_the_teammate(client, stub_hooks):
     assert replying["agent"]["handle"] == answer["author"]
     assert replying["reason"] == "reply"
     assert not_replying["agent"] is None
+
+
+def test_a_thread_with_a_teammate_hands_it_every_message_but_one_to_people(
+    client, stub_hooks
+):
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
+    seat = room_agent_seat(client, room)
+    thread = in_thread(client, room, "alice")
+    before = _for_whom(client, thread, content="再查一下出处")
+    with room_socket(client, thread, "alice") as ws:
+        post_message(client, thread, "alice", {"content": f"<@{seat}> 先看看"})
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+
+    plain = _for_whom(client, thread, content="再查一下出处")
+    empty = _for_whom(client, thread, content="")
+    from_bob = _for_whom(client, thread, who="bob", content="我补充一个出处")
+    to_bob = _for_whom(client, thread, content="<@bob> 你看下这个出处")
+
+    # Before anyone called a teammate into it, the 支线 is among people.
+    assert before["agent"] is None
+    assert plain["agent"]["handle"] == seat
+    assert plain["reason"] == "thread"
+    # The composer's avatar reads the empty draft: its eyes are open already.
+    assert empty["agent"]["handle"] == seat
+    assert from_bob["agent"]["handle"] == seat
+    # An @ of a person alone is said to that person.
+    assert to_bob["agent"] is None
+    assert to_bob["people"] == ["bob"]
 
 
 def test_the_owner_in_an_open_task_speaks_to_its_teammate(client, stub_hooks):
@@ -334,24 +367,55 @@ def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
     assert sent["meta"]["agent_recipient"]["mentioned"] is True
 
 
-def test_asking_nobody_where_you_are_alone_says_so(client, stub_hooks):
+def test_asking_nobody_where_you_are_alone_offers_the_teammate(client, stub_hooks):
     _, general, room = _channel(client)
     seat = room_agent_seat(client, room)
 
     in_general = post_message(client, general, "alice", {"content": "帮我列个计划"})
     in_room = post_message(client, room, "alice", {"content": "帮我列个计划"})
     asked = post_message(client, room, "alice", {"content": f"<@{seat}> 帮我列个计划"})
+    to_a_person = post_message(client, room, "alice", {"content": "<@bob> 你来看看"})
 
-    assert in_general.get("alone") is True
-    assert in_room.get("alone") is True
-    assert "alone" not in asked
+    assert in_general.get("unasked") == "alone"
+    assert in_room.get("unasked") == "alone"
+    assert "unasked" not in asked
+    assert "unasked" not in to_a_person
 
 
-def test_nobody_is_told_they_are_alone_where_someone_else_is(client, stub_hooks):
+def test_ordinary_talk_where_someone_else_is_is_not_remarked_on(client, stub_hooks):
     project, general, _ = _channel(client)
     # bob is in the project and so in 综合, though he never opened it.
     join_project_team(client, project, "bob")
 
     said = post_message(client, general, "alice", {"content": "明天几点开会？"})
 
-    assert "alone" not in said
+    assert "unasked" not in said
+
+
+def test_asking_nobody_right_after_asking_the_teammate_offers_it(client, stub_hooks):
+    project, general, _ = _channel(client)
+    join_project_team(client, project, "bob")
+    seat = room_agent_seat(client, general)
+    post_message(client, general, "alice", {"content": f"<@{seat}> 列一下发布步骤"})
+
+    follow_up = post_message(client, general, "alice", {"content": "再加上回滚"})
+    after_that = post_message(client, general, "alice", {"content": "大家周五有空吗"})
+    from_bob = post_message(client, general, "bob", {"content": "我有空"})
+
+    assert follow_up.get("unasked") == "after_agent"
+    # Only the sender's own message just before counts.
+    assert "unasked" not in after_that
+    assert "unasked" not in from_bob
+
+
+def test_the_offer_is_told_to_the_sender_once_and_never_stored(client, stub_hooks):
+    _, _, room = _channel(client)
+
+    sent = post_message(client, room, "alice", {"content": "帮我列个计划"})
+    lines = client.get(
+        f"/topics/{room}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+
+    assert sent.get("unasked") == "alone"
+    stored = next(line for line in lines if line["id"] == sent["id"])
+    assert "unasked" not in stored

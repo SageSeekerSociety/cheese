@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, text
 
+from app.core.sentences import say
 from app.domain.agent import runtime_orphans
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import InProcessBroker
@@ -116,6 +117,55 @@ async def test_a_turn_nobody_holds_that_said_nothing_past_the_horizon_is_ended(
     )
     lines = await _lines_about(db_factory, turn)
     assert len(lines) == 1, f"房间里该有且只有一句说明，实际 {lines}"
+    # 平台停掉的这一轮不是模型出错：那句话只说没做完、已停下，带一个「重试」。
+    assert lines == [say("turnStopped")]
+    async with db_factory() as session:
+        [said] = await session.scalars(
+            select(Block).where(
+                Block.turn_id == turn,
+                Block.meta["event_type"].as_string() == EVENT_TURN_TIMEOUT,
+            )
+        )
+    assert said.meta["retryable"] is True
+
+
+@pytest.mark.anyio
+async def test_silent_turns_in_two_rooms_are_both_ended_in_one_sweep(db_factory):
+    """两间房各有一轮卡死：一次扫描把两轮都关掉，两间房各说一声。"""
+    rooms = [await a_topic(db_factory, title=title) for title in ("甲", "乙")]
+    turns = []
+    for room in rooms:
+        turn = await open_turn(
+            db_factory,
+            room,
+            delivered=True,
+            age_s=NINETEEN_DAYS_S,
+            resendable=False,
+            session_id=f"sess-gone-{room}",
+        )
+        await _agent_said(
+            db_factory,
+            room,
+            turn,
+            datetime.now(UTC) - timedelta(seconds=NINETEEN_DAYS_S),
+        )
+        turns.append(turn)
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _SweepChat(db_factory, live_screen=False, seat_state="unknown")
+
+    async def rooms_just_spoke(topic_ids):
+        return {tid: datetime.now(UTC) - timedelta(minutes=1) for tid in topic_ids}
+
+    await runner.sweep_orphans(
+        chat, last_activity=rooms_just_spoke, silence_s=SILENCE_S
+    )
+
+    for turn in turns:
+        row = await turn_row(db_factory, turn)
+        assert row is not None and row.stopped_at is not None, (
+            "两间房各有一轮卡死，一次扫描没把它们都关掉"
+        )
+        assert len(await _lines_about(db_factory, turn)) == 1
 
 
 @pytest.mark.anyio

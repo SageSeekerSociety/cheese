@@ -1,23 +1,20 @@
 """The lines Claude Code prints into the conversation as if the agent said
-them, turned into the platform's own notices."""
+them, turned into the platform's own notices.
+
+A line saying that calling the model failed (a busy or unreachable service, a
+quota, the platform's way to the model) is not one of these: a failed turn
+says only that the model call went wrong (`turn.state.notices`).
+"""
 
 from app.core.sentences import say
 from app.domain.agent.platform_failures import (
-    CONTROL_PLANE_UNAVAILABLE_CODE,
-    MODEL_LIMIT_REACHED_CODE,
-    PROVIDER_OVERLOADED_CODE,
-    PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
-    SUBSCRIPTION_ACCOUNTS_COOLING_CODE,
-    SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     TOOL_UNAVAILABLE_CODE,
     classify_cli_notice,
 )
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
-    SEVERITY_ERROR,
     SEVERITY_WARN,
-    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
@@ -32,44 +29,6 @@ from app.domain.notice_meta import (
 #
 # 每一条是 (那一行的键, severity, who, 说明的键)，句子在 roomNotice 词表。
 _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
-    PROVIDER_UNREACHABLE_CODE: (
-        "cliProviderUnreachable",
-        SEVERITY_ERROR,
-        WHO_PLATFORM,
-        "cliProviderUnreachableHint",
-    ),
-    PROVIDER_OVERLOADED_CODE: (
-        "cliProviderOverloaded",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliProviderOverloadedHint",
-    ),
-    SUBSCRIPTION_EGRESS_OFFLINE_CODE: (
-        "cliSubscriptionEgressOffline",
-        SEVERITY_ERROR,
-        WHO_PLATFORM,
-        "cliSubscriptionEgressOfflineHint",
-    ),
-    # 平台自己没能确认这次调用记给哪个项目/哪份活，于是没去调模型。它自己的临时
-    # 故障，和「账户没钱」是两回事：后者要管理员充值，前者等一会儿就好。
-    CONTROL_PLANE_UNAVAILABLE_CODE: (
-        "cliControlPlaneUnavailable",
-        SEVERITY_WARN,
-        WHO_PLATFORM,
-        "cliControlPlaneUnavailableHint",
-    ),
-    SUBSCRIPTION_ACCOUNTS_COOLING_CODE: (
-        "cliSubscriptionAccountsCooling",
-        SEVERITY_ERROR,
-        WHO_HUMAN,
-        "cliSubscriptionAccountsCoolingHint",
-    ),
-    MODEL_LIMIT_REACHED_CODE: (
-        "cliModelLimitReached",
-        SEVERITY_ERROR,
-        WHO_HUMAN,
-        "cliModelLimitReachedHint",
-    ),
     TOOL_UNAVAILABLE_CODE: (
         "cliToolUnavailable",
         SEVERITY_WARN,
@@ -85,23 +44,14 @@ _CLI_NOTICE_COPY: dict[str, tuple[str, str, str, str]] = {
 }
 
 
-#: 等一等、再来一次就可能好的那几种。额度用完、工具配置错了，重试不会有变化。
-_CLI_RETRYABLE = frozenset(
-    {
-        PROVIDER_UNREACHABLE_CODE,
-        PROVIDER_OVERLOADED_CODE,
-        CONTROL_PLANE_UNAVAILABLE_CODE,
-        RESPONSE_TRUNCATED_CODE,
-        SUBSCRIPTION_EGRESS_OFFLINE_CODE,
-        SUBSCRIPTION_ACCOUNTS_COOLING_CODE,
-    }
-)
+#: 等一等、再来一次就可能好的那几种。工具配置错了，重试不会有变化。
+_CLI_RETRYABLE = frozenset({RESPONSE_TRUNCATED_CODE})
 
 
 def cli_notice(text: str) -> tuple[str, dict] | None:
     """整条消息其实是 CLI 印的一句英文提示时,给出该发的中文提示卡;否则 None。"""
     failure = classify_cli_notice(text)
-    if failure is None:
+    if failure is None or failure not in _CLI_NOTICE_COPY:
         return None
     line, severity, who, hint = _CLI_NOTICE_COPY[failure]
     return say(line), notice(

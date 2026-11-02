@@ -10,11 +10,13 @@ Three routes:
 - ``PUT/GET /topics/{id}/preview/snapshot`` keep and read the latest snapshot of
   the app the room is previewing. One per app: the key is who serves it and what
   it was declared as, so declaring the same app again keeps its snapshot.
-- ``POST /topics/{id}/preview/wake`` asks the teammate who declared the app to
-  bring it back. The platform does not know how the app was started — the agent
-  ran it as a background command — so restarting it is the agent's job; the
-  platform's part is starting a turn for that agent with the instruction, which
-  also brings its machine up.
+- ``POST /topics/{id}/preview/wake`` brings the app back. While the sandbox
+  still exists, running or frozen, waking the machine is enough — the same wake
+  its next tool call would do: a frozen sandbox is thawed and the app goes on
+  running as it was. Once the sandbox has been destroyed the platform does not
+  know how the app was started — the agent ran it as a background command — so
+  restarting it is the agent's job: a turn is started for that agent with the
+  instruction.
 - ``GET /topics/{id}/preview/wake-status`` is what the panel polls while it shows
   the steps: machine, tunnel, the agent working on it, the app answering.
 """
@@ -43,10 +45,10 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.machine.preview_wake import (
-    can_wake_on_machine,
     find_seat_session,
+    has_sandbox,
     is_preview_waking,
-    schedule_direct_preview_wake,
+    schedule_preview_wake,
 )
 from app.domain.machine.session_reports import conversation_sessions
 from app.domain.project.room_files import ARTIFACT_MIME
@@ -190,10 +192,14 @@ async def wake_preview_app(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Ask the teammate who declared the app to bring it back up.
+    """Bring the app back up: thaw its sandbox, or wake its teammate.
 
-    Starting a turn costs a model call, so this is the same permission as
-    asking the agent anything (``ask_agent``, the route's own declaration:
+    A sandbox that still exists is woken the way its next tool call wakes it —
+    frozen is thawed, running is left alone — and the app it was running keeps
+    running; no model turn is spent on that. Only when the sandbox has been
+    destroyed is the teammate asked to start the app again,
+    which costs a model call: that is the same permission as asking the agent
+    anything (``ask_agent``, the route's own declaration:
     ``Can(Permission.ask_agent)`` let the caller in and hands the place and the
     actor here), and it starts at most one: not while that conversation already
     has a turn running, and not twice within :data:`WAKE_DEDUP_SECONDS` for the
@@ -217,8 +223,6 @@ async def wake_preview_app(
         conversation_id=place.conversation_id,
         seat=seat,
     )
-    art_meta = art.meta if isinstance(art.meta, dict) else None
-    direct = can_wake_on_machine(art_meta, session_row)
     redis = get_redis_client()
     key = f"preview-wake:{_snapshot_key(place, art)}"
     if redis is not None:
@@ -244,13 +248,13 @@ async def wake_preview_app(
             ),
         )
 
-    if direct and session_row is not None and art_meta is not None:
-        schedule_direct_preview_wake(
+    if session_row is not None and await has_sandbox(db, session_row.id):
+        # The app's sandbox is still there: waking it is enough. A frozen one
+        # thaws with its processes as they were, and the app goes on running.
+        schedule_preview_wake(
             db.bind,
             place=place,
             session_id=session_row.id,
-            seat=seat,
-            serve=art_meta["serve"],
             fallback=_submit_turn,
             dedup_key=key,
         )
