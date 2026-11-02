@@ -192,6 +192,11 @@ class MachineSettings(BaseModel):
     # a fixed size above (`cloud_pool_fixed_hosts`), and only one host is rolled
     # at a time.
     cloud_host_rebuild_after_days: int = Field(default=14, ge=0, le=365)
+    # A host being rebuilt waits this long for its sandboxes to go idle; past
+    # it, one still in use is moved off between two of its turns
+    # (`lifecycle._release_frozen_on_draining_hosts`), so one long-lived
+    # sandbox does not hold the rebuild of the whole fleet.
+    cloud_host_drain_wait_s: int = Field(default=21600, ge=0, le=7 * 86400)
     # Past its reserved slots: when no host has a slot left at
     # `cloud_sandbox_memory_mb` each (`models.capacity`), a host still takes
     # one more sandbox if what it reads now says it has the room, up to its
@@ -215,6 +220,13 @@ class MachineSettings(BaseModel):
     # `cloud_host_parked_budget_gb` of parked homes deletes them first, oldest
     # first, and a host with no room for one coming back hands it a new
     # sandbox elsewhere. Off = destroyed past the keep time, as before.
+    # An open turn of the session keeps its sandbox from going idle while the
+    # turn started, or the sandbox was used, within this long. A turn that has
+    # not touched its sandbox for longer — a subagent only reading the web, a
+    # turn whose runner died — lets it freeze, and its next tool call thaws it.
+    # It replaced a flat two hours after a turn started, which froze a long
+    # turn still at work and kept a dead one for two hours (`lifecycle`).
+    cloud_sandbox_turn_hold_s: int = Field(default=1800, ge=60, le=86400)
     cloud_sandbox_park: bool = True
     cloud_sandbox_parked_keep_s: int = Field(default=172800, ge=0, le=30 * 86400)
     cloud_host_parked_budget_gb: int = Field(default=20, ge=0, le=1000)
