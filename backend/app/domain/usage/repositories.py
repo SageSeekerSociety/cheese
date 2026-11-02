@@ -273,6 +273,7 @@ class UsageRepository:
                 ).where(
                     TaskGatewayAccount.conversation_id == task_id,
                     TaskGatewayAccount.owner_handle == owner_handle,
+                    TaskGatewayAccount.project_id == project_id,
                 )
             )
         ).first()

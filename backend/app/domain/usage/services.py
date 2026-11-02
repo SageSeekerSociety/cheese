@@ -24,6 +24,7 @@ from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
 from app.domain.usage.model_access import overseas_approved as _overseas_approved
+from app.domain.usage.models import TaskGatewayAccount
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -93,7 +94,7 @@ class UsageService:
 
     async def task_gateway_account(
         self, project_id: uuid.UUID, task_id: uuid.UUID, owner_handle: str
-    ):
+    ) -> TaskGatewayAccount | None:
         """The task's gateway account for ``owner_handle``, or None; read with
         the spend `task_gateway_budget` asks next."""
         return await self._repo.task_gateway_account(project_id, task_id, owner_handle)
