@@ -554,6 +554,25 @@ async def project_gateway_key(
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
 
+async def task_key_in_step(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    owner_handle: str,
+) -> str | None:
+    """The task's key for ``owner_handle``, when it is minted and its budget
+    is in step with what the task may spend; None to ask `project_gateway_key`.
+    Read on ``session``: admission asks it on its own, whose request facts
+    already hold the project and its payer (`routes/llm_proxy.py`)."""
+    account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
+    if account is None or account.project_id != project_id or not account.gateway_key:
+        return None
+    target = await UsageService(session).task_gateway_budget(
+        project_id, task_id, owner_handle
+    )
+    return account.gateway_key if account.budget_usd == target else None
+
+
 async def _task_gateway_key(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
@@ -564,17 +583,9 @@ async def _task_gateway_key(
     if gateway is None:
         return None
     async with sessions() as session:
-        account = await session.get(TaskGatewayAccount, (task_id, owner_handle))
-        target = await UsageService(session).task_gateway_budget(
-            project_id, task_id, owner_handle
-        )
-        if (
-            account is not None
-            and account.project_id == project_id
-            and account.gateway_key
-            and account.budget_usd == target
-        ):
-            return account.gateway_key
+        ready = await task_key_in_step(session, project_id, task_id, owner_handle)
+        if ready is not None:
+            return ready
     async with sessions() as session:
         await session.execute(
             insert(TaskGatewayAccount)

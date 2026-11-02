@@ -297,6 +297,37 @@ class CreditBudgets:
     ) -> float | None:
         if owner_handle is None:
             return None
+        # A task's admission asks it twice: to refuse the call, then for the
+        # budget the task's key carries (`gateway_usage.task_key_in_step`).
+        # A member with no cap of their own is the common answer, and a miss
+        # is not kept by the session the way a row is.
+        can_cache = isinstance(self._session, AsyncSession)
+        key = ("member_remaining", project_id, owner_handle)
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+        remaining = await self._member_remaining(project_id, owner_handle)
+        if can_cache:
+            remember(
+                self._session,
+                key,
+                remaining,
+                tables=frozenset(
+                    {
+                        "member_credit_budgets",
+                        "project_credit_budgets",
+                        "resource_usage",
+                    }
+                ),
+            )
+        return remaining
+
+    async def _member_remaining(
+        self, project_id: uuid.UUID, owner_handle: str
+    ) -> float | None:
         cap = await self._session.get(MemberCreditBudget, (project_id, owner_handle))
         if cap is None:
             return None
