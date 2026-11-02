@@ -344,7 +344,7 @@ function submit() {
         <li v-for="tpl in presets" :key="tpl.id" class="tpl">
           <button type="button" class="tpl__pick" @click="applyTemplate(tpl)">
             <span class="tpl__title">{{ tpl.title }}</span>
-            <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
+            <span class="tpl__meta">{{ whatFor(tpl) }}</span>
           </button>
         </li>
       </ul>
@@ -485,9 +485,11 @@ function submit() {
         </button>
       </div>
     </div>
+    <!-- 「存成模板」和「保存」只属于「新建」那一页：模板页是挑一条，没有要存的表。
+         「取消」两边都留着 —— 它是退出这个建规则的界面，模板页上不挑也能退。 -->
     <div class="compose__foot">
       <v-checkbox
-        v-if="!editing && !editingTemplate"
+        v-if="tab === 'new' && !editing && !editingTemplate"
         v-model="asTemplate"
         autocomplete="off"
         :label="t('routines.form.keepTemplate')"
@@ -495,11 +497,11 @@ function submit() {
         density="compact"
         class="compose__keep"
       />
-      <p v-if="error || localError" role="alert" class="t-body c-danger compose__error">
+      <p v-if="tab === 'new' && (error || localError)" role="alert" class="t-body c-danger compose__error">
         {{ error || localError }}
       </p>
       <BaseButton :disabled="saving" @click="emit('update:modelValue', false)">{{ t('routines.cancel') }}</BaseButton>
-      <BaseButton kind="primary" :loading="saving" @click="submit">
+      <BaseButton v-if="tab === 'new'" kind="primary" :loading="saving" @click="submit">
         {{ t('routines.save') }}
       </BaseButton>
     </div>
