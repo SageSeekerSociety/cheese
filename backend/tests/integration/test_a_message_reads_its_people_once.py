@@ -1,5 +1,5 @@
-"""Sending a message, and the composer asking whom it is for, read the
-people involved in as few statements as the answers need.
+"""Sending a message, the composer asking whom it is for, and marking a room
+read read the people involved in as few statements as the answers need.
 
 - A room's roster was read, and then which of its members are agents was a
   statement of its own; the roster is read with it now
@@ -7,6 +7,8 @@ people involved in as few statements as the answers need.
 - Whether the project's owner is still on its team read the owner's account
   and then their team row; it is one statement now
   (`project_roles._handle_on_team`).
+- Marking a room read read the room, then the reader's seat in it; the seat
+  is read with the room now (`place_or_404(member=...)`).
 
 The caller signs in with a token that carries their user id, as a signed-in
 person's does, so nothing reads their own account to find it.
@@ -80,3 +82,18 @@ def test_sending_reads_the_owners_team_row_with_their_account(client):
     assert [s for s in seen if s.startswith('SELECT "user".id')] == [], seen
     teams = [s for s in seen if "FROM team_user_relation" in s]
     assert len(teams) == 1 and 'JOIN "user"' in teams[0], teams
+
+
+def test_marking_read_reads_the_room_with_the_readers_seat(client):
+    _, _root, room = _channel(client)
+    message = post_message(client, room, "alice", {"content": "hi"})
+    headers = _signed_in(client, "alice")
+    mark = lambda: client.post(  # noqa: E731
+        f"/topics/{room}/read", json={"seq": message.get("seq", 1)}, headers=headers
+    )
+    mark()
+
+    seen = _statements(mark)
+
+    seats = [s for s in seen if "topic_memberships" in s]
+    assert len(seats) == 1 and "FROM topics" in seats[0], seats
