@@ -49,6 +49,7 @@ from app.core.forge_http import reuse_forge_connections
 from app.core.health import set_domain_checks, set_periodic_health
 from app.core.job_runs import JobRuns
 from app.core.loop_lag import watch_loop_lag
+from app.core.loop_stalls import watch_loop_stalls
 from app.core.metrics import active_requests, registry
 from app.core.net_io import watch_api_io, watch_net_io
 from app.core.obs import (
@@ -489,6 +490,9 @@ async def lifespan(application: FastAPI):
     application.openapi()
 
     background.spawn(watch_loop_lag(), name="event loop lag")
+    # Where the loop was each time it stalled for more than a tenth of a
+    # second, for the performance page (`core/loop_stalls.py`).
+    background.spawn(watch_loop_stalls(), name="event loop stalls")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
     # 不只是「我们用户的流量」），重启即清零。
