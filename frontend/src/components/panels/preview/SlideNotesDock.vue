@@ -171,21 +171,38 @@ function key(event: KeyboardEvent) {
   touch-action: none;
   z-index: 1;
 }
+.slide-notes__handle::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: transparent;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+/* 平时就看得见的一小截把手（--faint 是图标、分隔线那一档的灰，两套主题都和底色拉得开）；
+   悬停、拖动时整条线加深，告诉读者这一整条都能拖。 */
 .slide-notes__handle::after {
   content: '';
   position: absolute;
   top: 2px;
   left: 50%;
-  width: 32px;
+  width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: var(--line);
+  background: var(--faint);
   transform: translateX(-50%);
+}
+.slide-notes__handle:hover::before,
+.slide-notes.is-dragging .slide-notes__handle::before,
+.slide-notes__handle:focus-visible::before {
+  background: var(--muted);
 }
 .slide-notes__handle:hover::after,
 .slide-notes.is-dragging .slide-notes__handle::after,
 .slide-notes__handle:focus-visible::after {
-  background: var(--accent);
+  background: var(--text);
 }
 .slide-notes__handle:focus-visible {
   outline: none;
