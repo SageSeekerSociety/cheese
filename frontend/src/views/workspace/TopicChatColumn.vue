@@ -140,7 +140,7 @@ const task = computed<RoomTask | null>(() => (props.taskId ? taskRead.data.value
 const viewer = computed(() => currentUserName.value ?? myHandle())
 const closed = computed(() => task.value?.status === 'closed')
 // 负责人和协作者在开着的任务里说的话就是说给 AI 队友的，不用 @；别人说的话它当参考，
-// 要它回答就 @ 它。任务关了，和支线一样，@ 了才答。
+// 要它回答就 @ 它。任务关了，和频道主线一样，@ 了才答。
 const alwaysSummon = computed(
   () =>
     !!task.value &&

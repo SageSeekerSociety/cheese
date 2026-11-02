@@ -5,8 +5,9 @@ The rules a person can state without the code:
 
 - A draft is for the AI teammate exactly when sending it would start the
   teammate's turn: it @-s the teammate, it replies to the teammate's message,
-  or its task's owner says it in an open task. Otherwise it is for the people
-  it @-s, or for nobody in particular.
+  its task's owner says it in an open task, or a person says it in a 支线 a
+  teammate was called into and it @-s no one but people. Otherwise it is for
+  the people it @-s, or for nobody in particular.
 - Asking who a draft is for writes nothing and wakes nobody.
 - A message sent as one for the teammate that no longer is (its task closed
   while it was typed) is not posted as discussion; the sender is told whom it
@@ -137,6 +138,36 @@ def test_a_reply_to_the_teammate_is_for_the_teammate(client, stub_hooks):
     assert replying["agent"]["handle"] == answer["author"]
     assert replying["reason"] == "reply"
     assert not_replying["agent"] is None
+
+
+def test_a_thread_with_a_teammate_hands_it_every_message_but_one_to_people(
+    client, stub_hooks
+):
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
+    seat = room_agent_seat(client, room)
+    thread = in_thread(client, room, "alice")
+    before = _for_whom(client, thread, content="再查一下出处")
+    with room_socket(client, thread, "alice") as ws:
+        post_message(client, thread, "alice", {"content": f"<@{seat}> 先看看"})
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+
+    plain = _for_whom(client, thread, content="再查一下出处")
+    empty = _for_whom(client, thread, content="")
+    from_bob = _for_whom(client, thread, who="bob", content="我补充一个出处")
+    to_bob = _for_whom(client, thread, content="<@bob> 你看下这个出处")
+
+    # Before anyone called a teammate into it, the 支线 is among people.
+    assert before["agent"] is None
+    assert plain["agent"]["handle"] == seat
+    assert plain["reason"] == "thread"
+    # The composer's avatar reads the empty draft: its eyes are open already.
+    assert empty["agent"]["handle"] == seat
+    assert from_bob["agent"]["handle"] == seat
+    # An @ of a person alone is said to that person.
+    assert to_bob["agent"] is None
+    assert to_bob["people"] == ["bob"]
 
 
 def test_the_owner_in_an_open_task_speaks_to_its_teammate(client, stub_hooks):

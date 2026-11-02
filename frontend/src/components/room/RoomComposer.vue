@@ -397,8 +397,12 @@ const shownMates = computed<Mate[]>(() => {
   const agent = addressing.value?.agent
   return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
 })
-// 任务负责人那里每句都交给队友：头像常亮，是规则不是开关。和 AI 队友私聊时没有这颗头像。
-const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
+// 任务负责人那里、交给过队友的支线里，每句都交给队友：头像常亮，是规则不是开关。支线这一条
+// 读后端的回答（`reason: 'thread'`），只 @ 了人时回答不交给，头像就照常闭眼、可点。和 AI
+// 队友私聊时没有这颗头像。
+const summonFixed = computed(
+  () => (props.alwaysSummon && props.handOff !== false) || addressing.value?.reason === 'thread'
+)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
 // 「交给：」后面那位队友叫什么：和头像、名册同一个叫法（`mateOf`），不是库里存的原名——

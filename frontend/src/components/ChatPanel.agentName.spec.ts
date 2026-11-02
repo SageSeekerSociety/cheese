@@ -15,7 +15,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
-import { composerText, fillComposer } from '@/test/composerInput'
+import { fillComposer } from '@/test/composerInput'
 import { loadMarkdownReader } from '@/test/markdownReader'
 
 // 发出去的消息走 POST，这里把每一次的正文记下来——「@ 的是谁」最终就落在正文里。
@@ -355,10 +355,6 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
     })
   }
 
-  function mine(id: string, recipient: Record<string, unknown>): Block {
-    return { ...aiMsg(id, '先看一下', 'me'), meta: { agent_recipient: recipient } } as Block
-  }
-
   it('支线在和另一位队友说话：「交给」和 Ctrl+Enter 写的都是那一位', async () => {
     history = []
     const { container } = renderThread('t3', 'thread-3', OTHER)
@@ -371,16 +367,6 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
     await fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true })
     await settle()
     expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
-  })
-
-  it('支线里上一句交给过它，打开时预先填的是那一位', async () => {
-    history = [mine('m1', { handle: 'opus', instance_id: 'i-2', mentioned: true })]
-    const { container } = renderThread('t4', 'thread-4', OTHER)
-    await settle()
-
-    const box = container.querySelector<HTMLElement>('.composer .ProseMirror')!
-    await waitFor(() => expect(composerText(box)).toBe(`<@${OTHER}> `))
-    expect(box.querySelector('.mention')?.textContent).toBe('无言')
   })
 
   it('这件事没单独指定，还是房间那位', async () => {
