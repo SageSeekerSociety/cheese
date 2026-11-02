@@ -678,19 +678,16 @@ def test_a_sandbox_uses_the_swap_it_is_given_and_a_later_step_changes_it(
 
 
 @with_sandbox_host
-def test_a_sandbox_is_slowed_before_its_limit_and_killed_whole_at_it(
-    rooms, machine_service
-):
-    """Four fifths of its memory limit is where the kernel starts reclaiming
-    from a sandbox and slowing it; at the limit it kills all of the sandbox's
-    processes together."""
+def test_a_sandbox_at_its_limit_is_killed_whole(rooms, machine_service):
+    """At its memory limit, after what fits in its swap, the kernel kills all
+    of a sandbox's processes together; there is no softer limit below it."""
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     group = sandbox_host.CGROUP / str(room.resource)
-    limit = settings.cloud_sandbox_memory_mb << 20
 
-    assert int((group / "memory.max").read_text()) == limit
-    # The kernel keeps it in whole pages.
-    assert int((group / "memory.high").read_text()) == limit // 5 * 4 // 4096 * 4096
+    assert int((group / "memory.max").read_text()) == (
+        settings.cloud_sandbox_memory_mb << 20
+    )
+    assert (group / "memory.high").read_text().strip() == "max"
     assert (group / "memory.oom.group").read_text().strip() == "1"
 
 

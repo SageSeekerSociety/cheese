@@ -48,13 +48,12 @@ class MachineSettings(BaseModel):
     # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
-    # killed alone, not to share the machine out evenly. Above four fifths of
-    # it (`memory.high`, `sandbox_host.limit`) the kernel reclaims and slows
-    # the sandbox before it reaches the limit, and that needs somewhere to put
-    # what a process holds: a running sandbox may use `cloud_sandbox_swap_mb`
-    # of the host's swap file. Without it the soft limit could take back only
-    # page cache, and a build's own memory went straight to the limit and was
-    # killed (one sandbox, 15 times in 19 hours; dev, 2026-11-02). The idle
+    # killed alone, not to share the machine out evenly. A running sandbox may
+    # use `cloud_sandbox_swap_mb` of the host's swap file: at its limit the
+    # kernel pushes what it can there first, so a build that peaks just above
+    # the limit runs slower instead of being killed (one sandbox was killed 15
+    # times in 19 hours with none; dev, 2026-11-02), and only what still does
+    # not fit is killed, the whole sandbox together (`sandbox_host.limit`). The idle
     # page-cache reclaim (`sandbox_host.reclaim`) turns that swap off while it
     # runs, so it still only drops page cache. A frozen sandbox may use more
     # (`machine/lifecycle.py`), so pages it will not touch may leave the
