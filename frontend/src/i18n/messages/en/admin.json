@@ -147,7 +147,8 @@
       "working": "Working",
       "idle": "Idle",
       "stopping": "Being destroyed",
-      "frozen": "Frozen"
+      "frozen": "Frozen",
+      "parked": "Parked"
     },
     "note": {
       "failed": "Broken by the provider, given up at {at}; waiting for the provider to delete it",
@@ -165,7 +166,8 @@
       "reclaim": "reclaimed in {in} at the earliest",
       "overdue": "past its idle time and not reclaimed yet (the room's AI teammate stopping later, or a background command still running, pushes it back)",
       "frozen": "Frozen {for} (processes stopped, not billed)",
-      "discard": "discarded at latest {in}"
+      "discard": "discarded at latest {in}",
+      "parked": "Parked: processes stopped, home kept; deleted in {in} at the latest"
     },
     "placed": "Placed {at}",
     "personal": "Personal conversation",
@@ -186,7 +188,8 @@
       "timed": {
         "sandbox_prepared": "Preparing a sandbox ({count}) p50 / p95",
         "sandbox_frozen": "Freezing ({count}) p50 / p95",
-        "sandbox_checked_out": "Opening a task checkout ({count}, dependencies included) p50 / p95"
+        "sandbox_checked_out": "Opening a task checkout ({count}, dependencies included) p50 / p95",
+        "sandbox_parked": "Parking ({count}) p50 / p95"
       },
       "stageValue": "{stage} {p50} / {p95}",
       "stage": {
@@ -197,7 +200,8 @@
         "executor": "executor",
         "checkpoint": "checkpoint",
         "freeze": "host freeze",
-        "checkout": "checkout"
+        "checkout": "checkout",
+        "park": "stop"
       },
       "abandoned": "Given up before ready",
       "replaced": "Moved off a broken host",

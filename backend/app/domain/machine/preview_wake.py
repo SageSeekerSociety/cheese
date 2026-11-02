@@ -100,7 +100,8 @@ async def has_sandbox(db: AsyncSession, session_id: uuid.UUID) -> bool:
     A home that is on its way out (``stopped_at`` set) counts as gone: what it
     held is already being taken apart, so waking nothing would help."""
     home = await CloudHostRepository(db).current_home(session_id)
-    return home is not None and home.stopped_at is None
+    # A parked one runs nothing to wake: its session starts it again.
+    return home is not None and home.stopped_at is None and home.parked_at is None
 
 
 async def touch_preview_activity(

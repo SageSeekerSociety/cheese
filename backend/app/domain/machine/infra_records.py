@@ -31,7 +31,8 @@ HOST_LOST = "cloud_host_lost"
 PREPARED = "sandbox_prepared"
 FROZEN = "sandbox_frozen"
 CHECKED_OUT = "sandbox_checked_out"
-TIMED = (PREPARED, FROZEN, CHECKED_OUT)
+PARKED = "sandbox_parked"
+TIMED = (PREPARED, FROZEN, CHECKED_OUT, PARKED)
 
 #: A refused session asks again on every tool call; one record per session in
 #: this long says it was refused without counting each retry.
@@ -209,5 +210,25 @@ async def keep_checked_out(
         conversation_id=conversation_id,
         session_id=session_id,
         stages={"checkout": total_s},
+        total_s=total_s,
+    )
+
+
+async def keep_parked(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
+    total_s: float,
+) -> None:
+    """Keep that a frozen sandbox was parked, and how long its host took to
+    stop it (``lifecycle._park``). Writes the caller's transaction."""
+    await _keep_timed(
+        session,
+        kind=PARKED,
+        key="sandboxTimedParked",
+        conversation_id=conversation_id,
+        session_id=session_id,
+        stages={"park": total_s},
         total_s=total_s,
     )

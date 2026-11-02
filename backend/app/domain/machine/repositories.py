@@ -61,15 +61,20 @@ class CloudHostRepository:
             )
         )
 
-    async def occupancy(self) -> dict[uuid.UUID, int]:
+    async def occupancy(self, *, parked: bool = False) -> dict[uuid.UUID, int]:
         """How many homes each live host carries (hosts with none are
-        absent): each is a sandbox, or one being placed or destroyed."""
-        rows = await self._session.execute(
+        absent): each is a sandbox, or one being placed or destroyed. A parked
+        one holds no slot and is left out, unless ``parked``: whether a host
+        is empty, for releasing it, counts them too."""
+        query = (
             select(SandboxHome.host_id, func.count())
             .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(CloudHost.released_at.is_(None))
             .group_by(SandboxHome.host_id)
         )
+        if not parked:
+            query = query.where(SandboxHome.parked_at.is_(None))
+        rows = await self._session.execute(query)
         return {host_id: int(homes) for host_id, homes in rows.all()}
 
     async def last_readings(

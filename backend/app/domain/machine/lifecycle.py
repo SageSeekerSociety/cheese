@@ -92,14 +92,15 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.models import (
     LOST_KEY,
     LOST_PROCESSES_KEY,
+    PARKED_KEY,
     THAW_KEY,
     AgentSession,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
-from app.domain.machine.infra_records import keep_frozen
-from app.domain.machine.models import CloudHost, SandboxHome
+from app.domain.machine.infra_records import keep_frozen, keep_parked
+from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.reaper import accepting, free_slots
 from app.domain.machine.repositories import CloudHostRepository
@@ -414,6 +415,8 @@ class SandboxLifecycle:
 
         destroyed = await self.destroy_idle()
         destroyed += await self._release_frozen_on_draining_hosts()
+        if settings.cloud_sandbox_park:
+            destroyed += await self.trim_parked()
         for home in await metering.unpaid_sandboxes(self._session):
             if self._hub.is_online(home.device_id) and await self._destroy(
                 home.id,
@@ -478,6 +481,7 @@ class SandboxLifecycle:
                 SandboxHome.host_id,
                 SandboxHome.active_at,
                 SandboxHome.frozen_at,
+                SandboxHome.parked_at,
                 SandboxHome.stopped_at,
                 SandboxHome.spec,
                 SandboxHome.resource_id,
@@ -513,6 +517,9 @@ class SandboxLifecycle:
         previewed = await self._previewed(
             [home.session_id for home in candidates if home.session_id is not None]
         )
+        # Hosts a frozen sandbox past its keep time may be parked on: taking
+        # sandboxes (not short of disk, not being rebuilt).
+        parkable = {host.id for host in await self._repo.live() if accepting(host)}
         await self._session.commit()
         destroyed = 0
         for home in candidates:
@@ -533,12 +540,34 @@ class SandboxLifecycle:
                 ):
                     destroyed += 1
                 continue
+            if home.parked_at is not None:
+                # Parked: nothing of it runs and it holds no slot. Past its
+                # keep time its home goes too.
+                if now - home.parked_at < timedelta(
+                    seconds=settings.cloud_sandbox_parked_keep_s
+                ):
+                    continue
+                if await self._destroy(
+                    home.id,
+                    holder_id,
+                    home.device_id,
+                    now - home.frozen_at,
+                    idle_for=_idle_for(home.spec),
+                    frozen=True,
+                ):
+                    destroyed += 1
+                continue
             if home.frozen_at is not None:
                 # Frozen: it is not pinged and no turn can be running on it.
-                # Past its keep time it is destroyed; before that it waits for
-                # its session or for a slot to be needed elsewhere. One whose
-                # conversation previews an app is kept the longer time.
+                # Past its keep time it is parked — its processes stopped and
+                # its slot given up, its home kept — where its host takes no
+                # parked homes it is destroyed; before that it waits for its
+                # session or for a slot to be needed elsewhere. One whose
+                # conversation previews an app is kept frozen the longer time.
                 if now - home.frozen_at < _frozen_keep(home.session_id in previewed):
+                    continue
+                if settings.cloud_sandbox_park and home.host_id in parkable:
+                    await self._park(home.id, holder_id, home.device_id)
                     continue
                 if await self._destroy(
                     home.id,
@@ -1030,8 +1059,13 @@ class SandboxLifecycle:
         await self._session.commit()
         if not self._hub.is_online(device_id):
             return 0
+        # Parked ones first, oldest first: nobody is coming back to them soon.
         rows.sort(
-            key=lambda home: frozen_eviction_key(home, home.session_id in previewed)
+            key=lambda home: (
+                home.parked_at is None,
+                home.parked_at or home.frozen_at,
+                frozen_eviction_key(home, home.session_id in previewed),
+            )
         )
         destroyed = 0
         for home in rows[:limit]:
@@ -1070,6 +1104,8 @@ class SandboxLifecycle:
                 select(SandboxHome).where(
                     SandboxHome.host_id.in_(list(by_id)),
                     SandboxHome.frozen_at.is_not(None),
+                    # A parked one holds no slot: removing it frees none.
+                    SandboxHome.parked_at.is_(None),
                     SandboxHome.stopped_at.is_(None),
                 )
             )
@@ -1096,6 +1132,147 @@ class SandboxLifecycle:
             idle_for=_idle_for(home.spec),
             frozen=True,
         )
+
+    async def _park(
+        self, home_id: uuid.UUID, holder_id: uuid.UUID | None, device_id: str
+    ) -> bool:
+        """Park a frozen sandbox past its keep time: stop its processes on its
+        host and take down its cgroup and link, but leave its home there
+        (``sandbox_home.park``); it gives up its slot (``occupancy``) and the
+        session's next tool call starts it again where it is
+        (``HostPool._unpark``), told what was stopped. Marked as being removed
+        while the host is at it, so a tool call meanwhile waits rather than
+        thawing processes that are going; a park that fails stays marked, and
+        the next sweep destroys it as any unfinished removal."""
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
+        home = await self._repo.lock_home(home_id)
+        if (
+            home is None
+            or home.frozen_at is None
+            or home.parked_at is not None
+            or home.stopped_at is not None
+        ):
+            await self._session.commit()
+            return False
+        home.stopped_at = datetime.now(UTC)
+        project, resource = str(holders.namespace_of(home)), home.resource_id
+        await self._session.commit()
+        began = time.monotonic()
+        try:
+            answered = await run_on_host(
+                self._hub,
+                device_id,
+                "park",
+                timeout=STOP_HOLD.total_seconds() - 30,
+                project=project,
+                resource=resource,
+            )
+        except (RuntimeError, TimeoutError, SandboxHomeError):
+            logger.warning("parking sandbox %s failed", home_id, exc_info=True)
+            return False
+        running = [str(one) for one in (answered or {}).get("processes") or [] if one]
+        if holder_id is not None:
+            await holders.lock(self._session, holder_id)
+        home = await self._repo.lock_home(home_id)
+        if home is None:
+            await self._session.commit()
+            return False
+        home.stopped_at = None
+        home.parked_at = datetime.now(UTC)
+        if home.session_id is not None:
+            row = await self._session.scalar(
+                select(AgentSession)
+                .where(AgentSession.id == home.session_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if row is not None:
+                request = {
+                    key: value
+                    for key, value in (row.execution_request or {}).items()
+                    if key != THAW_KEY
+                }
+                request[PARKED_KEY] = running
+                row.execution_request = request
+        await keep_parked(
+            self._session,
+            conversation_id=home.topic_id,
+            session_id=home.session_id,
+            total_s=time.monotonic() - began,
+        )
+        await self._session.commit()
+        return True
+
+    async def destroy_parked(self, home_id: uuid.UUID) -> bool:
+        """Destroy one parked sandbox whose session came back to a host that
+        cannot start it again (``HostPool.place``): its session is told it is
+        in a new sandbox, as for any destroyed one."""
+        row = (
+            await self._session.execute(
+                select(SandboxHome, CloudHost.device_id)
+                .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+                .where(SandboxHome.id == home_id)
+            )
+        ).one_or_none()
+        await self._session.commit()
+        if row is None or row[0].parked_at is None or row[1] is None:
+            return False
+        home, device_id = row
+        assert home.frozen_at is not None
+        return await self._destroy(
+            home.id,
+            None,
+            device_id,
+            datetime.now(UTC) - home.frozen_at,
+            idle_for=_idle_for(home.spec),
+            frozen=True,
+        )
+
+    async def trim_parked(self) -> int:
+        """Destroy parked sandboxes past what their host keeps of them
+        (``cloud_host_parked_budget_gb``, by the disk each was last read to
+        hold), oldest first; returns how many."""
+        budget = settings.cloud_host_parked_budget_gb * 10**9
+        rows = list(
+            (
+                await self._session.execute(
+                    select(SandboxHome, SandboxUsage.disk_bytes, CloudHost.device_id)
+                    .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+                    .outerjoin(SandboxUsage, SandboxUsage.home_id == SandboxHome.id)
+                    .where(
+                        SandboxHome.parked_at.is_not(None),
+                        SandboxHome.stopped_at.is_(None),
+                        CloudHost.released_at.is_(None),
+                    )
+                    .order_by(SandboxHome.parked_at.desc())
+                )
+            ).all()
+        )
+        await self._session.commit()
+        kept: dict[uuid.UUID, int] = {}
+        over = []
+        for home, disk_bytes, device_id in rows:
+            # Newest first: what is over the budget is the oldest.
+            total = kept.get(home.host_id, 0) + int(disk_bytes or 0)
+            kept[home.host_id] = total
+            if total > budget and device_id is not None:
+                over.append((home, device_id))
+        destroyed = 0
+        for home, device_id in over[:DESTROYS_PER_SWEEP]:
+            if not self._hub.is_online(device_id):
+                continue
+            assert home.frozen_at is not None
+            if await self._destroy(
+                home.id,
+                None,
+                device_id,
+                datetime.now(UTC) - home.frozen_at,
+                idle_for=_idle_for(home.spec),
+                frozen=True,
+            ):
+                destroyed += 1
+        return destroyed
 
     async def _destroy(
         self,

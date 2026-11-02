@@ -14,7 +14,7 @@ export type HostPhase =
   | 'releasing'
   | 'failed'
 
-export type SandboxState = 'waiting' | 'working' | 'idle' | 'stopping' | 'frozen'
+export type SandboxState = 'waiting' | 'working' | 'idle' | 'stopping' | 'frozen' | 'parked'
 
 /** 一个沙箱最近一次的读数：内存每分钟读一次，家目录每次走盘（几分钟一次）读一次。 */
 export interface SandboxUsage {
@@ -197,7 +197,7 @@ export interface MachinesOverview {
   }
 }
 
-export type TimedKind = 'sandbox_prepared' | 'sandbox_frozen' | 'sandbox_checked_out'
+export type TimedKind = 'sandbox_prepared' | 'sandbox_frozen' | 'sandbox_checked_out' | 'sandbox_parked'
 
 export interface StageTiming {
   count: number

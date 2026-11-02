@@ -42,6 +42,7 @@ from app.domain.agent_session.models import (
     LEFT_HOST_KEY,
     LOST_KEY,
     LOST_PROCESSES_KEY,
+    PARKED_KEY,
     THAW_KEY,
     AgentSession,
 )
@@ -74,6 +75,7 @@ from app.domain.machine.sandbox_wait import (
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     SANDBOX_REPLACED,
+    SANDBOX_RESUMED,
     STOPPED_PROCESSES,
     VM_PREPARING,
     _cloud_progress,
@@ -804,6 +806,7 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
         or lease.get("setup_digest") != _setup_digest(env)
         or request.get(LOST_KEY)
         or request.get(THAW_KEY)
+        or request.get(PARKED_KEY) is not None
         or claims.get("session") != str(row.id)
         or claims.get("t") != str(row.conversation_id)
         or not holder.signed_for(claims)
@@ -1468,14 +1471,24 @@ async def _install(
             and target["status"] == "ready"
             and (row.execution_request or {}).get(LOST_KEY)
         )
+        resumed = (
+            tells_agent
+            and not lost
+            and target["status"] == "ready"
+            and (row.execution_request or {}).get(PARKED_KEY) is not None
+        )
         stopped = []
-        if lost:
+        if lost or resumed:
             request = row.execution_request or {}
-            stopped = [str(one) for one in request.get(LOST_PROCESSES_KEY) or [] if one]
+            stopped = [
+                str(one)
+                for one in request.get(LOST_PROCESSES_KEY if lost else PARKED_KEY) or []
+                if one
+            ]
             row.execution_request = {
                 key: value
                 for key, value in request.items()
-                if key not in (LOST_KEY, LOST_PROCESSES_KEY)
+                if key not in (LOST_KEY, LOST_PROCESSES_KEY, PARKED_KEY)
             }
         conversation_id = row.conversation_id
         device = (
@@ -1532,7 +1545,7 @@ async def _install(
                 message, _another_attempt, interval=ENVIRONMENT_POLL_S, detail=detail
             )
         lost_notice = SANDBOX_LOST if holder.project_id else SANDBOX_REPLACED
-        notices = [lost_notice] * bool(lost)
+        notices = [lost_notice] * bool(lost) + [SANDBOX_RESUMED] * bool(resumed)
         if stopped:
             notices.append(
                 STOPPED_PROCESSES.format(

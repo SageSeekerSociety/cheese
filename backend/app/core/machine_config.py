@@ -205,6 +205,19 @@ class MachineSettings(BaseModel):
     # one sandbox limit plus `cloud_pool_admit_headroom_mb`. A host with no
     # such reading takes none past its reserved slots. Off = the reserved
     # slots are all there is, as before.
+    # A frozen sandbox past its keep time is parked rather than destroyed: its
+    # processes are stopped and it gives up its host's slot, but its home —
+    # checkout, dependencies, what was not pushed — stays on the host's disk,
+    # and the session's next tool call starts it again there instead of in a
+    # new sandbox that clones and installs everything again (`lifecycle._park`).
+    # Kept `cloud_sandbox_parked_keep_s` at most; and never at the cost of a
+    # sandbox in use: a host short of disk, being rebuilt, or holding more than
+    # `cloud_host_parked_budget_gb` of parked homes deletes them first, oldest
+    # first, and a host with no room for one coming back hands it a new
+    # sandbox elsewhere. Off = destroyed past the keep time, as before.
+    cloud_sandbox_park: bool = True
+    cloud_sandbox_parked_keep_s: int = Field(default=172800, ge=0, le=30 * 86400)
+    cloud_host_parked_budget_gb: int = Field(default=20, ge=0, le=1000)
     cloud_pool_admit_by_use: bool = True
     cloud_pool_admit_reading_s: int = Field(default=300, ge=30, le=3600)
     cloud_pool_admit_pressure: float = Field(default=8.0, ge=0.0, le=100.0)
