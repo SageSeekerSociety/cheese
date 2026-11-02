@@ -21,8 +21,10 @@ in particular. Anyone else's reply to it is an ordinary message, not its answer.
 Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 """
 
+import asyncio
 import uuid
 
+from app.api.routes import blocks as block_routes
 from tests.ask_fixtures import active_ask, wait_turn_idle
 from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
@@ -268,6 +270,79 @@ def test_one_answer_settles_it_for_everyone_asked(client, stub_hooks, monkeypatc
     assert _waiting_questions(client, "alice") == []
     assert _waiting_questions(client, "bob") == []
     assert len(prompts) == 1 and "按部门" in prompts[0]
+
+
+def test_an_answer_recorded_while_someone_submits_the_form_is_not_erased(
+    client, stub_hooks, monkeypatch
+):
+    """Alice submits the answer form while bob answers the same question by a
+    reply. Whichever lands first is its answer; the other is refused or stays
+    talk. An answer already recorded on the question is never wiped by the
+    form submitted after it."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+    reached, release = asyncio.Event(), asyncio.Event()
+    group_of = block_routes.group_of
+
+    async def form_held_once_it_has_read_the_questions(*args, **kwargs):
+        rows = await group_of(*args, **kwargs)
+        if not reached.is_set():
+            reached.set()
+            await release.wait()
+        return rows
+
+    monkeypatch.setattr(
+        block_routes, "group_of", form_held_once_it_has_read_the_questions
+    )
+
+    def answers_on_the_question() -> list[dict]:
+        (row,) = [b for b in _blocks(client, room) if b["id"] == question["id"]]
+        return [
+            e for e in row["meta"].get("answer_log") or [] if e.get("kind") != "skipped"
+        ]
+
+    async def race():
+        form = asyncio.ensure_future(
+            asyncio.to_thread(
+                client.post,
+                f"/blocks/{question['id']}/answers",
+                json={"answers": {question["id"]: {"options": ["按项目"]}}},
+                headers=session_auth_headers("alice"),
+            )
+        )
+        await asyncio.wait_for(reached.wait(), 10)
+        reply = asyncio.ensure_future(
+            asyncio.to_thread(
+                client.post,
+                f"/topics/{room}/messages",
+                json={
+                    "request_id": str(uuid.uuid4()),
+                    "content": "按部门",
+                    "reply_to": question["id"],
+                },
+                headers=session_auth_headers("bob"),
+            )
+        )
+        await asyncio.sleep(1.0)
+        recorded_meanwhile = await asyncio.to_thread(answers_on_the_question)
+        release.set()
+        done = await asyncio.wait_for(
+            asyncio.gather(form, reply, return_exceptions=True), 20
+        )
+        return recorded_meanwhile, done
+
+    recorded_meanwhile, (form, reply) = client.portal.call(race)
+    wait_turn_idle(client, room)
+
+    for response in (form, reply):
+        assert not isinstance(response, BaseException), repr(response)
+        assert response.status_code < 500, response.text
+    final = answers_on_the_question()
+    assert len(final) == 1, final
+    for entry in recorded_meanwhile:
+        assert entry in final, (
+            f"{entry['by']} 的回答已经记在题上，随后提交的表单把它抹掉了：{final}"
+        )
 
 
 def test_skipping_a_question_asked_of_several_takes_it_off_only_your_list(

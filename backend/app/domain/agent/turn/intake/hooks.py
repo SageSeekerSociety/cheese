@@ -22,10 +22,12 @@ from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.models import TurnResume
 from app.domain.agent.platform_failures import (
+    RUNNER_REPLACED_CODE,
     TURN_TIMEOUT_MESSAGE,
     is_provider_out_of_credit,
 )
 from app.domain.agent.prompt import _compaction_notice
+from app.domain.agent.resumable_failures import EGRESS_OFFLINE, SUBSCRIPTION_COOLING
 from app.domain.agent.room_events import post_system_event
 from app.domain.agent.run_records import record_now
 from app.domain.agent.service import (
@@ -52,11 +54,19 @@ from app.domain.agent.turn.intake.notes import (
     _running_compactions,
 )
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
-from app.domain.agent.turn.state.notices import _TOOL_ACTION, _turn_failure_notice
+from app.domain.agent.turn.state.notices import (
+    _TOOL_ACTION,
+    PROVIDER_OUT_OF_CREDIT,
+    _turn_failure_notice,
+    model_error_notice,
+    platform_side_cause,
+)
 from app.domain.agent.turn.steps.hooks import HookActivity, LandedEvent, execute_event
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
+from app.domain.agent_instance.own.naming import connection_name
 from app.domain.block.models import Block
+from app.domain.delivery.agent import instance_for_seat
 from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.notice_meta import (
     EVENT_TURN_TIMEOUT,
@@ -90,6 +100,53 @@ async def _turn_ended_noticed(
             )
             is not None
         )
+
+
+#: Waits the platform gives up on that are its own to fix: the subscription's
+#: way out, and its accounts' limits. The room hears a failed model call; the
+#: operators hear which (`_tell_operators`).
+_PLATFORM_SIDE_WAITS = frozenset({EGRESS_OFFLINE, SUBSCRIPTION_COOLING})
+
+
+def _tell_operators(cause: str, project_id: uuid.UUID, turn_id: uuid.UUID, said: str):
+    """A failed model call whose cause is the platform's own reaches its
+    operators; the room only hears that calling the model went wrong
+    (`model_error_notice`). `alerting` keeps one report per cause in its
+    repeat window."""
+    if cause == PROVIDER_OUT_OF_CREDIT:
+        # The key the gateway's own balance alert was always sent under, so a
+        # change of wording does not report an ongoing outage again.
+        title, key = "AI 中继余额已用完", "ai-relay-out-of-credit"
+    else:
+        title, key = f"AI 调用失败：平台侧（{cause}）", f"model-error-{cause}"
+    alerting.send(
+        title,
+        [
+            f"项目 {project_id}",
+            f"轮次 {turn_id}",
+            "上游原文：" + (said or "").strip()[:400],
+            "房间里看到的是「这次没做完：调用的模型出错了」。",
+        ],
+        key=key,
+        when=time.time(),
+    )
+
+
+async def _own_connection_name(
+    sessions: async_sessionmaker, project_id: uuid.UUID, seat: str | None
+) -> str | None:
+    """What the project calls the model connection this seat runs on."""
+    if seat is None:
+        return None
+    try:
+        async with sessions() as session:
+            instance = await instance_for_seat(session, project_id, seat)
+            if instance is None:
+                return None
+            return await connection_name(session, instance.id)
+    except Exception:  # the line still says its connection ran dry
+        logger.exception("could not name the model connection of %s", seat)
+        return None
 
 
 class BeginTurn(Protocol):
@@ -307,6 +364,12 @@ class HookEvents:
                 # Only a failure the service reported: the watchdog's timeout
                 # and a spent balance are not waits (`turn_resume`).
                 resumable = False
+                # The platform's own cause of a failed model call, for its
+                # operators (`_tell_operators`).
+                cause: str | None = None
+                seat = event.agent_handle or (
+                    state.acting_agent if state is not None else None
+                )
                 if event.text.strip() == TURN_TIMEOUT_MESSAGE:
                     # The watchdog's own verdict, and the only failure whose
                     # session may still be alive — everything downstream of it
@@ -348,27 +411,20 @@ class HookEvents:
                     line = credits_event(reason)
                     meta = CREDITS_EXHAUSTED_META
                 else:
+                    own = state is not None and state.route == OWN_ROUTE
                     line, meta = _turn_failure_notice(
                         event.text,
                         event.failure_code,
                         log=event.log,
-                        own=state is not None and state.route == OWN_ROUTE,
+                        own=own,
+                        service=(
+                            await _own_connection_name(sessions, project_id, seat)
+                            if own and is_provider_out_of_credit(event.text)
+                            else None
+                        ),
                     )
                     resumable = True
-                    if is_provider_out_of_credit(event.text):
-                        # 上游服务的余额用完了：项目里的人补团队额度也没有用，只有
-                        # 平台管理员能处理。房间里那句已经说了，这里再叫一次管平台
-                        # 的人（`alerting` 自带重复窗口，同一个上游不会每小时刷）。
-                        alerting.send(
-                            "AI 中继余额已用完",
-                            [
-                                f"项目 {project_id}",
-                                "上游原文：" + (event.text or "").strip()[:400],
-                                "重试没有作用；补团队额度也没有用。",
-                            ],
-                            key="ai-relay-out-of-credit",
-                            when=time.time(),
-                        )
+                    cause = platform_side_cause(event.text, own=own)
                 if resumable:
                     resume = await self._resume_later(
                         project_id,
@@ -378,25 +434,31 @@ class HookEvents:
                         # Only the seat that failed: the room's last speaker
                         # is a guess, and with several seats a guess wakes the
                         # wrong agent. Not resuming is the safer miss.
-                        seat=event.agent_handle
-                        or (state.acting_agent if state is not None else None),
+                        seat=seat,
                         route=state.route if state is not None else None,
                     )
                     if resume is not None and resume.dropped_at is None:
-                        # The room hears that the turn stopped and when the
-                        # platform tries again; no error frame, nobody needs
-                        # to step in (`execute_event`).
+                        # The platform tries again by itself: the room gets no
+                        # line and no error frame, and the line above the
+                        # composer says the teammate is waiting on it
+                        # (`turn_resume.waiting`, the run records).
                         recovering = True
-                        line, meta = turn_resume.scheduled_notice(resume)
-                    elif (
-                        resume is not None
-                        and resume.dropped_reason == turn_resume.RECOVERS_LATE
-                    ):
-                        line, meta = turn_resume.late_notice(resume)
+                    elif resume is not None and resume.reason != RUNNER_REPLACED_CODE:
+                        # A failed model call the platform waited out as long
+                        # as it would, or would not wait for at all (it comes
+                        # back past the horizon, its quota names no reset).
+                        line, meta = model_error_notice(event.text)
+                        if resume.reason in _PLATFORM_SIDE_WAITS:
+                            cause = cause or resume.reason
                 error_line, error_code = line, meta.get("code")
-                # Every failed turn says so in its conversation, once: a report
-                # delivered again finds the line it already left.
-                if not await _turn_ended_noticed(sessions, turn_id, meta):
+                if cause is not None and not recovering:
+                    _tell_operators(cause, project_id, turn_id, event.text)
+                # Every failed turn the platform does not try again says so in
+                # its conversation, once: a report delivered again finds the
+                # line it already left.
+                if not recovering and not await _turn_ended_noticed(
+                    sessions, turn_id, meta
+                ):
                     room_meta = dict(meta)
                     if "error" in room_meta:
                         # Startup diagnostics are platform records. The room
@@ -407,8 +469,7 @@ class HookEvents:
                             content=line,
                             meta=meta,
                             turn_id=turn_id,
-                            seat=event.agent_handle
-                            or (state.acting_agent if state is not None else None),
+                            seat=seat,
                         )
                         room_meta.pop("error")
                         room_meta.pop("failed", None)

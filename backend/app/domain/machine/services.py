@@ -374,12 +374,22 @@ class HostPool(PoolSweep):
             return await self._place_on_free(home)
         if not free:
             return None
+        project_key = home.get("project_id") or home.get("topic_id")
+        cached = await self._repo.stores(project_key) if project_key else set()
 
-        # A host that can run the sandbox now first; among those, the one with
-        # the fewest free slots, so the others can empty and be released.
+        # A host that can run the sandbox now first; then one that has this
+        # project's store, so its dependencies and cache are the ones this
+        # sandbox starts with — that beats packing, which is what decides
+        # among hosts equally good at that: the fewest free slots, so the
+        # others can empty and be released.
         def rank(host: CloudHost):
             ready = host.device_id is not None and self._hub.is_online(host.device_id)
-            return (not ready, free_slots(host, load), host.created_at)
+            return (
+                not ready,
+                host.id not in cached,
+                free_slots(host, load),
+                host.created_at,
+            )
 
         host = min(free, key=rank)
         await self._repo.put_home(host.id, home)
@@ -794,6 +804,41 @@ class HostPool(PoolSweep):
                 **(row.execution_request or {}),
                 THAW_KEY: home.resource_id,
             }
+
+    async def mark_awake(self, session_id: uuid.UUID) -> tuple[str | None, str] | None:
+        """Ask for the session's frozen sandbox to be woken, under the pool's
+        lock, without a tool call behind it (a reader opening its preview).
+
+        Marked exactly as ``place`` marks one a tool call is waiting on: the
+        home is kept frozen in its row and ``THAW_KEY`` says it is wanted, so a
+        freeze on its way to the host sees the mark and thaws it itself
+        (``lifecycle._freeze``), and the host call is left to the caller with
+        no lock held. Returns the host's device and the resource to wake, or
+        None when there is no sandbox to wake: none yet, frozen or not, or
+        already being removed. A home that is not frozen is returned with a
+        None device, which is a sandbox that can be used as it is."""
+        await self._repo.lock_pool()
+        home = await self._repo.current_home(session_id)
+        if home is not None:
+            home = await self._repo.lock_home(home.id)
+        if home is None or home.stopped_at is not None:
+            await self._session.commit()
+            return None
+        device_id = None
+        if home.frozen_at is not None:
+            if home.host_id is not None:
+                host = await self._repo.get(home.host_id)
+                device_id = None if host is None else host.device_id
+            else:
+                device_id = home.device_id
+            if device_id is None:
+                # No connector to thaw it with: leave it frozen and let the
+                # caller wake the agent, rather than telling it it is awake.
+                await self._session.commit()
+                return None
+            await self._wake_frozen(home, session_id)
+        await self._session.commit()
+        return device_id, str(home.resource_id)
 
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.

@@ -118,6 +118,11 @@ def watched(work: Coroutine) -> asyncio.Task:
     return task
 
 
+async def _discard(stream: asyncio.StreamReader) -> None:
+    while await stream.read(1 << 16):
+        pass
+
+
 def _say_failure(task: asyncio.Task) -> None:
     if task.cancelled() or (error := task.exception()) is None:
         return
@@ -793,6 +798,33 @@ class Runner(Generic[J]):  # noqa: UP046
             writer.close()
             with contextlib.suppress(ConnectionError, BrokenPipeError):
                 await writer.wait_closed()
+
+    async def read_or_end(self, reading: Awaitable[None]) -> None:
+        """Read the session's output for as long as it writes, or end it.
+
+        ``reading`` is the protocol reader. A session nobody reads any more
+        would go on with its process, so every answer would still say it is
+        alive and its turn running, and nothing would ever end that turn.
+        Ending the process instead is reported the way any exit is.
+        """
+        try:
+            await reading
+        except Exception:
+            print(
+                "the session's output can no longer be read; ending the session",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc(file=sys.stderr)
+            process = self.process
+            assert process is not None and process.stdout is not None
+            # ``process.wait`` settles only once stdout is closed, and a pipe
+            # nobody reads stops at a full buffer: what the session still
+            # writes is read and let go while it is ended.
+            drain = asyncio.ensure_future(_discard(process.stdout))
+            if process.returncode is None:
+                process.terminate()
+            await drain
 
     async def stopped(self) -> None:
         """Wait out the protocol reader once its process is gone."""

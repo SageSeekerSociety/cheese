@@ -1,9 +1,11 @@
 """A spent model balance is told to whoever owns the account that ran dry.
 
 A turn on the platform's model supply that meets a provider out of credit ran
-into the platform's own account: the room is told the platform has it in hand.
-A turn on the team's or member's own model connection met their account, which
-nobody on the platform side was told about and only they can top up.
+into the platform's own account: the room reads a failed model call, and the
+platform's operators are told. A turn on the team's or member's own model
+connection met their account, which only they can top up: the line names that
+connection and where to change it. Either way a retry is offered, for after
+the top-up.
 """
 
 import uuid
@@ -32,11 +34,11 @@ CREDIT_TOO_LOW = (
 
 @pytest.mark.anyio
 @pytest.mark.parametrize(
-    ("route", "who", "retryable"),
-    [(OWN_ROUTE, "human", False), ("gateway", "platform", True)],
+    ("route", "code"),
+    [(OWN_ROUTE, "own_out_of_credit"), ("gateway", "model_error")],
 )
 async def test_a_spent_balance_is_told_to_whoever_owns_the_account(
-    business_db_factory, tmp_path, monkeypatch, route, who, retryable
+    business_db_factory, tmp_path, monkeypatch, route, code
 ):
     factory = business_db_factory
     project, topic = await _room(factory, f"Spent balance on {route}")
@@ -71,5 +73,5 @@ async def test_a_spent_balance_is_told_to_whoever_owns_the_account(
         and (b.meta or {}).get("event_type") == "turn_failed"
     ]
     assert notices, [(b.author_type, b.content) for b in blocks]
-    assert notices[-1]["who"] == who
-    assert bool(notices[-1].get("retryable")) is retryable
+    assert notices[-1]["code"] == code
+    assert notices[-1].get("retryable") is True

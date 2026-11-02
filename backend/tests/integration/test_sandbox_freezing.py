@@ -32,6 +32,8 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.domain.agent_session.models import THAW_KEY, AgentSession
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.disk_guard import DiskGuard
@@ -182,10 +184,13 @@ def test_a_tool_call_thaws_the_same_sandbox_and_its_work_is_there(icy):
     assert before is not None
     host_id, resource = before.host_id, before.resource_id
 
-    target = tool_call(icy, seat)["target"]
+    answer = tool_call(icy, seat, tells_agent=True)
 
     # Same host, same home, same processes.
-    assert target["device_id"] == device
+    assert answer["target"]["device_id"] == device
+    # Waking is not losing: nothing was destroyed, so the agent is told
+    # nothing about it. A notice here would say it is in a new sandbox.
+    assert "notice" not in answer
     after = home_row(icy, seat)
     assert after is not None
     assert (after.host_id, after.resource_id, after.frozen_at) == (
@@ -215,7 +220,50 @@ def test_a_frozen_sandbox_is_kept_within_its_keep_time(icy):
 
     assert freeze_sweep(icy)["destroyed"] == 0
     assert home_row(icy, seat) is not None
+
+
+def declare_preview(case, seat, path="npm run dev") -> None:
+    """The session's room previews an app whose launch spec `cheese serve` kept."""
+
+    async def declare():
+        async with case.client.test_request_factory() as db:
+            conversation = await db.scalar(
+                select(AgentSession.conversation_id).where(
+                    AgentSession.id == seat.session
+                )
+            )
+            db.add(
+                Block(
+                    project_id=case.project_id,
+                    conversation_id=conversation,
+                    kind=BlockKind.artifact,
+                    author_type=AuthorType.participant,
+                    author="cheese",
+                    content=path,
+                    mime_type="application/x-cheesex-app",
+                    meta={"serve": {"port": 5173, "command": path, "cwd": "/w"}},
+                )
+            )
+            await db.commit()
+
+    run(case, declare)
+
+
+def test_a_frozen_sandbox_whose_room_previews_an_app_is_kept_longer(icy):
+    seat, home, _ = a_seat_working(icy)
+    declare_preview(icy, seat)
+    frozen_for(icy, seat, timedelta(seconds=settings.cloud_sandbox_frozen_keep_s + 60))
+
+    # Past the plain keep time, still inside the longer one: the app somebody
+    # may open is still there to thaw.
+    assert freeze_sweep(icy)["destroyed"] == 0
     assert home.exists()
+
+    frozen_for(
+        icy, seat, timedelta(seconds=settings.cloud_sandbox_frozen_keep_preview_s + 60)
+    )
+    assert freeze_sweep(icy)["destroyed"] == 1
+    assert not home.exists()
 
 
 def test_no_place_evicts_the_frozen_sandbox_frozen_longest_ago(icy, monkeypatch):
@@ -240,6 +288,31 @@ def test_no_place_evicts_the_frozen_sandbox_frozen_longest_ago(icy, monkeypatch)
     assert home_row(icy, oldest) is None
     assert home_row(icy, newer) is not None
     assert len(icy.provider.machines) == 1
+
+
+def test_when_a_slot_is_short_the_frozen_sandbox_without_a_preview_goes_first(
+    icy, monkeypatch
+):
+    """The sandbox whose room previews an app is the one somebody may open, so
+    it is the one kept: an older frozen sandbox without a preview gives up the
+    slot first."""
+    with_preview, without, waiting = icy.seats
+    monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
+    monkeypatch.setattr(settings, "cloud_pool_max_hosts", 1)
+    working_on(icy, with_preview, "host-1")
+    assert tool_call(icy, without)["target"]["device_id"] == "host-1"
+    declare_preview(icy, with_preview)
+    time_passes(icy, with_preview, timedelta(minutes=20))
+    time_passes(icy, without, timedelta(minutes=20))
+    assert freeze_sweep(icy)["destroyed"] == 0
+    # Frozen longest ago — but without a preview, so not the one evicted.
+    frozen_for(icy, with_preview, timedelta(minutes=30))
+    frozen_for(icy, without, timedelta(minutes=10))
+
+    answer = tool_call(icy, waiting)
+    assert answer.get("target", {}).get("device_id") == "host-1", answer
+    assert home_row(icy, without) is None
+    assert home_row(icy, with_preview) is not None
 
 
 def test_a_tool_call_that_lands_while_it_is_frozen_never_leaves_it_frozen(icy):
@@ -483,6 +556,9 @@ def test_deleting_a_frozen_sandbox_thaws_it_before_stopping_it(tmp_path):
         "sandbox_marker": lambda home: tmp_path / "marker",
     }
 
-    assert sandbox_home.destroy(cleanup, "project", "resource") == {"destroyed": True}
+    assert sandbox_home.destroy(cleanup, "project", "resource") == {
+        "destroyed": True,
+        "processes": [],
+    }
     assert order == ["thaw", "stop"]
     assert not home.exists()
