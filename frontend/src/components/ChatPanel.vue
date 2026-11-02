@@ -23,7 +23,7 @@ import { useKeepAudience } from '../composables/useKeepAudience'
 import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
-import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
+import { useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { taskLine, tasksByOrigin } from '../lib/channelTasks'
@@ -97,8 +97,7 @@ const props = withDefaults(
     composerClosed?: string | null
     // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。
     askClosed?: boolean
-    // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
-    // 先带上「@芝士 」。
+    // 这一栏是一条支线：输入框写「在支线中回复」。
     inThread?: boolean
     // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
     hint?: string | null
@@ -409,14 +408,6 @@ function askAbout(block: Block) {
   setReply(block)
   composerRef.value?.addAgentMention?.()
 }
-
-// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
-// 打开的那一刻做一次，删掉了不会再长回来。
-watch(loadingHistory, (loading, was) => {
-  if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
-  const seat = agentSeat.value
-  draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
-})
 
 // 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
 // （平时画它，点一下就交给它）。后者从我自己发过的话里找：最近一条 @ 了队友的那条。

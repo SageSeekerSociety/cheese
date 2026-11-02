@@ -24,7 +24,7 @@
   "summonPicker": "交给哪位队友",
   "summonPickerBusy": "正在忙",
   "summonPickerOff": "不交给队友",
-  "summonRule": "任务里你说的话都会交给{name}",
+  "summonRule": "在这里你说的话都会交给{name}",
   "viewingShared": "芝士会看到：你在看 {name}",
   "viewingOff": "不带你在看的文件",
   "viewingTurnOff": "点一下：这条消息不带你在看的文件",

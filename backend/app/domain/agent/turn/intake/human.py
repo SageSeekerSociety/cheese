@@ -108,8 +108,12 @@ async def _read_human(
         if _is_dm(topic)
         else None
     )
-    if place.thread is not None:
-        agent = await _thread_agent(session, place, project) or agent
+    thread_agent = (
+        await _thread_agent(session, place, project)
+        if place.thread is not None
+        else None
+    )
+    agent = thread_agent or agent
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -117,6 +121,12 @@ async def _read_human(
             place.task is not None
             and place.task.status == TaskStatus.open
             and TaskService.takes_part(place.task, author)
+            and not _names_only_people(mentions.content)
+        )
+        or (
+            place.task is None
+            and thread_agent is not None
+            and names_a_person(author)
             and not _names_only_people(mentions.content)
         )
         or (seats is not None and looks_like_agent_handle(seats[1])),
@@ -141,6 +151,7 @@ class Addressing:
     None when it starts none. ``reason`` says which rule called it:
     ``mention`` (it @-s the teammate), ``reply`` (it replies to the teammate's
     message), ``task`` (its owner or a collaborator speaks in an open task),
+    ``thread`` (a person speaks in a 支线 a teammate was handed),
     ``private`` (a private chat with the teammate). ``people`` are the persons it
     @-s. ``place`` is ``channel``, ``task`` or ``private``; ``task_status`` the
     task's status when it is said in one."""
@@ -190,7 +201,13 @@ async def preview_addressing(
     recipient = prepared.recipient
     reason = None
     if recipient["mentioned"]:
-        reason = "task" if place.task is not None else "private"
+        reason = (
+            "task"
+            if place.task is not None
+            else "thread"
+            if place.thread is not None
+            else "private"
+        )
     if with_text:
         parent = await reply_parent(session, place, reply_to)
         admission = await refuse_call(
@@ -240,12 +257,12 @@ def _names_only_people(content: str) -> bool:
     """Whether ``content`` @-s someone and every one it @-s is a person.
 
     A task calls its teammate with every message its owner or a collaborator
-    says, except one that says whom it is for and names no AI teammate there:
-    an @ of a person is said to that person, and the task's teammate does not
-    pick it up. Anyone else in the project may speak in a task as in a 支线:
-    their message calls the teammate only when it @-s it, and otherwise rides
-    into its next turn as something said there. ``@all``/``@here``
-    name the whole channel, the teammate included."""
+    says, and a 支线 with every message a person says there, except one that
+    says whom it is for and names no AI teammate: an @ of a person is said to
+    that person, and the teammate does not pick it up. Anyone else in the
+    project may speak in a task: their message calls the teammate only when it
+    @-s it, and otherwise rides into its next turn as something said there.
+    ``@all``/``@here`` name the whole channel, the teammate included."""
     handles = mentioned_handles(content)
     return bool(handles) and all(
         h not in (MENTION_ALL, MENTION_HERE) and names_a_person(h) for h in handles
@@ -253,11 +270,13 @@ def _names_only_people(content: str) -> bool:
 
 
 async def _thread_agent(session: AsyncSession, place: Place, project):
-    """Who a 支线's message is for when it calls nobody: the teammate the 支线
-    is talking with (`thread_teammate`). Handed to the channel's default
-    instead, it reached no one: the default has no turn there to hear it, and
-    the next turn of the teammate that does leaves out a message addressed to
-    somebody else."""
+    """Who a 支线's message is for when it @-s no AI teammate: the teammate the
+    支线 is talking with (`thread_teammate`), which a person's message there
+    calls unless it @-s only people. None when no teammate has been handed the
+    支线: a 支线 among people stays among people, and its messages call nobody.
+    Handed to the channel's default instead, a message there reached no one:
+    the default has no turn there to hear it, and the next turn of the teammate
+    that does leaves out a message addressed to somebody else."""
     assert place.thread is not None
     seat = await thread_teammate(session, place.thread)
     if seat is None:

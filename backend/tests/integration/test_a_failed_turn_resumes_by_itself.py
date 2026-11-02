@@ -672,9 +672,11 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
     )
     try:
         [owed] = await _owed_resumes(factory, conversation)
-        # Before the resume is due, a person says something in the thread.
+        # Before the resume is due, a person says something in the thread, to
+        # another person: a message there @-ing no teammate would hand the
+        # teammate a turn of its own.
         await runner.receive_message(
-            chat, conversation, author="u", content="hold on, I'll look first"
+            chat, conversation, author="u", content="<@v> hold on, I'll look first"
         )
         await runner.drain(timeout_s=10)
 
