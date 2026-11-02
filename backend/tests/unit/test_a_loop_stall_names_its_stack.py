@@ -107,3 +107,37 @@ def test_a_stall_inside_a_greenlet_names_the_frames_that_switched_to_it(
     stack = loop_stalls.stall_status()["recent"][0]["stack"]
     assert any("hold_the_loop_for_a_while" in frame for frame in stack)
     assert any("rows_decoded_in_a_greenlet" in frame for frame in stack)
+
+
+def test_a_stall_says_how_much_of_it_the_collector_took():
+    import gc
+
+    loop_stalls = _stalls()
+
+    def churn_cycles_and_collect() -> None:
+        end = time.monotonic() + 0.3
+        while time.monotonic() < end:
+            for _ in range(2000):
+                a: list = []
+                a.append(a)
+            gc.collect(2)
+
+    async def go() -> None:
+        watcher = asyncio.create_task(loop_stalls.watch_loop_stalls(iterations=12))
+        await asyncio.sleep(0.12)
+        churn_cycles_and_collect()
+        await watcher
+
+    before = loop_stalls.stall_status()["gc"][2]["collections"]
+    asyncio.run(go())
+    status = loop_stalls.stall_status()
+    assert status["gc"][2]["collections"] > before
+    assert status["recent"][0]["gc_ms"] > 0
+    assert gc.callbacks.count(loop_stalls._on_gc) == 0
+
+
+def test_a_collection_whose_start_was_not_seen_is_not_charged():
+    loop_stalls = _stalls()
+    before = [dict(g) for g in loop_stalls.stall_status()["gc"]]
+    loop_stalls._on_gc("stop", {"generation": 2})
+    assert loop_stalls.stall_status()["gc"] == before
