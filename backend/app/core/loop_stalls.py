@@ -26,6 +26,7 @@ another thread is blocked in resumes rather than failing with EINTR.
 """
 
 import asyncio
+import gc
 import os
 import signal
 import threading
@@ -54,6 +55,13 @@ _worst: list[dict] = []
 _recent: deque[dict] = deque(maxlen=KEEP)
 _count = 0
 _samples: Counter[tuple[str, ...]] = Counter()
+# The collector's passes, per generation: how many, and how long in all and at
+# worst. A stall whose stack is only a weakref callback (`weakref.py remove`)
+# is the collector freeing what died, and `gc_ms` on the stall says how much
+# of it the collector took.
+_gc_runs = [[0, 0.0, 0.0] for _ in range(3)]
+_gc_started = 0.0
+_gc_since_beat = 0.0
 # Whether a watcher is sampling: the alarm handler re-arms only while it is,
 # so an alarm handled after the watcher stopped cannot start another one.
 _active = False
@@ -69,6 +77,15 @@ def stall_status() -> dict:
         "count": _count,
         "worst": list(_worst),
         "recent": list(reversed(_recent)),
+        "gc": [
+            {
+                "generation": generation,
+                "collections": runs,
+                "total_ms": round(total * 1000, 1),
+                "worst_ms": round(worst * 1000, 1),
+            }
+            for generation, (runs, total, worst) in enumerate(_gc_runs)
+        ],
     }
 
 
@@ -103,6 +120,19 @@ def _where(frame: FrameType | None) -> tuple[str, ...]:
     return tuple(out)
 
 
+def _on_gc(phase: str, info: dict) -> None:
+    global _gc_started, _gc_since_beat
+    if phase == "start":
+        _gc_started = time.perf_counter()
+        return
+    took = time.perf_counter() - _gc_started
+    _gc_since_beat += took
+    runs = _gc_runs[min(info.get("generation", 2), 2)]
+    runs[0] += 1
+    runs[1] += took
+    runs[2] = max(runs[2], took)
+
+
 def _on_alarm(signum: int, frame: FrameType | None) -> None:
     if not _active:
         return
@@ -119,6 +149,7 @@ def _keep(late: float, samples: Counter[tuple[str, ...]]) -> None:
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "samples": total,
         "share": round(seen / total, 2),
+        "gc_ms": round(_gc_since_beat * 1000),
         "stack": list(stack),
     }
     _count += 1
@@ -130,7 +161,7 @@ def _keep(late: float, samples: Counter[tuple[str, ...]]) -> None:
 
 async def watch_loop_stalls(*, iterations: int | None = None) -> None:
     """Beat on the loop and keep where it was each time a beat came late."""
-    global _active
+    global _active, _gc_since_beat
     if threading.current_thread() is not threading.main_thread():
         return
     previous = signal.getsignal(signal.SIGALRM)
@@ -141,11 +172,13 @@ async def watch_loop_stalls(*, iterations: int | None = None) -> None:
     signal.signal(signal.SIGALRM, _on_alarm)
     signal.siginterrupt(signal.SIGALRM, False)
     _active = True
+    gc.callbacks.append(_on_gc)
     try:
         while iterations is None or iterations > 0:
             if iterations is not None:
                 iterations -= 1
             began = time.monotonic()
+            _gc_since_beat = 0.0
             signal.setitimer(signal.ITIMER_REAL, BEAT_S + STALL_S)
             try:
                 await asyncio.sleep(BEAT_S)
@@ -160,5 +193,7 @@ async def watch_loop_stalls(*, iterations: int | None = None) -> None:
                 _keep(late, samples)
     finally:
         _active = False
+        if _on_gc in gc.callbacks:
+            gc.callbacks.remove(_on_gc)
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
