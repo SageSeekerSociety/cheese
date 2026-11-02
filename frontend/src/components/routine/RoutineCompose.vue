@@ -344,7 +344,7 @@ function submit() {
         <li v-for="tpl in presets" :key="tpl.id" class="tpl">
           <button type="button" class="tpl__pick" @click="applyTemplate(tpl)">
             <span class="tpl__title">{{ tpl.title }}</span>
-            <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
+            <span class="tpl__meta">{{ whatFor(tpl) }}</span>
           </button>
         </li>
       </ul>
@@ -485,7 +485,9 @@ function submit() {
         </button>
       </div>
     </div>
-    <div class="compose__foot">
+    <!-- 底下那一排只属于「新建」那一页：模板页是挑一条，没有要存的表。
+         它挂在两个页签外面的话，翻到模板页也照样带着「存成模板 / 保存」。 -->
+    <div v-if="tab === 'new'" class="compose__foot">
       <v-checkbox
         v-if="!editing && !editingTemplate"
         v-model="asTemplate"
@@ -502,6 +504,11 @@ function submit() {
       <BaseButton kind="primary" :loading="saving" @click="submit">
         {{ t('routines.save') }}
       </BaseButton>
+    </div>
+    <!-- 模板页和新建页一样占满这一格：没有这一颗就退不出去（宿主上面那条工具条在
+         这一格打开时是藏起来的）。挑一条会自己翻回新建页，只有「不挑」需要它。 -->
+    <div v-else class="compose__foot">
+      <BaseButton @click="emit('update:modelValue', false)">{{ t('routines.close') }}</BaseButton>
     </div>
   </div>
 </template>

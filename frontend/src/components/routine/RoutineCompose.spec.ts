@@ -132,6 +132,23 @@ describe('RoutineCompose templates', () => {
     expect(container.textContent).not.toContain('先存下来')
     expect(container.textContent).not.toContain('什么时候跑')
   })
+
+  // 回归：底下那一排是新建页的页脚（存成模板 / 取消 / 保存），模板页是挑一条，
+  // 没有要存的表，不该带着它。
+  it('模板页不摆「存成模板 / 取消 / 保存」那一排', async () => {
+    const { getByText, queryByText, container } = render(Compose, {
+      props: { modelValue: true, routine: null, rooms: [], defaultRoom: 'room-1', error: '', agentName: '小 C' },
+      global: { plugins: [vuetify, i18n] },
+    })
+    expect(getByText(t('routines.form.keepTemplate'))).toBeTruthy()
+
+    await fireEvent.click(getByText(t('routines.compose.tab.template')))
+    await waitFor(() => expect(container.textContent).toContain(t('routines.template.preset')))
+    expect(queryByText(t('routines.form.keepTemplate'))).toBeNull()
+    expect(queryByText(t('routines.save'))).toBeNull()
+    // 退得出去：模板页留一颗「关闭」。
+    expect(getByText(t('routines.close'))).toBeTruthy()
+  })
 })
 
 // 目标是唯一必填的一格：标签右上有个星号，标签文字本身还是「目标」。
