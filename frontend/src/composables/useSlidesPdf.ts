@@ -8,7 +8,14 @@ type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 type Paint = { cancel: () => void }
 /** 文字流里的一段。pdf.js 不对外导出这两个类型，这里只写读到的那两个字段。 */
 type TextChunk = { items: Array<{ str: string; hasEOL: boolean } | { type: string }> }
-export type SlidePaintOptions = { width: number; height?: number; text?: boolean }
+export type SlidePaintOptions = {
+  width: number
+  height?: number
+  text?: boolean
+  /** 一页最多放大到原尺寸的几倍（PDF 的点数）。默认 2：缩略图和适合页面用不着更大；读者自己
+   *  放大时由调用方给更高的上限，像素面积另有上限兜着（见下面的 `ratio`）。 */
+  maxScale?: number
+}
 
 let libraryPromise: Promise<PdfLib> | null = null
 function library(): Promise<PdfLib> {
@@ -103,7 +110,11 @@ export function useSlidesPdf(data: WatchSource<ArrayBuffer | null>) {
       const base = page.getViewport({ scale: 1 })
       const scale = Math.max(
         0.05,
-        Math.min(options.width / base.width, options.height ? options.height / base.height : 2, 2)
+        Math.min(
+          options.width / base.width,
+          options.height ? options.height / base.height : (options.maxScale ?? 2),
+          options.maxScale ?? 2
+        )
       )
       const viewport = page.getViewport({ scale })
       // Cap both DPR and pixel area: a large slide must not allocate an unbounded bitmap.

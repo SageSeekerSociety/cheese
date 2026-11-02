@@ -12,6 +12,7 @@ import type { FileContent } from '../../../cx_types'
 import type { DocumentIdentity, DocumentSnapshot } from '../../../lib/documentIdentity'
 import type { FileKind } from '../../../lib/fileKind'
 import type { SubmitPreviewQuestion } from '../../../lib/previewQuestion'
+import type { SlideNote } from '../../../lib/slideNotes'
 import type { SlideSource } from './slidesContext'
 
 export interface PreviewViewProps {
@@ -72,7 +73,7 @@ export interface PreviewViewProps {
   /** Identity verified against the actual conversion response, not current metadata alone. */
   slideContext?: SlideSource
   /** 演示稿每一页的演讲者备注，下标即页码。空数组是「这一份没有备注可显示」。 */
-  slideNotes?: readonly string[]
+  slideNotes?: readonly SlideNote[]
   docLoading: boolean
   docError: string
   docRendererMissing: boolean

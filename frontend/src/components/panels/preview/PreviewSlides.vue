@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SlidePageContext, SlideSource } from './slidesContext'
+import type { SlideNote } from '@/lib/slideNotes'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { DragGesture } from '@use-gesture/vanilla'
@@ -10,10 +11,16 @@ import { useSlidesPdf } from '@/composables/useSlidesPdf'
 import { contextAround } from './markdownQuote'
 import { useSelectionHighlight } from './selectionHighlight'
 import { pageRatio } from './slidesContext'
+import SlideNotesDock from './SlideNotesDock.vue'
 import SlideThumbRail from './SlideThumbRail.vue'
+import { useSlidePresenterLink } from './useSlidePresenterLink'
+import { useSlideWheel } from './useSlideWheel'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
+import { storageGet, storageSet } from '@/lib/browserStorage'
+import { alignSlideNotes, hasNoteText, NOTES_MIN_PX } from '@/lib/slideNotes'
+import { stepShown } from '@/lib/slidePresenter'
 
 /** 幻灯片收成单栏的那条线，比文档那一档（`NARROW_PX` = 560）低。
  *
@@ -33,8 +40,9 @@ const props = withDefaults(
     rendererMissing?: boolean
     canDownload?: boolean
     context?: SlideSource
-    /** 每一页的演讲者备注，下标即页码（`notes[0]` 是第一页）。空的那几页是没有备注。 */
-    notes?: readonly string[]
+    /** 每一页的演讲者备注和隐藏标记，按原稿的页序（`notes[0]` 是第一页）；和 PDF 怎么对页
+     *  见 `alignSlideNotes`。 */
+    notes?: readonly SlideNote[]
   }>(),
   {
     title: '',
@@ -52,6 +60,7 @@ const emit = defineEmits<{
   download: []
 }>()
 const root = ref<HTMLElement | null>(null)
+const main = ref<HTMLElement | null>(null)
 const stage = ref<HTMLElement | null>(null)
 const sheet = ref<HTMLElement | null>(null)
 const { count, loading, failure, revision, paint, cancelPaint, pageText } = useSlidesPdf(() => props.data)
@@ -89,19 +98,88 @@ const frame = computed(() => {
 })
 // ---- 演讲者备注 ----
 //
-// 备注是**给讲的人看的**，摆在幻灯片**下面**那一条空闲里（原型也是这个位置）：一页 16:9
-// 的稿子按宽度缩到面板里之后，上下本来就空着，正好放一块不挤画面的正文。
+// 备注是给讲的人看的，钉在阅读区底部（`SlideNotesDock`）：幻灯片按剩下的高度缩放，宽而矮的
+// 面板里讲稿也一直在屏上。高度和开关都记在这台浏览器上，换一份稿子沿用。
 //
-// 放映时整块收掉，和工具栏一样：放映是把画面投给别人看，备注一旦跟着上屏，台下的每个
-// 人都读到了讲稿。真要在放映时自己看备注，那是「讲者视图」——另开一个窗口，不是这一层。
+// 放映时整块收掉：放映是把画面投给别人看，备注跟着上屏台下就都读到了讲稿。讲的人要边放边看
+// 讲稿，用「讲者视图」——另开一个窗口（`SlidePresenter`）。
 //
-// 这一份有没有备注由「整份里有没有一段非空的」定：一份稿子只要有一页有备注，这一档就该
-// 让人找得到它在哪；某一页是空的，摆一句「这一页没有备注」，而不是把那一条整个抽掉——
-// 抽掉了读者不知道是这一页没有，还是这一档没有这个功能。
-const hasNotes = computed(() => props.notes.some((text) => text.trim()))
-const pageNote = computed(() => (props.notes[current.value - 1] ?? '').trim())
-const notesOpen = ref(true)
-const showNotes = computed(() => ready.value && hasNotes.value && notesOpen.value && !presenting.value)
+// 整份稿子一条备注都没有时，按钮照样在，默认不展开；点开说一句「这份演示稿没有写演讲者备注」。
+// 以前这种稿子连按钮都不出现，读者分不清是稿子没写，还是没有这个功能。
+const NOTES_OPEN_KEY = 'cheese.slides.notesOpen'
+const NOTES_HEIGHT_KEY = 'cheese.slides.notesHeight'
+const aligned = computed(() => alignSlideNotes(props.notes, count.value))
+const isHidden = (page: number) => !!aligned.value[page - 1]?.hidden
+const hasNotes = computed(() => aligned.value.some(hasNoteText))
+const pageNote = computed(() => aligned.value[current.value - 1])
+const railMarks = computed(() => aligned.value.map((note) => ({ hidden: note.hidden, noted: hasNoteText(note) })))
+const notesOpen = ref(storageGet(NOTES_OPEN_KEY) !== '0')
+/** 没有备注的稿子上读者自己点开过：这一份文件里一直摆着那句「没有写」。 */
+const notesAsked = ref(false)
+const notesHeight = ref(Math.max(NOTES_MIN_PX, Number(storageGet(NOTES_HEIGHT_KEY)) || 168))
+const mainHeight = ref(600)
+const notesMax = computed(() => Math.max(NOTES_MIN_PX, Math.round(mainHeight.value * 0.6)))
+const notesShownHeight = computed(() => Math.min(notesHeight.value, notesMax.value))
+const showNotes = computed(
+  () => ready.value && !presenting.value && notesOpen.value && (hasNotes.value || notesAsked.value)
+)
+function toggleNotes() {
+  if (showNotes.value) {
+    if (hasNotes.value) setNotesOpen(false)
+    notesAsked.value = false
+  } else {
+    setNotesOpen(true)
+    notesAsked.value = true
+  }
+}
+function setNotesOpen(open: boolean) {
+  notesOpen.value = open
+  storageSet(NOTES_OPEN_KEY, open ? '1' : '0')
+}
+function closeNotes() {
+  setNotesOpen(false)
+  notesAsked.value = false
+}
+function resizeNotes(height: number) {
+  notesHeight.value = height
+  storageSet(NOTES_HEIGHT_KEY, String(height))
+}
+
+// ---- 缩放 ----
+//
+// Ctrl / ⌘ + 滚轮、触控板双指捏合、工具栏上的 − / +、键盘 + - 0。倍数是相对「适合页面」或
+// 「适合宽度」那一档的：100% 就是那一档本来的大小。放大以后舞台自己滚，指针下的那一点留在
+// 指针下。放映时不缩放（投出去的就是整页）。
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 5
+const zoom = ref(1)
+const zoomLabel = computed(() => `${Math.round(zoom.value * 100)}%`)
+let anchor: { x: number; y: number; fx: number; fy: number } | null = null
+function zoomBy(factor: number, at?: { x: number; y: number }) {
+  if (presenting.value || !ready.value) return
+  const next = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom.value * factor)) * 1000) / 1000
+  if (next === zoom.value) return
+  const el = stage.value
+  if (el) {
+    const point = at ?? { x: el.clientWidth / 2, y: el.clientHeight / 2 }
+    anchor = {
+      ...point,
+      fx: (el.scrollLeft + point.x) / Math.max(1, el.scrollWidth),
+      fy: (el.scrollTop + point.y) / Math.max(1, el.scrollHeight),
+    }
+  }
+  zoom.value = next
+}
+function resetZoom() {
+  anchor = null
+  zoom.value = 1
+}
+
+/** 往前 / 往后一页。放映时跳过隐藏页（和 PowerPoint 一样），读稿时隐藏页照常看得到。 */
+function step(direction: 1 | -1) {
+  if (!ready.value) return
+  go(presenting.value ? stepShown(current.value, direction, count.value, isHidden) : current.value + direction)
+}
 
 /** 读屏播报用：换页时说出来的是「第 4 页，共 6 页」，不是工具栏上那个数字框。 */
 const announcement = computed(() =>
@@ -156,7 +234,7 @@ function presentStops(): HTMLElement[] {
 /** 放映时点一下画面翻到下一页；到最后一页就停住（和原型一样，不绕回第一页）。 */
 function pointAdvance() {
   if (!presenting.value || !ready.value) return
-  if (current.value < count.value) go(current.value + 1)
+  step(1)
 }
 function keyboard(event: KeyboardEvent) {
   const active = window.document.activeElement
@@ -183,19 +261,23 @@ function keyboard(event: KeyboardEvent) {
   // 焦点在缩略图轨里时，方向键归那条轨（在缩略图之间走），不在这里翻页。
   if (active instanceof HTMLElement && active.closest('.slide-rail')) return
   if (!ready.value) return
-  const page = {
-    ArrowRight: current.value + 1,
-    ArrowDown: current.value + 1,
-    PageDown: current.value + 1,
-    ArrowLeft: current.value - 1,
-    ArrowUp: current.value - 1,
-    PageUp: current.value - 1,
-    Home: 1,
-    End: count.value,
-  }[event.key]
-  if (page !== undefined) {
+  const zoomKey = { '+': 1.25, '=': 1.25, '-': 0.8, '0': 0 }[event.key]
+  if (zoomKey !== undefined && !presenting.value) {
     event.preventDefault()
-    go(page)
+    if (zoomKey) zoomBy(zoomKey)
+    else resetZoom()
+    return
+  }
+  const direction = ({ ArrowRight: 1, ArrowDown: 1, PageDown: 1, ' ': 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1 } as const)[
+    event.key as 'ArrowRight'
+  ]
+  // 空格只在放映时翻页（翻页笔、PowerPoint 的习惯）；读稿时空格留给浏览器滚动。
+  if (direction !== undefined && (event.key !== ' ' || presenting.value)) {
+    event.preventDefault()
+    step(direction)
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault()
+    go(event.key === 'Home' ? 1 : count.value)
   }
 }
 // 和 PreviewPages 同一件事：浏览器给每一段文字各画一层底色，文字层里相邻两段是搭着
@@ -264,24 +346,39 @@ async function askPage() {
   }
 }
 watch(
-  [current, revision, fit, size, sheet, presenting, ready, narrow],
-  () => {
+  [current, revision, fit, size, sheet, presenting, ready, narrow, zoom],
+  async () => {
     const host = sheet.value
     if (!host || !ready.value) return
     const pad = frame.value
-    void paint(current.value, host, {
-      width: Math.max(32, size.value.width - 2 * pad.x),
-      height: fit.value || presenting.value ? Math.max(32, size.value.height - pad.top - pad.bottom) : undefined,
+    const scale = presenting.value ? 1 : zoom.value
+    await paint(current.value, host, {
+      width: Math.max(32, (size.value.width - 2 * pad.x) * scale),
+      height:
+        fit.value || presenting.value
+          ? Math.max(32, (size.value.height - pad.top - pad.bottom) * scale)
+          : undefined,
       text: true,
+      maxScale: 8,
     })
+    // 缩放后把指针下那一点放回指针下（页的尺寸在 paint 里定下来，所以等它画完）。
+    const el = stage.value
+    if (anchor && el) {
+      el.scrollLeft = anchor.fx * el.scrollWidth - anchor.x
+      el.scrollTop = anchor.fy * el.scrollHeight - anchor.y
+    }
+    anchor = null
   },
   { flush: 'post' }
 )
+watch(fit, resetZoom)
 watch(
   () => props.data,
   () => {
     current.value = 1
     jump.value = '1'
+    zoom.value = 1
+    notesAsked.value = false
   },
   { flush: 'sync' }
 )
@@ -309,24 +406,25 @@ watch(current, () => {
   pageFailure.value = ''
 })
 watch(
-  [root, stage],
+  [root, stage, main],
   () => {
     observer?.disconnect()
     observer = new ResizeObserver(() => {
       narrow.value = (root.value?.clientWidth ?? 800) < COMPACT_PX
       if (stage.value) size.value = { width: stage.value.clientWidth, height: stage.value.clientHeight }
+      if (main.value) mainHeight.value = main.value.clientHeight
     })
     if (root.value) observer.observe(root.value)
     if (stage.value) observer.observe(stage.value)
+    if (main.value) observer.observe(main.value)
   },
   { flush: 'post' }
 )
-// ---- 左右滑翻页 ----
+// ---- 左右扫翻页（触屏） ----
 //
-// 手指横着拖，这一页跟着走；松手时甩得够快、或者拖过了三分之一页宽，就翻到下一页 / 上一页，
-// 不够就弹回原处。只认手指：鼠标在页上拖是在选字。竖着的滑动留给浏览器（`touch-action:
-// pan-y`），这一格比一页高的时候照样能上下滚。
-const dragX = ref(0)
+// 手指横着快扫一下翻页，幻灯片不跟着手指挪：PowerPoint 里页面是钉住的，拖动是选字，整页跟着
+// 走只会让人以为把它拖坏了。只认手指（鼠标在页上拖是在选字）；竖着的滑动留给浏览器
+// （`touch-action: pan-y`）。放大了的时候不认——那时横着划是在看这一页的另一边。
 let swipe: DragGesture | null = null
 watch(
   stage,
@@ -336,18 +434,38 @@ watch(
     if (!el) return
     swipe = new DragGesture(
       el,
-      ({ active, movement: [mx], swipe: [sx], last }) => {
-        if (!ready.value) return
-        dragX.value = active ? mx : 0
-        if (!last) return
-        const page = sx ? -sx : Math.abs(mx) > el.clientWidth / 3 ? -Math.sign(mx) : 0
-        if (page) go(current.value + page)
+      ({ swipe: [sx], last }) => {
+        if (!ready.value || zoom.value > 1 || !last || !sx) return
+        step(sx > 0 ? -1 : 1)
       },
       { axis: 'x', filterTaps: true, pointer: { touch: true } }
     )
   },
   { flush: 'post' }
 )
+
+// ---- 滚轮 ----
+useSlideWheel({
+  area: main,
+  scroller: () => stage.value,
+  enabled: () => ready.value,
+  turn: step,
+  zoom: (factor, at) => zoomBy(factor, at),
+})
+
+// ---- 讲者视图 ----
+// 开一个窗口给讲的人自己看（讲稿、下一页、计时），这一边同时进入放映，投给台下。
+const presenterBlocked = ref(false)
+const presenter = useSlidePresenterLink({
+  deck: () =>
+    props.data && ready.value ? { bytes: props.data, notes: aligned.value, title: props.title } : null,
+  page: current,
+  go,
+})
+async function presenterView() {
+  presenterBlocked.value = !presenter.open()
+  if (!presenterBlocked.value && !presenting.value) await presentation()
+}
 
 onBeforeUnmount(() => {
   textGeneration += 1

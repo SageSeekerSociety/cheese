@@ -89,6 +89,13 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'navigation.pages.openPreview', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
+    // 讲者视图：放映时另开的窗口，内容由开它的那个窗口递过来（见 lib/slidePresenter）。
+    name: 'slides-presenter',
+    path: '/presenter',
+    component: () => import('@/views/SlidesPresenterView.vue'),
+    meta: { titleKey: 'navigation.pages.slidesPresenter', isFullPage: true, ...PERSONAL_PAGE },
+  },
+  {
     name: 'site-open',
     path: '/sites/:projectId',
     component: () => import('@/views/SiteOpenView.vue'),
