@@ -872,6 +872,15 @@ class HostPool(PoolSweep):
         home.waiting_since = None
         return await tell_ready(self._session, home, await self._vm(home))
 
+    async def waited_s(self, session_id: uuid.UUID) -> float | None:
+        """How long the session has waited for a host still coming up, if it
+        was told to wait (``tell_waiting``); read before ``tell_ready`` ends
+        the wait."""
+        home = await self._locked_home(session_id)
+        if home is None or home.waiting_since is None:
+            return None
+        return (datetime.now(UTC) - home.waiting_since).total_seconds()
+
     async def _vm(self, home: SandboxHome) -> bool:
         host = None if home.host_id is None else await self._repo.get(home.host_id)
         return host is not None and host.whole_machine

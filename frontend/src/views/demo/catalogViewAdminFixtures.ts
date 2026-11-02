@@ -473,6 +473,7 @@ export const CRV_MACHINES: MachinesOverview = {
     hosts_lost: 1,
     hosts_lost_by_reason: { provider_error: 1 },
     sandboxes_lost: 0,
+    timings: {},
   },
 }
 

@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -55,7 +56,7 @@ from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
-from app.domain.machine.infra_records import keep_refusal
+from app.domain.machine.infra_records import keep_prepared, keep_refusal
 from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import (
@@ -1074,6 +1075,7 @@ async def _attempt(
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
     cloud_host = None
+    placed_s = None
     if selected is None and not cloud_provisionable(settings):
         await db.commit()
         return {"unavailable": str(say("platformSpecUnavailable"))}
@@ -1087,6 +1089,7 @@ async def _attempt(
         )
         pool = HostPool(db, hub=hub)
         whole_machine = spec is not None and spec.name == VM
+        placing = time.monotonic()
         try:
             cloud_host = await pool.place(
                 session_id,
@@ -1114,6 +1117,7 @@ async def _attempt(
             # gone, places the session in a new one.
             await db.commit()
             return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+        placed_s = time.monotonic() - placing
         if not cloud_host.device_id or not hub.is_online(cloud_host.device_id):
             line = await pool.tell_waiting(session_id)
             await db.commit()
@@ -1228,6 +1232,11 @@ async def _attempt(
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
+            # Timed only when the call brings up hands it did not hold: a new
+            # sandbox, one another host now has, or one woken from a freeze
+            # (`infra_records.keep_prepared`). A re-check of ready hands is not.
+            fresh=holding is reservation,
+            placed_s=placed_s,
         )
     )
     _INSTALLS.add(work)
@@ -1289,6 +1298,8 @@ async def _install(
     owner_device,
     own,
     tells_agent=False,
+    fresh=False,
+    placed_s=None,
 ):
     """Bring the session's executor up under ``claim`` and record the outcome."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -1315,15 +1326,20 @@ async def _install(
             if owner_device
             else contextlib.nullcontext()
         )
+        started = time.monotonic()
+        thaw_s = None
         try:
             async with lease_claim.kept(bind, session_id, claim, since=now):
-                await thaw_if_asked(
+                thawed = await thaw_if_asked(
                     db,
                     hub,
                     session_id=session_id,
                     device_id=device_id,
                     work_resource=work_resource,
                 )
+                if thawed:
+                    thaw_s = time.monotonic() - started
+                executor_from = time.monotonic()
                 async with shown as heard:
                     info = await _start_executor(
                         hub,
@@ -1336,6 +1352,7 @@ async def _install(
                         platform_machine=platform_machine,
                         on_stderr=heard,
                     )
+                executor_s = time.monotonic() - executor_from
                 target = {
                     **reservation,
                     "status": "ready",
@@ -1476,6 +1493,19 @@ async def _install(
             )
         ready_line = None
         if cloud_host_id is not None and target["status"] == "ready":
+            if fresh or thaw_s is not None:
+                await keep_prepared(
+                    db,
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    stages={
+                        "place": placed_s,
+                        "thaw": thaw_s,
+                        "executor": executor_s,
+                    },
+                    total_s=time.monotonic() - started + (placed_s or 0),
+                    waited_s=await HostPool(db, hub=hub).waited_s(session_id),
+                )
             ready_line = await HostPool(db, hub=hub).tell_ready(session_id)
         await db.commit()
         await publish_line(topic_id, ready_line)
