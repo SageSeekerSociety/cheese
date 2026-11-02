@@ -66,7 +66,24 @@
   inset: 0 -4px;
 }
 .pane-resizer:hover {
+  background: var(--muted);
+}
+/* 中间一小截把手：平时就看得见这里能拖（只有 2px 的 --line-2 在浅色主题下几乎是白的），
+   悬停时跟着整条一起加深。 */
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  width: 4px;
+  height: 36px;
+  border-radius: 2px;
   background: var(--faint);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.pane-resizer:hover::after {
+  background: var(--text);
 }
 .col {
   min-width: 0;

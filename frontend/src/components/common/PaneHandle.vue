@@ -52,6 +52,6 @@ const props = defineProps<{ pane: ReturnType<typeof usePaneWidth> }>()
 
 .pane-handle:hover::after,
 .pane-handle:focus-visible::after {
-  background: var(--faint);
+  background: var(--muted);
 }
 </style>
