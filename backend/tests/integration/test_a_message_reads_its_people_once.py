@@ -97,3 +97,22 @@ def test_marking_read_reads_the_room_with_the_readers_seat(client):
 
     seats = [s for s in seen if "topic_memberships" in s]
     assert len(seats) == 1 and "FROM topics" in seats[0], seats
+
+
+def test_whom_a_draft_is_for_reads_the_projects_agents_with_the_room(client):
+    """Whom a draft would start a turn for asks which of the project's agents
+    sits here; the agents come in the statement that reads the room."""
+    _, _root, room = _channel(client)
+    post_message(client, room, "alice", {"content": "hi"})
+    headers = _signed_in(client, "alice")
+    ask = lambda: client.post(  # noqa: E731
+        f"/topics/{room}/messages/addressing",
+        json={"content": "hi"},
+        headers=headers,
+    )
+    ask()
+
+    seen = _statements(ask)
+
+    agents = [s for s in seen if "agent_instances" in s]
+    assert len(agents) == 1 and "FROM topics" in agents[0], agents
