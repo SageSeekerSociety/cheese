@@ -87,8 +87,10 @@ async def task_credit_context(
     agent_handles: list[str],
 ) -> TaskCreditContext | None:
     """The running execution's budget holder, or the next task execution's."""
-    place = await PlaceResolver(session).conversation(conversation_id)
-    if place is None or place.task is None or place.project_id != project_id:
+    # Read with whether its owner and creator are agents: `credit_owner`
+    # below asks it when the running turn names no payer.
+    task = await TaskService(session).with_people(conversation_id)
+    if task is None or task.project_id != project_id:
         return None
     turn = await AgentTurnRepository(session).open_turn_of(
         conversation_id, agent_handles
@@ -98,7 +100,7 @@ async def task_credit_context(
     )
     if owner is not None:
         return TaskCreditContext(conversation_id, owner, turn.id if turn else None)
-    owner = await TaskService(session).credit_owner(place.task)
+    owner = await TaskService(session).credit_owner(task)
     return TaskCreditContext(conversation_id, owner, None) if owner else None
 
 
