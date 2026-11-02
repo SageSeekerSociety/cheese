@@ -864,8 +864,8 @@ describe('⌘/Ctrl+Enter 和输入框的按键提示', () => {
 })
 
 // 发送键旁边那颗队友头像：这条发出去谁会接手。它读的是正文，点它、换一位写的都是正文里的 @。
-describe('输入框顶上那一行：这条交给谁', () => {
-  it('交给的队友按名册上的叫法写：没改过名的队友库里叫「芝士」，英文界面写的是名册给的名字', async () => {
+describe('头像说交给谁', () => {
+  it('交给的队友按名册上的叫法说：没改过名的队友库里叫「芝士」，英文界面说的是名册给的名字', async () => {
     // 后端回的是库里存的原名；名册（`teammateName`）在英文界面把它叫作 Cheese。
     const seat = { handle: 'cheese-topica', label: 'Cheese' }
     const fetchSpy = vi.fn(async () =>
@@ -884,8 +884,10 @@ describe('输入框顶上那一行：这条交给谁', () => {
     vi.stubGlobal('fetch', fetchSpy)
     try {
       const { container } = mount({ place: 't1', seat, pool: [] })
-      await vi.waitFor(() => expect(container.querySelector('.recipient__name')?.textContent).toBe('Cheese'))
-      expect(container.querySelector('.recipient')?.textContent).not.toContain('芝士')
+      const avatar = () => container.querySelector<HTMLButtonElement>('.summon__btn')!
+      await vi.waitFor(() => expect(avatar().getAttribute('aria-pressed')).toBe('true'))
+      expect(avatar().getAttribute('aria-label')).toContain('Cheese')
+      expect(avatar().getAttribute('aria-label')).not.toContain('芝士')
     } finally {
       vi.unstubAllGlobals()
     }

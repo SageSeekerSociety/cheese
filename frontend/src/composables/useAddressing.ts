@@ -7,7 +7,7 @@
 //
 // 一次问的是一份「草稿 + 回复对象 + 有没有正文」。地方本身变了（任务关了、又开了）也要
 // 重问：`version` 变一下就问。回来晚了的那一次（草稿已经又改了）不用。问不到时留着
-// 上一次的答案——宁可晚一点更新，也不让那一行空掉又出现。
+// 上一次的答案——宁可晚一点更新，也不让头像在两个答案之间闪一下。
 import type { Addressing, AddressingDraft } from '../api/messages'
 
 import { computed, onScopeDispose, shallowRef, watch } from 'vue'

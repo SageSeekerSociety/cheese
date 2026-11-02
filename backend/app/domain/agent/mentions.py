@@ -34,6 +34,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +44,7 @@ from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import Block
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import is_task
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
@@ -497,6 +498,57 @@ async def mentioned_outside(
         may_add=await members.may_bring_in(room, author),
         members_only=room.members_only,
     )
+
+
+#: Why the sender of a message that asked nobody is offered to hand it to the
+#: AI teammate: they are the only person in the channel, or the message they
+#: sent just before it here was for the teammate.
+Unasked = Literal["alone", "after_agent"]
+
+
+async def unasked(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    seq: int,
+    content: str,
+    meta: dict | None,
+    author: str,
+    people: Sequence[str],
+    may_summon: bool,
+) -> Unasked | None:
+    """Whether to tell ``author`` alone, under the message they just stored
+    (``seq`` in ``conversation_id``, saying ``content``, with ``meta``), that
+    it went to no AI teammate and offer to hand it over; and why.
+
+    A channel is people talking to each other by default, so a message that
+    asks nobody is ordinary and is not remarked on (#1743 removed a notice
+    that fired on every one). It is remarked on only where the sender looks
+    to be waiting for the teammate: nobody else is in the channel (``people``
+    is everyone who is), or the sender's message just before this one in the
+    same conversation was for the teammate. A message that names anyone,
+    teammate or person, asked someone; one from a sender who may not ask the
+    teammate is offered nothing it could not do."""
+    if not may_summon or _MENTION_RE.search(content):
+        return None
+    if ((meta or {}).get("agent_recipient") or {}).get("mentioned"):
+        return None
+    if set(people) == {author}:
+        return "alone"
+    before = await session.scalar(
+        select(Block.meta)
+        .where(
+            Block.conversation_id == conversation_id,
+            Block.author == author,
+            Block.kind == BlockKind.message,
+            Block.seq < seq,
+        )
+        .order_by(Block.seq.desc())
+        .limit(1)
+    )
+    if ((before or {}).get("agent_recipient") or {}).get("mentioned"):
+        return "after_agent"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
