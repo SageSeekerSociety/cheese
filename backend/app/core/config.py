@@ -123,6 +123,13 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
+    # How many prepared statements each pooled connection keeps (asyncpg,
+    # LRU). A statement that fell out is prepared again: one more round trip
+    # and a fresh plan, 2.5 ms against 0.3 ms for a kept one on the dev box.
+    # The hot paths alone issue about 600 distinct statements, and at the
+    # driver's default of 100 a third of their executions missed; at 300 one
+    # in 45 does. A kept statement costs the server about 40 KB per connection.
+    db_statement_cache_size: int = 300
     # How many uvicorn worker processes this container runs. The two numbers
     # above are the CONTAINER's budget and the workers share it; the image
     # passes this same variable to uvicorn's `--workers` (see the split below).
