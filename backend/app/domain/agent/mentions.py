@@ -508,14 +508,18 @@ Unasked = Literal["alone", "after_agent"]
 
 async def unasked(
     session: AsyncSession,
-    message: Block,
-    author: str,
     *,
+    conversation_id: uuid.UUID,
+    seq: int,
+    content: str,
+    meta: dict | None,
+    author: str,
     people: Sequence[str],
     may_summon: bool,
 ) -> Unasked | None:
-    """Whether to tell ``author`` alone, under ``message``, that it went to no
-    AI teammate and offer to hand it over; and why.
+    """Whether to tell ``author`` alone, under the message they just stored
+    (``seq`` in ``conversation_id``, saying ``content``, with ``meta``), that
+    it went to no AI teammate and offer to hand it over; and why.
 
     A channel is people talking to each other by default, so a message that
     asks nobody is ordinary and is not remarked on (#1743 removed a notice
@@ -525,20 +529,19 @@ async def unasked(
     same conversation was for the teammate. A message that names anyone,
     teammate or person, asked someone; one from a sender who may not ask the
     teammate is offered nothing it could not do."""
-    if not may_summon or _MENTION_RE.search(message.content or ""):
+    if not may_summon or _MENTION_RE.search(content):
         return None
-    recipient = (message.meta or {}).get("agent_recipient") or {}
-    if recipient.get("mentioned"):
+    if ((meta or {}).get("agent_recipient") or {}).get("mentioned"):
         return None
     if set(people) == {author}:
         return "alone"
     before = await session.scalar(
         select(Block.meta)
         .where(
-            Block.conversation_id == message.conversation_id,
+            Block.conversation_id == conversation_id,
             Block.author == author,
             Block.kind == BlockKind.message,
-            Block.seq < message.seq,
+            Block.seq < seq,
         )
         .order_by(Block.seq.desc())
         .limit(1)

@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine.models import (
@@ -14,6 +15,7 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
+    HostProjectStore,
     MachineStatus,
     SandboxHome,
 )
@@ -83,11 +85,38 @@ class CloudHostRepository:
     # --- homes ---------------------------------------------------------------
 
     async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
-        """Place a new home on a host, from its fields."""
+        """Place a new home on a host, from its fields. The host now keeps its
+        project's store too, whatever happens to this home later."""
         row = SandboxHome(host_id=host_id, **home)
         self._session.add(row)
+        project_key = home.get("project_id") or home.get("topic_id")
+        if project_key is not None:
+            now = datetime.now(UTC)
+            await self._session.execute(
+                insert(HostProjectStore)
+                .values(
+                    host_id=host_id,
+                    project_key=project_key,
+                    last_placed_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=["host_id", "project_key"],
+                    set_={"last_placed_at": now},
+                )
+            )
         await self._session.flush()
         return row
+
+    async def stores(self, project_key: uuid.UUID) -> set[uuid.UUID]:
+        """The hosts that have placed a sandbox of this project (or of this
+        conversation, for one in no project), and so hold its store."""
+        return set(
+            await self._session.scalars(
+                select(HostProjectStore.host_id).where(
+                    HostProjectStore.project_key == project_key
+                )
+            )
+        )
 
     async def put_device_home(self, device_id: str, home: dict) -> SandboxHome:
         """Place a new home on a person's computer, from its fields."""

@@ -145,6 +145,29 @@ async def _team_role(
     return role
 
 
+async def _handle_on_team(session: AsyncSession, team_id: int, handle: str) -> bool:
+    """Whether ``handle`` names a live account on team ``team_id``. Asked with
+    the account and its team row in one statement; an account this request
+    has read already answers by its id (`_team_role`)."""
+    if isinstance(session, AsyncSession):
+        loaded, unread = await UserRepository(session).loaded_by_handles([handle])
+        if handle in loaded:
+            return await _team_role(session, team_id, loaded[handle].id) is not None
+        if not unread:
+            return False  # known to name no live account
+    role = await session.scalar(
+        select(TeamUserRelation.role)
+        .join(User, User.id == TeamUserRelation.user_id)
+        .where(
+            User.username == handle,
+            User.deleted_at.is_(None),
+            TeamUserRelation.team_id == team_id,
+            TeamUserRelation.deleted_at.is_(None),
+        )
+    )
+    return role is not None
+
+
 async def team_owner_handle(session: AsyncSession, team_id: int) -> str | None:
     return await session.scalar(
         select(User.username)
@@ -200,11 +223,7 @@ async def _resolve_owner_of(
             )
             if found_team and owner in team_roles:
                 return owner
-        user = await UserRepository(session).get_by_username(owner)
-        if (
-            user is not None
-            and await _team_role(session, project.team_id, user.id) is not None
-        ):
+        if await _handle_on_team(session, project.team_id, owner):
             return owner
         # An owner who is no longer on the team but was let in by a roster row
         # (a personal project's owner always is on its team) still holds it.

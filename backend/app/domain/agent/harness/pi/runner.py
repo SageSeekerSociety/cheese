@@ -1116,7 +1116,7 @@ class Runner(runner.Runner[Journal]):
         self.client = Connection(
             self.process.stdout, self.process.stdin, on_event=self.observe
         )
-        self.listener = asyncio.create_task(self.client.listen())
+        self.listener = asyncio.create_task(self.read_or_end(self.client.listen()))
         self.refresher = asyncio.create_task(self._answer_the_door())
         # Whatever the session already holds is ours to land before the first
         # input: resuming a session means its history is already there. Nothing

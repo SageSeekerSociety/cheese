@@ -54,10 +54,11 @@ class _Repo:
     whose ``session_id`` was cleared by ``leave`` is nobody's.
     """
 
-    def __init__(self, home, hosts, *, load=None):
+    def __init__(self, home, hosts, *, load=None, cached=()):
         self.home = home
         self.hosts = list(hosts)
         self.load = dict(load or {})
+        self.cached = list(cached)
         self.placed: list[tuple[uuid.UUID, dict]] = []
         self.deleted: list = []
         self.locked = 0
@@ -81,6 +82,9 @@ class _Repo:
 
     async def occupancy(self):
         return dict(self.load)
+
+    async def stores(self, project_key):
+        return set(self.cached)
 
     async def put_home(self, host_id, home):
         self.placed.append((host_id, home))
