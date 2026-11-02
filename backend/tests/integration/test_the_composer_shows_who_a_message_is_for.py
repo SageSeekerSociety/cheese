@@ -11,9 +11,11 @@ The rules a person can state without the code:
 - A message sent as one for the teammate that no longer is (its task closed
   while it was typed) is not posted as discussion; the sender is told whom it
   is for now.
-- A message that asks nobody, said where its sender is the only person, comes
-  back saying so. 综合 holds everyone in the project whether or not they ever
-  opened it.
+- A message that asks nobody comes back offering to hand it to the teammate
+  only where its sender looks to be waiting for the teammate: they are the
+  only person in the channel (综合 holds everyone in the project whether or
+  not they ever opened it), or their message just before it there was for the
+  teammate. The offer is told to the sender alone and never stored.
 """
 
 import asyncio
@@ -334,24 +336,55 @@ def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
     assert sent["meta"]["agent_recipient"]["mentioned"] is True
 
 
-def test_asking_nobody_where_you_are_alone_says_so(client, stub_hooks):
+def test_asking_nobody_where_you_are_alone_offers_the_teammate(client, stub_hooks):
     _, general, room = _channel(client)
     seat = room_agent_seat(client, room)
 
     in_general = post_message(client, general, "alice", {"content": "帮我列个计划"})
     in_room = post_message(client, room, "alice", {"content": "帮我列个计划"})
     asked = post_message(client, room, "alice", {"content": f"<@{seat}> 帮我列个计划"})
+    to_a_person = post_message(client, room, "alice", {"content": "<@bob> 你来看看"})
 
-    assert in_general.get("alone") is True
-    assert in_room.get("alone") is True
-    assert "alone" not in asked
+    assert in_general.get("unasked") == "alone"
+    assert in_room.get("unasked") == "alone"
+    assert "unasked" not in asked
+    assert "unasked" not in to_a_person
 
 
-def test_nobody_is_told_they_are_alone_where_someone_else_is(client, stub_hooks):
+def test_ordinary_talk_where_someone_else_is_is_not_remarked_on(client, stub_hooks):
     project, general, _ = _channel(client)
     # bob is in the project and so in 综合, though he never opened it.
     join_project_team(client, project, "bob")
 
     said = post_message(client, general, "alice", {"content": "明天几点开会？"})
 
-    assert "alone" not in said
+    assert "unasked" not in said
+
+
+def test_asking_nobody_right_after_asking_the_teammate_offers_it(client, stub_hooks):
+    project, general, _ = _channel(client)
+    join_project_team(client, project, "bob")
+    seat = room_agent_seat(client, general)
+    post_message(client, general, "alice", {"content": f"<@{seat}> 列一下发布步骤"})
+
+    follow_up = post_message(client, general, "alice", {"content": "再加上回滚"})
+    after_that = post_message(client, general, "alice", {"content": "大家周五有空吗"})
+    from_bob = post_message(client, general, "bob", {"content": "我有空"})
+
+    assert follow_up.get("unasked") == "after_agent"
+    # Only the sender's own message just before counts.
+    assert "unasked" not in after_that
+    assert "unasked" not in from_bob
+
+
+def test_the_offer_is_told_to_the_sender_once_and_never_stored(client, stub_hooks):
+    _, _, room = _channel(client)
+
+    sent = post_message(client, room, "alice", {"content": "帮我列个计划"})
+    lines = client.get(
+        f"/topics/{room}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+
+    assert sent.get("unasked") == "alone"
+    stored = next(line for line in lines if line["id"] == sent["id"])
+    assert "unasked" not in stored

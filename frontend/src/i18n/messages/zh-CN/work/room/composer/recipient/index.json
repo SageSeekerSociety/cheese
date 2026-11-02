@@ -1,7 +1,5 @@
 {
   "closedAsk": "任务已关闭，这条不会再自动交给{name}",
   "closedAskAgent": "{'@'}{name}",
-  "closedAskPost": "仅发布讨论",
-  "alone": "已发布。这里目前只有你；本条未请求{name}处理。",
-  "aloneAsk": "回复并 {'@'}{name}"
+  "closedAskPost": "仅发布讨论"
 }

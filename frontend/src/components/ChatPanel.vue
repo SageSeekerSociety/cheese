@@ -38,12 +38,13 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
-import AloneReceipt from './room/AloneReceipt.vue'
+import EphemeralNotice from './room/EphemeralNotice.vue'
 import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import RoomComposer from './room/RoomComposer.vue'
 import RoomMessageSheet from './room/RoomMessageSheet.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -175,16 +176,17 @@ const mentionOutside = useMentionOutside({
 })
 const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
 
-// 我发的一条没交给任何 AI 队友、而这个频道里只有我（后端回这条消息时说的 `alone`）：在它
-// 下面说一声，只说这一次。之后又有人说话、换了对话，这一行就不在了。
-const aloneAfter = ref<Block | null>(null)
+// 我发的一条谁也没交给，而我看起来在等 AI 队友（后端回这条消息时说的 `unasked`：这里只有
+// 我，或者我上一条是交给队友的）：队友在它下面对我一个人说一声，只说这一次。按了哪颗键、
+// 之后又有人说话、换了对话、刷新，这一条就不在了。
+const unaskedAfter = ref<Block | null>(null)
 watch(
   () => props.conversationId ?? props.topic?.id,
-  () => (aloneAfter.value = null)
+  () => (unaskedAfter.value = null)
 )
 function onPosted(block: PostedMessage) {
   mentionOutside.offer(block)
-  aloneAfter.value = block.alone ? block : null
+  unaskedAfter.value = block.unasked ? block : null
 }
 
 // 这一栏的根：时间线和输入区都在它里面。滚动位置的「重写」判定要观察它——#4662
@@ -394,18 +396,18 @@ const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: pane
 // 整组提交：请求在这一层发，卡片只往上发意图（组件不取数据）。
 const { submit: submitAskGroup, busy: askGroupBusy } = useAskGroupAnswer({ timeline: panel.timeline, errorMsg })
 
-// 回执只挂在我那一条还是最后一条的时候（同一次发出去的附件跟在它后面，不算别人说话）。
-const aloneReceipt = computed(() => {
-  const mine = aloneAfter.value
+// 只挂在我那一条还是最后一条的时候（同一次发出去的附件跟在它后面，不算别人说话）。
+const unaskedNotice = computed(() => {
+  const mine = unaskedAfter.value
   if (!mine) return null
   const messages = panel.timeline.messages.value
   const at = messages.findIndex((m) => m.id === mine.id)
   if (at < 0) return null
   return messages.slice(at + 1).every((m) => m.turn_id === mine.turn_id) ? mine : null
 })
-// 「回复并 @芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
+// 「交给芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
 function askAbout(block: Block) {
-  aloneAfter.value = null
+  unaskedAfter.value = null
   setReply(block)
   composerRef.value?.addAgentMention?.()
 }
@@ -630,7 +632,20 @@ useComposerShortcut({
           >
             <template #timeline-start><slot name="timeline-start" /></template>
             <template #timeline-end>
-              <AloneReceipt v-if="aloneReceipt" :agent-name="agentName" @ask="askAbout(aloneReceipt)" />
+              <EphemeralNotice
+                v-if="unaskedNotice && agentSeat"
+                :agent="{ handle: agentSeat.handle, label: agentName }"
+              >
+                {{ t('work.room.ephemeral.unasked') }}
+                <template #actions>
+                  <BaseButton kind="primary" size="sm" @click="askAbout(unaskedNotice)">
+                    {{ t('work.room.ephemeral.handTo', { name: agentName }) }}
+                  </BaseButton>
+                  <BaseButton kind="secondary" size="sm" @click="unaskedAfter = null">
+                    {{ t('work.room.ephemeral.dismiss') }}
+                  </BaseButton>
+                </template>
+              </EphemeralNotice>
               <slot name="timeline-end" />
             </template>
           </ChatTimeline>

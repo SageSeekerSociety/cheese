@@ -1,7 +1,5 @@
 {
   "closedAsk": "The task is closed, so this no longer goes to {name} by itself",
   "closedAskAgent": "{'@'}{name}",
-  "closedAskPost": "Post as discussion only",
-  "alone": "Posted. You're the only one here, and this message didn't ask {name} for anything.",
-  "aloneAsk": "Reply and {'@'}{name}"
+  "closedAskPost": "Post as discussion only"
 }

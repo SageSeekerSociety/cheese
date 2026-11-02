@@ -666,7 +666,7 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
-  /** 在正文前面 @ 上这个频道平时交给的那位（「回复并 @芝士」）。已经 @ 了队友就不动。 */
+  /** 在正文前面 @ 上这个频道平时交给的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。 */
   addAgentMention() {
     if (summonReady.value) draft.value = withAgentMention(draft.value)
     void nextTick(() => composerInput.value?.focus?.())

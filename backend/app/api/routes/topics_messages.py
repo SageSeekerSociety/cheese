@@ -97,7 +97,7 @@ from app.core.errors import (
 from app.core.sentences import listing, say, size_text
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.mentions import mentioned_outside
+from app.domain.agent.mentions import mentioned_outside, unasked
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.human import preview_addressing
 from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
@@ -245,15 +245,16 @@ async def send_chat_message(
         raise await addressed_now() from None
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
-    # Told to the sender alone, never stored: nobody else is in this channel and
-    # the message asked no AI teammate, so nobody is going to answer it. Said
-    # once, under their message, so the silence that follows is not a mystery.
-    recipient = ((stored.meta or {}) if stored is not None else {}).get(
-        "agent_recipient"
-    ) or {}
-    if not (may_summon and recipient.get("mentioned")):
-        if set(people) == {actor.handle}:
-            sent["alone"] = True
+    # Told to the sender alone, in this answer, and never stored: the message
+    # asked nobody while the sender looks to be waiting for the AI teammate
+    # (`unasked` says when), so they are offered to hand it over. Said once,
+    # under their message; a reload does not bring it back.
+    if stored is not None:
+        why = await unasked(
+            db, stored, actor.handle, people=people, may_summon=may_summon
+        )
+        if why is not None:
+            sent["unasked"] = why
     # The sender's own copy may be the first one the client sees. It carries the
     # same one-line preview as the broadcast, or the cue would blink out when the
     # parent is on a page this client never loaded.

@@ -12,9 +12,9 @@
 // 任务负责人那里每句都交给队友，这是规则不是开关：头像常亮，点了不改正文。
 //
 // 表情只说状态：闭眼（不交给）、悬停时眯眼（点一下它就醒了）、睁眼（交给它）、往右上看
-// 冒泡（它正在这个频道里跑一轮，这条它会接着看）。闭眼那一种在头像左边再写一句
-// 「不交给 AI」：只有一颗灰着的头像，容易被当成装饰读过去。三种状态是一个值（`face`），
-// 那句字和悬停提示都读它，不会一个说不交给、一个说它会接着看。
+// 冒泡（它正在这个频道里跑一轮，这条它会接着看）。睁眼那一种在头像左边再写一句
+// 「交给芝士」，说清这一下会交给谁；闭眼和在忙时不写。三种状态是一个值（`face`），
+// 那句字和悬停提示都读它。
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
@@ -155,7 +155,7 @@ const rows = computed(() =>
 
 <template>
   <span class="summon">
-    <span v-if="face === 'off'" class="summon__off">{{ t('work.room.composer.summonOffLabel') }}</span>
+    <span v-if="face === 'on'" class="summon__to">{{ t('work.room.composer.summonOnLabel', { name: names }) }}</span>
     <button
       v-guide-anchor="guided ? 'composer-summon' : ''"
       type="button"
@@ -272,12 +272,12 @@ const rows = computed(() =>
   align-items: center;
   gap: 4px;
 }
-/* 「不交给 AI」：和输入框周围别的状态字一样安静（13px、--muted），不抢发送键。录音时
+/* 「交给芝士」：13px，和输入框周围别的状态字同一档，用正文色说清交给谁。录音时
    录音条从麦克风往左展开，盖住这一句。 */
-.summon__off {
+.summon__to {
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--muted);
+  color: var(--text);
   white-space: nowrap;
 }
 .summon__btn {
