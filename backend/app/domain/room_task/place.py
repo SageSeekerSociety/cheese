@@ -1,9 +1,10 @@
 """Resolve conversation addresses: a room, or a task or a 支线 in a room."""
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from sqlalchemy import and_, inspect, select
+from sqlalchemy import Select, and_, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import Base
@@ -85,6 +86,13 @@ class Place:
         )
 
 
+#: What a caller may have read with the room and its project, in the same
+#: statement: given the select, the select with its columns and joins added,
+#: and what to do with each row's extra columns once the project is read (one
+#: row per joined row, the room's columns repeated).
+RideAlong = Callable[[Select], tuple[Select, Callable[[Project, list[tuple]], None]]]
+
+
 def _loaded[R: Base](row: R | None) -> R | None:
     """A row the session already holds, or None when a commit or rollback has
     expired it: its columns would load lazily, which an async session cannot
@@ -103,7 +111,11 @@ class PlaceResolver:
         self._session = session
 
     async def resolve(
-        self, place_id: uuid.UUID, *, member: str | None = None
+        self,
+        place_id: uuid.UUID,
+        *,
+        member: str | None = None,
+        ride_along: RideAlong | None = None,
     ) -> Place | None:
         """The room ``place_id`` names. A task's id names no room: routes
         addressed by room stay closed to it.
@@ -111,7 +123,9 @@ class PlaceResolver:
         With ``member``, a room read here is read with the seat that handle
         holds in it, for the access check that asks it next
         (`TopicMembershipRepository.roles_for_member` answers from the fact),
-        as `TopicRepository.room_of_conversation` does."""
+        as `TopicRepository.room_of_conversation` does. ``ride_along`` adds a
+        caller's own read to that statement (`RideAlong`); it runs only when
+        the room is read here."""
         if _can_cache(self._session):
             if self._session.autoflush:
                 await self._session.flush()
@@ -139,8 +153,15 @@ class PlaceResolver:
                         TopicMembership.member_handle == member,
                     ),
                 )
-            row = (await self._session.execute(stmt)).first()
+            width = len(stmt.column_descriptions)
+            record = None
+            if ride_along is not None:
+                stmt, record = ride_along(stmt)
+            rows = (await self._session.execute(stmt)).all()
+            row = rows[0] if rows else None
             room, project = (row[0], row[1]) if row is not None else (None, None)
+            if record is not None and project is not None:
+                record(project, [tuple(r[width:]) for r in rows])
             if row is not None and room is not None and member is not None:
                 remember(
                     self._session,
@@ -190,7 +211,11 @@ class PlaceResolver:
         )
 
     async def conversation(
-        self, conversation_id: uuid.UUID, *, member: str | None = None
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        member: str | None = None,
+        ride_along: RideAlong | None = None,
     ) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
         a 支线's. A 支线 that became a task shares its id and is the task.
@@ -198,7 +223,9 @@ class PlaceResolver:
         What it found also answers `conversation.services.room_of` for the
         rest of the request: the access check behind most routes asks which
         room this conversation is in right after the route has resolved it."""
-        place = await self._conversation(conversation_id, member=member)
+        place = await self._conversation(
+            conversation_id, member=member, ride_along=ride_along
+        )
         if place is not None and _can_cache(self._session):
             remember(
                 self._session,
@@ -218,7 +245,11 @@ class PlaceResolver:
         return place
 
     async def _conversation(
-        self, conversation_id: uuid.UUID, *, member: str | None = None
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        member: str | None = None,
+        ride_along: RideAlong | None = None,
     ) -> Place | None:
         if _can_cache(self._session):
             in_map = _loaded(
@@ -227,7 +258,9 @@ class PlaceResolver:
                 )
             )
             if in_map is not None:
-                room_place = await self.resolve(in_map.room_id, member=member)
+                room_place = await self.resolve(
+                    in_map.room_id, member=member, ride_along=ride_along
+                )
                 return (
                     Place(room=room_place.room, task=in_map)
                     if room_place is not None
@@ -242,7 +275,9 @@ class PlaceResolver:
                 self._session, ("conversation_room_id", conversation_id)
             )
         if known_room is None or known_room == conversation_id:
-            place = await self.resolve(conversation_id, member=member)
+            place = await self.resolve(
+                conversation_id, member=member, ride_along=ride_along
+            )
             if place is not None:
                 return place
         if _can_cache(self._session):
@@ -262,7 +297,9 @@ class PlaceResolver:
         else:
             task = await self._session.get(Task, conversation_id)
         if task is not None:
-            room_place = await self.resolve(task.room_id, member=member)
+            room_place = await self.resolve(
+                task.room_id, member=member, ride_along=ride_along
+            )
             return (
                 Place(room=room_place.room, task=task)
                 if room_place is not None
@@ -270,7 +307,9 @@ class PlaceResolver:
             )
         thread = await self._session.get(Thread, conversation_id)
         if thread is not None:
-            room_place = await self.resolve(thread.room_id, member=member)
+            room_place = await self.resolve(
+                thread.room_id, member=member, ride_along=ride_along
+            )
             return (
                 Place(room=room_place.room, thread=thread)
                 if room_place is not None
@@ -306,7 +345,11 @@ async def inner_place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Plac
 
 
 async def place_or_404(
-    session: AsyncSession, place_id: uuid.UUID, *, member: str | None = None
+    session: AsyncSession,
+    place_id: uuid.UUID,
+    *,
+    member: str | None = None,
+    ride_along: RideAlong | None = None,
 ) -> Place:
     """The conversation this id names — a room, or one of its tasks — or 404.
 
@@ -319,7 +362,9 @@ async def place_or_404(
     回答它要读 `tasks` 和 `threads`，而那是本包的行 —— 第 2 层的 `topic` 反过来
     读，才是层表上那条向上的边（`docs/manual/dev/architecture.md`）。
     """
-    place = await PlaceResolver(session).conversation(place_id, member=member)
+    place = await PlaceResolver(session).conversation(
+        place_id, member=member, ride_along=ride_along
+    )
     if place is None:
         raise NotFoundError(say("topicNotFound"))
     return place

@@ -332,9 +332,14 @@ async def admission(
     credit_context = None
     if project is not None:
         credit_context = await task_credit_context_of(db, project, claims)
-        # The project's credit cap, read with its gateway spend: the refusal
-        # below asks the cap, and the key's budget further down asks both.
-        await CreditBudgets(db).project_caps([project.id], with_gateway_spend=True)
+        # The project's credit cap, read with its gateway spend and the task
+        # owner's own cap: the refusal below asks the caps, and the key's
+        # budget further down asks all three.
+        await CreditBudgets(db).project_caps(
+            [project.id],
+            with_gateway_spend=True,
+            member=credit_context.owner_handle if credit_context else None,
+        )
         refused = await credit_refusal(db, project, credit_context)
     # The supply decision rides along with the admission answer: the proxy has
     # to ask before every turn anyway, and one round trip that says both "may

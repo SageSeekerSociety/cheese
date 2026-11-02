@@ -60,6 +60,7 @@ from app.auth.project_roles import AGENT_PERMISSIONS, may
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.core.sentences import say
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.identity.actor import Actor
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
@@ -258,7 +259,11 @@ class _CanInChannel(WriteAccess):
         self, *, topic_id: uuid.UUID, db: AsyncSession, resolver: ActorResolver
     ) -> InChannel:
         assert self.permission is not None
-        place = await place_or_404(db, topic_id)
+        # Read with the project's agents: what these routes do next (whom a
+        # message is for, who answers here) asks which of them sits here.
+        place = await place_or_404(
+            db, topic_id, ride_along=project_agents_ride_along(db)
+        )
         # The room's roster, read once for the request: the door below asks the
         # caller's seat in it, and what these routes do next (whom a message is
         # for, who answers here) reads the same rows. Asked for the one seat

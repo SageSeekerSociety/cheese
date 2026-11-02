@@ -5,15 +5,26 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from sqlalchemy import Select, Uuid, and_, bindparam, func, select, update
+from sqlalchemy import (
+    Select,
+    Uuid,
+    and_,
+    bindparam,
+    func,
+    inspect,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.block.models import Block
 from app.domain.conversation.numbering import CREATED_TASKS_KEY
 from app.domain.identity.handles import names_a_person
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
@@ -38,6 +49,52 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TaskRepository(session)
+
+    async def with_people(self, task_id: uuid.UUID) -> Task | None:
+        """The task, read with whether its owner and its creator are AI
+        teammates: who pays for its work asks that next (`credit_owner`),
+        and each was a statement of its own. A task the session holds, with
+        both answers known, is answered without reading."""
+        if not isinstance(self._session, AsyncSession):
+            # A hand-written stand-in session (unit tests) has no identity map.
+            return await self._repo.get(task_id)
+        held = self._session.sync_session.identity_map.get(
+            self._session.sync_session.identity_key(Task, (task_id,))
+        )
+        if (
+            held is not None
+            and not inspect(held).expired_attributes
+            and all(
+                recall(self._session, ("is_agent", handle))[0]
+                for handle in (held.owner_handle, held.created_by)
+                if handle
+            )
+        ):
+            return held
+        row = (
+            await self._session.execute(
+                select(
+                    Task,
+                    names_a_live_agent(Task.owner_handle),
+                    names_a_live_agent(Task.created_by),
+                ).where(Task.id == task_id)
+            )
+        ).first()
+        if row is None:
+            return None
+        task, owner_is_agent, creator_is_agent = row
+        for handle, answer in (
+            (task.owner_handle, owner_is_agent),
+            (task.created_by, creator_is_agent),
+        ):
+            if handle:
+                remember(
+                    self._session,
+                    ("is_agent", handle),
+                    bool(answer),
+                    tables=frozenset({"user", "agent_bindings"}),
+                )
+        return task
 
     async def credit_owner(self, task: Task) -> str | None:
         """A human owner pays for work; an AI's work stays with its requester."""
