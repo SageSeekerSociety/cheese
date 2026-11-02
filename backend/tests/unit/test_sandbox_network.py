@@ -305,6 +305,9 @@ def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
 ):
     monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 256)
+    # No swap: with some, what does not fit is swapped out instead of killed,
+    # which is what the swap is for, and not what this asks.
+    monkeypatch.setattr(settings, "cloud_sandbox_swap_mb", 0)
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
 
     result = room.bash(
@@ -651,14 +654,17 @@ def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service
 
 
 @with_sandbox_host
-def test_a_sandbox_may_use_the_hosts_swap_only_when_it_is_told_to(
+def test_a_sandbox_uses_the_swap_it_is_given_and_a_later_step_changes_it(
     rooms, machine_service
 ):
-    """A sandbox has no swap of its own by default; `swap` is how a later step
-    gives it some, and the kernel then reports it against that sandbox."""
+    """A running sandbox starts with `cloud_sandbox_swap_mb` of the host's
+    swap; `swap` is how a later step (freezing, thawing) changes it, and the
+    kernel then reports it against that sandbox."""
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     group = sandbox_host.CGROUP / str(room.resource)
-    assert (group / "memory.swap.max").read_text().strip() == "0"
+    assert int((group / "memory.swap.max").read_text()) == (
+        settings.cloud_sandbox_swap_mb << 20
+    )
 
     answer = subprocess.run(
         ["sudo", "-n", bootstrap.SANDBOX_HOST, "swap", str(room.resource), "64"],
@@ -669,6 +675,45 @@ def test_a_sandbox_may_use_the_hosts_swap_only_when_it_is_told_to(
     assert answer.returncode == 0, answer.stderr
     assert json.loads(answer.stdout)["swap_max"] == 64 << 20
     assert int((group / "memory.swap.max").read_text()) == 64 << 20
+
+
+@with_sandbox_host
+def test_a_sandbox_has_no_softer_limit_below_its_memory_limit(rooms, machine_service):
+    """Its memory limit is the one limit: no `memory.high` to throttle it
+    below, and the kernel kills one process at a time, not the group the
+    sandbox's executor is in."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+
+    assert int((group / "memory.max").read_text()) == (
+        settings.cloud_sandbox_memory_mb << 20
+    )
+    assert (group / "memory.high").read_text().strip() == "max"
+    assert (group / "memory.oom.group").read_text().strip() == "0"
+
+
+@with_sandbox_host
+def test_reclaiming_a_running_sandbox_drops_cache_and_leaves_its_swap_as_it_was(
+    rooms, machine_service
+):
+    """The idle reclaim shuts a running sandbox's swap only while it runs:
+    what its processes hold stays in memory, and the swap it had is back
+    after."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    group = sandbox_host.CGROUP / name
+    before = (group / "memory.swap.max").read_text()
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "reclaim", name],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert name in json.loads(answer.stdout)["reclaimed"]
+    assert (group / "memory.swap.max").read_text() == before
+    assert int((group / "memory.swap.current").read_text()) == 0
 
 
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])

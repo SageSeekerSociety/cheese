@@ -16,6 +16,7 @@ from app.domain.machine.models import (
     AiStatus,
     CloudHost,
     HostProjectStore,
+    HostReading,
     MachineStatus,
     SandboxHome,
 )
@@ -70,6 +71,40 @@ class CloudHostRepository:
             .group_by(SandboxHome.host_id)
         )
         return {host_id: int(homes) for host_id, homes in rows.all()}
+
+    async def last_readings(
+        self, host_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, HostReading]:
+        """Each of these hosts' last reading, for those that have one."""
+        if not host_ids:
+            return {}
+        rows = await self._session.scalars(
+            select(HostReading)
+            .where(HostReading.host_id.in_(host_ids))
+            .distinct(HostReading.host_id)
+            .order_by(HostReading.host_id, HostReading.read_at.desc())
+        )
+        return {row.host_id: row for row in rows}
+
+    async def placed_since(
+        self, readings: dict[uuid.UUID, HostReading]
+    ) -> dict[uuid.UUID, int]:
+        """How many homes each host was given after its reading here was taken:
+        sandboxes that reading cannot have seen."""
+        counts: dict[uuid.UUID, int] = {}
+        for host_id, reading in readings.items():
+            counts[host_id] = int(
+                await self._session.scalar(
+                    select(func.count())
+                    .select_from(SandboxHome)
+                    .where(
+                        SandboxHome.host_id == host_id,
+                        SandboxHome.created_at > reading.read_at,
+                    )
+                )
+                or 0
+            )
+        return counts
 
     async def failures_since(self, since: datetime) -> tuple[int, datetime | None]:
         """How many hosts the provider failed since ``since``, and the last."""

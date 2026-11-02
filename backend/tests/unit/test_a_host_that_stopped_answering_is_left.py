@@ -83,6 +83,12 @@ class _Repo:
     async def occupancy(self):
         return dict(self.load)
 
+    async def last_readings(self, host_ids):
+        return {}
+
+    async def placed_since(self, readings):
+        return {}
+
     async def stores(self, project_key):
         return set(self.cached)
 

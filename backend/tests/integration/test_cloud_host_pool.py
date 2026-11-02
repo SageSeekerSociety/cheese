@@ -33,6 +33,7 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
+    HostReading,
     MachineStatus,
     SandboxHome,
     WarmMachine,
@@ -458,6 +459,54 @@ def test_a_host_takes_no_more_sandboxes_than_its_memory_holds(pool, monkeypatch)
     [bob] = pool.room("bob", 1)
     first = pool.place("alice", alice)
     pool.up(first)
+
+    assert pool.place("bob", bob) != first
+
+
+def _reads(pool, host_id: uuid.UUID, *, available_gib: int, pressure: float) -> None:
+    """The host's disk check has just read its memory."""
+
+    async def go():
+        async with pool.client.test_request_factory() as db:
+            db.add(
+                HostReading(
+                    host_id=host_id,
+                    read_at=datetime.now(UTC),
+                    disk_bytes=64 << 30,
+                    disk_free_bytes=40 << 30,
+                    memory_bytes=4 << 30,
+                    memory_available_bytes=available_gib << 30,
+                    memory_pressure_some_avg60=pressure,
+                )
+            )
+            await db.commit()
+
+    pool.run(go)
+
+
+def test_a_full_host_takes_one_more_when_it_reads_the_memory_free(pool, monkeypatch):
+    """Its one 3 GiB slot is taken, but the host reads 8 GiB available and no
+    pressure: the second session's sandbox goes on it, up to its two cores.
+    The third goes to another host."""
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    [carol] = pool.room("carol", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
+    _reads(pool, first, available_gib=8, pressure=0.0)
+
+    assert pool.place("bob", bob) == first
+    assert pool.place("carol", carol) != first
+
+
+def test_a_full_host_under_memory_pressure_takes_no_more(pool, monkeypatch):
+    monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
+    [alice] = pool.room("alice", 1)
+    [bob] = pool.room("bob", 1)
+    first = pool.place("alice", alice)
+    pool.up(first)
+    _reads(pool, first, available_gib=8, pressure=20.0)
 
     assert pool.place("bob", bob) != first
 
