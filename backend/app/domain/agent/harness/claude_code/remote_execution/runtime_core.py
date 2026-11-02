@@ -79,6 +79,7 @@ RELEASE_FILES = {
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "remote-execution/forge_proxy.py": "app/domain/agent/forge_proxy.py",
+    "remote-execution/forge_requests.py": "app/domain/agent/forge_requests.py",
     "cheese": "sandbox/cheese",
 }
 

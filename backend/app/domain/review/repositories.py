@@ -514,6 +514,27 @@ class AcceptCardRepository:
             stmt = stmt.where(Topic.project_id == project_id)
         return list((await self._session.scalars(stmt)).all())
 
+    async def held_pr_deliveries(
+        self, project_id: uuid.UUID, open_statuses: tuple[AcceptStatus, ...]
+    ) -> list[tuple[int, str | None, str | None]]:
+        """这个项目里还在等人决定的卡骑着的 PR：号码、它的分支（任务的分支）和它要
+        并进去的分支。"""
+        stmt = (
+            select(AcceptCard.pr_number, Task.branch_name, Task.base_branch)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                Topic.project_id == project_id,
+                AcceptCard.status.in_(open_statuses),
+                AcceptCard.pr_number.is_not(None),
+                AcceptCard.pr_merged_at.is_(None),
+            )
+        )
+        return [
+            (row[0], row[1], row[2])
+            for row in (await self._session.execute(stmt)).all()
+        ]
+
     async def returned_since(
         self, task_ids: list[uuid.UUID], since: datetime
     ) -> list[AcceptCard]:
