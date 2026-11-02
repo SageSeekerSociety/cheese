@@ -307,6 +307,12 @@ def fixture_env(home, root, port):
         "DISABLE_ERROR_REPORTING": "1",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        # What a room's session sets (`remote_execution/client.py`). From
+        # 2.1.304 tool search is on by default behind a custom
+        # ANTHROPIC_BASE_URL, which the fixture is: left unset, all but a
+        # dozen tools go behind ToolSearch and the first request names
+        # neither SendMessage nor TaskStop.
+        "ENABLE_TOOL_SEARCH": "false",
     }
 
 
