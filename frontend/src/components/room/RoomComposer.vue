@@ -4,8 +4,8 @@
 // **叫不叫芝士，只由这条消息本身决定**，这里没有一个自己存着状态的开关。开关能和
 // 正文说不一样的话（亮着、正文里却没有 @），那时候「这条到底算不算叫了它」谁也答不
 // 上来。三个入口（手打 @、点按钮、⌘/Ctrl+Enter）写的都是同一个 @，你看得见，也能
-// 自己删。这条最后交给谁由后端定（@、回复、任务负责人那几条规矩），输入框顶上那一行
-// 和那颗头像画的都是后端对这份草稿的回答（`useAddressing`），不在这里另算一遍。
+// 自己删。这条最后交给谁由后端定（@、回复、任务负责人那几条规矩），那颗头像画的是
+// 后端对这份草稿的回答（`useAddressing`），不在这里另算一遍。
 //
 // 草稿、回复对象和待发附件**不归它管**：那几样要跟着话题走、跨刷新活下来，而话题
 // 什么时候换只有房间知道。正文是 v-model，其余由房间传进来——它只负责画和发。
@@ -43,7 +43,6 @@ import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
 import ComposerEditor from './ComposerEditor.vue'
-import ComposerRecipient from './ComposerRecipient.vue'
 import ComposerSummon from './ComposerSummon.vue'
 import ComposerViewing from './ComposerViewing.vue'
 import ComposerVoiceBar from './ComposerVoiceBar.vue'
@@ -93,11 +92,11 @@ const props = defineProps<{
   busyAgents?: string[]
   /** 我在这个频道里上一次交给的那位队友：头像平时画它，点一下就交给它。 */
   lastMate?: string | null
-  /** 这条发在哪段对话里（房间，或房间里的任务、支线）。不给就不问「交给谁」，那一行空着。 */
+  /** 这条发在哪段对话里（房间，或房间里的任务、支线）。不给就不问「交给谁」，头像只看正文里的 @。 */
   place?: string | null
   /** 这条回复的那条消息的 id。 */
   replyTo?: string | null
-  /** 这段对话自己的状态（任务开着还是关了）：变了，「交给谁」那一行重问一次。 */
+  /** 这段对话自己的状态（任务开着还是关了）：变了，「交给谁」重问一次。 */
   placeState?: string | null
 }>()
 
@@ -401,26 +400,16 @@ const shownMates = computed<Mate[]>(() => {
 const summonFixed = computed(() => props.alwaysSummon && props.handOff !== false)
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
-// 「交给：」后面那位队友叫什么：和头像、名册同一个叫法（`mateOf`），不是库里存的原名——
-// 没改过名的队友库里存的是「芝士」，屏幕按读者的语言叫它。
-const recipientMateName = computed(() => {
-  const agent = addressing.value?.agent
-  return agent ? mateOf(agent).label : ''
-})
-// 「交给：」后面写的人名：@ 名单上的叫法，名单上没有就是 handle。
-function personName(handle: string): string {
-  return props.mentionPool.find((m) => m.handle === handle)?.label ?? handle
-}
 
 // ---- 打字的时候任务关了 ----
 //
 // 开着的任务里，负责人说的每句话都交给队友；任务一关，同一句话就只是讨论。打到一半的
-// 草稿不能就这样悄悄降成讨论发出去：那个人一直看着「交给」那一行在打字。所以记住这份
+// 草稿不能就这样悄悄降成讨论发出去：那个人一直看着睁着眼的头像在打字。所以记住这份
 // 草稿是在「任务交给队友」时写的（`heldFor`），任务关了之后第一次发，先就地问一句：
 // 「@ 它」还是「仅发布讨论」。草稿、回复对象、附件都原样留着。
 //
-// 记的是**这个人看着的那一行**：草稿非空的每一刻，那一行说「任务里交给队友」就记下。所以
-// 第一个字落下时那一行（空草稿问到的那一次）已经说了交给队友，就从这一刻算起——不等这份
+// 记的是**这个人看着的那颗头像**：草稿非空的每一刻，后端说「任务里交给队友」就记下。所以
+// 第一个字落下时头像（空草稿问到的那一次）已经说了交给队友，就从这一刻算起——不等这份
 // 草稿自己的回答；一路打字、它第一次问到时任务已经关了，也照样先问。
 const heldFor = ref<Mate | null>(null)
 const askingRecipient = ref(false)
@@ -623,9 +612,9 @@ function sendDraft(opts?: { summon?: boolean; to?: Mate | null }) {
   const content = expandMentions(
     opts?.summon ? withAgentMention(draft.value, opts.to ?? restingMate.value) : draft.value
   )
-  // 那一行此刻写着交给谁，发出去就是在说「我要交给它」：送到时不交给了，后端不发、退回来
-  // （`expects_agent`），由后端按发送那一刻的状态再判一次。带的是屏幕上那一行，不论它是
-  // 不是对这份草稿问到的——刚改了一个字就按发送，那人看着的仍是那一行。
+  // 头像此刻说交给谁，发出去就是在说「我要交给它」：送到时不交给了，后端不发、退回来
+  // （`expects_agent`），由后端按发送那一刻的状态再判一次。带的是屏幕上那个回答，不论它是
+  // 不是对这份草稿问到的——刚改了一个字就按发送，那人看着的仍是它。
   const expectsAgent = !opts?.summon && !!addressing.value?.agent
   emit('send', {
     content,
@@ -677,7 +666,7 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
-  /** 在正文前面 @ 上这个频道平时交给的那位（「回复并 @芝士」）。已经 @ 了队友就不动。 */
+  /** 在正文前面 @ 上这个频道平时交给的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。 */
   addAgentMention() {
     if (summonReady.value) draft.value = withAgentMention(draft.value)
     void nextTick(() => composerInput.value?.focus?.())
@@ -777,7 +766,6 @@ defineExpose({
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
     <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
-      <ComposerRecipient :addressing="addressing" :agent-name="recipientMateName" :name-of="personName" />
       <!-- 这条消息带着的东西：回复的那条在最前，然后是引用，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"

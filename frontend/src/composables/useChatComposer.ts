@@ -169,7 +169,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
   }
   const composerRef = ref<{
     focus: () => void
-    /** 「回复并 @芝士」：正文前面 @ 上平时交给的那位。 */
+    /** 「交给芝士」（仅你可见那一句的按钮）：正文前面 @ 上平时交给的那位。 */
     addAgentMention?: () => void
     /** 送到时已经不交给队友了：就地问交给谁（见 RoomComposer）。 */
     askRecipient?: (now: Addressing | null) => void

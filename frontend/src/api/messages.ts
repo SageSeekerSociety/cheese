@@ -23,8 +23,9 @@ export interface MentionedOutside {
 
 export type PostedMessage = Block & {
   mentioned_outside?: MentionedOutside
-  /** 这条没交给任何 AI 队友，而这个频道里只有发的人自己。只回给发的人，不落库。 */
-  alone?: boolean
+  /** 这条谁也没交给，而发的人看起来在等 AI 队友：这里只有他（`alone`），或者他上一条是交给
+   *  队友的（`after_agent`）。只回给发的人，不落库。 */
+  unasked?: 'alone' | 'after_agent'
 }
 
 /** 一条消息此刻发出去会交给谁：后端照发送时的同一套规矩读草稿，不写任何东西。 */
