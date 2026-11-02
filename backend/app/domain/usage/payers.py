@@ -22,15 +22,13 @@ and whether that team is somebody's personal one.
 """
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import and_, select
+from sqlalchemy import Select, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
-from app.domain.agent_instance.facts import remember_project_agents
-from app.domain.agent_instance.models import AgentInstance
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.team.services import team_service
@@ -209,14 +207,25 @@ def _payer_teams_key(team_ids: list[int]) -> tuple:
     return ("payer_teams", tuple(sorted(set(team_ids))))
 
 
+#: What a caller may have read with the project, in the same statement: given
+#: the select, the select with its columns and joins added, and what to do with
+#: the extra columns of each row once the project is read (the rows are one
+#: per joined row, the project's columns repeated).
+RideAlong = Callable[[Select], tuple[Select, Callable[[Project, list[tuple]], None]]]
+
+
 async def project_with_payer(
-    session: AsyncSession, project_id: uuid.UUID
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    ride_along: RideAlong | None = None,
 ) -> Project | None:
     """The project row, read with the team that pays for it and that team's
     plan in one statement, for a caller about to ask who pays (model
     admission, on every model call). What it read answers
     `ProjectRepository.get` and `payers_for_projects` for the rest of the
-    request; without request facts it is the project alone."""
+    request; without request facts it is the project alone. ``ride_along``
+    adds a caller's own read to the statement (`RideAlong`)."""
     if not isinstance(session, AsyncSession):
         return await session.get(Project, project_id)
     if session.autoflush:
@@ -224,27 +233,20 @@ async def project_with_payer(
     found, cached = recall(session, ("project", project_id))
     if found:
         return cached
-    # The project's agent instances ride along, one row each: admission asks
-    # which of them the credential's seat is next (`for_seat_handle`).
-    rows = (
-        await session.execute(
-            select(Project, Team.plan_key, Team.personal_owner_user_id, Plan)
-            .add_columns(AgentInstance)
-            .outerjoin(
-                Team, and_(Team.id == Project.team_id, Team.deleted_at.is_(None))
-            )
-            .outerjoin(Plan, Plan.key == Team.plan_key)
-            .outerjoin(AgentInstance, AgentInstance.project_id == Project.id)
-            .where(Project.id == project_id)
-            .order_by(AgentInstance.created_at)
-        )
-    ).all()
+    stmt = (
+        select(Project, Team.plan_key, Team.personal_owner_user_id, Plan)
+        .outerjoin(Team, and_(Team.id == Project.team_id, Team.deleted_at.is_(None)))
+        .outerjoin(Plan, Plan.key == Team.plan_key)
+        .where(Project.id == project_id)
+    )
+    record = None
+    if ride_along is not None:
+        stmt, record = ride_along(stmt)
+    rows = (await session.execute(stmt)).all()
     row = rows[0][:4] if rows else None
     project = row[0] if row is not None else None
-    if project is not None:
-        remember_project_agents(
-            session, project.id, [r[4] for r in rows if r[4] is not None]
-        )
+    if record is not None and project is not None:
+        record(project, [tuple(r[4:]) for r in rows])
     remember(session, ("project", project_id), project, tables=frozenset({"projects"}))
     if row is not None and project is not None and row[1] is not None:
         _, plan_key, owner, plan = row

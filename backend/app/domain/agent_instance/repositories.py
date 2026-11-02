@@ -15,8 +15,6 @@ from app.domain.identity.handles import (
     agent_instance_id_bounds,
 )
 
-_AGENT_INSTANCE_TABLES = AGENT_INSTANCE_TABLES
-
 
 class AgentInstanceRepository:
     def __init__(self, session: AsyncSession):
@@ -68,7 +66,7 @@ class AgentInstanceRepository:
                 self._session,
                 ("agent_instance_by_id", instance_id),
                 instance,
-                tables=_AGENT_INSTANCE_TABLES,
+                tables=AGENT_INSTANCE_TABLES,
             )
         return instance
 
