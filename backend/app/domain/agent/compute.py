@@ -237,6 +237,22 @@ class ComputePool:
             )
         return found
 
+    def found_pairs(self) -> set[tuple[tuple[uuid.UUID, str], str]]:
+        """Every (seat, conversation) recovery reached this round, across the
+        runtimes: `found_conversations` for all seats at once."""
+        found: set[tuple[tuple[uuid.UUID, str], str]] = set()
+        for runtime in self._runtimes():
+            found.update(getattr(runtime, "found_conversations", ()))
+        return found
+
+    def terminal_pairs(self) -> set[tuple[tuple[uuid.UUID, str], str]]:
+        """Every (seat, conversation) an authority named dead this round,
+        across the runtimes: `terminal_conversations` for all seats at once."""
+        found: set[tuple[tuple[uuid.UUID, str], str]] = set()
+        for runtime in self._runtimes():
+            found.update(getattr(runtime, "terminal_conversations", ()))
+        return found
+
     def found_conversations(self, topic_id, agent_handle) -> set[str]:
         """The conversations on this seat recovery actually reached and
         re-attached (FB-56 legacy③)."""
