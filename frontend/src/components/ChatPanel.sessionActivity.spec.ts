@@ -27,7 +27,6 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import { clockTime } from '@/lib/dateText'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { loadMarkdownReader } from '@/test/markdownReader'
@@ -105,7 +104,8 @@ async function flush() {
 }
 
 const RESUME_DUE = '2026-10-30T19:20:00Z'
-const RESUME_HINT = () => `约 ${clockTime(Date.parse(RESUME_DUE))} 自动重试`
+/** 等自动重试的那一行：说调用模型出错了、在自动重试，不说几点。 */
+const RESUME_HINT = () => '调用的模型出错了，正在自动重试'
 
 /** 自动重试的一步（排上、开始）：一条运行记录，排在后端发出的第 `at` 帧。 */
 function resumeFrame(event: string, id: string, at: number, meta: Record<string, unknown> = {}): WsServerFrame {
@@ -300,8 +300,8 @@ describe('session activity', () => {
     expect(queryClient.getQueryData<TopicProgress>(keys.roomProgress(topic.id))?.items).toEqual(items)
   })
 
-  // 一轮没完成、平台约好几点自动重试：输入框上方说这位队友在等、约几点重试，打开
-  // 页面时（服务端答 sync 的 room_state）就说；重试开始了就不再说它在等。
+  // 一轮没完成、平台排了自动重试：输入框上方说这位队友调用模型出错了、在自动重试（不说
+  // 几点），打开页面时（服务端答 sync 的 room_state）就说；重试开始了就不再说它在等。
   it('the composer shows a teammate waiting for its automatic retry until the retry starts', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {

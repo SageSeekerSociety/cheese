@@ -6,6 +6,7 @@
   "filesChanged": "修改了 {n} 个文件",
   "goConfirm": "去确认",
   "goEnvironment": "去环境设置",
+  "goAgentSettings": "去 AI 队友设置",
   "moreFiles": "另 {n} 个文件",
   "platform": "平台",
   "quote": "「{text}」",

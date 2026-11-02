@@ -356,3 +356,32 @@ async def test_asking_for_hands_reads_the_agents_account_with_the_session(
     assert [s for s in seen if 'FROM "user"' in s and "agent_sessions" not in s] == []
     sessions = [s for s in seen if "FROM agent_sessions" in s]
     assert len(sessions) == 1 and 'FROM "user"' in sessions[0], sessions
+
+
+async def test_admission_reads_the_projects_agents_with_the_project(
+    client, monkeypatch
+):
+    """Admission asks which of the project's agents the credential's seat is;
+    the project's agents come in the statement that reads the project."""
+    gateway = FakeGateway()
+    chat = client.app.dependency_overrides[get_chat_service]()
+    monkeypatch.setattr(chat, "_gateway", gateway)
+    room = await _room(client)
+    _admit(client, room)
+
+    with _statements() as seen:
+        again = _admit(client, room)
+
+    assert again.json()["data"]["allow"] is True, again.text
+    agents = [s for s in seen if "agent_instances" in s]
+    assert len(agents) == 1 and "FROM projects" in agents[0], agents
+
+
+async def test_asking_for_hands_reads_the_room_with_the_agents_seat(
+    client, monkeypatch
+):
+    """The seat the credential's agent holds is read with the room."""
+    seen = await _asked_for_hands(client, monkeypatch)
+
+    seats = [s for s in seen if "topic_memberships" in s]
+    assert len(seats) == 1 and "FROM topics" in seats[0], seats

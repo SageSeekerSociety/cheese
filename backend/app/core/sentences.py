@@ -235,6 +235,41 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         # what it asks; the notice now says which thing changed
         # (``spaceTaskChanged``), and old notifications still carry the key.
         "spaceTaskRequirementsChanged",
+        # A failed turn's line names no cause the reader cannot act on: a
+        # failed model call is one sentence (``turnFailedModelError``), a wait
+        # for the platform's own retry is the line above the composer, not the
+        # conversation, and a turn the platform stopped says only that. Old
+        # conversations still hold the lines that named a reason, a time or a
+        # recovery date, and the stop that counted its minutes.
+        "turnResumeScheduled",
+        "turnFailedRecoversLate",
+        "turnFailedRecoversLateHint",
+        "turnEndedRateLimited",
+        "turnEndedOverloaded",
+        "turnEndedStreamEnded",
+        "turnEndedUnreachable",
+        "turnEndedEgressOffline",
+        "turnEndedSubscriptionCooling",
+        "turnEndedQuotaReset",
+        "turnEndedRunnerReplaced",
+        "turnFailedOutOfCredit",
+        "turnFailedOutOfCreditHint",
+        "turnFailedOwnOutOfCredit",
+        "turnFailedOwnOutOfCreditHint",
+        "cliProviderUnreachable",
+        "cliProviderUnreachableHint",
+        "cliProviderOverloaded",
+        "cliProviderOverloadedHint",
+        "cliSubscriptionEgressOffline",
+        "cliSubscriptionEgressOfflineHint",
+        "cliControlPlaneUnavailable",
+        "cliControlPlaneUnavailableHint",
+        "cliSubscriptionAccountsCooling",
+        "cliSubscriptionAccountsCoolingHint",
+        "cliModelLimitReached",
+        "cliModelLimitReachedHint",
+        "turnWedged",
+        "turnWedgedDetail",
     }
 )
 

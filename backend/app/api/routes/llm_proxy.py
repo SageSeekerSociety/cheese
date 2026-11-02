@@ -67,6 +67,7 @@ from app.domain.agent.credits_notice import note_credits_refusal
 from app.domain.agent.gateway_usage import UNKNOWN_TARGET
 from app.domain.agent.personal.keys import stored_key
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.facts import project_agents_ride_along
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
@@ -307,7 +308,9 @@ async def admission(
     except ValueError as exc:
         raise NotFoundError("Unknown project") from exc
     # Read with who pays for it: admission asks that next, every model call.
-    project = await project_with_payer(db, project_uuid)
+    project = await project_with_payer(
+        db, project_uuid, ride_along=project_agents_ride_along(db)
+    )
     if project is not None:
         try:
             await _require_model_caller(db, token, project_uuid)
