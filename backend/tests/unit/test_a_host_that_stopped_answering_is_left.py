@@ -200,6 +200,7 @@ class _Case:
             stopped_at=None,
             active_at=None,
             frozen_at=None,
+            parked_at=None,
         )
         self.row = SimpleNamespace(
             conversation_id=self.home.conversation_id,

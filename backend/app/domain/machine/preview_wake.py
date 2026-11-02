@@ -100,7 +100,8 @@ async def has_sandbox(db: AsyncSession, session_id: uuid.UUID) -> bool:
     A home that is on its way out (``stopped_at`` set) counts as gone: what it
     held is already being taken apart, so waking nothing would help."""
     home = await CloudHostRepository(db).current_home(session_id)
-    return home is not None and home.stopped_at is None
+    # A parked one runs nothing to wake: its session starts it again.
+    return home is not None and home.stopped_at is None and home.parked_at is None
 
 
 async def touch_preview_activity(
@@ -243,10 +244,10 @@ async def wake_preview_on_machine(
     """Bring the session's own sandbox back, thawing it if it was frozen.
 
     No launch command runs and no model turn is spent: a frozen sandbox's
-    processes resume in place, so an app it was running goes on running. A
-    sandbox that is still running is left as it is. Returns False when there is
-    no sandbox to bring up (it was destroyed), so the caller wakes the agent
-    for a turn instead."""
+    processes resume in place, so an app it was running goes on running.
+    Returns False when that cannot bring the app back — no sandbox (destroyed
+    or parked), or one already running whose app exited — so the caller wakes
+    the agent for a turn instead."""
     hub = hub or device_hub
     try:
         async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -255,14 +256,18 @@ async def wake_preview_on_machine(
             if marked is None:
                 return False
             device_id, work_resource = marked
-            if device_id is not None:
-                await lifecycle.thaw_if_asked(
-                    db,
-                    hub,
-                    session_id=session_id,
-                    device_id=device_id,
-                    work_resource=work_resource,
-                )
+            if device_id is None:
+                # Running, and its app still does not answer (the route asks
+                # the app before it wakes anything): it exited, and nothing on
+                # the machine starts it again but the agent.
+                return False
+            await lifecycle.thaw_if_asked(
+                db,
+                hub,
+                session_id=session_id,
+                device_id=device_id,
+                work_resource=work_resource,
+            )
             return True
     except Exception:
         logger.warning(

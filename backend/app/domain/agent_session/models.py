@@ -63,6 +63,12 @@ LOST_KEY = "sandbox_lost"
 #: it. Absent when nothing was running, or the host could not read it — the
 #: copy is the same as before there were processes to name.
 LOST_PROCESSES_KEY = "sandbox_lost_processes"
+#: Set in a session's ``execution_request`` when its cloud sandbox was parked
+#: (``lifecycle._park``): its processes stopped, its home kept on the host.
+#: The value is what was running, as ``LOST_PROCESSES_KEY`` names it (an empty
+#: list when nothing was). The first tool call that lands in it again is told
+#: its files are all there and its processes are not, and clears it.
+PARKED_KEY = "sandbox_parked"
 #: Set in a session's ``execution_request`` when it asked for another cloud
 #: sandbox while it already had one — the spec it is on, asked again
 #: (``session_work.switch_environment``). The host it left is named here so its

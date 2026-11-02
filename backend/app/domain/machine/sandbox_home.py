@@ -168,6 +168,20 @@ def destroy(cleanup, project, resource) -> dict:
     return {"destroyed": True, "processes": running}
 
 
+def park(cleanup, project, resource) -> dict:
+    """Stop a sandbox as `destroy` does — thawed, what runs read, its executor
+    and everything else holding its files ended, its cgroup and link taken
+    down — but leave its home and its work where they are, for its session to
+    start again in (`lifecycle._park`). Answers what was running."""
+    home, work = cleanup["resource_paths"](Path.home(), project, resource)
+    thaw(cleanup, [home.name])
+    running = processes(home.name)
+    if home.exists():
+        cleanup["stop_executor"](home, resource)
+    cleanup["end_holders"]([home, work])
+    return {"parked": True, "processes": running}
+
+
 def filesystem(path: Path) -> dict:
     """Total and free bytes and inodes of the filesystem ``path`` is on. A
     system that reports no inodes (0 total) has no such limit to keep."""
@@ -413,6 +427,7 @@ def disk(cleanup, live, grace_s, idle=()) -> dict:
 
 ACTIONS = {
     "destroy": destroy,
+    "park": park,
     "disk": disk,
     "swap": swap,
     "freeze": freeze,

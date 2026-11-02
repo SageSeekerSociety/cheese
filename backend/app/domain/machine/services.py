@@ -242,6 +242,25 @@ class HostPool(PoolSweep):
                 # Gone upstream: what was there is gone with it.
                 await self.forget(host)
                 home = None
+            elif home.parked_at is not None:
+                # Parked: its home is on the host, nothing of it runs. Started
+                # again there when the host has room for it; otherwise its
+                # home goes and the session gets a new sandbox below.
+                if await self._unpark(home, host, session_id):
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
+                await self._session.commit()
+                await SandboxLifecycle(self._session, hub=self._hub).destroy_parked(
+                    home.id
+                )
+                await self._lock_holder(holder_id)
+                return await self.place(
+                    session_id,
+                    actor=actor,
+                    resource_id=resource_id,
+                    whole_machine=whole_machine,
+                )
             elif _keeps(host):
                 request = await self._session.scalar(
                     select(AgentSession.execution_request).where(
@@ -797,6 +816,49 @@ class HostPool(PoolSweep):
         host = await self._repo.get(home.host_id)
         return host is not None and host.device_id == device_id and _keeps(host)
 
+    async def _unpark(
+        self, home: SandboxHome, host: CloudHost, session_id: uuid.UUID
+    ) -> bool:
+        """Start a parked sandbox again on its host, under the pool's lock:
+        when the host takes sandboxes, answers, and has a slot for it — a
+        reserved one, or the memory to go past them (``memory_admits``). Its
+        executor is installed afresh by the attempt that follows: the lease's
+        check is dropped so nothing is handed to the one that was stopped.
+        False leaves it parked, for the caller to replace."""
+        if not (_keeps(host) and accepting(host) and self._answers(host)):
+            return False
+        load = await self._repo.occupancy()
+        if not free_slots(host, load):
+            readings = await self._repo.last_readings([host.id])
+            since = await self._repo.placed_since(readings)
+            if not memory_admits(
+                host,
+                load,
+                readings.get(host.id),
+                since.get(host.id, 0),
+                datetime.now(UTC),
+            ):
+                return False
+        home.parked_at = None
+        home.frozen_at = None
+        home.active_at = datetime.now(UTC)
+        row = await self._session.scalar(
+            select(AgentSession).where(AgentSession.id == session_id)
+        )
+        if row is not None:
+            row.execution_request = {
+                key: value
+                for key, value in (row.execution_request or {}).items()
+                if key != THAW_KEY
+            }
+            if row.work_lease and "verified_at" in row.work_lease:
+                row.work_lease = {
+                    key: value
+                    for key, value in row.work_lease.items()
+                    if key != "verified_at"
+                }
+        return True
+
     async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
         """Ask for a frozen sandbox to be woken, under the pool's lock.
 
@@ -833,6 +895,10 @@ class HostPool(PoolSweep):
         if home is not None:
             home = await self._repo.lock_home(home.id)
         if home is None or home.stopped_at is not None:
+            await self._session.commit()
+            return None
+        if home.parked_at is not None:
+            # Nothing of it runs to wake: its session starts it again.
             await self._session.commit()
             return None
         device_id = None

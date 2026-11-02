@@ -251,7 +251,7 @@ class PoolSweep:
         fixed = settings.cloud_pool_fixed_hosts
         await self._repo.lock_pool()
         hosts = await self._repo.live()
-        load = await self._repo.occupancy()
+        load = await self._repo.occupancy(parked=True)
         for host in hosts:
             if host.device_id is None or self._hub.is_online(host.device_id):
                 host.offline_since = None
@@ -366,7 +366,7 @@ class PoolSweep:
         while True:
             try:
                 await self._repo.lock_pool()
-                load = await self._repo.occupancy()
+                load = await self._repo.occupancy(parked=True)
                 hosts = await self._repo.live()
                 if fixed:
                     if sum(1 for host in hosts if not host.whole_machine) >= fixed:
@@ -421,7 +421,7 @@ class PoolSweep:
             return
         await self._repo.lock_pool()
         hosts = await self._repo.live()
-        load = await self._repo.occupancy()
+        load = await self._repo.occupancy(parked=True)
         draining = [host for host in hosts if host.draining_since is not None]
         if any(not load.get(host.id) for host in draining):
             # An empty one is released this sweep; the next waits for that.

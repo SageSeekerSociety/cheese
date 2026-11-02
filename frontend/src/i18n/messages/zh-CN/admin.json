@@ -147,7 +147,8 @@
       "working": "工作中",
       "idle": "空闲",
       "stopping": "销毁中",
-      "frozen": "已冻结"
+      "frozen": "已冻结",
+      "parked": "停机留盘"
     },
     "note": {
       "failed": "provider 弄坏了，{at} 放弃，等 provider 删掉",
@@ -165,7 +166,8 @@
       "reclaim": "最早 {in}后回收",
       "overdue": "已过空闲期还没回收（频道里 AI 队友最近一次停下得更晚、或后台命令还在跑，都会往后推）",
       "frozen": "已冻结 {for}（进程停着，不计费）",
-      "discard": "最迟 {in}后销毁"
+      "discard": "最迟 {in}后销毁",
+      "parked": "停机留盘：进程停了、目录留着，最迟 {in}后删"
     },
     "placed": "{at} 放上来",
     "personal": "个人对话",
@@ -186,7 +188,8 @@
       "timed": {
         "sandbox_prepared": "准备沙箱（{count} 次）p50 / p95",
         "sandbox_frozen": "冻结（{count} 次）p50 / p95",
-        "sandbox_checked_out": "打开任务目录（{count} 次，含装依赖）p50 / p95"
+        "sandbox_checked_out": "打开任务目录（{count} 次，含装依赖）p50 / p95",
+        "sandbox_parked": "停机留盘（{count} 次）p50 / p95"
       },
       "stageValue": "{stage} {p50} / {p95}",
       "stage": {
@@ -197,7 +200,8 @@
         "executor": "装执行器",
         "checkpoint": "推送检查点",
         "freeze": "主机冻结",
-        "checkout": "检出"
+        "checkout": "检出",
+        "park": "停进程"
       },
       "abandoned": "没准备好就放弃",
       "replaced": "宿主机坏掉、换了一台",
