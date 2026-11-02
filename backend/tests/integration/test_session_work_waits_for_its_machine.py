@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
@@ -30,6 +31,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.project.models import Project
+from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
 from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
@@ -228,6 +230,26 @@ def test_a_new_rooms_first_command_waits_for_its_own_machine(cloud_rooms, monkey
     assert time.monotonic() - started < 10, "Ready is noticed within a poll or two"
     installed_on = [call.args[0] for call in case.hub.exec.await_args_list]
     assert installed_on == ["older-rooms-machine", "new-rooms-machine"]
+
+    # Each sandbox brought up keeps how long its steps took; both rooms
+    # waited for a host coming up, and say for how long.
+    async def timed():
+        async with case.client.test_factory() as db:
+            return [
+                record.meta
+                for record in await db.scalars(
+                    select(RunRecord)
+                    .where(RunRecord.kind == "sandbox_prepared")
+                    .order_by(RunRecord.created_at)
+                )
+            ]
+
+    kept = case.client.portal.call(timed)
+    assert len(kept) == 2
+    for one in kept:
+        assert {"place", "executor", "host"} <= one["stages"].keys()
+        assert "thaw" not in one["stages"]
+        assert one["total_s"] >= one["stages"]["host"] > 0
 
 
 def test_a_machine_that_drops_while_it_is_set_up_is_still_being_prepared(

@@ -139,6 +139,12 @@ class MachineConfigOut(BaseModel):
     history_step_s: int
 
 
+class StageTimingOut(BaseModel):
+    count: int
+    p50_s: float | None
+    p95_s: float | None
+
+
 class MachineHistoryOut(BaseModel):
     since: str
     prepared: int
@@ -155,6 +161,9 @@ class MachineHistoryOut(BaseModel):
     hosts_lost: int
     hosts_lost_by_reason: dict[str, int]
     sandboxes_lost: int
+    # By kind (`sandbox_prepared`, `sandbox_frozen`, `sandbox_checked_out`),
+    # by stage, and `total`: how long each took over the same window.
+    timings: dict[str, dict[str, StageTimingOut]] = {}
 
 
 class MachinesOverviewOut(BaseModel):

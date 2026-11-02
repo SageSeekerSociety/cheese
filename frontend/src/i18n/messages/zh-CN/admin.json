@@ -181,8 +181,24 @@
     "fact": {
       "prepared": "开始准备的沙箱",
       "ready": "准备好的",
-      "wait": "等待时长 p50 / p95 / 最长",
+      "wait": "等主机开机 p50 / p95 / 最长",
       "waitValue": "{p50} / {p95} / {max}",
+      "timed": {
+        "sandbox_prepared": "准备沙箱（{count} 次）p50 / p95",
+        "sandbox_frozen": "冻结（{count} 次）p50 / p95",
+        "sandbox_checked_out": "打开任务目录（{count} 次，含装依赖）p50 / p95"
+      },
+      "stageValue": "{stage} {p50} / {p95}",
+      "stage": {
+        "total": "合计",
+        "place": "排位",
+        "host": "等主机",
+        "thaw": "解冻",
+        "executor": "装执行器",
+        "checkpoint": "推送检查点",
+        "freeze": "主机冻结",
+        "checkout": "检出"
+      },
       "abandoned": "没准备好就放弃",
       "replaced": "宿主机坏掉、换了一台",
       "released": "回收（空闲 / 额度用完）",

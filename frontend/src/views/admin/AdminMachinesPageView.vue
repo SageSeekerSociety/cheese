@@ -573,6 +573,22 @@ const failureNote = computed(() =>
               }}
             </dd>
           </div>
+          <div v-for="(stages, kind) in history.timings ?? {}" :key="kind">
+            <dt>{{ t(`admin.machines.fact.timed.${kind}`, { count: stages.total?.count ?? 0 }) }}</dt>
+            <dd class="mc-num">
+              {{
+                Object.entries(stages)
+                  .map(([stage, timing]) =>
+                    t('admin.machines.fact.stageValue', {
+                      stage: t(`admin.machines.fact.stage.${stage}`),
+                      p50: duration(timing.p50_s),
+                      p95: duration(timing.p95_s),
+                    }),
+                  )
+                  .join(' · ')
+              }}
+            </dd>
+          </div>
           <div>
             <dt>{{ t('admin.machines.fact.abandoned') }}</dt>
             <dd class="mc-num">{{ n(history.abandoned) }}</dd>
