@@ -48,12 +48,15 @@ class MachineSettings(BaseModel):
     # sandboxes. Sessions in this repository's
     # own earlier sandboxes had `pnpm run build` and `vue-tsc` OOM-killed at
     # 2 GiB (docs/topics), and the limit is there so that a session over it is
-    # killed alone, not to share the machine out evenly. No swap of its own
-    # (`cloud_sandbox_swap_mb` stays 0), so a session at its limit is killed
-    # instead of pushing the machine into swap; the idle page-cache reclaim
-    # (`sandbox_host.reclaim`) is only safe because nothing in a running
-    # sandbox's cgroup can be swapped. A frozen sandbox is the exception: its
-    # processes do not run, so it is allowed this much swap while it sleeps
+    # killed alone, not to share the machine out evenly. Above four fifths of
+    # it (`memory.high`, `sandbox_host.limit`) the kernel reclaims and slows
+    # the sandbox before it reaches the limit, and that needs somewhere to put
+    # what a process holds: a running sandbox may use `cloud_sandbox_swap_mb`
+    # of the host's swap file. Without it the soft limit could take back only
+    # page cache, and a build's own memory went straight to the limit and was
+    # killed (one sandbox, 15 times in 19 hours; dev, 2026-11-02). The idle
+    # page-cache reclaim (`sandbox_host.reclaim`) turns that swap off while it
+    # runs, so it still only drops page cache. A frozen sandbox may use more
     # (`machine/lifecycle.py`), so pages it will not touch may leave the
     # machine. The host itself keeps a swap file
     # (`cloud_host_swap_mb`), so a burst in the machine's own processes —
@@ -63,7 +66,7 @@ class MachineSettings(BaseModel):
     # all run, sessions share by equal weight. Processes: stops a
     # fork bomb, well above the threads a Node or JVM build starts.
     cloud_sandbox_memory_mb: int = Field(default=3072, ge=64)
-    cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
+    cloud_sandbox_swap_mb: int = Field(default=1024, ge=0)
     cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
     cloud_sandbox_pids: int = Field(default=4096, ge=16)
     # Disk. On a platform host a sandbox's home — its checkout, its
@@ -190,6 +193,23 @@ class MachineSettings(BaseModel):
     # a fixed size above (`cloud_pool_fixed_hosts`), and only one host is rolled
     # at a time.
     cloud_host_rebuild_after_days: int = Field(default=14, ge=0, le=365)
+    # Past its reserved slots: when no host has a slot left at
+    # `cloud_sandbox_memory_mb` each (`models.capacity`), a host still takes
+    # one more sandbox if what it reads now says it has the room, up to its
+    # cores and its disk (`models.hard_capacity`). Sandboxes hold far less
+    # than their limit: a full host held 2.2 GiB at the median and 4.6 GiB at
+    # most of the 12 GiB reserved for its four (dev, 2026-11-01). What it
+    # reads (`reaper.memory_admits`): its last reading at most
+    # `cloud_pool_admit_reading_s` old, memory pressure (PSI some avg60) under
+    # `cloud_pool_admit_pressure` percent, and available memory, less one
+    # sandbox limit for each sandbox placed on it since that reading, still
+    # one sandbox limit plus `cloud_pool_admit_headroom_mb`. A host with no
+    # such reading takes none past its reserved slots. Off = the reserved
+    # slots are all there is, as before.
+    cloud_pool_admit_by_use: bool = True
+    cloud_pool_admit_reading_s: int = Field(default=300, ge=30, le=3600)
+    cloud_pool_admit_pressure: float = Field(default=8.0, ge=0.0, le=100.0)
+    cloud_pool_admit_headroom_mb: int = Field(default=2048, ge=0)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer

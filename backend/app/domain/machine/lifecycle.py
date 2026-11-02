@@ -166,26 +166,28 @@ async def run_on_host(hub, device_id: str, action: str, timeout: float, **reques
 
 
 async def thaw_on_host(hub, device_id: str, resource: str) -> None:
-    """Wake a frozen sandbox on its host: let it use no swap (`memory.swap.max`
-    back to 0, so it does not sit in the swap file while it runs) and resume
+    """Wake a frozen sandbox on its host: give it back the swap a running
+    sandbox has (`memory.swap.max` back to `cloud_sandbox_swap_mb`) and resume
     its processes (`sandbox_home.thaw`). Raises ``SandboxHomeError`` when the
     host cannot thaw it; a host that cannot set the swap limit still thaws.
 
     Called with no database lock held (`session_work._install` and the freeze
     below): it is a round trip to the machine.
     """
+    mib = settings.cloud_sandbox_swap_mb
     try:
         answer = await run_on_host(
-            hub, device_id, "swap", timeout=30, name=resource, mib=0
+            hub, device_id, "swap", timeout=30, name=resource, mib=mib
         )
         if answer.get("swap_error"):
             logger.warning(
-                "setting sandbox %s's swap back to 0 failed: %s",
+                "setting sandbox %s's swap back to %d MiB failed: %s",
                 resource,
+                mib,
                 answer["swap_error"],
             )
     except (RuntimeError, TimeoutError):
-        logger.warning("setting sandbox %s's swap back to 0 failed", resource)
+        logger.warning("setting sandbox %s's swap back to %d MiB failed", resource, mib)
     answer = await run_on_host(hub, device_id, "thaw", timeout=30, names=[resource])
     if answer.get("thaw_error"):
         raise SandboxHomeError(str(answer["thaw_error"]))

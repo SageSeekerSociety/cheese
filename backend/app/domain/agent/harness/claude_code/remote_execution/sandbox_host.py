@@ -439,6 +439,14 @@ def limit(name, pid, limits):
     group = CGROUP / name
     group.mkdir()
     (group / "memory.max").write_text(str(limits["memory_mb"] * 1024 * 1024))
+    # Above four fifths of its limit the kernel slows the sandbox and reclaims
+    # from it, into its swap below, before the limit kills anything; and when
+    # it does kill, it kills the whole sandbox's processes together, not one
+    # of a build's workers with the rest left waiting on it.
+    (group / "memory.high").write_text(str(limits["memory_mb"] * 1024 * 1024 // 5 * 4))
+    group_kill = group / "memory.oom.group"
+    if group_kill.exists():
+        group_kill.write_text("1")
     swap = group / "memory.swap.max"
     if swap.exists():
         swap.write_text(str(limits["swap_mb"] * 1024 * 1024))
@@ -773,8 +781,11 @@ def down(name):
 
 def reclaim(names):
     """Have each named sandbox of the caller's give back what of its memory
-    the kernel can take without killing anything: its page cache, since a
-    sandbox has no swap. Answers how much each gave back."""
+    the kernel can take without killing anything. A running sandbox gives
+    back only its page cache: its swap is shut for the reclaim and put back
+    after, so what its processes hold stays in memory for their next step. A
+    frozen one gives back what its swap takes too. Answers how much each gave
+    back."""
     uid = caller()
     given = {}
     if not STATE.is_dir():
@@ -785,6 +796,11 @@ def reclaim(names):
         group = CGROUP / name
         if record is None or record["uid"] != uid or not group.is_dir():
             continue
+        swap = group / "memory.swap.max"
+        kept = None
+        if swap.exists() and (group / "cgroup.freeze").read_text().strip() != "1":
+            kept = swap.read_text().strip()
+            swap.write_text("0")
         before = int((group / "memory.current").read_text())
         try:
             (group / "memory.reclaim").write_text(str(before))
@@ -793,6 +809,9 @@ def reclaim(names):
             # anonymous memory in it is always so; what it did give is kept.
             if error.errno != errno.EAGAIN:
                 raise
+        finally:
+            if kept is not None:
+                swap.write_text(kept)
         given[name] = max(0, before - int((group / "memory.current").read_text()))
     return {"reclaimed": given}
 

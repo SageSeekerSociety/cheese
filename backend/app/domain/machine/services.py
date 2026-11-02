@@ -79,6 +79,7 @@ from app.domain.machine.reaper import (
     _still_moving,
     accepting,
     free_slots,
+    memory_admits,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.supply import data_disk_gb, effective_spec, pick_offering
@@ -362,14 +363,24 @@ class HostPool(PoolSweep):
         off."""
         load = await self._repo.occupancy()
         now = datetime.now(UTC)
-        free = [
+        live = [
             host
             for host in await self._repo.live()
-            if accepting(host)
-            and free_slots(host, load)
-            and self._can_start(host, now)
-            and host.id != avoid
+            if accepting(host) and self._can_start(host, now) and host.id != avoid
         ]
+        free = [host for host in live if free_slots(host, load)]
+        if not free and settings.cloud_pool_admit_by_use:
+            # Every reserved slot is taken: a host whose reading shows the
+            # memory free takes one more (`reaper.memory_admits`).
+            readings = await self._repo.last_readings([host.id for host in live])
+            since = await self._repo.placed_since(readings)
+            free = [
+                host
+                for host in live
+                if memory_admits(
+                    host, load, readings.get(host.id), since.get(host.id, 0), now
+                )
+            ]
         if not free and avoid is not None:
             return await self._place_on_free(home)
         if not free:
