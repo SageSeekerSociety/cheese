@@ -233,9 +233,20 @@ class PlaceResolver:
                     if room_place is not None
                     else None
                 )
-        place = await self.resolve(conversation_id, member=member)
-        if place is not None:
-            return place
+        # A conversation the request already knows to be in another room is
+        # a task or a 支线: asking `topics` for it would only find nothing
+        # (`room_of_conversation` leaves this fact on the access check).
+        known_room = None
+        if _can_cache(self._session):
+            found_room, known_room = recall(
+                self._session, ("conversation_room_id", conversation_id)
+            )
+            if not found_room:
+                known_room = None
+        if known_room is None or known_room == conversation_id:
+            place = await self.resolve(conversation_id, member=member)
+            if place is not None:
+                return place
         if _can_cache(self._session):
             found_task, cached_task = recall(
                 self._session, ("task_row", conversation_id)
