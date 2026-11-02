@@ -371,6 +371,38 @@ class SandboxHome(UuidPk, Timestamps, Base):
     )
 
 
+class HostProjectStore(Base):
+    """That a host has kept a project's store: its dependencies, its build
+    cache, what a sandbox of that project left in the project's namespace and
+    a sandbox of it placed there again starts warm with.
+
+    Written whenever a home is placed on a host (``CloudHostRepository.put_home``)
+    and kept after that home is destroyed: the store is the project's, not the
+    session's, and survives the sandbox that filled it. Placement prefers a
+    host that has it over one that does not, before it packs sandboxes onto
+    the host with the fewest free slots (``HostPool._place_on_free``). A row
+    goes with its host (CASCADE).
+
+    ``project_key`` is the namespace the home's directories sit under
+    (``holder.namespace_of``): the project, or the conversation itself for a
+    sandbox in no project. Rows for a project outlive that project's homes
+    and its sandboxes; nothing reads a deleted project's rows.
+    """
+
+    __tablename__ = "host_project_stores"
+
+    host_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "cloud_hosts.id",
+            ondelete="CASCADE",
+            name="fk_host_project_stores_host_id_cloud_hosts",
+        ),
+        primary_key=True,
+    )
+    project_key: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
+    last_placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class RetainedHomeArchive(UuidPk, Timestamps, Base):
     """An archive of a session's home, written to the private bucket while
     idle sandboxes were archived rather than destroyed. Kept until

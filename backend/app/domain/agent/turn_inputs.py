@@ -52,6 +52,7 @@ from app.domain.agent.models import (
 from app.domain.agent.nonce import new_nonce, nonce_in
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.common import Uuid
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import (
     terminate_inputs_of_dead_works,
@@ -636,6 +637,10 @@ async def close_silent_turns(session_factory, records, notice, still_unheld) -> 
     from app.domain.agent.room_events import say_in
 
     async with session_factory() as session:
+        # Every conversation a line may go into, in one batch and before the
+        # turn rows (`conversation.numbering`): a line written per turn would
+        # take them one at a time, in no order.
+        await lock_conversations(session, {r.topic_id for r in records.values()})
         turns = AgentTurnRepository(session)
         locked = await turns.lock_open(records)
         closing = [turn_id for turn_id in locked if still_unheld(records[turn_id])]

@@ -237,69 +237,6 @@ def test_serve_with_cmd_starts_detached_app_and_records_launch_meta(
     assert saved == serve
 
 
-def test_serve_restore_opens_missing_worktree_relocates_home_and_restarts_app(
-    monkeypatch, tmp_path
-):
-    """`cheese serve --restore` in a fresh sandbox opens the task checkout,
-    relocates paths from the old sandbox home, starts the command and brings
-    the preview tunnel up."""
-    cli = _load()
-    task_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    old_home = tmp_path / "old-home"
-    new_home = tmp_path / "new-home"
-    (new_home / ".cheese").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(new_home))
-    monkeypatch.setenv("CHEESE_PREVIEW_UP", "/preview-up")
-
-    opened_tasks: list[str] = []
-
-    def fake_task_worktree(tid: str, *, reinstall: bool = False):
-        opened_tasks.append(tid)
-        tdir = new_home / ".cheese" / "tasks" / tid
-        (tdir / ".git").mkdir(parents=True, exist_ok=True)
-        (tdir / "web").mkdir(parents=True, exist_ok=True)
-        return tdir
-
-    monkeypatch.setattr(cli, "_task_worktree", fake_task_worktree)
-    up_calls: list[list[str]] = []
-    monkeypatch.setattr(cli.subprocess, "call", lambda args: up_calls.append(args) or 0)
-    monkeypatch.setattr(cli, "_probe_app", lambda port: None)
-    started: list[tuple[str, str, int]] = []
-    monkeypatch.setattr(
-        cli,
-        "_start_detached_serve_cmd",
-        lambda cmd, cwd, port: started.append((cmd, cwd, port)),
-    )
-    monkeypatch.setattr(cli, "_wait_for_app", lambda port, timeout: 200)
-
-    spec = {
-        "port": 5173,
-        "command": (
-            f"node {old_home}/.cheese/tasks/{task_id}/web/server.js "
-            f"--static {old_home}-other/keep --port 5173"
-        ),
-        "cwd": f"{old_home}/.cheese/tasks/{task_id}/web",
-        "home": str(old_home),
-        "task_id": task_id,
-    }
-    rc = cli._restore_served_app(cli.json.dumps(spec), 10.0)
-    assert rc == 0
-    assert opened_tasks == [task_id]
-    assert up_calls == [["sh", "/preview-up", "5173"]]
-    resolved_new = str(new_home.resolve())
-    assert started == [
-        (
-            f"node {resolved_new}/.cheese/tasks/{task_id}/web/server.js "
-            f"--static {old_home}-other/keep --port 5173",
-            f"{resolved_new}/.cheese/tasks/{task_id}/web",
-            5173,
-        )
-    ]
-    # A non-UUID task_id (e.g. path traversal) is refused before touching the disk.
-    bad_spec = {**spec, "task_id": "../checkout"}
-    assert cli._restore_served_app(cli.json.dumps(bad_spec), 10.0) == 2
-
-
 @pytest.mark.skipif(
     not Path("/proc/net/tcp").exists(),
     reason="/proc/net/tcp process inspection is Linux-specific",

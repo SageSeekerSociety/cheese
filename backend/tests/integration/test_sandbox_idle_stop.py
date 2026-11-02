@@ -37,7 +37,7 @@ from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
-from app.domain.machine.sandbox_wait import SANDBOX_LOST
+from app.domain.machine.sandbox_wait import SANDBOX_LOST, STOPPED_PROCESSES
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
@@ -591,9 +591,42 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
 
     answer = tool_call(cloud, seat, tells_agent=True)
     assert answer["target"]["device_id"] == "host-a"
+    # This machine has no sandbox cgroup for the host program to read, so no
+    # process is named: the copy is the one there always was.
     assert answer["notice"] == SANDBOX_LOST
     assert not (home / "room" / "notes.md").exists()
     # Told once.
+    assert "notice" not in tool_call(cloud, seat, tells_agent=True)
+
+
+def test_the_agent_is_told_what_was_running_when_its_sandbox_was_destroyed(
+    cloud, monkeypatch
+):
+    """The host reads the sandbox's processes before it stops them, and the
+    session's next tool call says what went with the sandbox. It is told once:
+    the list goes with the notice, not into the row for good."""
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    time_passes(cloud, seat, timedelta(minutes=11))
+
+    original = lifecycle.run_on_host
+
+    async def with_processes(hub, device_id, action, timeout, **request):
+        answer = await original(hub, device_id, action, timeout, **request)
+        if action == "destroy":
+            answer = {
+                **answer,
+                "processes": ["npm run dev", "python3 -m http.server 8000"],
+            }
+        return answer
+
+    monkeypatch.setattr(lifecycle, "run_on_host", with_processes)
+    assert sweep(cloud)["destroyed"] == 1
+
+    answer = tool_call(cloud, seat, tells_agent=True)
+    assert answer["notice"] == SANDBOX_LOST + "\n" + STOPPED_PROCESSES.format(
+        processes="  npm run dev\n  python3 -m http.server 8000"
+    )
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
 
 

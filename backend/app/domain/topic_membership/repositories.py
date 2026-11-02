@@ -2,13 +2,17 @@
 
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
+from app.domain.identity.models import AgentBinding
 from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.user.models import User
 
 _TOPIC_MEMBER_TABLES = frozenset({"topic_memberships"})
+#: What ``("is_agent", handle)`` is read from (`IdentityService.agents_among`).
+_AGENT_TABLES = frozenset({"user", "agent_bindings"})
 
 
 def _can_cache(session: object) -> bool:
@@ -66,24 +70,53 @@ class TopicMembershipRepository:
             found, cached = recall(self._session, ("topic_member_rows", topic_id))
             if found:
                 return list(cached)
-        stmt = (
-            select(TopicMembership)
-            .where(TopicMembership.topic_id == topic_id)
-            .order_by(TopicMembership.created_at.asc())
-        )
-        rows = list((await self._session.scalars(stmt)).all())
-        if _can_cache(self._session):
-            remember(
-                self._session,
-                ("topic_member_rows", topic_id),
-                tuple(rows),
-                tables=_TOPIC_MEMBER_TABLES,
+        if not _can_cache(self._session):
+            stmt = (
+                select(TopicMembership)
+                .where(TopicMembership.topic_id == topic_id)
+                .order_by(TopicMembership.created_at.asc())
             )
+            return list((await self._session.scalars(stmt)).all())
+        # Read with which members are AI teammates (a live user carrying an
+        # agent binding, as `IdentityRepository.agent_handles` decides): who
+        # reads a roster asks that next nearly every time
+        # (`TopicMemberService.agent_handles`), and it was a statement of its
+        # own. Left as `IdentityService.agents_among` leaves it.
+        agent = (
+            exists()
+            .where(
+                User.username == TopicMembership.member_handle,
+                User.deleted_at.is_(None),
+                AgentBinding.user_id == User.id,
+            )
+            .label("is_agent")
+        )
+        pairs = (
+            await self._session.execute(
+                select(TopicMembership, agent)
+                .where(TopicMembership.topic_id == topic_id)
+                .order_by(TopicMembership.created_at.asc())
+            )
+        ).all()
+        rows = [row for row, _ in pairs]
+        remember(
+            self._session,
+            ("topic_member_rows", topic_id),
+            tuple(rows),
+            tables=_TOPIC_MEMBER_TABLES,
+        )
+        remember(
+            self._session,
+            ("topic_member_pairs", topic_id),
+            tuple((r.member_handle, r.role) for r in rows),
+            tables=_TOPIC_MEMBER_TABLES,
+        )
+        for row, is_agent in pairs:
             remember(
                 self._session,
-                ("topic_member_pairs", topic_id),
-                tuple((r.member_handle, r.role) for r in rows),
-                tables=_TOPIC_MEMBER_TABLES,
+                ("is_agent", row.member_handle),
+                bool(is_agent),
+                tables=_AGENT_TABLES,
             )
         return rows
 

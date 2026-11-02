@@ -237,15 +237,13 @@ def test_a_running_session_whose_report_went_stale_is_asked_for_a_new_one(client
     assert client.portal.call(remind, now + 3 * threshold) == 0
 
 
-def _turn_in(client, task_id: str, *, failed: bool | str) -> uuid.UUID:
+def _turn_in(client, task_id: str, *, failed: bool) -> uuid.UUID:
     """A turn of the task's session that has ended; ``failed`` leaves the line
-    the platform posts for a failed turn (``True``), or for one it will
-    resume (``"resume"``)."""
+    the platform posts for a turn it gave up on."""
     from app.domain.agent.models import AgentTurn
     from app.domain.agent.room_events import post_system_event
     from app.domain.notice_meta import (
         EVENT_TURN_FAILED,
-        EVENT_TURN_RESUME_WAIT,
         SEVERITY_WARN,
         WHO_PLATFORM,
         notice,
@@ -269,13 +267,14 @@ def _turn_in(client, task_id: str, *, failed: bool | str) -> uuid.UUID:
             )
             await session.commit()
         if failed:
-            kind = EVENT_TURN_RESUME_WAIT if failed == "resume" else EVENT_TURN_FAILED
             await post_system_event(
                 client.test_factory,
                 room,
                 "这次没做完",
                 turn,
-                meta=notice(kind, severity=SEVERITY_WARN, who=WHO_PLATFORM),
+                meta=notice(
+                    EVENT_TURN_FAILED, severity=SEVERITY_WARN, who=WHO_PLATFORM
+                ),
                 inner_id=uuid.UUID(task_id),
             )
 
@@ -308,8 +307,7 @@ def _resume_owed(client, project_id: str, task_id: str, seat: str, turn) -> None
     client.portal.call(owe)
 
 
-@pytest.mark.parametrize("last_turn", [True, "resume"], ids=["failed", "resuming"])
-def test_a_session_whose_last_turn_failed_is_not_asked(client, last_turn):
+def test_a_session_whose_last_turn_failed_is_not_asked(client):
     """Asking starts a turn on the same broken model, which fails again: one
     more failed turn and one more line in the room every threshold, for as long
     as the session stays up. A resume, or a person, wakes such a seat; once a
@@ -327,7 +325,7 @@ def test_a_session_whose_last_turn_failed_is_not_asked(client, last_turn):
 
     remind = StaleProgressReminder(chat, sessions_running)
 
-    _turn_in(client, task_id, failed=last_turn)
+    _turn_in(client, task_id, failed=True)
     asked = [client.portal.call(remind, now + k * threshold) for k in range(3)]
     assert asked == [0, 0, 0]
     assert chat.told == []

@@ -3,8 +3,6 @@ import type { ResumeWait } from '../../../types/roomSocket'
 
 import { describe, expect, it } from 'vitest'
 
-import { clockTime } from '../../../lib/dateText'
-
 import { type StreamAt, useRunRecords } from './useRunRecords'
 
 function queued(id: string, turn: string, seat: string, ahead?: number): Block {
@@ -90,19 +88,38 @@ function said(id: string, author: string, createdAt: string): Block {
 }
 
 describe('等自动重试的队友', () => {
-  it('打开页面时服务端说它还欠着一次自动重试，输入框上方就说它约几点重试', () => {
+  it('打开页面时服务端说它还欠着一次自动重试，输入框上方就说它在等自动重试，不说几点、从出错时算用时', () => {
     const records = useRunRecords()
     records.resumesNow([owed()], at(1))
     const [line] = records.waitingLines(() => '芝士')
     expect(line.name).toBe('芝士')
-    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+    expect(line.kind).toBe('retrying')
+    expect(line.detail ?? null).toBeNull()
+    expect(line.since).toBe(Date.parse('2026-10-29T07:30:00Z') / 1000)
   })
 
   it('页面开着时排上的自动重试，当场就说', () => {
     const records = useRunRecords()
-    records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE }))
+    records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE, reason: 'overloaded' }))
     const [line] = records.waitingLines(() => '芝士')
-    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+    expect(line.kind).toBe('retrying')
+  })
+
+  it('两位队友都在等，各占一行', () => {
+    const records = useRunRecords()
+    records.resumesNow([owed('cheese-a', 'r1'), owed('cheese-b', 'r2')], at(1))
+    const lines = records.waitingLines((h) => (h === 'cheese-a' ? '芝士' : '火花'))
+    expect(lines.map((l) => [l.name, l.kind])).toEqual([
+      ['芝士', 'retrying'],
+      ['火花', 'retrying'],
+    ])
+  })
+
+  it('平台更新换掉了运行程序的那一次不是调用模型出错：照「正在工作」说', () => {
+    const records = useRunRecords()
+    records.resumesNow([{ ...owed(), reason: 'runner_replaced' }], at(1))
+    const [line] = records.waitingLines(() => '芝士')
+    expect(line.kind).toBe('working')
   })
 
   it.each(['turn_resume_started', 'turn_resume_stopped'])('%s 之后不再说它在等', (event) => {
@@ -133,7 +150,7 @@ describe('等自动重试的队友', () => {
     records.receive(step('turn_resume_wait', 'r1', 'cheese-a', { due_at: DUE }), at(7))
     records.resumesNow([], at(6))
     const [line] = records.waitingLines(() => '芝士')
-    expect(line.detail).toContain(clockTime(Date.parse(DUE)))
+    expect(line.kind).toBe('retrying')
   })
 
   // 重连时，补发的旧运行记录在那份现场之后才到：它排在现场之前，现场说不欠了就是不欠了。

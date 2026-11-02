@@ -148,6 +148,14 @@ class MachineSettings(BaseModel):
     # good. A slot needed, a disk running short or a host being rebuilt take a
     # frozen sandbox sooner (`machine/lifecycle.py`, `disk_guard`, `reaper`).
     cloud_sandbox_frozen_keep_s: int = Field(default=7200, ge=60, le=30 * 86400)
+    # A sandbox whose conversation has a previewed app (`cheese serve`, the
+    # conversation's latest artifact carries a `serve` spec) is kept frozen
+    # this long instead: somebody opening its preview is likely, and a thaw is
+    # a second, where starting the app again is a model turn. Frozen sandboxes
+    # without one are evicted for a slot first (`machine/lifecycle.py`).
+    cloud_sandbox_frozen_keep_preview_s: int = Field(
+        default=86400, ge=60, le=30 * 86400
+    )
     # A command the executor still runs for the session (a Bash call sent to the
     # background) keeps an otherwise idle sandbox up, but no longer than this
     # after the session's last activity.

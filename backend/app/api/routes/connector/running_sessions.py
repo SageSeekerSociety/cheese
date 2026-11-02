@@ -8,8 +8,7 @@ from app.api.auth import ActorResolverDep, PresentedCredential
 from app.api.request_deps import DbSession
 from app.api.routes.connector.schemas import RunningDeviceSessionsOut
 from app.core.errors import ForbiddenError, NotFoundError, UnauthorizedError
-from app.domain.agent.device_sessions import running_on
-from app.domain.device import owner_reads
+from app.domain.agent.device_sessions import running_for_token, running_on
 from app.domain.device.wiring import sql_device_service
 from app.domain.team.services import team_service
 
@@ -48,7 +47,7 @@ async def device_sessions(device_id: str, resolver: ActorResolverDep, db: DbSess
     responses={200: {"model": RunningDeviceSessionsOut}},
 )
 async def connector_sessions(db: DbSession, token: PresentedCredential):
-    device = await owner_reads.device_for_token(db, token)
-    if device is None:
+    sessions = await running_for_token(db, token)
+    if sessions is None:
         raise UnauthorizedError()
-    return {"sessions": [row for _, row in await running_on(db, device.device_id)]}
+    return {"sessions": sessions}

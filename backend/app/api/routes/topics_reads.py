@@ -39,7 +39,8 @@ async def mark_topic_read(
     The cursor is per person, so whose it is comes from the verified
     credential — ``handle`` in the body is only an assertion checked against
     it (it used to BE the identity, letting anyone move anyone's cursor)."""
-    place = await place_or_404(db, topic_id)
+    # Read with the seat the signed-in person holds there: the door asks it.
+    place = await place_or_404(db, topic_id, member=resolver.signed_in_handle())
     room_id, topic = place.room_id, place.room
     actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
     await resolver.authorize_topic(

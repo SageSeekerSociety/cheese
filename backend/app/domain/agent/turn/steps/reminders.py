@@ -51,7 +51,7 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import names_a_person
-from app.domain.notice_meta import EVENT_TURN_FAILED, EVENT_TURN_RESUME_WAIT
+from app.domain.notice_meta import EVENT_TURN_FAILED
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.reads import conversation_progress
 from app.domain.user.services import language_of
@@ -373,8 +373,8 @@ class ProgressNotices(Protocol):
 
 def _failing(conversation):
     """The conversation's seat is not one to ask anything: its last turn failed
-    (the turn carries the line saying so, a scheduled resume's included), or
-    the platform owes it a resume. Asking starts a turn on the same broken
+    (the turn carries the line saying so), or the platform owes it a resume
+    (a turn it will retry gets no line while it waits). Asking starts a turn on the same broken
     model, which fails again: every threshold, one more failed turn and one
     more line in the room, for as long as the session stays up (2026-10, a
     ChatGPT account's egress offline for 26 hours, ~210 lines in one task).
@@ -389,9 +389,7 @@ def _failing(conversation):
     return or_(
         exists().where(
             Block.turn_id == last_turn,
-            Block.meta["event_type"]
-            .as_string()
-            .in_((EVENT_TURN_FAILED, EVENT_TURN_RESUME_WAIT)),
+            Block.meta["event_type"].as_string() == EVENT_TURN_FAILED,
         ),
         exists().where(
             TurnResume.conversation_id == conversation,

@@ -37,10 +37,14 @@ not billed, and its session's next tool call wakes this same sandbox — same
 host, same home, same processes (`session_work._install`) — rather than
 building a new one. A frozen sandbox holds its host's slot while it sleeps, so
 it cannot be kept for good: past `cloud_sandbox_frozen_keep_s` it is destroyed
-as any idle sandbox always was. A slot the pool needs, a disk running short and
-a host being rebuilt take a frozen sandbox sooner, oldest first. A whole cloud
-VM and a sandbox on a person's own computer are not frozen: they keep the
-lifecycle below.
+as any idle sandbox always was. One whose conversation previews an app
+(`cheese serve`, the conversation's latest artifact carries a `serve` spec) is
+kept `cloud_sandbox_frozen_keep_preview_s` instead — somebody opening the
+preview should find the app still there, and thawing it is a second where
+starting it again is a model turn. A slot the pool needs, a disk running short
+and a host being rebuilt take a frozen sandbox sooner, oldest first, and one
+without a preview goes before one with it. A whole cloud VM and a sandbox on a
+person's own computer are not frozen: they keep the lifecycle below.
 
 **Destroyed**, a sandbox's executor and everything still running in its home
 are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
@@ -84,7 +88,13 @@ from app.domain.agent import execution, resource_cleanup, turn_inputs
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import LOST_KEY, THAW_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LOST_KEY,
+    LOST_PROCESSES_KEY,
+    THAW_KEY,
+    AgentSession,
+)
+from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
 from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
@@ -227,6 +237,44 @@ async def frozen_sessions(db, session_ids) -> set[uuid.UUID]:
     )
 
 
+async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
+    """Which of these sessions serve an app preview right now.
+
+    The conversation's latest artifact carries a ``serve`` spec when ``cheese
+    serve`` declared it (``topics_shown``); that is also how the preview panel
+    decides what it is looking at, so a sandbox is kept warm exactly when
+    somebody could open the app it runs. The newest artifact wins: declaring
+    another one repoints the preview."""
+    wanted = [one for one in session_ids if one is not None]
+    if not wanted:
+        return set()
+    rows = await db.execute(
+        select(AgentSession.id, AgentSession.conversation_id).where(
+            AgentSession.id.in_(wanted)
+        )
+    )
+    conversations = {session_id: conversation for session_id, conversation in rows}
+    if not conversations:
+        return set()
+    artifacts = await db.execute(
+        select(Block.conversation_id, Block.meta)
+        .where(
+            Block.conversation_id.in_(set(conversations.values())),
+            Block.kind == BlockKind.artifact,
+        )
+        .order_by(Block.conversation_id, Block.created_at.desc())
+    )
+    latest: dict[uuid.UUID, dict | None] = {}
+    for conversation_id, meta in artifacts:
+        latest.setdefault(conversation_id, meta)
+    found: set[uuid.UUID] = set()
+    for session_id, conversation_id in conversations.items():
+        meta = latest.get(conversation_id)
+        if isinstance(meta, dict) and isinstance(meta.get("serve"), dict):
+            found.add(session_id)
+    return found
+
+
 async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> None:
     """Wake a sandbox a tool call has already asked for (`THAW_KEY`), before
     its executor is asked anything (`session_work._install`, under the claim,
@@ -280,18 +328,25 @@ def _pressed_idle() -> timedelta:
     return timedelta(seconds=settings.cloud_sandbox_idle_stop_pressed_s)
 
 
-def _frozen_keep() -> timedelta:
+def _frozen_keep(preview: bool = False) -> timedelta:
     """How long a frozen sandbox is kept before it is destroyed anyway
     (`cloud_sandbox_frozen_keep_s`): it holds its host's slot the whole
-    time."""
-    return timedelta(seconds=settings.cloud_sandbox_frozen_keep_s)
+    time. One whose conversation previews an app is kept for the longer
+    `cloud_sandbox_frozen_keep_preview_s`."""
+    seconds = (
+        settings.cloud_sandbox_frozen_keep_preview_s
+        if preview
+        else settings.cloud_sandbox_frozen_keep_s
+    )
+    return timedelta(seconds=seconds)
 
 
-def frozen_eviction_key(home) -> tuple:
-    """What ranks a frozen sandbox for eviction: the one frozen longest ago
-    first. A function rather than a column order, so what has a preview can be
-    kept for last in a later step: return a tuple that sorts those after."""
-    return (home.frozen_at, home.id)
+def frozen_eviction_key(home, previewed: bool = False) -> tuple:
+    """What ranks a frozen sandbox for eviction: one whose conversation
+    previews an app goes last, and among the rest the one frozen longest ago
+    first. A function rather than a column order so the preview can come
+    before the age, and be given per home (it takes a query to know)."""
+    return (previewed, home.frozen_at, home.id)
 
 
 #: How long an open turn's interval may stand and still count as its session at
@@ -450,6 +505,9 @@ class SandboxLifecycle:
             .order_by(SandboxHome.active_at)
         )
         candidates = list(rows.all())
+        previewed = await self._previewed(
+            [home.session_id for home in candidates if home.session_id is not None]
+        )
         await self._session.commit()
         destroyed = 0
         for home in candidates:
@@ -473,8 +531,9 @@ class SandboxLifecycle:
             if home.frozen_at is not None:
                 # Frozen: it is not pinged and no turn can be running on it.
                 # Past its keep time it is destroyed; before that it waits for
-                # its session or for a slot to be needed elsewhere.
-                if now - home.frozen_at < _frozen_keep():
+                # its session or for a slot to be needed elsewhere. One whose
+                # conversation previews an app is kept the longer time.
+                if now - home.frozen_at < _frozen_keep(home.session_id in previewed):
                     continue
                 if await self._destroy(
                     home.id,
@@ -536,6 +595,9 @@ class SandboxLifecycle:
         load = await self._repo.occupancy()
         await self._session.commit()
         return not any(free_slots(host, load) for host in hosts if accepting(host))
+
+    async def _previewed(self, session_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        return await previewed_sessions(self._session, session_ids)
 
     @staticmethod
     def _held_for(home, pressed: bool) -> timedelta:
@@ -941,10 +1003,15 @@ class SandboxLifecycle:
         if host_id is not None:
             query = query.where(SandboxHome.host_id == host_id)
         rows = list(await self._session.scalars(query.order_by(SandboxHome.frozen_at)))
+        previewed = await self._previewed(
+            [home.session_id for home in rows if home.session_id is not None]
+        )
         await self._session.commit()
         if not self._hub.is_online(device_id):
             return 0
-        rows.sort(key=frozen_eviction_key)
+        rows.sort(
+            key=lambda home: frozen_eviction_key(home, home.session_id in previewed)
+        )
         destroyed = 0
         for home in rows[:limit]:
             assert home.frozen_at is not None  # selected by `frozen_at` set
@@ -986,10 +1053,16 @@ class SandboxLifecycle:
                 )
             )
         )
+        previewed = await self._previewed(
+            [home.session_id for home in rows if home.session_id is not None]
+        )
         await self._session.commit()
         if not rows:
             return False
-        home = min(rows, key=frozen_eviction_key)
+        home = min(
+            rows,
+            key=lambda home: frozen_eviction_key(home, home.session_id in previewed),
+        )
         # Both were selected for: on one of these hosts, and frozen.
         assert home.host_id is not None and home.frozen_at is not None
         host = by_id[home.host_id]
@@ -1080,7 +1153,7 @@ class SandboxLifecycle:
         project, resource = str(holders.namespace_of(home)), home.resource_id
         await self._session.commit()
         try:
-            await run_on_host(
+            answered = await run_on_host(
                 self._hub,
                 device_id,
                 "destroy",
@@ -1092,6 +1165,10 @@ class SandboxLifecycle:
             # Marked, it takes no tool call; a later sweep tries again.
             logger.warning("destroying sandbox %s failed", home_id, exc_info=True)
             return False
+        # What was running when it went, as the host read it before stopping
+        # the executor. A host too old to answer the key names nothing; one
+        # that could not read its cgroup answers an empty list.
+        running = [str(one) for one in (answered or {}).get("processes") or [] if one]
         if holder_id is not None:
             await holders.lock(self._session, holder_id)
         home = await self._repo.lock_home(home_id)
@@ -1109,10 +1186,15 @@ class SandboxLifecycle:
                 .execution_options(populate_existing=True)
             )
             if row is not None:
-                row.execution_request = {
-                    **(row.execution_request or {}),
-                    LOST_KEY: True,
+                request = {
+                    key: value
+                    for key, value in (row.execution_request or {}).items()
+                    if key != LOST_PROCESSES_KEY
                 }
+                request[LOST_KEY] = True
+                if running:
+                    request[LOST_PROCESSES_KEY] = running
+                row.execution_request = request
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that
