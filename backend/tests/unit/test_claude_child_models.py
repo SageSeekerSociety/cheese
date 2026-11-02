@@ -23,7 +23,10 @@ def _plain(value):
     """Request content as the model reads it: `cache_control` moves with the
     breakpoints, and a message's text may be sent as a string or as a block."""
     if isinstance(value, dict):
-        if set(value) <= {"type", "text", "cache_control"} and value.get("type") == "text":
+        if (
+            set(value) <= {"type", "text", "cache_control"}
+            and value.get("type") == "text"
+        ):
             return value["text"]
         return {k: _plain(v) for k, v in value.items() if k != "cache_control"}
     if isinstance(value, list):
