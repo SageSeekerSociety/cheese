@@ -101,6 +101,27 @@ function duration(seconds: number | null | undefined): string {
   if (s < 86400) return t('admin.machines.dur.h', { n: Math.round((s / 3600) * 10) / 10 })
   return t('admin.machines.dur.d', { n: Math.round((s / 86400) * 10) / 10 })
 }
+/** 过去 24 小时每种计时一行：每一段的 p50 / p95，合计放最前。 */
+const timingRows = computed(() =>
+  Object.entries(props.overview?.history?.timings ?? {}).map(([kind, stages]) => {
+    const all = stages ?? {}
+    const order = ['total', ...Object.keys(all).filter((stage) => stage !== 'total')]
+    return {
+      kind,
+      count: all.total?.count ?? 0,
+      text: order
+        .filter((stage) => all[stage])
+        .map((stage) =>
+          t('admin.machines.fact.stageValue', {
+            stage: t(`admin.machines.fact.stage.${stage}`),
+            p50: duration(all[stage]?.p50_s),
+            p95: duration(all[stage]?.p95_s),
+          })
+        )
+        .join(' · '),
+    }
+  })
+)
 function since(iso: string | null): string {
   return iso ? duration((nowMs.value - new Date(iso).getTime()) / 1000) : ''
 }
@@ -573,21 +594,9 @@ const failureNote = computed(() =>
               }}
             </dd>
           </div>
-          <div v-for="(stages, kind) in history.timings ?? {}" :key="kind">
-            <dt>{{ t(`admin.machines.fact.timed.${kind}`, { count: stages.total?.count ?? 0 }) }}</dt>
-            <dd class="mc-num">
-              {{
-                Object.entries(stages)
-                  .map(([stage, timing]) =>
-                    t('admin.machines.fact.stageValue', {
-                      stage: t(`admin.machines.fact.stage.${stage}`),
-                      p50: duration(timing.p50_s),
-                      p95: duration(timing.p95_s),
-                    })
-                  )
-                  .join(' · ')
-              }}
-            </dd>
+          <div v-for="row in timingRows" :key="row.kind">
+            <dt>{{ t(`admin.machines.fact.timed.${row.kind}`, { count: row.count }) }}</dt>
+            <dd class="mc-num">{{ row.text }}</dd>
           </div>
           <div>
             <dt>{{ t('admin.machines.fact.abandoned') }}</dt>
