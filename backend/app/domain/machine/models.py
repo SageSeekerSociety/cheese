@@ -364,6 +364,13 @@ class SandboxHome(UuidPk, Timestamps, Base):
     frozen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Since when a frozen sandbox past its keep time is parked: its processes
+    # stopped and its slot given up, its home left on the host's disk for the
+    # session to start again there (`lifecycle._park`). `frozen_at` stays set
+    # with it: a parked sandbox is a frozen one that holds no slot.
+    parked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Since when the sandbox is being destroyed: its home is being deleted
     # from the host, and the row goes once it is. A tool call meanwhile waits.
     stopped_at: Mapped[datetime | None] = mapped_column(
