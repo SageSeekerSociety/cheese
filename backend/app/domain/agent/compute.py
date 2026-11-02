@@ -221,22 +221,6 @@ class ComputePool:
                 found.update(probe(seat))
         return found
 
-    def terminal_conversations(self, topic_id, agent_handle) -> set[str]:
-        """The conversations on this seat an authority's own per-conversation
-        terminal answer named dead this recover round (FB-56 legacy③) —
-        never a complement of somebody else's success."""
-        seat = (topic_id, agent_handle)
-        found: set[str] = set()
-        for runtime in self._runtimes():
-            found.update(
-                conversation
-                for pair_seat, conversation in getattr(
-                    runtime, "terminal_conversations", set()
-                )
-                if pair_seat == seat
-            )
-        return found
-
     def found_pairs(self) -> set[tuple[tuple[uuid.UUID, str], str]]:
         """Every (seat, conversation) recovery reached this round, across the
         runtimes: `found_conversations` for all seats at once."""
@@ -246,12 +230,13 @@ class ComputePool:
         return found
 
     def terminal_pairs(self) -> set[tuple[tuple[uuid.UUID, str], str]]:
-        """Every (seat, conversation) an authority named dead this round,
-        across the runtimes: `terminal_conversations` for all seats at once."""
-        found: set[tuple[tuple[uuid.UUID, str], str]] = set()
+        """Every (seat, conversation) an authority's own per-conversation
+        terminal answer named dead this recover round, across the runtimes
+        (FB-56 legacy③): never a complement of somebody else's success."""
+        named: set[tuple[tuple[uuid.UUID, str], str]] = set()
         for runtime in self._runtimes():
-            found.update(getattr(runtime, "terminal_conversations", ()))
-        return found
+            named.update(getattr(runtime, "terminal_conversations", ()))
+        return named
 
     def found_conversations(self, topic_id, agent_handle) -> set[str]:
         """The conversations on this seat recovery actually reached and
