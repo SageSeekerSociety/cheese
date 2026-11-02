@@ -678,9 +678,10 @@ def test_a_sandbox_uses_the_swap_it_is_given_and_a_later_step_changes_it(
 
 
 @with_sandbox_host
-def test_a_sandbox_at_its_limit_is_killed_whole(rooms, machine_service):
-    """At its memory limit, after what fits in its swap, the kernel kills all
-    of a sandbox's processes together; there is no softer limit below it."""
+def test_a_sandbox_has_no_softer_limit_below_its_memory_limit(rooms, machine_service):
+    """Its memory limit is the one limit: no `memory.high` to throttle it
+    below, and the kernel kills one process at a time, not the group the
+    sandbox's executor is in."""
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     group = sandbox_host.CGROUP / str(room.resource)
 
@@ -688,7 +689,7 @@ def test_a_sandbox_at_its_limit_is_killed_whole(rooms, machine_service):
         settings.cloud_sandbox_memory_mb << 20
     )
     assert (group / "memory.high").read_text().strip() == "max"
-    assert (group / "memory.oom.group").read_text().strip() == "1"
+    assert (group / "memory.oom.group").read_text().strip() == "0"
 
 
 @with_sandbox_host

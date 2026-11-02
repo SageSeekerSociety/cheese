@@ -440,15 +440,12 @@ def limit(name, pid, limits):
     group.mkdir()
     (group / "memory.max").write_text(str(limits["memory_mb"] * 1024 * 1024))
     # At the limit the kernel first pushes what it can into the sandbox's swap
-    # below, and only what still does not fit is killed: then all of the
-    # sandbox's processes together, not one of a build's workers with the rest
-    # left waiting on it. No `memory.high`: with nothing left to swap, a
-    # process over it is throttled instead of killed, and a sandbox at 256 MiB
-    # asking for 512 hung for two minutes where it had been killed at once
-    # (CI, 2026-11-02).
-    group_kill = group / "memory.oom.group"
-    if group_kill.exists():
-        group_kill.write_text("1")
+    # below, and only what still does not fit is killed, one process at a
+    # time. Not `memory.oom.group`: the sandbox's executor is in the group,
+    # and killing the group took it with the build (CI, 2026-11-02). Nor
+    # `memory.high`: with nothing left to swap, a process over it is
+    # throttled instead of killed, and a sandbox at 256 MiB asking for 512
+    # hung for two minutes where it had been killed at once (CI, 2026-11-02).
     swap = group / "memory.swap.max"
     if swap.exists():
         swap.write_text(str(limits["swap_mb"] * 1024 * 1024))

@@ -53,7 +53,7 @@ class MachineSettings(BaseModel):
     # kernel pushes what it can there first, so a build that peaks just above
     # the limit runs slower instead of being killed (one sandbox was killed 15
     # times in 19 hours with none; dev, 2026-11-02), and only what still does
-    # not fit is killed, the whole sandbox together (`sandbox_host.limit`). The idle
+    # not fit is killed (`sandbox_host.limit`). The idle
     # page-cache reclaim (`sandbox_host.reclaim`) turns that swap off while it
     # runs, so it still only drops page cache. A frozen sandbox may use more
     # (`machine/lifecycle.py`), so pages it will not touch may leave the
