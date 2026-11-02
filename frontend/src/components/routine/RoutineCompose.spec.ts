@@ -133,9 +133,9 @@ describe('RoutineCompose templates', () => {
     expect(container.textContent).not.toContain('什么时候跑')
   })
 
-  // 回归：底下那一排是新建页的页脚（存成模板 / 取消 / 保存），模板页是挑一条，
-  // 没有要存的表，不该带着它。
-  it('模板页不摆「存成模板 / 取消 / 保存」那一排', async () => {
+  // 回归：底下那一排里「存成模板 / 保存」是新建页的，模板页是挑一条、没有要存的表，
+  // 不该带着它们；「取消」两边都在 —— 它是退出整个这个界面。
+  it('模板页只剩一颗「取消」，不摆「存成模板 / 保存」', async () => {
     const { getByText, queryByText, container } = render(Compose, {
       props: { modelValue: true, routine: null, rooms: [], defaultRoom: 'room-1', error: '', agentName: '小 C' },
       global: { plugins: [vuetify, i18n] },
@@ -146,8 +146,8 @@ describe('RoutineCompose templates', () => {
     await waitFor(() => expect(container.textContent).toContain(t('routines.template.preset')))
     expect(queryByText(t('routines.form.keepTemplate'))).toBeNull()
     expect(queryByText(t('routines.save'))).toBeNull()
-    // 退得出去：模板页留一颗「关闭」。
-    expect(getByText(t('routines.close'))).toBeTruthy()
+    // 退得出去：模板页留一颗「取消」。
+    expect(getByText(t('routines.cancel'))).toBeTruthy()
   })
 })
 
