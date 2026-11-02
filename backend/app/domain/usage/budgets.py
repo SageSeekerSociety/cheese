@@ -61,7 +61,7 @@ def _member_columns(project_id: uuid.UUID, owner_handle: str) -> tuple:
         )
         .scalar_subquery()
     )
-    return limit, used
+    return limit.label("member_limit"), used.label("member_used")
 
 
 class CreditBudgets:
@@ -260,6 +260,10 @@ class CreditBudgets:
         that member's own cap and what they have used under it, and leaves it
         for `member_remaining` (a task's admission asks it to refuse the call
         and again for the task key's budget)."""
+        if member is not None and not (with_gateway_spend and len(project_ids) == 1):
+            raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                "project_caps reads a member's cap only with the spend, for one project"
+            )
         if not project_ids:
             return {}
         # Admitting a model call asks this, then asks it again for the budget
@@ -310,7 +314,7 @@ class CreditBudgets:
                     spent_q, spent_q.c.project_id == caps_q.c.project_id, full=True
                 )
             )
-            if member is not None and len(project_ids) == 1:
+            if member is not None:
                 # A row even when the project has neither a cap nor spend: a
                 # member may have a cap of their own under a budget whose
                 # project limit is unset.
@@ -323,17 +327,18 @@ class CreditBudgets:
         caps: dict[uuid.UUID, tuple[float, float]] = {}
         gateway_spend: dict[uuid.UUID, float] = {}
         member_answer: list[float | None] = []
-        for project_id, limit, used, *rest in rows:
+        for row in rows:
+            project_id, limit, used, *rest = row
             if project_id is not None and limit is not None:
                 caps[project_id] = (limit, used)
             if project_id is not None and rest and rest[0] is not None:
                 gateway_spend[project_id] = float(rest[0])
-            if len(rest) == 3 and not member_answer:
-                member_limit, member_used = rest[1], rest[2]
+            if member is not None and not member_answer:
+                member_limit = row._mapping["member_limit"]
                 member_answer.append(
                     None
                     if member_limit is None
-                    else member_limit - float(member_used or 0)
+                    else member_limit - float(row._mapping["member_used"] or 0)
                 )
         if can_cache:
             remember(

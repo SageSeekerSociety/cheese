@@ -153,7 +153,7 @@ class PlaceResolver:
                         TopicMembership.member_handle == member,
                     ),
                 )
-            width = 3 if member is not None else 2
+            width = len(stmt.column_descriptions)
             record = None
             if ride_along is not None:
                 stmt, record = ride_along(stmt)
