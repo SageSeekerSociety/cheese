@@ -58,7 +58,8 @@ describe('AdminCiActivityPageView', () => {
     const { getByText } = mount({ board, jobs: CRV_CI_JOBS })
 
     // The viewer's local time, whatever zone the test runs in.
-    getByText(`ciActivity.computedAt {"at":"${clockTime(Date.parse(board.generated_at))}"}`)
+    const at = clockTime(Date.parse(board.generated_at))
+    getByText('ciActivity.computedAt ' + JSON.stringify({ at }))
   })
 
   it('says how far back a backfilling sweep reaches and why it stopped', () => {
