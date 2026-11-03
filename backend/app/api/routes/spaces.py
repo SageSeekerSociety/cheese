@@ -33,6 +33,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
 )
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.space import permissions as space_seats
 from app.domain.space.analytics_service import SpaceAnalyticsService
@@ -497,7 +498,7 @@ async def list_space_members(
         and space.open_scope is not None
         and not await space_seats.runs(db, space_id, auth_user.user_id)
     ):
-        raise ForbiddenError("Only the admins of an open space see its members")
+        raise ForbiddenError(say("openSpaceMembersAdminsOnly"))
     members = await service.list_members(space_id)
     items = await _hydrate_members(
         members,

@@ -12,13 +12,14 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service, require_reviewed_space
 from app.api.space_payloads import _build_full_space_payload
 from app.api.write_access import Can
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.space.access_service import SpaceAccessService
 from app.domain.space.permissions import Permission as SpacePermission
@@ -39,10 +40,37 @@ class SpaceAccessRequest(BaseModel):
     scope: list[str] = Field(default_factory=list)
 
 
+class SpaceOpenRequestView(BaseModel):
+    """The space's latest request to open, as its settings page shows it."""
+
+    id: int
+    scope: list[str]
+    status: Literal["PENDING", "APPROVED", "REJECTED"]
+    reason: str | None
+    createdAt: str
+    reviewedAt: str | None
+
+
+class SpaceAccessView(BaseModel):
+    """The fields of the space payload this route is about; the reply carries
+    the whole space payload (``_build_full_space_payload``)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    openScope: list[str] | None
+    openRequest: SpaceOpenRequestView | None
+
+
+class SpaceAccessReply(BaseModel):
+    space: SpaceAccessView
+
+
 @router.put(
     "/{spaceId}/access",
     summary="Set who reads a space",
     dependencies=[Can(SpacePermission.edit_settings)],
+    **typed_response(SpaceAccessReply),
 )
 async def put_space_access(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -54,7 +82,7 @@ async def put_space_access(
     access = SpaceAccessService(db)
     if payload.mode == "members":
         if payload.scope:
-            raise BadRequestError("A members-only space takes no scope")
+            raise BadRequestError(say("openSpaceMembersNoScope"))
         space = await access.set_members_only(space_id)
     else:
         space = await access.open(

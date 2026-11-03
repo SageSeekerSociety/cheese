@@ -21,6 +21,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
+from app.core.sentences import say
 from app.domain.space.models import (
     Space,
     SpaceOpenRequest,
@@ -46,14 +47,14 @@ def normalize_scope(raw: Sequence[str]) -> list[str]:
             continue
         if not _SUFFIX.match(value):
             raise BadRequestError(
-                f"Invalid email suffix: {entry}", data={"suffix": entry}
+                say("openSpaceSuffixInvalid", suffix=entry), data={"suffix": entry}
             )
         if value not in scope:
             scope.append(value)
     if not scope:
-        raise BadRequestError("An open space needs at least one email suffix")
+        raise BadRequestError(say("openSpaceScopeRequired"))
     if len(scope) > MAX_SUFFIXES:
-        raise BadRequestError(f"An open space takes at most {MAX_SUFFIXES} suffixes")
+        raise BadRequestError(say("openSpaceScopeTooLong", max=MAX_SUFFIXES))
     return scope
 
 
@@ -93,7 +94,7 @@ class SpaceAccessService:
         or rewrites the pending request and leaves the space as it is."""
         space = await self._locked_space(space_id)
         if space.review_status != "APPROVED":
-            raise ConflictError("A space under review cannot be opened")
+            raise ConflictError(say("openSpaceUnderReview"))
         wanted = normalize_scope(scope)
         current = space.open_scope
         if current is not None and all(_covered(current, s) for s in wanted):
@@ -153,11 +154,9 @@ class SpaceAccessService:
         if request is None:
             return None
         if shown_scope is None or list(shown_scope) != list(request.scope):
-            raise ConflictError(
-                "The request changed after it was shown; reload and review it again"
-            )
+            raise ConflictError(say("openRequestChanged"))
         if not approved and not reason.strip():
-            raise BadRequestError("A rejection reason is required")
+            raise BadRequestError(say("openRequestReasonRequired"))
         now = datetime.now(UTC)
         request.status = (
             SpaceOpenRequestStatus.APPROVED.value
