@@ -598,7 +598,7 @@ async def lifespan(application: FastAPI):
         freeze_after_startup()
         # And let the middle generation fill before it is promoted, so full
         # collections — which walk the whole live heap with the loop held — run
-        # a fifth as often (`core/gc_tuning.py`).
+        # less often (`core/gc_tuning.py` says how much, and why).
         tune_after_startup()
         try:
             yield
