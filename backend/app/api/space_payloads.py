@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
+from app.domain.space.access_service import SpaceAccessService
 from app.domain.space.services import SpaceService
 from app.domain.task.protocol import Teaching
 from app.domain.user.repositories import (
@@ -27,6 +28,7 @@ class SpaceRow(Protocol):
     visible_task_limit: Mapped[int | None]
     default_category_id: Mapped[int | None]
     task_templates: Mapped[list]
+    open_scope: Mapped[list[str] | None]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 
@@ -240,6 +242,9 @@ def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> di
         "visibleTaskLimit": space.visible_task_limit,
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
+        # NULL: members-only. A list: open to everyone signed in whose email
+        # is in it (``app.domain.space.access_service``).
+        "openScope": list(space.open_scope) if space.open_scope is not None else None,
         # 空间级「给 AI 队友的指导」(#944) — the settings form reads it back, so it
         # has to be here rather than only on the write path. `include_private` is
         # set only where the caller is a board manager (the settings page).
@@ -457,4 +462,22 @@ async def _build_full_space_payload(
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]
+    if include_private:
+        # The settings page shows whether opening the space is waiting for
+        # review, or why it was sent back; nobody else is told.
+        request = await SpaceAccessService(db).latest_request(space.id)
+        space_data["openRequest"] = (
+            None
+            if request is None
+            else {
+                "id": request.id,
+                "scope": list(request.scope),
+                "status": request.status,
+                "reason": request.reason,
+                "createdAt": request.created_at.isoformat(),
+                "reviewedAt": (
+                    request.reviewed_at.isoformat() if request.reviewed_at else None
+                ),
+            }
+        )
     return space_data

@@ -14,9 +14,10 @@ from app.domain.user.repositories import UserRepository
 class TaskVisibilityService:
     """谁看得见一道题（也就是谁领得了它）。
 
-    题目只给它那块板里的人：出题者、本版管理员、已经领过它的人（个人领或经小队
-    领）总看得见；其余的人先得是这块板的成员，题目开了可见范围（邮箱域名白名单）
-    时还得在名单里。不在板里的人既读不到它，也在列表和搜索里找不到它。
+    题目只给读得到它那块板的人：出题者、本版管理员、已经领过它的人（个人领或经
+    小队领）总看得见；其余的人先得读得到这块板（成员，或开放空间范围内的人，判据
+    是 ``SpaceRepository.build_reader_predicate``），题目开了可见范围（邮箱域名白
+    名单）时还得在名单里。不在板里的人既读不到它，也在列表和搜索里找不到它。
     ``can_view_task`` 与 ``build_visibility_predicate`` 是同一条规则的两种形态。
     """
 
@@ -35,7 +36,7 @@ class TaskVisibilityService:
             return True
         if await self.is_participant(task_id=task.id, user_id=user_id):
             return True
-        if not await self._space_repo.is_member(
+        if not await self._space_repo.is_reader(
             space_id=task.space_id, user_id=user_id
         ):
             return False
@@ -79,7 +80,7 @@ class TaskVisibilityService:
                     TaskAccessDomain.domain == email_domain,
                 )
             )
-        in_space = SpaceRepository.build_member_of_predicate(
+        in_space = SpaceRepository.build_reader_of_predicate(
             space_id=Task.space_id, user_id=user_id
         )
 

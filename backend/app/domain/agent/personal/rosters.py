@@ -22,6 +22,14 @@ from app.domain.user.services import names_by_handles, usernames_by_ids
 
 #: A team role, by the int the team domain stores.
 _TEAM_ROLE = {0: "所有者", 1: "管理员", 2: "成员"}
+# Where the person sits in a space they read (``space_seats.seat_of``); an open
+# space they read because their email is in its scope has no member row.
+_SEAT = {
+    space_seats.Seat.owner: "你是管理员",
+    space_seats.Seat.admin: "你是管理员",
+    space_seats.Seat.member: "你是成员",
+    space_seats.Seat.in_scope: "开放空间，你的邮箱在它的范围内",
+}
 #: The most people one read lists; it says how many more there are.
 LISTED = 100
 
@@ -67,15 +75,12 @@ async def my_teams(session: AsyncSession, user_id: int) -> Read:
 
 
 async def my_spaces(session: AsyncSession, user_id: int) -> Read:
-    """The spaces the person is in or runs, and whether they run each."""
+    """The spaces the person reads, and where they sit in each."""
     spaces = SpaceService.for_routes(session)
     lines: list[str] = []
     for found in await spaces.list_spaces(limit=LISTED, member_user_id=user_id):
-        runs = await space_seats.runs(session, found.id, user_id)
-        lines.append(
-            f"- 空间「{found.name}」（spaces/{found.id}），"
-            + ("你是管理员" if runs else "你是成员")
-        )
+        seat = await space_seats.seat_of(session, found.id, user_id)
+        lines.append(f"- 空间「{found.name}」（spaces/{found.id}），" + _SEAT.get(seat, ""))
     return Read("你加入的空间", "\n".join(lines) if lines else "你不在任何空间里。")
 
 
@@ -99,7 +104,7 @@ async def space(session: AsyncSession, user_id: int, space_id: int) -> Read:
     """A space the person is in or runs: its managers and its members."""
     runs = await space_seats.runs(session, space_id, user_id)
     spaces = SpaceService.for_routes(session)
-    if not runs and not await spaces.is_member(space_id=space_id, user_id=user_id):
+    if not runs and not await spaces.is_reader(space_id=space_id, user_id=user_id):
         raise NotFoundError.for_resource("space", str(space_id))
     label = (await SpaceLabels(session).describe([space_id])).get(space_id)
     managers = sorted(await space_seats.managers(session, space_id))

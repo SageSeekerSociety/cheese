@@ -33,10 +33,13 @@ covers:
 
 ## 谁能看见，谁能管理 {#membership}
 
-「谁能看见这块题目版」这个问题，答案**只有成员资格一个来源，没有可见性档位**（模型注释里写得很直白：there is no visibility tier）。两件事要分开：
+「谁能看见这块题目版」只有一条判据：`SpaceRepository.build_reader_predicate`。列表按它过滤，单块板的席位（`permissions.seat_of`）和 `is_reader` 也按它的分支判，所以「列表里没有」和「直接打开是 404」是同一个答案。它有三个分支：
 
-- `SpaceMember` 一行是「这块板子归我看」。成员资格本身就是可见性，所以移除一个成员**什么都不带走**——不带走他的题目、提交和项目。
+- `SpaceMember` 一行是「这块板子归我看」。移除一个成员**什么都不带走**——不带走他的题目、提交和项目。
 - `SpaceAdminRelation` 一行（`OWNER = 0` / `ADMIN = 1`）是「我可以管理它」。创建者和管理员不写 `SpaceMember` 行也照样看得见。
+- **开放空间**：`Space.open_scope` 是一组注册邮箱后缀（如 `["ruc.edu.cn"]`），`NULL` 是只对成员开放（默认）。注册邮箱的域名等于其中一个、或以「`.` + 其中一个」结尾的登录用户，坐的是 `Seat.in_scope`，权限和成员一样（看、出题），领题按题目自己的判据走。他们**不写 `SpaceMember` 行**——看、领题、出题都不写；开放空间里的 `SpaceMember` 行只是管理员点名加进来的范围外的人。题目自己的邮箱域名限制（`access_control_enabled`）在开放空间里照样生效。
+
+开放空间的设置在 `access_service.py`，路由是 `PUT /spaces/{id}/access`（`edit_settings`）。改回只对成员开放、或把范围收窄（新范围的每个后缀都被现在的范围覆盖），保存即生效；设为开放或扩大范围则写一条 `SpaceOpenRequest`（`space_open_request` 表，每块板最多一条 `PENDING`），平台审核通过才把范围写进 `open_scope`，在那之前空间保持原样（见[审批](#review)）。
 
 `SpaceMember` 上有一条必须留意的索引：`uq_space_member_active` 是 `(space_id, user_id)` 在 `deleted_at IS NULL` 上的部分唯一索引。没有它，两个请求同时读到「还不是成员」就都会写，之后每个 `get_member` 都抛 `MultipleResultsFound`——一次文档里写着「重复点等于没点」的操作变成一个 500。部分索引的另一个用处：软删掉的行是「移除」的记录，**重新加入是复活它而不是加第二行**，那些行在索引之外，所以移除不会挡住随后的加入。另有一条非部分索引 `ix_space_member_space_user` 服务「连删除行一起按对读」的那个读法（那正是它存在的理由）。
 
@@ -54,6 +57,8 @@ covers:
 
 `Space.review_status` 默认 `APPROVED`（为了既有数据），而**公开的创建路由把新建的置为 `PENDING`**（`api/routes/spaces.py`）。所以新建的空间要等平台审核：默认值服务历史数据，创建那条路写死未审批。`SpaceReviewService`（`review_service.py`）管状态迁移，裁定人与时间写回 `Space.reviewed_by` / `reviewed_at`；`review_reason` 是驳回时给人看的那句话。
 
+设为开放空间（或扩大范围）也要平台审核，和新建空间走同一个后台队列 `/admin/spaces`：`SpaceReviewService.list_reviews` 把两种申请按最近改动合在一页里，每条用 `kind` 区分（`create` / `open`）。开放申请按它自己的 id 审（`POST /admin/spaces/open-requests/{id}/review`），驳回同样要一句理由，空间的设置页读得到这条申请的状态和理由（`openRequest`，只给管理员）。
+
 ## 管理员看板 {#analytics}
 
 `space/` 下另外几个服务是老师与管理员那一侧：`analytics_service` / `analytics_view_service`（纯计算与 CSV 导出分在 `analytics_compute` / `analytics_participant_compute`；视图服务本身只剩门面，读数据、参数解析、告警计数、报告组装分在 `analytics_view_queries` / `analytics_view_params` / `analytics_view_alerts` / `analytics_view_reports`，子模块一律回调 `service._x(...)`，所以补丁点依然打在 service 上）、`learning_service`（学习维度：成员怎么与 AI 协作、卡在哪，issue #945）、`member_publishing_service`（题目列表「我发布的」那一格，含还没过审的题）、`rank_service`、`tags_service`。
@@ -67,4 +72,4 @@ covers:
 - **`docs/spec.md` 的空间/分类两级定义是旧的**。代码这边 `Space` = 一门课、`SpaceCategory` = 课里的一个分组；协议与壳模块里还写着「项目集」的地方，指的都是 `SpaceCategory`。
 - **`SpaceMember` 的 `NULL` invite_code 不等于「没有码」**，下游不要替它下结论。
 - **协议字段不许直接读列**。`resource_pack` / `conditions` / `default_role` 要经过 `task.protocol.resolve` 才拿到题目继承与整键覆盖后的结果。
-- **`visible_task_limit` 不是权限**。它是对成员露出前几道的截断，admin 与创建者不受它影响；真正的授权在成员资格与 `SpaceAdminRelation` 上。
+- **`visible_task_limit` 不是权限**。它是对成员露出前几道的截断，admin 与创建者不受它影响；真正的授权在 `build_reader_predicate` 的三个分支上。

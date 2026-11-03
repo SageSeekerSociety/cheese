@@ -16,6 +16,24 @@ export type Space = {
   reviewReason?: string | null
   /** 这块板的「AI 队友辅导」：题目上的设置和它同时生效。全空 = 没说。 */
   teaching?: SpaceTeaching
+  /**
+   * 谁读得到这块板。`null` 是只对成员开放；一组邮箱后缀（`ruc.edu.cn`）是开放空间：
+   * 注册邮箱在范围内的登录用户不用加入就能看、领题、出题。
+   */
+  openScope?: string[] | null
+  /** 最近一次「设为开放空间」的申请；只有管理员读得到，没申请过是 `null`。 */
+  openRequest?: SpaceOpenRequest | null
+}
+
+/** 把空间设为开放空间（或扩大范围）的申请，平台审核通过前空间保持原样。 */
+export type SpaceOpenRequest = {
+  id: number
+  scope: string[]
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  /** 被驳回时审核人写的原因。 */
+  reason: string | null
+  createdAt: string
+  reviewedAt: string | null
 }
 
 /** AI 队友怎么帮学生：引导为主、讲解与示例、先明确需求再实现、不加限制。 */

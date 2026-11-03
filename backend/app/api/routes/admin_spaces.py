@@ -7,7 +7,8 @@ from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.domain.space.review_service import SpaceReviewService
+from app.domain.space.access_service import SpaceAccessService
+from app.domain.space.review_service import SpaceReviewService, open_request_view
 
 router = APIRouter(prefix="/admin/spaces", tags=["admin"], dependencies=[ROUTE_DECIDES])
 
@@ -25,7 +26,7 @@ async def list_space_reviews(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
 ) -> dict:
-    items = await SpaceReviewService(db).list_applications(
+    items = await SpaceReviewService(db).list_reviews(
         status=status, offset=offset, limit=limit
     )
     return ok({"items": items})
@@ -43,5 +44,19 @@ async def review_space(
     # publish into the space on its next request and still find it PENDING
     # ("Space must be approved before creating tasks"). Same reason as the
     # commit in ``create_space``.
+    await db.commit()
+    return ok({"application": item})
+
+
+@router.post("/open-requests/{request_id}/review")
+async def review_space_open_request(
+    request_id: int, body: ReviewSpaceRequest, db: DbSession, handle: PlatformAdminDep
+) -> dict:
+    request, space = await SpaceAccessService(db).review(
+        request_id, approved=body.approved, reason=body.reason, reviewer=handle
+    )
+    item = open_request_view(request, space)
+    # Commit before answering, as ``review_space`` does: an owner told the
+    # space is open sends people to it on the next request.
     await db.commit()
     return ok({"application": item})

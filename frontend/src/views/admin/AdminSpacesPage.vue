@@ -8,7 +8,8 @@ import AdminSpacesPageView from './AdminSpacesPageView.vue'
 
 import { SpacesApi } from '@/api/spaces'
 
-// 管理后台的「空间申请」（`/admin/spaces`）：待平台管理员过目的开版申请。
+// 管理后台的「空间申请」（`/admin/spaces`）：待平台管理员过目的开版申请，和把已有空间
+// 设为开放空间的申请（`kind: 'open'`）。
 // 取数与写在这一半，画法在 `AdminSpacesPageView.vue`。
 //
 // 这一版换的是**壳**（做法不变）：
@@ -85,7 +86,12 @@ async function decide(item: SpaceApplication, approved: boolean) {
   saving.value = true
   writeError.value = ''
   try {
-    await SpacesApi.review(item.id, approved, reason.value.trim())
+    // 一页里有两种申请：新建的空间按空间审，设为开放空间的按那条申请自己的 id 审。
+    if (item.kind === 'open' && item.requestId != null) {
+      await SpacesApi.reviewOpenRequest(item.requestId, approved, reason.value.trim())
+    } else {
+      await SpacesApi.review(item.id, approved, reason.value.trim())
+    }
     selected.value = null
     reason.value = ''
     await load()

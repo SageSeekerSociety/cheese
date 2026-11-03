@@ -1,7 +1,16 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnExpressionArgument, Select, and_, exists, func, or_, select
+from sqlalchemy import (
+    ColumnExpressionArgument,
+    Select,
+    and_,
+    exists,
+    func,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -30,6 +39,7 @@ from app.domain.space.models import (
     SpaceUserRank,
 )
 from app.domain.tag.models import Tag
+from app.domain.user.models import User
 
 __all__ = [
     "SpaceAdminRelationRepository",
@@ -67,8 +77,8 @@ class SpaceRepository:
             remember(self._session, key, space, tables=frozenset({"space"}))
         return space
 
-    async def is_member(self, *, space_id: int, user_id: int) -> bool:
-        """The single-space form of ``build_membership_predicate``.
+    async def is_reader(self, *, space_id: int, user_id: int) -> bool:
+        """The single-space form of ``build_reader_predicate``.
 
         A direct link and the list ask one question, so a board cannot be
         hidden from the list and still answer at its own address.
@@ -76,7 +86,18 @@ class SpaceRepository:
         stmt = select(Space.id).where(
             Space.id == space_id,
             Space.deleted_at.is_(None),
-            self.build_membership_predicate(user_id=user_id),
+            self.build_reader_predicate(user_id=user_id),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none() is not None
+
+    async def in_open_scope(self, *, space_id: int, user_id: int) -> bool:
+        """The single-space form of ``build_open_scope_predicate``: whether the
+        space is open and the person's email is in its scope."""
+        stmt = select(Space.id).where(
+            Space.id == space_id,
+            Space.deleted_at.is_(None),
+            self.build_open_scope_predicate(user_id=user_id),
         )
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none() is not None
@@ -84,7 +105,8 @@ class SpaceRepository:
     async def list_spaces(
         self, *, limit: int, offset: int = 0, member_user_id: int
     ) -> Sequence[Space]:
-        """The 题目版 this user is in — created, administered, or joined.
+        """The 题目版 this user reads — created, administered, joined, or open
+        to their email's scope.
 
         There is deliberately no unfiltered variant: a caller that forgets the
         viewer would hand back a board nobody invited them to, and the list
@@ -95,7 +117,7 @@ class SpaceRepository:
         stmt: Select[tuple[Space]] = select(Space).where(
             Space.deleted_at.is_(None),
             Space.review_status == "APPROVED",
-            SpaceRepository.build_membership_predicate(user_id=member_user_id),
+            SpaceRepository.build_reader_predicate(user_id=member_user_id),
         )
         stmt = stmt.order_by(Space.created_at.desc()).limit(limit).offset(offset)
         result = await self._session.execute(stmt)
@@ -105,7 +127,7 @@ class SpaceRepository:
         stmt = select(func.count(Space.id)).where(
             Space.deleted_at.is_(None),
             Space.review_status == "APPROVED",
-            SpaceRepository.build_membership_predicate(user_id=member_user_id),
+            SpaceRepository.build_reader_predicate(user_id=member_user_id),
         )
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
@@ -123,17 +145,18 @@ class SpaceRepository:
         return {int(row[0]): row[1] for row in result.all()}
 
     @staticmethod
-    def build_membership_predicate(*, user_id: int) -> ColumnElement[bool]:
-        """「这个题目版是不是他的」, as a SQL predicate over Space.
+    def build_reader_predicate(*, user_id: int) -> ColumnElement[bool]:
+        """「他读得到这个题目版」, as a SQL predicate over Space.
 
         The one rule, in one place: a list query filters by it and a direct
-        link is refused by it, so hiding a board and refusing to read it are
-        the same answer rather than two that agree today.
+        link is refused by it (``is_reader``, and the seat in
+        ``app.domain.space.permissions``), so hiding a board and refusing to
+        read it are the same answer rather than two that agree today.
 
-        Both branches are needed and neither is redundant. The member row is
-        what joining writes; the admin relation is how a board's creator and
-        its managers see their own board without anyone having had to write
-        one — which is also every board that predates membership existing.
+        Three branches, none redundant. The member row is what joining or an
+        admin naming someone writes; the admin relation is how a board's
+        creator and its managers see their own board without anyone having had
+        to write one; the open scope is everyone an open space reads to.
         """
         member_exists = exists().where(
             SpaceMember.space_id == Space.id,
@@ -145,19 +168,64 @@ class SpaceRepository:
             SpaceAdminRelation.user_id == user_id,
             SpaceAdminRelation.deleted_at.is_(None),
         )
-        return or_(member_exists, admin_exists)
+        return or_(
+            member_exists,
+            admin_exists,
+            SpaceRepository.build_open_scope_predicate(user_id=user_id),
+        )
 
     @staticmethod
-    def build_member_of_predicate(
+    def build_open_scope_predicate(*, user_id: int) -> ColumnElement[bool]:
+        """「这是开放空间，他的注册邮箱在范围里」, as a SQL predicate over Space.
+
+        In scope means the email's domain is one of the space's suffixes or
+        ends in ``.`` plus one (``ruc.edu.cn`` takes ``mails.ruc.edu.cn``). The
+        domain is ``user.email_domain``, or the part after ``@`` for a row
+        written before that column was filled — the same reading
+        ``resolve_user_email_domain`` gives a problem's own domain list.
+        Suffixes are stored lower-case and hold only letters, digits, ``-``
+        and ``.`` (``app.domain.space.access_service``), so one cannot act as
+        a ``LIKE`` wildcard.
+        """
+        domain = (
+            select(
+                func.lower(
+                    func.coalesce(
+                        User.email_domain, func.split_part(User.email, "@", 2)
+                    )
+                )
+            )
+            .where(User.id == user_id, User.deleted_at.is_(None))
+            .scalar_subquery()
+        )
+        suffix = func.jsonb_array_elements_text(Space.open_scope).table_valued(
+            "value"
+        )
+        return and_(
+            Space.open_scope.is_not(None),
+            exists(
+                select(literal(1))
+                .select_from(suffix)
+                .where(
+                    or_(
+                        domain == suffix.c.value,
+                        domain.like(literal("%.") + suffix.c.value),
+                    )
+                )
+            ),
+        )
+
+    @staticmethod
+    def build_reader_of_predicate(
         *, space_id: ColumnExpressionArgument[int], user_id: int
     ) -> ColumnElement[bool]:
-        """「他在 ``space_id`` 这块板里」, as a SQL predicate over whatever row
-        carries that column — ``is_member`` for a query over another table, such
-        as a board's 题目 asking whether the reader is in their board."""
+        """「他读得到 ``space_id`` 这块板」, as a SQL predicate over whatever row
+        carries that column — ``is_reader`` for a query over another table, such
+        as a board's 题目 asking whether the reader may see their board."""
         return exists().where(
             Space.id == space_id,
             Space.deleted_at.is_(None),
-            SpaceRepository.build_membership_predicate(user_id=user_id),
+            SpaceRepository.build_reader_predicate(user_id=user_id),
         )
 
     async def exists_by_name(self, name: str) -> bool:

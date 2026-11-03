@@ -1,7 +1,14 @@
 import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
 export type SpaceApplication = {
+  /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
+  kind: 'create' | 'open'
+  /** 空间的 id（两种申请都是）。 */
   id: number
+  /** `open` 申请自己的 id，审核时用它。 */
+  requestId?: number
+  /** `open` 申请要开放给的邮箱后缀。 */
+  openScope?: string[]
   avatarId?: number | null
   name: string
   intro: string
@@ -20,6 +27,11 @@ export type PostSpaceRequestData = {
   avatarId?: number
   taskTemplates?: string
   visibleTaskLimit?: number | null
+}
+
+export type PutSpaceAccessRequestData = {
+  mode: 'members' | 'open'
+  scope: string[]
 }
 
 export type PostSpaceJoinRequestData = {

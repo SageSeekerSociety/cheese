@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -51,8 +52,19 @@ class Space(Base):
     enable_rank: Mapped[bool] = mapped_column(
         "enable_rank", Boolean, nullable=False, default=False
     )
-    # There is no visibility tier. Who can see a 题目版 exists is answered by
-    # membership and nothing else — see ``SpaceMember``.
+    # Who reads a 题目版 besides its owner, admins and members. NULL is a
+    # members-only space, the default: its ``SpaceMember`` rows are everyone
+    # else who sees it. A list of registered-email suffixes (``["ruc.edu.cn"]``)
+    # is an open space: every signed-in person whose email domain is one of
+    # them, or ends in ``.`` plus one, reads it and takes part without joining,
+    # and its member rows are only the people outside the scope an admin named.
+    # Written only by an approved ``SpaceOpenRequest`` (widening) or by the
+    # owner narrowing it; the rule is ``SpaceRepository.build_reader_predicate``.
+    # `none_as_null`: None writes SQL NULL, not the JSON scalar `null`, which
+    # the predicate would try to read as an array.
+    open_scope: Mapped[list[str] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
     )
@@ -83,6 +95,59 @@ class Space(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class SpaceOpenRequestStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class SpaceOpenRequest(Base):
+    """A space owner's request to open the space to an email-suffix scope.
+
+    Opening a space widens who reads it from its members to everyone in the
+    scope, so it waits for the platform's review, as a new space does; until a
+    reviewer approves it the space keeps the mode it had. Approving copies
+    ``scope`` onto ``Space.open_scope``. At most one request per space is
+    pending; asking again while one waits rewrites that one, and going back to
+    members-only deletes it, since nobody has reviewed it yet.
+    """
+
+    __tablename__ = "space_open_request"
+    __table_args__ = (
+        Index("ix_space_open_request_space_id", "space_id"),
+        Index(
+            "uq_space_open_request_pending",
+            "space_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED')",
+            name="ck_space_open_request_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: The suffixes the space would read to once approved.
+    scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    #: Why a reviewer sent it back; NULL otherwise.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The reviewer's handle.
+    reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
 
 
@@ -164,8 +229,8 @@ class SpaceCategory(Base):
 class SpaceMaterialVisibility(str, Enum):
     """谁能看到这一份空间资料。
 
-    两档，没有第三档：「所有成员」是**这个板子里的人**（``SpaceRepository.is_member``
-    判的那一批）都能看；「仅管理员」只有所有者与管理员看得到，成员看清单时这一行
+    两档，没有第三档：「所有成员」是**读得到这个板子的人**（``SpaceRepository.is_reader``
+    判的那一批，开放空间里包括范围内的人）都能看；「仅管理员」只有所有者与管理员看得到，成员看清单时这一行
     根本不出现。档位是**读**的开关，不是写的开关 —— 两档都由管理员传。
     """
 
@@ -352,7 +417,11 @@ class SpaceClassificationTagRelation(Base):
 
 
 class SpaceMember(Base):
-    """A user who is *in* a 题目版 — the whole of who can see it.
+    """A user who is *in* a 题目版. In a members-only space these rows are the
+    whole of who sees it besides its managers; in an open space (see
+    ``Space.open_scope``) they are the people outside its scope an admin named,
+    who then read it as anyone in scope does. Nobody gets a row by reading,
+    claiming or publishing in an open space.
 
     Membership and the admin relation are two different questions: this row
     says "this 题目版 is mine to see and I am counted among its members",

@@ -42,6 +42,7 @@ const spaceId = computed(() => String(route.params.spaceId))
 
 const SECTIONS = [
   { name: 'SpacesDetailSettingsBasic', label: 'spaces.settings.tabs.basic', icon: 'mdi-information-outline' },
+  { name: 'SpacesDetailSettingsAccess', label: 'spaces.settings.tabs.access', icon: 'mdi-earth' },
   { name: 'SpacesDetailSettingsCategories', label: 'spaces.settings.tabs.categories', icon: 'mdi-shape-outline' },
   { name: 'SpacesDetailSettingsTemplates', label: 'spaces.settings.tabs.templates', icon: 'mdi-file-document-outline' },
   { name: 'SpacesDetailSettingsInviteCodes', label: 'spaces.settings.tabs.inviteCodes', icon: 'mdi-ticket-outline' },
