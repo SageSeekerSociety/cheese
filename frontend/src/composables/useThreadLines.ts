@@ -138,7 +138,7 @@ export function useThreadLines(opts: {
             participants: row.participants,
             tasks: row.tasks,
             failed: row.failed,
-            failed_code: row.failed_code,
+            failed_notice: row.failed_notice,
             replying: shown.thread?.replying,
           }
           opts.timeline.replace({ ...shown, thread: summary })

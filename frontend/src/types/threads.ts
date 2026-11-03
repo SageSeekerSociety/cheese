@@ -26,6 +26,13 @@ export interface ThreadTask {
 
 /** 主线上一条消息下面的支线：它自己的 id（一段独立的对话），回复数、最后一句、谁说过
  * 话（挂着的那条消息的作者在前）、出了哪几件任务，以及此刻哪几位 AI 队友正在里面回答。 */
+/** 一轮出错时平台落下的那一句：`content` 是存下的中文原句，`i18n.content` 是它的句子键
+ *  （`noticeText.ts` 的 `responseText` 按读者的语言重说）。 */
+export interface ThreadFailedNotice {
+  content: string
+  i18n?: { content?: unknown }
+}
+
 export interface ThreadSummary {
   id: string
   room_id: string
@@ -37,8 +44,9 @@ export interface ThreadSummary {
   tasks: ThreadTask[]
   /** 最后一条回复之后，AI 队友在这条支线里的一轮出错了。 */
   failed?: boolean
-  /** 那一轮为什么出错：`credits_exhausted` 是额度用完，重试没有用。 */
-  failed_code?: string | null
+  /** 那一轮出错时落进支线的那句（存下的原句和它的句子键）：主线上那一行照它说，
+   *  和支线里那一行是同一句。 */
+  failed_notice?: ThreadFailedNotice | null
   /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */
   replying?: string[]
   /** 收起来的时刻（`thread/recycle.py`），开着的是 null。收起来的支线仍然读得到，
