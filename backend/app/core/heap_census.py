@@ -12,8 +12,10 @@ objects: 270 ms against 160 ms on the dev box), so it runs only when an
 admin asks for it
 (`/admin/stats/performance?heap=true`), never on a timer. Asked with
 `&owners=true`, it also traces who holds a sample of the leading types, in
-two more passes over the heap: about five times as long (610,000 objects:
-710 ms against 140 ms on the dev box).
+up to three more passes over the heap: about five times as long (610,000
+objects: 710 ms against 140 ms on the dev box). Those passes are Python, so
+the route runs the census in a worker thread and the loop is handed back
+between bytecodes; the first count is C and holds it throughout.
 """
 
 import gc
@@ -35,6 +37,8 @@ def _holders(objects: list, wanted: dict[int, object]) -> dict[int, list]:
     """For each object in ``wanted`` (by id), the objects that refer to it,
     found in one pass over ``objects``."""
     found: dict[int, list] = {key: [] for key in wanted}
+    if not found:
+        return found
     for obj in objects:
         for ref in gc.get_referents(obj):
             held = found.get(id(ref))
@@ -94,8 +98,8 @@ def _owners(objects: list, by_type: Counter) -> list[dict]:
 def heap_census(top: int = TOP, *, owners: bool = False) -> dict:
     """How many objects the collector tracks outside the frozen startup heap,
     how many are frozen, and the ``top`` types by count; with ``owners``,
-    also who holds a sample of the leading types (two more passes over the
-    heap, so several times as long)."""
+    also who holds a sample of the leading types (up to three more passes
+    over the heap, so several times as long)."""
     started = time.perf_counter()
     objects = gc.get_objects()
     # Counted by the type object in C (`map`, `Counter`'s own loop), named
