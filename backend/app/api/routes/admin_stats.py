@@ -241,6 +241,7 @@ async def performance_stats(
     handle: PlatformAdminDep,
     request: Request,
     heap: Annotated[bool, Query()] = False,
+    owners: Annotated[bool, Query()] = False,
 ) -> dict:
     """第四类：**这一刻**的接口耗时，按路由，外加投递与事件积压。
 
@@ -262,8 +263,9 @@ async def performance_stats(
     snap["session_host"] = await session_host_snapshot()
     # 要的时候才数：数一遍和做一次完整回收一样久，也一样占着事件循环
     # （`core/heap_census.py`）。
+    # `owners` 再追查排前几类是谁持有的，多扫两遍堆，要久几倍。
     if heap:
-        snap["heap"] = heap_census()
+        snap["heap"] = heap_census(owners=owners)
     return ok(snap)
 
 
