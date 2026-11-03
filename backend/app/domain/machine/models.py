@@ -509,12 +509,13 @@ class SandboxUsage(Base):
         DateTime(timezone=True), nullable=True
     )
     # Of that memory: what is anonymous (a process's own) and what is page
-    # cache; how much of the host's swap it uses (always 0 while a sandbox's
-    # `memory.swap.max` is 0); and how many times the kernel killed one of its
+    # cache; how much of the host's swap it uses and may use; and how many times the kernel killed one of its
     # processes for running out of memory since it started.
     anon_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     file_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The swap it may use (`memory.swap.max`); None where unlimited.
+    swap_max_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     oom_kills: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

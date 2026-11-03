@@ -333,6 +333,7 @@ export const CRV_MACHINES: MachinesOverview = {
             anon_bytes: 2.3 * 2 ** 30,
             file_bytes: 0.3 * 2 ** 30,
             swap_bytes: 0,
+            swap_max_bytes: 2 ** 30,
             oom_kills: 0,
             memory_read_at: '2026-10-12T09:59:20Z',
             disk_bytes: 4.2e9,

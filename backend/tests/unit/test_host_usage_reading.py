@@ -97,6 +97,7 @@ def test_each_sandbox_memory_is_reported_under_its_home_name(kernel):
     (group / "memory.peak").write_text("2147483648\n")
     (group / "memory.stat").write_text("anon 805306368\nfile 268435456\nslab 1024\n")
     (group / "memory.swap.current").write_text("1048576\n")
+    (group / "memory.swap.max").write_text("1073741824\n")
     (group / "memory.events").write_text(
         "low 0\nhigh 0\nmax 3\noom 1\noom_kill 2\noom_group_kill 1\n"
     )
@@ -104,6 +105,8 @@ def test_each_sandbox_memory_is_reported_under_its_home_name(kernel):
     older = kernel / "cgroup" / "cheese-sandboxes" / "older"
     older.mkdir()
     (older / "memory.current").write_text("5\n")
+    # A frozen sandbox may swap out all it holds: unlimited reads as None.
+    (older / "memory.swap.max").write_text("max\n")
 
     found = {s["resource"]: s for s in sandbox_home.sandboxes()}
 
@@ -114,6 +117,7 @@ def test_each_sandbox_memory_is_reported_under_its_home_name(kernel):
         "anon": 805306368,
         "file": 268435456,
         "swap": 1048576,
+        "swap_max": 2**30,
         "oom_kill": 2,
     }
     # Every one of them is left out rather than guessed at when absent.
@@ -121,4 +125,5 @@ def test_each_sandbox_memory_is_reported_under_its_home_name(kernel):
     assert found["older"]["anon"] is None
     assert found["older"]["file"] is None
     assert found["older"]["swap"] is None
+    assert found["older"]["swap_max"] is None
     assert found["older"]["oom_kill"] is None

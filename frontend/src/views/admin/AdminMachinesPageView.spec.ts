@@ -266,6 +266,7 @@ describe('机器', () => {
         anon_bytes: 2.4 * GIB,
         file_bytes: 0.3 * GIB,
         swap_bytes: 0,
+        swap_max_bytes: null,
         oom_kills: 0,
         memory_read_at: '2026-10-12T09:59:30Z',
         disk_bytes: 4e9,
@@ -301,6 +302,7 @@ describe('机器', () => {
         anon_bytes: 2.4 * GIB,
         file_bytes: 0.3 * GIB,
         swap_bytes: 0.5 * GIB,
+        swap_max_bytes: null,
         oom_kills: 2,
         memory_read_at: '2026-10-12T09:59:30Z',
         disk_bytes: 4e9,
@@ -314,6 +316,31 @@ describe('机器', () => {
     await fireEvent.click(getByText('pool-a'))
     expect(queryByText(/swap 0\.5 GiB|交换 0\.5 GiB/)).not.toBeNull()
     expect(queryByText(/OOM-killed 2 times|被 OOM 杀过 2 次/)).not.toBeNull()
+  })
+
+  it('沙箱的交换和它能用的上限放在一起，快用满时标出来', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.9 * GIB,
+        memory_peak_bytes: 3 * GIB,
+        anon_bytes: 2.8 * GIB,
+        file_bytes: 0.1 * GIB,
+        swap_bytes: 0.9 * GIB,
+        swap_max_bytes: 1 * GIB,
+        oom_kills: 0,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    const swap = getByText(/swap 0\.9 \/ 1\.0 GiB|交换 0\.9 \/ 1\.0 GiB/)
+    expect(swap).toBeTruthy()
   })
 
   it('还没被领走的温机也在宿主机表里，带着它此刻的阶段：在跑的机器一台都不漏', () => {
