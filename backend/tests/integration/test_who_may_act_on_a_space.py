@@ -5,7 +5,7 @@ appointed, a member, a signed-in person who is not in it, and nobody signed in.
 Three rules divide them:
 
 - **reading** the board is for anyone in it (owner, admin, member);
-- **running** it — settings, categories, invite codes, the roster, domain
+- **running** it — settings, categories, the join link, the roster, domain
   groups, announcements, materials, the analytics desk — is for its owner and
   its admins;
 - **owning** it — deleting it, appointing or removing admins — is for the
@@ -142,10 +142,24 @@ def _make_archived_category(b: Board) -> None:
     assert resp.status_code == 200, resp.text
 
 
-def _make_code(b: Board) -> None:
-    resp = b.client.post(f"{b.base}/invite-codes", json={"maxUses": 5}, headers=b.owner)
-    assert resp.status_code == 201, resp.text
-    b.made["code"] = resp.json()["data"]["inviteCode"]["id"]
+def _make_link(b: Board) -> None:
+    b.made["link"] = b.owner_get("/join-link")["token"]
+
+
+def _make_request(b: Board, user_client: UserCreator) -> None:
+    """Someone waiting on the board: approval switched on, then the link used."""
+    user, headers = _person(user_client, b.client)
+    switched = b.client.patch(
+        f"{b.base}/join-link", json={"approval": True}, headers=b.owner
+    )
+    assert switched.status_code == 200, switched.text
+    token = switched.json()["data"]["token"]
+    asked = b.client.post(f"/space-invites/{token}/join", headers=headers)
+    assert asked.status_code == 200, asked.text
+    b.made["target"] = user.user_id
+    b.made["request"] = next(
+        r["id"] for r in _requests(b) if r["userId"] == user.user_id
+    )
 
 
 def _make_group(b: Board) -> None:
@@ -205,9 +219,8 @@ def _category(b: Board) -> dict | None:
     return next((c for c in cats if c["id"] == b.made["category"]), None)
 
 
-def _code(b: Board) -> dict | None:
-    codes = b.owner_get("/invite-codes")["inviteCodes"]
-    return next((c for c in codes if c["id"] == b.made.get("code")), None)
+def _requests(b: Board) -> list[dict]:
+    return b.owner_get("/join-requests")["requests"]
 
 
 def _group_names(b: Board) -> set[str]:
@@ -309,42 +322,53 @@ MANAGER_ACTIONS = [
         done=lambda b: not (_category(b) or {"archivedAt": 1}).get("archivedAt"),
     ),
     ManagerAction(
-        "only a manager lists the invite codes",
-        lambda b, h: b.client.get(f"{b.base}/invite-codes", headers=h),
+        "only a manager reads the join link",
+        lambda b, h: b.client.get(f"{b.base}/join-link", headers=h),
         allowed=200,
         outsider=404,
     ),
     ManagerAction(
-        "only a manager mints an invite code",
-        lambda b, h: b.client.post(
-            f"{b.base}/invite-codes", json={"maxUses": 3, "note": "第二班"}, headers=h
-        ),
-        allowed=201,
-        outsider=404,
-        done=lambda b: (
-            "第二班"
-            in {c.get("note") for c in b.owner_get("/invite-codes")["inviteCodes"]}
-        ),
-    ),
-    ManagerAction(
-        "only a manager edits an invite code",
+        "only a manager makes joining by link wait for approval",
         lambda b, h: b.client.patch(
-            f"{b.base}/invite-codes/{b.made['code']}", json={"maxUses": 6}, headers=h
+            f"{b.base}/join-link", json={"approval": True}, headers=h
         ),
         allowed=200,
         outsider=404,
-        prepare=_p(_make_code),
-        done=lambda b: (_code(b) or {}).get("maxUses") == 6,
+        done=lambda b: b.owner_get("/join-link")["approval"] is True,
     ),
     ManagerAction(
-        "only a manager revokes an invite code",
-        lambda b, h: b.client.delete(
-            f"{b.base}/invite-codes/{b.made['code']}", headers=h
+        "only a manager resets the join link",
+        lambda b, h: b.client.post(f"{b.base}/join-link/reset", headers=h),
+        allowed=200,
+        outsider=404,
+        prepare=_p(_make_link),
+        done=lambda b: b.owner_get("/join-link")["token"] != b.made["link"],
+    ),
+    ManagerAction(
+        "only a manager lists the requests to join",
+        lambda b, h: b.client.get(f"{b.base}/join-requests", headers=h),
+        allowed=200,
+        outsider=404,
+    ),
+    ManagerAction(
+        "only a manager approves a request to join",
+        lambda b, h: b.client.post(
+            f"{b.base}/join-requests/{b.made['request']}/approve", headers=h
         ),
         allowed=204,
         outsider=404,
-        prepare=_p(_make_code),
-        done=lambda b: _code(b) is None,
+        prepare=_make_request,
+        done=lambda b: b.made["target"] in _roster(b),
+    ),
+    ManagerAction(
+        "only a manager rejects a request to join",
+        lambda b, h: b.client.post(
+            f"{b.base}/join-requests/{b.made['request']}/reject", headers=h
+        ),
+        allowed=204,
+        outsider=404,
+        prepare=_make_request,
+        done=lambda b: not _requests(b) and b.made["target"] not in _roster(b),
     ),
     ManagerAction(
         "only a manager puts someone on the roster",
@@ -627,10 +651,10 @@ def test_nobody_signed_in_downloads_a_material(board: Board) -> None:
     [
         ("GET", "/spaces", None),
         ("POST", "/spaces", {"name": "匿名的板", "intro": "", "description": ""}),
-        ("POST", "/spaces/join", {"code": "ANYCODE"}),
+        ("POST", "/space-invites/ANYLINK/join", None),
         ("GET", "/space-applications", None),
     ],
-    ids=["list boards", "create a board", "join with a code", "my applications"],
+    ids=["list boards", "create a board", "join through a link", "my applications"],
 )
 def test_nobody_signed_in_lists_creates_or_joins_a_board(
     api_client: TestClient, method: str, path: str, body: dict | None

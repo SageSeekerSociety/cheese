@@ -5,6 +5,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -27,12 +28,12 @@ space_admin_relation_seq = Sequence("space_admin_relation_seq")
 space_domain_group_seq = Sequence("space_domain_group_seq")
 space_domain_group_domain_seq = Sequence("space_domain_group_domain_seq")
 space_member_seq = Sequence("space_member_seq")
-space_invite_code_seq = Sequence("space_invite_code_seq")
 space_material_seq = Sequence("space_material_seq")
 
 
 class Space(Base):
     __tablename__ = "space"
+    __table_args__ = (Index("uq_space_join_token", "join_token", unique=True),)
 
     id: Mapped[int] = mapped_column(BigInteger, space_seq, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -53,6 +54,18 @@ class Space(Base):
     )
     # There is no visibility tier. Who can see a 题目版 exists is answered by
     # membership and nothing else — see ``SpaceMember``.
+    #
+    # The space's join link (``/space-invites/<token>``), the way a member gets
+    # in besides being added by an owner or admin: permanent until one of them
+    # resets it, which makes the old link answer like a space that does not
+    # exist. NULL until first asked for; ``SpaceService.join_link`` mints it.
+    join_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Whether joining through the link waits for an owner or admin. Off by
+    # default: a course's members draw on nothing, so the link alone lets a
+    # student in (a team's switch defaults on for the opposite reason).
+    join_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     visible_task_limit: Mapped[int | None] = mapped_column(
         "visible_task_limit", Integer, nullable=True
     )
@@ -388,23 +401,6 @@ class SpaceMember(Base):
     id: Mapped[int] = mapped_column(BigInteger, space_member_seq, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    # 这个人是怎么进来的: the ``space_invite_code`` row this membership came from,
-    # or NULL for "no code is on record". Two different situations share that
-    # NULL and this column cannot tell them apart, so nothing downstream should
-    # try to:
-    #
-    # * rows written before this column existed — nobody recorded which code
-    #   was taken, and the migration deliberately backfills nothing (naming a
-    #   code for an old member would be inventing history);
-    # * someone the owner put in directly (``SpaceService.add_member``), where
-    #   the truth is "no code was involved".
-    #
-    # Both read as 未知, which is not the same claim as "no code", and is the
-    # only honest thing to say for the first group.
-    #
-    # No FK, like every other id in this module; and the code it names stays
-    # readable after a revoke, because revoking is a soft delete.
-    invite_code_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -417,47 +413,49 @@ class SpaceMember(Base):
     )
 
 
-class SpaceInviteCode(Base):
-    """A code that, when redeemed, makes the redeemer a member of a 题目版.
+class SpaceJoinRequest(Base):
+    """Someone asking to join a 题目版 through its link, while the link asks
+    for approval.
 
-    Every 题目版 is created holding one, because a 题目版 nobody else can
-    reach is not much use: the creator hands the code out and the people who
-    take it are the ones who can see the board at all.
-
-    Deliberately NOT the platform's ``invite_code`` table (that one admits a
-    person to the platform at registration and has nothing to do with any
-    space); the two share a shape and nothing else, so they share no table.
+    One kind of thing, so its own table — not the team's application table,
+    whose rows belong to a team. A request is answered once: approved (the
+    person becomes a member) or rejected; ``decided_by`` / ``decided_at`` say
+    by whom and when. At most one request per person waits on a space at a
+    time, which the partial unique index holds even when two clicks race.
     """
 
-    __tablename__ = "space_invite_code"
-
-    id: Mapped[int] = mapped_column(BigInteger, space_invite_code_seq, primary_key=True)
-    space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    code: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False, index=True
+    __tablename__ = "space_join_request"
+    __table_args__ = (
+        Index(
+            "uq_space_join_request_pending",
+            "space_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        Index("ix_space_join_request_space_id", "space_id"),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED')",
+            name="ck_space_join_request_status",
+        ),
     )
-    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    expires_at: Mapped[datetime | None] = mapped_column(
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    space_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space.id", ondelete="CASCADE", name="fk_space_join_request_space_id_space"
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Who minted it. Nullable because a row written before the field was read
-    # back — or by a caller that had no actor — may hold nobody; the roster
-    # renders that as 未知 rather than as an empty name.
-    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    # 这张码给谁 / 干什么用, in the maker's own words ("十月这批同学"). Optional:
-    # a code that says nothing about itself is a normal code, and every code
-    # minted before this column is exactly that.
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
 
 

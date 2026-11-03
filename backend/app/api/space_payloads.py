@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.domain.space.services import SpaceService
@@ -29,18 +28,6 @@ class SpaceRow(Protocol):
     task_templates: Mapped[list]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
-
-
-class SpaceInviteCodeRow(Protocol):
-    id: Mapped[int]
-    space_id: Mapped[int]
-    code: Mapped[str]
-    max_uses: Mapped[int]
-    use_count: Mapped[int]
-    expires_at: Mapped[datetime | None]
-    created_at: Mapped[datetime]
-    note: Mapped[str | None]
-    created_by: Mapped[int | None]
 
 
 class SpaceCategoryRow(Protocol):
@@ -185,33 +172,6 @@ class PatchSpaceDomainGroupRequest(BaseModel):
     domains: list[str] | None = None
 
 
-class CreateSpaceInviteCodeRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    max_uses: int | None = Field(default=None, alias="maxUses")
-    expires_at: int | None = Field(default=None, alias="expiresAt")
-    # 这张码给谁 / 干什么用. Optional and free text; omitted or blank is stored
-    # as NULL, which the read side reports as "no note" rather than "".
-    note: str | None = Field(default=None, alias="note")
-
-
-class PatchSpaceInviteCodeRequest(BaseModel):
-    """What may still be changed on a live code.
-
-    Both fields are nullable and both are optional, and the two mean different
-    things: an absent ``expiresAt`` leaves the date alone, an explicit null
-    clears it. The route reads ``model_fields_set`` to tell them apart.
-    ``note`` follows the same rule: absent leaves the 说明 alone, null (or a
-    blank string, which the service normalises to the same thing) clears it.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    max_uses: int | None = Field(default=None, alias="maxUses")
-    expires_at: int | None = Field(default=None, alias="expiresAt")
-    note: str | None = Field(default=None, alias="note")
-
-
 class AddSpaceManagerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -250,64 +210,6 @@ def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> di
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
     }
-
-
-def _invite_code_to_api_model(
-    invite: SpaceInviteCodeRow, created_by: dict | None = None
-) -> dict:
-    """One code as the 邀请码 screen reads it.
-
-    ``createdBy`` is the same hydrated person object a member row carries, and
-    is passed in rather than read off the row because turning a user id into a
-    name is a batched query the caller already runs for the whole list. It is
-    ``None`` when the row names nobody — the screen says 未知 rather than
-    rendering an empty name.
-    """
-    created_at_ms = (
-        int(invite.created_at.timestamp() * 1000) if invite.created_at else 0
-    )
-    expires_at_ms = (
-        int(invite.expires_at.timestamp() * 1000) if invite.expires_at else None
-    )
-    return {
-        "id": invite.id,
-        "spaceId": invite.space_id,
-        "code": invite.code,
-        "maxUses": invite.max_uses,
-        "useCount": invite.use_count,
-        "expiresAt": expires_at_ms,
-        "createdAt": created_at_ms,
-        "note": invite.note,
-        "createdBy": created_by,
-    }
-
-
-async def _invite_codes_to_api_models(
-    invites: Sequence[SpaceInviteCodeRow],
-    *,
-    db: AsyncSession,
-) -> list[dict]:
-    """The list form of the above, with its makers hydrated in one query.
-
-    Two queries for however many codes, the same shape ``_hydrate_members``
-    uses: a per-row lookup would grow with the number of codes on the board.
-    """
-    maker_ids = [c.created_by for c in invites if c.created_by is not None]
-    people = (
-        await _hydrate_people(
-            maker_ids,
-            user_repo=UserRepository(session=db),
-            profile_repo=UserProfileRepository(session=db),
-        )
-        if maker_ids
-        else {}
-    )
-    return [
-        _invite_code_to_api_model(
-            invite, people.get(invite.created_by) if invite.created_by else None
-        )
-        for invite in invites
-    ]
 
 
 def _category_to_api_model(

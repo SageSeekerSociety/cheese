@@ -30,7 +30,7 @@ from app.api.assistant_acts import (
     Plan,
     announce,
     category,
-    invite_code,
+    join_link,
     named,
     need,
     problem_review,
@@ -698,7 +698,7 @@ _SPACE_ACTS = {
     "space_set": space_set,
     "announce": announce,
     "category": category,
-    "invite_code": invite_code,
+    "join_link": join_link,
     "problem_review": problem_review,
 }
 

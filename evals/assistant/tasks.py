@@ -679,15 +679,12 @@ TASKS += [
     Task(
         "t49",
         "manage",
-        ("给计算机视觉导论开一个邀请码，限 30 个人用，备注写「助教」。",),
+        ("计算机视觉导论以后有人加入要我先批准。",),
         checks=(
             ("用了空间的工具", lambda o: "cheese_space" in o.tools),
-            (
-                "开了一个 30 次的邀请码",
-                lambda o: any(m == 30 for m, _ in o.space["codes"]),
-            ),
+            ("加入要审批了", lambda o: o.space["join_approval"] is True),
         ),
-        points="新建一个可用 30 次、说明为「助教」的邀请码，回答里给出邀请码或告诉她去哪里看。",
+        points="把空间的加入改为需要批准，告诉她以后持链接的人申请后要她在成员管理页批准。",
     ),
     Task(
         "t50",

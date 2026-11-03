@@ -15,13 +15,11 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.space_payloads import (
-    SpaceInviteCodeRow,
     TeachingRequest,
     _admin_to_api_model,
     _build_full_space_payload,
     _category_to_api_model,
     _hydrate_people,
-    _invite_codes_to_api_models,
     _space_to_api_model,
 )
 from app.api.write_access import ROUTE_DECIDES, Can
@@ -30,7 +28,6 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import (
     BadRequestError,
     ConflictError,
-    ForbiddenError,
     NotFoundError,
 )
 from app.db.session import get_db
@@ -56,7 +53,6 @@ from app.domain.user.services import languages_by_ids
 
 class SpaceMemberRow(Protocol):
     user_id: Mapped[int]
-    invite_code_id: Mapped[int | None]
     created_at: Mapped[datetime]
 
 
@@ -117,12 +113,6 @@ class PatchSpaceRequest(BaseModel):
         return value
 
 
-class JoinSpaceRequest(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    code: str = Field(..., min_length=1)
-
-
 class AddSpaceMemberRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -150,29 +140,12 @@ def _expect_list(value: list | str | None, field: str) -> list:
     raise BadRequestError(f"{field} must be a list or a JSON array string")
 
 
-def _member_to_api_model(
-    member: SpaceMemberRow,
-    user_info: dict | None = None,
-    invite_code: SpaceInviteCodeRow | None = None,
-) -> dict:
-    """One member row of the 成员 page.
-
-    ``inviteCode`` is the 「加入方式」 column: the code this membership came in
-    on, or **null**, which is the answer for two cases the row cannot tell
-    apart — a member who predates the column (nobody recorded the code) and one
-    the owner added directly (no code was involved). The screen renders both as
-    未知: null means "not on record", and dressing it up as a blank or a 0
-    would claim something the row does not say.
-    """
+def _member_to_api_model(member: SpaceMemberRow, user_info: dict | None = None) -> dict:
+    """One member row of the 成员 page."""
     joined_at_ms = int(member.created_at.timestamp() * 1000) if member.created_at else 0
     result: dict = {"userId": member.user_id, "joinedAt": joined_at_ms}
     if user_info is not None:
         result["user"] = user_info
-    result["inviteCode"] = (
-        {"id": invite_code.id, "code": invite_code.code}
-        if invite_code is not None
-        else None
-    )
     return result
 
 
@@ -181,33 +154,15 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
-    space_service: SpaceService,
 ) -> list[dict]:
-    """Roster rows, with the people and the codes they came in on.
-
-    Both lookups are batched for the same reason, and it is the same reason the
-    people half was batched before: a per-row lookup makes rendering a board
-    cost grow with the class. The codes are fetched through
-    ``get_by_ids``, which deliberately keeps soft-deleted codes — 加入方式 has
-    to keep naming the code that let someone in after it is revoked, and that
-    is precisely when somebody goes looking at this column.
-    """
+    """Roster rows, with the people batched into one lookup: a per-row lookup
+    makes rendering a board cost grow with the class."""
     people = await _hydrate_people(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
     )
-    codes = await space_service.invite_codes_by_ids(
-        [m.invite_code_id for m in members if m.invite_code_id is not None]
-    )
-    return [
-        _member_to_api_model(
-            member,
-            people[member.user_id],
-            codes.get(member.invite_code_id) if member.invite_code_id else None,
-        )
-        for member in members
-    ]
+    return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
 
 @router.get(
@@ -374,20 +329,7 @@ async def create_space(
     space_data = await _build_full_space_payload(
         space, service=service, db=db, include_private=True
     )
-    # Every 题目版 is created holding a code (see SpaceService.create_space),
-    # so hand it back here rather than making the creator come and ask.
-    codes = await service.list_invite_codes(space_id=space.id)
-    # Same shape the 邀请码 screen reads, its maker hydrated and all: the
-    # creator is looking at this payload right after the board appears, and a
-    # code that arrives without the same fields the list gives it is how two
-    # views of one row drift apart.
-    items = await _invite_codes_to_api_models(codes, db=db)
-    return ok(
-        {
-            "space": space_data,
-            "inviteCode": items[0] if items else None,
-        }
-    )
+    return ok({"space": space_data})
 
 
 @router.patch(
@@ -454,28 +396,6 @@ async def delete_space(
     return None
 
 
-@router.post(
-    "/join", summary="Join a Space with an invite code", dependencies=[ROUTE_DECIDES]
-)
-async def join_space(
-    payload: JoinSpaceRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceService = Depends(get_space_service),
-    db=Depends(get_db),
-) -> dict:
-    if auth_user.user_id <= 0:
-        raise ForbiddenError("Only signed-in users can join a space")
-    space = await service.join_space(
-        code=payload.code.strip(), user_id=auth_user.user_id
-    )
-    # Commit before answering: someone told they have joined opens the board on
-    # their next request, and the board is closed to non-members. Same reason as
-    # the commit in ``create_space``.
-    await db.commit()
-    space_data = await _build_full_space_payload(space, service=service, db=db)
-    return ok({"space": space_data})
-
-
 @router.get(
     "/{spaceId}/members",
     summary="List Space Members",
@@ -492,7 +412,6 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
-        space_service=service,
     )
     return ok({"members": items})
 
@@ -525,7 +444,6 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
-        space_service=service,
     )
     return ok({"member": items[0]})
 
